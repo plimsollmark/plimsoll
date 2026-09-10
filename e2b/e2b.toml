@@ -1,0 +1,30 @@
+# E2B template config for plimsoll's toolchain image.
+#
+# Build it from this directory with the E2B CLI:
+#   e2b template build
+# The CLI fills in team_id and template_id on the first build. Then point
+# plimsolld at it with E2B_TEMPLATE=plimsoll-toolchain (or the built ID).
+#
+# ---- Resource constraints (per sandbox / per run) ----
+# E2B sizes CPU and RAM at the TEMPLATE level, not per API call, so these fields are
+# how plimsoll bounds a single hostile run on the e2b provider (the provider's
+# Request carries no per-call override — see sandbox/e2b.go). Treat the aggregate
+# host budget as roughly SANDBOX_MAX_CONCURRENT x these values, and size the two
+# together (a concurrency count alone is not a resource budget).
+#
+#   cpu_count = 2     Enough for a real tsc/tsx/eslint build to stay responsive under
+#                     the wall-clock timeout, without handing a CPU-spinning hostile
+#                     run more than two cores.
+#   memory_mb = 1024  Headroom for a genuine TypeScript compile (tsc peaks a few
+#                     hundred MB on a medium project) while capping a memory bomb.
+#                     Below ~512 MB, tsc on a non-trivial project OOMs.
+#
+# Disk: E2B disk is the template rootfs plus the microVM's ephemeral overlay, all
+# reclaimed when the VM is killed. The run's wall-clock (the create "timeout" in
+# e2b.go, run budget + 10s) is the bound on within-run disk growth, and the slim
+# base image (see e2b.Dockerfile) keeps the rootfs itself small — so a hostile run
+# cannot exhaust disk for longer than it lives, on a minimal surface.
+dockerfile = "e2b.Dockerfile"
+template_name = "plimsoll-toolchain"
+cpu_count = 2
+memory_mb = 1024

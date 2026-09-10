@@ -1,0 +1,30 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -379,6 +379,7 @@ add_executable(qjs_exe
+     gen/repl.c
+     gen/standalone.c
+     qjs.c
++    coderunner-hostcall.c
+ )
+ add_qjs_libc_if_needed(qjs_exe)
+ add_static_if_needed(qjs_exe)
+diff --git a/qjs.c b/qjs.c
+--- a/qjs.c
++++ b/qjs.c
+@@ -44,6 +44,7 @@ extern const uint32_t qjsc_standalone_size;
+ static int qjs__argc;
+ static char **qjs__argv;
+ 
++void coderunner_register_hostcall(JSContext *ctx);
+ 
+ static bool is_standalone(const char *exe)
+ {
+@@ -234,6 +235,7 @@ static JSContext *JS_NewCustomContext(JSRuntime *rt)
+ 
+     JSValue global = JS_GetGlobalObject(ctx);
+     JS_SetPropertyFunctionList(ctx, global, global_obj, countof(global_obj));
++    coderunner_register_hostcall(ctx);
+     JSValue args = JS_NewArray(ctx);
+     int i;
+     for(i = 0; i < qjs__argc; i++) {

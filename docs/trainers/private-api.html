@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Trace a worked process graph from an LLM through MCP, a Node gateway, a Go dataplane, plimsoll, and a private inventory API.">
+  <title>Private API Flight Recorder · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <link rel="stylesheet" href="private-api.css">
+  <script src="private-api.js" defer></script>
+</head>
+<body>
+  <main class="flight-recorder" id="experienceApp">
+    <nav class="flight-nav" aria-label="Trainer navigation">
+      <a href="index.html">← All trainers</a>
+      <div class="nav-tools"><span class="nav-badge" title="This is a static lesson, not live telemetry"><i></i> static lesson · no live telemetry</span><button class="theme-toggle" id="themeToggle" type="button" aria-pressed="true" aria-label="Switch to dark theme"><span class="theme-icon" aria-hidden="true">☾</span><span class="theme-label">Dark mode</span></button></div>
+    </nav>
+
+    <header class="flight-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Stockroom / private API / process graph</p>
+        <h1>Trace a thought.<br><em>Not a box.</em></h1>
+        <p class="hero-lede">When an LLM asks which warehouses are short on stock, what process calls what process? Follow the actual messages from the model to MCP, through the Stockroom gateway and Go dataplane, into plimsoll, and back out to the private API.</p>
+        <p class="hero-lede"><b>Stockroom is a worked example, not a product.</b> It is a fictional inventory platform: a Node gateway, a Go dataplane, and the same <code>inventory.*</code> API the grant examples in this repository use. Every process boundary and every wire message below is real; only the company is invented.</p>
+        <div class="hero-punchline"><span>THE ONE SENTENCE</span><strong><b>run_javascript</b> is the MCP tool. <b>inventory.warehouses.list()</b> is a runtime global inside the guest: the isolated process that runs the model-authored JavaScript. They are not the same thing.</strong></div>
+      </div>
+      <div class="hero-orbit" aria-label="The two doors into Stockroom" role="img">
+        <div class="orbit-center"><span>Stock<br>room</span><small>one Node process</small></div>
+        <div class="orbit-node orbit-mcp"><b>/mcp</b><small>model-facing<br>JSON-RPC</small></div>
+        <div class="orbit-node orbit-api"><b>/v1/*</b><small>private REST<br>gateway</small></div>
+        <div class="orbit-line line-one"></div><div class="orbit-line line-two"></div>
+      </div>
+    </header>
+
+    <section class="truth-strip" aria-label="The key distinction">
+      <div><span class="truth-number">01</span><strong>MCP exposure</strong><p>The model receives tool names, descriptions, schemas, and a resource URI.</p></div>
+      <div><span class="truth-number">02</span><strong>Runtime exposure</strong><p>The isolated guest receives preloaded <code>inventory.*</code> and <code>host.*</code> globals.</p></div>
+      <div><span class="truth-number">03</span><strong>Private API route</strong><p><code>/v1/warehouses</code> is a route in the Node gateway, not a separate process or a model-facing tool.</p></div>
+    </section>
+
+    <p class="egg-legend"><span class="egg-mark" aria-hidden="true">✦</span> marks a live teaching control: probe the guest boundary or answer the contract check. The process cards, trace player, and protocol tabs are the main lesson. As a shortcut, type a container runtime (<code>runc</code>, <code>runsc</code>) or a provider name (<code>docker</code>, <code>wasm</code>, <code>e2b</code>) when this page has focus.</p>
+
+    <section class="layers-section" aria-labelledby="layersTitle">
+      <div class="section-heading"><div><p class="eyebrow">Stop compressing the architecture</p><h2 id="layersTitle">What each layer is actually responsible for</h2></div><p class="section-note"><strong>In this example, Stockroom owns two processes:</strong> the Node gateway and the Go dataplane. plimsoll owns its broker and provider; the caller owns the LLM/MCP host; the guest and WMS/ERP are outside the trusted Stockroom process boundary. “Private Stockroom API” is a shorthand for a route plus downstream service calls, not one mystery process.</p></div>
+      <div class="ownership-legend" aria-label="Ownership legend">
+        <span><i class="legend-swatch owner-caller"></i><b>Caller infrastructure</b><small>LLM + MCP host</small></span>
+        <span><i class="legend-swatch owner-stockroom"></i><b>Stockroom code</b><small>Node gateway + Go dataplane</small></span>
+        <span><i class="legend-swatch owner-plimsoll"></i><b>plimsoll code</b><small>broker + provider</small></span>
+        <span><i class="legend-swatch owner-guest"></i><b>Untrusted guest</b><small>ephemeral agent code</small></span>
+        <span><i class="legend-swatch owner-external"></i><b>Outside boundary</b><small>WMS / ERP</small></span>
+      </div>
+      <div class="layer-grid">
+        <article class="layer-card layer-model"><div class="layer-head"><span>01</span><b>OUTSIDE STOCKROOM</b></div><h3>LLM model</h3><p>Chooses a tool and writes the JavaScript argument. It is not the MCP server and it does not open the private API.</p><dl><dt>Owns</dt><dd>Reasoning and tool selection</dd><dt>Sees</dt><dd>Tool descriptions, schemas, and resource hints</dd><dt>Protocol</dt><dd>Model message to its MCP host</dd></dl></article>
+        <article class="layer-card layer-mcp"><div class="layer-head"><span>02</span><b>HOST PROCESS</b></div><h3>MCP client / host</h3><p>Runs the agent integration, holds the MCP connection, and places tools into model context.</p><dl><dt>Owns</dt><dd>MCP session and tool registry bridge</dd><dt>Calls</dt><dd><code>POST /mcp</code> or the stdio server</dd><dt>Protocol</dt><dd>MCP Streamable HTTP JSON-RPC or stdio</dd></dl></article>
+        <article class="layer-card layer-gateway"><div class="layer-head"><span>03</span><b>NODE PROCESS</b></div><h3>Stockroom gateway</h3><p>One Node process owns both the model-facing <code>/mcp</code> route and the private <code>/v1/*</code> REST routes. Its HTTP layer uses <a class="inline-reference external-reference" href="https://hono.dev/docs" target="_blank" rel="noopener">Hono</a>, a small Web Standards web framework.</p><dl><dt>Owns</dt><dd>Hono edge, MCP tools, auth capture, Connect clients</dd><dt>Calls</dt><dd><code>stockClient</code> and <code>codegenClient</code></dd><dt>Protocol</dt><dd>MCP JSON-RPC in; Connect/gRPC client out</dd></dl></article>
+        <article class="layer-card layer-dataplane"><div class="layer-head"><span>04</span><b>GO PROCESS :8746</b></div><h3>Stockroom dataplane</h3><p>Domain and execution core. It authenticates RPCs, enforces scopes, and owns the stock and code services.</p><dl><dt>Owns</dt><dd><code>StockService</code>, <code>CodegenService</code>, limiters, provider clients</dd><dt>Calls</dt><dd>WMS/ERP directly, or plimsoll for code</dd><dt>Protocol</dt><dd>Connect server supporting gRPC, gRPC-Web, Connect/JSON</dd></dl></article>
+        <article class="layer-card layer-runner"><div class="layer-head"><span>05</span><b>GO PACKAGE OR PROCESS</b></div><h3>plimsoll</h3><p>Runs hostile JavaScript, freezes the grant, and brokers permitted API calls. It can be embedded in the dataplane or run as <code>plimsolld</code>.</p><dl><dt>Owns</dt><dd>Provider boundary, route allowlist, token, budgets</dd><dt>Calls</dt><dd>Guest runtime and the configured private API origin</dd><dt>Protocol</dt><dd>In-process call, or Connect/gRPC <code>RunJavaScriptV2</code></dd></dl></article>
+        <article class="layer-card layer-guest"><div class="layer-head"><span>06</span><b>UNTRUSTED PROCESS</b></div><h3>Guest JavaScript</h3><p>The isolated process that runs model-authored code: Node in Docker, or QuickJS inside the WASM provider.</p><dl><dt>Owns</dt><dd>Only its computation and stdout/stderr</dd><dt>Receives</dt><dd>Injected <code>inventory.*</code> and <code>host.*</code> globals</dd><dt>Cannot hold</dt><dd>Bearer token, private origin, or ambient network</dd></dl></article>
+        <article class="layer-card layer-route"><div class="layer-head"><span>07</span><b>LAYER, NOT PROCESS</b></div><h3>Gateway private REST route</h3><p><code>GET /v1/warehouses</code> is an HTTP route inside the existing Node gateway process. It is the private API surface that plimsoll may call.</p><dl><dt>Receives</dt><dd>HTTP from the plimsoll broker</dd><dt>Does</dt><dd>Calls <code>stockClient.listWarehouses({})</code></dd><dt>Then</dt><dd>Connect/gRPC to Go <code>StockService</code></dd></dl></article>
+        <article class="layer-card layer-external"><div class="layer-head"><span>08</span><b>EXTERNAL SERVICE</b></div><h3>WMS / ERP system</h3><p>The system of record for stock. It is outside both plimsoll and the Stockroom process boundary.</p><dl><dt>Receives</dt><dd>Provider-specific stock requests from Go</dd><dt>Returns</dt><dd>Warehouse, item, count, or adjustment data</dd><dt>Protocol</dt><dd>Vendor API, normally HTTP(S)</dd></dl></article>
+      </div>
+      <div class="protocol-map" aria-label="Code mode protocol path"><strong>CODE MODE PATH</strong><span>MCP JSON-RPC<br><b>/mcp</b></span><i>→</i><span>HTTP REST<br><b>/v1/warehouses</b></span><i>→</i><span>Connect / gRPC<br><b>StockService</b></span><i>→</i><span>Vendor HTTP(S)<br><b>WMS / ERP</b></span></div>
+      <section class="contract-check" aria-labelledby="contractCheckTitle">
+        <div class="contract-heading"><div><span class="panel-label">FAIL THE ASSUMPTION</span><h3 id="contractCheckTitle">Which of these is the MCP tool?</h3><p>MCP is the protocol used by the model’s host to call a registered server operation. The guest global is JavaScript that runs only after plimsoll starts the isolated guest. The REST route is a private gateway endpoint.</p></div><span class="egg-mark" aria-hidden="true">✦</span></div>
+        <div class="contract-options" role="group" aria-label="Choose the MCP tool">
+          <button type="button" data-contract-answer="wrong">A. <code>inventory.warehouses.list()</code>, because it reaches the stock data</button>
+          <button type="button" data-contract-answer="correct">B. <code>run_javascript</code>, because it is registered on the MCP server</button>
+          <button type="button" data-contract-answer="wrong">C. <code>GET /v1/warehouses</code>, because it is the first API hop</button>
+        </div>
+        <p class="contract-verdict" id="contractVerdict" role="status" hidden></p>
+      </section>
+    </section>
+
+    <section class="graph-section" aria-labelledby="graphTitle">
+      <div class="section-heading">
+        <div><p class="eyebrow">First, name the actors</p><h2 id="graphTitle">The process graph</h2></div>
+        <p class="section-note">Every card is a process, external service, or named layer. Every arrow is a message. Click a card to inspect ownership, responsibilities, and what it cannot see.</p>
+      </div>
+      <div class="process-workbench">
+      <div class="process-graph" id="processGraph">
+        <button class="process-card model-card owner-caller" data-process="model">
+          <span class="process-index">01</span><span class="process-kind">outside your app</span><h3>LLM model</h3><p>Chooses a tool from the MCP host's registry.</p><code>tools/call</code>
+        </button>
+        <div class="graph-arrow model-to-mcp"><span>tool call</span><b>→</b></div>
+        <button class="process-card mcp-card owner-caller" data-process="mcp">
+          <span class="process-index">02</span><span class="process-kind">host process</span><h3>MCP client / host</h3><p>Holds the server connection and puts tools into model context.</p><code>POST /mcp</code> <code>stdio</code>
+        </button>
+        <div class="graph-arrow mcp-to-gateway"><span>JSON-RPC</span><b>→</b></div>
+        <button class="process-card gateway-card owner-stockroom" data-process="gateway">
+          <span class="process-index">03</span><span class="process-kind">Node process</span><h3>Stockroom gateway</h3><p>Hono edge, MCP server, tool handlers, Connect clients.</p><code>MCP server + tool handlers</code>
+        </button>
+        <div class="graph-branch">
+          <div class="branch-arm branch-direct"><span>direct tool path</span><b>↘</b></div>
+          <div class="branch-arm branch-code"><span>code mode path</span><b>↘</b></div>
+        </div>
+        <button class="process-card dataplane-card owner-stockroom" data-process="dataplane">
+          <span class="process-index">04</span><span class="process-kind">Go process :8746</span><h3>Stockroom dataplane</h3><p>Auth, scopes, <code>StockService</code>, <code>CodegenService</code>, limiter.</p><code>Connect services + policy</code>
+        </button>
+        <div class="graph-arrow vertical-arrow"><span>Connect RPC</span><b>↓</b></div>
+        <button class="process-card runner-card owner-plimsoll" data-process="runner">
+          <span class="process-index">05</span><span class="process-kind">Go process</span><h3>plimsoll / plimsolld</h3><p>Validates the run, freezes the grant, brokers calls, starts the provider.</p><code>RunJavaScriptV2</code>
+        </button>
+        <button class="graph-arrow runner-to-guest boundary-probe" id="boundaryProbe" type="button" title="Probe this boundary"><span class="probe-idle">isolated execution</span><span class="probe-hint">probe the boundary</span><b>→</b><span class="egg-mark" aria-hidden="true">✦</span></button>
+        <button class="process-card guest-card owner-guest" data-process="guest">
+          <span class="process-index">06</span><span class="process-kind">untrusted process</span><h3>guest JS</h3><p>Node in Docker, or QuickJS in WASM. No token. No ambient network.</p><code>inventory.warehouses.list()</code>
+        </button>
+        <div class="graph-arrow guest-to-private"><span>brokered API call</span><b>→</b></div>
+        <button class="process-card private-card owner-route" data-process="private">
+          <span class="process-index">07</span><span class="process-kind">route in Node gateway</span><h3>Gateway REST route</h3><p><code>/v1/warehouses</code> is not a new process. It calls the gateway's Connect client for Go <code>StockService</code>.</p><code>GET /v1/warehouses</code>
+        </button>
+        <div class="graph-arrow private-to-external"><span>vendor HTTPS</span><b>↓</b></div>
+        <button class="process-card external-card owner-external" data-process="external">
+          <span class="process-index">08</span><span class="process-kind">external service</span><h3>WMS / ERP</h3><p>The real system of record outside the Stockroom process boundary.</p><code>vendor API</code>
+        </button>
+      </div>
+      <aside class="process-inspector" id="processInspector" aria-live="polite">
+        <span class="inspector-label">Select an actor</span><strong>Who is calling?</strong><p>Click any process card above. The recorder will show its incoming wire, its responsibilities, and the boundary it owns. Learn-more links stay reader-facing: protocol specifications and the next trainer, not repository files.</p>
+      </aside>
+      <div class="probe-stage" id="probeStage" hidden>
+        <div class="probe-scene" aria-hidden="true">
+          <div class="probe-side probe-broker"><b>plimsoll broker</b><small>holds the minted token</small></div>
+          <div class="probe-wall"><span>boundary</span></div>
+          <div class="probe-side probe-guest"><b>guest process</b><small>runs the model's code</small></div>
+          <div class="probe-packet packet-call">call</div>
+          <div class="probe-packet packet-token">token</div>
+        </div>
+        <div class="probe-controls" aria-label="Choose the sandbox boundary">
+          <span>Change the enforcement layer</span>
+          <button type="button" data-runtime-choice="runc" aria-pressed="true"><b>runc</b><small>container tier</small></button>
+          <button type="button" data-runtime-choice="runsc" aria-pressed="false"><b>runsc</b><small>kernel tier</small></button>
+          <button type="button" data-provider-choice="docker" aria-pressed="true"><b>docker</b><small>socket broker</small></button>
+          <button type="button" data-provider-choice="wasm" aria-pressed="false"><b>wasm</b><small>host function</small></button>
+          <button type="button" data-provider-choice="e2b" aria-pressed="false"><b>e2b</b><small>guarded microVM</small></button>
+        </div>
+        <p class="probe-verdict" id="probeVerdict" role="status"></p>
+      </div>
+      </div>
+    </section>
+
+    <section class="protocol-section" aria-labelledby="protocolTitle">
+      <div class="section-heading"><div><p class="eyebrow">Open the wire</p><h2 id="protocolTitle">Protocol decoder</h2></div><p class="section-note">A protocol is the contract between two sides: where bytes go, what shape they have, who answers, and what the receiver does next. Pick one hop.</p></div>
+      <div class="protocol-tabs" role="tablist" aria-label="Protocol definitions">
+        <button class="protocol-tab active" data-protocol="mcp-http" role="tab">MCP over HTTP</button>
+        <button class="protocol-tab" data-protocol="mcp-stdio" role="tab">MCP over stdio</button>
+        <button class="protocol-tab" data-protocol="connect" role="tab">Connect / gRPC</button>
+        <button class="protocol-tab" data-protocol="private-rest" role="tab">Private REST</button>
+        <button class="protocol-tab" data-protocol="plimsoll-rpc" role="tab">plimsoll RPC</button>
+        <button class="protocol-tab" data-protocol="guest-broker" role="tab">Guest to broker</button>
+      </div>
+      <div class="protocol-panel" id="protocolPanel" role="tabpanel"></div>
+    </section>
+
+    <section class="trace-section" aria-labelledby="traceTitle">
+      <div class="section-heading trace-heading">
+        <div><p class="eyebrow">Now run the film</p><h2 id="traceTitle">Two ways to ask for the same stock data</h2></div>
+        <div class="trace-switches" role="group" aria-label="Trace mode">
+          <button class="trace-mode active" data-lane="code">Code mode <small>uses plimsoll</small></button>
+          <button class="trace-mode" data-lane="direct">Direct MCP <small>bypasses plimsoll</small></button>
+        </div>
+      </div>
+      <div class="deployment-row">
+        <span class="deployment-label">Code mode deployment</span>
+        <button class="deployment-choice active" data-deployment="local"><b>local provider</b><small>dataplane owns sandbox</small></button>
+        <button class="deployment-choice" data-deployment="remote"><b>remote plimsolld</b><small>Connect hop to runner</small></button>
+        <button class="play-button" id="playTrace"><span>▶</span> Play trace</button>
+        <button class="reset-button" id="resetTrace">Reset</button>
+      </div>
+      <div class="trace-layout">
+        <div class="trace-timeline" id="traceTimeline" aria-live="polite"></div>
+        <aside class="trace-detail" id="traceDetail">
+          <div class="detail-topline"><span id="detailStatus">READY</span><span id="detailCount">0 / 0</span></div>
+          <h3 id="detailTitle">Choose a trace</h3>
+          <p id="detailBody">The direct MCP path and code mode may end at the same private service, but they do not have the same process graph. Play either trace to see the difference.</p>
+          <div class="wire-box"><span id="wireLabel">WIRE INSPECTOR</span><pre id="wirePayload">Select Code mode or Direct MCP, then press Play trace.</pre></div>
+          <div class="detail-boundary" id="detailBoundary"></div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="exposure-section" aria-labelledby="exposureTitle">
+      <div class="section-heading"><div><p class="eyebrow">What each audience actually sees</p><h2 id="exposureTitle">Four windows into one call</h2></div><p class="section-note">The model, the MCP wire, the guest, and the private API have different contracts. Confusing these windows is how private APIs accidentally become public APIs.</p></div>
+      <div class="exposure-tabs" role="tablist" aria-label="Exposure windows">
+        <button class="exposure-tab active" data-exposure="model" role="tab">Model sees</button>
+        <button class="exposure-tab" data-exposure="mcp" role="tab">MCP wire sends</button>
+        <button class="exposure-tab" data-exposure="guest" role="tab">Guest runtime gets</button>
+        <button class="exposure-tab" data-exposure="api" role="tab">Private API receives</button>
+      </div>
+      <div class="exposure-panel" id="exposurePanel" role="tabpanel"></div>
+    </section>
+
+    <section class="value-section" aria-labelledby="valueTitle">
+      <div class="value-intro"><p class="eyebrow">So what does plimsoll bring?</p><h2 id="valueTitle">A private API can be useful without becoming a sandbox capability free-for-all.</h2><p>Stockroom keeps its domain API and its MCP product. plimsoll contributes the controlled middle: a place where agent-authored code can loop, filter, and compose private data while the origin, route policy, caller identity, token, network boundary, and audit semantics stay outside the guest.</p></div>
+      <div class="value-grid">
+        <article><span>01</span><h3>Better than one-shot tools</h3><p><code>inventory.items.counts(id)</code> can sit inside a loop or condition. The model does not need one MCP round trip per item.</p></article>
+        <article><span>02</span><h3>Safer than a raw SDK secret</h3><p>The guest sees typed helpers. plimsoll holds the private origin and per-run credential, and allows only the registered routes.</p></article>
+        <article><span>03</span><h3>Clearer than magic</h3><p>The MCP description and <code>stockroom://sandbox-api.d.ts</code> explain the model-facing contract. The flight recorder explains the process-facing contract.</p></article>
+      </div>
+    </section>
+
+    <section class="learn-section" aria-labelledby="learnTitle">
+      <p class="eyebrow">Further reading</p><h2 id="learnTitle">Protocol references and next trainers</h2>
+      <div class="learn-grid">
+        <a class="external-reference" href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports" target="_blank" rel="noopener"><b class="learn-kind">EXTERNAL · official docs ↗</b><code>MCP transports</code><span>Official specification for Streamable HTTP and stdio.</span></a>
+        <a class="external-reference" href="https://www.jsonrpc.org/specification" target="_blank" rel="noopener"><b class="learn-kind">EXTERNAL · official docs ↗</b><code>JSON-RPC 2.0</code><span>The envelope used by MCP: requests, responses, ids, params, and errors.</span></a>
+        <a class="external-reference" href="https://ts.sdk.modelcontextprotocol.io/server" target="_blank" rel="noopener"><b class="learn-kind">EXTERNAL · official docs ↗</b><code>MCP TypeScript server API</code><span>Server construction and transport connections in the TypeScript SDK.</span></a>
+        <a class="external-reference" href="https://connectrpc.com/" target="_blank" rel="noopener"><b class="learn-kind">EXTERNAL · official docs ↗</b><code>Connect RPC</code><span>Protobuf-generated RPC over HTTP, compatible with gRPC and gRPC-Web.</span></a>
+        <a class="external-reference" href="https://grpc.io/docs/what-is-grpc/core-concepts/" target="_blank" rel="noopener"><b class="learn-kind">EXTERNAL · official docs ↗</b><code>gRPC core concepts</code><span>How .proto services become typed client and server calls.</span></a>
+        <a class="external-reference" href="https://protobuf.dev/overview/" target="_blank" rel="noopener"><b class="learn-kind">EXTERNAL · official docs ↗</b><code>Protocol Buffers</code><span>The schema and serialization layer underneath the typed RPC contract.</span></a>
+        <a class="internal-reference" href="brokering.html"><b class="learn-kind">INTERNAL · trainer site →</b><code>plimsoll API broker</code><span>How route allowlists, credentials, budgets, and transport adapters work.</span></a>
+        <a class="internal-reference" href="capabilities.html"><b class="learn-kind">INTERNAL · trainer site →</b><code>plimsoll capabilities</code><span>How a per-run grant becomes the only authority the guest can use.</span></a>
+        <a class="internal-reference" href="agent-products.html"><b class="learn-kind">INTERNAL · trainer site →</b><code>MCP product design</code><span>How tool descriptions, resources, and code mode become a model-facing contract.</span></a>
+      </div>
+    </section>
+
+    <footer class="flight-footer"><a href="brokering.html">Go deeper: API Broker →</a><a href="capabilities.html">Design the grant →</a><a href="agent-products.html">Design the MCP product →</a></footer>
+  </main>
+
+  <script id="trainerData" type="application/json">
+  {"mode":"experience","id":"private-api-flight-recorder","title":"Private API Flight Recorder","tagline":"one worked process graph from LLM to private API","experience":"process-graph"}
+  </script>
+</body>
+</html>

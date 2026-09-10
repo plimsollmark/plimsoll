@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive trainer for plimsoll host-API grants, named RPC profiles, route enforcement, and per-run credentials.">
+  <title>Capabilities · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Capabilities</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">Want to watch one private API request cross both sides of the boundary? Try <a href="private-api.html">The Private API Lab</a>. New to the words here? <a href="plain-english.html">Start with Plain English</a>. Use ← and → to move between chapters; a check marks ideas you have exercised, not a certification.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id": "capabilities",
+    "title": "plimsoll capabilities",
+    "tagline": "one caller, one run, exact routes",
+    "chapters": [
+      {
+        "id": "default-deny",
+        "label": "Default deny",
+        "kind": "quiz",
+        "title": "No grant means no network",
+        "lede": "By default, code you run can't reach the network at all. It only gets out if you hand that specific run a 'grant', and even then the grant starts empty, so it still reaches nothing until you add exact addresses.",
+        "stats": [{"label":"nil grant","value":"no network","tone":"good"},{"label":"empty allow","value":"0 routes","tone":"good"}],
+        "prompt": "A Docker JavaScript request has a valid host origin and token minter, but its <code>Allow</code> list is empty. What can hostile code reach?",
+        "options": [
+          {"label":"The whole configured origin","note":"BaseURL establishes a network destination.","correct":false,"result":"an origin is not permission","detail":"BaseURL tells the broker where an allowed route would go. It does not create an implicit route."},
+          {"label":"Read-only GET routes","note":"Safe methods are granted automatically.","correct":false,"result":"there are no default methods","detail":"Every method and path pair must be declared. GET is not privileged over PUT, POST, or DELETE by omission."},
+          {"label":"Nothing","note":"An empty allowlist is a second independent off switch.","correct":true,"result":"the run reaches zero routes","detail":"A nil grant gives no network at all. A non-nil grant with an empty Allow list still reaches nothing, even if other fields are populated.","facts":["per-run attachment","explicit method + path","no implicit routes"]}
+        ],
+        "explainer":{"try":"Compare nil grant, empty Allow, and one exact route. Only the third case adds authority, and only for a provider and operation that support grants.","idea":"There are two separate off switches for network access, so a stray setting can never quietly turn a web address or a key into open internet.","points":["Grants ride on individual requests, not provider-global state.","Unsupported providers return <code>ErrUnsupported</code> instead of ignoring a grant.","Docker and WASM JavaScript use the same grant enforcement core."]}
+      },
+      {
+        "id": "valid-grant",
+        "label": "Valid grant",
+        "kind": "matrix",
+        "title": "The grant describes a canonical, narrow authority",
+        "lede": "Before a grant is used, plimsoll checks it the same strict way every time: one clean web address, one HTTP method, one exact path, and narrow permissions. Anything ambiguous is rejected up front.",
+        "stats": [{"label":"route methods","value":"4"},{"label":"forbidden scopes","value":"2","tone":"warn"}],
+        "prompt": "Read each row as a validation boundary. Rejected declarations never reach a provider.",
+        "rowLabel": "Grant field",
+        "columns": ["Accepted shape", "Rejected example", "Reason"],
+        "rows": [
+          {"label":"BaseURL", "cells":[{"text":"canonical origin","tone":"good","note":"scheme + host + optional port"},{"text":"https://u@api/x?q=1","tone":"bad"},{"text":"no userinfo, path, query, or fragment","tone":"neutral"}]},
+          {"label":"Transport", "cells":[{"text":"HTTPS off loopback","tone":"good"},{"text":"http://api.example","tone":"bad"},{"text":"HTTP is allowed only for loopback hosts","tone":"neutral"}]},
+          {"label":"Method", "cells":[{"text":"GET / PUT / POST / DELETE","tone":"good"},{"text":"PATCH","tone":"bad"},{"text":"one explicit method per HostRoute","tone":"neutral"}]},
+          {"label":"Path pattern", "cells":[{"text":"/v1/lights/*","tone":"good"},{"text":"/v1/** or /v1/%2e%2e","tone":"bad"},{"text":"decoded canonical segments; * occupies one segment","tone":"neutral"}]},
+          {"label":"Scope", "cells":[{"text":"one nonempty token","tone":"good"},{"text":"lights:read code:run","tone":"bad"},{"text":"whitespace cannot smuggle another scope","tone":"neutral"}]},
+          {"label":"Scope authority", "cells":[{"text":"least privilege","tone":"good"},{"text":"code:run or *","tone":"bad"},{"text":"a capability cannot recurse into execution or grant everything","tone":"neutral"}]}
+        ],
+        "explainer":{"try":"Build a minimal declaration for <code>GET https://api.example/v1/lights/abc</code>: the origin stops before the path, while the path belongs in one HostRoute.","idea":"A grant only behaves the same everywhere when its address, routes, and permissions can be read exactly one way.","points":["Each <code>*</code> matches exactly one non-empty path segment.","Duplicate method-and-path routes are rejected.","A missing minter means no Authorization header; it does not widen the Allow list."]}
+      },
+      {
+        "id": "server-authority",
+        "label": "Server authority",
+        "kind": "pipeline",
+        "title": "RPC callers select authority; they do not define it",
+        "lede": "When the request comes in over the network, the caller only names a profile. The server does the rest: it checks who you are, looks up the real rules it keeps privately, confirms you are on the allowed list, and issues one key good for just this run.",
+        "stats": [{"label":"raw RPC grant","value":"rejected","tone":"good"},{"label":"mint cadence","value":"once / run","tone":"good"}],
+        "prompt": "Step through the authority handoff for a subject-bound JWT profile.",
+        "steps": [
+          {"layer":"caller","name":"Select grant_profile","short":"Send code plus a server-known profile name.","detail":"The caller never supplies BaseURL, routes, scopes, or bearer material over the wire. A remote client given a raw in-memory grant fails instead of silently dropping it.","tone":"neutral"},
+          {"layer":"auth","name":"Authenticate code:run","short":"Resolve the bearer to a stable principal ID.","detail":"Execution authentication answers who may call plimsoll. That principal identity is retained for audit and subject-bound minting.","tone":"good"},
+          {"layer":"profile","name":"Resolve server policy","short":"Load origin, Allow routes, scopes, minter configuration, and optional SDK preamble.","detail":"Profiles live in the server-side grants file. Callers can choose only a configured name; they cannot widen its policy.","tone":"good"},
+          {"layer":"ACL","name":"Check allowed_callers","short":"Require this authenticated principal on the profile ACL.","detail":"The code:run scope alone does not confer downstream host-API authority. A profile's allowed_callers check is an independent gate.","tone":"good"},
+          {"layer":"mint","name":"Mint for this run","short":"Pass BaseURL, Allow, scopes, remaining TTL, and principal Subject to the minter.","detail":"A subject-bound minter refuses an anonymous run. Prefer a short-lived route-scoped token; a static token is the degenerate option for APIs that cannot mint.","tone":"good"},
+          {"layer":"dispatch","name":"Attach one resolved grant","short":"Give the validated capability to the supporting operation only.","detail":"The grant is attached to this JavaScript dispatch. It does not become provider state and does not bleed into a later project or another caller's run.","tone":"good"}
+        ],
+        "explainer":{"try":"Name the two separate authorization gates: code:run admits execution, while allowed_callers admits one downstream profile. Then find where caller identity becomes the minted token subject.","idea":"The rules and the key are made on the server, never handed over by the untrusted request, yet the key is still tied to the one caller who was let in.","points":["JWT profiles mint a fresh short-lived token per run.","Static profiles read one shared bearer from a server environment variable.","The RPC request contains a profile selector, never a raw caller-authored grant."]}
+      },
+      {
+        "id": "decoded-routes",
+        "label": "Decoded routes",
+        "kind": "matrix",
+        "title": "Approve exactly the path sent on the wire",
+        "lede": "The allowed-address check compares the real, decoded path piece by piece. If a request tries to disguise its true path with encoding tricks, it is denied before anything downstream can reinterpret it.",
+        "stats": [{"label":"pattern","value":"GET /v1/lights/*/on"},{"label":"wildcard width","value":"1 segment","tone":"good"}],
+        "prompt": "Assume the only route is <code>GET /v1/lights/*/on</code>. Which requests reach the upstream API?",
+        "rowLabel": "Request",
+        "columns": ["Decision", "Why", "Upstream call"],
+        "rows": [
+          {"label":"GET /v1/lights/a/on", "cells":[{"text":"allow","tone":"good"},{"text":"one non-empty wildcard segment","tone":"good"},{"text":"same bytes","tone":"good"}]},
+          {"label":"GET /v1/lights/a/b/on", "cells":[{"text":"deny","tone":"bad"},{"text":"wildcard cannot span two segments","tone":"neutral"},{"text":"none","tone":"good"}]},
+          {"label":"GET /v1/lights/%2f/on", "cells":[{"text":"deny","tone":"bad"},{"text":"decoding changes path structure","tone":"neutral"},{"text":"none","tone":"good"}]},
+          {"label":"GET /v1/lights/%2e%2e/on", "cells":[{"text":"deny","tone":"bad"},{"text":"encoded traversal and decoded mismatch","tone":"neutral"},{"text":"none","tone":"good"}]},
+          {"label":"POST /v1/lights/a/on", "cells":[{"text":"deny","tone":"bad"},{"text":"method is part of the capability","tone":"neutral"},{"text":"none","tone":"good"}]},
+          {"label":"GET /v1/lights//on", "cells":[{"text":"deny","tone":"bad"},{"text":"wildcard cannot bind an empty segment","tone":"neutral"},{"text":"none","tone":"good"}]}
+        ],
+        "explainer":{"try":"Try to construct a path where authorization sees one set of segments and HTTP sends another. The decoded-equals-raw rule closes that gap before matching.","idea":"The exact path the gate approves has to be the exact path that gets sent onward, with no sleight of hand in between.","points":["Query, fragment, backslash, control, empty, dot, and traversal forms are rejected.","Method comparison is case-insensitive; path comparison is exact.","The injected client mirrors these checks for clarity, but the host-side broker is authoritative."]}
+      },
+      {
+        "id": "shared-broker",
+        "label": "Shared broker",
+        "kind": "pipeline",
+        "title": "The credential stays outside hostile code",
+        "lede": "Three providers enter the same host-side gatekeeper through three different pipes. Docker keeps its network off and uses a private Unix socket; QuickJS has no socket or guest network and uses a direct host function; an E2B microVM denies all egress except one exit to the configured guard. None of the three pipes carries the key.",
+        "stats": [{"label":"grant adapters","value":"3","tone":"good"},{"label":"token in guest","value":"never","tone":"good"}],
+        "prompt": "Follow one <code>host.get</code> call from guest code to the configured API.",
+        "steps": [
+          {"layer":"daemon","name":"Mint one broker session","short":"Freeze one grant and hold its bearer in Go.","detail":"plimsoll invokes the grant's minter once, validates the token, and creates a per-run broker with fixed policy and quotas. The bearer is not placed in code, arguments, environment, or WASM memory.","tone":"good"},
+          {"layer":"provider","name":"Attach the narrow adapter","short":"A Unix socket for Docker, a direct host function for WASM, the guard for E2B.","detail":"Docker remains on --network none. QuickJS has no ambient network or socket; only bounded method/path/body and response buffers cross its host-function ABI. E2B denies all egress except the one exit its <code>E2B_GUARD_URL</code> names, and the guard delegates to this same core.","tone":"good"},
+          {"layer":"client","name":"Call host.get / put / post / del","short":"The client performs a defense-in-depth Allow check.","detail":"The generic <code>host.call</code> client offers only declared routes. An optional embedder preamble may add domain-specific ergonomics without replacing the broker boundary.","tone":"neutral"},
+          {"layer":"broker","name":"Authorize the exact wire target","short":"Reject query, traversal, encoding, or cleaning mismatches and bound request work.","detail":"The shared broker is authoritative. A crafted socket client or direct native call cannot bypass the same method-and-route allowlist by skipping the injected helper.","tone":"good"},
+          {"layer":"broker","name":"Overwrite Authorization","short":"Inject the minted bearer immediately before forwarding.","detail":"A guest-supplied Authorization header does not control upstream identity. The broker supplies the credential it holds outside the container.","tone":"good"},
+          {"layer":"cleanup","name":"Close the per-run session","short":"Stop the adapter and release upstream connections.","detail":"The capability lifetime follows the run. Later runs receive independent frozen policies and, with a real minter, freshly scoped credentials.","tone":"good"}
+        ],
+        "explainer":{"try":"List everything guest code can observe: the generic API, allowed route metadata, and either a socket path or native call. The bearer and general network transport are deliberately absent.","idea":"You can only hold hostile code to a grant if the key and the real route check live outside the code, where it can't touch them.","points":["Docker project grants are brokered: the runner preloads the same client module into every step with <code>node --import</code>, over the same per-run socket.","WASM's direct host function is the quota-bounded in-memory mailbox; WASM remains snippet-only, so it has no project grant to give.","E2B grants need <code>E2B_GUARD_URL</code>, the forced channel that keeps the credential and the route check outside the VM; with no guard configured a grant is refused rather than downgraded."]}
+      },
+      {
+        "id": "capability-gate",
+        "label": "Threat gate",
+        "kind": "checklist",
+        "title": "Review the whole capability, not just its token",
+        "lede": "How much damage a grant could do is the combination of who can use it, on which runner, to which site, on which exact routes, with which permissions, for how long. Every one of those has to be pinned down, not left open.",
+        "stats": [],
+        "prompt": "Check each required threat-model gate before making a host API reachable from hostile JavaScript.",
+        "items": [
+          {"label":"Use a server-side named profile","why":"Never let an RPC caller provide its own origin, routes, scopes, preamble, or bearer material."},
+          {"label":"Restrict allowed_callers","why":"Require the authenticated principal on this profile's ACL; code:run alone is not downstream authority."},
+          {"label":"Validate a canonical HTTPS origin","why":"Permit HTTP only on loopback and reject userinfo, path, query, and fragment ambiguity."},
+          {"label":"Declare exact least-privilege routes","why":"Use only GET, PUT, POST, or DELETE with decoded canonical paths and one-segment wildcards."},
+          {"label":"Declare narrow scope tokens","why":"Each scope is one whitespace-free token; reject code:run and * so guest code cannot recurse or reach everything."},
+          {"label":"Mint once for the authenticated subject","why":"Prefer short-lived per-run credentials and refuse subject-bound minting when no real principal is present."},
+          {"label":"Require advertised JavaScript broker support","why":"Permit Docker/WASM snippets and reject project or E2B grants rather than exposing a credential or silently dropping authority."},
+          {"label":"Audit profile, principal, provider, and outcome","why":"Record identifiers and run metadata without logging code or live credentials.","required":false}
+        ],
+        "ready":"The capability has an explicit caller, operation, destination, route set, credential scope, lifetime, and external enforcement point.",
+        "notReady":"Keep the run network-isolated. A missing ACL, canonical route, subject, scope, or supported broker turns narrow authority into ambient authority.",
+        "explainer":{"try":"Remove any one required check and describe the new attack: caller confusion, origin smuggling, route traversal, scope escalation, token theft, or unsupported-provider exposure.","idea":"The key is just one piece. The real limit is everything enforced around it at once: who, where, which routes, which permissions, and for how long.","points":["An empty Allow list safely reaches nothing.","The shared Go broker, not the injected helper or transport adapter, is the authoritative route gate.","The credential enters neither the hostile container nor QuickJS/WASM memory."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

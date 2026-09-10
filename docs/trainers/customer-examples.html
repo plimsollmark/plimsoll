@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive customer cookbook for integrating MCP and agent products with plimsoll.">
+  <title>Customer examples · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Customer examples</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">New to the words here? <a href="plain-english.html">Start with Plain English</a>. Use ← and → to move between chapters; a check marks ideas you have exercised, not a certification.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id": "customer-examples",
+    "title": "customer integration cookbook",
+    "tagline": "six recipes, explicit authority",
+    "chapters": [
+      {
+        "id": "readonly-mcp",
+        "label": "Read-only MCP",
+        "kind": "pipeline",
+        "title": "Recipe: one code-mode tool over a SaaS API",
+        "lede": "One run_code tool the agent writes small programs against, a typed SDK to make those programs easy to write, and a JavaScript profile whose shared host-side gatekeeper allows only the exact read routes you declared.",
+        "stats": [{"label":"agent tools","value":"1"},{"label":"grant providers","value":"Docker, WASM, guarded E2B","tone":"good"}],
+        "prompt": "The agent writes against a small injected SDK, never a URL or bearer:<pre><code>(async () =&gt; {\n  const invoices = await saas.invoices.open();\n  const overdue = invoices.filter((x) =&gt; x.daysOverdue &gt; 0);\n  console.log(JSON.stringify({ open: invoices.length, overdue: overdue.length }));\n})().catch((e) =&gt; { console.error(e.message); process.exit(1); });</code></pre>",
+        "steps": [
+          {"layer":"MCP surface","name":"Expose run_code","short":"Accept bounded JavaScript and timeout; keep policy fields trusted.","detail":"The model does not choose grant_profile, BaseURL, routes, scopes, or caller identity. The tool returns a structured execution envelope.","tone":"good"},
+          {"layer":"authoring","name":"Publish narrow types","short":"Describe only supported SDK methods and result shapes.","detail":"A <code>.d.ts</code> file helps the agent produce valid calls without exposing transport details. Types improve authoring; they do not authorize anything.","tone":"neutral"},
+          {"layer":"profile","name":"Inject a runtime preamble","short":"Implement saas.invoices.open using the generic host client.","detail":"The named server profile owns the preamble, HTTPS origin, GET route, read scope, allowed_callers ACL, and token minter.","tone":"good"},
+          {"layer":"plimsolld","name":"Resolve one caller and run","short":"Authenticate code:run, check the profile ACL, and mint once for this run.","detail":"A stable authenticated principal becomes the subject of a subject-bound credential. The caller selects a configured profile name but cannot redefine its authority.","tone":"good"},
+          {"layer":"provider","name":"Broker the exact read","short":"Use Docker's Unix socket or WASM's direct host function.","detail":"The shared broker checks the exact canonical method and route and injects the bearer host-side. E2B reaches that same broker through its configured guard; choose WASM only when process-tier isolation is acceptable.","tone":"good"},
+          {"layer":"tool result","name":"Return bounded evidence","short":"Frame stdout, stderr, exit, timeout, duration, provider, and isolation.","detail":"Carry the minimum tier on the request so a weak provider never runs it. A non-zero guest exit remains a normal result; verify the returned isolation before using output.","tone":"good"}
+        ],
+        "explainer":{"try":"Start with one exact route such as <code>GET /invoices/open</code>. Add an SDK method only when its route, token scope, ACL, and negative test are ready together.","idea":"One tool can let the agent compute freely, while the only real network permission stays a single server-held route on the server side.","points":["Use verified runsc when hostile code needs a production kernel-tier boundary; use WASM only for an explicitly accepted process tier.","The injected SDK is convenience inside the hostile guest; the shared Go broker is authoritative.","Never place the domain token in the tool schema, prompt, preamble, environment, stdout, or stderr."]}
+      },
+      {
+        "id": "support-analytics",
+        "label": "Support analytics",
+        "kind": "scenario",
+        "title": "Recipe: fetch a narrow snapshot, compute locally",
+        "lede": "A support or analytics agent needs to slice and count data lots of different ways. That doesn't mean giving it the whole API or building a new endpoint for every question.",
+        "stats": [{"label":"upstream routes","value":"1","tone":"good"},{"label":"computation","value":"inside sandbox"}],
+        "promptLabel": "Choose the data boundary",
+        "prompt": "The product needs weekly counts by support queue. The domain API exposes a tenant-filtered, field-minimized snapshot:<pre><code>(async () =&gt; {\n  const rows = await support.analytics.week();\n  const byQueue = rows.reduce((out, row) =&gt; {\n    const key = String(row.queue); out[key] = (out[key] || 0) + 1; return out;\n  }, Object.create(null));\n  console.log(JSON.stringify(byQueue));\n})();</code></pre>Which integration keeps the flexible computation narrow?",
+        "options": [
+          {"label":"Expose an unrestricted support API token","note":"Let agent code fetch whatever tables it needs.","result":"credential and data authority become ambient","detail":"A broad bearer or general egress lets hostile code move beyond the customer question and exfiltrate data.","tone":"bad"},
+          {"label":"Add one MCP tool for every aggregation","note":"Build counts-by-queue, counts-by-owner, aging buckets, and every future variant.","result":"safe but rigid and schema-heavy","detail":"Discrete reviewed tools can be right for sensitive actions, but this read-only analytics workload benefits from local composition over a minimized input set.","tone":"warn"},
+          {"label":"Broker one tenant-filtered snapshot route","note":"Return only the fields and time window required, then aggregate in the sandbox.","result":"flexibility stays inside a narrow data capability","detail":"A fixed JavaScript profile allows the snapshot route on Docker or WASM. The domain API enforces tenant identity from the minted subject, while generated code can only compute over the returned rows.","tone":"good","facts":["server-side tenant filter","field-minimized response","no general egress"]}
+        ],
+        "explainer":{"try":"Delete every field the question does not need, then run two tenant principals and prove their snapshots cannot cross. Data minimization belongs at the domain API, not in cooperative agent code.","idea":"Hand the untrusted code a purpose-built slice of the data, not a broad key to the whole system.","points":["The route allowlist limits which endpoint can be called; the downstream credential and API enforce tenant/data policy.","Treat stdout as hostile, size-bounded text before adding it to a ticket or prompt.","Use a product-owned result schema if free-form console output is too ambiguous."]}
+      },
+      {
+        "id": "approved-automation",
+        "label": "Approved writes",
+        "kind": "pipeline",
+        "title": "Recipe: separate analysis from approved mutation",
+        "lede": "Give reads and writes separate profiles, and keep the actual policy and approval in your trusted gateway. plimsoll enforces which routes a run may call; it does not decide whether an action is approved.",
+        "stats": [{"label":"profiles","value":"read + write"},{"label":"approval owner","value":"product","tone":"good"}],
+        "prompt": "The analysis run emits data, not authority:<pre><code>(async () =&gt; {\n  const ticket = await automation.tickets.get('t-42');\n  console.log(JSON.stringify({ action: 'close_ticket', id: ticket.id, reason: 'duplicate' }));\n})();</code></pre>After approval, trusted product code may execute a fixed adapter such as:<pre><code>(async () =&gt; { await automation.tickets.close(APPROVED.id); })();</code></pre>",
+        "steps": [
+          {"layer":"analysis run","name":"Attach the read profile","short":"Let hostile JavaScript inspect only declared read routes.","detail":"The agent cannot select the write profile. Its output is an untrusted proposal, even when it is valid JSON and cites a policy reason.","tone":"good"},
+          {"layer":"product gateway","name":"Parse a strict proposal schema","short":"Reject extra actions, fields, IDs, tenants, and malformed output.","detail":"Do not execute console text as code. Convert it into a typed product object with deterministic validation and tenant binding.","tone":"good"},
+          {"layer":"policy","name":"Evaluate deterministic rules","short":"Check authorization, object state, idempotency, risk, and approval requirements.","detail":"The product, not the model and not plimsoll, decides whether this exact action may proceed. Record the policy version and proposal digest.","tone":"good"},
+          {"layer":"approval","name":"Obtain required approval","short":"Bind human or rule-based approval to the exact tenant, action, object, and expiry.","detail":"A generic 'approved' flag is insufficient. A changed ID, action, input, or expired approval must require a new decision.","tone":"good"},
+          {"layer":"write run","name":"Attach the write profile after approval","short":"Run a fixed product-owned adapter with the approved value encoded safely.","detail":"Use a narrower write ACL, method-and-route allowlist, scope, and short lifetime. Do not reuse the arbitrary analysis program under elevated authority.","tone":"good"},
+          {"layer":"domain API","name":"Enforce again and audit","short":"Verify subject, tenant, scope, object policy, and idempotency at the write endpoint.","detail":"The shared broker restricts transport to the approved profile's routes, while the domain API remains responsible for business authorization and records the mutation outcome.","tone":"good"}
+        ],
+        "explainer":{"try":"Attempt three attacks: edit the proposal after approval, reuse approval in another tenant, and ask the analysis run to select the write profile. All three must fail in trusted product logic before mutation.","idea":"Keep planning and doing apart: plimsoll gives you the wall and the allowed routes; your own fixed policy is what actually authorizes an action.","points":["Both read and write grants can use Docker or WASM JavaScript; the required isolation floor decides which is acceptable.","Prefer direct product-side mutation after approval when a second code run adds no useful computation.","Never imply that a grant profile proves user intent or business approval."]}
+      },
+      {
+        "id": "project-evaluation",
+        "label": "Project evaluation",
+        "kind": "pipeline",
+        "title": "Recipe: evaluate a multi-file project in isolation",
+        "lede": "Coding and grading agents can drop source files, run checks in order, and pull back chosen output files, all with no outside-API key at all.",
+        "stats": [{"label":"grant","value":"nil","tone":"good"},{"label":"project providers","value":"Docker / E2B"}],
+        "prompt": "A Go embedder can express the evaluation protocol directly:<pre><code>res, err := runner.RunProject(ctx, sandbox.ProjectRequest{\n  Files: []sandbox.File{{Path: &quot;src/main.ts&quot;, Content: source}},\n  Steps: []string{&quot;npm test&quot;, &quot;npm run build&quot;},\n  Artifacts: []string{&quot;dist/report.json&quot;},\n  MinimumIsolation: sandbox.IsolationKernel,\n})</code></pre>",
+        "steps": [
+          {"layer":"capability","name":"Confirm project support","short":"Use Remote.Describe or local ProjectCapable before accepting work.","detail":"Docker and E2B structurally support projects. WASM returns ErrUnsupported, and structural support still does not prove a particular compiler is installed.","tone":"good"},
+          {"layer":"request","name":"Stage validated files","short":"Use canonical relative paths and bounded UTF-8 content.","detail":"Shared validation rejects absolute paths, traversal, backslashes, controls, duplicates, too many files, and projects over the size ceiling.","tone":"good"},
+          {"layer":"request","name":"Declare ordered steps","short":"Run tests, lint, build, or evaluation commands under one wall-clock budget.","detail":"The provider stops at the first non-zero or timed-out step and returns one StepResult for every command that actually ran.","tone":"neutral"},
+          {"layer":"provider","name":"Use a baked toolchain","short":"Supply every required compiler and checker in the Docker image or E2B template.","detail":"Runtime egress is denied. A build must not depend on fetching packages or tools after hostile code starts.","tone":"good"},
+          {"layer":"artifacts","name":"Capture explicit outputs","short":"Request only bounded relative files needed by the evaluator.","detail":"Existing artifacts are returned as binary-safe bytes, including partial outputs after a failed step. The work tree is not an implicit download.","tone":"good"},
+          {"layer":"consumer","name":"Score from structured outcomes","short":"Inspect Steps, Artifacts, provider, per-run isolation, Outcome, and Detail.","detail":"Leave ProjectRequest.Grant nil unless the project genuinely needs the host API: Docker brokers project grants and E2B does so with its guard, so nil is a choice here rather than the only option. A returned ProjectResult uses Outcome for its stable post-dispatch classification and Detail for human context; pre-dispatch refusal and infrastructure failure remain returned Go errors.","tone":"good"}
+        ],
+        "explainer":{"try":"Make the test step fail and verify the build step never runs, while a report written before failure can still be captured. Then lower the provider below the request's required tier and prove no step starts.","idea":"A project run is just a fenced-in set of files and steps, not an excuse to hand a coding agent free run of the host.","points":["Docker and E2B project runs are isolated and network-denied unless a grant is explicitly selected.","Docker supports project grants; E2B requires its configured guard, while WASM has no project runtime.","Set the request minimum before dispatch and verify every returned ProjectResult tier."]}
+      },
+      {
+        "id": "private-deployment",
+        "label": "Private deployment",
+        "kind": "matrix",
+        "title": "Recipe: integrate a private plimsolld behind TLS",
+        "lede": "If you host plimsoll yourself, you can use the official Go client or the raw generated one. Either way, securing the connection and checking the wall on every result is your job, not plimsoll's.",
+        "stats": [{"label":"server transport","value":"h2c behind TLS"},{"label":"remote static tier","value":"unknown","tone":"warn"}],
+        "prompt": "The official adapter keeps the checks compact:<pre><code>r, err := client.New(url, client.WithToken(token))\nif err != nil { return err }\ninfo, err := r.Describe(ctx)\nif err != nil { return err }\nif !info.SupportsMinimumIsolation ||\n   !info.Isolation.Meets(min) { return errDiscovery }\nres, err := r.RunJavaScript(ctx, sandbox.Request{\n  Code: source, MinimumIsolation: min,\n})\nif err != nil { return err } // DataLoss means execution may have occurred\nif !res.Isolation.Meets(min) { return errEvidenceMismatch }</code></pre>",
+        "rowLabel": "Client choice",
+        "columns": ["Best fit", "What it preserves", "Customer obligations"],
+        "rows": [
+          {"label":"Official client.New", "cells":[{"text":"Go + Sandbox interface","tone":"good"},{"text":"validation, response cap, errors.Is sentinels","tone":"good"},{"text":"TLS, token, Describe, result tier","tone":"neutral"}]},
+          {"label":"Generated Connect client", "cells":[{"text":"direct proto control","tone":"good"},{"text":"wire fields and status codes","tone":"neutral"},{"text":"recreate bounds, mappings, result checks","tone":"warn"}]},
+          {"label":"sandbox.Build", "cells":[{"text":"same-process Provider plus error","tone":"neutral"},{"text":"checked selection and transport-agnostic Sandbox","tone":"good"},{"text":"handle Build error; own readiness, limits, admission, audit","tone":"warn"}]},
+          {"label":"Native process fallback", "cells":[{"text":"never","tone":"bad"},{"text":"nothing safe","tone":"bad"},{"text":"remove it","tone":"good"}]}
+        ],
+        "explainer":{"try":"Put a TLS terminator in front of plimsolld, authenticate Describe and runs with a code:run bearer, then change the provider below the request floor and prove the code never executes.","idea":"The startup check catches a mismatch early, the request's minimum wall blocks a weak or outdated backend before any code runs, and the result gives you the final proof of what ran. Use all three.","points":["Keep <code>SANDBOX_MIN_ISOLATION</code> as a daemon-wide floor and put the product's floor on each request.","A server floor rejection is safe pre-dispatch; a client <code>ErrIsolationEvidenceMismatch</code>/DataLoss means execution may have occurred, so do not automatically retry or consume its output.","A JavaScript profile uses <code>WithJavaScriptGrantProfile</code>; raw HostAPIGrant values cannot cross RPC."]}
+      },
+      {
+        "id": "recipe-gate",
+        "label": "Recipe gate",
+        "kind": "checklist",
+        "title": "Ship the recipe only after its negative cases pass",
+        "lede": "Each recipe looks different, but what you have to prove before launch is always the same: a stable identity, spelled-out permissions, bounded results, a strong wall, fair sharing, and audit logs that never leak the key.",
+        "stats": [],
+        "prompt": "Check each required item against the exact customer deployment, not only a local positive demo.",
+        "items": [
+          {"label":"Map identity without pretending to delegate it","why":"Use distinct plimsoll principals when downstream policy needs per-agent separation. A shared gateway bearer intentionally yields one service subject; it does not preserve the original customer identity."},
+          {"label":"Pin the intended profile in trusted config","why":"Keep profile selection out of model-controlled arguments and require the actual plimsoll principal in allowed_callers."},
+          {"label":"Test an undeclared and encoded route","why":"Verify the shared broker rejects a neighboring method/path and percent-encoded traversal through both provider adapters before the domain API sees either."},
+          {"label":"Frame every execution outcome","why":"Return bounded stdout, stderr, exit_code, timed_out, duration, sandbox, and isolation without treating guest exit as transport failure."},
+          {"label":"Enforce the minimum tier at three layers","why":"Set the daemon floor, carry Request.MinimumIsolation to prevent weak dispatch, and check every returned tier before consuming output."},
+          {"label":"Apply count, rate, memory, time, and output quotas","why":"Shed excess work immediately, key fairness to the caller, and document bounded retry for capacity only."},
+          {"label":"Prove the token is never guest-visible","why":"For granted Docker/WASM JavaScript, inspect code, preamble, environment, WASM memory boundary, stdout, stderr, errors, traces, and logs; the bearer stays in Go."},
+          {"label":"Audit identifiers, never hostile contents","why":"Record caller, profile, provider, isolation, sizes, exit, timeout, and duration without code, tokens, or raw customer data."},
+          {"label":"Keep every project run isolated","why":"Leave ProjectRequest.Grant nil so the run has no network at all. Docker and guarded E2B would accept a project grant, so this is a deliberate least-authority choice, not a limitation to work around."},
+          {"label":"Run two-tenant and overload tests","why":"Prove data separation and quota UX under concurrent customer traffic.","required":false}
+        ],
+        "ready":"The customer recipe has explicit identity and authority, bounded outcomes, per-run tier evidence, fair quotas, negative-route coverage, tenant separation, and no guest-visible credential.",
+        "notReady":"Keep the integration disabled. A missing principal, ACL, negative test, result frame, quota, audit rule, or token-secrecy proof leaves the customer boundary incomplete.",
+        "explainer":{"try":"Review one read recipe, one approved write, and one isolated project against the same list. The profile details change; the evidence obligations do not.","idea":"A good recipe is defined as much by what it refuses and how it fails as by the happy-path example.","points":["Docker and WASM JavaScript support host-API grants through one broker core.","E2B grants need its configured guard, and a project run has no network unless a grant is explicitly selected.","Plimsoll enforces execution and route boundaries; the product and domain API still own business authorization."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

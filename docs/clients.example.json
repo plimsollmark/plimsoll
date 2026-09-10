@@ -1,0 +1,14 @@
+{
+  "clients": [
+    {
+      "id": "mcp-client-acme",
+      "token_sha256": "REPLACE_WITH_64_HEX_SHA256_OF_THE_CLIENTS_BEARER_TOKEN____________",
+      "scopes": ["code:run"]
+    },
+    {
+      "id": "mcp-client-globex",
+      "token_sha256": "REPLACE_WITH_64_HEX_SHA256_OF_A_SECOND_CLIENTS_BEARER_TOKEN_______",
+      "scopes": ["code:run"]
+    }
+  ]
+}

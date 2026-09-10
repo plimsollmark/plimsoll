@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive trainer for making a plimsoll-backed MCP surface self-describing: schemas, annotations, typed sandbox globals, and a drift test.">
+  <title>Discoverable tools · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Discoverable tools</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">New to the words here? <a href="plain-english.html">Start with Plain English</a>. Use ← and → to move between chapters; a check marks ideas you have exercised, not a certification.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id": "discoverability",
+    "title": "self-describing tools",
+    "tagline": "no client should have to guess",
+    "chapters": [
+      {
+        "id": "the-gap",
+        "label": "The gap",
+        "kind": "scenario",
+        "title": "Let the client read the contract, not guess it",
+        "lede": "An LLM client consuming your server has no reliable way to know a tool's return shape or the signatures of the globals you inject into the sandbox. When the only source of truth is a name, the model probes by calling functions blind.",
+        "stats": [{"label":"guessing cost","value":"blind probe calls","tone":"warn"},{"label":"the fix","value":"a declared contract","tone":"good"}],
+        "promptLabel": "Close the gap",
+        "prompt": "A model must call your <code>run_code</code> tool and use an injected <code>host.get(...)</code> client, but nothing tells it what run_code returns or what arguments host.get takes. How do you make the surface knowable?",
+        "options": [
+          {"label":"Let the model infer from names","note":"Assume good naming is documentation.","result":"the model probes blind and mishandles shapes","detail":"Names hint intent, not structure. The client cannot know required fields, optionality, or the result envelope, so it calls speculatively and mismanages what comes back.","tone":"bad"},
+          {"label":"Describe the shapes in prose","note":"Spell out every field in the tool description string.","result":"better, but unparseable and easily stale","detail":"Prose in a description cannot be validated and drifts from the real return the moment the code changes. A client has no way to check itself against it.","tone":"warn"},
+          {"label":"Declare machine-readable contracts","note":"inputSchema, outputSchema, annotations, and a typed sandbox-globals document.","result":"the client reads the shape before it calls","detail":"Each tool ships a complete inputSchema and outputSchema with correct annotations, and the injected globals ship a typed contract a client can fetch. Discovery replaces probing.","tone":"good","facts":["inputSchema + outputSchema","tool annotations","typed sandbox globals"]}
+        ],
+        "explainer":{"try":"List every tool your server registers and every global you inject into the sandbox. For each, write down where a client would learn its shape today. Any answer of 'from the name' is the gap this trainer closes.","idea":"Discoverability is a correctness and safety property, not a nicety: a client that can read the contract stops guessing, and a schema you validate against stops the contract from drifting.","points":["plimsoll exposes run_code and injects the domain globals; the tools and globals a client sees are yours to describe.","A description string is documentation; a schema is a contract a client can parse and check.","Everything here describes shape only, never the credential or the route authority."]}
+      },
+      {
+        "id": "annotations",
+        "label": "Annotations",
+        "kind": "matrix",
+        "title": "Mark each tool's behavior honestly",
+        "lede": "Tool annotations tell a client how a call behaves before it runs it: whether it only reads, whether repeating it is safe, whether it can destroy state, and whether it reaches the outside world. Set them per tool, not by copy-paste.",
+        "stats": [{"label":"read-only","value":"list_* tools","tone":"good"},{"label":"idempotent","value":"only if truly safe","tone":"warn"}],
+        "promptLabel": "Set the hints",
+        "prompt": "Assign the four annotations to four representative tools. A wrong hint is worse than none.",
+        "rowLabel": "Tool",
+        "columns": ["readOnlyHint", "idempotentHint", "destructiveHint", "openWorldHint"],
+        "rows": [
+          {"label":"list_lights", "cells":[{"text":"true","tone":"good","note":"pure discovery, no state change"},{"text":"true","tone":"good"},{"text":"false","tone":"good"},{"text":"false","tone":"good","note":"closed set from your backend"}]},
+          {"label":"set_light_brightness", "cells":[{"text":"false","tone":"neutral","note":"mutates device state"},{"text":"true","tone":"good","note":"an absolute set repeats to the same value"},{"text":"false","tone":"good"},{"text":"false","tone":"good"}]},
+          {"label":"recall_scene", "cells":[{"text":"false","tone":"warn","note":"changes state, not read-only"},{"text":"unknown","tone":"warn","note":"scenes may transition or layer"},{"text":"false","tone":"neutral"},{"text":"false","tone":"good"}]},
+          {"label":"run_code", "cells":[{"text":"false","tone":"warn"},{"text":"false","tone":"warn","note":"arbitrary model-authored code"},{"text":"unknown","tone":"warn","note":"depends on the code"},{"text":"true","tone":"good","note":"may call brokered external routes"}]}
+        ],
+        "explainer":{"try":"Group your tools by class: list_* is read-only and idempotent; set_* mutates and is idempotent only when it writes an absolute value; recall_* and run_code are neither read-only nor safely repeatable. Assign the four hints from the class, then correct the exceptions by hand.","idea":"Annotations are advisory hints a client uses to decide whether to auto-call, batch, or confirm. Wrong hints are dangerous: a mutating tool marked read-only invites unconfirmed calls.","points":["readOnlyHint:true means no observable state change; a set_* or recall_* tool can never claim it.","idempotentHint:true means repeating the identical call is safe; absolute writes qualify, relative or toggling writes do not.","openWorldHint:true means the tool reaches beyond a closed, known set; run_code that can call brokered routes is open-world.","Annotations are hints, not enforcement; the broker and your policy still decide what a call may actually do."]}
+      },
+      {
+        "id": "output-schema",
+        "label": "Output schema",
+        "kind": "pipeline",
+        "title": "Declare the result shape from real returns",
+        "lede": "A tool can declare an outputSchema describing its result, and return the structured result in structuredContent alongside the human-readable content. Derive the schema from what the tool actually returns, not from what you assume it returns.",
+        "stats": [{"label":"schema source","value":"real returns","tone":"good"},{"label":"result carries","value":"content + structuredContent"}],
+        "prompt": "Add an outputSchema to one tool the honest way, from observed output to a checked contract.",
+        "steps": [
+          {"layer":"observe","name":"Capture real returns","short":"Call the tool against the backend or a fixture.","detail":"Run each tool against the live backend or a recorded fixture and capture the exact result values. Assumptions about shape are where drift begins.","tone":"good"},
+          {"layer":"infer","name":"Infer a JSON Schema","short":"Derive fields, types, required, and optionality from the samples.","detail":"Mark a field required only when it is always present. An absent on, brightness, or color field is UNKNOWN, not a default, so it is optional in the schema.","tone":"good"},
+          {"layer":"review","name":"Have a human lock it in","short":"Review the inferred schema before it becomes the contract.","detail":"Inference over a few samples can miss rare shapes. A person confirms optional versus required and names the result envelope before it ships.","tone":"neutral"},
+          {"layer":"declare","name":"Attach outputSchema to the tool","short":"Publish the schema in the tool definition.","detail":"The tool now advertises its result shape next to its inputSchema, so a client reads both before ever calling it.","tone":"good"},
+          {"layer":"return","name":"Emit structuredContent","short":"Return the structured object alongside the text content.","detail":"Populate structuredContent with the object the schema describes, and keep content for the human-readable rendering. The two must agree.","tone":"good"},
+          {"layer":"validate","name":"Check the return against the schema","short":"Fail loudly when a real result violates its declared shape.","detail":"A returned result that does not satisfy its own outputSchema is a defect, caught at the boundary rather than by a confused model downstream.","tone":"good"}
+        ],
+        "explainer":{"try":"Pick one tool, capture ten real results, and write the smallest schema every sample satisfies. Any field missing from even one sample is optional, not required.","idea":"The result shape is a contract only if it is derived from and checked against real returns; a schema written from memory is one more thing to keep in sync and get wrong.","points":["structuredContent carries the machine-readable object; content carries the text a person reads.","Partial state is UNKNOWN: an absent field is optional in the schema, never a silent zero or off.","Generate the schema from samples, then have a person confirm required versus optional before locking it."]}
+      },
+      {
+        "id": "sandbox-types",
+        "label": "Sandbox types",
+        "kind": "quiz",
+        "title": "Type the globals the tool schema cannot reach",
+        "lede": "The globals you inject into the sandbox, the host client and any domain SDK, are not MCP tools, so they get no inputSchema or outputSchema for free. A model writing sandbox code still needs their signatures, and a name will not supply them.",
+        "stats": [{"label":"not a tool","value":"injected globals","tone":"warn"},{"label":"contract","value":".d.ts + JSDoc","tone":"good"}],
+        "prompt": "The sandbox injects <code>host.get/put/post/del</code> and a domain SDK. How should a client learn their parameters and return types?",
+        "options": [
+          {"label":"Let the model guess from names","note":"Assume host.get is self-evident.","correct":false,"result":"the model calls with wrong arguments and shapes","detail":"Argument names, optionality, and return types are invisible from a name. The model probes, and a probe that runs can still be wrong."},
+          {"label":"Embed signatures in run_code's description","note":"Describe every global in the tool prompt.","correct":false,"result":"unparseable and quickly stale","detail":"A prose blob in one tool's description cannot be validated and drifts from the real preamble. It also bloats the context of every call."},
+          {"label":"Publish a typed contract for the globals","note":"A .d.ts fully typing host and the SDK, with JSDoc examples.","correct":true,"result":"the model authors correct sandbox code from a real type surface","detail":"A .d.ts types every parameter, optionality, and return, with a one-line description plus an example call and example return per function. It is for authoring only; the broker still enforces authority.","facts":[".d.ts for authoring","JSDoc example call + return","authority stays server-side"]}
+        ],
+        "explainer":{"try":"Write the .d.ts for one injected global. For each function give param names and types, optionality, the return type, a one-line description, and an example call with its example return. If you cannot fill in the example, you do not yet know the shape either.","idea":"Typing the globals is the sandbox equivalent of outputSchema for tools: it turns an injected surface a model would otherwise probe into a contract it can read. The type document is convenience for the author, never the thing that grants permission.","points":["Injected globals bypass the tool schema, so their shapes must be published separately.","Type params, optionality, and returns, and include an example call and example return in JSDoc.","The .d.ts improves authoring only; the shared broker, not the type, decides what a call may reach. See the agent-products domain-SDK chapter."]}
+      },
+      {
+        "id": "runtime-contract",
+        "label": "Runtime contract",
+        "kind": "matrix",
+        "title": "Serve the typed contract to clients at runtime",
+        "lede": "A typed contract only helps if a client can fetch it before writing sandbox code. Expose it as an MCP resource or as a small describe tool, and pick by what your server already registers.",
+        "stats": [{"label":"resource","value":"if you register resources","tone":"good"},{"label":"tool","value":"describe_sandbox_api","tone":"neutral"}],
+        "promptLabel": "Choose the delivery",
+        "prompt": "Compare the two ways to hand a client the sandbox-globals contract at runtime.",
+        "rowLabel": "Approach",
+        "columns": ["Shape", "Best when", "Client flow"],
+        "rows": [
+          {"label":"MCP resource", "cells":[{"text":"a uri returning the .d.ts or JSON","tone":"good"},{"text":"your server already registers resources","tone":"good"},{"text":"fetch the resource, then author code","tone":"neutral"}]},
+          {"label":"describe tool", "cells":[{"text":"structured JSON per function","tone":"good"},{"text":"no resource surface exists yet","tone":"neutral"},{"text":"call describe_sandbox_api, then author code","tone":"neutral"}]},
+          {"label":"both, kept as prose", "cells":[{"text":"two sources to keep in sync","tone":"warn","note":"pick one authority"},{"text":"rarely","tone":"warn"},{"text":"they drift and disagree","tone":"bad"}]}
+        ],
+        "explainer":{"try":"Check whether your server already registers resources. If it does, add a resource such as a sandbox-api.d.ts or sandbox-api.json uri. If it does not, add a describe_sandbox_api tool returning the same information as structured JSON. State which you chose and why.","idea":"One runtime source of truth beats prose the client cannot fetch. The delivery mechanism follows the surface your server already speaks, so a client discovers the globals the same way it discovers everything else.","points":["Prefer the resource when the server already registers resources; otherwise a describe tool.","Return the same facts either way: function name, typed params, return schema, one-line description, example.","Do not ship both a resource and a tool that can disagree; keep a single generated source."]}
+      },
+      {
+        "id": "drift-gate",
+        "label": "Drift gate",
+        "kind": "checklist",
+        "title": "Validate against the spec, and against reality",
+        "lede": "A plausible-looking schema is not a correct one. Confirm the definitions against the current MCP specification, then test every declared outputSchema against the tool's real response so the two cannot drift apart unnoticed.",
+        "stats": [],
+        "prompt": "Check each gate before you rely on the declared contracts.",
+        "items": [
+          {"label":"Confirm against the current MCP spec, not memory","why":"Fetch the current specification (2025-06-18 revision or later) and confirm outputSchema, structuredContent, and annotations are implemented as written, not merely as plausible JSON."},
+          {"label":"Give every tool a complete inputSchema","why":"Each registered tool has a clear description and a JSON Schema marking required and optional fields, so a client never guesses an argument."},
+          {"label":"Set the four annotations per tool","why":"readOnlyHint, destructiveHint, idempotentHint, and openWorldHint reflect real behavior: list_* is read-only, set_* is not idempotent unless it writes an absolute value, recall_* and run_code are neither."},
+          {"label":"Declare outputSchema from observed returns","why":"Every tool advertises a result shape derived from real output and returns the object in structuredContent, with absent fields optional rather than defaulted."},
+          {"label":"Publish the typed sandbox globals","why":"The injected host client and domain SDK ship a .d.ts or equivalent with params, optionality, returns, and an example per function, exposed as a resource or a describe tool."},
+          {"label":"Test declared shapes against real responses","why":"A script calls each tool, validates the response against its outputSchema, and fails loudly on drift; wire it into whatever test or build gate your server already runs."},
+          {"label":"Keep the contract free of secrets and authority","why":"Schemas, types, and examples describe shape only; the credential and the route authority never appear in a description, an example return, or the sandbox types."},
+          {"label":"Review shape changes as contract changes","why":"Adding a field or a tool changes the published contract; regenerate the schema and types together and re-run the drift test before shipping.","required":false}
+        ],
+        "ready":"Every tool has a description, a complete inputSchema, correct annotations, and an outputSchema checked against real returns; the sandbox globals ship a typed contract a client can fetch; a drift test fails loudly when any declared shape and its real response disagree.",
+        "notReady":"Hold the release. A missing outputSchema, an untyped global, a guessed annotation, or an absent drift test leaves a client probing blind, which is the gap this trainer exists to close.",
+        "explainer":{"try":"Run the drift test against the live backend or fixtures, then change one tool's return by a field. The test must fail before the mismatch reaches a model. If it passes, the schema is not actually being checked.","idea":"A contract is only as trustworthy as the check that keeps it honest. Validate the definitions against the current spec once, and validate the returns against the schema on every run of your build gate.","points":["Fetch the current MCP spec and verify the implementation, since a schema can look right and still be wrong.","The drift test is the invariant: the real response must satisfy the declared outputSchema, or the build fails.","Ask before changing tool behavior; a schema and annotation pass changes documentation, not what a call does."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive walkthrough of plimsoll's shipped API Efficiency Advisor: bounded broker metadata becomes post-run guidance without changing execution.">
+  <title>Efficiency Advisor · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Efficiency Advisor</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">Shipped, metadata-only, and off by default per grant profile. New to the words? <a href="plain-english.html">Start with Plain English</a>. A check marks ideas you have exercised, not a certification.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id":"advisor",
+    "title":"API Efficiency Advisor",
+    "tagline":"post-run guidance from broker metadata",
+    "chapters":[
+      {
+        "id":"who-notices",
+        "label":"Why plimsoll",
+        "kind":"quiz",
+        "title":"Who is even positioned to notice the waste?",
+        "lede":"This feature is shipped and runs only after dispatch. Setup: an agent runs code through plimsoll and uses a customer's API in a wasteful way. Before fixing it, ask the simple question of who can see the per-run call pattern.",
+        "stats":[{"label":"status","value":"shipped","tone":"good"},{"label":"sees every call","value":"the broker","tone":"good"}],
+        "promptLabel":"Make the call",
+        "prompt":"An agent makes 128 tiny calls to add up a column of numbers. Which part of the system can tell that this run was wasteful?",
+        "options":[
+          {"label":"The agent itself","note":"Let the model notice it is being inefficient.","correct":false,"result":"the agent doesn't know","detail":"The model wrote a loop that works. It has no view of how many calls that became, what they cost, or that one call could replace them. From inside the code, the waste is invisible."},
+          {"label":"The customer's API","note":"The API sees the incoming requests.","correct":false,"result":"it sees calls, not intent","detail":"The API sees 128 separate valid requests. It cannot tell they were one logical operation, a single sum from a single run, so it cannot tell they were wasteful."},
+          {"label":"plimsoll's broker","note":"It already brokers every host call for safety.","correct":true,"result":"it sees the whole pattern","detail":"The broker in the middle already checks and forwards every call. For one run it sees all 128 calls, their matched route template, and their timing. It is the only place that sees the run-level pattern, so it is the only place that can advise on it.","facts":["already on the wire","per-run pattern","route template + timing"]}
+        ],
+        "explainer":{"try":"Notice the broker is given no new power here. It already sees these calls in order to guard them; the idea is to also learn from them.","idea":"The advisor works because plimsoll already sits between the agent's code and the customer's API. That chokepoint is data nobody else has.","points":["The agent sees its own code, not the cost.","The API sees single calls, not the run-level pattern.","Only the broker sees every call in one run, with route and timing."]}
+      },
+      {
+        "id":"waste-catalog",
+        "label":"The waste catalog",
+        "kind":"matrix",
+        "title":"Four ways agent code wastes an API",
+        "lede":"Each row is a call pattern the advisor spots in the per-run trace. The last column is the important one: some of these the agent can fix itself, and some need the customer to change their API.",
+        "stats":[{"label":"detectors","value":"4"},{"label":"metadata only","value":"yes","tone":"good"}],
+        "promptLabel":"The anti-patterns",
+        "prompt":"Read across each row: what the agent did, the cheaper way, and who is able to fix it.",
+        "rowLabel":"Pattern",
+        "columns":["What the agent did","The cheaper way","Who can fix it"],
+        "rows":[
+          {"label":"Fan-out / N+1","cells":[{"text":"128 calls to /items/:id, one per row","tone":"bad"},{"text":"one allowlisted batch route","tone":"good"},{"text":"agent, if a batch route exists","tone":"neutral"}]},
+          {"label":"Aggregate in code","cells":[{"text":"pull every row, then sum in JS","tone":"bad"},{"text":"one call to a sum or count endpoint","tone":"good"},{"text":"customer, if no such endpoint","tone":"warn"}]},
+          {"label":"Repeated identical reads","cells":[{"text":"the same GET, over and over","tone":"bad"},{"text":"read once and reuse the result","tone":"good"},{"text":"agent, usually","tone":"neutral"}]},
+          {"label":"Serial when parallel","cells":[{"text":"waits for each call before the next","tone":"warn"},{"text":"fire independent calls together","tone":"good"},{"text":"agent, if calls don't depend on each other","tone":"neutral"}]}
+        ],
+        "explainer":{"try":"Pick the two rows an agent could fix on its own, and the one that needs a brand-new endpoint. That split is the whole design.","idea":"Some waste is the agent's call pattern; some waste is a missing endpoint. The advisor has to tell them apart, because they go to different people.","points":["A better route already in the profile means the agent can switch to it now.","No better route means the customer has to build one.","Every detector reads only counts, routes, and timings, never the data itself."]}
+      },
+      {
+        "id":"follow-a-run",
+        "label":"Follow a run",
+        "kind":"pipeline",
+        "title":"128 calls to add up a column",
+        "lede":"Walk the flagship example end to end: an agent computes a total the slow way, and watch where the advisor steps in. Nothing here blocks the run; the advice rides alongside it.",
+        "stats":[{"label":"calls made","value":"128","tone":"bad"},{"label":"calls needed","value":"1","tone":"good"}],
+        "prompt":"Step through one wasteful run, from the agent's loop to the advice that comes out.",
+        "steps":[
+          {"layer":"agent","name":"The agent writes a loop","short":"for each id: GET /items/:id, add to total","detail":"The code is correct. It just fetches 128 rows one at a time to add up a single field."},
+          {"layer":"broker","name":"The broker forwards and records","short":"128 calls, same route template, timed","detail":"Each call is checked and forwarded as usual. Alongside that, the broker records the matched route template, byte counts, status, and latency. It never records the raw path or row data.","tone":"neutral"},
+          {"layer":"detector","name":"A detector spots the pattern","short":"many reads, then a local reduce","detail":"After the run, the aggregate-in-code detector sees a burst of reads to one route template with no writes after, and flags it with the cost: 128 calls, the added latency, and the bytes moved.","tone":"warn"},
+          {"layer":"router","name":"Advice is routed by who can fix it","short":"does a better endpoint exist?","detail":"The advisor checks the profile's declared routes. If a sum or batch endpoint exists, the fix is the agent's. If not, the fix is the customer's API. This decision is the heart of the feature.","tone":"good"},
+          {"layer":"out","name":"The advice comes out","short":"an agent hint, or a prompt for the customer","detail":"Either a short hint the product can hand back to the agent, such as 'use the batch route', or a paste-ready prompt for the customer to design the missing endpoint. Either way, the charts and logs update.","tone":"good"}
+        ],
+        "explainer":{"try":"Watch step 2 closely: the run is never slowed or blocked. The advice is computed afterward, from metadata only.","idea":"The wasteful run still runs and still returns its answer. The advisor's job is to make the next run cheaper, not to interfere with this one.","points":["The broker records route templates and timings, never row data.","The detector attaches a cost so the advice is concrete.","The router decides agent-fix versus customer-fix before any advice is written."]}
+      },
+      {
+        "id":"where-advice-goes",
+        "label":"Where advice goes",
+        "kind":"quiz",
+        "title":"Agent, or human? Let the fix decide",
+        "lede":"This is the open design question, now decided: when the advisor finds waste, does it tell the agent so it self-corrects next turn, or the human developer? The clean rule is to route by whoever can actually fix it.",
+        "stats":[{"label":"routing rule","value":"who can fix it","tone":"good"},{"label":"advice blocks a run","value":"never","tone":"good"}],
+        "promptLabel":"Make the call",
+        "prompt":"The agent made 128 calls to compute a sum, and the customer's API has no aggregate endpoint. Where should the advice go?",
+        "options":[
+          {"label":"To the agent, to self-correct","note":"Feed the hint into the next model turn.","correct":false,"result":"the agent can't fix this one","detail":"There is no better endpoint to switch to. Telling the agent to 'be more efficient' just burns tokens, because it has no cheaper call available. Agent self-correction only helps when a better route already exists."},
+          {"label":"To the human, as an AI prompt","note":"Generate a prompt to design the missing endpoint.","correct":true,"result":"the fix is an API change","detail":"Only the customer can add a sum endpoint, so the advisor produces a paste-ready prompt describing the observed pattern and the endpoint to build. This is the 'no endpoint exists' branch of the routing rule.","facts":["needs an API change","human-facing prompt","built from metadata"]},
+          {"label":"Block the run until it is efficient","note":"Refuse wasteful patterns.","correct":false,"result":"advice is never a gate","detail":"Advice is evidence, like the isolation tier. Blocking would change execution and break the non-authoritative rule. The run always completes; only the guidance differs."}
+        ],
+        "explainer":{"try":"Flip the scenario: if the API did have a batch route, the best answer becomes the agent, so it can switch to it next turn. Same rule, other branch.","idea":"Route the advice to whoever can act on it: the agent when a better call already exists, the human when the API itself needs to change. Never block either way.","points":["Better endpoint exists, agent-fixable: hint the agent (opt-in) and it self-corrects.","No better endpoint, API change needed: prompt the human.","Both are advisory; the run itself is untouched."]}
+      },
+      {
+        "id":"guardrails",
+        "label":"Guardrails",
+        "kind":"checklist",
+        "title":"Ship the advisor only if it stays safe",
+        "lede":"The advisor watches real customer traffic, so it is one careless step from a data leak. These are the non-negotiables that keep it honest. All are required.",
+        "stats":[],
+        "prompt":"Check each guardrail that must hold before the advisor can watch real traffic.",
+        "items":[
+          {"label":"Metadata only, never bodies or tokens","why":"The advisor uses route templates, counts, sizes, and timings. It must never read or store request bodies, response data, or credentials."},
+          {"label":"Advice never blocks or changes a run","why":"A finding is evidence attached to a run, like the isolation tier. It can never gate execution or alter the result."},
+          {"label":"plimsoll never calls an LLM itself","why":"It emits prompt text; the customer runs it in their own AI. No customer data leaves the deployment and the trusted surface stays small."},
+          {"label":"Advice is built only from trusted inputs","why":"Route templates come from the customer's own profile, not from guest code. Never echo agent-controlled strings into advice, so it cannot become a prompt-injection channel."},
+          {"label":"Off by default, opt-in per profile","why":"Some customers do not want their traffic analyzed or advice shown to agents. Silence is the default."},
+          {"label":"Bounded like the rest of the broker","why":"Cap the per-run trace and the advice size, matching the existing per-run call and byte budgets."}
+        ],
+        "ready":"The advisor can watch real traffic: it reads only metadata, never blocks a run, never calls out to an LLM, cannot be injection-fed, is opt-in, and stays bounded.",
+        "notReady":"Not safe to enable yet. A single gap here, reading a body, blocking a run, or echoing guest text, turns a helpful coach into a liability.",
+        "explainer":{"try":"Uncheck 'metadata only' and name the leak: the advisor would be storing exactly the customer data it was built to stay away from.","idea":"Every guardrail points the same way: the advisor may learn from the shape of traffic, never from its contents.","points":["Same rule as the audit log: metadata yes, code and credentials never.","Advisory is non-authoritative by construction.","Trusted inputs only keeps the advice channel clean."]}
+      },
+      {
+        "id":"bottleneck-view",
+        "label":"The bottleneck view",
+        "kind":"matrix",
+        "title":"Charts and logs that show where it hurts",
+        "lede":"The customer-facing payoff: a dashboard built from the same metadata. Each signal answers one question, and together they separate a slow API from a wasteful agent.",
+        "stats":[{"label":"signals","value":"5"},{"label":"source","value":"metadata","tone":"good"}],
+        "promptLabel":"The dashboard",
+        "prompt":"Pair each signal with what it tells the customer and what they would do about it.",
+        "rowLabel":"Signal",
+        "columns":["What it shows","You would act by"],
+        "rows":[
+          {"label":"Calls per run, per route","cells":[{"text":"where the volume goes","tone":"neutral"},{"text":"target the busiest route first","tone":"good"}]},
+          {"label":"Fan-out heatmap","cells":[{"text":"runs exploding into many calls","tone":"neutral"},{"text":"add a batch endpoint","tone":"good"}]},
+          {"label":"Latency p50 / p95 / p99 per route","cells":[{"text":"which routes are slow","tone":"neutral"},{"text":"fix or cache the slow one","tone":"good"}]},
+          {"label":"Repeated-read ratio","cells":[{"text":"how much is just re-fetching","tone":"neutral"},{"text":"cache or reuse results","tone":"good"}]},
+          {"label":"Bottleneck attribution","cells":[{"text":"API latency versus agent pattern","tone":"neutral"},{"text":"send it to the right team","tone":"good"}]}
+        ],
+        "explainer":{"try":"Look at the last row: it settles the argument. Is the run slow because the API is slow, or because the agent called it badly? The split tells you who owns the fix.","idea":"The dashboard turns a vague 'it feels slow' into a specific 'this route, this pattern, this owner'.","points":["Every panel is built from route-level metadata, not payloads.","Attribution separates a slow API from a chatty agent.","Ships as a Grafana pack and a self-contained HTML report, like these trainers."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive trainer for choosing and operating plimsoll's Disabled, WASM, Docker, and E2B providers.">
+  <title>Providers · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Providers</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">New to the words here? <a href="plain-english.html">Start with Plain English</a>. Use ← and → to move between chapters; a check marks ideas you have exercised, not a certification.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id": "providers",
+    "title": "plimsoll providers",
+    "tagline": "choose the boundary you can prove",
+    "chapters": [
+      {
+        "id": "provider-chooser",
+        "label": "Choose a provider",
+        "kind": "scenario",
+        "title": "Start from the required boundary",
+        "lede": "Don't start by picking a runner by name. Start from what the job needs: which operation, how strong a wall, whether it needs an outside key, and where it runs. The runner is whatever satisfies all four.",
+        "stats": [{"label":"safe default","value":"disabled","tone":"good"},{"label":"strongest tier","value":"vm","tone":"good"}],
+        "promptLabel": "Choose for this workload",
+        "prompt": "A production job runs a hostile multi-file TypeScript project. It requires a hardware-virtualized boundary, needs no host API, and can use a prebuilt remote template. Which provider satisfies the complete contract?",
+        "options": [
+          {"label":"WASM","note":"The lowest-latency path for JavaScript snippets.","result":"the operation is unsupported","detail":"WASM is process-tier and implements snippets only. It cannot run projects or provide a hardware boundary.","tone":"bad"},
+          {"label":"Docker with runc","note":"A locked-down container using the host kernel.","result":"the boundary is too weak","detail":"runc reports container tier. Its resource controls are valuable, but it is not a hostile-production kernel or VM boundary.","tone":"bad"},
+          {"label":"Docker with verified runsc","note":"A project-capable gVisor path.","result":"strong, but not the requested hardware boundary","detail":"Verified runsc reports kernel tier. It can be production-eligible, but the scenario specifically requires hardware virtualization.","tone":"warn"},
+          {"label":"E2B","note":"A disposable Firecracker microVM with a baked toolchain.","result":"E2B matches the full contract","detail":"E2B supports projects at VM tier. With no grant, outbound traffic is denied and the toolchain must already be in the selected template.","tone":"good","facts":["operation: project","isolation: vm","grant: none"]}
+        ],
+        "explainer":{"try":"Change one requirement mentally: for a low-latency snippet in trusted development, WASM may fit; for a self-hosted project at kernel tier, verified runsc may fit.","idea":"Pick the smallest runner that meets every requirement, then lock that floor in with configuration so it can't quietly drop.","points":["Unset or unknown <code>SANDBOX_PROVIDER</code> selects Disabled.","<code>Describe</code> reports structural operation support and current isolation evidence.","<code>SANDBOX_MIN_ISOLATION</code> refuses startup below the required tier."]}
+      },
+      {
+        "id": "wasm-reality",
+        "label": "WASM reality",
+        "kind": "quiz",
+        "title": "WASM is an engine boundary inside plimsolld",
+        "lede": "WASM runs JavaScript fast and caps its memory for real, but it puts up no operating-system wall. The code runs inside plimsoll's own process, so treat it as the thinnest wall, not a tiny VM.",
+        "stats": [{"label":"reported tier","value":"process","tone":"warn"},{"label":"projects / JS grants","value":"no / yes","tone":"neutral"}],
+        "prompt": "Which description is accurate enough to put in a security review?",
+        "options": [
+          {"label":"A lightweight VM","note":"WebAssembly isolates as strongly as hardware virtualization.","correct":false,"result":"the boundary is overstated","detail":"The engine runs in-process. An engine escape lands in plimsolld, not in a disposable VM."},
+          {"label":"A process-tier snippet engine","note":"QuickJS-ng runs through wazero with a per-run memory cap.","correct":true,"result":"the claim matches the implementation","detail":"WASM supports JavaScript snippets and snippet grants through a bounded direct host function. Projects remain unsupported, and the reported isolation is process.","facts":["QuickJS-ng / WASI","wazero memory pages","shared host broker","no OS boundary"]},
+          {"label":"A project runner","note":"Use it for a multi-file TypeScript build.","correct":false,"result":"the operation is unsupported","detail":"The embedded engine has no npm, filesystem project contract, or build toolchain, so RunProject returns ErrUnsupported."}
+        ],
+        "explainer":{"try":"Separate three properties: language engine, resource ceiling, and escape boundary. WASM supplies the first two without claiming the third.","idea":"A fast, memory-capped engine can be genuinely useful without being a strong enough wall for hostile code.","points":["The embedded QuickJS-ng WASI artifact evaluates snippets.","wazero's <code>WithMemoryLimitPages</code> enforces the memory ceiling.","The banned qjs wrapper is not part of this path because its advertised memory limit is a no-op."]}
+      },
+      {
+        "id": "docker-proof",
+        "label": "Docker proof",
+        "kind": "pipeline",
+        "title": "Docker earns its reported tier during Preflight",
+        "lede": "Docker runs the code in a throwaway container with the network off and tight limits. How strong a wall it claims depends on what it can prove at startup: a plain container is the middle wall, and only a verified gVisor runtime earns the stronger 'kernel' wall.",
+        "stats": [{"label":"runc tier","value":"container","tone":"warn"},{"label":"verified runsc","value":"kernel","tone":"good"}],
+        "prompt": "Step through the checks and controls that turn Docker configuration into a run boundary.",
+        "steps": [
+          {"layer":"config","name":"Explicit provider","short":"Select Docker and name images, runtime, resources, and optional seccomp policy.","detail":"Docker is never selected as an automatic fallback. Hardened deployments can additionally require immutable @sha256 image references.","tone":"neutral"},
+          {"layer":"preflight","name":"Pin the local daemon","short":"Resolve one local Unix endpoint and keep using it.","detail":"A remote Docker daemon is rejected because local broker mounts and teardown would no longer hold. Later readiness probes verify the pinned endpoint instead of following mutable context.","tone":"good"},
+          {"layer":"evidence","name":"Verify the OCI runtime","short":"Inspect daemon registration, including the runsc executable path.","detail":"Default runc remains container tier. Only a successfully verified runsc registration upgrades the reported evidence to kernel tier; a failed refresh makes readiness fail closed.","tone":"good"},
+          {"layer":"policy","name":"Apply the runtime envelope","short":"Read-only root, non-root user, dropped capabilities, no-new-privileges, and fixed memory, CPU, PID, and writable-disk limits.","detail":"Under runc, a configured seccomp policy narrows shared-kernel attack surface. It is skipped under runsc, whose user-space kernel intercepts syscalls.","tone":"good"},
+          {"layer":"network","name":"Keep network none","short":"Every container runs with Docker networking disabled.","detail":"A no-grant run has no egress. A granted JavaScript run still has no network interface; its only host-API path is a per-run Unix socket.","tone":"good"},
+          {"layer":"dispatch","name":"Run and force cleanup","short":"Pipe the snippet or stage the project, capture bounded output, then remove the named container.","detail":"Non-zero guest exits are normal results. Timeouts and infrastructure failures remain distinct, and teardown targets the daemon endpoint pinned by Preflight.","tone":"neutral"}
+        ],
+        "explainer":{"try":"Replay the path twice: once with runc and the audited seccomp allowlist, then once with verified runsc. Identify which controls remain and which reported tier changes.","idea":"Locking Docker down lowers the risk; only proving it is actually running gVisor decides whether the wall is strong enough for hostile code.","points":["runc shares the host kernel and reports container tier.","Verified runsc supplies a gVisor user-space-kernel boundary and reports kernel tier.","Docker brokers project grants as well as JavaScript ones; E2B needs its configured guard for either; WASM has no project runtime to grant."]}
+      },
+      {
+        "id": "e2b-lifecycle",
+        "label": "E2B lifecycle",
+        "kind": "scenario",
+        "title": "A remote VM still needs fail-closed edges",
+        "lede": "E2B spins up a fresh throwaway virtual computer in the cloud for each run. The VM is the strongest wall, but plimsoll still has to lock the doors around it: prove the connection is authenticated and keep the network shut, or kill the VM and refuse.",
+        "stats": [{"label":"reported tier","value":"vm","tone":"good"},{"label":"host memory budget","value":"off-host","tone":"neutral"}],
+        "promptLabel": "Inspect a create response",
+        "prompt": "The E2B control plane returns a sandbox ID, but the secured-envd access token is missing. What should plimsoll do?",
+        "options": [
+          {"label":"Run through the public envd URL","note":"The sandbox ID is enough to address the VM.","result":"the data plane would be unauthenticated","detail":"A public URL must not become authority. plimsoll rejects the handle and attempts to reap the VM.","tone":"bad"},
+          {"label":"Retry without secure mode","note":"Availability matters more than the requested access contract.","result":"the boundary silently weakens","detail":"The provider does not downgrade security configuration to make a run succeed.","tone":"bad"},
+          {"label":"Fail closed and kill the VM","note":"Require the secured envd and traffic tokens promised by creation.","result":"the incomplete handle is rejected","detail":"Every envd request carries the per-sandbox access token. Public traffic is disabled, outbound traffic is denied, and missing security evidence aborts the run.","tone":"good","facts":["secure: true","deny outbound","allowPublicTraffic: false"]}
+        ],
+        "explainer":{"try":"Follow ownership after a successful create: verify live template resources, stage code, stream bounded output, and kill the billable VM even when the request times out.","idea":"A strong VM wall does not excuse sloppy setup. If a door is left open, the strong wall just makes overlooking it a costlier mistake.","points":["E2B Preflight validates configuration but does not live-smoke-test the API or template.","The run verifies live memory, integral vCPU, and disk allocation against configured maxima.","Aggregate host-memory admission is ignored for E2B because runners live off-host; count and rate limits still matter."]}
+      },
+      {
+        "id": "project-toolchains",
+        "label": "Project toolchains",
+        "kind": "matrix",
+        "title": "Projects need tools before the network disappears",
+        "lede": "A project run drops several files and runs your build, lint, and run steps in order, stopping at the first one that fails. There is no internet during the run, so every tool it needs has to be baked in ahead of time; it cannot install packages on the fly.",
+        "stats": [{"label":"project providers","value":"2"},{"label":"project grants","value":"2 of 2","tone":"good"}],
+        "prompt": "Compare where each provider gets its project tools and which authority accompanies them.",
+        "rowLabel": "Provider",
+        "columns": ["Project support", "Toolchain source", "Runtime egress", "Project grant"],
+        "rows": [
+          {"label":"WASM", "cells":[{"text":"no","tone":"bad"},{"text":"n/a","tone":"neutral"},{"text":"none","tone":"good"},{"text":"rejected","tone":"bad"}]},
+          {"label":"Docker", "cells":[{"text":"yes","tone":"good"},{"text":"project image","tone":"good","note":"node + pinned tsc/tsx/eslint"},{"text":"network none","tone":"good"},{"text":"brokered","tone":"good","note":"the same client is preloaded into every step with node --import"}]},
+          {"label":"E2B", "cells":[{"text":"yes","tone":"good"},{"text":"E2B template","tone":"good","note":"baked before dispatch"},{"text":"outbound denied","tone":"good"},{"text":"with guard","tone":"warn","note":"needs E2B_GUARD_URL; without it the grant is refused, not downgraded"}]},
+          {"label":"Disabled", "cells":[{"text":"no","tone":"neutral"},{"text":"n/a","tone":"neutral"},{"text":"nothing runs","tone":"good"},{"text":"rejected","tone":"neutral"}]}
+        ],
+          "explainer":{"try":"Imagine adding a compiler. Decide whether it belongs in <code>docker/Dockerfile</code> and the E2B template, then account for its version in the shared toolchain source of truth.","idea":"Because there is no internet during a run, whatever tools you bake into the image or template become part of both what works and what you have to trust.","points":["Docker and E2B pin the same TypeScript toolchain versions.","A failed project step is reported in <code>Steps</code>; subsequent steps do not run.","Docker and E2B can combine project execution with a host-API grant when their broker path is configured."]}
+      },
+      {
+        "id": "provider-gate",
+        "label": "Selection gate",
+        "kind": "checklist",
+        "title": "Turn a provider choice into an operating claim",
+        "lede": "A runner is only 'ready' when everything lines up with the job: the right operation, a proven wall, real resource limits, healthy dependencies, and a matching key model. Any gap means don't turn it on yet.",
+        "stats": [],
+        "prompt": "Check every required gate before enabling hostile execution. Recommended evidence makes the decision easier to audit later.",
+        "items": [
+          {"label":"Choose the operation first","why":"Confirm snippet versus project support; treat JavaScript grants and project grants as separate capabilities."},
+          {"label":"Set and enforce an isolation floor","why":"Use reported evidence and SANDBOX_MIN_ISOLATION; do not infer strength from the provider name."},
+          {"label":"Run provider Preflight","why":"Validate local configuration and dependencies, while remembering that Describe is not an image or template smoke test."},
+          {"label":"Bound each run and aggregate admission","why":"Set memory, CPU, PID where supported, disk, time, output, count, rate, and local aggregate-memory limits."},
+          {"label":"Prebuild the project toolchain","why":"Docker images and E2B templates must contain every build, lint, and run tool needed with egress denied."},
+          {"label":"Keep grant support operation-specific","why":"Docker supports both operations, WASM supports snippets, and E2B requires its configured guard for both."},
+          {"label":"Record Describe and readiness evidence","why":"Capture the active provider, current tier, structural support, and readiness state for operators.","required":false}
+        ],
+        "ready":"The provider claim is explicit and testable. Exercise a real smoke run in the deployment environment before serving hostile traffic.",
+        "notReady":"Do not enable execution yet. Missing operation, isolation, resource, toolchain, or capability evidence is a deployment failure, not a runtime guess.",
+        "explainer":{"try":"Try to complete the gate for each provider. Disabled passes the safe-refusal goal; the other three require a workload-specific case.","idea":"Choosing a runner is a case you assemble from current evidence, not a fixed label you copy from a docs page.","points":["<code>Describe</code> prevents gateways from hard-coding the provider matrix.","Readiness can fail when Docker's pinned endpoint or runtime verification changes.","A safe deployment may deliberately remain Disabled."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

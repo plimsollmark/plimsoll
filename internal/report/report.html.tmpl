@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+:root {
+  color-scheme: light;
+  --ink: #172129; --muted: #586770; --faint: #88969e;
+  --paper: #eef3f5; --panel: #ffffff; --line: #d7e0e4; --line-strong: #aebdc4;
+  --accent: #177f99; --accent-deep: #0b4c61; --accent-soft: #e0f1f5;
+  --good: #11845f; --good-soft: #e3f5ed;
+  --warn: #b46b18; --warn-soft: #fff1db;
+  --bad: #b83f43; --bad-soft: #fbe6e7;
+  --neutral: #647681; --neutral-soft: #edf1f3;
+  --shadow-soft: 0 8px 24px rgba(19, 38, 48, 0.09);
+  --radius: 16px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  color: var(--ink);
+  background:
+    repeating-linear-gradient(90deg, rgba(23, 33, 41, 0.03) 0 1px, transparent 1px 72px),
+    linear-gradient(180deg, #fbfdfd, var(--paper));
+  background-attachment: fixed;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 32px 24px 72px; }
+header.top { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; margin-bottom: 8px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.mark {
+  width: 40px; height: 40px; flex: none; display: grid; place-items: center;
+  border-radius: 11px; color: #fff; font: 800 0.72rem/1 ui-monospace, monospace;
+  background: linear-gradient(145deg, #2aa7c3, #12677d 65%, #e59c49 150%);
+  box-shadow: 0 0 0 4px rgba(42, 167, 195, 0.15);
+}
+h1 { font-size: 1.32rem; margin: 0; line-height: 1.15; }
+.sub { color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
+.meta { color: var(--faint); font-size: 0.78rem; margin-left: auto; text-align: right; }
+h2 { font-size: 1.02rem; margin: 34px 0 12px; }
+code {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.84em; background: rgba(23, 127, 153, 0.1); color: var(--accent-deep);
+  padding: 0.08em 0.4em; border-radius: 6px;
+}
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-top: 14px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 16px; box-shadow: var(--shadow-soft); }
+.tile .n { font-size: 1.5rem; font-weight: 750; letter-spacing: -0.01em; }
+.tile .k { color: var(--muted); font-size: 0.76rem; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
+.tile.warn .n { color: var(--warn); }
+.tile.bad .n { color: var(--bad); }
+.tile.good .n { color: var(--good); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-soft); overflow: hidden; }
+table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+thead th { text-align: left; color: var(--muted); font-weight: 650; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 11px 14px; border-bottom: 1px solid var(--line); background: #f7fafb; }
+tbody td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.run.has-findings { cursor: pointer; }
+tr.run.has-findings:hover { background: var(--accent-soft); }
+tr.run td .caret { color: var(--accent); font-size: 0.7rem; margin-left: 5px; }
+tr.findings-row > td { background: #f7fafb; padding: 0; }
+tr.findings-row[hidden] { display: none; }
+.findings-inner { padding: 6px 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+.finding { border-left: 3px solid var(--neutral); background: var(--panel); border: 1px solid var(--line); border-left-width: 3px; border-radius: 10px; padding: 11px 13px; }
+.finding.sev-high { border-left-color: var(--bad); }
+.finding.sev-medium { border-left-color: var(--warn); }
+.finding.sev-low { border-left-color: var(--accent); }
+.finding.sev-info { border-left-color: var(--neutral); }
+.finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 5px; }
+.finding p { margin: 4px 0; }
+.finding .cost { color: var(--muted); font-size: 0.8rem; }
+.finding .suggest { color: var(--good); font-size: 0.82rem; }
+.badge { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 7px; border-radius: 999px; background: var(--neutral-soft); color: var(--neutral); }
+.badge.sev-high { background: var(--bad-soft); color: var(--bad); }
+.badge.sev-medium { background: var(--warn-soft); color: var(--warn); }
+.badge.sev-low { background: var(--accent-soft); color: var(--accent-deep); }
+.badge.fix { background: var(--good-soft); color: var(--good); }
+.badge.api { background: var(--warn-soft); color: var(--warn); }
+details.prompt { margin-top: 7px; }
+details.prompt summary { cursor: pointer; color: var(--accent-deep); font-size: 0.8rem; font-weight: 650; }
+details.prompt pre { white-space: pre-wrap; word-break: break-word; background: #0d1b22; color: #d7e7ec; padding: 12px 13px; border-radius: 9px; font-size: 0.78rem; margin: 8px 0 0; overflow-x: auto; }
+.empty { color: var(--muted); background: var(--panel); border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 26px; text-align: center; }
+.note { color: var(--faint); font-size: 0.78rem; margin-top: 8px; }
+footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div class="brand">
+    <div class="mark">c/r</div>
+    <div>
+      <h1>{{.Title}}</h1>
+      <div class="sub">API Efficiency Advisor — rendered from the exported audit stream</div>
+    </div>
+  </div>
+  <div class="meta">
+    Generated {{.Generated}}{{if .Source}}<br>Source: {{.Source}}{{end}}
+  </div>
+</header>
+
+{{if eq .TotalRuns 0}}
+<div class="empty">No <code>code run</code> records found in the audit stream.</div>
+{{else}}
+
+<div class="tiles">
+  <div class="tile"><div class="n">{{.TotalRuns}}</div><div class="k">Runs</div></div>
+  <div class="tile"><div class="n">{{.TotalHostCalls}}</div><div class="k">Host calls</div></div>
+  <div class="tile{{if .TotalFindings}} warn{{end}}"><div class="n">{{.TotalFindings}}</div><div class="k">Findings</div></div>
+  <div class="tile good"><div class="n">{{.TotalAgentFixable}}</div><div class="k">Agent-fixable</div></div>
+  <div class="tile{{if .TotalAPIChange}} warn{{end}}"><div class="n">{{.TotalAPIChange}}</div><div class="k">API-change</div></div>
+  <div class="tile{{if .TotalAddedLatencyMs}} bad{{end}}"><div class="n">{{ms .TotalAddedLatencyMs}}</div><div class="k">Attributed waste</div></div>
+  <div class="tile"><div class="n">{{.TotalExtraCalls}}</div><div class="k">Extra calls</div></div>
+  <div class="tile"><div class="n">{{bytes .TotalBytesMoved}}</div><div class="k">Bytes moved</div></div>
+</div>
+
+{{if .Profiles}}
+<h2>Where the waste is — profiles by attributed latency</h2>
+<div class="card">
+<table>
+  <thead><tr><th>Profile</th><th class="num">Runs</th><th class="num">Host calls</th><th class="num">Findings</th><th class="num">Agent-fixable</th><th class="num">API-change</th><th class="num">Extra calls</th><th class="num">Waste</th><th class="num">Bytes</th></tr></thead>
+  <tbody>
+  {{range .Profiles}}
+    <tr>
+      <td>{{if .Profile}}<code>{{.Profile}}</code>{{else}}<span class="note">(none)</span>{{end}}</td>
+      <td class="num">{{.Runs}}</td>
+      <td class="num">{{.HostCalls}}</td>
+      <td class="num">{{.Findings}}</td>
+      <td class="num">{{.AgentFixable}}</td>
+      <td class="num">{{.APIChange}}</td>
+      <td class="num">{{.ExtraCalls}}</td>
+      <td class="num">{{ms .AddedLatencyMs}}</td>
+      <td class="num">{{bytes .BytesMoved}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+
+{{if .Patterns}}
+<h2>Patterns detected</h2>
+<div class="card">
+<table>
+  <thead><tr><th>Pattern</th><th>Worst severity</th><th>Remedy</th><th class="num">Count</th><th class="num">Agent-fixable</th><th class="num">Extra calls</th><th class="num">Waste</th><th class="num">Bytes</th></tr></thead>
+  <tbody>
+  {{range .Patterns}}
+    <tr>
+      <td>{{prettyPattern .Pattern}}</td>
+      <td><span class="badge sev-{{sevKey .Severity}}">{{.Severity}}</span></td>
+      <td><code>{{.Remedy}}</code></td>
+      <td class="num">{{.Count}}</td>
+      <td class="num">{{.AgentFixable}}</td>
+      <td class="num">{{.ExtraCalls}}</td>
+      <td class="num">{{ms .AddedLatencyMs}}</td>
+      <td class="num">{{bytes .BytesMoved}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<h2>Patterns detected</h2>
+<div class="empty">No efficiency findings in these runs. Either the traced calls were efficient, or advice was not enabled on the profiles that ran.</div>
+{{end}}
+
+<h2>Runs</h2>
+<div class="card">
+<table>
+  <thead><tr><th>Time (UTC)</th><th>Trace</th><th>Profile</th><th>Sandbox</th><th class="num">Exit</th><th class="num">Duration</th><th class="num">Host calls</th><th class="num">Findings</th><th class="num">Waste</th></tr></thead>
+  <tbody>
+  {{range .Runs}}
+    <tr class="run{{if .Findings}} has-findings{{end}}"{{if .Findings}} data-target="run-{{.ID}}"{{end}}>
+      <td>{{if .When}}{{.When}}{{else}}<span class="note">—</span>{{end}}</td>
+      <td>{{if .TraceID}}<code>{{.TraceID}}</code>{{else}}<span class="note">—</span>{{end}}</td>
+      <td>{{if .Profile}}<code>{{.Profile}}</code>{{else}}<span class="note">(none)</span>{{end}}</td>
+      <td>{{.Sandbox}}{{if .Isolation}} <span class="note">/ {{.Isolation}}</span>{{end}}</td>
+      <td class="num">{{.ExitCode}}{{if .TimedOut}} ⏱{{end}}</td>
+      <td class="num">{{ms .DurationMs}}</td>
+      <td class="num">{{.HostCalls}}{{if .HostCallsDenied}} <span class="note">({{.HostCallsDenied}} denied)</span>{{end}}</td>
+      <td class="num">{{.FindingCount}}{{if .Findings}}<span class="caret">▸</span>{{end}}</td>
+      <td class="num">{{ms .AddedLatencyMs}}</td>
+    </tr>
+    {{if .Findings}}
+    <tr class="findings-row" id="run-{{.ID}}" hidden><td colspan="8">
+      <div class="findings-inner">
+      {{range .Findings}}
+        <div class="finding sev-{{sevKey .Severity}}">
+          <div class="finding-head">
+            <span class="badge">{{prettyPattern .Pattern}}</span>
+            <span class="badge sev-{{sevKey .Severity}}">{{.Severity}}</span>
+            {{if .AgentFixable}}<span class="badge fix">agent-fixable</span>{{else}}<span class="badge api">API change</span>{{end}}
+            <code>{{.Method}} {{.Route}}</code>
+          </div>
+          <p>{{.Detail}}</p>
+          {{$c := cost .}}{{if $c}}<p class="cost">{{$c}}</p>{{end}}
+          {{if .SuggestedRoute}}<p class="suggest">Better route already granted: <code>{{.SuggestedMethod}} {{.SuggestedRoute}}</code> — the agent can switch to it now.</p>{{end}}
+          {{if .DesignPrompt}}<details class="prompt"><summary>API-design prompt for this finding</summary><pre>{{.DesignPrompt}}</pre></details>{{end}}
+        </div>
+      {{end}}
+      </div>
+    </td></tr>
+    {{end}}
+  {{end}}
+  </tbody>
+</table>
+</div>
+<p class="note">Click a run with findings to expand its efficiency detail.</p>
+
+{{end}}
+
+<footer>
+  plimsoll Prospector · every value above is metadata only — route templates, verbs, counts, and timings — never a request path, body, or credential.
+</footer>
+</div>
+<script>
+(function () {
+  var rows = document.querySelectorAll("tr.run.has-findings");
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].addEventListener("click", function () {
+      var id = this.getAttribute("data-target");
+      var panel = document.getElementById(id);
+      if (!panel) return;
+      panel.hidden = !panel.hidden;
+      var caret = this.querySelector(".caret");
+      if (caret) caret.textContent = panel.hidden ? "▸" : "▾";
+    });
+  }
+})();
+</script>
+</body>
+</html>

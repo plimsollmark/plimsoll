@@ -1,0 +1,22 @@
+{
+  "profiles": {
+    "e2b-live-test": {
+      "base_url": "https://REPLACE_WITH_TEST_API_ORIGIN",
+      "allow": [
+        "GET /healthz"
+      ],
+      "allowed_callers": [
+        "e2b-live-client"
+      ],
+      "scopes": [
+        "e2b:test"
+      ],
+      "token": {
+        "type": "static",
+        "env": "E2B_LIVE_GRANT_TOKEN"
+      },
+      "advice": "operator",
+      "advice_retention": "none"
+    }
+  }
+}

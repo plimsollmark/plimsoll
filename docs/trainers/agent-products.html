@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive trainer for designing a safe agent-facing run_code product on plimsoll.">
+  <title>Agent products · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Agent products</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">New to the words here? <a href="plain-english.html">Start with Plain English</a>. Use ← and → to move between chapters; a check marks ideas you have exercised, not a certification.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id": "agent-products",
+    "title": "agent product design",
+    "tagline": "a narrow tool around a hard boundary",
+    "chapters": [
+      {
+        "id": "tool-surface",
+        "label": "Tool surface",
+        "kind": "scenario",
+        "title": "Offer one bounded computation tool",
+        "lede": "'Code mode' swaps a big menu of read-only API tools for a single run_code tool plus a documented SDK. It makes the agent's interface simpler, not its underlying permissions wider.",
+        "stats": [{"label":"agent tool","value":"run_code"},{"label":"profile choice","value":"gateway-owned","tone":"good"}],
+        "promptLabel": "Design the surface",
+        "prompt": "Agents need to fetch several allowed resource types, join and filter them, then print a compact answer. Which product surface best supports this workload without exposing credentials?",
+        "options": [
+          {"label":"One tool per API endpoint","note":"Expose every GET as a separate agent tool.","result":"workable, but composition moves into tool orchestration","detail":"Discrete tools are appropriate for individually reviewed, high-impact actions. For read-heavy computation, a large surface adds schemas and round trips without improving the downstream route boundary.","tone":"warn"},
+          {"label":"One run_code tool with a typed SDK","note":"Accept bounded JavaScript and inject domain methods inside the sandbox.","result":"code mode fits the composition workload","detail":"The product gateway fixes the server-side profile. Agent code sees ergonomic SDK calls, while plimsoll's shared broker enforces the exact method-and-route capability and holds the credential in Go outside the guest.","tone":"good","facts":["one bounded input","server-held profile","structured result"]},
+          {"label":"A shell tool on the product host","note":"Let the agent use curl and local files directly.","result":"the trust boundary disappears","detail":"Host-native execution and ambient network access violate plimsoll's reason for existing. Generated code stays behind an explicitly reported sandbox tier.","tone":"bad"}
+        ],
+        "explainer":{"try":"Keep mutation or approval-heavy operations as discrete product tools, while using run_code for bounded computation over the exact read routes the profile permits.","idea":"Code mode shrinks the agent's tool schema and back-and-forth. It must never shrink away the permission checks, the wall, or the output limits.","points":["Do not expose grant_profile, BaseURL, bearer, or arbitrary routes as model-controlled arguments.","Describe the injected SDK and result envelope in the tool contract.","Treat every model-authored program as hostile unless policy explicitly says otherwise."]}
+      },
+      {
+        "id": "product-topology",
+        "label": "Product topology",
+        "kind": "pipeline",
+        "title": "Carry identity to the server-held capability",
+        "lede": "Your gateway is the trusted middle layer between an agent session and plimsoll. It confirms who the session is, picks the fixed policy, and never asks the untrusted code to identify itself.",
+        "stats": [{"label":"identity source","value":"authenticated session","tone":"good"},{"label":"downstream ACL","value":"allowed_callers"}],
+        "prompt": "Follow one generic agent call through the code-mode topology using a subject-bound JWT profile.",
+        "steps": [
+          {"layer":"agent provider","name":"Invoke run_code","short":"Send JavaScript within the product tool schema.","detail":"The agent-facing caller supplies code and a bounded timeout at most. It cannot choose an origin, route list, profile policy, bearer, or caller subject.","tone":"neutral"},
+          {"layer":"product gateway","name":"Authenticate the session","short":"Resolve a stable tenant/caller identity and apply product policy.","detail":"Map the verified session to a plimsoll client credential whose server-side principal is stable. Never forward a free-form subject from tool input or generated code.","tone":"good"},
+          {"layer":"plimsolld","name":"Authenticate code:run","short":"Derive the principal only from the RPC bearer.","detail":"If the gateway uses one shared service principal, every run has that service identity; use distinct trusted principals when per-session subject, rate, tenant, and audit separation is required.","tone":"good"},
+          {"layer":"grant registry","name":"Resolve the fixed profile","short":"Check allowed_callers, then load routes, scopes, minter, and SDK preamble.","detail":"code:run admits execution but does not grant the domain API. The actual plimsoll principal must appear in the profile's allowed_callers ACL.","tone":"good"},
+          {"layer":"shared broker","name":"Mint and enforce one run","short":"Freeze the grant, authorize the exact target, and inject the credential host-side.","detail":"Docker reaches the broker over a Unix socket; WASM uses a bounded direct host function. A subject-bound minter binds the fresh credential to the authenticated principal; the token stays in Go.","tone":"good"},
+          {"layer":"domain API","name":"Verify downstream identity","short":"Validate token signature, audience, times, scopes, and subject before serving data.","detail":"The domain API derives tenant and caller from trusted claims, not request parameters authored by the model. It receives only broker-allowed routes.","tone":"good"}
+        ],
+        "explainer":{"try":"Trace four identities separately: agent session, product gateway, plimsoll principal, and downstream token subject. Document where they intentionally map or collapse.","idea":"Tenants stay separated only when one stable, verified identity is what both the allowed-caller check and the per-run key are built from.","points":["The generic topology is agent provider → product gateway → plimsolld → shared broker → domain API.","A subject-bound profile refuses anonymous/open-dev callers.","Docker and WASM JavaScript grants are supported; E2B requires its configured guard and project support is provider-specific."]}
+      },
+      {
+        "id": "tool-envelope",
+        "label": "Tool envelope",
+        "kind": "matrix",
+        "title": "Make limits and outcomes part of the tool schema",
+        "lede": "The tool you expose to the model should be narrower than plimsoll's full API. Take only what the model actually needs, and return everything needed to make sense of one run, nothing more.",
+        "stats": [{"label":"source ceiling","value":"256 KiB"},{"label":"RPC wall ceiling","value":"5 min","tone":"warn"}],
+        "prompt": "Separate agent-controlled input, trusted gateway configuration, normal result data, and returned errors.",
+        "rowLabel": "Field or concern",
+        "columns": ["Agent tool contract", "Trust / limit", "Product behavior"],
+        "rows": [
+          {"label":"code", "cells":[{"text":"required string","tone":"good"},{"text":"UTF-8, no NUL, ≤256 KiB","tone":"good"},{"text":"validate before RPC","tone":"neutral"}]},
+          {"label":"timeout", "cells":[{"text":"small bounded option","tone":"good"},{"text":"product cap ≤ server cap","tone":"good"},{"text":"context deadline + request budget","tone":"neutral"}]},
+          {"label":"grant profile", "cells":[{"text":"not model-controlled","tone":"good"},{"text":"fixed trusted config","tone":"good"},{"text":"WithJavaScriptGrantProfile","tone":"neutral"}]},
+          {"label":"stdout / stderr", "cells":[{"text":"bounded strings","tone":"good"},{"text":"untrusted display content","tone":"warn"},{"text":"preserve separately; never execute markup","tone":"neutral"}]},
+          {"label":"exit / timed_out", "cells":[{"text":"normal result fields","tone":"good"},{"text":"guest outcome","tone":"neutral"},{"text":"let the agent revise code","tone":"neutral"}]},
+          {"label":"provider / isolation", "cells":[{"text":"always return","tone":"good"},{"text":"security evidence","tone":"good"},{"text":"enforce minimum per result","tone":"neutral"}]},
+          {"label":"duration", "cells":[{"text":"return milliseconds","tone":"good"},{"text":"bounded telemetry","tone":"neutral"},{"text":"feed UX and quota metrics","tone":"neutral"}]},
+          {"label":"transport error", "cells":[{"text":"structured product error","tone":"warn"},{"text":"never include secrets or code","tone":"good"},{"text":"classify before retry","tone":"neutral"}]}
+        ],
+        "explainer":{"try":"Design the exact JSON response an agent receives. Include stdout, stderr, exit_code, timed_out, duration_ms, sandbox, and isolation even when the guest exit is non-zero.","idea":"A consistent response shape lets the agent debug a code failure without dressing it up as a transport failure or hiding which wall ran it.","points":["Provider output is capped, and the official remote client caps unary response reads.","A non-zero exit is not a tool transport error.","Treat stdout and stderr as hostile text in logs, UIs, and subsequent prompts."]}
+      },
+      {
+        "id": "policy-tiers",
+        "label": "Policy tiers",
+        "kind": "matrix",
+        "title": "Match model trust to an enforceable boundary",
+        "lede": "The runner's name is not your safety policy. Decide the minimum wall strength for each kind of code, and check the wall every run actually reports.",
+        "stats": [{"label":"hostile floor","value":"kernel / vm","tone":"good"},{"label":"native host","value":"never","tone":"good"}],
+        "prompt": "Use process tier only as an explicitly accepted convenience policy; agent-authored hostile workloads require verified kernel or VM isolation.",
+        "rowLabel": "Execution configuration",
+        "columns": ["Reported tier", "Suitable policy", "Domain API grant today"],
+        "rows": [
+          {"label":"Disabled", "cells":[{"text":"none","tone":"neutral"},{"text":"safe feature-off","tone":"good"},{"text":"no","tone":"neutral"}]},
+          {"label":"WASM / wazero", "cells":[{"text":"process","tone":"warn"},{"text":"trusted convenience only","tone":"warn"},{"text":"JS broker exists","tone":"good","note":"direct host function; tier remains too weak for hostile production"}]},
+          {"label":"Docker / runc", "cells":[{"text":"container","tone":"warn"},{"text":"self-host dev; not hostile boundary","tone":"bad"},{"text":"JS broker exists","tone":"good","note":"but tier remains too weak for hostile production"}]},
+          {"label":"Docker / verified runsc", "cells":[{"text":"kernel","tone":"good"},{"text":"hostile agent code/projects","tone":"good"},{"text":"JS + project grants","tone":"good"}]},
+          {"label":"E2B / Firecracker", "cells":[{"text":"vm","tone":"good"},{"text":"hostile isolated code/projects","tone":"good"},{"text":"JS + project with guard","tone":"good"}]}
+        ],
+        "explainer":{"try":"For a hostile code-mode tool that must call a domain API, intersect the tier and grant columns. Verified runsc supports both JavaScript and project grants; E2B supports both when its guard is configured.","idea":"A strong wall with no way to reach the API, and a way to reach the API with a weak wall, are both half a policy. You need both halves.","points":["Set the daemon isolation floor and carry <code>MinimumIsolation</code> on every request so weak dispatch is refused.","Use Describe for readiness and verify each returned isolation tier again.","E2B projects must bake tools because egress is denied; E2B grants require a configured E2B_GUARD_URL."]}
+      },
+      {
+        "id": "domain-sdk",
+        "label": "Domain SDK",
+        "kind": "quiz",
+        "title": "Put ergonomics in the preamble, authority in the profile",
+        "lede": "A small SDK can dress up generic host calls as friendly domain methods. But it runs inside the untrusted sandbox, so it is a convenience and a backstop, never the thing that actually enforces permissions.",
+        "stats": [{"label":"runtime SDK","value":"preamble_file"},{"label":"authoritative routes","value":"server profile","tone":"good"}],
+        "prompt": "How should a product expose <code>inventory.items.get(id)</code> while allowing only <code>GET /items/*</code>?",
+        "options": [
+          {"label":"Embed the URL and bearer in the SDK","note":"The generated code can call fetch with those values.","correct":false,"result":"hostile code can read and reuse the credential","detail":"Secrets and unrestricted transports do not belong in the preamble or tool prompt. The shared host-side broker must retain the token."},
+          {"label":"Let the SDK decide which routes are safe","note":"Its id helper and method list define authorization.","correct":false,"result":"guest code can bypass guest code","detail":"The preamble runs in the same hostile boundary as the model's program. A crafted script can skip it, so its checks are never authoritative."},
+          {"label":"Inject a thin SDK from a server profile","note":"Ship authoring types separately and keep GET /items/* in the profile Allow list.","correct":true,"result":"ergonomics and authority stay separate","detail":"The preamble wraps <code>host.get</code>; the shared broker independently checks the exact method and route, then injects the per-run credential. The SDK never sees origin or bearer.","facts":[".d.ts for authoring","preamble for runtime","Allow for enforcement"]}
+        ],
+        "explainer":{"try":"Add one SDK method. The change is incomplete until its argument encoding, authoring type, runtime wrapper, exact server-side route, scope, and negative-route test agree.","idea":"The friendly typed SDK is a nicety on top; the real, smaller permission is enforced by the server underneath.","points":["Generate the thin client and types from a schema when practical, but review the resulting route set.","Guard identifiers in the SDK for clearer errors; rely on the broker against hostile bypass.","Docker and WASM JavaScript can use the same grant-backed preamble."]}
+      },
+      {
+        "id": "launch-gate",
+        "label": "Launch gate",
+        "kind": "checklist",
+        "title": "Design failure UX before opening the tool",
+        "lede": "A safe launch is more than one successful demo. It covers fair sharing, which errors are worth retrying, proof of the wall, keeping tenants apart, blocking bad routes, keeping the key secret, and clean audit logs.",
+        "stats": [],
+        "prompt": "Check each required launch gate for the generic run_code product.",
+        "items": [
+          {"label":"Apply per-caller concurrency and rate limits","why":"Use the stable plimsoll principal as the limiter key so one agent session cannot consume every execution slot."},
+          {"label":"Back off only capacity and transient failures","why":"ErrAtCapacity / ResourceExhausted gets bounded jittered retry; InvalidRequest, Unsupported, and Disabled need code, feature, or operator action instead."},
+          {"label":"Return guest failures for revision","why":"Non-zero exit and timed_out remain structured run outcomes with bounded stdout/stderr, not generic tool crashes."},
+          {"label":"Prevent weak dispatch and verify every result","why":"Require kernel or VM on each request; reject weak or unknown evidence, stop new runs, and alert. Keep the daemon floor too."},
+          {"label":"Prove tenant and session separation","why":"Run two authenticated principals through the profile and verify ACL decisions, JWT subjects, downstream tenant data, rate keys, and audits stay distinct."},
+          {"label":"Exercise a negative route","why":"Call a nearby undeclared method/path and an encoded traversal form; both must fail through each enabled adapter at the shared broker without reaching the domain API."},
+          {"label":"Prove no token leakage","why":"Inspect code, stdout, stderr, environment, errors, UI traces, and logs; the per-run credential must remain host-side."},
+          {"label":"Keep SDK, types, routes, and scopes in sync","why":"A method addition changes product ergonomics and server authority separately; review and test both."},
+          {"label":"Audit without recording hostile contents","why":"Log principal, profile name, provider, isolation, sizes, exit, timeout, and duration, never submitted code or live credentials."},
+          {"label":"Publish retry and quota guidance","why":"Tell agent clients the maximum source/time/output envelope and when retry-after behavior is appropriate.","required":false}
+        ],
+        "ready":"The tool has bounded inputs and outputs, fair admission, actionable failure classes, verified isolation, tenant-safe authority, negative security tests, and credential-free audit evidence.",
+        "notReady":"Keep run_code unavailable. A successful positive call does not compensate for ambiguous retries, shared identity, a weak tier, an untested route boundary, or token exposure.",
+        "explainer":{"try":"Run the launch suite under overload, bad code, weak provider evidence, two principals, one forbidden route, and one downstream outage. Each should produce a different safe product response.","idea":"Agent experience and sandbox safety meet at how you handle failure: be helpful, but don't retry errors that will always fail, and don't paper over a broken wall.","points":["Admission sheds immediately instead of building an unbounded execution queue.","Expose concise stable error classes; retain sensitive infrastructure detail only for operators.","Audit one structured line per run without code contents."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

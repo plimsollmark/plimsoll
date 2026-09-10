@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive trainer for plimsoll's transport, request path, auth, grants, evidence, and error architecture.">
+  <title>Architecture · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Architecture</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">New to the vocabulary? <a href="plain-english.html">Start with Plain English</a> first; this is the same trip with the real gate names. Step the request paths slowly; every layer narrows authority, bounds work, or reports evidence.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id":"architecture",
+    "title":"plimsoll architecture",
+    "tagline":"follow one hostile request",
+    "chapters":[
+      {
+        "id":"request-path",
+        "label":"End-to-end path",
+        "kind":"pipeline",
+        "title":"A run crosses gates before it reaches a provider",
+        "lede":"The daemon is a control plane around a transport-neutral execution core. Step one request through the layers in their actual order.",
+        "stats":[{"label":"dispatches","value":"0 or 1","tone":"good"},{"label":"audit lines","value":"1","tone":"good"}],
+        "prompt":"A caller submits <code>RunJavaScriptV2</code> over Connect. Advance the request and watch where it can stop.",
+        "steps":[
+          {"layer":"caller","name":"Go client / RPC caller","short":"code + timeout + optional profile name","detail":"The wire request carries code and a profile selector. It never carries a raw HostAPIGrant or downstream bearer."},
+          {"layer":"HTTP edge","name":"Body boundary","short":"read deadline + raw/decompressed caps","detail":"The server bounds the whole body, decompressed Connect message, and concurrent decode work before attacker-controlled input can consume unbounded resources."},
+          {"layer":"identity","name":"Auth interceptor","short":"verify bearer + code:run","detail":"The interceptor authenticates before Connect reads the request body, stamps a Principal, and denies unmapped procedures."},
+          {"layer":"service","name":"Validate + resolve","short":"shared bounds + profile ACL","detail":"The handler validates UTF-8, sizes, counts, and paths, then resolves any named server-side grant for this caller."},
+          {"layer":"admission","name":"Limiter","short":"global + caller + rate gates","detail":"Capacity is reserved without queueing. A failed gate returns ResourceExhausted before a provider starts.","tone":"warn"},
+          {"layer":"data plane","name":"Selected provider","short":"WASM, Docker, E2B, or Disabled","detail":"Exactly one provider handles the validated request and reports the boundary that actually ran."},
+          {"layer":"response","name":"Audit + result","short":"metadata, never source code","detail":"One structured audit event records principal, sizes, profile, provider, outcome, timeout, and duration. The RPC response carries the guest result and isolation evidence.","tone":"good"}
+        ],
+        "explainer":{"try":"Reset, then name the earliest layer that rejects an invalid bearer, an oversized source, and a full pool.","idea":"The provider is the last gate, not the first line of defense.","points":["Ingress limits protect decode work.","Validation is shared by local and remote callers.","Admission occurs before dispatch and auditing occurs for every run attempt handled by the service."]}
+      },
+      {
+        "id":"transport-neutral-core",
+        "label":"Execution core",
+        "kind":"matrix",
+        "title":"The sandbox package does not know HTTP",
+        "lede":"A small Go interface and shared value types let the same providers back the daemon, an in-process embedder, or the official remote client adapter.",
+        "stats":[{"label":"required methods","value":"4"},{"label":"transport types","value":"0","tone":"good"}],
+        "prompt":"Separate the stable execution contract from optional evidence and transport adapters.",
+        "rowLabel":"Surface",
+        "columns":["Responsibility","Security meaning","Location"],
+        "rows":[
+          {"label":"Sandbox", "cells":[{"text":"run JS / project","tone":"good"},{"text":"provider boundary","tone":"good"},{"text":"transport-neutral Sandbox contract","tone":"neutral"}]},
+          {"label":"Request / Result", "cells":[{"text":"plain Go values","tone":"good"},{"text":"typed outcome channels","tone":"good"},{"text":"sandbox package","tone":"neutral"}]},
+          {"label":"ProjectCapable", "cells":[{"text":"static project support","tone":"neutral"},{"text":"avoid false claims","tone":"good"},{"text":"optional interface","tone":"neutral"}]},
+          {"label":"GrantCapable", "cells":[{"text":"per-operation grants","tone":"neutral"},{"text":"no silent authority loss","tone":"good"},{"text":"optional interface","tone":"neutral"}]},
+          {"label":"Preflighter", "cells":[{"text":"bounded readiness probe","tone":"neutral"},{"text":"evidence before traffic","tone":"good"},{"text":"optional interface","tone":"neutral"}]},
+          {"label":"Connect adapter", "cells":[{"text":"wire translation","tone":"neutral"},{"text":"auth + RPC codes","tone":"warn"},{"text":"RPC handler + official client","tone":"neutral"}]}
+        ],
+        "explainer":{"try":"Imagine adding a CLI. Identify which row it reuses unchanged and which row it replaces.","idea":"Transport-neutral does not mean policy-free: validation, capabilities, outcomes, and isolation remain part of the core contract.","points":["No Connect or HTTP types enter <code>sandbox</code>.","The official client adapts remote RPC back into <code>sandbox.Sandbox</code>.","Decorators such as admission forward optional capability interfaces."]}
+      },
+      {
+        "id":"authenticate-first",
+        "label":"Ingress order",
+        "kind":"quiz",
+        "title":"Authenticate before decoding attacker work",
+        "lede":"Ordering at the HTTP boundary is part of the resource-defense model, not merely request plumbing.",
+        "stats":[{"label":"raw cap","value":"8 MiB"},{"label":"unknown RPC","value":"deny","tone":"good"}],
+        "prompt":"An unauthenticated client streams a large compressed Connect body. Which ordering preserves the daemon's contract?",
+        "options":[
+          {"label":"Decode, then authenticate","note":"The handler needs the message before it knows the procedure.","correct":false,"result":"attacker-controlled decode happens first","detail":"An invalid caller could consume decompression and parsing capacity before being rejected."},
+          {"label":"Authenticate at HTTP entry","note":"Verify the bearer and procedure scope before Connect reads the body.","correct":true,"result":"identity gates decode work","detail":"Raw and decompressed caps, bounded decode concurrency, and a whole-body deadline remain independent defenses after authentication.","facts":["fail closed","code:run scope","bounded body"]},
+          {"label":"Trust HTTP/2 flow control","note":"Let the transport provide the only resource bound.","correct":false,"result":"transport control is not an application cap","detail":"Flow control does not replace explicit raw-body, decompressed-message, concurrency, and deadline limits."}
+        ],
+        "explainer":{"try":"List the four independent ingress controls in the correct order: authentication, body bytes, decode slots, and deadline.","idea":"Rejecting identity early reduces the amount of attacker-chosen work every later layer must perform.","points":["All SandboxService procedures are explicitly scope-mapped.","Missing or invalid tokens map to Unauthenticated.","Missing scope and unmapped procedures map to PermissionDenied."]}
+      },
+      {
+        "id":"grant-path",
+        "label":"Authority path",
+        "kind":"pipeline",
+        "title":"A profile name becomes a per-run capability",
+        "lede":"Authority moves through a different path than code. The server resolves it, binds it to the caller, and keeps the credential in Go outside hostile Docker or QuickJS code.",
+        "stats":[{"label":"caller secrets","value":"0","tone":"good"},{"label":"mint calls","value":"1/run","tone":"good"}],
+        "prompt":"Trace a supported Docker or WASM JavaScript grant. E2B needs its configured guard, and project support is provider-specific.",
+        "steps":[
+          {"layer":"wire","name":"grant_profile","short":"caller selects a name","detail":"The request contains only a bounded profile name. Empty means an isolated run."},
+          {"layer":"registry","name":"Profile + ACL","short":"origin, routes, scopes, allowed callers","detail":"The server looks up configuration and requires the authenticated Principal.UserID to appear in <code>allowed_callers</code>."},
+          {"layer":"context","name":"Subject binding","short":"principal stamped on the run","detail":"A subject-bound minter cannot run anonymously; otherwise callers would collapse into a shared downstream identity."},
+          {"layer":"provider","name":"Call the minter once","short":"JWT fresh; static reused","detail":"A JWT profile mints a fresh short-lived token per run with subject, audience, scopes, and expiry. A static profile returns the same server-held bearer each run. Custom minters define their own credential semantics."},
+          {"layer":"bridge","name":"Transport adapter","short":"Unix socket or direct host function","detail":"Docker stays on <code>--network none</code> and frames calls over a per-run Unix socket. WASM passes bounded buffers through a wazero host function. Both enter the same broker core."},
+          {"layer":"broker","name":"Enforce once","short":"exact route + budgets + bearer","detail":"The shared broker rejects target normalization mismatches, enforces per-run limits, adds Authorization, and uses a proxy-free transport that does not follow redirects."},
+          {"layer":"host API","name":"Verify downstream","short":"validate by credential type","detail":"For JWT profiles, the target API verifies issuer, audience, subject, time, and signature. For static profiles, it verifies the shared bearer according to its own policy. In both cases, the credential never becomes guest data.","tone":"good"}
+        ],
+        "explainer":{"try":"At each step, ask who can see the base URL, route list, signing secret, minted bearer, and subject.","idea":"Profile selection delegates authority without delegating the authority-definition mechanism.","points":["<code>code:run</code> alone grants no downstream capability.","The broker is generic; optional preamble code adds a domain SDK.","Docker brokers JavaScript and project grants; WASM brokers JavaScript grants only; E2B needs E2B_GUARD_URL for either and returns Unsupported without it."]}
+      },
+      {
+        "id":"evidence-channels",
+        "label":"Evidence channels",
+        "kind":"matrix",
+        "title":"Describe, Preflight, and Result answer different questions",
+        "lede":"Static support, current dependency readiness, and per-run truth are intentionally separate signals.",
+        "stats":[{"label":"signals","value":"3"},{"label":"smoke test","value":"separate","tone":"warn"}],
+        "prompt":"Use the narrowest signal that can prove the fact you care about.",
+        "rowLabel":"Signal",
+        "columns":["Question answered","Examples","What it cannot prove"],
+        "rows":[
+          {"label":"Describe RPC", "cells":[{"text":"what is selected/supported?","tone":"good"},{"text":"provider, tier, projects, grants","tone":"neutral"},{"text":"image has tsc","tone":"warn"}]},
+          {"label":"Preflight / readyz", "cells":[{"text":"dependencies ready now?","tone":"good"},{"text":"daemon, runsc, E2B key/resources","tone":"neutral"},{"text":"guest program succeeds","tone":"warn"}]},
+          {"label":"Run result", "cells":[{"text":"what actually happened?","tone":"good"},{"text":"exit, output, timeout, isolation","tone":"neutral"},{"text":"future readiness","tone":"warn"}]},
+          {"label":"Image smoke", "cells":[{"text":"artifact contract works?","tone":"good"},{"text":"Node/toolchain/runner present","tone":"neutral"},{"text":"all future requests","tone":"warn"}]}
+        ],
+        "explainer":{"try":"Pick the signal needed to prove that runsc is registered, then the signal needed to prove the project image contains eslint.","idea":"A truthful architecture labels evidence by time and scope instead of turning one green check into a universal promise.","points":["<code>/healthz</code> proves process liveness only.","<code>/readyz</code> reruns provider Preflight without executing hostile code.","Describe's project support is structural, not a toolchain smoke test."]}
+      },
+      {
+        "id":"error-map",
+        "label":"RPC error map",
+        "kind":"matrix",
+        "title":"Wire codes preserve retry meaning",
+        "lede":"The service translates known core outcomes into stable Connect codes while leaving guest exit codes in successful responses.",
+        "stats":[{"label":"typed sentinels","value":"4"},{"label":"guest exit","value":"OK response","tone":"good"}],
+        "prompt":"Read this as a caller's decision table, not just a server implementation detail.",
+        "rowLabel":"Core outcome",
+        "columns":["Connect code","Caller interpretation","Retry?"],
+        "rows":[
+          {"label":"ErrInvalidRequest", "cells":[{"text":"InvalidArgument","tone":"warn"},{"text":"fix request","tone":"neutral"},{"text":"no","tone":"bad"}]},
+          {"label":"ErrUnsupported", "cells":[{"text":"Unimplemented","tone":"warn"},{"text":"choose operation/provider","tone":"neutral"},{"text":"not unchanged","tone":"bad"}]},
+          {"label":"ErrDisabled", "cells":[{"text":"FailedPrecondition","tone":"warn"},{"text":"operator must configure","tone":"neutral"},{"text":"after config","tone":"warn"}]},
+          {"label":"ErrAtCapacity", "cells":[{"text":"ResourceExhausted","tone":"warn"},{"text":"load was shed","tone":"neutral"},{"text":"bounded backoff","tone":"good"}]},
+          {"label":"context deadline", "cells":[{"text":"DeadlineExceeded","tone":"warn"},{"text":"budget expired","tone":"neutral"},{"text":"policy decision","tone":"warn"}]},
+          {"label":"guest ExitCode != 0", "cells":[{"text":"successful RPC","tone":"good"},{"text":"program failed normally","tone":"neutral"},{"text":"application decision","tone":"warn"}]},
+          {"label":"unmatched error", "cells":[{"text":"Internal","tone":"bad"},{"text":"infrastructure fault","tone":"bad"},{"text":"investigate","tone":"warn"}]}
+        ],
+        "explainer":{"try":"For each row, decide whether sending the identical request immediately is rational.","idea":"Error taxonomy is architecture because it controls retries, overload, and whether failures amplify.","points":["Use <code>errors.Is</code> for core sentinels.","Non-zero exit is never promoted into a transport failure.","Audit logs record the outcome without recording submitted code."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

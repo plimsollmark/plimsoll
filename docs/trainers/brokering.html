@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="How agent code reaches a customer's API through plimsoll's broker without ever holding the key, how each provider carries broker calls, and how the industry solves the same problem.">
+  <title>The API Broker · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <style>
+    /* Page-local styling for the animated request-flow diagrams. Additive only:
+       scoped under .brk-diagram so it never touches shared trainer.css rules. */
+    .brk-diagram { display: block; width: 100%; max-width: 700px; margin: 6px auto 4px; }
+    .brk-diagram svg { width: 100%; height: auto; }
+  </style>
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">The API Broker</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">Chapters 1-4 describe the shared broker and its Docker and WASM transports; chapter 5 is the E2B path, which reaches the same broker through a configured egress guard. Want the outbound call from both sides at once? Try <a href="private-api.html">The Private API Lab</a>. New to the words? <a href="plain-english.html">Start with Plain English</a>. A check marks ideas you have exercised, not a certification.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id":"brokering",
+    "title":"The API Broker",
+    "tagline":"how agent code reaches your API without ever holding the key",
+    "chapters":[
+      {
+        "id":"the-words",
+        "label":"The words",
+        "kind":"matrix",
+        "title":"Decode the eight words first",
+        "lede":"Before any diagrams, here is the whole vocabulary in plain English. Every later chapter is just these eight ideas moving around. If a word here is new, this row is all you need.",
+        "stats":[{"label":"terms","value":"8"},{"label":"jargon","value":"decoded","tone":"good"}],
+        "promptLabel":"The glossary",
+        "prompt":"Read each row across: the scary word, what it actually means, and why it matters the moment agent code wants to touch your API.",
+        "rowLabel":"Word",
+        "columns":["In plain English","Why it matters here"],
+        "rows":[
+          {"label":"Sandbox","cells":[{"text":"a padded room where we run code we do not trust","tone":"neutral"},{"text":"agent-written code could be hostile, so it never runs loose on your machine","tone":"good"}]},
+          {"label":"Provider","cells":[{"text":"which kind of room: in-process (WASM), a container (Docker), or a small VM (E2B)","tone":"neutral"},{"text":"a stronger room means stronger walls around the code","tone":"good"}]},
+          {"label":"Isolation tier","cells":[{"text":"how many walls stand between the code and your host","tone":"neutral"},{"text":"process is thinnest, then container, then kernel, then VM is strongest","tone":"good"}]},
+          {"label":"Grant","cells":[{"text":"a permission slip: this one run may call this one API, on a short list of routes","tone":"neutral"},{"text":"off by default; with no grant the code has no network at all","tone":"good"}]},
+          {"label":"Broker (the guard)","cells":[{"text":"a checkpoint in the middle that inspects every call and attaches the key","tone":"neutral"},{"text":"so the code never holds the key and can never wander off the route list","tone":"good"}]},
+          {"label":"Token / credential","cells":[{"text":"the server-held bearer or short-lived password the guard adds to each call","tone":"neutral"},{"text":"JWT profiles mint a fresh short-lived token per run; static profiles reuse a server-held bearer","tone":"good"}]},
+          {"label":"Egress","cells":[{"text":"traffic leaving the room","tone":"neutral"},{"text":"default-deny: only the guard's single route out is ever allowed","tone":"good"}]},
+          {"label":"Forward proxy","cells":[{"text":"the industry's name for that guard: a mandatory exit everyone must pass through","tone":"neutral"},{"text":"it is how service meshes mediate outbound calls; plimsoll's guard is one of these","tone":"good"}]}
+        ],
+        "explainer":{"try":"Cover the middle column and see if you can say each word in your own plain terms. The one to lock in is grant: a per-run permission slip, off unless you hand it out.","idea":"The whole system is eight plain ideas. Untrusted code runs in a room with its network off, and a guard in the middle is the only way out to your API.","points":["No grant means no network. Access is opt-in, one run at a time.","The guard, not the code, holds the key and enforces the route list.","Everything after this chapter is these words in motion."]}
+      },
+      {
+        "id":"follow-a-request",
+        "label":"Follow a request",
+        "kind":"pipeline",
+        "title":"One request, from the agent's code to your API",
+        "lede":"This is shipped behavior today for Docker JavaScript. Walk a single call from the model's code all the way to your API and back, and watch the one thing that never moves: the key.",
+        "stats":[{"label":"network in sandbox","value":"none","tone":"good"},{"label":"key reaches code","value":"never","tone":"good"}],
+        "prompt":"Press <strong>Play path</strong> to send one request across. The dot is the call; the glowing box is the guard; the key is attached only after the route is checked.<span class='brk-diagram'><svg viewBox='0 0 660 150' role='img' aria-label='A request travels from agent code, through plimsolld and the broker, to your API. The key is attached at the broker, never inside the sandbox.' style='font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif'><defs><marker id='brkArrow' markerWidth='9' markerHeight='9' refX='7' refY='3' orient='auto'><path d='M0,0 L7,3 L0,6 Z' fill='#9bb3bc'/></marker></defs><line x1='140' y1='72' x2='188' y2='72' stroke='#9bb3bc' stroke-width='2' marker-end='url(#brkArrow)'/><line x1='322' y1='72' x2='370' y2='72' stroke='#9bb3bc' stroke-width='2' marker-end='url(#brkArrow)'/><line x1='504' y1='72' x2='552' y2='72' stroke='#9bb3bc' stroke-width='2' marker-end='url(#brkArrow)'/><rect x='8' y='45' width='132' height='54' rx='11' fill='#eef5f7' stroke='#7fa8b5' stroke-width='1.5' stroke-dasharray='5 4'/><text x='74' y='69' text-anchor='middle' fill='#0b4c61' font-size='13' font-weight='700'>Agent code</text><text x='74' y='86' text-anchor='middle' fill='#8a6d3b' font-size='10.5' font-weight='600'>no network</text><rect x='190' y='45' width='132' height='54' rx='11' fill='#eef5f7' stroke='#7fa8b5' stroke-width='1.5'/><text x='256' y='69' text-anchor='middle' fill='#0b4c61' font-size='13' font-weight='700'>plimsolld</text><text x='256' y='86' text-anchor='middle' fill='#5b6b73' font-size='10.5' font-weight='600'>auth · mint key</text><rect x='372' y='45' width='132' height='54' rx='11' fill='#e0f1f5' stroke='#177f99' stroke-width='2'/><circle cx='438' cy='72' r='28' fill='none' stroke='#177f99' stroke-width='2'><animate attributeName='r' values='24;34;24' dur='2.2s' repeatCount='indefinite'/><animate attributeName='opacity' values='0.55;0;0.55' dur='2.2s' repeatCount='indefinite'/></circle><text x='438' y='68' text-anchor='middle' fill='#0b4c61' font-size='13' font-weight='700'>Broker</text><text x='438' y='85' text-anchor='middle' fill='#5b6b73' font-size='10.5' font-weight='600'>checks route</text><rect x='554' y='45' width='98' height='54' rx='11' fill='#eef5f7' stroke='#7fa8b5' stroke-width='1.5'/><text x='603' y='76' text-anchor='middle' fill='#0b4c61' font-size='13' font-weight='700'>Your API</text><text x='470' y='34' font-size='16'>🔑</text><text x='528' y='120' text-anchor='middle' fill='#8a6d3b' font-size='10.5' font-weight='600'>key added here</text><circle r='7' fill='#177f99'><animateMotion dur='4.2s' repeatCount='indefinite' path='M74,72 H603' keyPoints='0;0.344;0.344;0.688;0.688;1;1' keyTimes='0;0.26;0.34;0.60;0.68;0.94;1' calcMode='linear'/></circle></svg></span>",
+        "steps":[
+          {"layer":"your app","name":"The agent writes code","short":"code that calls host.get(relativeRoute)","detail":"The model writes JavaScript that supplies a relative route to a helper named <code>host</code>. It knows the route it requests, but it never sees the upstream origin or credential."},
+          {"layer":"gateway","name":"Your gateway picks a profile","short":"names a grant_profile","detail":"Your MCP server or agent runner names which permission slip to use. It can only <em>choose</em> a server-side profile by name; it cannot invent one, and it cannot ship its own routes or token."},
+          {"layer":"plimsolld","name":"Authenticate, admit, resolve credential","short":"who are you, are you allowed, use this profile's key","detail":"plimsoll checks the caller's identity and scope, checks capacity and the isolation floor, then calls the profile's minter once. A JWT profile returns a fresh short-lived token for this run; a static profile returns its reusable server-held bearer. Nothing has executed yet.","tone":"neutral"},
+          {"layer":"sandbox","name":"Run with the network off","short":"--network none, one private line","detail":"The container starts with no internet at all, except a single private line (a unix socket) to the guard. Hostile code in here can reach nothing on its own.","tone":"neutral"},
+          {"layer":"broker","name":"The guard checks and forwards","short":"on the list? add the key, send it","detail":"Each <code>host.get</code> becomes a message on that private line. The guard checks it against the route allowlist, attaches the profile credential, forwards it to your API, and counts it against the per-run budget: 256 calls, a 1 MiB request body and a 4 MiB response body. Those are deliberately generous for honest code and fatal for a loop that has run away, which is the only thing a per-run cap can usefully tell apart. The credential is added on the host side and never crosses into the container.","tone":"good"},
+          {"layer":"your API","name":"The answer returns","short":"response back, run is audit-logged","detail":"Your API replies; the guard hands the bytes back to the code. Per-call route-template, size, status, and timing metadata lives in the run's ephemeral CallTrace. The durable base audit unit is one structured line per run, with aggregate call counts and no data or credential.","tone":"good"}
+        ],
+        "explainer":{"try":"Play the path and stop at the glowing box. That guard is the whole security model: the code on the left has no network, and the key appears only to its right.","idea":"Agent code supplies the relative route it wants, but never holds the upstream origin or credential. The guard checks that route, adds the credential, and only allowlisted calls ever leave the room.","points":["The sandbox runs on --network none; the only way out is the guard.","The allowlist, upstream origin, and credential live on the host side; the guest supplies only its requested relative route and body.","Per-call metadata is bounded in the ephemeral CallTrace; the durable base audit is one line per run with aggregate call counts."]}
+      },
+      {
+        "id":"the-one-rule",
+        "label":"The one rule",
+        "kind":"quiz",
+        "title":"Where should the key live?",
+        "lede":"Everything about the broker follows from a single decision. Make it yourself: given that the code in the room is assumed hostile, where is it safe to keep the API key?",
+        "stats":[{"label":"the rule","value":"key stays out","tone":"good"}],
+        "promptLabel":"Make the call",
+        "prompt":"The run needs to call your API, which requires a key. You control where that key is placed. Pick the only safe option.",
+        "options":[
+          {"label":"In the sandbox's environment variables","note":"Set API_KEY inside the container.","correct":false,"result":"the code can just read it","detail":"Anything in the container's environment is readable by the code you do not trust. It can print the key, or send it out the first chance it gets. This is exactly the leak the broker exists to prevent."},
+          {"label":"Handed to the agent code to use","note":"Let the code call your API directly.","correct":false,"result":"now the code holds the key","detail":"If the code makes the call itself, it holds the key and can call any route, on your list or not. The allowlist and host-side enforcement stop meaning anything because nothing is checking or scoping the calls anymore."},
+          {"label":"Only on the guard, added after the check","note":"The broker injects it host-side.","correct":true,"result":"the code never holds it","detail":"The guard attaches the key after it has checked the route, on the host side of the private line. The container has no network and never sees the key, so a fully compromised run has nothing to steal and nowhere to send it. This is why the broker is worth the trouble.","facts":["key stays host-side","minter called once per run","off-list calls blocked"]}
+        ],
+        "explainer":{"try":"Notice the first two options are the easy, obvious ways to give code an API key, and both hand your credential to the attacker. The safe answer is the one that costs a little more to build.","idea":"The key must never enter the room with the hostile code. The guard adds it after the route check, so a compromised run holds nothing worth stealing.","points":["Credential in the sandbox equals credential leaked.","The guard scopes and injects; the code only asks.","This one rule is what every provider chapter has to preserve."]}
+      },
+      {
+        "id":"every-room",
+        "label":"Same guard, every room",
+        "kind":"matrix",
+        "title":"One permission slip, four kinds of room",
+        "lede":"Current architecture. The permission slip and the guard's checks are shared code. What differs per provider is only the private line the request travels down. Here is what each room needs and where it stands.",
+        "stats":[{"label":"providers","value":"4"},{"label":"shared guard","value":"yes","tone":"good"}],
+        "promptLabel":"Compare the rooms",
+        "prompt":"Read across: the same guard runs everywhere. Only the pipe from the code to the guard changes, and each provider advertises which operation-specific paths it can enforce.",
+        "rowLabel":"Provider",
+        "columns":["The private line (transport)","Where the guard runs","Today"],
+        "rows":[
+          {"label":"Docker JS snippet","cells":[{"text":"a unix socket","tone":"good"},{"text":"same host as plimsoll","tone":"good"},{"text":"works now","tone":"good"}]},
+          {"label":"Docker project","cells":[{"text":"same socket, plus a preload module","tone":"neutral"},{"text":"same host","tone":"good"},{"text":"works now","tone":"good"}]},
+          {"label":"WASM","cells":[{"text":"a bounded direct host function","tone":"good"},{"text":"the same process","tone":"good"},{"text":"works now for snippets","tone":"good"}]},
+          {"label":"E2B JavaScript and project","cells":[{"text":"one allowed exit to a proxy","tone":"neutral"},{"text":"host-side, outside the VM","tone":"good"},{"text":"works with E2B_GUARD_URL","tone":"good"}]}
+        ],
+        "explainer":{"try":"Look down the middle column. For Docker and WASM the guard sits beside the code's runtime; for E2B it cannot, because the room is on someone else's servers.","idea":"Grants across runtimes are not separate policy implementations. They are one shared guard plus a thin, per-provider pipe from the code to that guard.","points":["The grant description, route checks, token injection, budgets, and upstream HTTP are shared code.","Docker and WASM JavaScript adapters and the Docker project adapter all use it; a project step gets the same client preloaded with <code>node --import</code>.","Each provider advertises whether it can enforce, so a gateway does not hard-code the matrix."]}
+      },
+      {
+        "id":"e2b-far-away",
+        "label":"E2B: the far room",
+        "kind":"pipeline",
+        "title":"E2B: the locked room on someone else's servers",
+        "lede":"E2B gives the strongest walls, a real small VM, but it runs on E2B's servers, so we cannot slide a private line under the door like we do with Docker. Here is the path that shipped, step by step.",
+        "stats":[{"label":"status","value":"shipped","tone":"good"},{"label":"key in VM","value":"never","tone":"good"}],
+        "prompt":"Press <strong>Play path</strong>. All the VM's exits are bricked except one, pointed at our host-side guard. The key is pinned to the guard and never crosses into the VM.<span class='brk-diagram'><svg viewBox='0 0 660 190' role='img' aria-label='An E2B microVM has all egress denied except one allowed exit to plimsoll’s host-side guard, which attaches the key and forwards to your API. The key never enters the VM.' style='font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif'><defs><marker id='e2bArrow' markerWidth='9' markerHeight='9' refX='7' refY='3' orient='auto'><path d='M0,0 L7,3 L0,6 Z' fill='#177f99'/></marker></defs><g stroke='#c0392b' stroke-width='2'><line x1='55' y1='58' x2='55' y2='34'/><line x1='115' y1='58' x2='115' y2='34'/><line x1='55' y1='140' x2='55' y2='164'/></g><g fill='#c0392b' font-size='12' font-weight='700'><text x='55' y='30' text-anchor='middle'>✕</text><text x='115' y='30' text-anchor='middle'>✕</text><text x='55' y='178' text-anchor='middle'>✕</text></g><text x='168' y='26' fill='#c0392b' font-size='10.5' font-weight='600'>all other egress blocked</text><rect x='14' y='58' width='176' height='82' rx='12' fill='#eef5f7' stroke='#7fa8b5' stroke-width='1.5'/><rect x='20' y='64' width='164' height='70' rx='9' fill='none' stroke='#7fa8b5' stroke-width='1' stroke-dasharray='4 4'/><text x='102' y='82' text-anchor='middle' fill='#5b6b73' font-size='10' font-weight='700'>microVM · E2B servers</text><text x='102' y='104' text-anchor='middle' fill='#0b4c61' font-size='13' font-weight='700'>Agent code</text><text x='102' y='121' text-anchor='middle' fill='#8a6d3b' font-size='10' font-weight='600'>deny-all network</text><line x1='190' y1='99' x2='298' y2='99' stroke='#177f99' stroke-width='2.5' marker-end='url(#e2bArrow)'/><text x='244' y='90' text-anchor='middle' fill='#177f99' font-size='10.5' font-weight='700'>one allowed exit</text><rect x='300' y='72' width='150' height='54' rx='11' fill='#e0f1f5' stroke='#177f99' stroke-width='2'/><text x='375' y='95' text-anchor='middle' fill='#0b4c61' font-size='12.5' font-weight='700'>plimsoll guard</text><text x='375' y='112' text-anchor='middle' fill='#5b6b73' font-size='10' font-weight='600'>host-side · adds key</text><text x='432' y='66' font-size='15'>🔑</text><line x1='450' y1='99' x2='518' y2='99' stroke='#177f99' stroke-width='2.5' marker-end='url(#e2bArrow)'/><rect x='520' y='72' width='128' height='54' rx='11' fill='#eef5f7' stroke='#7fa8b5' stroke-width='1.5'/><text x='584' y='103' text-anchor='middle' fill='#0b4c61' font-size='13' font-weight='700'>Your API</text><text x='375' y='150' text-anchor='middle' fill='#8a6d3b' font-size='10.5' font-weight='600'>the key never enters the VM</text><circle r='7' fill='#177f99'><animateMotion dur='4s' repeatCount='indefinite' path='M190,99 H584' keyPoints='0;0.47;0.47;1;1' keyTimes='0;0.38;0.48;0.92;1' calcMode='linear'/></circle></svg></span>",
+        "steps":[
+          {"layer":"the problem","name":"The room is not on our machine","short":"a microVM on E2B's servers","detail":"With Docker, the room is a container on our own host, so a private socket reaches it. An E2B microVM runs on E2B's infrastructure. There is no shared hallway to run that private line down.","tone":"warn"},
+          {"layer":"the rule","name":"The key stays outside the VM","short":"guard and key live on our side","detail":"The code inside is hostile, so the guard (the route list) and the key can never live inside the VM. Only the raw bytes of a request and its reply are ever allowed to cross in and out. This is the one rule from chapter 3, unchanged.","tone":"neutral"},
+          {"layer":"the plumbing","name":"One allowed exit","short":"deny all egress except the guard","detail":"The VM's network is switched off except for a single approved exit, pointed at our host-side guard. Every other way out is bricked, so hostile code cannot reach your API directly and cannot phone anywhere else.","tone":"neutral"},
+          {"layer":"broker","name":"The guard does its job","short":"check route, add key, forward","detail":"A host.get leaves by that one exit as plain bytes. Our guard checks the route, attaches the profile credential, forwards to your API, and enforces the same budget as every other provider: 256 calls, a 1 MiB request body and a 4 MiB response body per run. JWT profiles mint a fresh short-lived token per run; static profiles reuse a server-held bearer. It is the exact same guard as Docker; only the pipe changed from a socket to one allowed exit.","tone":"good"},
+          {"layer":"the token","name":"The guest cannot forge the exit","short":"E2B injects the guard token outside the VM","detail":"The one allowed exit is only useful if the guard can tell a real run from a hostile call. E2B's per-host header transform attaches the run's guard token to requests on their way out, outside the guest, so the code inside never sees it and cannot mint its own. Configure the guard with <code>E2B_GUARD_URL</code>; with no guard configured an E2B grant is refused outright rather than quietly downgraded to something weaker.","tone":"good"},
+          {"layer":"result","name":"Strong walls and a real API","short":"VM isolation without holding the key","detail":"You get hardware-VM isolation and mediated API access at the same time. Read the startup evidence narrowly: the smoke test creates a no-grant microVM and proves egress is denied outright, so it establishes the deny-all floor, not the guarded exception. The exception is proved by the live guard test (make e2b-guard-live), which fails rather than skips when it is not configured.","tone":"good"}
+        ],
+        "explainer":{"try":"Follow the dot: it can only leave the VM through the single teal arrow, and the key icon stays pinned to the guard on the far side of it. Nothing hostile ever touches the key.","idea":"E2B is hard only because the room is remote. The fix keeps the guard and key on our side and forces the VM's one allowed exit through them.","points":["Default-deny egress plus exactly one allowed exit to a host-side guard.","The run's guard token is attached outside the VM, so the guest can use the exit but cannot forge a call through it.","The E2B capability flips on only after a smoke test proves egress stays denied."]}
+      },
+      {
+        "id":"industry-standard",
+        "label":"How industry does it",
+        "kind":"matrix",
+        "title":"This is the mainstream pattern, not a plimsoll invention",
+        "lede":"The implementation is not exotic. Mediating outbound calls from code you do not fully trust is a solved problem, and plimsoll uses the standard tools, plus one rule made stricter because the code is assumed fully hostile.",
+        "stats":[{"label":"standard","value":"egress proxy","tone":"good"},{"label":"anti-pattern","value":"metadata server","tone":"bad"}],
+        "promptLabel":"The industry map",
+        "prompt":"Two techniques the industry uses, and one it uses that we deliberately refuse. Read the last column for where plimsoll lands on each.",
+        "rowLabel":"Technique",
+        "columns":["What it is","Who uses it","plimsoll"],
+        "rows":[
+          {"label":"Forced-egress forward proxy","cells":[{"text":"default-deny network; all outbound must pass one proxy that holds the policy","tone":"neutral"},{"text":"Envoy, Istio and Linkerd egress gateways","tone":"neutral"},{"text":"the guard is exactly this","tone":"good"}]},
+          {"label":"Short-lived scoped tokens","cells":[{"text":"a broker vends a narrow, expiring token and injects it at the proxy","tone":"neutral"},{"text":"SPIFFE and SPIRE, OAuth client-credentials","tone":"neutral"},{"text":"per-run JWT minter with a required audience","tone":"good"}]},
+          {"label":"Metadata server","cells":[{"text":"a link-local endpoint hands the key INTO the VM","tone":"bad"},{"text":"AWS IMDS, GCP metadata server","tone":"neutral"},{"text":"we refuse it: the key must never enter hostile code","tone":"bad"}]}
+        ],
+        "explainer":{"try":"Note the third row. The cloud's normal way to give a VM credentials puts the key inside the VM, which is exactly why IMDSv2 had to add SSRF defenses. For hostile code that is the one thing we will not do.","idea":"plimsoll implements the industry-standard forced-egress proxy plus host-side credential injection, applied to the strict case where the workload is assumed fully hostile.","points":["Forced-egress forward proxy: the same shape as a service-mesh egress gateway.","Fresh short-lived credentials are available through JWT profiles; static profiles reuse their server-held bearer.","The lifetime choice is separate from the invariant that the credential never enters the guest."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

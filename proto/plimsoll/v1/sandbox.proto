@@ -1,0 +1,204 @@
+syntax = "proto3";
+
+// Package plimsoll.v1 is the RPC surface of the standalone code-execution
+// sandbox. It mirrors the transport-agnostic sandbox.Sandbox interface so any
+// provider (wasm, docker/gVisor, e2b) can back it. Callers reach it over
+// Connect/gRPC; access requires the "code:run" scope.
+package plimsoll.v1;
+
+option go_package = "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1;plimsollv1";
+
+// SandboxService runs untrusted, agent-authored code in an isolated runtime.
+service SandboxService {
+  // RunJavaScriptV2 runs a JavaScript snippet. The versioned procedure is an
+  // atomic protocol boundary: an old backend returns Unimplemented before code
+  // can execute, including when minimum_isolation is requested.
+  rpc RunJavaScriptV2(RunJavaScriptV2Request) returns (RunJavaScriptV2Response);
+  // RunProject writes a multi-file project and runs a sequence of build/lint/run
+  // steps. ProjectCapable providers structurally support this protocol; callers
+  // must still ensure their selected image/template contains the required tools.
+  // RunProjectV2 provides the same mixed-version safety for project runs.
+  rpc RunProjectV2(RunProjectV2Request) returns (RunProjectV2Response);
+  // Describe reports the active provider, current isolation evidence, and static
+  // operation support. Project support is structural and does not prove that the
+  // selected image/template contains a particular toolchain.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  string sandbox = 1; // active provider id (e.g. "docker")
+  // isolation is the provider's boundary tier ("vm", "kernel", "container",
+  // "process", "none") — see RunJavaScriptV2Response.isolation.
+  string isolation = 2;
+  bool supports_project = 3; // whether RunProject works on this provider
+  // Grant support is operation-specific. A provider may support isolated project
+  // runs while only having a credential-safe broker for JavaScript snippets.
+  bool supports_javascript_grants = 4;
+  bool supports_project_grants = 5;
+  // Protocol feature bit: true means this server enforces request
+  // minimum_isolation before admission and dispatch. Older servers omit the
+  // field and therefore decode as false. This is advisory discovery; the V2
+  // execution procedure itself is the atomic mixed-version gate.
+  bool supports_minimum_isolation = 6;
+  // Protocol feature bit: true means this server can compute efficiency advice
+  // (Prospector) for a run whose grant_profile opts in. It is discovery only:
+  // per-profile `advice: off|operator|caller` config still governs whether any
+  // given run returns advice, and advice never changes a run's execution.
+  bool supports_advisory = 7;
+}
+
+// AdviceFinding is one metadata-only efficiency observation about a run's brokered
+// host.* calls (Prospector). It is EVIDENCE, never authoritative: its presence
+// never changes a run's exit_code, output, or isolation. Every string field is
+// templated from trusted inputs alone — the profile's route templates, one of four
+// HTTP verbs, and a sentence built from those plus numbers — so a finding can
+// neither echo a guest id/body/token nor become a prompt-injection channel.
+message AdviceFinding {
+  string pattern = 1; // detector id: fan_out|aggregate_in_code|repeated_read|sequential_calls
+  string severity = 2; // info|low|medium|high (advisory ranking only)
+  string remedy = 3; // batch|aggregate|filter|cache|parallel
+  string method = 4; // route method the finding concerns (GET/PUT/POST/DELETE)
+  string route = 5; // matched route TEMPLATE, never a raw path
+  string detail = 6; // one plain sentence, templated from metadata only
+  // suggested_method/suggested_route name a better route the profile already
+  // exposes (the agent-fixable case). Both empty means no better endpoint exists,
+  // so the fix is an API change and this finding is never returned to a caller.
+  string suggested_method = 7;
+  string suggested_route = 8;
+  int32 extra_calls = 9; // calls beyond the ideal the pattern spent
+  int64 added_latency_ms = 10; // upstream time the pattern cost over its ideal shape
+  int64 bytes_moved = 11; // request+response bytes across the flagged calls
+}
+
+message RunJavaScriptV2Request {
+  string code = 1; // JavaScript source; engine is provider-dependent
+  int32 timeout_ms = 2; // optional; defaults and is clamped server-side
+  // grant_profile names a server-configured host-API capability (see
+  // PLIMSOLL_GRANTS_FILE). Empty = fully isolated. The caller can only SELECT a
+  // pre-registered profile; BaseURL, allowed routes, and the token live server-side.
+  string grant_profile = 3;
+  // Per-run boundary floor. Empty means no request-specific floor; otherwise
+  // one of "process", "container", "kernel", or "vm". The server checks its
+  // current provider evidence immediately before admission and dispatch.
+  string minimum_isolation = 4;
+  // trace_id is an OPAQUE correlation id the caller already uses in its own logs
+  // (e.g. an id carried across an upstream MCP proxy boundary). plimsoll
+  // records it on the run's audit line and does NOTHING else with it: it is never
+  // parsed, never routed on, never handed to the guest, and never sent upstream.
+  // Its only job is to make plimsoll's metadata-only audit line JOINABLE to the
+  // caller's own record of the same request — so "which record did the agent
+  // read" stays answerable one layer up, without plimsoll keeping a second copy
+  // of the payload to answer it.
+  //
+  // It is caller-controlled, which makes it the one field here that could smuggle
+  // a path or an identifier into a telemetry stream whose entire claim is that it
+  // cannot hold one. The server therefore accepts it only as [A-Za-z0-9._:-] up to
+  // 64 bytes and DROPS it otherwise, recording that it dropped one. Put nothing
+  // meaningful in it: the meaning belongs in the caller's log, not this one.
+  string trace_id = 5;
+}
+
+message RunJavaScriptV2Response {
+  // stdout/stderr are bytes, not strings: guest programs can emit arbitrary
+  // byte sequences, and a protobuf string would repair invalid UTF-8 lossily
+  // during serialization. The caller decides how to decode.
+  bytes stdout = 1;
+  bytes stderr = 2;
+  int32 exit_code = 3;
+  bool timed_out = 4;
+  int64 duration_ms = 5;
+  string sandbox = 6; // which provider ran it (e.g. "docker")
+  // isolation is the strength of the boundary the code actually ran behind
+  // ("vm", "kernel", "container", "process", "none"), so a caller is never blind
+  // to the tier. The provider name alone hides it: "docker" is a real kernel
+  // boundary under gVisor but only shared-kernel namespaces under runc.
+  string isolation = 7;
+  // The provider's output cap dropped bytes from the stream. The retained
+  // prefix is returned unmarked; these flags are the only truncation signal.
+  bool stdout_truncated = 8;
+  bool stderr_truncated = 9;
+  // advice is a bounded, metadata-only list of efficiency findings. It is present
+  // only when the run's grant_profile set advice: caller AND at least one
+  // agent-fixable finding exists; it is empty otherwise. Advisory only: this field
+  // never changed the run's execution — a run is byte-identical with or without it.
+  // Only agent-fixable findings (a better route the profile exposes) appear here;
+  // API-change findings stay on the operator surface.
+  repeated AdviceFinding advice = 10;
+}
+
+message ProjectFile {
+  string path = 1; // relative path inside the project work dir
+  string content = 2;
+}
+
+message StepResult {
+  string command = 1;
+  // bytes for the same reason as RunJavaScriptV2Response.stdout: guest output
+  // is arbitrary bytes and must not be repaired during serialization.
+  bytes stdout = 2;
+  bytes stderr = 3;
+  int32 exit_code = 4;
+  bool timed_out = 5;
+  int64 duration_ms = 6;
+  // The sandbox's per-step output cap dropped bytes from the stream.
+  bool stdout_truncated = 7;
+  bool stderr_truncated = 8;
+}
+
+// ProjectOutcome types the top-level conclusion of a project run so callers can
+// make retry/status decisions without parsing failure strings. Per-step
+// failures live in steps; this reports how the RUN concluded.
+enum ProjectOutcome {
+  PROJECT_OUTCOME_UNSPECIFIED = 0;
+  // The runner executed the plan to its normal conclusion (stop on first
+  // failing step included); inspect steps for the user's results.
+  PROJECT_OUTCOME_COMPLETED = 1;
+  // The run failed around step execution for a request-attributable reason the
+  // runner reported (illegal file path, unwritable file, over-budget result).
+  // Retrying the same request will fail again.
+  PROJECT_OUTCOME_SETUP_FAILED = 2;
+  // The outer wall-clock budget expired before the runner reported; steps may
+  // be partial or missing.
+  PROJECT_OUTCOME_TIMED_OUT = 3;
+  // The sandbox produced no parseable result: execution state unknown. Retry
+  // only if the project is idempotent.
+  PROJECT_OUTCOME_PROTOCOL_ERROR = 4;
+}
+
+message Artifact {
+  string path = 1;
+  bytes content = 2;
+}
+
+message RunProjectV2Request {
+  repeated ProjectFile files = 1; // written into the work dir before steps run
+  repeated string steps = 2; // shell commands run in order; stop on first failure
+  int32 timeout_ms = 3; // total wall-clock budget; clamped server-side
+  repeated string artifacts = 4; // relative file paths to capture and return
+  string grant_profile = 5; // server-configured host-API capability; empty = isolated
+  string minimum_isolation = 6; // per-run floor; see RunJavaScriptV2Request.minimum_isolation
+  string trace_id = 7; // opaque join key for the caller's own log; see RunJavaScriptV2Request.trace_id
+}
+
+message RunProjectV2Response {
+  repeated StepResult steps = 1; // one per step that ran
+  string sandbox = 2;
+  // Typed top-level conclusion of the run. Step failures live in steps;
+  // pre-dispatch/provider failures use the RPC status instead of this field.
+  ProjectOutcome outcome = 3;
+  repeated Artifact artifacts = 4; // captured output files (those that existed)
+  string isolation = 5; // boundary tier the run executed behind (see RunJavaScriptV2Response.isolation)
+  // Human-readable context for a non-completed outcome; empty when completed.
+  string outcome_detail = 6;
+  // The aggregate artifact byte budget dropped one or more requested artifacts
+  // that existed.
+  bool artifacts_truncated = 7;
+  // advice mirrors RunJavaScriptV2Response.advice for project runs: a bounded,
+  // metadata-only list of agent-fixable efficiency findings over the run's brokered
+  // host.* calls. Present only when the grant_profile set advice: caller AND at least
+  // one agent-fixable finding exists; empty otherwise. Advisory only — a run is
+  // byte-identical with or without it; API-change findings stay on the operator surface.
+  repeated AdviceFinding advice = 8;
+}

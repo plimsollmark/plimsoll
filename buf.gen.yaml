@@ -1,0 +1,14 @@
+version: v2
+clean: true
+# Plugins run via `go tool`, so their versions are PINNED by go.mod's tool
+# directives (protoc-gen-go v1.36.11, protoc-gen-connect-go v1.20.0) and
+# integrity-checked by go.sum — reproducible generation with no network, no
+# buf.build registry access, and no reliance on whatever happens to be on PATH.
+# To upgrade: `go get -tool <module>@<version>`, then `buf generate`.
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: gen/go
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-connect-go"]
+    out: gen/go
+    opt: paths=source_relative

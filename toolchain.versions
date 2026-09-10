@@ -1,0 +1,13 @@
+# Single source of truth for the baked TypeScript toolchain versions, shared by the
+# docker provider image (docker/Dockerfile) and the e2b template (e2b/e2b.Dockerfile)
+# so the two providers offer the SAME toolchain and cannot drift.
+#
+# Both Dockerfiles hardcode these versions (so `docker build` and `e2b template
+# build` need no special flags); the internal/toolchain test fails if either
+# Dockerfile no longer matches this file. To bump a version: edit it here AND in both
+# Dockerfiles — the test will tell you if you miss one.
+#
+# Format: name=version (one per line; # comments allowed).
+typescript=5.6.3
+tsx=4.19.2
+eslint=9.13.0

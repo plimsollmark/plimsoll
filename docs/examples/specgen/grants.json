@@ -1,0 +1,37 @@
+{
+  "profiles": {
+    "smart-home": {
+      "base_url": "https://home.internal",
+      "allowed_callers": ["mcp-home"],
+      "scopes": ["home:control"],
+      "token": { "type": "jwt", "secret_env": "SMART_HOME_JWT_SECRET", "audience": "home" },
+
+      "allow": [
+        "POST /lights",
+        "DELETE /lights/*",
+        "GET /lights/*",
+        "PATCH /lights/*",
+        "PUT /lights/*",
+        "GET /rooms/*/lights",
+        "GET /scenes",
+        "GET /status"
+      ],
+      "catalog": [
+        "GET /lights",
+        "POST /lights",
+        "DELETE /lights/*",
+        "GET /lights/*",
+        "PATCH /lights/*",
+        "PUT /lights/*",
+        "GET /rooms/*/lights",
+        "GET /scenes",
+        "GET /status"
+      ],
+      "preamble_file": "preamble.js",
+      "health_check": "GET /status",
+
+      "advice": "caller",
+      "advice_retention": "detailed"
+    }
+  }
+}

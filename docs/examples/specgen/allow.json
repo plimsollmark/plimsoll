@@ -1,0 +1,11 @@
+[
+  "GET /lights",
+  "POST /lights",
+  "DELETE /lights/*",
+  "GET /lights/*",
+  "PATCH /lights/*",
+  "PUT /lights/*",
+  "GET /rooms/*/lights",
+  "GET /scenes",
+  "GET /status"
+]

@@ -1,0 +1,20 @@
+# The out-of-module tools `make audit` shells out to. They are not Go dependencies,
+# so nothing in go.mod pins them and every machine can run a different gate while
+# reporting the same "audit: OK". This file is the pin: `make tools` installs exactly
+# these, and `make tools-check` (a prerequisite of `audit`) refuses to run the gate
+# against anything else.
+#
+# The codegen plugins are NOT here: protoc-gen-go and protoc-gen-connect-go are
+# pinned by go.mod `tool` directives and run through `go tool`, which is the better
+# mechanism. These three cannot use it because they are invoked as commands rather
+# than built from this module.
+#
+# To bump one: change the version here, run `make tools`, run `make audit`, and
+# commit both this file and any output churn it causes (a golangci-lint bump in
+# particular can surface new findings, which is the point of pinning it).
+#
+# Format: name=version (one per line; # comments allowed). The version string is
+# compared literally against what the installed tool reports.
+buf=1.71.0
+golangci-lint=2.12.2
+govulncheck=v1.6.0

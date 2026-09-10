@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive trainer for plimsoll's provider, isolation, capability, result, and admission concepts.">
+  <title>Concepts · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Concepts</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">New to the words here? <a href="plain-english.html">Start with Plain English</a>. Use ← and → to move between chapters; a check marks ideas you have exercised, not a certification.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id": "concepts",
+    "title": "plimsoll concepts",
+    "tagline": "boundaries before features",
+    "chapters": [
+      {
+        "id": "safe-default",
+        "label": "Safe by default",
+        "kind": "quiz",
+        "title": "No provider means no execution",
+        "lede": "Out of the box, plimsoll runs nothing. Someone has to switch a runner on first. If no runner is set, or the name is unknown, every request is politely refused instead of guessed.",
+        "stats": [{"label":"default","value":"disabled","tone":"good"},{"label":"native fallback","value":"never","tone":"good"}],
+        "prompt": "A fresh deployment has no <code>SANDBOX_PROVIDER</code>. What happens when a caller submits JavaScript?",
+        "options": [
+          {"label":"Run it with local Node","note":"Convenient, but it would execute hostile code as a host process.","correct":false,"result":"there is no native fallback","detail":"Executing agent code directly on the daemon host violates plimsoll's central invariant."},
+          {"label":"Use WASM automatically","note":"A low-latency provider might look like a safe fallback.","correct":false,"result":"providers are opt-in","detail":"Even the process-tier WASM provider must be chosen explicitly."},
+          {"label":"Return ErrDisabled","note":"The Disabled provider is the safe factory default.","correct":true,"result":"the run is refused","detail":"The caller receives a typed precondition failure. Nothing evaluates the submitted code.","facts":["provider: disabled","isolation: none","RPC: FailedPrecondition"]}
+        ],
+        "explainer":{"try":"Pick each tempting fallback and inspect why plimsoll refuses to infer authority from convenience.","idea":"The safest execution path is the one that does not exist until an operator deliberately configures it.","points":["<code>Build(nil)</code> returns <code>(Provider, error)</code> and selects Disabled when no provider is configured.","Direct provider constructors are explicit opt-ins.","Agent code is never executed as a native host process."]}
+      },
+      {
+        "id": "isolation-ladder",
+        "label": "Isolation ladder",
+        "kind": "matrix",
+        "title": "Provider name is not boundary strength",
+        "lede": "Each runner tells you how thick its wall is, its 'tier'. The name alone does not: the same Docker runner reports a weaker or stronger wall depending on what it can prove at startup. So read the wall it reports, don't guess it from the name.",
+        "stats": [{"label":"tiers","value":"5"},{"label":"hostile floor","value":"kernel","tone":"warn"}],
+        "prompt": "Read the rows from weakest to strongest. A runner that can't prove its wall counts as meeting no minimum you asked for.",
+        "rowLabel": "Configuration",
+        "columns": ["Reported tier", "What an escape reaches", "Hostile production"],
+        "rows": [
+          {"label":"Disabled", "cells":[{"text":"none","tone":"neutral"},{"text":"nothing runs","tone":"good"},{"text":"safe refusal","tone":"good"}]},
+          {"label":"WASM / wazero", "cells":[{"text":"process","tone":"warn"},{"text":"plimsolld process","tone":"bad"},{"text":"too weak","tone":"bad"}]},
+          {"label":"Docker / runc", "cells":[{"text":"container","tone":"warn"},{"text":"shared host kernel","tone":"bad"},{"text":"too weak alone","tone":"bad"}]},
+          {"label":"Docker / verified runsc", "cells":[{"text":"kernel","tone":"good"},{"text":"gVisor user-space kernel","tone":"good"},{"text":"eligible","tone":"good"}]},
+          {"label":"E2B / Firecracker", "cells":[{"text":"vm","tone":"good"},{"text":"hardware VM boundary","tone":"good"},{"text":"strongest tier","tone":"good"}]}
+        ],
+        "explainer":{"try":"Find the two configurations that use the same Docker provider name but make different security promises.","idea":"The tier comes from what the runner could prove at startup, not from its name, and every run carries the answer.","points":["<code>SANDBOX_MIN_ISOLATION</code> can refuse weak startup configurations.","Every result reports the tier that actually ran.","runsc is kernel-tier only after Preflight verifies its registration with the daemon: that is configuration and behavior evidence, not cryptographic attestation of the runtime."]}
+      },
+      {
+        "id": "operation-contracts",
+        "label": "Operation contracts",
+        "kind": "matrix",
+        "title": "Support is operation-specific",
+        "lede": "Running a one-file snippet, running a whole multi-file project, and handing code a narrow key to one outside service are three separate abilities. A runner having one of them tells you nothing about the other two.",
+        "stats": [{"label":"operations","value":"4"},{"label":"JS grant providers","value":"3, one guarded","tone":"good"}],
+        "prompt": "This is the current built-in provider matrix. A cross means the provider rejects the request instead of dropping its contract.",
+        "rowLabel": "Provider",
+        "columns": ["JavaScript", "Projects", "JS grants", "Project grants"],
+        "rows": [
+          {"label":"WASM", "cells":[{"text":"yes","tone":"good"},{"text":"no","tone":"bad"},{"text":"brokered","tone":"good"},{"text":"no","tone":"bad"}]},
+          {"label":"Docker", "cells":[{"text":"yes","tone":"good"},{"text":"yes","tone":"good"},{"text":"brokered","tone":"good"},{"text":"brokered","tone":"good"}]},
+          {"label":"E2B", "cells":[{"text":"yes","tone":"good"},{"text":"yes","tone":"good"},{"text":"with guard","tone":"warn"},{"text":"with guard","tone":"warn"}]},
+          {"label":"Disabled", "cells":[{"text":"no","tone":"neutral"},{"text":"no","tone":"neutral"},{"text":"no","tone":"neutral"},{"text":"no","tone":"neutral"}]}
+        ],
+        "explainer":{"try":"Choose a provider for a multi-file TypeScript build with a host-API grant. Docker satisfies both halves; work out which half WASM refuses, and what E2B needs configured before it can do either.","idea":"What a runner is allowed to do is decided per task, one answer for snippets, one for projects, one for grants, not for the runner as a whole.","points":["<code>Describe</code> reports project and grant support separately.","Unsupported operations return <code>ErrUnsupported</code>.","No provider silently ignores a requested grant."]}
+      },
+      {
+        "id": "least-authority",
+        "label": "Least authority",
+        "kind": "quiz",
+        "title": "A grant is a narrow route, not network access",
+        "lede": "A 'grant' is not 'the internet'. The caller picks a named profile by its name only; the server holds the real details and asks that profile's minter for the credential used by the run. A JWT profile creates a fresh short-lived token per run; a static profile reuses its server-held bearer.",
+        "stats": [{"label":"default routes","value":"0","tone":"good"},{"label":"minter calls","value":"1 / run","tone":"good"}],
+        "prompt": "A remote caller needs <code>GET /companies/acme</code>. Which request preserves the capability model?",
+        "options": [
+          {"label":"Send a bearer token in code","note":"Put a long-lived secret in the hostile container.","correct":false,"result":"the credential is exposed","detail":"Hostile code could print or exfiltrate the bearer. Raw caller-supplied grants are not accepted over RPC."},
+          {"label":"Enable container egress","note":"Let code call the host API directly.","correct":false,"result":"the route boundary disappears","detail":"A grant is not general network access. No-grant runs remain network-isolated."},
+          {"label":"Select a named profile","note":"The server holds the origin, allowed routes, ACL, scopes, and minter.","correct":true,"result":"authority stays server-side","detail":"The shared broker enforces the exact route and injects the credential returned by the profile's minter. JWT profiles mint a fresh short-lived token per run; static profiles reuse a server-held bearer. Either way, the credential stays in Go and never enters the guest.","facts":["allowed_callers ACL","exact-wire allowlist","credential outside guest"]}
+        ],
+        "explainer":{"try":"Compare what hostile code can observe in each option: source text, network, token, and allowed route.","idea":"A good grant names exactly who may call exactly which address, for exactly one run.","points":["A nil grant means no network.","An empty <code>Allow</code> list reaches nothing.","Declared scopes cannot include <code>code:run</code> or <code>*</code>."]}
+      },
+      {
+        "id": "result-semantics",
+        "label": "Result semantics",
+        "kind": "scenario",
+        "title": "Guest failure is still a result",
+        "lede": "'The code ran and failed' is very different from 'we never ran your code' and from 'our plumbing broke'. plimsoll keeps those three apart so you know when it is worth trying again.",
+        "stats": [{"label":"exit 1","value":"result","tone":"good"},{"label":"capacity","value":"error","tone":"warn"}],
+        "promptLabel": "Classify the outcome",
+        "prompt": "Select an event to see which channel carries it.",
+        "options": [
+          {"label":"JavaScript calls process.exit(2)","note":"The guest deliberately exits non-zero.","result":"normal Result with ExitCode 2","detail":"No Go error is returned. stdout, stderr, duration, sandbox, and isolation remain meaningful.","tone":"good"},
+          {"label":"Request exceeds 256 KiB","note":"Shared validation rejects it before dispatch.","result":"ErrInvalidRequest","detail":"Over RPC this maps to InvalidArgument. No provider starts.","tone":"warn"},
+          {"label":"All admission slots are busy","note":"The service sheds instead of queueing.","result":"ErrAtCapacity","detail":"Over RPC this maps to ResourceExhausted and is a candidate for bounded backoff.","tone":"warn"},
+          {"label":"Docker daemon disappears","note":"A provider dependency fails unexpectedly.","result":"infrastructure error","detail":"An unmatched returned error maps to Internal. It is not disguised as guest stderr.","tone":"bad"}
+        ],
+        "explainer":{"try":"Ask whether a normal guest result exists for each event. That single question separates the channels.","idea":"An exit code tells you how the code itself did; a returned error tells you the system around it refused the request or broke.","points":["Pre-dispatch refusal and infrastructure failure are returned Go errors.","Project step failures live in <code>Steps</code>.","A returned <code>ProjectResult</code> classifies its post-dispatch conclusion in <code>Outcome</code>, with human context in <code>Detail</code> for non-completed outcomes."]}
+      },
+      {
+        "id": "admission-budget",
+        "label": "Admission budget",
+        "kind": "budget",
+        "title": "Count work and reserve memory",
+        "lede": "Limiting how many runs happen at once is not the same as limiting memory. plimsoll does both: it caps how many run together and reserves a fixed chunk of memory for each, then turns away anything over the line right away instead of making it wait in a queue.",
+        "stats": [],
+        "defaults": {"maxConcurrent":8,"totalMemory":1024,"perRunMemory":256,"offered":10},
+        "prompt": "Move the controls. How many runs you can actually take is the smaller of two things: your run-count limit and how many fit in total memory. E2B runners live off your machine, so they don't spend this host memory.",
+        "explainer":{"try":"Set eight concurrent runs, 1 GiB total memory, and 256 MiB per run. Then explain why only four enter.","idea":"The gate reserves the scarce thing, memory and run slots, before starting anything, and sheds extra work right away instead of queueing it.","points":["Concurrency and memory are released exactly once.","RPC limits also add per-caller concurrency and token-bucket rate gates.","Malformed half-configured budgets fail closed."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

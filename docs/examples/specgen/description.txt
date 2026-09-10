@@ -1,0 +1,23 @@
+Smart Home Control (v1.2.0).
+Agent code reaches it through the brokered `home.*` client; only the operations
+below are permitted. Every call is allow-listed and gets a per-run token injected
+host-side, so the code never handles a credential.
+
+  home.listLights()  ->  GET /lights
+      List every light with its current state.
+  home.createLight(body)  ->  POST /lights
+      Register a new light.
+  home.getLight(id)  ->  GET /lights/{id}
+      Get one light by id.
+  home.setLight(id, body)  ->  PUT /lights/{id}
+      Replace a light's full state.
+  home.deleteLight(id)  ->  DELETE /lights/{id}
+      Remove a light.
+  home.updateLight(id, body)  ->  PATCH /lights/{id}
+      Patch part of a light's state (brightness, color).
+  home.listRoomLights(room)  ->  GET /rooms/{room}/lights
+      List the lights in one room.
+  home.listScenes()  ->  GET /scenes
+      List saved scenes.
+  home.getStatus()  ->  GET /status
+      Report gateway health and current capacity (in-flight requests, rate-limit headroom).

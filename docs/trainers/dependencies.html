@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive trainer for plimsoll's Go modules, embedded runtimes, provider dependencies, toolchains, and trusted computing base.">
+  <title>Dependencies · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Dependencies</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">New to the words here? <a href="plain-english.html">Start with Plain English</a>. A hostile-code runner has two dependency lists: what ships inside plimsolld, and what each runner needs when it runs.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id":"dependencies",
+    "title":"plimsoll dependencies",
+    "tagline":"keep the trusted surface explainable",
+    "chapters":[
+      {
+        "id":"two-graphs",
+        "label":"Two dependency graphs",
+        "kind":"matrix",
+        "title":"Build dependencies and runtime dependencies are different",
+        "lede":"plimsoll has two separate dependency lists: the small set of Go libraries baked into the daemon itself, and the outside things a chosen runner pulls in at run time, like a container runtime, images, or a cloud service. Keep them straight.",
+        "stats":[{"label":"direct Go deps","value":"4","tone":"good"},{"label":"native fallback","value":"0","tone":"good"}],
+        "prompt":"Place each dependency at the layer whose compromise or outage it affects.",
+        "rowLabel":"Layer",
+        "columns":["Examples","Present when","Failure scope"],
+        "rows":[
+          {"label":"Go control plane", "cells":[{"text":"Connect, protobuf, x/net","tone":"neutral"},{"text":"every daemon","tone":"warn"},{"text":"RPC/control process","tone":"warn"}]},
+          {"label":"Embedded JS engine", "cells":[{"text":"wazero + qjs-wasi.wasm","tone":"neutral"},{"text":"WASM provider","tone":"warn"},{"text":"same process","tone":"bad"}]},
+          {"label":"Local execution plane", "cells":[{"text":"Docker, runtime, images, seccomp","tone":"neutral"},{"text":"Docker provider","tone":"warn"},{"text":"host kernel boundary","tone":"warn"}]},
+          {"label":"Remote execution plane", "cells":[{"text":"E2B API, envd, template","tone":"neutral"},{"text":"E2B provider","tone":"warn"},{"text":"off-host availability","tone":"warn"}]},
+          {"label":"Guest toolchain", "cells":[{"text":"Node, tsc, tsx, eslint","tone":"neutral"},{"text":"project image/template","tone":"warn"},{"text":"individual project run","tone":"neutral"}]}
+        ],
+        "explainer":{"try":"For a Docker-only deployment, cross out dependencies that are compiled in but not invoked, then identify which still remain in the process TCB.","idea":"Not every library baked in is a wall, but anything that reads untrusted input or runs code still has to be watched closely.","points":["The <code>sandbox</code> package stays transport-neutral.","Provider Preflight turns external dependencies into explicit readiness evidence.","No provider ever falls back to host Node or a host shell."]}
+      },
+      {
+        "id":"go-modules",
+        "label":"Go modules",
+        "kind":"matrix",
+        "title":"Four direct modules carry the control plane",
+        "lede":"The Go dependency list is kept small on purpose. Every new library that parses input or runs code is one more thing hostile code could exploit, so it has to earn its place.",
+        "stats":[{"label":"Go","value":"1.26.2"},{"label":"direct","value":"4","tone":"good"}],
+        "prompt":"Versions shown here mirror <code>go.mod</code>. Indirect modules arrive through the direct graph.",
+        "rowLabel":"Module",
+        "columns":["Version","Role","Trust note"],
+        "rows":[
+          {"label":"connectrpc.com/connect", "cells":[{"text":"v1.20.0","tone":"neutral"},{"text":"RPC client/server","tone":"good"},{"text":"wire/body parsing","tone":"warn"}]},
+          {"label":"github.com/tetratelabs/wazero", "cells":[{"text":"v1.12.0","tone":"neutral"},{"text":"WASM runtime + WASI","tone":"good"},{"text":"in-process engine","tone":"bad"}]},
+          {"label":"golang.org/x/net", "cells":[{"text":"v0.56.0","tone":"neutral"},{"text":"network/HTTP support","tone":"good"},{"text":"protocol surface","tone":"warn"}]},
+          {"label":"google.golang.org/protobuf", "cells":[{"text":"v1.36.11","tone":"neutral"},{"text":"wire messages","tone":"good"},{"text":"generated parser","tone":"warn"}]},
+          {"label":"golang.org/x/sys", "cells":[{"text":"v0.46.0 indirect","tone":"neutral"},{"text":"low-level OS support","tone":"neutral"},{"text":"transitive","tone":"warn"}]},
+          {"label":"golang.org/x/text", "cells":[{"text":"v0.38.0 indirect","tone":"neutral"},{"text":"text support","tone":"neutral"},{"text":"transitive","tone":"warn"}]}
+        ],
+        "explainer":{"try":"Choose which update deserves the most adversarial isolation testing: a docs-only tool, protobuf, or wazero.","idea":"The goal isn't the fewest dependencies for its own sake; it's a trusted surface small enough to understand and test.","points":["Generated Connect/protobuf code is checked into <code>gen/go</code>.","buf generation uses local plugins and needs no network.","Do not add a dependency casually to the hostile-code TCB."]}
+      },
+      {
+        "id":"wasm-stack",
+        "label":"WASM stack",
+        "kind":"quiz",
+        "title":"wazero supplies the real memory control",
+        "lede":"The WASM runner bundles a small JavaScript engine and runs it on the wazero host, setting a real memory cap for each run itself instead of trusting a wrapper to do it.",
+        "stats":[{"label":"artifact","value":"embedded"},{"label":"boundary","value":"process","tone":"warn"}],
+        "prompt":"A proposed wrapper claims to expose <code>MemoryLimit</code>, but the setting is a no-op. What should plimsoll do?",
+        "options":[
+          {"label":"Keep the wrapper for convenience","note":"Document that the limit is best-effort.","correct":false,"result":"a safety control becomes fictional","detail":"An unenforced memory setting is worse than an explicit unsupported error in a hostile-code runner."},
+          {"label":"Drive wazero directly","note":"Use WithMemoryLimitPages for a real per-run cap.","correct":true,"result":"the limit is enforceable","detail":"This is why <code>github.com/fastschema/qjs</code> is banned. plimsoll embeds the QuickJS-ng WASI artifact but owns the wazero configuration.","facts":["qjs wrapper banned","page limit","no FS/network"]},
+          {"label":"Use host Node instead","note":"Avoid WASM complexity by evaluating the snippet natively.","correct":false,"result":"host execution violates the invariant","detail":"There is never a native-process fallback for agent-authored code."}
+        ],
+        "explainer":{"try":"Separate the engine from the boundary: QuickJS interprets JavaScript; wazero constrains WASM memory; neither creates an OS or VM boundary.","idea":"A safety setting only counts if plimsoll can prove the engine underneath actually enforces it, not just that a label says so.","points":["The embedded artifact checksum is test-pinned.","QuickJS source, wasi-sdk, CMake, the local host-call shim, and a deterministic build script are all pinned and documented.","An engine escape lands in plimsolld, so this tier is for lower-risk use only."]}
+      },
+      {
+        "id":"provider-dependencies",
+        "label":"Provider externals",
+        "kind":"matrix",
+        "title":"Each provider fails on a different external edge",
+        "lede":"Each runner leans on different outside things, so the startup check is different for each: WASM needs almost nothing, Docker needs a working daemon and images, E2B needs the cloud API and a template.",
+        "stats":[{"label":"providers","value":"3"},{"label":"offline default","value":"yes","tone":"good"}],
+        "prompt":"Use this map when deciding readiness, rollout strategy, and where immutable artifacts must live.",
+        "rowLabel":"Provider",
+        "columns":["External/runtime needs","Artifact needs","Preflight focus"],
+        "rows":[
+          {"label":"WASM", "cells":[{"text":"none after build","tone":"good"},{"text":"embedded qjs WASM","tone":"warn"},{"text":"configuration enforceable","tone":"good"}]},
+          {"label":"Docker", "cells":[{"text":"daemon + OCI runtime","tone":"warn"},{"text":"snippet + project images, seccomp","tone":"warn"},{"text":"endpoint, images, runsc evidence","tone":"good"}]},
+          {"label":"E2B", "cells":[{"text":"E2B control API + envd","tone":"warn"},{"text":"template / baked toolchain","tone":"warn"},{"text":"API key, tokens, allocations","tone":"good"}]},
+          {"label":"Disabled", "cells":[{"text":"none","tone":"good"},{"text":"none","tone":"good"},{"text":"always refuses","tone":"neutral"}]}
+        ],
+        "explainer":{"try":"Simulate an air-gapped host after artifacts are present. Which configured provider can still create new runners?","idea":"Whether a runner can start right now, meaning are its dependencies up, is a separate question from how strong its wall is. Both matter.","points":["Docker runs guests with network disabled.","No-grant E2B denies outbound internet and public traffic.","Mutable external state should be probed, not assumed from startup config alone."]}
+      },
+      {
+        "id":"toolchain-lockstep",
+        "label":"Guest toolchain",
+        "kind":"scenario",
+        "title":"Bake tools once; deny installs at runtime",
+        "lede":"The Docker and E2B project runners bake in the same fixed set of TypeScript tools, so projects can build without ever letting the code reach the internet to install anything.",
+        "stats":[{"label":"Node image","value":"22-alpine"},{"label":"runtime egress","value":"off","tone":"good"}],
+        "promptLabel":"Change one dependency",
+        "prompt":"Select an update path and inspect whether it preserves the lockstep contract.",
+        "options":[
+          {"label":"npm install during every run","note":"Fetch the newest tools inside the sandbox.","result":"rejected supply-chain path","detail":"Runtime network is denied. Dynamic installs add non-reproducible code and an exfiltration path.","tone":"bad"},
+          {"label":"Bump Docker only","note":"Change tsc in the local project image.","result":"provider drift","detail":"The toolchain test detects that Docker and the E2B template no longer match <code>toolchain.versions</code>.","tone":"warn"},
+          {"label":"Update all three sources","note":"toolchain.versions plus both Dockerfiles, then rebuild/smoke.","result":"lockstep preserved","detail":"Current pins are TypeScript 5.6.3, tsx 4.19.2, and ESLint 9.13.0. Build-time installation leaves runtime network off.","tone":"good","facts":["single version file","two images/templates","smoke after build"]}
+        ],
+        "explainer":{"try":"Imagine only snippet execution is enabled. Decide which toolchain artifacts are unnecessary at runtime and which base image still matters.","idea":"Baking a fixed set of tools into the image turns a live download you can't vouch for into a reviewed, known ingredient.","points":["Project steps stop on first failure.","The in-container runner is a preloaded Node ESM process.","Structural project support still needs artifact smoke evidence."]}
+      },
+      {
+        "id":"upgrade-gate",
+        "label":"Upgrade gate",
+        "kind":"checklist",
+        "title":"Review dependency changes as boundary changes",
+        "lede":"Bumping a dependency isn't done when the number changes. It's done when you've re-checked where it came from, what it now does, and that each runner's safety controls still hold.",
+        "stats":[],
+        "prompt":"Check the evidence required for a dependency or execution artifact upgrade.",
+        "items":[
+          {"label":"Record the exact source and immutable digest","why":"A tag or unexplained embedded binary cannot be reproduced reliably."},
+          {"label":"Review changelog and security impact","why":"Prioritize parsers, runtimes, syscall surface, and boundary behavior."},
+          {"label":"Update all lockstep version sources","why":"The shared toolchain file and both provider images must agree."},
+          {"label":"Run build, vet, unit, race, proto, and lint checks","why":"Control-plane and concurrency regressions need broad local evidence."},
+          {"label":"Run provider and negative security smokes","why":"Prove denied network/routes/syscalls as well as successful execution."},
+          {"label":"Re-run Preflight against the deployment artifact","why":"Local unit tests do not prove an OCI runtime, image, or E2B template exists."},
+          {"label":"Update architecture and audit records","why":"The documented TCB must match what operators actually deploy."},
+          {"label":"Generate an SBOM for release artifacts","why":"Useful supply-chain evidence beyond the current minimum.","required":false}
+        ],
+        "ready":"The change has source, behavioral, concurrency, and live provider evidence. It can enter the normal rollout process.",
+        "notReady":"The new dependency has not re-earned trust. Keep the previous artifact or leave execution disabled.",
+        "explainer":{"try":"Check only unit tests and observe why that cannot prove the artifact digest or live runtime contract.","idea":"An upgrade has to clear the same safety bar as the first launch; a new version has to re-earn trust, not inherit it.","points":["Never reintroduce <code>fastschema/qjs</code>.","Prefer standard library and existing primitives when they fit.","Close known provenance gaps before claiming reproducible supply-chain inputs."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

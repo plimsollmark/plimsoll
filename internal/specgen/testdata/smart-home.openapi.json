@@ -1,0 +1,69 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Smart Home Control",
+    "version": "1.2.0"
+  },
+  "paths": {
+    "/lights": {
+      "get": {
+        "operationId": "listLights",
+        "summary": "List every light with its current state."
+      },
+      "post": {
+        "operationId": "createLight",
+        "summary": "Register a new light.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object" } } }
+        }
+      }
+    },
+    "/lights/{id}": {
+      "get": {
+        "operationId": "getLight",
+        "summary": "Get one light by id.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ]
+      },
+      "put": {
+        "operationId": "setLight",
+        "summary": "Replace a light's full state.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object" } } }
+        }
+      },
+      "delete": {
+        "operationId": "deleteLight",
+        "summary": "Remove a light."
+      },
+      "patch": {
+        "operationId": "updateLight",
+        "summary": "Patch part of a light's state (brightness, color).",
+        "requestBody": {
+          "content": { "application/json": { "schema": { "type": "object" } } }
+        }
+      }
+    },
+    "/rooms/{room}/lights": {
+      "get": {
+        "operationId": "listRoomLights",
+        "summary": "List the lights in one room."
+      }
+    },
+    "/scenes": {
+      "get": {
+        "operationId": "listScenes",
+        "summary": "List saved scenes."
+      }
+    },
+    "/status": {
+      "get": {
+        "operationId": "getStatus",
+        "summary": "Report gateway health and current capacity (in-flight requests, rate-limit headroom)."
+      }
+    }
+  }
+}

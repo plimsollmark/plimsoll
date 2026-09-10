@@ -1,0 +1,21 @@
+# golangci-lint v2 config. The one rule that matters here is the depguard ban on
+# github.com/fastschema/qjs: its MemoryLimit is a no-op, so it never bounds memory.
+# This repo is the sanctioned sandbox (wazero driven directly, with a real per-run
+# memory cap) and must never depend on qjs. See MIGRATION_NOTES.md.
+#
+# Run: golangci-lint run
+version: "2"
+linters:
+  default: none # this config exists for the qjs ban only — not a full lint adoption
+  enable:
+    - depguard
+  settings:
+    depguard:
+      rules:
+        no-qjs:
+          deny:
+            - pkg: github.com/fastschema/qjs
+              desc: >-
+                github.com/fastschema/qjs is banned (its MemoryLimit is a no-op,
+                so it does not bound memory). Use plimsoll/sandbox, which drives
+                wazero directly with WithMemoryLimitPages. See MIGRATION_NOTES.md.

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive operator trainer for configuring, sizing, probing, observing, and deploying plimsoll.">
+  <title>Operations · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Operations</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">New to the words here? <a href="plain-english.html">Start with Plain English</a>. Treat every green signal as evidence with a scope: startup, readiness, and run results prove different things.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id":"operations",
+    "title":"plimsoll operations",
+    "tagline":"fail fast, shed early, measure honestly",
+    "chapters":[
+      {
+        "id":"startup-contract",
+        "label":"Startup contract",
+        "kind":"pipeline",
+        "title":"Configuration becomes evidence before traffic",
+        "lede":"Before it says 'ready', the daemon checks its settings, sets up the chosen runner, and pokes its outside dependencies. If any of that fails, it never opens for traffic.",
+        "stats":[{"label":"unsafe fallback","value":"none","tone":"good"},{"label":"preflight","value":"bounded","tone":"good"}],
+        "prompt":"Step through a deliberate Docker + runsc startup. A malformed value or unmet floor stops the process.",
+        "steps":[
+          {"layer":"selection","name":"Choose provider","short":"SANDBOX_PROVIDER=docker","detail":"An unset selection produces Disabled. An unknown provider name returns an explicit configuration error. The daemon never guesses a real provider."},
+          {"layer":"envelope","name":"Parse resources","short":"memory, CPU, PIDs, disk","detail":"Configured controls must be enforceable by the selected provider. Unsupported or malformed dimensions become configuration errors."},
+          {"layer":"boundary","name":"Set isolation floor","short":"SANDBOX_MIN_ISOLATION=kernel","detail":"The daemon refuses a provider whose measured isolation class does not meet the operator's floor."},
+          {"layer":"capacity","name":"Build admission","short":"count, memory, caller, rate","detail":"Aggregate host memory clamps count capacity for local runners; per-caller and token-bucket gates prevent one identity from monopolizing it."},
+          {"layer":"dependency","name":"Run Preflight","short":"daemon, runtime, images, keys","detail":"A cheap bounded probe verifies what it can without running hostile code. runsc evidence is pinned for Docker dispatch."},
+          {"layer":"serve","name":"Expose endpoints","short":"RPC + healthz + readyz + metrics","detail":"Only after startup checks pass does the daemon accept work. Readiness can probe dependencies again.","tone":"good"}
+        ],
+        "explainer":{"try":"Change the imagined isolation floor to VM while keeping Docker. Identify the exact stage that refuses startup.","idea":"Make a broken or unsafe setup refuse to start at all, instead of something you only spot after it is already live.","points":["Unset selects Disabled; an unknown provider name returns an error.","Invalid resource and limiter values fail closed.","Preflight does not execute submitted code."]}
+      },
+      {
+        "id":"resource-envelope",
+        "label":"Resource envelope",
+        "kind":"matrix",
+        "title":"Enforcement differs by provider",
+        "lede":"Asking for limits like memory or CPU only means something if the runner can actually enforce each one. If a runner can't enforce a limit you set, it says so instead of quietly ignoring it.",
+        "stats":[{"label":"dimensions","value":"4"},{"label":"silent drops","value":"0","tone":"good"}],
+        "prompt":"Zero means use the provider default. A non-zero unsupported value must not disappear.",
+        "rowLabel":"Provider",
+        "columns":["Memory","CPU","PIDs","Writable disk"],
+        "rows":[
+          {"label":"WASM", "cells":[{"text":"wazero page cap","tone":"good"},{"text":"unsupported","tone":"bad"},{"text":"unsupported","tone":"bad"},{"text":"unsupported","tone":"bad"}]},
+          {"label":"Docker", "cells":[{"text":"cgroup cap","tone":"good"},{"text":"cgroup cap","tone":"good"},{"text":"pids limit","tone":"good"},{"text":"aggregate sized tmpfs mounts","tone":"good","note":"/tmp, /dev/shm, and /work fit one budget; smoke verifies their sizes and that no extra persistent-writable mount exists"}]},
+          {"label":"E2B", "cells":[{"text":"template maximum","tone":"good"},{"text":"integral vCPU","tone":"good"},{"text":"unsupported","tone":"bad"},{"text":"template maximum","tone":"good"}]}
+        ],
+        "explainer":{"try":"Configure fractional CPU and a PID cap. Which providers can honor both?","idea":"A limit you set is a safety promise, so a runner that can't keep it must error out, not bury the fact in the docs.","points":["E2B verifies live allocations do not exceed configured maxima.","WASM has a real per-run memory cap through wazero.","Size aggregate admission alongside each per-run envelope."]}
+      },
+      {
+        "id":"capacity-lab",
+        "label":"Capacity lab",
+        "kind":"budget",
+        "title":"Reserve local memory before dispatch",
+        "lede":"Total memory is the real cap on how many runs happen at once locally. Even if you allow, say, eight at a time, you only get as many as the memory budget actually fits.",
+        "stats":[],
+        "defaults":{"maxConcurrent":8,"totalMemory":2048,"perRunMemory":256,"offered":12},
+        "prompt":"Tune a local fleet. The wrapper sheds immediately; it does not queue goroutines or containers. E2B execution is off-host, so its remote runner RAM is excluded from this host-memory calculation.",
+        "explainer":{"try":"Reduce aggregate memory until only two runs fit, then raise the offered burst. Watch shed load grow without latency from a queue.","idea":"Turning work away right at the run boundary protects both the daemon and the machine it runs on.","points":["Global capacity is supplemented by per-caller concurrency.","Per-caller token buckets bound sustained rate and burst.","<code>ErrAtCapacity</code> maps to ResourceExhausted."]}
+      },
+      {
+        "id":"probe-semantics",
+        "label":"Probe semantics",
+        "kind":"scenario",
+        "title":"Ask the endpoint that can prove the fact",
+        "lede":"There are several health checks, and each proves a different thing. 'Is it alive?' is not the same question as 'is it ready?', which is not the same as 'does this image have the right tools?'",
+        "stats":[{"label":"public probes","value":"3"},{"label":"probe auth","value":"none","tone":"good"}],
+        "promptLabel":"Choose an operator question",
+        "prompt":"Select a question to see the correct evidence source.",
+        "options":[
+          {"label":"Is the process alive?","note":"A scheduler needs a liveness decision.","result":"GET /healthz","detail":"This answers process liveness. It does not contact the provider dependency or assert a security tier.","tone":"good"},
+          {"label":"Is runsc still usable?","note":"Traffic should stop if the configured runtime disappears.","result":"GET /readyz","detail":"Readiness reruns the provider's bounded Preflight and fails when its external contract is unavailable.","tone":"good"},
+          {"label":"Are project grants supported?","note":"A gateway is deciding which product feature to expose.","result":"Describe RPC","detail":"Describe reports operation-specific structural support and current isolation evidence. It requires code:run because it describes the execution boundary.","tone":"good"},
+          {"label":"Does this image contain tsc?","note":"The provider claims structural project support.","result":"run an explicit image/template smoke","detail":"Neither Describe nor generic Preflight promises a particular baked tool. Test the artifact contract before rollout.","tone":"warn"}
+        ],
+        "explainer":{"try":"Explain why making /healthz call Docker would produce a worse orchestration signal than keeping readiness separate.","idea":"A good health check answers one narrow question, and that narrowness is what makes it safe to wire up to automatic actions.","points":["<code>/healthz</code>, <code>/readyz</code>, and <code>/metrics</code> sit outside RPC auth for infrastructure probes.","Describe executes no hostile code and consumes no limiter slot.","A smoke test is deployment evidence, not a per-request guarantee."]}
+      },
+      {
+        "id":"observe-load",
+        "label":"Observe load",
+        "kind":"matrix",
+        "title":"Metrics and audit logs answer different questions",
+        "lede":"Two kinds of signals: rolled-up numbers show how the whole fleet is behaving, and one log line per run records who called and what happened, without ever saving the code they ran.",
+        "stats":[{"label":"source in logs","value":"never","tone":"good"},{"label":"audit unit","value":"one/run","tone":"good"}],
+        "prompt":"Pair aggregate signals with request-level evidence during an incident.",
+        "rowLabel":"Signal",
+        "columns":["Carries","Use it for","Privacy boundary"],
+        "rows":[
+          {"label":"plimsoll_runs_total", "cells":[{"text":"dispatched count","tone":"neutral"},{"text":"traffic volume","tone":"good"},{"text":"no code","tone":"good"}]},
+          {"label":"plimsoll_runs_failed_total", "cells":[{"text":"infra failures","tone":"neutral"},{"text":"provider health","tone":"good"},{"text":"guest exit excluded","tone":"good"}]},
+          {"label":"plimsoll_inflight", "cells":[{"text":"current work","tone":"neutral"},{"text":"saturation","tone":"good"},{"text":"aggregate only","tone":"good"}]},
+          {"label":"plimsoll_shed_total", "cells":[{"text":"reason-labelled sheds","tone":"neutral"},{"text":"capacity/rate tuning","tone":"good"},{"text":"aggregate only","tone":"good"}]},
+          {"label":"structured audit", "cells":[{"text":"principal, sizes, profile, provider, outcome","tone":"neutral"},{"text":"trace one decision","tone":"good"},{"text":"never token/code","tone":"good"}]}
+        ],
+        "explainer":{"try":"A guest exits 1 during a traffic spike. Decide which counters move and what the audit line should show.","idea":"Watch the machinery in as much detail as you like, but treat the submitted code and keys as secrets that never get logged.","points":["A non-zero guest exit is not an infrastructure failure.","Audit identifies callers by Principal.UserID, never bearer token.","Shed reasons distinguish global, per-key, and rate pressure."]}
+      },
+      {
+        "id":"production-gate",
+        "label":"Production gate",
+        "kind":"checklist",
+        "title":"Require evidence before hostile traffic",
+        "lede":"Going to production is a list of things you have actually proven, not just 'a runner is set and the health check is green'.",
+        "stats":[],
+        "prompt":"Check every required gate. The trainer remains fail-closed until the complete evidence set is present.",
+        "items":[
+          {"label":"Authentication is configured","why":"Use per-client token hashes or a protected static token; code:run is required."},
+          {"label":"Isolation floor matches the threat model","why":"Hostile production should require verified kernel or VM tier."},
+          {"label":"Images are immutable and toolchain-smoked","why":"Enable digest pinning and prove the selected snippet/project artifacts."},
+          {"label":"Resource and aggregate budgets are coherent","why":"Per-run memory and fleet capacity must fit the actual host."},
+          {"label":"Provider Preflight passes","why":"Runtime, daemon, endpoint, credentials, and allocations are current evidence."},
+          {"label":"No-grant egress is denied","why":"Network isolation is the default; only an explicitly supported broker opens routes."},
+          {"label":"Readiness, metrics, and audit collection are wired","why":"Operators must detect dependency loss, shedding, and per-run outcomes."},
+          {"label":"Grant and negative-route smoke tests pass","why":"Required when a Docker or WASM JavaScript grant profile is enabled.","required":false}
+        ],
+        "ready":"The deployment has the minimum evidence needed to accept hostile code. Keep artifact and E2B live checks in the release process.",
+        "notReady":"Do not route hostile code yet. Missing gates are startup or rollout blockers, not warnings to accept indefinitely.",
+        "explainer":{"try":"Check recommended grant smoke first. Notice that optional evidence cannot compensate for a missing isolation or authentication gate.","idea":"Being production-ready is all-or-nothing: any one missing safety piece keeps the system shut.","points":["runc/container tier is not a hostile-code boundary by itself.","Pin both snippet and project images when pin enforcement is enabled.","Re-run live provider checks after material infrastructure changes."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A short local evaluation path for plimsoll.">
+  <title>Quick start · plimsoll</title>
+  <link rel="stylesheet" href="trainer.css">
+  <link rel="stylesheet" href="customer.css">
+</head>
+<body>
+  <main class="customer-page">
+    <nav class="customer-nav" aria-label="Page navigation">
+      <a class="nav-mark" href="index.html">PLIMSOLL</a>
+      <a href="index.html">← Back to the field guide</a>
+    </nav>
+    <header class="customer-page-head">
+      <p class="catalog-eyebrow">self-managed evaluation · 10 minutes</p>
+      <h1>Start with a smoke.<br><em>Then choose your wall.</em></h1>
+      <p>This path runs a local process-tier smoke against the checked-in WASM provider. It proves the request and result shape, not hostile-production isolation. For customer-authored code in production, use verified Docker/runsc kernel evidence or the E2B VM provider.</p>
+    </header>
+    <div class="customer-layout">
+      <section class="customer-panel">
+        <h2>1. Build and start the local smoke</h2>
+        <p>From the repository root, build the module and start the daemon in explicitly acknowledged development mode. The default provider is disabled; nothing executes until you opt in.</p>
+        <pre><code>go build ./...
+
+SANDBOX_PROVIDER=wasm \
+PLIMSOLL_INSECURE=1 \
+go run ./cmd/plimsolld</code></pre>
+        <h2>2. Run one bounded snippet</h2>
+        <p>In a second terminal, send a versioned request. The response includes the exit status, output, duration, provider, and actual isolation tier.</p>
+        <pre><code>curl -sS \
+  http://127.0.0.1:8746/plimsoll.v1.SandboxService/RunJavaScriptV2 \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"code":"console.log(6 * 7)","timeoutMs":1000,"minimumIsolation":"process"}'</code></pre>
+        <h2>3. Read the receipt</h2>
+        <p>Expect a successful guest result with <code>stdout</code> containing <code>42</code> and an isolation value of <code>process</code>. A non-zero guest exit code is a normal run result; a typed RPC error means the request was rejected or infrastructure failed.</p>
+        <div class="customer-callout">This smoke uses WASM in the plimsolld process. It is useful for learning the API, but it is not an operating-system or VM boundary.</div>
+      </section>
+      <aside class="customer-panel">
+        <h2>What to verify next</h2>
+        <ol>
+          <li>Run <code>go vet ./...</code> and <code>go test ./...</code>.</li>
+          <li>Move to Docker with verified <code>runsc</code> when the workload is hostile and needs a kernel tier.</li>
+          <li>Set a per-run resource envelope, an aggregate memory budget, caller auth, and a minimum isolation floor.</li>
+          <li>Use a named server-side grant only when the product has deliberately approved a narrow host API.</li>
+        </ol>
+        <div class="customer-callout good"><strong>Safe default:</strong> leave <code>SANDBOX_PROVIDER</code> unset when you are not intentionally running code. The default is Disabled.</div>
+        <div class="customer-links">
+          <a href="providers.html">Compare providers →</a>
+          <a href="integrations.html">Use the Go client →</a>
+          <a href="../../examples/">Run the examples →</a>
+        </div>
+      </aside>
+    </div>
+    <details class="customer-reference-shelf">
+      <summary>Definitions and references <span>links are labeled</span></summary>
+      <div class="customer-reference-grid">
+        <a class="internal" href="plain-english.html"><b>INTERNAL · trainer site →</b><strong>Plain English</strong><small>Decode WASM, containers, gVisor, VMs, and RPC.</small></a>
+        <a class="internal" href="providers.html"><b>INTERNAL · trainer site →</b><strong>Providers</strong><small>Compare the execution boundaries plimsoll can use.</small></a>
+        <a class="external" href="https://hono.dev/docs" target="_blank" rel="noopener"><b>EXTERNAL · official docs ↗</b><strong>Hono</strong><small>The web framework a gateway in front of plimsoll is commonly built on.</small></a>
+        <a class="external" href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports" target="_blank" rel="noopener"><b>EXTERNAL · official docs ↗</b><strong>MCP transports</strong><small>The official Streamable HTTP and stdio specification.</small></a>
+        <a class="external" href="https://www.jsonrpc.org/specification" target="_blank" rel="noopener"><b>EXTERNAL · official docs ↗</b><strong>JSON-RPC 2.0</strong><small>The request and response envelope used by MCP.</small></a>
+        <a class="external" href="https://docs.docker.com/get-started/docker-overview" target="_blank" rel="noopener"><b>EXTERNAL · official docs ↗</b><strong>Docker overview</strong><small>Containers, images, and the Docker daemon.</small></a>
+        <a class="external" href="https://gvisor.dev/docs/" target="_blank" rel="noopener"><b>EXTERNAL · official docs ↗</b><strong>gVisor</strong><small>The runsc application-kernel boundary.</small></a>
+      </div>
+    </details>
+  </main>
+</body>
+</html>

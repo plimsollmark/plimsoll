@@ -1,0 +1,27 @@
+{
+  "profiles": {
+    "inventory": {
+      "base_url": "https://inventory.example.internal",
+      "allow": [
+        "POST /ping",
+        "GET /v1/warehouses",
+        "GET /v1/warehouses/*/items",
+        "GET /v1/items/*",
+        "GET /v1/items/*/counts",
+        "POST /v1/items/*/adjust"
+      ],
+      "allowed_callers": ["mcp-client-acme", "mcp-client-globex"],
+      "scopes": ["inventory:read", "inventory:adjust"],
+      "token": {
+        "type": "jwt",
+        "secret_env": "INVENTORY_JWT_SECRET",
+        "ttl_sec": 60,
+        "issuer": "plimsoll",
+        "audience": "inventory"
+      },
+      "preamble_file": "inventory.client.js",
+      "advice": "caller",
+      "advice_retention": "aggregate"
+    }
+  }
+}

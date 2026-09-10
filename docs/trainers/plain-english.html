@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A no-jargon on-ramp to plimsoll: decode WASM, containers, gVisor, and VMs, and learn the one idea behind them, which is how many walls stand between untrusted code and your stuff.">
+  <title>Plain English · plimsoll trainer</title>
+  <link rel="stylesheet" href="trainer.css">
+  <script src="trainer.js" defer></script>
+</head>
+<body>
+  <div class="trainer-shell">
+    <aside class="trainer-rail">
+      <a class="trainer-back" href="index.html">← All trainers</a>
+      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Plain English</strong><small id="trainerTagline">Loading…</small></span></div>
+      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
+      <p class="rail-note">No prior knowledge assumed. Click every option; the plain-English explanations live in the results. When you're done, the <a href="architecture.html">Architecture</a> trainer is the same trip with the real names.</p>
+    </aside>
+    <main class="trainer-main">
+      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
+      <section class="trainer-stage" id="stage" aria-live="polite"></section>
+      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
+      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
+    </main>
+  </div>
+
+  <script id="trainerData" type="application/json">
+  {
+    "id":"plain-english",
+    "title":"Plain English",
+    "tagline":"the jargon, decoded, start here",
+    "chapters":[
+      {
+        "id":"walls",
+        "label":"The big idea",
+        "kind":"scenario",
+        "title":"It all comes down to how many walls",
+        "lede":"Untrusted code has to run somewhere. The only question that really matters: if it turns out to be malicious, how much can it reach? Every choice below is secretly a choice of how many walls stand between that code and your stuff.",
+        "stats":[{"label":"the real question","value":"blast radius","tone":"good"},{"label":"walls to pick from","value":"0 to 3"}],
+        "promptLabel":"Choose where a stranger's code runs",
+        "prompt":"You have a snippet of JavaScript from someone you don't trust. Pick where to run it, then read the last line of each result to see how exposed you'd be.",
+        "options":[
+          {"label":"Inside my own app (wasm)","note":"Fastest. No separate machine: a sealed mini-interpreter runs it right inside your program.","tone":"warn","result":"one thin wall","detail":"A tiny sealed JavaScript engine runs the code inside your own running program. Great for speed and basically-trusted code. But it shares your app's memory and permissions, so if that engine ever has a bug, the escaped code is standing <em>inside your app</em>.","facts":["fastest","weakest wall","JS only"]},
+          {"label":"Hand it to a helper (rpc → Docker)","note":"Send it to a separate program that boxes the code in a container.","tone":"neutral","result":"a real wall you host","detail":"The code goes to a separate helper program (the plimsoll daemon), which runs it in a locked-down <em>container</em>, a boxed-off slice of your machine with its own files. An escape is trapped in that box, not in your app. Switch on gVisor and there's an extra wall on top.","facts":["container wall","optional gVisor","your machine"]},
+          {"label":"Ship it to a throwaway cloud VM (e2b)","note":"Send it off your machine entirely, into a disposable virtual computer.","tone":"good","result":"the strongest wall, off your machine","detail":"The code runs in a whole separate fake computer in the cloud, walled off by the hardware itself, then thrown away. Even a full escape is trapped in a disposable machine that isn't even yours. Slowest to start, safest by far.","facts":["hardware wall","disposable","off-machine"]}
+        ],
+        "explainer":{"try":"Click all three and compare the last line of each result. Notice the wall gets stronger as the code moves further from your own program.","idea":"There is no single 'safest' choice. It is a trade between speed and how far a bad snippet could reach. Pick the weakest wall you can live with, not the strongest one that exists.","points":["<code>wasm</code> = in your app. <code>rpc</code> = in a container on your machine. <code>e2b</code> = in a throwaway cloud VM.","More walls means safer, but slower and more setup.","The rest of this trainer just explains the words hiding in that sentence."]}
+      },
+      {
+        "id":"decoder",
+        "label":"Decoder ring",
+        "kind":"matrix",
+        "title":"Every scary word, in one plain sentence",
+        "lede":"The other trainers are full of words that sound like you need a degree to read them. You don't. Here is each one in plain English, plus the only reason you'd care about it.",
+        "stats":[{"label":"words decoded","value":"7"},{"label":"jargon required","value":"none","tone":"good"}],
+        "promptLabel":"The jargon, decoded",
+        "prompt":"Read down the list. Each row is one word the grown-up trainers throw at you, translated into English.",
+        "rowLabel":"The word",
+        "columns":["In plain English","Why you'd care"],
+        "rows":[
+          {"label":"Process","cells":[{"text":"one running program and everything inside it","tone":"neutral","note":"it all shares one pile of memory and one set of permissions"},{"text":"'process-tier' means the code runs right next to yours","tone":"warn"}]},
+          {"label":"Syscall","cells":[{"text":"how a program asks the operating system to do anything real","tone":"neutral","note":"open a file, use the network, and so on"},{"text":"not a wall; sandboxes get safer by limiting which ones are allowed","tone":"neutral"}]},
+          {"label":"RPC","cells":[{"text":"just 'send the request to another program and get the answer back'","tone":"neutral","note":"the mailman, not a wall"},{"text":"not a wall either; a door named 'rpc' is really protected by the container it hands the code to","tone":"neutral"}]},
+          {"label":"WASM / WebAssembly","cells":[{"text":"a sealed mini-computer that runs inside a normal program","tone":"neutral","note":"here it runs JavaScript and nothing else"},{"text":"the thinnest wall: no operating-system wall, so it shares your app","tone":"warn"}]},
+          {"label":"Container (Docker)","cells":[{"text":"a boxed-off slice of your computer with its own files","tone":"neutral","note":"but it still borrows the real operating-system core underneath"},{"text":"the middle wall: solid, but sharing one foundation","tone":"neutral"}]},
+          {"label":"gVisor / runsc","cells":[{"text":"a stand-in operating-system core that answers those requests itself","tone":"neutral","note":"so the container never touches the real one"},{"text":"an extra wall bolted on top of the container","tone":"good"}]},
+          {"label":"Virtual machine (VM)","cells":[{"text":"a whole fake computer with its own core, walled off by hardware","tone":"neutral","note":"E2B spins one up, uses it, and throws it away"},{"text":"the strongest wall, and the slowest to start","tone":"good"}]}
+        ],
+        "explainer":{"try":"Cover the right column and try to say each word's meaning out loud before you read it. That is the entire vocabulary the other trainers quietly assume.","idea":"Most of these are just walls of different thickness: WASM is thin, then a container, then gVisor, then a whole VM at the top. Syscall and RPC are not walls at all; they're how code asks to do things and how it travels. Get that split and the rest is easy.","points":["'Tier' just means how thick the wall is: process, then container, then a stand-in core, then a whole VM. RPC is not on that ladder.","<code>RPC</code> is delivery, not defense: when a door is named 'rpc', its wall is the container on the other end, not RPC itself.","Everything else is 'the code runs here, and here's what stops it from reaching you'."]}
+      },
+      {
+        "id":"follow",
+        "label":"Follow the code",
+        "kind":"pipeline",
+        "title":"Watch one snippet go out and come back",
+        "lede":"Forget the internals for a moment. Here's the whole trip your code takes, in plain steps. The Architecture trainer shows this same trip with the real gate names; this is the friendly version.",
+        "stats":[{"label":"steps","value":"5","tone":"good"},{"label":"jargon","value":"optional"}],
+        "prompt":"Step through what happens after you hand plimsoll a piece of code to run. Hit Play to watch the walls go up.",
+        "steps":[
+          {"layer":"you","name":"You hand over some code","short":"'run this, and here's the time limit'","detail":"You send the code plus a few rules, like a timeout. You never bundle passwords or secret keys with it; those travel a separate path on purpose."},
+          {"layer":"door check","name":"The bouncer checks you first","short":"who are you, and are you allowed?","detail":"Before anything runs, plimsoll confirms you're allowed and that your request isn't oversized. A bad request is turned away here, before a single line of your code runs."},
+          {"layer":"the runner","name":"It picks where to run the code","short":"in-app, in a container, or in a cloud VM","detail":"Based on how you set it up, the code goes to one of the three doors from chapter 1. This is the exact moment the walls go up around it.","tone":"warn"},
+          {"layer":"run","name":"Your code runs behind the wall","short":"it does its thing, fenced in","detail":"The code executes inside whatever walls you chose. If it tries something nasty, those walls are what stop it from reaching the rest of your machine."},
+          {"layer":"back to you","name":"You get the result, plus a receipt","short":"output plus proof of which wall ran it","detail":"You get back what the code printed, whether it succeeded, and a note stating exactly which wall actually ran it. Your original code is never written to any log.","tone":"good"}
+        ],
+        "explainer":{"try":"Play the path and watch the walls go up at step 3. Notice the bouncer at step 2 rejects bad requests before your code ever runs.","idea":"The place your code runs is the last step, not the first line of defense. A lot of the safety is simply 'check before you run, and prove what you ran.'","points":["Secrets travel a separate path from code, never bundled together.","Nothing runs until the request clears the door check.","You're always told which wall really ran your code, not asked to take it on faith.","Want the real gate names? That's the <strong>Architecture</strong> trainer, next door."]}
+      },
+      {
+        "id":"three-doors",
+        "label":"Three doors",
+        "kind":"matrix",
+        "title":"wasm, rpc, e2b, side by side, no jargon",
+        "lede":"The three places your code can run, compared on the only things you actually feel: where it runs, how strong the wall is, how fast it starts, and what happens if that wall cracks.",
+        "stats":[{"label":"doors","value":"3"},{"label":"wrong answer","value":"none, it depends","tone":"neutral"}],
+        "promptLabel":"The three doors, side by side",
+        "prompt":"Read the last column top to bottom: that's your worst case for each door, from 'inside your app' down to 'a disposable box in the cloud'.",
+        "rowLabel":"Door",
+        "columns":["Where the code runs","Wall strength","Speed to start","If the sandbox breaks"],
+        "rows":[
+          {"label":"wasm","cells":[{"text":"inside your own app","tone":"neutral"},{"text":"thin: a sealed interpreter, no OS wall","tone":"warn"},{"text":"instant","tone":"good"},{"text":"the escaped code is inside your app","tone":"bad"}]},
+          {"label":"rpc (Docker)","cells":[{"text":"a container on your machine","tone":"neutral"},{"text":"solid: a real OS box, add gVisor for more","tone":"good"},{"text":"quick","tone":"neutral"},{"text":"stuck in the box, not in your app","tone":"neutral","note":"still your machine"}]},
+          {"label":"e2b","cells":[{"text":"a throwaway VM in the cloud","tone":"neutral"},{"text":"strongest: a separate hardware-walled computer","tone":"good"},{"text":"slowest, a VM has to boot","tone":"warn"},{"text":"trapped in a disposable box that isn't yours","tone":"good"}]}
+        ],
+        "explainer":{"try":"Scan down the middle two columns: as the wall gets stronger, the speed drops. That trade is the whole story, and you can't cheat it.","idea":"Moving down the list buys you a stronger wall and costs you startup speed. Pick the row that matches how much you trust the code.","points":["Basically-trusted code that must be fast → <code>wasm</code>.","Real isolation you run yourself → <code>rpc</code> (Docker), ideally with gVisor.","Genuinely hostile code, or 'not on my hardware' → <code>e2b</code>."]}
+      },
+      {
+        "id":"blast-radius",
+        "label":"Worst case",
+        "kind":"quiz",
+        "title":"Pretend the sandbox has a bug, who's in trouble?",
+        "lede":"No sandbox is perfect. The smart question isn't 'is it unbreakable?' It's 'when it breaks, how bad is it?' The answer is different for each door.",
+        "stats":[{"label":"perfect sandbox","value":"doesn't exist","tone":"warn"},{"label":"what to compare","value":"blast radius","tone":"good"}],
+        "promptLabel":"Make the call",
+        "prompt":"You're running code you genuinely don't trust, and you want the damage contained even if the sandbox itself has a flaw. Which door gives you the smallest blast radius?",
+        "options":[
+          {"label":"wasm, inside my app","note":"Trust the in-app engine to be bug-free.","correct":false,"result":"biggest blast radius","detail":"If the in-app engine has a flaw, the escaped code is already inside your app with your app's permissions. Smallest wall, worst worst-case. Fine for trusted code, risky for hostile code."},
+          {"label":"rpc, a container on my machine","note":"Let an escape land in a box instead of the app.","correct":false,"result":"contained, but still your machine","detail":"Better: an escape is stuck in the container, away from your app. But it's still your hardware, and a plain container shares the real OS core, which is exactly why gVisor (an extra wall) exists. A strong middle ground, not the strongest."},
+          {"label":"e2b, a throwaway cloud VM","note":"Put a whole separate computer between you and the code.","correct":true,"result":"smallest blast radius","detail":"Even a full escape is trapped inside a disposable VM walled off by hardware, and it isn't even your machine. When the code is truly hostile, this is the door that limits the damage most.","facts":["hardware wall","disposable","off your machine"]}
+        ],
+        "explainer":{"try":"Now imagine the code is fully trusted. The best answer flips to wasm, its speed wins and the blast radius barely matters. The real question is always 'how hostile is this code?'","idea":"Choose your door by picturing the sandbox failing. The stronger the wall, the less it matters that it might.","points":["Trusted code → a weak wall is fine; go fast.","Unknown or hostile code → assume the sandbox will crack, and pick accordingly.","gVisor and VMs exist precisely because a plain container shares the host's OS core."]}
+      },
+      {
+        "id":"pick",
+        "label":"Pick a door",
+        "kind":"quiz",
+        "title":"So which one do I actually use?",
+        "lede":"You now know every word. Last question: match the door to the job. Then you're ready to read the grown-up trainers without a dictionary.",
+        "stats":[{"label":"words left to learn","value":"0","tone":"good"},{"label":"next stop","value":"Architecture"}],
+        "promptLabel":"Match the door to the job",
+        "prompt":"A teammate says: 'I want to let users run their own little JavaScript formulas in our app, and it has to feel instant.' Which door do you reach for first?",
+        "options":[
+          {"label":"wasm, in-app, instant","note":"Fast, in-process, JavaScript only.","correct":true,"result":"right call for fast, low-risk snippets","detail":"Little formulas that must feel instant, where the worst case is small, are exactly what the in-app engine is for. If they need one allowlisted API, a WASM grant can call it without putting the key in JavaScript. Graduate to rpc or e2b when the code is hostile or needs projects and OS tools.","facts":["instant","JS only","weakest wall"]},
+          {"label":"e2b, cloud VM","note":"Strongest wall, off your machine.","correct":false,"result":"safe, but overkill here","detail":"Not wrong on safety, since it's the strongest wall. But booting a cloud VM for every little formula kills the 'instant' requirement and costs more. Save it for genuinely hostile or heavy code."},
+          {"label":"rpc, container on your machine","note":"Solid wall, some startup cost.","correct":false,"result":"reasonable, but heavier than needed","detail":"A perfectly safe choice, but spinning up a container for every keystroke-fast formula is heavier than a trusted little snippet needs. Great once the code gets riskier or needs real OS isolation."}
+        ],
+        "explainer":{"try":"Re-read the question, but swap 'little formulas' for 'code my users write that could be malicious'. Notice your answer should slide toward rpc or e2b.","idea":"Match the wall to the risk and the speed you need, nothing more. You've got the whole vocabulary now.","points":["Next: the <strong>Architecture</strong> trainer follows one real request through every gate, the same trip as chapter 3, with the real names.","Then <strong>Providers</strong> and <strong>Concepts</strong> go deep on each door.","Come back here any time a word stops making sense."]}
+      }
+    ]
+  }
+  </script>
+</body>
+</html>
