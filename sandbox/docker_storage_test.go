@@ -199,8 +199,9 @@ func TestDockerPreflightRequiresLocalImages(t *testing.T) {
 // in-container evidence to prove every writable bound — including that the
 // promised tmpfs mounts are the ONLY mounts accepting writes at all.
 func TestDockerSmokeTestVerifiesStorageBounds(t *testing.T) {
-	requireDocker(t)
+
 	d := testDocker()
+	requireSnippetImage(t, d)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	if err := d.SmokeTest(ctx); err != nil {
@@ -214,7 +215,7 @@ func TestDockerSmokeTestVerifiesStorageBounds(t *testing.T) {
 // would auto-create an anonymous writable volume). The run must still execute
 // the verified content and succeed.
 func TestDockerRunUsesPreflightVerifiedImageID(t *testing.T) {
-	requireDocker(t)
+
 	const tag = "crsbx-test-tag-swap:local"
 	if out, err := exec.Command("docker", "tag", "node:22-alpine", tag).CombinedOutput(); err != nil {
 		t.Skipf("cannot tag throwaway image: %v: %s", err, out)
@@ -222,6 +223,7 @@ func TestDockerRunUsesPreflightVerifiedImageID(t *testing.T) {
 	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", tag).Run() })
 
 	d := testDocker()
+	requireSnippetImage(t, d)
 	d.Image = tag
 	// Freeze the readiness clock so the run below is served from the verified
 	// state instead of racing the cache TTL into a re-Preflight.

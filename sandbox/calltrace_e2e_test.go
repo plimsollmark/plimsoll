@@ -19,7 +19,7 @@ import (
 // per template, a broker-side denial counted with no row, and neither the injected
 // credential nor a raw path anywhere in the serialized trace.
 func TestDockerRunPopulatesCallTrace(t *testing.T) {
-	requireDocker(t)
+	requireSnippetImage(t, testDocker())
 
 	var mu sync.Mutex
 	var gotPaths, gotAuth []string

@@ -11,8 +11,25 @@ import (
 	"time"
 )
 
-func TestWasmRunJavaScript(t *testing.T) {
+// testWasm is DefaultWasm with a timeout sized for a test machine instead of for a
+// caller. DefaultWasm's 5s DefaultTimeout is a deliberate product default; it is not
+// a budget for `go test -race` on two shared vCPUs, where the race detector
+// instruments wazero's compilation of the embedded QuickJS build and a `console.log`
+// can exceed five seconds before running a single line of guest code.
+//
+// Leaving the tests on the product default made every functional WASM test fail with
+// exit 124 on the first CI run of .github/workflows/audit.yml (2026-09-10): twelve
+// failures that said nothing about the code under test. Tests that assert timeout
+// behaviour itself set their own timeout and are unaffected, since an explicit
+// assignment still wins.
+func testWasm() *WasmSandbox {
 	w := DefaultWasm()
+	w.DefaultTimeout = 60 * time.Second
+	return w
+}
+
+func TestWasmRunJavaScript(t *testing.T) {
+	w := testWasm()
 	res, err := w.RunJavaScript(context.Background(), Request{Code: `console.log("wasm", 6 * 7)`})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -29,7 +46,7 @@ func TestWasmRunJavaScript(t *testing.T) {
 }
 
 func TestWasmEnforcesMinimumIsolationBeforeExecution(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	res, err := w.RunJavaScript(context.Background(), Request{
 		Code:             `console.log("must not run")`,
 		MinimumIsolation: IsolationKernel,
@@ -54,7 +71,7 @@ func TestWasmEnforcesMinimumIsolationBeforeExecution(t *testing.T) {
 }
 
 func TestWasmNonZeroExitIsResult(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	res, err := w.RunJavaScript(context.Background(), Request{Code: `throw new Error("boom")`})
 	if err != nil {
 		t.Fatalf("a JS error should be a result, got error: %v", err)
@@ -65,7 +82,7 @@ func TestWasmNonZeroExitIsResult(t *testing.T) {
 }
 
 func TestWasmHasNoNetworkOrFS(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	// No host import is provided for fetch; it should be undefined in QuickJS.
 	res, err := w.RunJavaScript(context.Background(), Request{Code: `console.log("hasFetch=" + (typeof fetch))`})
 	if err != nil {
@@ -77,7 +94,7 @@ func TestWasmHasNoNetworkOrFS(t *testing.T) {
 }
 
 func TestWasmTimeout(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	w.DefaultTimeout = 1 * time.Second
 	res, err := w.RunJavaScript(context.Background(), Request{Code: `while (true) {}`})
 	if err != nil {
@@ -113,7 +130,7 @@ func TestWasmZeroValueTimeoutFallbacks(t *testing.T) {
 func TestWasmMemoryPagesClamped(t *testing.T) {
 	// An oversized resource envelope (8 GiB → 131072 pages) exceeds wazero's 4 GiB
 	// ceiling; it must be pinned to the max, not panic the runtime on first run.
-	w := DefaultWasm()
+	w := testWasm()
 	Resources{MemoryMB: 8192}.applyWasm(w)
 	if got := w.memoryLimitPages(); got != wasmMaxPages {
 		t.Fatalf("pages = %d, want clamped to %d", got, wasmMaxPages)
@@ -124,7 +141,7 @@ func TestWasmMemoryPagesClamped(t *testing.T) {
 }
 
 func TestWasmRejectsUnsupportedResourceDimensions(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	Resources{CPUs: 1}.applyWasm(w)
 	if err := w.Preflight(context.Background()); err == nil {
 		t.Fatal("WASM silently ignored a configured CPU cap")
@@ -154,7 +171,7 @@ func TestWasmMemoryLimitEnforced(t *testing.T) {
 
 	// Baseline: 128 MiB fits under the 256 MiB default, so the workload is a valid
 	// discriminator and not failing for some unrelated reason.
-	big := DefaultWasm()
+	big := testWasm()
 	if res, err := big.RunJavaScript(context.Background(), Request{Code: code}); err != nil {
 		t.Fatalf("baseline run errored: %v", err)
 	} else if !strings.Contains(res.Stdout, "ALLOCATED_128MB") {
@@ -163,7 +180,7 @@ func TestWasmMemoryLimitEnforced(t *testing.T) {
 
 	// Under a 32 MiB cap the SAME allocation must be stopped (caught OOM or a guest
 	// trap), never completed.
-	small := DefaultWasm()
+	small := testWasm()
 	small.MemoryPages = 512 // 32 MiB
 	res, err := small.RunJavaScript(context.Background(), Request{Code: code})
 	if err != nil {
@@ -181,7 +198,7 @@ func TestWasmMemoryLimitEnforced(t *testing.T) {
 // error). If wazero changes the prefix, the trap would instead be returned as an
 // infra error and this test fails — exactly the regression to catch.
 func TestWasmTrapClassifierPinsWazeroPrefix(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	res, err := w.RunJavaScript(context.Background(), Request{
 		Code: `function f(n){return n<=0?0:1+f(n-1)} f(200000)`,
 	})
@@ -197,7 +214,7 @@ func TestWasmTrapClassifierPinsWazeroPrefix(t *testing.T) {
 }
 
 func TestWasmProjectUnsupported(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	// The wasm provider cannot run projects; it signals this with ErrUnsupported (a
 	// returned error mapped to Unimplemented by the RPC layer), not a
 	// success-with-Err-string, so every provider reports "unsupported" uniformly.
@@ -208,7 +225,7 @@ func TestWasmProjectUnsupported(t *testing.T) {
 }
 
 func TestWasmConsoleErrorDoesNotCrash(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	// qjs only defines console.log; the shim must make error/warn/info/debug
 	// callable so this whole script runs instead of aborting on console.error.
 	res, err := w.RunJavaScript(context.Background(), Request{
@@ -226,7 +243,7 @@ func TestWasmConsoleErrorDoesNotCrash(t *testing.T) {
 }
 
 func TestWasmNumberFormatting(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	// qjs lacks Intl and groups nothing; the polyfill must make currency/number
 	// formatting produce Node-like output instead of the bare number.
 	cases := []struct{ code, want string }{
@@ -281,7 +298,7 @@ func TestQuickJSLicenseNoticeProvenance(t *testing.T) {
 }
 
 func TestWasmStackOverflowIsResultNotError(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	// Deep JS recursion overflows the stack; in this wasm build that traps as an
 	// out-of-bounds access (qjs#47). It must be reported as a failed run (non-zero
 	// exit), not as an infrastructure error returned to the caller.

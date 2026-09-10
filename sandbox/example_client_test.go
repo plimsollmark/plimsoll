@@ -38,7 +38,7 @@ func inventoryMockGateway(t *testing.T) *httptest.Server {
 // (docs/examples/grants/inventory.client.js) rather than a fixture written for the
 // test, so documentation that stops working fails the build.
 func TestExampleClientE2E(t *testing.T) {
-	requireDocker(t)
+
 	preamble, err := os.ReadFile("../docs/examples/grants/inventory.client.js")
 	if err != nil {
 		t.Fatalf("read example client: %v", err)
@@ -57,6 +57,7 @@ func TestExampleClientE2E(t *testing.T) {
 		Preamble: string(preamble),
 	}
 	d := testDocker()
+	requireSnippetImage(t, d)
 	res, err := d.RunJavaScript(context.Background(), Request{
 		Grant: grant,
 		Code: `(async () => {
@@ -82,7 +83,7 @@ func TestExampleClientE2E(t *testing.T) {
 // widen the grant: adjust() is a real method on the documented client, and the route
 // it calls is absent from the Allow list above, so the call is refused.
 func TestExampleClientRejectsUngrantedRoute(t *testing.T) {
-	requireDocker(t)
+
 	preamble, err := os.ReadFile("../docs/examples/grants/inventory.client.js")
 	if err != nil {
 		t.Fatalf("read example client: %v", err)
@@ -97,6 +98,7 @@ func TestExampleClientRejectsUngrantedRoute(t *testing.T) {
 		Preamble: string(preamble),
 	}
 	d := testDocker()
+	requireSnippetImage(t, d)
 	res, err := d.RunJavaScript(context.Background(), Request{
 		Grant: grant,
 		Code: `(async () => {

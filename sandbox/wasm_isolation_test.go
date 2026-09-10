@@ -34,7 +34,7 @@ func TestWasmDefaultCannotReachHostResources(t *testing.T) {
 	}
 	t.Setenv("WI_SANDBOX_SECRET", "leaked-env-value")
 
-	ws := DefaultWasm() // no HostAPI grant -> no FS preopen, no --std, no env
+	ws := testWasm() // no HostAPI grant -> no FS preopen, no --std, no env
 	code := fmt.Sprintf(`
 	  (async () => {
 	    const out = {};
@@ -83,7 +83,7 @@ func TestWasmDefaultCannotReachHostResources(t *testing.T) {
 // globals. This is NOT the isolation boundary (see the authoritative test above) —
 // it just confirms the no-grant path does not enable the libc globals.
 func TestWasmDefaultExposesNoStdGlobals(t *testing.T) {
-	ws := DefaultWasm()
+	ws := testWasm()
 	res, err := ws.RunJavaScript(context.Background(), Request{Code: `
 		const names = ["std","os","require","process","fetch","Deno","Bun"];
 		console.log(names.map(n => n + "=" + eval("typeof " + n)).join(","));

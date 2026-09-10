@@ -37,7 +37,7 @@ func TestWasmHostAPIGrantUsesSharedBroker(t *testing.T) {
 		Minter:  StaticToken(token),
 		Scopes:  []string{"lights:write"},
 	}
-	w := DefaultWasm()
+	w := testWasm()
 	if !w.SupportsJavaScriptGrants() {
 		t.Fatal("WASM must advertise JavaScript grant support")
 	}
@@ -91,7 +91,7 @@ func TestWasmNativeBridgeCannotBypassRawTargetChecks(t *testing.T) {
 	}
 	// Call the low-level native primitive directly, bypassing the cooperative JS
 	// SDK gate. The provider-neutral Go broker must still reject encoded targets.
-	res, err := DefaultWasm().RunJavaScript(context.Background(), Request{
+	res, err := testWasm().RunJavaScript(context.Background(), Request{
 		Code:  `var r=__coderunner_host_call(JSON.stringify({method:"GET",path:"/v1/%6cights/kitchen"}));console.log(r.status)`,
 		Grant: grant,
 	})
@@ -110,7 +110,7 @@ func TestWasmNativeBridgeCannotBypassRawTargetChecks(t *testing.T) {
 }
 
 func TestWasmNativeBridgeWithoutGrantFailsClosed(t *testing.T) {
-	res, err := DefaultWasm().RunJavaScript(context.Background(), Request{
+	res, err := testWasm().RunJavaScript(context.Background(), Request{
 		Code: `var r=__coderunner_host_call(JSON.stringify({method:"GET",path:"/"}));console.log(r.status)`,
 	})
 	if err != nil {

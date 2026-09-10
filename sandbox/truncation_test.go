@@ -50,7 +50,7 @@ func TestCappedStreamReportsTruncation(t *testing.T) {
 // TestWasmMarksOutputTruncation runs the in-process provider with a tiny output
 // cap and verifies the result carries the truncation flag with unmarked output.
 func TestWasmMarksOutputTruncation(t *testing.T) {
-	w := DefaultWasm()
+	w := testWasm()
 	w.MaxOutputBytes = 16
 	res, err := w.RunJavaScript(context.Background(), Request{Code: `console.log("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")`})
 	if err != nil {

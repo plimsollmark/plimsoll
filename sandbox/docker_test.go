@@ -453,8 +453,9 @@ func TestDockerInfraExitClassification(t *testing.T) {
 }
 
 func TestDockerRunCapturesStdoutAndExitZero(t *testing.T) {
-	requireDocker(t)
+
 	d := testDocker()
+	requireSnippetImage(t, d)
 	res, err := d.RunJavaScript(context.Background(), Request{Code: `console.log("hi", 1 + 2)`})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -471,8 +472,9 @@ func TestDockerRunCapturesStdoutAndExitZero(t *testing.T) {
 }
 
 func TestDockerNonZeroExitIsResultNotError(t *testing.T) {
-	requireDocker(t)
+
 	d := testDocker()
+	requireSnippetImage(t, d)
 	res, err := d.RunJavaScript(context.Background(), Request{Code: `console.error("boom"); process.exit(3)`})
 	if err != nil {
 		t.Fatalf("non-zero exit should be a result, got error: %v", err)
@@ -486,8 +488,9 @@ func TestDockerNonZeroExitIsResultNotError(t *testing.T) {
 }
 
 func TestDockerTimeout(t *testing.T) {
-	requireDocker(t)
+
 	d := testDocker()
+	requireSnippetImage(t, d)
 	d.DefaultTimeout = 1 * time.Second
 	res, err := d.RunJavaScript(context.Background(), Request{Code: `setTimeout(() => {}, 60000)`})
 	if err != nil {
@@ -575,6 +578,25 @@ func requireProjectImage(t *testing.T, d *DockerSandbox) {
 	requireDocker(t)
 	if err := exec.Command("docker", "image", "inspect", d.ProjectImage).Run(); err != nil {
 		t.Skipf("project image %s not built (run `docker build -t %s docker/`)", d.ProjectImage, d.ProjectImage)
+	}
+}
+
+// requireSnippetImage is requireProjectImage's missing counterpart for the snippet
+// image. requireDocker proves only that the docker binary is on PATH; a machine can
+// have docker installed and a daemon running without ever having pulled
+// node:22-alpine, and then every snippet test fails reporting "image is not
+// inspectable on the pinned daemon" — an infrastructure condition dressed up as a
+// test failure, saying nothing about the code under test.
+//
+// That machine is not hypothetical: it is every hosted CI runner, and it is any
+// contributor who installed docker and went straight to `go test ./...`. The
+// project image already skipped correctly; this one did not, which is how the first
+// CI run of .github/workflows/audit.yml failed (2026-09-10).
+func requireSnippetImage(t *testing.T, d *DockerSandbox) {
+	t.Helper()
+	requireDocker(t)
+	if err := exec.Command("docker", "image", "inspect", d.Image).Run(); err != nil {
+		t.Skipf("snippet image %s not present (run `docker pull %s`)", d.Image, d.Image)
 	}
 }
 
