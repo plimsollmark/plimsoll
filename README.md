@@ -114,11 +114,26 @@ which is why the links above point at the published copy instead.
 
 ## The problem
 
-Agent frameworks increasingly need to run model-authored code. The products that
-offer this converge on one security sentence, "isolated per request, nothing
-persists," because a single-runtime vendor has exactly one boundary to describe. None
-of them let a caller ask which tier ran, assert a minimum before dispatch, or check
-the answer afterwards.
+Agent frameworks increasingly need to run model-authored code. A single-runtime vendor
+has exactly one boundary to describe, so the products that offer this converge on one
+security sentence: "isolated per request, nothing persists."
+
+Checked in September 2026 against the current documentation for E2B, Modal, Daytona,
+Vercel Sandbox, Cloudflare and Northflank: none of them returns the isolation boundary a
+run executed behind, and none refuses a run that would execute below a minimum the
+caller stated. Modal comes closest, in the other direction: passing
+`experimental_options={"vm_runtime": True}` to `Sandbox.create()` opts into a full VM
+instead of the gVisor default, but nothing reports back which runtime served a given
+call. Kubernetes RuntimeClass (`runtimeClassName: gvisor`) is the same shape one layer
+down, a declaration in a pod spec rather than a per-request floor.
+
+The case this is built for is the one Northflank documents plainly: it runs Kata
+Containers where nested virtualization is available and gVisor where it is not. That is
+a reasonable engineering decision, and it means the boundary your code ran behind is a
+property of the host it landed on. The caller has no way to ask which it got.
+
+If your service does report the tier and enforce a caller's floor, open an issue and
+this section gets corrected.
 
 Meanwhile the ecosystem ships safety claims that nothing checks. The founding example
 for this project: a popular embeddable JavaScript sandbox advertised a `MemoryLimit`
