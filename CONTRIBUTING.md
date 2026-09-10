@@ -5,11 +5,21 @@ Thanks for looking. Two things to know before you spend time on a change.
 **Do not report security vulnerabilities here.** See [SECURITY.md](SECURITY.md) for
 private disclosure through GitHub Security Advisories.
 
-**There is no CI, by design.** You will not see checks run on your pull request. This
-is not an oversight or a missing config. The gate is run locally by the maintainer
-before anything merges, and the result is recorded in the commit message. Practically,
-that means a pull request sits until someone runs it by hand, so expect merges to be
-slower than on a project with automated checks.
+**CI runs part of the gate on your pull request, and you should still run all of it
+locally.** The [audit workflow](.github/workflows/audit.yml) runs `make audit`: build,
+vet, race tests, golangci-lint, `buf lint` plus a generated-code drift check, and
+`govulncheck`.
+
+What it does not run is the part that tests the isolation claims. The docker, seccomp
+and E2B suites are opt-in (`DOCKER=1`, `E2B=1`), they need a local docker daemon and a
+live paid E2B account, and no automated run in this project is permitted to spend
+money. So a green check means the code compiles, passes the race detector, lints
+clean and has no known vulnerable dependencies. It does not mean anyone verified that
+a container came up read-only or that a microVM denied egress. If your change touches
+a provider, run the full local gate and paste the result into the pull request.
+
+The maintainer still runs the full gate by hand before merging, so expect merges to be
+slower than on a project where the automated checks are the whole story.
 
 ## The gate
 

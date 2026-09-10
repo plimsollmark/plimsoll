@@ -347,10 +347,20 @@ means only that it passed under whatever happened to be on `PATH`, which is not 
 claim this gate makes. `make tools` installs the pinned set; the codegen plugins are
 pinned separately by go.mod `tool` directives.
 
-**There is no CI, and that is a decision rather than an omission.** This
-repository ships no workflow files and registers no runners; `make audit` is the
-gate, and it runs locally. A change that proposes automating it on a hosted
-runner should be raised as a change of policy, not filed as a fix.
+**CI runs `make audit` and nothing else, which is less than the gate.**
+[.github/workflows/audit.yml](.github/workflows/audit.yml) runs the plain target on
+every push and pull request, so what the check claims and what the Makefile does
+cannot drift. It does **not** pass `DOCKER=1` or `E2B=1`, and those are where the
+provider isolation claims are actually tested: no CI run has ever proved that a
+container came up read-only or that a microVM denied egress. Read a green check as
+"compiles, races clean, lints clean, no known vulnerable dependencies", and nothing
+more.
+
+The E2B suite is absent deliberately rather than left unconfigured. It drives a live
+paid service and no automated run in this project may spend, so **do not add an E2B
+key to repository secrets to "complete" the gate.** Third-party actions are pinned by
+commit SHA rather than tag, for the same reason the gate tools, the QuickJS artifact
+and the gVisor release are pinned: a tag is mutable.
 
 **The E2B key never lands on disk.** The live E2B suite reads `E2B_API_KEY` from
 the environment and nothing writes it anywhere:
@@ -375,30 +385,38 @@ owning account staying secure.
 
 Consumers `require` tagged versions with no `replace`; day-to-day sibling
 development uses an uncommitted workspace (`go work init . ../plimsoll`,
-gitignored). Version resolution outside a workspace (`go mod tidy`/`go mod
-vendor`, Docker builds) can come from a local file-based GOPROXY, published per
-tag with `make modproxy` and wired machine-wide via:
-```sh
-go env -w GOPROXY='file:///path/to/goproxy,https://proxy.golang.org,direct' \
-          GONOSUMDB='github.com/plimsollmark/*'
-```
-(`GONOSUMDB` rather than `GOPRIVATE`: `GOPRIVATE` implies `GONOPROXY`, which would
-bypass the file proxy and go straight to VCS. That used to fail on an unresolvable
-host; now it would fetch a real GitHub repository instead of the tag the file proxy
-holds, which is worse, because the two can silently differ.)
+gitignored). A workspace build resolves the sibling working tree, not the pinned
+version, so it proves nothing about the pin: verify with `GOWORK=off`.
 
-**The `github.com/plimsollmark/*` exemption is temporary, and here is its exit
-condition.** The module is currently published only to the local file proxy, so
-`sum.golang.org` cannot verify it: a lookup for `github.com/plimsollmark/plimsoll`
-returns `not found`, because the checksum database tries to `git ls-remote` the
-repository and there is no public repository behind the name yet (verified
-2026-09-09). Without the exemption every sibling `go mod tidy` fails on checksum
-verification rather than on anything real. **Once this repository is public on
-GitHub with matching tags, delete `github.com/plimsollmark/*` from `GONOSUMDB`.**
-At that point `sum.golang.org` records the hash of the first version it sees and
-every later fetch is verified against it, which is the real replacement for what
-the `.localhost` path used to give for free. Leaving the exemption in place after
-publication would keep the TCB's own module as the one dependency nobody checks.
+Version resolution outside a workspace (`go mod tidy`/`go mod vendor`, Docker
+builds) comes from `proxy.golang.org` and is checked against `sum.golang.org`,
+like any other public module. There is nothing to configure. The `make modproxy`
+target that publishes a local file-based GOPROXY still exists and is still how a
+pre-publication tag would be served, but no released version needs it.
+
+**Public releases start at v0.2.0, and the gap below it is deliberate.** Versions
+v0.1.0 through v0.1.7 were tagged on this module before publication and resolve only
+from a local file proxy; their trees are not this tree. A module version is global and
+immutable, so those numbers are spent: reusing one publicly would mean a single
+version string naming two different artifacts, and any consumer holding the older
+hash would hit a checksum mismatch. The first public tag is therefore numbered above
+the whole retired line rather than starting from v0.1.0.
+
+**The `github.com/plimsollmark/*` checksum exemption is gone, and it is not coming
+back.** While consumers still required a pre-publication v0.1.x, this module had to
+be exempted from `sum.golang.org`: a checksum lookup for a version with no public tag
+behind it returns `not found`, so enforcing verification then would have turned every
+`go mod tidy` into a failure that described nothing real. That is why the exemption
+existed and why it was always framed as temporary.
+
+It was removed on 2026-09-10, once every consumer required v0.2.0. `sum.golang.org`
+now holds v0.2.0 (transparency-log index 62818162) and verifies every later fetch
+against the hash it recorded, which is the real replacement for what the old
+`.localhost` module path used to give for free. **Do not re-add the exemption.**
+Doing so would leave this TCB's own module as the one dependency in a consumer's
+graph that nothing cross-checks, which is precisely backwards for a component whose
+job is running hostile code. If a future pre-publication tag ever needs the file
+proxy again, scope the exemption to that work and take it out with the tag.
 
 **Supply chain.** Codegen plugins are pinned by go.mod `tool` directives
 (`protoc-gen-go`, `protoc-gen-connect-go`) and run via `go tool`, so `buf generate`

@@ -1,0 +1,63 @@
+# The gate, run where a reader can see it.
+#
+# This runs `make audit` and nothing more, so what the badge claims and what the
+# Makefile does cannot drift. Read README.md § Verification for what this does NOT
+# cover: the docker, seccomp and E2B suites are opt-in (`DOCKER=1`, `E2B=1`) and are
+# not run here, so a green check on this workflow proves strictly less than a local
+# `make audit DOCKER=1 E2B=1`.
+#
+# The E2B suite is deliberately absent rather than merely unconfigured. It drives a
+# live paid service, and no automated run in this project may spend. Do not add an
+# API key to this repository's secrets to "complete" the gate.
+#
+# Third-party actions are pinned to a commit SHA, not a tag. A tag is mutable and
+# repointing one is a supply-chain attack this repository is otherwise careful about
+# (pinned gate tools, a SHA-256-pinned QuickJS artifact, a pinned gVisor release);
+# leaving the CI that guards it on floating tags would be the loose end.
+name: audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only. Nothing here publishes, comments, or writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # go.mod's `go` directive is the floor (1.26.2), not the canonical build. The
+      # `toolchain go1.26.6` line is, because govulncheck is clean there and earlier
+      # 1.26.x carried stdlib advisories in the reverse-proxy and HTTP/2 paths this
+      # TCB calls. Whatever version setup-go lands, GOTOOLCHAIN=auto then honors that
+      # toolchain line, so the gate runs on the pinned compiler either way.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Report the toolchain actually in use
+        run: go version
+
+      - name: Put installed tools on PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # Installs exactly the versions in gate-tools.versions. `make audit` runs
+      # `tools-check` first and fails on any mismatch, so this step cannot silently
+      # install something else and still report success.
+      - name: Install the pinned gate tools
+        run: make tools
+
+      - name: make audit
+        run: make audit

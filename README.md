@@ -29,8 +29,31 @@ res, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
 - **No third-party security audit has ever been performed**, and the author's own
   self-review ledgers are not published either. [SECURITY.md](SECURITY.md) says what
   exists, what it is worth, and what you can check yourself instead.
-- **There is no CI.** The gate is `make audit`, run locally. See
-  [CONTRIBUTING.md](CONTRIBUTING.md).
+- **CI runs the gate, but not all of it.** The
+  [audit workflow](.github/workflows/audit.yml) runs `make audit` on every push and
+  pull request: build, vet, race tests, lint, `buf lint`, a generated-code drift
+  check, and `govulncheck`. It does **not** run the docker, seccomp or E2B suites,
+  which are opt-in (`DOCKER=1`, `E2B=1`) and are where the provider isolation claims
+  are actually tested. A green check therefore proves strictly less than a local
+  `make audit DOCKER=1 E2B=1`. The E2B suite drives a live paid service and is
+  deliberately never wired to a runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Learn how it works
+
+The [interactive lessons](https://plimsollmark.github.io/plimsoll/trainers/) are the
+fastest way in if you would rather read than clone. They are plain HTML pages with no
+build step, no dependencies and no network calls, covering the execution model,
+architecture, the four providers, the capability model, operations, and integrating
+with an agent or MCP server.
+
+Start with **[Plain English](https://plimsollmark.github.io/plimsoll/trainers/plain-english.html)**
+if you want the idea before the API, or
+**[Quick start](https://plimsollmark.github.io/plimsoll/trainers/quick-start.html)**
+if you want to run something.
+
+They live in [docs/trainers/](docs/trainers/) and work offline: open any file from a
+clone in a browser. GitHub shows `.html` files as source rather than rendering them,
+which is why the links above point at the published copy instead.
 
 ## The problem
 
@@ -284,9 +307,9 @@ be recorded by accident.
   syscall filter and the kernel-tier boundary.
 - [docs/advisory-privacy.md](docs/advisory-privacy.md) covers the advisory channel and
   why its telemetry cannot carry payloads.
-- [docs/trainers/](docs/trainers/) are dependency-free interactive lessons on the
-  execution model, providers, capabilities, and operations. Open any file directly or
-  serve the directory.
+- [The interactive lessons](https://plimsollmark.github.io/plimsoll/trainers/) cover
+  the execution model, providers, capabilities, and operations. Source in
+  [docs/trainers/](docs/trainers/); open any file from a clone to read them offline.
 - [docs/seams.md](docs/seams.md) maps the deliberate extension points.
 
 ## License
