@@ -84,8 +84,13 @@ func TestTrainerDocuments(t *testing.T) {
 					t.Fatalf("missing shell element %q", id)
 				}
 			}
-			if len(doc.Chapters) != 6 {
-				t.Fatalf("chapter count = %d, want 6", len(doc.Chapters))
+			// A floor, not an exact count. This asserted `== 6` until 2026-09-10, which
+			// caught a stub trainer (the thing worth catching) but also made the course
+			// unable to learn anything new: a lesson could only gain a chapter by losing
+			// one, so the test was deciding editorial questions it has no view on.
+			// Every trainer still holds at least six, so nothing has been weakened.
+			if len(doc.Chapters) < 6 {
+				t.Fatalf("chapter count = %d, want at least 6 (a trainer this short is a stub)", len(doc.Chapters))
 			}
 			seenChapters := map[string]bool{}
 			for i, chapter := range doc.Chapters {
