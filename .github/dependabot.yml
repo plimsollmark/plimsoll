@@ -1,0 +1,30 @@
+# Dependabot exists here for one reason: .github/workflows/audit.yml pins its actions
+# by commit SHA rather than by tag, because a tag is mutable and this repository is
+# careful about that everywhere else. The cost of a SHA pin is that it never updates
+# itself, including through a security fix, so without something watching them the
+# pins rot silently and quietly.
+#
+# This opens pull requests. It does not run builds on a hosted runner beyond the audit
+# workflow that already runs on every pull request, so it does not change the project's
+# position on CI.
+#
+# Only the github-actions ecosystem is watched. Go modules are deliberately absent:
+# there are four direct dependencies, `make audit` runs `govulncheck` on every push and
+# pull request, and this is a trusted computing base where a dependency bump is a
+# decision to make deliberately rather than a pull request to merge on sight.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+    groups:
+      # One pull request for all of them. Two actions are pinned; separate PRs for a
+      # checkout bump and a setup-go bump is noise, not signal.
+      actions:
+        patterns:
+          - "*"

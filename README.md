@@ -182,6 +182,51 @@ execution may already have happened.
 a caller asserting its own requirement, because a stale `Describe` response must never
 be able to authorize a later downgrade.
 
+## What comes back, and what it means
+
+Most sandboxes flatten every bad outcome into one error, and the caller then cannot
+tell a user's broken code from a refused request from a run that may have half
+happened. That distinction is the difference between retrying safely and repeating
+something with side effects.
+
+**A non-zero exit code is a normal result, not a Go error.** The user's code failed;
+nothing went wrong with the sandbox. Errors are reserved for pre-dispatch failures
+(`ErrInvalidRequest`, `ErrUnsupported`, `ErrDisabled`, `ErrAtCapacity`), cancellation,
+and unmatched infrastructure faults.
+
+For projects, per-step failures live in `Steps` and the run's conclusion is a typed
+`ProjectResult.Outcome`, which is a stable retry classification rather than a message
+to regex:
+
+| Outcome | What happened | Retryable |
+|---|---|---|
+| `completed` | every step ran; read `Steps` for pass or fail | no, the answer is in the result |
+| `setup_failed` | staging the project never got as far as your code | yes, nothing of yours ran |
+| `timed_out` | the run exceeded its deadline | with care; side effects may exist |
+| `protocol_error` | the runner and the host disagreed | no, this is a bug to report |
+
+Read the isolation errors the same way. `ErrInsufficientIsolation` means **no code
+ran**. `ErrIsolationEvidenceMismatch` means execution **may already have happened**,
+which is why it is never a safe automatic retry. `ErrAtCapacity` is the one that is
+cleanly retryable with backoff, because admission refused the run before it started.
+
+### Output comes back exactly as the guest wrote it
+
+Guest output is `bytes` on the wire, not a string, so arbitrary bytes survive verbatim
+instead of being lossily repaired into UTF-8. If your agent emits a binary blob, a lone
+surrogate, or invalid UTF-8, you receive what it actually wrote.
+
+**Truncation is a field, never a marker injected into your data.** Results carry
+`StdoutTruncated`, `StderrTruncated` and `ArtifactsTruncated`, and the retained output
+is not annotated in-band. Nothing appends `...[truncated]` into a stream you are about
+to parse, so a run that produces JSON still produces parseable JSON right up to the
+cut.
+
+Flooding is classified as what it is. An E2B guest that pushes its output past the
+transfer budget is a **failed user run** (exit 153, both streams flagged truncated),
+not an infrastructure error, so it does not page anyone and it does not get retried as
+though the platform failed.
+
 ## Capability grants
 
 Without a grant, a run has **no network at all**. A grant is opt-in twice over: a nil
@@ -237,6 +282,29 @@ plimsoll-specgen -emit health   api.openapi.json   # the recovery probe, if deri
 Worked example, with the input document and every generated artifact side by side:
 [docs/examples/specgen](docs/examples/specgen).
 
+### The broker also protects the API from the agent
+
+A sandbox usually protects your infrastructure from the agent's code. This one also
+protects your upstream API from the agent's behaviour, which is a different failure:
+**an agent loop that reacts to a 429 by trying again, faster.**
+
+Nothing in a model's training makes it back off. So the broker does it host-side. When
+an upstream returns 429 or 503, a **per-run circuit breaker** opens for a cooldown
+that honours `Retry-After` (capped at 30s), and further permitted calls are *shed* with
+a fast 503 rather than piled onto an API that has already asked for room. While
+shedding, one elected caller per second probes the grant's declared `health_check`
+route and closes the breaker early on a 2xx, so recovery does not wait out the full
+cooldown or burn an expensive call to discover it.
+
+The probe uses the run's credential but is neither traced nor charged to the call
+budget. Sheds are counted separately from policy denials (`CallTrace.Shed` versus
+`Denied`) and surface on the audit line as `host_calls_shed`, so "the agent was
+throttled" and "the agent tried something it was not allowed to" never look alike.
+
+**The scope is one run.** This is not fleet-wide overload protection and does not
+coordinate across concurrent runs; it stops a single agent loop from hammering an
+endpoint that is already struggling.
+
 ## Telemetry is metadata-only by construction
 
 Every brokered call is recorded in a `CallTrace` holding the matched route
@@ -264,6 +332,47 @@ auth, TLS on any non-loopback listener, pinned images with no `unconfined` secco
 explicit per-run resource envelope with an aggregate memory budget, and per-caller
 rate limiting. Every violation is reported at once, so it is one fix pass rather than
 a startup loop.
+
+## The dependency list, and who checks the checkers
+
+This runs hostile code, so every dependency is attack surface someone else controls.
+There are **four direct dependencies**, and the whole list fits here:
+
+```
+connectrpc.com/connect      the RPC transport
+google.golang.org/protobuf  the wire format
+github.com/tetratelabs/wazero  the WebAssembly runtime
+golang.org/x/net            HTTP/2
+```
+
+`golang.org/x/sys` and `golang.org/x/text` come along indirectly. That is the entire
+graph. Adding to it is a decision, not a convenience.
+
+**One library is banned by name, in the linter, with the reason attached.**
+`github.com/fastschema/qjs` looked like the obvious way to embed a JavaScript engine,
+and its `MemoryLimit` is a no-op: it accepts a limit and does not enforce one. In an
+in-process sandbox an unenforced memory cap is a direct route to taking down the host.
+So plimsoll drives wazero directly with `WithMemoryLimitPages` for a real per-run cap,
+a `depguard` rule fails the build if the import returns, and a test asserts the same
+thing independently of the linter. The generalisable part is not the library, it is
+that a dependency claiming a safety property is not evidence that it has one.
+
+The embedded QuickJS artifact is pinned to quickjs-ng v0.15.1 **by SHA-256** and
+guarded by a provenance test, and `docker/install-gvisor.sh` pins a specific gVisor
+release and checksum rather than tracking `latest`.
+
+### The gate pins the tools that run the gate
+
+`make audit` shells out to `buf`, `golangci-lint` and `govulncheck`. Those are not Go
+dependencies, so nothing in `go.mod` pins them, and without something else doing it
+every machine would run a different gate while reporting the same `audit: OK`.
+
+So [gate-tools.versions](gate-tools.versions) pins all three, and `tools-check` is a
+prerequisite of `audit`: **the gate refuses to run against anything else.** `make
+tools` installs exactly the pinned set. This matters because the alternative is a
+green check that means "it passed under whatever happened to be on this `PATH`", which
+is not the claim the gate is making. The codegen plugins are pinned separately, by
+go.mod `tool` directives, so `buf generate` is reproducible with no network.
 
 ## Quick start
 
