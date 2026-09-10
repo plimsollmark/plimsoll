@@ -320,6 +320,50 @@ throttled" and "the agent tried something it was not allowed to" never look alik
 coordinate across concurrent runs; it stops a single agent loop from hammering an
 endpoint that is already struggling.
 
+### Prior art, and what differs here
+
+Keeping the credential out of the guest is not a new idea, and two funded platforms
+ship a version of it. Vercel Sandbox's **credentials brokering** injects the credential
+into egressing traffic host-side, so that "the secrets never enter the sandbox, so code
+running inside it cannot exfiltrate them." Cloudflare's **Code Mode** holds the access
+tokens in a supervisor outside the isolate and makes `fetch()` and `connect()` throw
+inside it. Two teams building the same control independently is the best evidence
+available that it is the right control.
+
+Checked September 2026 against their current documentation, four things differ here:
+
+- **Route granularity, and denial as the default.** Vercel states plainly that
+  "Matchers never block traffic": access is decided per domain from the TLS SNI, and a
+  request matching no rule still reaches that domain, simply without the credential
+  attached. Restricting a domain to particular paths means routing it through a proxy
+  you write and rejecting the rest there. plimsoll refuses anything that is not
+  byte-identical to an approved route, and that refusal is the component rather than an
+  integration point.
+- **The credential is minted per run, not attached per sandbox.** Their documented
+  examples interpolate a long-lived token from the operator's environment. A grant here
+  carries a `TokenMinter` called once per run with that run's scopes and the calling
+  principal as the subject.
+- **No parallel path to bypass.** Vercel documents that traffic permitted by
+  `subnets.allow` "bypasses SNI filtering, credentials brokering, and requests
+  proxying", and that domain fronting is possible because matching reads the SNI alone.
+  A plimsoll guest has no network at all outside the broker: Docker runs with
+  `--network none`, and the WASM guest has a host function and no sockets.
+- **Backpressure and generation.** Neither documents a circuit breaker or backoff on an
+  upstream 429/503, and while generating a model-facing tool surface from OpenAPI is
+  well populated, generating the *enforced* allow list from the same document is not
+  something this project has found elsewhere.
+
+**Where theirs is broader, and it is a real trade.** Vercel's firewall governs whatever
+the sandbox runs, so package installs, `git`, and Postgres clients all work with a
+credential attached at the boundary. plimsoll's broker serves JavaScript runs through
+the injected client, and everything else in the guest has no egress whatsoever: the
+project toolchain is baked into the image precisely because runtime has no network. If
+your agent needs to `npm install` mid-run against a private registry, their model covers
+that case and this one does not.
+
+Vendor documentation changes; this comparison is dated for that reason. If it is wrong
+or has gone stale, open an issue.
+
 ## Telemetry is metadata-only by construction
 
 Every brokered call is recorded in a `CallTrace` holding the matched route
