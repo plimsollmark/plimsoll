@@ -19,6 +19,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 // BannedQJS must never be imported: its MemoryLimit is a no-op, so it cannot bound
@@ -30,6 +33,33 @@ const BannedQJS = "github.com/fastschema/qjs"
 //
 //	func TestNoBannedQJSDependency(t *testing.T) { sandboxtest.RequireNoQJS(t) }
 func RequireNoQJS(t testing.TB) { RequireNoImport(t, BannedQJS) }
+
+// WasmTestTimeout is the per-run timeout a test should give the WASM provider. It
+// is deliberately far larger than the provider's own DefaultTimeout, which is a
+// product default chosen for real callers.
+//
+// Under `go test -race` the race detector instruments wazero's compilation of the
+// embedded QuickJS build, and on a small shared machine that compilation alone can
+// take longer than the product default before a single line of guest code runs. A
+// test that inherits the product default is then measuring the host's speed, and it
+// reports the result as exit 124: a timeout that looks like the code under test
+// misbehaved. That is a false failure, and a slow enough machine turns every
+// WASM-backed test in the suite into one.
+const WasmTestTimeout = 60 * time.Second
+
+// Wasm returns a WASM sandbox configured for tests: the real provider, with
+// WasmTestTimeout in place of the product default. Use it anywhere a test needs a
+// working sandbox rather than to assert timeout behaviour itself; a test that IS
+// about timeouts must set its own value, which still wins over this one.
+//
+// plimsoll's own sandbox package cannot import this package (it would be an import
+// cycle), so it keeps a private equivalent. Every other package, in this module and
+// in consumers, should use this.
+func Wasm() *sandbox.WasmSandbox {
+	w := sandbox.DefaultWasm()
+	w.DefaultTimeout = WasmTestTimeout
+	return w
+}
 
 // RequireNoImport fails t if modulePath (or a subpackage of it) is imported by the
 // module under test. It locates the calling module via `go env GOMOD` and checks

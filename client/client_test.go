@@ -17,13 +17,14 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandboxtest"
 )
 
 // startServer runs a real plimsolld handler (wasm provider) over httptest and
 // returns its URL. verifier=nil means keyless.
 func startServer(t *testing.T, verifier rpc.TokenVerifier) string {
 	t.Helper()
-	svc := rpc.NewSandboxService(sandbox.DefaultWasm())
+	svc := rpc.NewSandboxService(sandboxtest.Wasm())
 	mux := http.NewServeMux()
 	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(verifier)))
 	mux.Handle(path, h)
@@ -37,7 +38,7 @@ func startServer(t *testing.T, verifier rpc.TokenVerifier) string {
 // sent. Keyless.
 func startLoggingServer(t *testing.T, log *bytes.Buffer) string {
 	t.Helper()
-	svc := rpc.NewSandboxService(sandbox.DefaultWasm())
+	svc := rpc.NewSandboxService(sandboxtest.Wasm())
 	svc.Logger = slog.New(slog.NewJSONHandler(log, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	mux := http.NewServeMux()
 	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
