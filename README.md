@@ -14,6 +14,14 @@ What backs that value is provider-specific startup evidence, described exactly u
 collected, not as a remote attestation: no provider here cryptographically attests
 the runtime implementation underneath it.
 
+The second thing it does is narrower and, for most callers, the more useful one:
+**it lets agent-written code use your API without ever receiving your credential, your
+base URL, or general network access.** The bearer is minted per run, stays in Go, and
+is attached host-side only after the caller and the exact route have been authorized.
+Code that ignores the injected client and calls out by hand does not get further,
+because the broker rather than the client is what enforces the policy. See
+[Capability grants](#capability-grants).
+
 ```go
 res, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
     Code:             "console.log(6 * 7)",
@@ -21,6 +29,55 @@ res, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
 })
 // res.Isolation reports the boundary that actually ran.
 ```
+
+## The workflow this is built for
+
+Running agent-authored code costs something in every environment, and the cost is
+wrong in both directions. A microVM per run is right for production and absurd for
+the *inner loop*, meaning the edit-run-debug cycle a developer repeats hundreds of
+times a day. But developing against a weak sandbox and deploying against a strong one
+is how a weak sandbox reaches production.
+
+Plimsoll's answer is that the tier is chosen by configuration and **demanded by each
+request**, so the two decisions are made by different people at different times:
+
+1. **Locally, run in-process.** `SANDBOX_PROVIDER=wasm` executes JavaScript on an
+   embedded QuickJS build through wazero. No sandbox account, no API key, no docker
+   daemon, no network, no per-run cost. It is process-tier isolation and the README
+   says so everywhere: an engine escape lands in your own daemon.
+2. **In production, demand the tier your threat model requires.** Every request
+   carries `MinimumIsolation`, so the caller states its own floor rather than trusting
+   whatever the operator configured.
+3. **Then ship the configuration mistake.** A deploy still pointing at `wasm` while
+   the caller demands `IsolationVM` is the failure this design exists to catch.
+4. **The run is refused before dispatch.** The handler compares the floor against
+   current provider evidence immediately before admission, and returns
+   `ErrInsufficientIsolation`. **No submitted code ran.** The caller also re-checks the
+   evidence on the response; a mismatch there is `ErrIsolationEvidenceMismatch`, which
+   is a weaker guarantee and deliberately described as one, because by then execution
+   may already have happened.
+
+This is enforcement at runtime, expressed through a typed request field. Nothing in
+the type system forces a production caller to ask for `IsolationVM`; what the design
+gives you is that asking is one field, and that asking is checked before anything
+executes rather than reported afterwards.
+
+**What this workflow does not give you is a guarantee that code behaving locally
+behaves in production**, and it would be dishonest to imply otherwise:
+
+- The engines differ. `wasm` runs QuickJS; `docker` and `e2b` run Node. `fetch` is
+  undefined under QuickJS and global under Node 22, and there is no npm. A snippet
+  passing locally is not evidence it passes on a production tier.
+- `RunProject` is unsupported on `wasm` and always returns `ErrUnsupported`, so
+  multi-file projects cannot be exercised in-process at all.
+- Grant support differs. `wasm` always supports JavaScript grants; `e2b` supports them
+  only when `E2B_GUARD_URL` is configured, so a grant that works locally fails there
+  until the guard is set up.
+
+Treat the in-process tier as a fast way to iterate on your integration, not as a
+staging environment. `Describe` reports what the active provider actually supports, so
+a gateway can find these differences at startup instead of discovering them in
+production.
 
 ## Status, plainly
 
@@ -149,6 +206,36 @@ anything is dispatched upstream.
 Over RPC, a caller selects a **named server-side profile** by id. Raw caller-supplied
 grants are intentionally not accepted over the wire, so base URL, routes, and
 credential all stay server-side, and every profile carries an `allowed_callers` ACL.
+
+### The policy and the tool description are generated from one source
+
+Three things describe the same API surface, and in every hand-maintained setup they
+drift apart:
+
+- the **allow list**, which is what the broker enforces,
+- the **preamble**, the JavaScript client the agent actually calls,
+- the **tool description**, the text a gateway shows the model so it knows what exists.
+
+When they disagree the failure is quiet and specific: the model is told about a route
+the broker will refuse, or the client offers a method the policy never approved. You
+find out at runtime, in an agent transcript.
+
+[`plimsoll-specgen`](cmd/plimsoll-specgen) derives **all three from one OpenAPI 3.x
+document**, so they cannot disagree. Path parameters become whole-segment `*` routes,
+operations become typed methods on a global, and summaries become the description. It
+is deterministic and fully offline: no server is contacted and no credential is
+needed. It fails closed on ambiguous input, and it **reports rather than silently
+drops** what it cannot express, so a verb the broker cannot enforce (`HEAD`,
+`OPTIONS`, `TRACE`) is a warning rather than a gap you discover later.
+
+```sh
+plimsoll-specgen -emit grants   api.openapi.json   # the allow list and preamble
+plimsoll-specgen -emit catalog  api.openapi.json   # every route, for operator advice
+plimsoll-specgen -emit health   api.openapi.json   # the recovery probe, if derivable
+```
+
+Worked example, with the input document and every generated artifact side by side:
+[docs/examples/specgen](docs/examples/specgen).
 
 ## Telemetry is metadata-only by construction
 
