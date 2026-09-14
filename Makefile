@@ -1,6 +1,8 @@
-# plimsoll — local checks. There is deliberately NO CI (the owner builds
-# locally), so `make audit` is the single reproducible gate that runs everything a
-# hostile-code TCB should pass before a commit. Each target is runnable on its own.
+# plimsoll — the gate. `make audit` is the single reproducible check that runs
+# everything a hostile-code TCB should pass before a commit, and CI
+# (.github/workflows/audit.yml, gvisor.yml) runs these same targets on a hosted
+# runner so what a check claims and what this file does cannot drift. Each target
+# is runnable on its own.
 #
 # "Reproducible" is a claim this file has to earn. buf, golangci-lint and
 # govulncheck live outside the module, so they are pinned in gate-tools.versions,
@@ -9,17 +11,19 @@
 # happened to be on PATH", which is not a gate.
 
 # The docker/e2b suites need real infrastructure, so they are opt-in even inside
-# `make audit`: set DOCKER=1 (local daemon, built images) and/or E2B=1
-# (E2B_API_KEY in the environment) to include them.
+# `make audit`: set DOCKER=1 (local daemon, images from `make docker-images`) and/or
+# E2B=1 (E2B_API_KEY in the environment) to include them. DOCKER=1 is a request for
+# proof: docker-suite runs in required mode, where a missing daemon, a missing image
+# or any skipped test fails the target instead of passing quietly.
 SECCOMP := $(CURDIR)/docker/seccomp.json
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race lint buf vuln docker-suite e2b-suite e2b-guard-live modproxy tools tools-check help
+.PHONY: audit build vet test race lint buf vuln docker-images docker-suite e2b-suite e2b-guard-live modproxy tools tools-check help
 
 ## audit: the full local gate — pinned-tool check, build, vet, race tests, lint, buf, govulncheck (+ opt-in docker/e2b)
 audit: tools-check build vet race lint buf vuln
-	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + built images)"; fi
+	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
 	@echo "audit: OK"
 
@@ -53,9 +57,28 @@ buf:
 vuln:
 	govulncheck ./...
 
-## docker-suite: the real docker/seccomp/broker tests (needs a local daemon + built images)
+## docker-images: pull the snippet image and build the project image the docker suite runs against
+docker-images:
+	docker pull node:22-alpine
+	docker build -t plimsoll/sandbox:latest docker/
+
+# Required mode, twice over. SANDBOX_TEST_REQUIRE_DOCKER=1 makes the test helpers
+# fail instead of skip when the daemon or an image is missing; the scan afterwards
+# fails the target on ANY skipped test in the selection, so a future bare t.Skip
+# cannot turn requested coverage into a quiet pass either. -skip Live excludes the
+# live E2B tests, which match the selection by name and skip without a key; they
+# belong to e2b-suite, and here a skip must mean docker. The status file, rather
+# than a pipe, keeps the go test exit code under POSIX sh.
+## docker-suite: the real docker/seccomp/broker/smoke tests; a missing daemon, image or skipped test FAILS
 docker-suite:
-	SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" go test ./sandbox -run 'Docker|RunProject|Broker|Smoke' -count=1 -v
+	@mkdir -p tmp
+	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
+	     go test ./sandbox -run 'Docker|RunProject|Broker|Smoke' -skip 'Live' -count=1 -v; \
+	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/docker-suite.log; then \
+	   echo "docker-suite: required coverage was skipped:" >&2; \
+	   grep -E '^ *--- SKIP' tmp/docker-suite.log >&2; exit 1; fi
+	@exit "$$(cat tmp/docker-suite.status)"
 
 ## e2b-suite: the live E2B tests (needs E2B_API_KEY)
 e2b-suite:

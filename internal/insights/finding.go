@@ -76,18 +76,26 @@ func (s Severity) String() string {
 	}
 }
 
-// Cost is the observed waste a Finding attributes to its pattern, all derived from
-// the trace's own numbers.
+// Cost is what a Finding can say about the price of its pattern. The inputs are
+// measured (the broker counted the calls, timed each round trip, and summed the
+// bytes); the "ideal" they are compared against is never measured, and it is always
+// the same assumption: one call's worth. Read each field with that in mind, and
+// never present the two derived ones as savings.
 type Cost struct {
-	// ExtraCalls is how many calls beyond the ideal the pattern spent (e.g. count-1
-	// for a fan-out one batch call would cover). Zero for latency-only findings.
+	// ExtraCalls is the measured call count minus one. Rigorous when a granted
+	// batch route exists (a fan-out with Suggested set: one call really would do);
+	// an assumption when the finding says the API needs a new endpoint, since that
+	// endpoint's shape is unknown. Zero for latency-only findings.
 	ExtraCalls int
-	// AddedLatency estimates the upstream time the pattern cost over its ideal shape:
-	// for fan-out/aggregate, the summed latency minus a single call's; for sequential,
-	// the summed latency minus the slowest call (the wall time if fully parallel).
+	// AddedLatency is the summed measured round-trip time minus one call's (the
+	// slowest for fan-out, aggregate and sequential; the average for repeated
+	// reads). It is a model, "time spent beyond one call", not a measurement of
+	// wall time lost: it assumes the replacement call would take about as long as
+	// one of the existing ones, and it sums calls that may have overlapped.
 	AddedLatency time.Duration
-	// BytesMoved is the request+response bytes across the flagged calls (already
-	// bounded by the broker's per-call caps).
+	// BytesMoved is the measured request+response bytes across the flagged calls,
+	// already bounded by the broker's per-call caps. It is the gross total the
+	// pattern moved, not a saving: the replacement call moves bytes too.
 	BytesMoved int
 }
 

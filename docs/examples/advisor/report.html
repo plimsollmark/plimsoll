@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13 requests became 1: plimsoll's efficiency advisor on one measured run</title>
+<meta name="description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/advisor/report.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="13 requests became 1: plimsoll's efficiency advisor on one measured run">
+<meta property="og:description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/advisor/report.html">
+<meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/advisor-example.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root{color-scheme:light}
+body{margin:0;padding:24px 16px;background:#fff;color:#1f2328;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1100px;margin:0 auto}
+nav{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline;padding-bottom:12px;border-bottom:1px solid #d1d9e0;margin-bottom:20px}
+nav .brand{font-weight:700;color:#0f4a85;font-size:1.1em}
+a{color:#0969da} a:hover{text-decoration-thickness:2px}
+h1{font-size:1.7em;line-height:1.2;margin:0 0 8px} h2{font-size:1.2em;margin:32px 0 8px} h3{font-size:1em;margin:18px 0 6px}
+p{max-width:80ch} .muted{color:#59636e}
+.tiles{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+.tile{border:1px solid #d1d9e0;border-radius:8px;padding:10px 14px;min-width:150px;background:#f6f8fa}
+.tile b{display:block;font-size:1.5em}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0}
+.tabs button{border:1px solid #d1d9e0;border-bottom:none;border-radius:8px 8px 0 0;background:#f6f8fa;padding:8px 14px;font:inherit;cursor:pointer;text-align:left}
+.tabs button[aria-selected=true]{background:#fff;font-weight:600}
+.panel{border:1px solid #d1d9e0;border-radius:0 8px 8px 8px;padding:16px}
+.panel[hidden]{display:none}
+pre{background:#f6f8fa;border:1px solid #d1d9e0;border-radius:6px;padding:12px;overflow:auto;font-size:13px;line-height:1.45}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%} td,th{border:1px solid #d1d9e0;padding:5px 8px;text-align:left;vertical-align:top;font-size:.92em} th{background:#f6f8fa}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.card{border-left:4px solid #bf8700;background:#fff8c5;padding:10px 14px;border-radius:0 6px 6px 0;margin:10px 0}
+.card.ok{border-left-color:#1a7f37;background:#dafbe1}
+.card.op{border-left-color:#0969da;background:#ddf4ff}
+.toggle{margin:8px 0}
+.toggle button{font:inherit;padding:6px 12px;border:1px solid #d1d9e0;border-radius:6px;background:#fff;cursor:pointer}
+.toggle button[aria-pressed=true]{background:#ddf4ff;border-color:#0969da}
+.hide{display:none}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px} dt{color:#59636e}
+ul{max-width:80ch;padding-left:1.2em} li{margin:4px 0}
+footer{margin-top:40px;padding-top:12px;border-top:1px solid #d1d9e0;color:#59636e;font-size:.92em}
+</style></head><body><main>
+<nav><span class="brand">plimsoll</span>
+<a href="https://github.com/plimsollmark/plimsoll">EXTERNAL · source repo ↗</a>
+<a href="https://plimsollmark.github.io/plimsoll/trainers/advisor.html">INTERNAL · trainer site → the advisor lesson</a>
+<a href="https://plimsollmark.github.io/plimsoll/trainers/">INTERNAL · trainer site → all lessons</a></nav>
+
+<h1>13 requests became 1, and the sandbox is what said so</h1>
+<p class="muted">One run of plimsoll's efficiency advisor, generated 2026-09-14 by <code>go run ./examples/advisor -report</code>. Every number on this page was measured by the API or read from the daemon's own log, or is labelled as a model.</p>
+
+<p><b>plimsoll</b> is an open source sandbox service for running code that an AI agent wrote. Its broker authorizes every call that code makes to your API, keeps the credential outside the sandbox, and records only route templates, verbs, status codes, byte counts and timings. There is no field for a path, a body or a credential, so none can be recorded by accident.</p>
+<p><b>The efficiency advisor</b> reads that record after a run and reports where the call pattern cost the API more than the question needed. When the profile already grants a better route, the finding names it and comes back to the caller, who can rewrite. When it does not, the finding stays with the operator, because the agent cannot call a route that does not exist. plimsoll never calls a model to do any of this.</p>
+<p><b>This page</b> is one real run of the repository's advisor example: a fake inventory API with twelve items, a plimsoll daemon on the WASM provider, and one grant profile with <code>advice: caller</code>. The same question is asked twice, first the way an agent tends to write it, then the way the advice suggests.</p>
+
+<div class="tiles">
+<div class="tile"><span class="muted">run 1 requests</span><b>13</b></div><div class="tile"><span class="muted">run 2 requests</span><b>1</b></div>
+<div class="tile"><span class="muted">run 1 answer</span><b style="font-size:1em">{&#34;total&#34;:132,&#34;rows&#34;:12}</b></div><div class="tile"><span class="muted">run 2 answer</span><b style="font-size:1em">{&#34;total&#34;:132,&#34;rows&#34;:12}</b></div>
+</div>
+
+<div class="tabs" role="tablist">
+<button role="tab" data-run="1" aria-selected="true">1. the agent&#39;s first attempt: list the ids, then one call per item</button><button role="tab" data-run="2" aria-selected="false">2. the same question, written the way the advice suggests</button>
+</div>
+
+<section class="panel" id="run-1" role="tabpanel" >
+<h3>What the agent's code did</h3>
+<pre>host.get(&#34;/items&#34;).then(function (list) {
+  return Promise.all(list.items.map(function (it) { return host.get(&#34;/items/&#34; &#43; it.id); }));
+}).then(function (rows) {
+  var total = rows.reduce(function (a, r) { return a &#43; r.onHand; }, 0);
+  console.log(JSON.stringify({ total: total, rows: rows.length }));
+});</pre>
+<h3>What came back</h3>
+<dl><dt>guest output</dt><dd><code>{&#34;total&#34;:132,&#34;rows&#34;:12}</code></dd>
+<dt>guest wall time</dt><dd>319 ms, engine start included</dd>
+<dt>advice on the result</dt><dd>1 finding(s), below</dd></dl>
+
+<div class="card"><b>fan_out</b> (low, remedy batch) on GET /items/*<br>
+suggested: <b>GET /items</b>, already granted<br>
+11 calls beyond one <span class="muted">(measured count minus one)</span> ·
+about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> ·
+490 bytes moved in total <span class="muted">(gross, not a saving)</span><br>
+<span class="muted">This run made 12 GET /items/* calls that differ only by the wildcard segment; a batch endpoint would collapse them into one request.</span></div>
+
+
+<h3>What the API saw, and what plimsoll's trace holds</h3>
+<div class="toggle"><button type="button" class="trace-toggle" aria-pressed="false">Show what plimsoll's trace holds instead</button>
+<span class="muted">The trace never leaves the daemon; this view is reconstructed from the profile's route templates, and the audit line's <code>host_calls=13</code> is what confirms the count.</span></div>
+<div class="scroll"><table><thead><tr><th>#</th><th>method</th><th class="path">path as the API saw it</th><th class="tmpl hide">route template in the trace</th><th class="num">request bytes</th><th class="num">response bytes</th></tr></thead>
+<tbody><tr><td class="num">0</td><td>GET</td><td class="path"><code>/items</code></td><td class="tmpl hide"><code>/items</code></td><td class="num">0</td><td class="num">502</td></tr><tr><td class="num">1</td><td>GET</td><td class="path"><code>/items/i-1</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">40</td></tr><tr><td class="num">2</td><td>GET</td><td class="path"><code>/items/i-2</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">41</td></tr><tr><td class="num">3</td><td>GET</td><td class="path"><code>/items/i-3</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">41</td></tr><tr><td class="num">4</td><td>GET</td><td class="path"><code>/items/i-4</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">40</td></tr><tr><td class="num">5</td><td>GET</td><td class="path"><code>/items/i-5</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">41</td></tr><tr><td class="num">6</td><td>GET</td><td class="path"><code>/items/i-6</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">41</td></tr><tr><td class="num">7</td><td>GET</td><td class="path"><code>/items/i-7</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">40</td></tr><tr><td class="num">8</td><td>GET</td><td class="path"><code>/items/i-8</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">41</td></tr><tr><td class="num">9</td><td>GET</td><td class="path"><code>/items/i-9</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">41</td></tr><tr><td class="num">10</td><td>GET</td><td class="path"><code>/items/i-10</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">41</td></tr><tr><td class="num">11</td><td>GET</td><td class="path"><code>/items/i-11</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">41</td></tr><tr><td class="num">12</td><td>GET</td><td class="path"><code>/items/i-12</code></td><td class="tmpl hide"><code>/items/*</code></td><td class="num">0</td><td class="num">42</td></tr>
+<tr><th colspan="4">13 requests</th><th class="num" colspan="2">992 bytes</th></tr></tbody></table></div>
+
+<h3>The operator's view: the daemon's audit line</h3>
+<div class="card op">host_calls=13 · advice_findings=3 · advice_agent_fixable=1
+<br>operator only: <b>aggregate_in_code</b> on GET /items/* (remedy aggregate)<br>returned to the caller: <b>fan_out</b> on GET /items/* (remedy batch)<br>operator only: <b>repeated_read</b> on GET /items/* (remedy cache)
+<br><span class="muted">An API-change finding names an endpoint that does not exist yet, so the agent cannot act on it; it stays here, with a prompt the API owner can paste into their own AI.</span></div>
+</section>
+
+<section class="panel" id="run-2" role="tabpanel" hidden>
+<h3>What the agent's code did</h3>
+<pre>host.get(&#34;/items&#34;).then(function (list) {
+  var total = list.items.reduce(function (a, r) { return a &#43; r.onHand; }, 0);
+  console.log(JSON.stringify({ total: total, rows: list.items.length }));
+});</pre>
+<h3>What came back</h3>
+<dl><dt>guest output</dt><dd><code>{&#34;total&#34;:132,&#34;rows&#34;:12}</code></dd>
+<dt>guest wall time</dt><dd>306 ms, engine start included</dd>
+<dt>advice on the result</dt><dd>none</dd></dl>
+<div class="card ok">No finding. The collection route carried the column, so one request answered the question.</div>
+
+<h3>What the API saw, and what plimsoll's trace holds</h3>
+<div class="toggle"><button type="button" class="trace-toggle" aria-pressed="false">Show what plimsoll's trace holds instead</button>
+<span class="muted">The trace never leaves the daemon; this view is reconstructed from the profile's route templates, and the audit line's <code>host_calls=1</code> is what confirms the count.</span></div>
+<div class="scroll"><table><thead><tr><th>#</th><th>method</th><th class="path">path as the API saw it</th><th class="tmpl hide">route template in the trace</th><th class="num">request bytes</th><th class="num">response bytes</th></tr></thead>
+<tbody><tr><td class="num">0</td><td>GET</td><td class="path"><code>/items</code></td><td class="tmpl hide"><code>/items</code></td><td class="num">0</td><td class="num">502</td></tr>
+<tr><th colspan="4">1 requests</th><th class="num" colspan="2">502 bytes</th></tr></tbody></table></div>
+
+<h3>The operator's view: the daemon's audit line</h3>
+<div class="card op">host_calls=1 · advice_findings=0 · advice_agent_fixable=0
+
+<br><span class="muted">An API-change finding names an endpoint that does not exist yet, so the agent cannot act on it; it stays here, with a prompt the API owner can paste into their own AI.</span></div>
+</section>
+
+
+<h2>Predicted next to measured</h2>
+<p>The finding's numbers compare the measured pattern with an assumed ideal of one call. The ideal is never measured, so the second run is the measurement.</p>
+<div class="scroll"><table><thead><tr><th>number</th><th>the finding said</th><th>the API measured</th></tr></thead><tbody>
+<tr><td>calls</td><td>11 beyond one on GET /items/* (measured count minus one)</td><td>the API served 13 requests, then 1: 12 fewer</td></tr><tr><td>latency</td><td>about 1ms beyond one call (a model, not wall time)</td><td>guest wall time 319ms, then 306ms (includes engine start; not the same quantity)</td></tr><tr><td>bytes</td><td>490 moved in total by the flagged calls (gross)</td><td>the API moved 992 bytes, then 502: 490 fewer</td></tr>
+</tbody></table></div>
+<p class="muted">Bytes matched here only because the collection call was already being made in run 1; in general the replacement call moves bytes of its own, which is why the number is a gross total and not a saving.</p>
+
+<h2>Run it yourself</h2>
+<p>From a checkout of the repository, with Go installed. No docker, no credentials, no model, and nothing leaves your machine:</p>
+<pre>git clone https://github.com/plimsollmark/plimsoll.git && cd plimsoll
+go run ./examples/advisor                    # the run, in the terminal
+go run ./examples/advisor -report out.html   # the same run as a page like this one</pre>
+<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, or if the rewrite comes back with any finding at all. Source: <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/advisor/main.go">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="https://github.com/plimsollmark/plimsoll#efficiency-advisor">EXTERNAL · source repo ↗ README, efficiency advisor</a>.</p>
+
+<h2>What this page claims, and what it does not</h2>
+<ul>
+<li><b>Advice never changes a run.</b> It is computed after the result is final, over metadata the broker already held. A run with advice is byte-identical in execution to one without; advice cannot gate admission or change an exit code, an output byte or the isolation tier.</li>
+<li><b>The trace is metadata only.</b> Route templates, verbs, status codes, byte counts, latency. The toggle above shows what that leaves out.</li>
+<li><b>No model is involved.</b> Four deterministic detectors and one question against the granted routes. The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
+<li><b>The numbers are what they say.</b> The call count is measured. The latency and byte figures are a model of the pattern against an ideal of one call, and the table above puts them next to what the API measured.</li>
+<li><b>This run used the WASM provider</b>, which is process-tier isolation and fine for an example. The advisor is provider-independent; the sequential-calls remedy applies to the Docker and E2B guests, since the WASM client issues host calls one at a time.</li>
+<li><b>Status:</b> pre-1.0, single author, no external users yet, no third-party security audit. The lesson <a href="https://plimsollmark.github.io/plimsoll/trainers/advisor.html">INTERNAL · trainer site → API Efficiency Advisor</a> walks the same ground with a 128-call example.</li>
+</ul>
+
+<footer>Apache-2.0 · This page loads nothing from anywhere: no scripts, styles, fonts or images beyond what is inline. · <a href="https://plimsollmark.github.io/plimsoll/trainers/">INTERNAL · trainer site → plimsollmark.github.io/plimsoll/trainers</a></footer>
+
+<script>
+(function () {
+  var tabs = document.querySelectorAll('.tabs button');
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () {
+      tabs.forEach(function (o) { o.setAttribute('aria-selected', o === t ? 'true' : 'false'); });
+      document.querySelectorAll('.panel').forEach(function (p) { p.hidden = p.id !== 'run-' + t.dataset.run; });
+    });
+  });
+  document.querySelectorAll('.trace-toggle').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var on = b.getAttribute('aria-pressed') !== 'true';
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.textContent = on ? 'Show the paths the API saw instead' : "Show what plimsoll's trace holds instead";
+      var panel = b.closest('.panel');
+      panel.querySelectorAll('.path').forEach(function (c) { c.classList.toggle('hide', on); });
+      panel.querySelectorAll('.tmpl').forEach(function (c) { c.classList.toggle('hide', !on); });
+    });
+  });
+})();
+</script>
+</main></body></html>

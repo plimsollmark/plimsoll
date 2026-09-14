@@ -228,18 +228,20 @@ func prettyPattern(p string) string {
 	}
 }
 
-// findingCost renders a finding's attributed waste as one compact clause, or "" when
-// it carries no positive number.
+// findingCost renders a finding's numbers as one compact clause, or "" when it
+// carries no positive number. The labels say what each number is: the call count
+// is measured, the latency is a model (summed round trips beyond one call), and the
+// bytes are the gross total the pattern moved, not a saving.
 func findingCost(f Finding) string {
 	var parts []string
 	if f.ExtraCalls > 0 {
-		parts = append(parts, fmt.Sprintf("%d extra calls", f.ExtraCalls))
+		parts = append(parts, fmt.Sprintf("%d calls beyond one", f.ExtraCalls))
 	}
 	if f.AddedLatencyMs > 0 {
-		parts = append(parts, humanMillis(f.AddedLatencyMs)+" added latency")
+		parts = append(parts, "about "+humanMillis(f.AddedLatencyMs)+" beyond one call (modelled)")
 	}
 	if f.BytesMoved > 0 {
-		parts = append(parts, humanBytes(f.BytesMoved)+" moved")
+		parts = append(parts, humanBytes(f.BytesMoved)+" moved in total")
 	}
 	return strings.Join(parts, " · ")
 }

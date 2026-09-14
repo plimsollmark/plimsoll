@@ -5,18 +5,18 @@ Thanks for looking. Two things to know before you spend time on a change.
 **Do not report security vulnerabilities here.** See [SECURITY.md](SECURITY.md) for
 private disclosure through GitHub Security Advisories.
 
-**CI runs part of the gate on your pull request, and you should still run all of it
-locally.** The [audit workflow](.github/workflows/audit.yml) runs `make audit`: build,
-vet, race tests, golangci-lint, `buf lint` plus a generated-code drift check, and
-`govulncheck`.
+**CI runs the gate on your pull request, and you should still run it locally.** The
+[audit workflow](.github/workflows/audit.yml) runs `make audit` (build, vet, race
+tests, golangci-lint, `buf lint` plus a generated-code drift check, `govulncheck`)
+and then `make audit DOCKER=1` with the images prepared, so the docker, seccomp,
+broker and smoke tests run on every push under runc. That second job is in required
+mode: a missing image or a skipped test fails it rather than passing quietly. The
+[gvisor workflow](.github/workflows/gvisor.yml) runs the same suite under runsc.
 
-What it does not run is the part that tests the isolation claims. The docker, seccomp
-and E2B suites are opt-in (`DOCKER=1`, `E2B=1`), they need a local docker daemon and a
-live paid E2B account, and no automated run in this project is permitted to spend
-money. So a green check means the code compiles, passes the race detector, lints
-clean and has no known vulnerable dependencies. It does not mean anyone verified that
-a container came up read-only or that a microVM denied egress. If your change touches
-a provider, run the full local gate and paste the result into the pull request.
+What CI does not run is E2B. That suite needs a live paid account, and no automated
+run in this project is permitted to spend money, so no check ever verified that a
+microVM denied egress. If your change touches the E2B provider, run the live suite
+locally and paste the result into the pull request.
 
 The maintainer still runs the full gate by hand before merging, so expect merges to be
 slower than on a project where the automated checks are the whole story.
@@ -43,7 +43,8 @@ same result.
 The infrastructure suites are opt-in because they need real infrastructure:
 
 ```sh
-make audit DOCKER=1                  # adds docker/seccomp/broker/smoke tests
+make docker-images                   # pull node:22-alpine, build plimsoll/sandbox:latest
+make audit DOCKER=1                  # adds docker/seccomp/broker/smoke tests; skips are failures
 E2B_API_KEY=... make audit E2B=1     # adds the live E2B microVM suite
 ```
 

@@ -67,9 +67,15 @@ message AdviceFinding {
   // so the fix is an API change and this finding is never returned to a caller.
   string suggested_method = 7;
   string suggested_route = 8;
-  int32 extra_calls = 9; // calls beyond the ideal the pattern spent
-  int64 added_latency_ms = 10; // upstream time the pattern cost over its ideal shape
-  int64 bytes_moved = 11; // request+response bytes across the flagged calls
+  // The three numbers compare the measured pattern with an assumed ideal of one
+  // call; the ideal is never measured. extra_calls is the measured count minus one
+  // (rigorous when suggested_route is set). added_latency_ms is the summed measured
+  // round-trip time minus one call's: a model of time spent beyond one call, not wall
+  // time lost. bytes_moved is the measured gross bytes the flagged calls moved, not
+  // a saving.
+  int32 extra_calls = 9;
+  int64 added_latency_ms = 10;
+  int64 bytes_moved = 11;
 }
 
 message RunJavaScriptV2Request {

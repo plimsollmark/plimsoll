@@ -4,6 +4,11 @@ A sandbox service for running untrusted, agent-authored code that **reports the
 isolation boundary each run executed behind, and refuses the run when it is weaker
 than the caller demanded**.
 
+Lessons, no clone needed: [eighteen interactive lessons](https://plimsollmark.github.io/plimsoll/trainers/)
+on GitHub Pages cover the execution model, the tiers, the capability broker, and the
+efficiency advisor. Static pages: no network calls, no analytics, no third-party
+scripts.
+
 A Plimsoll line is the load limit painted on a ship's hull. It is mandatory, and it
 is on the outside where anyone can check it. That is the idea here: the isolation
 tier is a value the caller reads, asserts a floor against, and re-checks on the
@@ -86,14 +91,18 @@ production.
 - **No third-party security audit has ever been performed**, and the author's own
   self-review ledgers are not published either. [SECURITY.md](SECURITY.md) says what
   exists, what it is worth, and what you can check yourself instead.
-- **CI runs the gate, but not all of it.** The
-  [audit workflow](.github/workflows/audit.yml) runs `make audit` on every push and
-  pull request: build, vet, race tests, lint, `buf lint`, a generated-code drift
-  check, and `govulncheck`. It does **not** run the docker, seccomp or E2B suites,
-  which are opt-in (`DOCKER=1`, `E2B=1`) and are where the provider isolation claims
-  are actually tested. A green check therefore proves strictly less than a local
-  `make audit DOCKER=1 E2B=1`. The E2B suite drives a live paid service and is
-  deliberately never wired to a runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- **CI runs the gate, in the open, and each check means what it ran.** The
+  [audit workflow](.github/workflows/audit.yml) has two jobs. `audit` runs plain
+  `make audit` on every push and pull request: build, vet, race tests, lint,
+  `buf lint`, a generated-code drift check, and `govulncheck`. `audit-docker` then
+  runs `make audit DOCKER=1` with the images prepared, in required mode: a missing
+  daemon, a missing image or a skipped test fails the job. A green `audit-docker`
+  therefore means the docker suite ran under runc with the shipped seccomp profile
+  and proved a read-only root, sized `noexec` writable mounts, and the broker's
+  refusals. The [gvisor workflow](.github/workflows/gvisor.yml) runs the same suite
+  under runsc, the kernel tier, from the pinned installer. What no check exercises
+  is E2B: that suite drives a live paid service and is deliberately never wired to a
+  runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Learn how it works
 
@@ -382,6 +391,50 @@ would look joinable and join to nothing.
 
 Full rationale: [docs/advisory-privacy.md](docs/advisory-privacy.md).
 
+## Efficiency advisor
+
+The broker is the one component that sees every call the agent's code makes and
+holds none of the content, so it is also the place to notice waste. After a run
+finishes, four deterministic detectors read its `CallTrace` and report where the call
+pattern cost the API more than the question needed: **fan-out** (an N+1 loop over a
+per-item route), **aggregate-in-code** (rows pulled so the guest could reduce them
+locally), **repeated reads** of one route, and **sequential calls** that could have
+run concurrently. A small router then asks one question of the profile's allow list:
+does a better route already exist? If it does, the finding is **agent-fixable** and
+names the granted route to switch to. If it does not, it is an **API-change**
+finding, and `insights.Prompt` renders a paste-ready prompt for the API owner's own
+AI to design the missing endpoint. plimsoll never calls a model itself.
+
+Who sees what is a per-profile setting. `advice: off | operator | caller` chooses the
+audience: `caller` returns the agent-fixable subset on the run result, which the Go
+client exposes as `Result.Advice`; API-change findings stay on operator surfaces
+whatever the mode. `advice_retention: none | aggregate | detailed` chooses what
+reaches the durable audit log, from nothing to one metadata-only record per finding,
+which is the stream [prospector-report](cmd/prospector-report) renders as HTML.
+`/metrics` carries bounded counts by profile, pattern, severity and remedy.
+
+Two constraints hold on every surface. Advice is **evidence, never authority**: it
+is computed after dispatch over the already-final result, so a run with advice is
+byte-identical in execution to one without, and it never gates admission or changes
+an exit code, an output byte or the tier. And it is **metadata only**: findings are
+templated from route templates and numbers, and no guest-controlled string is ever
+copied through. It is off by default; a profile opts in.
+
+Read the three numbers on a finding for what they are. `extra_calls` is the measured
+call count minus one, and it is rigorous when a granted batch route is named. The
+other two compare the measured pattern with an ideal that is never measured:
+`added_latency_ms` is the summed round-trip time beyond one call, a model rather than
+wall time lost, and `bytes_moved` is the gross bytes the flagged calls moved, not a
+saving. Quote the first; treat the others as order-of-magnitude context.
+
+`go run ./examples/advisor` shows the whole loop in one screen: the per-item loop, the
+finding that comes back, the rewrite it suggests, and the API's own request and byte
+counts beside the finding's predictions. Add `-report out.html` for the same run as a
+self-contained page; one such run is published at
+[plimsollmark.github.io/plimsoll/examples/advisor/report.html](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html). The lesson
+[API Efficiency Advisor](https://plimsollmark.github.io/plimsoll/trainers/advisor.html)
+walks the same ground with a 128-call example.
+
 ## Hardened mode
 
 `PLIMSOLL_HARDENED=1` turns the soft production posture into an enforced startup
@@ -527,7 +580,7 @@ Stated so you do not have to discover it in review:
 
 ## Examples
 
-Three runnable programs, none needing docker, credentials or a daemon you start
+Four runnable programs, none needing docker, credentials or a daemon you start
 yourself. Run them from the repository root.
 
 | Command | What it shows |
@@ -535,6 +588,7 @@ yourself. Run them from the repository root.
 | `go run ./examples/minimal` | One snippet, its result, and the isolation tier the run reports. |
 | `go run ./examples/grant` | The capability model: a permitted route, a refused one, the same refusal when the guest bypasses the injected client, and a search for the credential that comes back empty. |
 | `go run ./examples/daemon` | The service path: plimsolld started with a real multi-client auth file, called by the Go client, refusing an isolation floor it cannot meet and refusing a wrong bearer. |
+| `go run ./examples/advisor` | The efficiency advisor: one question asked twice of a fake inventory API, first as a per-item loop (13 requests, a `fan_out` finding naming the granted collection route), then as the advice suggests (1 request, no findings), same answer both times. |
 
 `examples/grant` is the one to read if you only read one. It prints the run's
 `CallTrace` after each step, which is the same metadata-only evidence the advisory

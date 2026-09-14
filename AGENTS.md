@@ -46,10 +46,13 @@ option is intentionally only process-tier.
   [docker/Dockerfile](docker/Dockerfile) (node + tsc/tsx/eslint, baked in so
   runtime needs no egress) and [docker/runner.mjs](docker/runner.mjs) (the
   in-sandbox multi-file project runner).
-- [examples/](examples/) — three runnable programs: `minimal` (one snippet and the
+- [examples/](examples/) — four runnable programs: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
-  the injected client and being refused by the broker anyway), and `daemon` (the
-  full service path with auth, `Describe`, and an isolation floor being refused).
+  the injected client and being refused by the broker anyway), `daemon` (the
+  full service path with auth, `Describe`, and an isolation floor being refused),
+  and `advisor` (the efficiency advisor over a loopback daemon: a per-item loop,
+  the finding that names the granted collection route, the rewrite, and the API's
+  own request count as the witness).
 - [docs/trainers/](docs/trainers/) — dependency-free interactive lessons covering
   the execution model, architecture, providers, capabilities, operations,
   dependencies, MCP/agent integration, customer patterns, and product planning.
@@ -131,7 +134,12 @@ is read-only and every writable mount is a tmpfs with the exact promised size +
 the promised mounts are the **only** ones that accept writes at all (device-node
 mounts like docker's `/dev/null`-masked proc paths are excluded: their writes
 discard rather than persist); Preflight also requires both images to be present
-(inspectable) on the pinned daemon. For e2b: one throwaway microVM must
+(inspectable) on the pinned daemon. Under runsc the first probe container also
+reads one bounded line of `dmesg` and logs it (`DockerSandbox.RuntimeBanner`).
+That line is diagnostic identity information for an operator's log and nothing
+more: gVisor's own documentation says the banner is trivially forged, so it never
+authorizes the kernel tier, never replaces the mount and write checks, and an
+unreadable banner does not fail readiness. Under runc it is not attempted. For e2b: one throwaway microVM must
 complete secured create (both access tokens), live resource verification,
 multi-file staging into the project dir, and a probe run through the exact
 project-step path (`sh` script → node) — proving the configured template bakes
@@ -291,6 +299,12 @@ path into guest content. The pipeline:
 2. **Detectors.** `insights.Analyze(trace, allow)` ([internal/insights](internal/insights/))
    runs four deterministic detectors (fan-out/N+1, aggregate-in-code, repeated-read,
    sequential-when-parallel), each emitting a `Finding` (pattern/severity/cost/remedy).
+   A finding's cost compares the measured pattern with an assumed ideal of one call,
+   never a measured one: `ExtraCalls` is count minus one (rigorous when a granted batch
+   route is named), `AddedLatency` is summed round trips beyond one call (a model, not
+   wall time lost), `BytesMoved` is the gross bytes the pattern moved (not a saving).
+   The sequential finding's parallel remedy applies to Docker and E2B guests; the WASM
+   client wraps a synchronous host call, so its calls are serialized by construction.
    A small router asks one question from the profile's `Allow` list: does a better
    route already exist? If so the finding is **agent-fixable** (`Finding.Suggested` set);
    if not it is an **API-change** finding, and `insights.Prompt` can render a paste-ready
@@ -303,7 +317,11 @@ path into guest content. The pipeline:
 3. **Routing by audience.** Per-profile `advice: off|operator|caller`
    (`grants.AdviceMode`) decides who can act: `off` computes nothing; `operator` keeps
    findings on operator surfaces; `caller` additionally returns the agent-fixable subset
-   on the run result's `advice` field (`internal/rpc/advice.go`). Both `RunJavaScriptV2`
+   on the run result's `advice` field (`internal/rpc/advice.go`). The official Go
+   client maps that field onto `sandbox.Result.Advice` and `ProjectResult.Advice`
+   (`[]sandbox.AdviceFinding`, transport-independent: pattern, severity, remedy,
+   route template, suggested route, and the cost numbers); direct in-process
+   providers leave it nil, since advice is a service-side computation. Both `RunJavaScriptV2`
    and `RunProjectV2` compute and route advice the same way over their run's `CallTrace`.
    API-change findings stay operator-only regardless.
 4. **Retention of durable telemetry.** Per-profile `advice_retention: none|aggregate|detailed`
@@ -322,9 +340,10 @@ go build ./...
 go vet ./...
 go test ./...     # the e2b *live* tests skip without E2B_API_KEY
 ```
-Some tests need a local docker daemon (and, for `RunProject`, the project image
-`plimsoll/sandbox:latest` — build it with `docker build -t plimsoll/sandbox:latest docker/`).
-Snippet runs use the public `node:22-alpine`.
+Some tests need a local docker daemon and the two images (`node:22-alpine` for
+snippets, `plimsoll/sandbox:latest` for `RunProject`); `make docker-images` pulls
+the first and builds the second. Without them those tests skip in an ordinary run
+and fail under `make audit DOCKER=1`.
 
 `make audit` is the single local gate: build, vet, race tests, golangci-lint,
 `buf lint` plus a generated-code drift check, and `govulncheck`. The real
@@ -347,20 +366,29 @@ means only that it passed under whatever happened to be on `PATH`, which is not 
 claim this gate makes. `make tools` installs the pinned set; the codegen plugins are
 pinned separately by go.mod `tool` directives.
 
-**CI runs `make audit` and nothing else, which is less than the gate.**
-[.github/workflows/audit.yml](.github/workflows/audit.yml) runs the plain target on
-every push and pull request, so what the check claims and what the Makefile does
-cannot drift. It does **not** pass `DOCKER=1` or `E2B=1`, and those are where the
-provider isolation claims are actually tested: no CI run has ever proved that a
-container came up read-only or that a microVM denied egress. Read a green check as
-"compiles, races clean, lints clean, no known vulnerable dependencies", and nothing
-more.
+**CI runs the gate as three Makefile targets, and each green check means exactly
+what its target exercised.** [.github/workflows/audit.yml](.github/workflows/audit.yml)
+has two jobs: `audit` runs plain `make audit` (build, vet, race tests, lint, buf
+lint plus generated-code drift, govulncheck; no containers), and `audit-docker`
+runs `make docker-images` then `make audit DOCKER=1`, the docker suite under runc
+with the shipped seccomp profile. `DOCKER=1` is a request for proof: `docker-suite`
+sets `SANDBOX_TEST_REQUIRE_DOCKER=1`, under which a missing daemon or image fails a
+test instead of skipping it, and the target then fails on any `--- SKIP` line in
+its own output. So a green `audit-docker` means the isolation suite ran: a container
+came up read-only, every writable mount was a sized `noexec` tmpfs, the seccomp
+profile loaded, and the broker refused what it was built to refuse. An ordinary
+`go test ./...` on a machine without docker keeps its skips.
+[.github/workflows/gvisor.yml](.github/workflows/gvisor.yml) is the kernel-tier
+run: it installs the pinned gVisor bundle with `docker/install-gvisor.sh` and runs
+the same suite with `SANDBOX_DOCKER_RUNTIME=runsc`. It is a separate workflow so a
+runsc failure is attributable on its own and cannot mask the runc result.
 
-The E2B suite is absent deliberately rather than left unconfigured. It drives a live
-paid service and no automated run in this project may spend, so **do not add an E2B
-key to repository secrets to "complete" the gate.** Third-party actions are pinned by
-commit SHA rather than tag, for the same reason the gate tools, the QuickJS artifact
-and the gVisor release are pinned: a tag is mutable.
+What no CI run exercises is E2B. That suite is absent deliberately rather than
+left unconfigured: it drives a live paid service and no automated run in this
+project may spend, so **do not add an E2B key to repository secrets to "complete"
+the gate.** Third-party actions are pinned by commit SHA rather than tag, for the
+same reason the gate tools, the QuickJS artifact and the gVisor release are pinned:
+a tag is mutable.
 
 **The E2B key never lands on disk.** The live E2B suite reads `E2B_API_KEY` from
 the environment and nothing writes it anywhere:

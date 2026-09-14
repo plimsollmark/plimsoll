@@ -1,0 +1,70 @@
+# The kernel-tier run: the docker suite under gVisor (runsc), where the guest sees a
+# user-space kernel instead of the host's. This is what the README calls the kernel
+# tier, and it is the tier a hostile deployment is meant to run at.
+#
+# It is a separate workflow from audit.yml on purpose. The runc job there is the
+# proven baseline; this one adds two things a hosted runner has to be able to do,
+# neither of which is verified until a run has actually happened: install the
+# pinned gVisor bundle with the committed installer (root, then a docker restart),
+# and run gVisor's default systrap platform on the runner's VM. Keeping it apart
+# means a red result here is attributable to runsc and cannot mask a green runc
+# result, and a green result here is the first hosted proof of the kernel tier.
+#
+# Same rules as audit.yml: no E2B, no secrets, read-only permissions, actions pinned
+# by commit SHA. The gVisor release itself is pinned by SHA-512 in
+# docker/gvisor.versions and verified by the installer before anything is installed.
+name: gvisor
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gvisor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-runsc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Put installed tools on PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install the pinned gate tools
+        run: make tools
+
+      # The committed installer: downloads the pinned release bundle, checks it
+      # against the SHA-512 in docker/gvisor.versions, verifies the executable set,
+      # installs, registers the runsc runtime with sidecar auto-download disabled,
+      # and restarts the daemon. Root is what the step needs; the runner has it.
+      - name: Install the pinned gVisor release
+        run: sudo ./docker/install-gvisor.sh
+
+      - name: Report the daemon and its runtimes
+        run: |
+          docker info --format 'server {{.ServerVersion}} runtimes {{range $k, $v := .Runtimes}}{{$k}} {{end}}'
+          runsc --version
+
+      - name: Pull the snippet image and build the project image
+        run: make docker-images
+
+      # The suite reads SANDBOX_DOCKER_RUNTIME, so every docker test, the startup
+      # smoke probe included, runs under runsc. The seccomp profile is skipped for
+      # this runtime by design: gVisor filters syscalls in its own kernel.
+      - name: make audit DOCKER=1 under runsc
+        env:
+          SANDBOX_DOCKER_RUNTIME: runsc
+        run: make audit DOCKER=1
