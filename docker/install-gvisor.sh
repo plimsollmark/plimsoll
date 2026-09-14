@@ -59,9 +59,17 @@ VERSION="$("$STAGE/bin/runsc" --version)"
 
 # Exercise runsc's own sidecar completeness check against a throwaway config.
 # These flags belong to the pinned release; review them when upgrading.
+#
+# Everything after "--" is a runtime flag written into daemon.json. --host-uds=open
+# lets a sandbox connect to host Unix-domain sockets that are mounted into it and
+# nothing more (no creating host sockets: that would be "create" or "all"). The
+# docker provider brokers every host-API grant over exactly one such socket, mounted
+# per run, and runsc's default of "none" refuses it with ECONNREFUSED. The provider's
+# startup smoke test proves the socket is reachable and refuses to serve otherwise.
+RUNTIME_FLAGS=(--host-uds=open)
 "$STAGE/bin/runsc" install --download-sidecars=NEVER --require-sidecars=ALWAYS \
-  --config_file="$STAGE/daemon.json"
-echo "Verified gVisor $RELEASE ($ARCH): complete bundle, committed SHA512, sidecars available."
+  --config_file="$STAGE/daemon.json" -- "${RUNTIME_FLAGS[@]}"
+echo "Verified gVisor $RELEASE ($ARCH): complete bundle, committed SHA512, sidecars available, runtime flags ${RUNTIME_FLAGS[*]}."
 if [[ "$VERIFY_ONLY" -eq 1 ]]; then
   exit 0
 fi
@@ -70,7 +78,7 @@ install -d -m 0755 /usr/local/bin/gvisor-bin
 for entry in "${EXECUTABLES[@]}"; do
   install -m 0755 "$STAGE/bin/$entry" "/usr/local/bin/$entry"
 done
-/usr/local/bin/runsc install --download-sidecars=NEVER --require-sidecars=ALWAYS
+/usr/local/bin/runsc install --download-sidecars=NEVER --require-sidecars=ALWAYS -- "${RUNTIME_FLAGS[@]}"
 if command -v systemctl >/dev/null 2>&1; then
   systemctl restart docker
 else

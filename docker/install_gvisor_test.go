@@ -53,6 +53,7 @@ set -eu
 if [[ "$1" == --version ]]; then echo 'runsc version release-%s'; exit; fi
 [[ "$1" == install && "$2" == --download-sidecars=NEVER && "$3" == --require-sidecars=ALWAYS ]]
 [[ "$4" == --config_file=*/tmp/gvisor-install.*/daemon.json ]]
+[[ "$5" == -- && "$6" == --host-uds=open && $# -eq 6 ]]
 `, tc.version))
 			put(filepath.Join(bundleDir, "shim"), "fixture")
 			if !tc.missing {
