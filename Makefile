@@ -72,6 +72,7 @@ docker-images:
 ## docker-suite: the real docker/seccomp/broker/smoke tests; a missing daemon, image or skipped test FAILS
 docker-suite:
 	@mkdir -p tmp
+	@[ -w tmp ] || { echo "docker-suite: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
 	     go test ./sandbox -run 'Docker|RunProject|Broker|Smoke' -skip 'Live' -count=1 -v; \
 	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log

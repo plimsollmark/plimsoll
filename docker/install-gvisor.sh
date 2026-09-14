@@ -36,6 +36,13 @@ for entry in "${EXECUTABLES[@]}"; do
 done
 
 mkdir -p "$SCRIPT_DIR/../tmp"
+# Under sudo the checkout belongs to the invoking user. A tmp/ created by root here
+# would refuse every later unprivileged write into it (make docker-suite keeps its
+# log and status there), which is how the first hosted runsc run went red after its
+# tests had passed. Hand the directory back to the user who ran sudo.
+if [[ "$EUID" -eq 0 && -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+  chown "$SUDO_UID:$SUDO_GID" "$SCRIPT_DIR/../tmp"
+fi
 STAGE="$(mktemp -d "$SCRIPT_DIR/../tmp/gvisor-install.XXXXXX")"
 trap 'rm -rf -- "$STAGE"' EXIT
 BUNDLE="$STAGE/gvisor.tar.zstd"
