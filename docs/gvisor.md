@@ -52,7 +52,8 @@ the runtime bundle separately from GitHub Actions dependency updates.
 3. Run `--verify-only` on a native host for each supported architecture. Review
    the pinned release's install flags: this release uses
    `--download-sidecars=NEVER --require-sidecars=ALWAYS`, which upstream describes
-   as transitional flags.
+   as transitional flags, and registers the runtime with `--host-uds=open` (see
+   below); confirm the flag and its values still exist in `runsc flags`.
 4. Run `make audit`, then install on a test host and run
    `SANDBOX_DOCKER_RUNTIME=runsc make audit DOCKER=1`. Record any architecture or
    runtime path that was not exercised before making a support claim.
@@ -60,6 +61,26 @@ the runtime bundle separately from GitHub Actions dependency updates.
 Upstream's move to sidecar bundles and the removal of legacy auto-downloads are
 documented in [EXTERNAL · official installation docs ↗](https://gvisor.dev/docs/user_guide/install/).
 The old pinned binary does not expire when the transitional downloader is removed.
+
+## Host Unix sockets: why runsc is registered with `--host-uds=open`
+
+The docker provider brokers every host-API grant over one Unix socket, created on
+the host per run and bind-mounted into the container at `/run/host-api.sock`. Whether
+a guest may connect to a host socket is a runtime property: runsc's `--host-uds`
+flag takes `none|open|create|all` and defaults to `none`, under which the connect
+fails with `ECONNREFUSED` and every grant run fails while the runtime otherwise
+works. The installer therefore registers the runtime with `--host-uds=open`, the
+smallest value that allows the connect: `open` lets the sandbox use host sockets
+that are mounted into it and does not let it create host sockets (`create`, `all`).
+The only socket ever mounted is the per-run broker socket, so `open` exposes exactly
+the channel the grant is meant to use.
+
+This was found by the first hosted `gvisor` workflow run (2026-09-14): the banner
+read succeeded, and the three tests that broker a grant failed with `ECONNREFUSED`.
+Since then the provider's startup `SmokeTest` mounts a throwaway host socket into
+the first probe container exactly as a run would and requires the guest to reach it;
+a runtime that cannot broker grants refuses to serve, with the fix named, instead
+of reporting ready.
 
 Verify:
 

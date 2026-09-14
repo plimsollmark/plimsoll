@@ -89,7 +89,7 @@ unrecognized provider names are explicit errors, and the default (unset) is
 | Value     | Provider | Isolation | Notes |
 |-----------|----------|-----------|-------|
 | `wasm`    | in-process QuickJS via wazero | process tier, lowest latency | JS snippets and snippet grants through a direct host function; no projects. An engine escape lands in plimsolld. |
-| `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). |
+| `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. |
 | `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. Sandboxes are stamped with a per-instance metadata ID; `ReconcileOrphans` (run periodically by the daemon) reaps stamped, untracked microVMs that leaked past a malformed create response or failed teardown. |
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
 
@@ -134,7 +134,12 @@ is read-only and every writable mount is a tmpfs with the exact promised size +
 the promised mounts are the **only** ones that accept writes at all (device-node
 mounts like docker's `/dev/null`-masked proc paths are excluded: their writes
 discard rather than persist); Preflight also requires both images to be present
-(inspectable) on the pinned daemon. Under runsc the first probe container also
+(inspectable) on the pinned daemon. The first probe container also mounts a
+throwaway host Unix socket exactly as a run mounts the per-run broker socket and
+must reach it: whether a guest may connect to a host socket is a runtime property
+(runsc needs `--host-uds=open`, which `docker/install-gvisor.sh` sets), and a runtime
+that cannot broker grants must refuse to serve rather than fail every grant run.
+Under runsc the first probe container also
 reads one bounded line of `dmesg` and logs it (`DockerSandbox.RuntimeBanner`).
 That line is diagnostic identity information for an operator's log and nothing
 more: gVisor's own documentation says the banner is trivially forged, so it never

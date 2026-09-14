@@ -12,7 +12,7 @@ import (
 // move the isolation tier.
 
 func TestSmokeProbeScriptReadsBannerOnlyWhenAsked(t *testing.T) {
-	with, without := smokeProbeScript(true), smokeProbeScript(false)
+	with, without := smokeProbeScript(true, false), smokeProbeScript(false, false)
 	if !strings.Contains(with, "dmesg") {
 		t.Fatal("banner script does not read dmesg")
 	}
@@ -20,7 +20,7 @@ func TestSmokeProbeScriptReadsBannerOnlyWhenAsked(t *testing.T) {
 		t.Fatal("a probe built without the banner still contains the dmesg read")
 	}
 	for _, s := range []string{with, without} {
-		for _, want := range []string{`/proc/mounts`, `/plimsoll-smoke`, `JSON.stringify({ rootWritable, mounts, writable, banner })`} {
+		for _, want := range []string{`/proc/mounts`, `/plimsoll-smoke`, `JSON.stringify({ rootWritable, mounts, writable, banner, socket })`} {
 			if !strings.Contains(s, want) {
 				t.Fatalf("probe lost %q", want)
 			}

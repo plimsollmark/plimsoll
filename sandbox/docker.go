@@ -732,17 +732,68 @@ func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 	d.stateMu.Lock()
 	d.runtimeBannerLine, d.runtimeBannerRead = "", false
 	d.stateMu.Unlock()
+	// The grant path is a host Unix socket mounted into the container. Whether the
+	// configured runtime lets a guest connect to one is a runtime property (runsc
+	// refuses unless registered with --host-uds=open), so the first probe container
+	// also mounts a throwaway socket and must reach it. Without this, a runtime that
+	// cannot broker grants would report ready and then fail every grant run.
+	sock, closeSock, err := startSmokeSocket()
+	if err != nil {
+		return err
+	}
+	defer closeSock()
 	for i, p := range probes {
 		// The banner read is attempted once, in the first probe container, and only
 		// when the runtime is runsc: under runc the same envelope (uid 1000, no
 		// capabilities, the daemon's seccomp default) gets "klogctl: Operation not
 		// permitted", and a host kernel log is not something a probe should read.
 		readBanner := i == 0 && state.runtime == "runsc"
-		if err := d.smokeProbe(ctx, state, p.id, p.workTmpfs, readBanner); err != nil {
-			return fmt.Errorf("writable-storage smoke failed for image %q under runtime %q: %w", p.ref, state.runtime, err)
+		socketPath := ""
+		if i == 0 {
+			socketPath = sock
+		}
+		if err := d.smokeProbe(ctx, state, p.id, p.workTmpfs, readBanner, socketPath); err != nil {
+			return fmt.Errorf("smoke failed for image %q under runtime %q: %w", p.ref, state.runtime, err)
 		}
 	}
 	return nil
+}
+
+// startSmokeSocket listens on a throwaway host Unix socket the way brokerForRun
+// does (same directory shape, same 0666 mode for the uid-1000 guest) and answers
+// each connection's first line with "pong". The returned function stops it.
+func startSmokeSocket() (path string, closeFn func(), err error) {
+	dir, err := os.MkdirTemp("", "crsbx-smoke-sock")
+	if err != nil {
+		return "", nil, err
+	}
+	path = filepath.Join(dir, "host-api.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", nil, err
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		_ = l.Close()
+		_ = os.RemoveAll(dir)
+		return "", nil, err
+	}
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				buf := make([]byte, 64)
+				_, _ = c.Read(buf)
+				_, _ = c.Write([]byte("pong\n"))
+			}(c)
+		}
+	}()
+	return path, func() { _ = l.Close(); _ = os.RemoveAll(dir) }, nil
 }
 
 // RuntimeBanner returns the first line the smoke container read from `dmesg`, and
@@ -759,9 +810,10 @@ func (d *DockerSandbox) RuntimeBanner() (line string, read bool) {
 	return d.runtimeBannerLine, d.runtimeBannerRead
 }
 
-// smokeProbeScript is the node program the smoke container runs. The banner block
-// is appended, not toggled, so a script built without it contains no dmesg at all.
-func smokeProbeScript(readBanner bool) string {
+// smokeProbeScript is the node program the smoke container runs. The banner and
+// socket blocks are appended, not toggled, so a script built without them contains
+// no dmesg and no socket connect at all.
+func smokeProbeScript(readBanner bool, socket bool) string {
 	const storage = `const fs = require("fs");
 const mounts = fs.readFileSync("/proc/mounts", "utf8");
 let rootWritable = false;
@@ -799,11 +851,30 @@ let banner = null;
   banner = { error: String((e && e.message) || e).slice(0, 200) };
 }
 `
-	const emit = `process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, banner }));`
+	const finish = `function finish(socket) { process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, banner, socket })); }
+`
+	// The connect is bounded by its own timeout and every outcome, including a
+	// refusal, is reported as data rather than thrown, so the storage evidence above
+	// is never lost to the socket check.
+	const socketProbe = `(function () {
+  var done = false;
+  var s = require("net").connect("` + containerSocketPath + `");
+  function end(v) { if (done) return; done = true; try { s.destroy(); } catch (e) {} finish(v); }
+  s.setTimeout(3000, function () { end({ error: "timeout" }); });
+  s.on("connect", function () { s.write("ping\n"); });
+  s.on("data", function (d) { end({ ok: true, reply: String(d).trim().slice(0, 32) }); });
+  s.on("error", function (e) { end({ error: String((e && e.code) || e).slice(0, 64) }); });
+})();
+`
+	script := storage
 	if readBanner {
-		return storage + banner + emit
+		script += banner
 	}
-	return storage + emit
+	script += finish
+	if socket {
+		return script + socketProbe
+	}
+	return script + "finish(null);\n"
 }
 
 // bannerFirstLine reduces whatever the smoke container read to one bounded line
@@ -833,15 +904,20 @@ func bannerFirstLine(head string) string {
 // creation) and regular files (append). Device-node mounts are excluded:
 // docker's masked /proc paths are /dev/null binds whose writes discard, not
 // storage.
-func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionState, image string, workTmpfs bool, readBanner bool) error {
-	probe := smokeProbeScript(readBanner)
+func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionState, image string, workTmpfs bool, readBanner bool, socketPath string) error {
+	probe := smokeProbeScript(readBanner, socketPath != "")
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	name := "crsbx-smoke-" + randID()
 	// Override any image ENTRYPOINT (the project image's is the runner protocol):
 	// the probe must be exactly `node -` reading the script from stdin.
-	runArgs := append(d.lockdownArgs(name, workTmpfs, state.runtime), "--entrypoint", "node", image, "-")
+	runArgs := d.lockdownArgs(name, workTmpfs, state.runtime)
+	if socketPath != "" {
+		// Mounted exactly as brokerForRun mounts the per-run broker socket.
+		runArgs = append(runArgs, "-v", socketPath+":"+containerSocketPath)
+	}
+	runArgs = append(runArgs, "--entrypoint", "node", image, "-")
 	args, err := dockerArgs(state.host, runArgs...)
 	if err != nil {
 		return err
@@ -863,9 +939,28 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 			Head  string `json:"head"`
 			Error string `json:"error"`
 		} `json:"banner"`
+		Socket *struct {
+			OK    bool   `json:"ok"`
+			Reply string `json:"reply"`
+			Error string `json:"error"`
+		} `json:"socket"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		return fmt.Errorf("probe returned unparseable output: %w", err)
+	}
+	if socketPath != "" {
+		reason := "no socket result reported"
+		switch {
+		case report.Socket != nil && report.Socket.OK && report.Socket.Reply == "pong":
+			reason = ""
+		case report.Socket != nil && report.Socket.OK:
+			reason = fmt.Sprintf("connected but the reply was %q", bannerFirstLine(report.Socket.Reply))
+		case report.Socket != nil:
+			reason = bannerFirstLine(report.Socket.Error)
+		}
+		if reason != "" {
+			return fmt.Errorf("a host Unix socket mounted at %s is not reachable from inside the container (%s), so no host-API grant could be brokered; for runsc, register the runtime with --host-uds=open (docker/install-gvisor.sh does) and restart docker", containerSocketPath, reason)
+		}
 	}
 	if readBanner {
 		// Recorded before the storage checks and independent of their outcome; it
