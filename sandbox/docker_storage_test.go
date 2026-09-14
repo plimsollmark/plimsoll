@@ -168,7 +168,7 @@ func TestDockerPreflightRejectsImageWithVolumes(t *testing.T) {
 	build := exec.Command("docker", "build", "-q", "-t", img, "-")
 	build.Stdin = strings.NewReader("FROM scratch\nVOLUME /data\n")
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Skipf("cannot build throwaway VOLUME image: %v: %s", err, out)
+		infraSkip(t, "cannot build throwaway VOLUME image: %v: %s", err, out)
 	}
 	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", img).Run() })
 
@@ -218,7 +218,7 @@ func TestDockerRunUsesPreflightVerifiedImageID(t *testing.T) {
 
 	const tag = "crsbx-test-tag-swap:local"
 	if out, err := exec.Command("docker", "tag", "node:22-alpine", tag).CombinedOutput(); err != nil {
-		t.Skipf("cannot tag throwaway image: %v: %s", err, out)
+		infraSkip(t, "cannot tag throwaway image: %v: %s", err, out)
 	}
 	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", tag).Run() })
 
@@ -238,7 +238,7 @@ func TestDockerRunUsesPreflightVerifiedImageID(t *testing.T) {
 	swap := exec.Command("docker", "build", "-q", "-t", tag, "-")
 	swap.Stdin = strings.NewReader("FROM scratch\nVOLUME /data\n")
 	if out, err := swap.CombinedOutput(); err != nil {
-		t.Skipf("cannot re-point tag at a VOLUME image: %v: %s", err, out)
+		infraSkip(t, "cannot re-point tag at a VOLUME image: %v: %s", err, out)
 	}
 
 	res, err := d.RunJavaScript(ctx, Request{Code: "console.log(6*7)"})

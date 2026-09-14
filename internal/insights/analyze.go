@@ -257,6 +257,11 @@ func detectRepeatedReads(groups []*group) []Finding {
 // detectSequential is the low-confidence heuristic: a run whose summed upstream
 // latency spans several routes and is large. The trace cannot prove the calls were
 // serialized or independent, so severity is fixed at low and the detail is hedged.
+// The remedy is only actionable where the guest can issue calls concurrently: the
+// Docker and E2B clients can, while the WASM client wraps a synchronous host call,
+// so under that provider the calls were serialized by construction. The finding
+// never reaches a caller (it has no Suggested route); an operator reading it should
+// know which provider produced it.
 func detectSequential(calls []sandbox.CallRow) (Finding, bool) {
 	if len(calls) < seqMinCalls {
 		return Finding{}, false

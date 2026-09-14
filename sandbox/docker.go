@@ -97,6 +97,12 @@ type DockerSandbox struct {
 	ready           bool
 	runtimeVerified bool
 	verifiedRuntime string
+	// runtimeBannerLine is what the smoke container's `dmesg` printed first, read
+	// only under runsc. It is identity information for an operator's log and
+	// nothing else: gVisor's own documentation says the banner is trivially forged,
+	// so IsolationClass never reads these fields. See RuntimeBanner.
+	runtimeBannerLine string
+	runtimeBannerRead bool
 	// verifiedImageIDs maps the configured image references to the content-addressed
 	// IDs whose configs were actually inspected (no VOLUMEs). Runs launch these IDs,
 	// not the mutable tags, so a tag re-pointed after Preflight cannot substitute an
@@ -723,24 +729,40 @@ func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 		{ref: d.Image, id: state.imageID, workTmpfs: false},
 		{ref: d.ProjectImage, id: state.projectImageID, workTmpfs: true},
 	}
-	for _, p := range probes {
-		if err := d.smokeProbe(ctx, state, p.id, p.workTmpfs); err != nil {
+	d.stateMu.Lock()
+	d.runtimeBannerLine, d.runtimeBannerRead = "", false
+	d.stateMu.Unlock()
+	for i, p := range probes {
+		// The banner read is attempted once, in the first probe container, and only
+		// when the runtime is runsc: under runc the same envelope (uid 1000, no
+		// capabilities, the daemon's seccomp default) gets "klogctl: Operation not
+		// permitted", and a host kernel log is not something a probe should read.
+		readBanner := i == 0 && state.runtime == "runsc"
+		if err := d.smokeProbe(ctx, state, p.id, p.workTmpfs, readBanner); err != nil {
 			return fmt.Errorf("writable-storage smoke failed for image %q under runtime %q: %w", p.ref, state.runtime, err)
 		}
 	}
 	return nil
 }
 
-// smokeProbe runs the storage probe inside one lockdown container and verifies
-// the mount table it reports. The probe does not trust mount flags: it attempts
-// an actual write at EVERY mount point, so the writable set is proven
-// exhaustively rather than assumed from the flags this provider happened to
-// pass. Only mounts that can persist guest bytes count — directories (file
-// creation) and regular files (append). Device-node mounts are excluded:
-// docker's masked /proc paths are /dev/null binds whose writes discard, not
-// storage.
-func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionState, image string, workTmpfs bool) error {
-	const probe = `const fs = require("fs");
+// RuntimeBanner returns the first line the smoke container read from `dmesg`, and
+// whether a line was read at all. It is a diagnostic, not evidence: gVisor prints
+// "Starting gVisor..." there, and gVisor's documentation warns in the same breath
+// that the banner is easily replicated by an attacker. So the value is for an
+// operator reading a startup log ("the runtime that answered was the one I
+// configured"), never for a decision. IsolationClass does not consult it, a run is
+// never refused or admitted because of it, and an unreadable banner does not fail
+// SmokeTest. The read is attempted only under runsc; under runc read is false.
+func (d *DockerSandbox) RuntimeBanner() (line string, read bool) {
+	d.stateMu.RLock()
+	defer d.stateMu.RUnlock()
+	return d.runtimeBannerLine, d.runtimeBannerRead
+}
+
+// smokeProbeScript is the node program the smoke container runs. The banner block
+// is appended, not toggled, so a script built without it contains no dmesg at all.
+func smokeProbeScript(readBanner bool) string {
+	const storage = `const fs = require("fs");
 const mounts = fs.readFileSync("/proc/mounts", "utf8");
 let rootWritable = false;
 try { fs.writeFileSync("/plimsoll-smoke", "x"); rootWritable = true; } catch (e) {}
@@ -764,7 +786,55 @@ for (const line of mounts.trim().split("\n")) {
     }
   } catch (e) {}
 }
-process.stdout.write(JSON.stringify({ rootWritable, mounts, writable }));`
+let banner = null;
+`
+	// Bounded three ways: head -c caps the bytes, the timeout caps the wait, and a
+	// failure is reported as text rather than thrown. stderr is folded into stdout
+	// so a refusal ("klogctl: Operation not permitted") is what gets recorded.
+	const banner = `try {
+  const head = require("child_process").execFileSync("sh", ["-c", "dmesg 2>&1 | head -c 512"],
+    { encoding: "latin1", timeout: 3000, maxBuffer: 65536, stdio: ["ignore", "pipe", "ignore"] });
+  banner = { head: head };
+} catch (e) {
+  banner = { error: String((e && e.message) || e).slice(0, 200) };
+}
+`
+	const emit = `process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, banner }));`
+	if readBanner {
+		return storage + banner + emit
+	}
+	return storage + emit
+}
+
+// bannerFirstLine reduces whatever the smoke container read to one bounded line
+// of printable ASCII, so the value is safe to put on a log line. The runtime, not
+// the guest, produced it, but the bound and the character filter cost nothing.
+func bannerFirstLine(head string) string {
+	line, _, _ := strings.Cut(head, "\n")
+	line = strings.TrimRight(line, "\r")
+	var b strings.Builder
+	for _, r := range line {
+		if r < 0x20 || r > 0x7e {
+			r = '?'
+		}
+		b.WriteRune(r)
+		if b.Len() >= 120 {
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// smokeProbe runs the storage probe inside one lockdown container and verifies
+// the mount table it reports. The probe does not trust mount flags: it attempts
+// an actual write at EVERY mount point, so the writable set is proven
+// exhaustively rather than assumed from the flags this provider happened to
+// pass. Only mounts that can persist guest bytes count — directories (file
+// creation) and regular files (append). Device-node mounts are excluded:
+// docker's masked /proc paths are /dev/null binds whose writes discard, not
+// storage.
+func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionState, image string, workTmpfs bool, readBanner bool) error {
+	probe := smokeProbeScript(readBanner)
 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -789,9 +859,32 @@ process.stdout.write(JSON.stringify({ rootWritable, mounts, writable }));`
 		RootWritable bool     `json:"rootWritable"`
 		Mounts       string   `json:"mounts"`
 		Writable     []string `json:"writable"`
+		Banner       *struct {
+			Head  string `json:"head"`
+			Error string `json:"error"`
+		} `json:"banner"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		return fmt.Errorf("probe returned unparseable output: %w", err)
+	}
+	if readBanner {
+		// Recorded before the storage checks and independent of their outcome; it
+		// changes nothing below. A failed read is logged and left unavailable.
+		switch {
+		case report.Banner != nil && report.Banner.Head != "":
+			line := bannerFirstLine(report.Banner.Head)
+			d.stateMu.Lock()
+			d.runtimeBannerLine, d.runtimeBannerRead = line, true
+			d.stateMu.Unlock()
+			slog.Info("docker smoke: runtime banner (diagnostic identity only, forgeable, not isolation evidence)",
+				"runtime", state.runtime, "banner", line)
+		case report.Banner != nil:
+			slog.Info("docker smoke: runtime banner unavailable (diagnostic only; readiness unaffected)",
+				"runtime", state.runtime, "reason", bannerFirstLine(report.Banner.Error))
+		default:
+			slog.Info("docker smoke: runtime banner not reported (diagnostic only; readiness unaffected)",
+				"runtime", state.runtime)
+		}
 	}
 	if report.RootWritable {
 		return errors.New("root filesystem accepted a write; --read-only is not in force")

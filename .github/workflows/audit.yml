@@ -1,14 +1,25 @@
 # The gate, run where a reader can see it.
 #
-# This runs `make audit` and nothing more, so what the badge claims and what the
-# Makefile does cannot drift. Read README.md § Verification for what this does NOT
-# cover: the docker, seccomp and E2B suites are opt-in (`DOCKER=1`, `E2B=1`) and are
-# not run here, so a green check on this workflow proves strictly less than a local
-# `make audit DOCKER=1 E2B=1`.
+# Two jobs, each a Makefile target, so what a check claims and what the Makefile
+# does cannot drift:
 #
-# The E2B suite is deliberately absent rather than merely unconfigured. It drives a
-# live paid service, and no automated run in this project may spend. Do not add an
-# API key to this repository's secrets to "complete" the gate.
+#   audit         `make audit`: build, vet, race tests, golangci-lint, buf lint plus a
+#                 generated-code drift check, govulncheck. No containers.
+#   audit-docker  `make docker-images` then `make audit DOCKER=1`: the same gate plus
+#                 the docker suite under runc with the shipped seccomp profile, in
+#                 required mode. A missing daemon, a missing image or any skipped
+#                 test fails the job, so a green check means the suite ran: a
+#                 container came up read-only, every writable mount was a sized
+#                 noexec tmpfs, the seccomp profile loaded, and the broker refused
+#                 what it was meant to refuse.
+#
+# The runsc (gVisor, kernel tier) run lives in gvisor.yml, separately, so its result
+# is attributable on its own and cannot mask this one.
+#
+# Read README.md § Status for what a green check does NOT cover: the E2B suite is
+# deliberately absent rather than merely unconfigured. It drives a live paid service,
+# and no automated run in this project may spend. Do not add an API key to this
+# repository's secrets to "complete" the gate.
 #
 # Third-party actions are pinned to a commit SHA, not a tag. A tag is mutable and
 # repointing one is a supply-chain attack this repository is otherwise careful about
@@ -61,3 +72,38 @@ jobs:
 
       - name: make audit
         run: make audit
+
+  # Same gate, plus the docker suite. `needs` keeps it from spending runner minutes
+  # on containers when the plain gate already failed, and keeps a docker failure
+  # attributable: if this job is red and `audit` is green, the isolation suite is
+  # what broke. ubuntu-latest ships a docker daemon; nothing here installs one.
+  audit-docker:
+    needs: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Put installed tools on PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install the pinned gate tools
+        run: make tools
+
+      - name: Report the daemon and its runtimes
+        run: docker info --format 'server {{.ServerVersion}} runtimes {{range $k, $v := .Runtimes}}{{$k}} {{end}}'
+
+      # The suite launches the images by Preflight-verified content ID, so they must
+      # exist on the daemon before the tests run; the test helpers fail (not skip)
+      # when they do not, because DOCKER=1 is a request for proof.
+      - name: Pull the snippet image and build the project image
+        run: make docker-images
+
+      - name: make audit DOCKER=1
+        run: make audit DOCKER=1

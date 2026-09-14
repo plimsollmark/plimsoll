@@ -277,6 +277,7 @@ func (r *Remote) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbox
 		Duration:        time.Duration(m.GetDurationMs()) * time.Millisecond,
 		Sandbox:         m.GetSandbox(),
 		Isolation:       sandbox.ParseIsolationClass(m.GetIsolation()),
+		Advice:          adviceFromWire(m.GetAdvice()),
 	}
 	if err := sandbox.CheckResultIsolation(result.Isolation, in.MinimumIsolation); err != nil {
 		return result, connect.NewError(connect.CodeDataLoss, err)
@@ -315,6 +316,7 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 		Outcome:            outcomeFromWire(m.GetOutcome()),
 		Detail:             m.GetOutcomeDetail(),
 		ArtifactsTruncated: m.GetArtifactsTruncated(),
+		Advice:             adviceFromWire(m.GetAdvice()),
 	}
 	for _, s := range m.GetSteps() {
 		out.Steps = append(out.Steps, sandbox.StepResult{
@@ -335,6 +337,26 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 		return out, connect.NewError(connect.CodeDataLoss, err)
 	}
 	return out, nil
+}
+
+// adviceFromWire retains the caller's post-dispatch evidence for both operations.
+// The service selects the audience; the client neither analyzes nor grants routes.
+func adviceFromWire(in []*plimsollv1.AdviceFinding) []sandbox.AdviceFinding {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sandbox.AdviceFinding, 0, len(in))
+	for _, f := range in {
+		out = append(out, sandbox.AdviceFinding{
+			Pattern: f.GetPattern(), Severity: f.GetSeverity(), Remedy: f.GetRemedy(),
+			Method: f.GetMethod(), Route: f.GetRoute(), Detail: f.GetDetail(),
+			SuggestedMethod: f.GetSuggestedMethod(), SuggestedRoute: f.GetSuggestedRoute(),
+			ExtraCalls:   int(f.GetExtraCalls()),
+			AddedLatency: time.Duration(f.GetAddedLatencyMs()) * time.Millisecond,
+			BytesMoved:   f.GetBytesMoved(),
+		})
+	}
+	return out
 }
 
 // outcomeFromWire maps the wire enum back to the sandbox package's typed project

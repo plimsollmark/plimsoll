@@ -250,6 +250,35 @@ type ProjectResult struct {
 	// Result.CallTrace. Non-nil only when the run carried a host-API grant that made
 	// calls, and purely advisory: it never changes Steps, Outcome, or Isolation.
 	CallTrace *CallTrace
+	// Advice contains caller-visible findings returned by an RPC service. Direct
+	// providers leave it nil; advice never changes execution or authorization.
+	Advice []AdviceFinding
+}
+
+// AdviceFinding is post-dispatch efficiency evidence supplied by an RPC service.
+// Routes are templates, and suggested routes are already granted to the caller.
+// Operator-only findings and ungranted catalog routes are never included. This
+// transport-independent value carries no protobuf or detector types.
+//
+// The three numbers compare the measured pattern with an assumed ideal of one call;
+// the ideal itself is never measured. ExtraCalls is the measured count minus one,
+// rigorous when SuggestedRoute is set (a granted batch route exists). AddedLatency
+// is the summed measured round-trip time minus one call's: a model of time spent
+// beyond one call, not wall time lost. BytesMoved is the measured gross bytes the
+// flagged calls moved, not a saving. Quote ExtraCalls; treat the other two as
+// order-of-magnitude context.
+type AdviceFinding struct {
+	Pattern         string        // detector id: fan_out, aggregate_in_code, repeated_read, sequential_calls
+	Severity        string        // info, low, medium, high; advisory ranking only
+	Remedy          string        // batch, aggregate, filter, cache, parallel
+	Method          string        // route method the finding concerns
+	Route           string        // matched route template, never a raw path
+	Detail          string        // one sentence templated from metadata only
+	SuggestedMethod string        // a better route the profile already grants, or ""
+	SuggestedRoute  string        // the agent-fixable case; both empty never reaches a caller
+	ExtraCalls      int           // measured calls beyond one
+	AddedLatency    time.Duration // modelled: summed round trips minus one call's
+	BytesMoved      int64         // measured gross bytes across the flagged calls
 }
 
 // Result is the outcome of an execution. A non-zero ExitCode is a normal guest
@@ -275,6 +304,9 @@ type Result struct {
 	// when the run carried a host-API grant that made calls, and is purely advisory:
 	// it never changes ExitCode, Stdout/Stderr, or Isolation.
 	CallTrace *CallTrace
+	// Advice mirrors ProjectResult.Advice for an RPC snippet response. Direct
+	// providers leave it nil; callers may use it as a hint for a subsequent run.
+	Advice []AdviceFinding
 }
 
 // Sandbox is an isolated code runner.

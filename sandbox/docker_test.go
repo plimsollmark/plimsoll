@@ -12,13 +12,37 @@ import (
 	"time"
 )
 
+// dockerRequired reports whether the caller asked for docker coverage to be
+// proven rather than attempted. `make docker-suite` sets
+// SANDBOX_TEST_REQUIRE_DOCKER=1, and under it every infrastructure skip below is a
+// failure: a daemon that is not there, an image that was never built, a throwaway
+// image that could not be tagged. Without it (an ordinary `go test ./...` on a
+// laptop without docker) the same conditions skip, as they always have.
+//
+// The distinction exists because a skip inside a deliberately requested suite reads
+// exactly like a pass: the run is green, the isolation claims were never exercised,
+// and nothing says so. CI runs the suite in required mode for that reason.
+func dockerRequired() bool {
+	return os.Getenv("SANDBOX_TEST_REQUIRE_DOCKER") == "1"
+}
+
+// infraSkip skips the test for a missing piece of docker infrastructure, or fails
+// it when that infrastructure was required (see dockerRequired).
+func infraSkip(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if dockerRequired() {
+		t.Fatalf("docker coverage was required (SANDBOX_TEST_REQUIRE_DOCKER=1) but its infrastructure is missing: "+format, args...)
+	}
+	t.Skipf(format, args...)
+}
+
 func requireDocker(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
-		t.Skip("skipping docker sandbox test in -short mode")
+		infraSkip(t, "skipping docker sandbox test in -short mode")
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not available")
+		infraSkip(t, "docker not available")
 	}
 }
 
@@ -161,7 +185,7 @@ func TestIsDigestPinned(t *testing.T) {
 
 func TestDockerRequirePinnedImagesPreflight(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not on PATH")
+		infraSkip(t, "docker not on PATH")
 	}
 	d := DefaultDocker("") // mutable tags
 	d.RequirePinnedImages = true
@@ -424,7 +448,7 @@ func TestDockerDirectRunsEnforceSnapshottedMinimumIsolation(t *testing.T) {
 
 func TestDockerRejectsRemoteDaemonAtPreflight(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not on PATH")
+		infraSkip(t, "docker not on PATH")
 	}
 	t.Setenv("DOCKER_HOST", "tcp://10.0.0.5:2375")
 	d := DefaultDocker("")
@@ -577,7 +601,7 @@ func requireProjectImage(t *testing.T, d *DockerSandbox) {
 	t.Helper()
 	requireDocker(t)
 	if err := exec.Command("docker", "image", "inspect", d.ProjectImage).Run(); err != nil {
-		t.Skipf("project image %s not built (run `docker build -t %s docker/`)", d.ProjectImage, d.ProjectImage)
+		infraSkip(t, "project image %s not built (run `make docker-images`)", d.ProjectImage)
 	}
 }
 
@@ -596,7 +620,7 @@ func requireSnippetImage(t *testing.T, d *DockerSandbox) {
 	t.Helper()
 	requireDocker(t)
 	if err := exec.Command("docker", "image", "inspect", d.Image).Run(); err != nil {
-		t.Skipf("snippet image %s not present (run `docker pull %s`)", d.Image, d.Image)
+		infraSkip(t, "snippet image %s not present (run `make docker-images`)", d.Image)
 	}
 }
 

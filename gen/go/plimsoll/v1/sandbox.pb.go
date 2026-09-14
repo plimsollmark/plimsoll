@@ -252,11 +252,17 @@ type AdviceFinding struct {
 	// so the fix is an API change and this finding is never returned to a caller.
 	SuggestedMethod string `protobuf:"bytes,7,opt,name=suggested_method,json=suggestedMethod,proto3" json:"suggested_method,omitempty"`
 	SuggestedRoute  string `protobuf:"bytes,8,opt,name=suggested_route,json=suggestedRoute,proto3" json:"suggested_route,omitempty"`
-	ExtraCalls      int32  `protobuf:"varint,9,opt,name=extra_calls,json=extraCalls,proto3" json:"extra_calls,omitempty"`                // calls beyond the ideal the pattern spent
-	AddedLatencyMs  int64  `protobuf:"varint,10,opt,name=added_latency_ms,json=addedLatencyMs,proto3" json:"added_latency_ms,omitempty"` // upstream time the pattern cost over its ideal shape
-	BytesMoved      int64  `protobuf:"varint,11,opt,name=bytes_moved,json=bytesMoved,proto3" json:"bytes_moved,omitempty"`               // request+response bytes across the flagged calls
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// The three numbers compare the measured pattern with an assumed ideal of one
+	// call; the ideal is never measured. extra_calls is the measured count minus one
+	// (rigorous when suggested_route is set). added_latency_ms is the summed measured
+	// round-trip time minus one call's: a model of time spent beyond one call, not wall
+	// time lost. bytes_moved is the measured gross bytes the flagged calls moved, not
+	// a saving.
+	ExtraCalls     int32 `protobuf:"varint,9,opt,name=extra_calls,json=extraCalls,proto3" json:"extra_calls,omitempty"`
+	AddedLatencyMs int64 `protobuf:"varint,10,opt,name=added_latency_ms,json=addedLatencyMs,proto3" json:"added_latency_ms,omitempty"`
+	BytesMoved     int64 `protobuf:"varint,11,opt,name=bytes_moved,json=bytesMoved,proto3" json:"bytes_moved,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *AdviceFinding) Reset() {
