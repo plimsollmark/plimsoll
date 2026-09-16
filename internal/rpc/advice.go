@@ -155,8 +155,10 @@ type findingSummary struct {
 //   - RetentionNone (default): nothing. The run's findings never reach the durable
 //     audit log; the caller wire hint and the bounded /metrics aggregates are emitted
 //     elsewhere and are unaffected.
-//   - RetentionAggregate: the mode, finding count, and total estimated waste, so a log
-//     reader can glance the run's cost without a per-route record of it.
+//   - RetentionAggregate: the mode, finding count, and the modelled totals (extra
+//     calls, latency beyond one call, bytes moved), so a log reader can glance the
+//     run's cost without a per-route record of it. Findings cover disjoint route
+//     groups, so the sums never count a call twice.
 //   - RetentionDetailed: additionally advice_finding_details, one record per finding —
 //     the per-route breakdown the exported-audit HTML report renders.
 //

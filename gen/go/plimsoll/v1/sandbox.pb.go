@@ -241,10 +241,10 @@ func (x *DescribeResponse) GetSupportsAdvisory() bool {
 // neither echo a guest id/body/token nor become a prompt-injection channel.
 type AdviceFinding struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
-	Pattern  string                 `protobuf:"bytes,1,opt,name=pattern,proto3" json:"pattern,omitempty"`   // detector id: fan_out|aggregate_in_code|repeated_read|sequential_calls
+	Pattern  string                 `protobuf:"bytes,1,opt,name=pattern,proto3" json:"pattern,omitempty"`   // detector id: fan_out|repeated_read
 	Severity string                 `protobuf:"bytes,2,opt,name=severity,proto3" json:"severity,omitempty"` // info|low|medium|high (advisory ranking only)
-	Remedy   string                 `protobuf:"bytes,3,opt,name=remedy,proto3" json:"remedy,omitempty"`     // batch|aggregate|filter|cache|parallel
-	Method   string                 `protobuf:"bytes,4,opt,name=method,proto3" json:"method,omitempty"`     // route method the finding concerns (GET/PUT/POST/DELETE)
+	Remedy   string                 `protobuf:"bytes,3,opt,name=remedy,proto3" json:"remedy,omitempty"`     // batch|cache
+	Method   string                 `protobuf:"bytes,4,opt,name=method,proto3" json:"method,omitempty"`     // route method the finding concerns (GET/PUT/POST/DELETE/PATCH)
 	Route    string                 `protobuf:"bytes,5,opt,name=route,proto3" json:"route,omitempty"`       // matched route TEMPLATE, never a raw path
 	Detail   string                 `protobuf:"bytes,6,opt,name=detail,proto3" json:"detail,omitempty"`     // one plain sentence, templated from metadata only
 	// suggested_method/suggested_route name a better route the profile already
@@ -253,7 +253,8 @@ type AdviceFinding struct {
 	SuggestedMethod string `protobuf:"bytes,7,opt,name=suggested_method,json=suggestedMethod,proto3" json:"suggested_method,omitempty"`
 	SuggestedRoute  string `protobuf:"bytes,8,opt,name=suggested_route,json=suggestedRoute,proto3" json:"suggested_route,omitempty"`
 	// The three numbers compare the measured pattern with an assumed ideal of one
-	// call; the ideal is never measured. extra_calls is the measured count minus one
+	// call; the ideal is never measured. extra_calls is the measured successful call
+	// count minus one, counting only calls the broker delivered with a 2xx status
 	// (rigorous when suggested_route is set). added_latency_ms is the summed measured
 	// round-trip time minus one call's: a model of time spent beyond one call, not wall
 	// time lost. bytes_moved is the measured gross bytes the flagged calls moved, not

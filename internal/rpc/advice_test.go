@@ -17,24 +17,24 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
-// fanOutTrace builds a metadata-only CallTrace that trips the detectors two ways:
+// fanOutTrace builds a metadata-only CallTrace that trips the fan-out detector two
+// ways, one finding per route group:
 //   - GET /v1/lights/* hit 8 times, with a collection sibling (GET /v1/lights) in
 //     the profile's Allow -> a fan-out the router can suggest a batch for
 //     (agent-fixable).
-//   - GET /v1/sensors/* hit 8 times, with NO sibling in Allow -> a fan-out plus the
-//     write-free aggregate-in-code finding, neither of which the router can fix
-//     (API-change, operator-only).
+//   - GET /v1/sensors/* hit 8 times, with NO sibling in Allow -> a fan-out the router
+//     cannot fix (API-change, operator-only).
 //
-// Response sizes are all distinct so the repeated-read detector stays quiet, and
-// latencies are tiny so the sequential detector stays quiet — keeping the finding
-// set deterministic for the assertions.
+// Every call is delivered with a 200, and response sizes are all distinct so the
+// repeated-read detector stays quiet — keeping the finding set deterministic for the
+// assertions.
 func fanOutTrace() *sandbox.CallTrace {
 	var calls []sandbox.CallRow
 	seq := 0
 	add := func(route string) {
 		seq++
 		calls = append(calls, sandbox.CallRow{
-			Seq: seq, Method: "GET", Route: route, Status: 200,
+			Seq: seq, Method: "GET", Route: route, Status: 200, Delivered: true,
 			ReqBytes: 0, RespBytes: 100 + seq, Latency: time.Millisecond,
 		})
 	}
@@ -236,9 +236,9 @@ func TestAdviceCallerReturnsOnlyAgentFixable(t *testing.T) {
 		t.Errorf("finding cost/detail wrong: detail=%q extra_calls=%d", first.GetDetail(), first.GetExtraCalls())
 	}
 
-	// The operator surface saw more than the caller got: the sensors fan-out and the
-	// aggregate-in-code finding are API-change (no suggestion), so they are withheld
-	// from the caller but still counted on the audit line.
+	// The operator surface saw more than the caller got: the sensors fan-out is
+	// API-change (no suggestion), so it is withheld from the caller but still counted
+	// on the audit line.
 	entry := lastCodeRunLog(t, &logbuf)
 	findings := int(entry["advice_findings"].(float64))
 	agentFixable := int(entry["advice_agent_fixable"].(float64))
@@ -264,12 +264,13 @@ func TestAdviceAuditCarriesFindingsAndCosts(t *testing.T) {
 
 	entry := lastCodeRunLog(t, &logbuf)
 	findings := int(entry["advice_findings"].(float64))
-	if findings < 2 {
-		t.Fatalf("expected >=2 findings, got %d", findings)
+	if findings != 2 {
+		t.Fatalf("expected exactly 2 findings (one fan-out per route group), got %d", findings)
 	}
-	// Aggregate cost attributes are present and positive (the fan-outs waste calls).
-	if entry["advice_extra_calls"].(float64) <= 0 {
-		t.Errorf("advice_extra_calls not positive: %v", entry["advice_extra_calls"])
+	// The totals sum disjoint route groups: two fan-outs of 8 calls each are 7+7 extra
+	// calls, never inflated by a second finding over the same rows.
+	if got := entry["advice_extra_calls"].(float64); got != 14 {
+		t.Errorf("advice_extra_calls = %v, want 14", got)
 	}
 	if _, ok := entry["advice_bytes_moved"]; !ok {
 		t.Error("advice_bytes_moved missing")

@@ -179,4 +179,13 @@ func TestBrokerCoreCapsResponseBeforeReturningItToAnyAdapter(t *testing.T) {
 	if response.Status != http.StatusBadGateway || strings.Contains(string(response.Body), "credential-like") {
 		t.Fatalf("over-cap response escaped core: %+v", response)
 	}
+	// The trace keeps the upstream's 200 but records that the broker did not deliver
+	// it, so nothing downstream can mistake a capped response for a successful read.
+	trace := core.traceSnapshot()
+	if trace == nil || len(trace.Calls) != 1 {
+		t.Fatalf("trace = %+v, want exactly one row for the capped call", trace)
+	}
+	if row := trace.Calls[0]; row.Status != http.StatusOK || row.Delivered || row.RespBytes != 0 {
+		t.Fatalf("capped row = %+v, want status 200, Delivered=false, 0 response bytes", row)
+	}
 }

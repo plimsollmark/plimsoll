@@ -261,22 +261,23 @@ type ProjectResult struct {
 // transport-independent value carries no protobuf or detector types.
 //
 // The three numbers compare the measured pattern with an assumed ideal of one call;
-// the ideal itself is never measured. ExtraCalls is the measured count minus one,
-// rigorous when SuggestedRoute is set (a granted batch route exists). AddedLatency
-// is the summed measured round-trip time minus one call's: a model of time spent
-// beyond one call, not wall time lost. BytesMoved is the measured gross bytes the
-// flagged calls moved, not a saving. Quote ExtraCalls; treat the other two as
-// order-of-magnitude context.
+// the ideal itself is never measured. ExtraCalls is the measured successful call
+// count minus one (only calls the broker delivered with a 2xx status are counted),
+// rigorous when SuggestedRoute is set (a granted collection route exists, if it
+// returns the same items). AddedLatency is the summed measured round-trip time minus
+// one call's: a model of time spent beyond one call, not wall time lost. BytesMoved
+// is the measured gross bytes the counted calls moved, not a saving. Quote
+// ExtraCalls; treat the other two as order-of-magnitude context.
 type AdviceFinding struct {
-	Pattern         string        // detector id: fan_out, aggregate_in_code, repeated_read, sequential_calls
+	Pattern         string        // detector id: fan_out, repeated_read
 	Severity        string        // info, low, medium, high; advisory ranking only
-	Remedy          string        // batch, aggregate, filter, cache, parallel
+	Remedy          string        // batch, cache
 	Method          string        // route method the finding concerns
 	Route           string        // matched route template, never a raw path
 	Detail          string        // one sentence templated from metadata only
 	SuggestedMethod string        // a better route the profile already grants, or ""
 	SuggestedRoute  string        // the agent-fixable case; both empty never reaches a caller
-	ExtraCalls      int           // measured calls beyond one
+	ExtraCalls      int           // measured successful calls beyond one
 	AddedLatency    time.Duration // modelled: summed round trips minus one call's
 	BytesMoved      int64         // measured gross bytes across the flagged calls
 }

@@ -33,16 +33,25 @@ func testRegistry(t *testing.T) *grants.Registry {
 
 // TestAttachPrompts proves the Phase 3 surfacing rules: an API-change finding gets a
 // design prompt grounded in its profile's routes, an agent-fixable finding does not,
-// and an unknown profile is skipped without error.
+// an unknown profile is skipped without error, and a historical record naming a
+// retired remedy (aggregate, filter, parallel; deleted 2026-09-16) renders without a
+// prompt, since the detector that would have justified one no longer exists.
 func TestAttachPrompts(t *testing.T) {
 	reg := testRegistry(t)
 	records := []report.Record{
 		{
+			Profile: "inventory", // grants only the per-item route: no collection sibling
+			Findings: []report.Finding{{
+				Pattern: "fan_out", Remedy: "batch", Method: "GET",
+				Route: "/api/orders/*", Detail: "fan-out with no granted collection route", AgentFixable: false,
+				ExtraCalls: 29,
+			}},
+		},
+		{
 			Profile: "inventory",
 			Findings: []report.Finding{{
 				Pattern: "aggregate_in_code", Remedy: "aggregate", Method: "GET",
-				Route: "/api/orders/*", Detail: "reduced in code", AgentFixable: false,
-				ExtraCalls: 29,
+				Route: "/api/orders/*", Detail: "historical record from before 2026-09-16", AgentFixable: false,
 			}},
 		},
 		{
@@ -70,12 +79,21 @@ func TestAttachPrompts(t *testing.T) {
 	if !strings.Contains(prompt, "API designer") || !strings.Contains(prompt, "/api/orders/*") {
 		t.Errorf("prompt not grounded in the profile routes:\n%s", prompt)
 	}
-	// Agent-fixable finding is left alone (the fix is a route switch).
+	// A read fan-out's prompt offers the server-side aggregate as a conditional
+	// alternative, which is where the retired aggregate-in-code idea now lives.
+	if !strings.Contains(prompt, "server-side aggregate") {
+		t.Errorf("read fan-out prompt should offer the aggregate alternative:\n%s", prompt)
+	}
+	// A historical retired-remedy record renders but gets no prompt.
 	if records[1].Findings[0].DesignPrompt != "" {
+		t.Error("a retired-remedy record must not receive a design prompt")
+	}
+	// Agent-fixable finding is left alone (the fix is a route switch).
+	if records[2].Findings[0].DesignPrompt != "" {
 		t.Error("agent-fixable finding should not receive a design prompt")
 	}
 	// Unknown profile is skipped.
-	if records[2].Findings[0].DesignPrompt != "" {
+	if records[3].Findings[0].DesignPrompt != "" {
 		t.Error("unknown profile should receive no prompt")
 	}
 }

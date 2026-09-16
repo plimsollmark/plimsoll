@@ -20,7 +20,10 @@ leak impossible rather than merely discouraged:
   cannot ride along in one.
 - `CallRow` (`sandbox/calltrace.go`) has **no field** for a request body, a response body,
   or a credential. The broker reads bodies to proxy the call and injects the token itself,
-  but neither is ever copied into the trace. Sizes are byte **counts**, not content.
+  but neither is ever copied into the trace. Sizes are byte **counts**, not content. It
+  does record whether the broker delivered the upstream response, so a capped or
+  unanswered call is never read as a successful one; that is a broker fact, not guest
+  content.
 
 So a concrete id, query value, request/response body, or bearer token cannot enter the
 `CallTrace`, and every downstream artifact (findings, wire hints, audit records, metrics)

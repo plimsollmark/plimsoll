@@ -170,6 +170,12 @@ func run(ctx context.Context, reportPath string) error {
 	if first.audit.AgentFixable != 1 || second.audit.AgentFixable != 0 {
 		return fmt.Errorf("audit lines disagree with the results: agent_fixable %d then %d", first.audit.AgentFixable, second.audit.AgentFixable)
 	}
+	// One observation, one finding: the twelve per-item reads are reported once, as
+	// the fan-out, with eleven calls beyond one. A second finding over the same rows
+	// would double the audit line's totals.
+	if first.audit.AdviceFindings != 1 || first.audit.ExtraCalls != 11 {
+		return fmt.Errorf("run 1's audit line should carry exactly the fan-out finding with 11 extra calls, got %d finding(s) and %d extra calls", first.audit.AdviceFindings, first.audit.ExtraCalls)
+	}
 	// The twelve per-item reads fetched twelve distinct items, and several of those
 	// responses are the same size. The trace holds the route template and the size,
 	// not the item, so it cannot tell same-size from same-item; the repeated-read
@@ -188,8 +194,8 @@ func run(ctx context.Context, reportPath string) error {
 	fmt.Println()
 	fmt.Println("summary   | same answer both times; the second run cost the API", second.requestCount(), "request instead of", first.requestCount())
 	fmt.Println("summary   | the finding named the granted route to switch to, so the fix needed no API change")
-	fmt.Println("summary   | the audit lines are the operator's view; the aggregate_in_code finding is an API-change")
-	fmt.Println("summary   | finding, so it is counted there and never returned to the caller")
+	fmt.Println("summary   | the audit line is the operator's view: the same finding with its costs and, at advice_retention=detailed,")
+	fmt.Println("summary   | one metadata-only record per finding; nothing was withheld from the caller here, since the one finding was agent-fixable")
 	fmt.Printf("summary   | %d of the %d per-item responses were the same size, and none was flagged as a repeated read:\n", sameSize, perItem)
 	fmt.Println("summary   | the trace holds the template and the size, not the item, so it cannot tell same-size from same-item")
 
@@ -440,6 +446,7 @@ type auditLine struct {
 	HostCalls      int           `json:"host_calls"`
 	AdviceFindings int           `json:"advice_findings"`
 	AgentFixable   int           `json:"advice_agent_fixable"`
+	ExtraCalls     int           `json:"advice_extra_calls"`
 	Details        []auditDetail `json:"advice_finding_details"`
 }
 
@@ -747,7 +754,7 @@ about {{ms .AddedLatency}} ms beyond one call <span class="muted">(modelled, not
 <h3>The operator's view: the daemon's audit line</h3>
 <div class="card op">host_calls={{.Audit.HostCalls}} · advice_findings={{.Audit.AdviceFindings}} · advice_agent_fixable={{.Audit.AgentFixable}}
 {{range .Audit.Details}}<br>{{if .AgentFixable}}returned to the caller{{else}}operator only{{end}}: <b>{{.Pattern}}</b> on {{.Method}} {{.Route}} (remedy {{.Remedy}}){{end}}
-<br><span class="muted">An API-change finding names an endpoint that does not exist yet, so the agent cannot act on it; it stays here, with a prompt the API owner can paste into their own AI.</span></div>
+<br><span class="muted">A finding the agent could not act on (no granted route to switch to) would stay here, operator only, with a prompt the API owner can paste into their own AI. This run produced none: the profile already granted the collection route, so the one finding went back to the caller.</span></div>
 </section>
 {{end}}
 
@@ -763,16 +770,16 @@ about {{ms .AddedLatency}} ms beyond one call <span class="muted">(modelled, not
 <pre>git clone {{.RepoURL}}.git && cd plimsoll
 go run ./examples/advisor                    # the run, in the terminal
 go run ./examples/advisor -report out.html   # the same run as a page like this one</pre>
-<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, or if the per-item loop is flagged as a repeated read. Source: <a href="{{.SourceURL}}">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="{{.ReadmeURL}}">EXTERNAL · source repo ↗ README, efficiency advisor</a>.</p>
+<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="{{.SourceURL}}">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="{{.ReadmeURL}}">EXTERNAL · source repo ↗ README, efficiency advisor</a>.</p>
 
 <h2>What this page claims, and what it does not</h2>
 <ul>
 <li><b>Advice never changes a run.</b> It is computed after the result is final, over metadata the broker already held. A run with advice is byte-identical in execution to one without; advice cannot gate admission or change an exit code, an output byte or the isolation tier.</li>
 <li><b>The trace is metadata only.</b> Route templates, verbs, status codes, byte counts, latency. The toggle above shows what that leaves out.</li>
-<li><b>No model is involved.</b> Four deterministic detectors and one question against the granted routes. The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
+<li><b>No model is involved.</b> Two deterministic detectors (a fan-out over a per-item route, and repeated reads of one fixed route), counting only calls the broker delivered with a 2xx status, and one question against the granted routes. The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
 <li><b>The numbers are what they say.</b> The call count is measured. The latency and byte figures are a model of the pattern against an ideal of one call, and the table above puts them next to what the API measured.</li>
 <li><b>A finding claims only what the trace can support.</b> In run 1, {{.SameSize}} of the {{.PerItem}} per-item responses were the same size, and the API's log shows they were {{.PerItem}} distinct items. The trace holds the route template and the size, not the item, so it cannot tell same-size from same-item, and the repeated-read detector does not read a wildcard route at all. It reads only a route without a wildcard, where the broker admits exactly one path and every call is the same request; an unchanged size there is evidence the data did not change, and the finding says evidence, not proof.</li>
-<li><b>This run used the WASM provider</b>, which is process-tier isolation and fine for an example. The advisor is provider-independent; the sequential-calls remedy applies to the Docker and E2B guests, since the WASM client issues host calls one at a time.</li>
+<li><b>This run used the WASM provider</b>, which is process-tier isolation and fine for an example. The advisor is provider-independent: the same broker core records the trace under Docker, E2B and WASM, so the findings do not depend on the tier.</li>
 <li><b>Status:</b> pre-1.0, single author, no external users yet, no third-party security audit. The lesson <a href="{{.LessonURL}}">INTERNAL · trainer site → API Efficiency Advisor</a> walks the same ground with a 128-call example.</li>
 </ul>
 

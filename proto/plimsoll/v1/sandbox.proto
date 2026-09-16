@@ -56,10 +56,10 @@ message DescribeResponse {
 // HTTP verbs, and a sentence built from those plus numbers — so a finding can
 // neither echo a guest id/body/token nor become a prompt-injection channel.
 message AdviceFinding {
-  string pattern = 1; // detector id: fan_out|aggregate_in_code|repeated_read|sequential_calls
+  string pattern = 1; // detector id: fan_out|repeated_read
   string severity = 2; // info|low|medium|high (advisory ranking only)
-  string remedy = 3; // batch|aggregate|filter|cache|parallel
-  string method = 4; // route method the finding concerns (GET/PUT/POST/DELETE)
+  string remedy = 3; // batch|cache
+  string method = 4; // route method the finding concerns (GET/PUT/POST/DELETE/PATCH)
   string route = 5; // matched route TEMPLATE, never a raw path
   string detail = 6; // one plain sentence, templated from metadata only
   // suggested_method/suggested_route name a better route the profile already
@@ -68,7 +68,8 @@ message AdviceFinding {
   string suggested_method = 7;
   string suggested_route = 8;
   // The three numbers compare the measured pattern with an assumed ideal of one
-  // call; the ideal is never measured. extra_calls is the measured count minus one
+  // call; the ideal is never measured. extra_calls is the measured successful call
+  // count minus one, counting only calls the broker delivered with a 2xx status
   // (rigorous when suggested_route is set). added_latency_ms is the summed measured
   // round-trip time minus one call's: a model of time spent beyond one call, not wall
   // time lost. bytes_moved is the measured gross bytes the flagged calls moved, not

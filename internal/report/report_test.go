@@ -170,6 +170,27 @@ func TestRenderDesignPrompt(t *testing.T) {
 	}
 }
 
+// TestRenderHistoricalPatternLabels: the sequential and aggregate-in-code detectors
+// were deleted on 2026-09-16, but an operator's retained audit stream may still carry
+// their records. The report keeps rendering them under their old labels rather than
+// failing or relabelling history; the daemon simply never emits them again. (The
+// sample fixture's aggregate_in_code record is the same case in file form.)
+func TestRenderHistoricalPatternLabels(t *testing.T) {
+	rec := Record{Profile: "hue", Sandbox: "docker", FindingCount: 2, Findings: []Finding{
+		{Pattern: "sequential_calls", Severity: "low", Remedy: "parallel", Method: "GET", Route: "/a", Detail: "historical"},
+		{Pattern: "aggregate_in_code", Severity: "low", Remedy: "aggregate", Method: "GET", Route: "/items/*", Detail: "historical"},
+	}}
+	var buf bytes.Buffer
+	if err := Render(&buf, []Record{rec}, Options{Generated: fixedTime}); err != nil {
+		t.Fatalf("render historical stream: %v", err)
+	}
+	for _, want := range []string{"Sequential calls", "Aggregate in code"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("historical pattern label %q missing from the rendered report", want)
+		}
+	}
+}
+
 // TestRenderEmpty renders an empty stream without error and shows the empty state.
 func TestRenderEmpty(t *testing.T) {
 	var buf bytes.Buffer

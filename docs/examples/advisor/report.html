@@ -75,7 +75,7 @@ footer{margin-top:40px;padding-top:12px;border-top:1px solid #d1d9e0;color:#5963
 });</pre>
 <h3>What came back</h3>
 <dl><dt>guest output</dt><dd><code>{&#34;total&#34;:132,&#34;rows&#34;:12}</code></dd>
-<dt>guest wall time</dt><dd>311 ms, engine start included</dd>
+<dt>guest wall time</dt><dd>312 ms, engine start included</dd>
 <dt>advice on the result</dt><dd>1 finding(s), below</dd></dl>
 
 <div class="card"><b>fan_out</b> (low, remedy batch) on GET /items/*<br>
@@ -83,7 +83,7 @@ suggested: <b>GET /items</b>, already granted<br>
 11 calls beyond one <span class="muted">(measured count minus one)</span> ·
 about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> ·
 490 bytes moved in total <span class="muted">(gross, not a saving)</span><br>
-<span class="muted">This run made 12 GET /items/* calls to one per-item route (the trace holds the template, not the item); a batch endpoint would cover them in one request.</span></div>
+<span class="muted">This run made 12 successful GET /items/* calls to one per-item route (the trace holds the template, not the item); a collection or batch read would cover them in one request if it returns the same items.</span></div>
 
 
 <h3>What the API saw, and what plimsoll's trace holds</h3>
@@ -94,9 +94,9 @@ about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> 
 <tr><th colspan="4">13 requests</th><th class="num" colspan="2">992 bytes</th></tr></tbody></table></div>
 
 <h3>The operator's view: the daemon's audit line</h3>
-<div class="card op">host_calls=13 · advice_findings=2 · advice_agent_fixable=1
-<br>operator only: <b>aggregate_in_code</b> on GET /items/* (remedy aggregate)<br>returned to the caller: <b>fan_out</b> on GET /items/* (remedy batch)
-<br><span class="muted">An API-change finding names an endpoint that does not exist yet, so the agent cannot act on it; it stays here, with a prompt the API owner can paste into their own AI.</span></div>
+<div class="card op">host_calls=13 · advice_findings=1 · advice_agent_fixable=1
+<br>returned to the caller: <b>fan_out</b> on GET /items/* (remedy batch)
+<br><span class="muted">A finding the agent could not act on (no granted route to switch to) would stay here, operator only, with a prompt the API owner can paste into their own AI. This run produced none: the profile already granted the collection route, so the one finding went back to the caller.</span></div>
 </section>
 
 <section class="panel" id="run-2" role="tabpanel" hidden>
@@ -107,7 +107,7 @@ about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> 
 });</pre>
 <h3>What came back</h3>
 <dl><dt>guest output</dt><dd><code>{&#34;total&#34;:132,&#34;rows&#34;:12}</code></dd>
-<dt>guest wall time</dt><dd>300 ms, engine start included</dd>
+<dt>guest wall time</dt><dd>299 ms, engine start included</dd>
 <dt>advice on the result</dt><dd>none</dd></dl>
 <div class="card ok">No finding. The collection route carried the column, so one request answered the question.</div>
 
@@ -121,14 +121,14 @@ about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> 
 <h3>The operator's view: the daemon's audit line</h3>
 <div class="card op">host_calls=1 · advice_findings=0 · advice_agent_fixable=0
 
-<br><span class="muted">An API-change finding names an endpoint that does not exist yet, so the agent cannot act on it; it stays here, with a prompt the API owner can paste into their own AI.</span></div>
+<br><span class="muted">A finding the agent could not act on (no granted route to switch to) would stay here, operator only, with a prompt the API owner can paste into their own AI. This run produced none: the profile already granted the collection route, so the one finding went back to the caller.</span></div>
 </section>
 
 
 <h2>Predicted next to measured</h2>
 <p>The finding's numbers compare the measured pattern with an assumed ideal of one call. The ideal is never measured, so the second run is the measurement.</p>
 <div class="scroll"><table><thead><tr><th>number</th><th>the finding said</th><th>the API measured</th></tr></thead><tbody>
-<tr><td>calls</td><td>11 beyond one on GET /items/* (measured count minus one)</td><td>the API served 13 requests, then 1: 12 fewer</td></tr><tr><td>latency</td><td>about 1ms beyond one call (a model, not wall time)</td><td>guest wall time 311ms, then 300ms (includes engine start; not the same quantity)</td></tr><tr><td>bytes</td><td>490 moved in total by the flagged calls (gross)</td><td>the API moved 992 bytes, then 502: 490 fewer</td></tr>
+<tr><td>calls</td><td>11 beyond one on GET /items/* (measured count minus one)</td><td>the API served 13 requests, then 1: 12 fewer</td></tr><tr><td>latency</td><td>about 1ms beyond one call (a model, not wall time)</td><td>guest wall time 312ms, then 299ms (includes engine start; not the same quantity)</td></tr><tr><td>bytes</td><td>490 moved in total by the flagged calls (gross)</td><td>the API moved 992 bytes, then 502: 490 fewer</td></tr>
 </tbody></table></div>
 <p class="muted">Bytes matched here only because the collection call was already being made in run 1; in general the replacement call moves bytes of its own, which is why the number is a gross total and not a saving.</p>
 
@@ -137,16 +137,16 @@ about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> 
 <pre>git clone https://github.com/plimsollmark/plimsoll.git && cd plimsoll
 go run ./examples/advisor                    # the run, in the terminal
 go run ./examples/advisor -report out.html   # the same run as a page like this one</pre>
-<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, or if the per-item loop is flagged as a repeated read. Source: <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/advisor/main.go">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="https://github.com/plimsollmark/plimsoll#efficiency-advisor">EXTERNAL · source repo ↗ README, efficiency advisor</a>.</p>
+<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/advisor/main.go">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="https://github.com/plimsollmark/plimsoll#efficiency-advisor">EXTERNAL · source repo ↗ README, efficiency advisor</a>.</p>
 
 <h2>What this page claims, and what it does not</h2>
 <ul>
 <li><b>Advice never changes a run.</b> It is computed after the result is final, over metadata the broker already held. A run with advice is byte-identical in execution to one without; advice cannot gate admission or change an exit code, an output byte or the isolation tier.</li>
 <li><b>The trace is metadata only.</b> Route templates, verbs, status codes, byte counts, latency. The toggle above shows what that leaves out.</li>
-<li><b>No model is involved.</b> Four deterministic detectors and one question against the granted routes. The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
+<li><b>No model is involved.</b> Two deterministic detectors (a fan-out over a per-item route, and repeated reads of one fixed route), counting only calls the broker delivered with a 2xx status, and one question against the granted routes. The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
 <li><b>The numbers are what they say.</b> The call count is measured. The latency and byte figures are a model of the pattern against an ideal of one call, and the table above puts them next to what the API measured.</li>
 <li><b>A finding claims only what the trace can support.</b> In run 1, 8 of the 12 per-item responses were the same size, and the API's log shows they were 12 distinct items. The trace holds the route template and the size, not the item, so it cannot tell same-size from same-item, and the repeated-read detector does not read a wildcard route at all. It reads only a route without a wildcard, where the broker admits exactly one path and every call is the same request; an unchanged size there is evidence the data did not change, and the finding says evidence, not proof.</li>
-<li><b>This run used the WASM provider</b>, which is process-tier isolation and fine for an example. The advisor is provider-independent; the sequential-calls remedy applies to the Docker and E2B guests, since the WASM client issues host calls one at a time.</li>
+<li><b>This run used the WASM provider</b>, which is process-tier isolation and fine for an example. The advisor is provider-independent: the same broker core records the trace under Docker, E2B and WASM, so the findings do not depend on the tier.</li>
 <li><b>Status:</b> pre-1.0, single author, no external users yet, no third-party security audit. The lesson <a href="https://plimsollmark.github.io/plimsoll/trainers/advisor.html">INTERNAL · trainer site → API Efficiency Advisor</a> walks the same ground with a 128-call example.</li>
 </ul>
 

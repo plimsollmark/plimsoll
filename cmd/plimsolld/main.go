@@ -416,12 +416,13 @@ func writeMetrics(w http.ResponseWriter, svc *rpc.SandboxService) {
 	writeAdviceMetrics(w, svc.AdviceStats())
 }
 
-// writeAdviceMetrics renders the Prospector Phase 4 advice/waste counters, one series
-// per (profile, pattern, severity, remedy, agent_fixable). Every label is operator-
+// writeAdviceMetrics renders the Prospector Phase 4 advice counters, one series per
+// (profile, pattern, severity, remedy, agent_fixable). Every label is operator-
 // bounded metadata (a grant profile plus the fixed detector vocabulary and the
 // router's agent-fixable split), so nothing here can leak a request value or inflate
-// cardinality. The added-latency counter is the "pattern waste" the dashboard's
-// bottleneck-attribution panel weighs against raw upstream latency.
+// cardinality. The added-latency counter is the modelled latency beyond one call
+// that the dashboard's bottleneck-attribution panel weighs against raw upstream
+// latency; it is a model of the pattern's shape, not measured wall time lost.
 func writeAdviceMetrics(w io.Writer, series []rpc.AdviceSeriesSnapshot) {
 	if len(series) == 0 {
 		return
@@ -436,7 +437,7 @@ func writeAdviceMetrics(w io.Writer, series []rpc.AdviceSeriesSnapshot) {
 	for _, s := range series {
 		fmt.Fprintf(w, "plimsoll_advice_extra_calls_total{%s} %d\n", adviceLabels(s), s.ExtraCalls)
 	}
-	fmt.Fprintf(w, "# HELP plimsoll_advice_added_latency_seconds_total Upstream latency attributed to flagged patterns over their ideal shape.\n")
+	fmt.Fprintf(w, "# HELP plimsoll_advice_added_latency_seconds_total Modelled upstream latency beyond one call, summed over the calls a pattern flagged (a model of the pattern's shape, not measured wall time lost).\n")
 	fmt.Fprintf(w, "# TYPE plimsoll_advice_added_latency_seconds_total counter\n")
 	for _, s := range series {
 		fmt.Fprintf(w, "plimsoll_advice_added_latency_seconds_total{%s} %g\n", adviceLabels(s), s.AddedLatencySec)

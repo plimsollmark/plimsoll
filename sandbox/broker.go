@@ -314,6 +314,9 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	// attaches here; CallRow remains metadata-only by construction.
 	started := time.Now()
 	resp, err := b.transport.RoundTrip(req) // RoundTrip never follows redirects.
+	// The three failure records below leave Delivered false: the guest receives a
+	// broker error in place of the upstream response, whatever status the upstream
+	// sent, and the row keeps that status so the trace still says what happened.
 	if err != nil || resp == nil || resp.Body == nil {
 		b.trace.record(CallRow{
 			Method:   strings.ToUpper(route.Method),
@@ -352,6 +355,7 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 		Method:    strings.ToUpper(route.Method),
 		Route:     route.Path,
 		Status:    resp.StatusCode,
+		Delivered: true,
 		ReqBytes:  len(body),
 		RespBytes: len(responseBody),
 		Latency:   latency,

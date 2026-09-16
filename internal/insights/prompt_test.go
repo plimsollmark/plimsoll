@@ -36,6 +36,7 @@ func TestPromptGroundedInMetadata(t *testing.T) {
 		"GET /items/*", // the declared route, template form
 		"511 more calls",
 		"batch endpoint",
+		"server-side aggregate", // offered as a conditional alternative for a read fan-out
 		"OpenAPI 3.1",
 		"rationale",
 	} {
@@ -53,10 +54,7 @@ func TestPromptOneTemplatePerRemedyClass(t *testing.T) {
 		wantTask string
 	}{
 		{RemedyBatch, "batch endpoint"},
-		{RemedyAggregate, "aggregate"},
-		{RemedyFilter, "filter or selection parameter"},
 		{RemedyCache, "Cache-Control"},
-		{RemedyParallel, "compound endpoint"},
 	}
 	seen := make(map[string]RemedyClass)
 	for _, tc := range cases {
@@ -89,10 +87,32 @@ func TestPromptOneTemplatePerRemedyClass(t *testing.T) {
 	}
 }
 
+// TestPromptUnknownRemedyRefused covers an unknown class and the three retired ones
+// (aggregate, filter, parallel): a historical audit record naming a retired remedy
+// must not get a prompt, since the detector that justified it no longer exists.
 func TestPromptUnknownRemedyRefused(t *testing.T) {
-	f := Finding{Method: "GET", Route: "/items/*", Remedy: RemedyClass("bogus"), Detail: "x"}
-	if got, ok := Prompt(f, nil); ok || got != "" {
-		t.Errorf("unknown remedy class must yield (\"\", false), got (%q, %v)", got, ok)
+	for _, remedy := range []string{"bogus", "aggregate", "filter", "parallel"} {
+		f := Finding{Method: "GET", Route: "/items/*", Remedy: RemedyClass(remedy), Detail: "x"}
+		if got, ok := Prompt(f, nil); ok || got != "" {
+			t.Errorf("remedy %q must yield (\"\", false), got (%q, %v)", remedy, got, ok)
+		}
+	}
+}
+
+// TestPromptBatchAlternativeIsReadOnly: the aggregate alternative rides on the batch
+// prompt for a read fan-out only. For a write fan-out the prompt asks for explicit
+// batch-write semantics and never mentions an aggregate, since summing rows is not a
+// thing a write does.
+func TestPromptBatchAlternativeIsReadOnly(t *testing.T) {
+	read := Finding{Method: "GET", Route: "/items/*", Remedy: RemedyBatch, Detail: "x."}
+	got, ok := Prompt(read, nil)
+	if !ok || !strings.Contains(got, "server-side aggregate") {
+		t.Errorf("read batch prompt should offer the aggregate alternative:\n%s", got)
+	}
+	write := Finding{Method: "PUT", Route: "/items/*", Remedy: RemedyBatch, Detail: "x."}
+	got, ok = Prompt(write, nil)
+	if !ok || strings.Contains(got, "aggregate") || !strings.Contains(got, "partial-failure") {
+		t.Errorf("write batch prompt should ask for write semantics and never an aggregate:\n%s", got)
 	}
 }
 
@@ -106,10 +126,10 @@ func TestPromptNeverLeaksNonTemplateData(t *testing.T) {
 		secretBody = "{\"ssn\":\"078-05-1120\"}"
 		token      = "Bearer eyJhbGci"
 	)
-	// Aggregate-in-code: many distinct-row reads, no writes, a granted per-item route.
+	// A read fan-out with only the per-item route granted: the API-change case.
 	allow := []sandbox.HostRoute{{Method: "GET", Path: "/items/*"}}
 	rows := fanoutRows("/items/*", 40, 20*time.Millisecond)
-	_, prompt := promptFor(t, trace(rows...), allow, PatternAggregateInCode)
+	_, prompt := promptFor(t, trace(rows...), allow, PatternFanOut)
 
 	for _, leak := range []string{secretID, secretBody, token, "078-05-1120", "eyJhbGci"} {
 		if strings.Contains(prompt, leak) {
@@ -164,10 +184,10 @@ func TestPromptDeterministic(t *testing.T) {
 func TestPromptFallsBackToFindingRouteWithoutAllowList(t *testing.T) {
 	// Called with no Allow list, the routes block still names the finding's own
 	// template so the AI has something concrete to design against.
-	f := Finding{Method: "PUT", Route: "/v1/lights/*/on", Remedy: RemedyFilter, Detail: "x."}
+	f := Finding{Method: "PUT", Route: "/v1/lights/*/on", Remedy: RemedyBatch, Detail: "x."}
 	prompt, ok := Prompt(f, nil)
 	if !ok {
-		t.Fatal("Prompt refused a filter finding")
+		t.Fatal("Prompt refused a batch finding")
 	}
 	if !strings.Contains(prompt, "  - PUT /v1/lights/*/on") {
 		t.Errorf("prompt should fall back to the finding's own route:\n%s", prompt)

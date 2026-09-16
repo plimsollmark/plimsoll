@@ -298,23 +298,39 @@ path into guest content. The pipeline:
 
 1. **Data foundation.** The shared broker records a bounded, metadata-only
    `CallTrace` per run (`sandbox/calltrace.go`): the matched route *template* for
-   each brokered `host.*` call plus verb, status, byte counts, and latency. `CallRow`
-   has **no field** for a path, query, body, or credential, so none can enter the
-   trace by construction. Attached to `Result.CallTrace` (snippets) and
-   `ProjectResult.CallTrace` (projects); discarded after the response.
+   each brokered `host.*` call plus verb, status, whether the broker delivered the
+   response to the guest, byte counts, and latency. A call the broker refused to
+   deliver (no upstream answer, an oversized or unreadable body) keeps its row and
+   its upstream status, marked undelivered, so a capped 200 is never read as a
+   successful call. `CallRow` has **no field** for a path, query, body, or credential,
+   so none can enter the trace by construction. Attached to `Result.CallTrace`
+   (snippets) and `ProjectResult.CallTrace` (projects); discarded after the response.
 2. **Detectors.** `insights.Analyze(trace, allow)` ([internal/insights](internal/insights/))
-   runs four deterministic detectors (fan-out/N+1, aggregate-in-code, repeated-read,
-   sequential-when-parallel), each emitting a `Finding` (pattern/severity/cost/remedy).
-   A finding's cost compares the measured pattern with an assumed ideal of one call,
-   never a measured one: `ExtraCalls` is count minus one (rigorous when a granted batch
-   route is named), `AddedLatency` is summed round trips beyond one call (a model, not
-   wall time lost), `BytesMoved` is the gross bytes the pattern moved (not a saving).
-   The sequential finding's parallel remedy applies to Docker and E2B guests; the WASM
-   client wraps a synchronous host call, so its calls are serialized by construction.
-   A small router asks one question from the profile's `Allow` list: does a better
-   route already exist? If so the finding is **agent-fixable** (`Finding.Suggested` set);
-   if not it is an **API-change** finding, and `insights.Prompt` can render a paste-ready
-   prompt for the customer's own AI to design the missing endpoint. plimsoll emits text
+   runs two deterministic detectors, fan-out/N+1 over a per-item route and repeated
+   reads of one fixed route, each emitting a `Finding` (pattern/severity/cost/remedy).
+   Both count only calls the broker delivered with a 2xx status: failed calls are
+   named in the finding's sentence and never counted as records retrieved, and a
+   trace that hit its row cap reports its count as "at least". Each finding stands on
+   its own (method, route) group, so a run's findings never describe the same call
+   twice and their costs sum without double counting. A finding's cost compares the
+   measured pattern with an assumed ideal of one call, never a measured one:
+   `ExtraCalls` is the successful count minus one (rigorous when a granted collection
+   route is named and returns the same items), `AddedLatency` is summed round trips
+   beyond one call (a model, not wall time lost), `BytesMoved` is the gross bytes the
+   pattern moved (not a saving). The former aggregate-in-code and sequential-calls
+   detectors were deleted on 2026-09-16: the trace holds no call start times, so it
+   cannot tell serial calls from concurrent ones, and no guest content, so it cannot
+   tell a client-side reduce from any other loop. A small router asks one question
+   from the profile's `Allow` list, for a **GET** fan-out only: does the collection
+   route already exist? If so the finding is **agent-fixable** (`Finding.Suggested`
+   set) and states its condition, that the collection route must return the same
+   items, which plimsoll does not verify. A write fan-out is never routed, granted or
+   catalogued: a collection write's semantics cannot be read off its path, so it stays
+   an API-change finding until an explicit operation relationship exists. With no
+   suggested route it is an **API-change** finding, and `insights.Prompt` can render a
+   paste-ready prompt for the customer's own AI to design the missing endpoint; for a
+   read fan-out that prompt also offers a server-side aggregate as a conditional
+   alternative, which is where the aggregate idea now lives. plimsoll emits text
    and **never calls an LLM itself**. When a profile also declares a `catalog` (its full
    endpoint list, e.g. `plimsoll-specgen -emit catalog`), an API-change finding whose
    batch route the catalog exposes but the grant omits is annotated with the concrete route

@@ -114,16 +114,16 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
   <div class="tile{{if .TotalFindings}} warn{{end}}"><div class="n">{{.TotalFindings}}</div><div class="k">Findings</div></div>
   <div class="tile good"><div class="n">{{.TotalAgentFixable}}</div><div class="k">Agent-fixable</div></div>
   <div class="tile{{if .TotalAPIChange}} warn{{end}}"><div class="n">{{.TotalAPIChange}}</div><div class="k">API-change</div></div>
-  <div class="tile{{if .TotalAddedLatencyMs}} bad{{end}}"><div class="n">{{ms .TotalAddedLatencyMs}}</div><div class="k">Attributed waste</div></div>
+  <div class="tile{{if .TotalAddedLatencyMs}} bad{{end}}"><div class="n">{{ms .TotalAddedLatencyMs}}</div><div class="k">Modelled latency beyond one call</div></div>
   <div class="tile"><div class="n">{{.TotalExtraCalls}}</div><div class="k">Extra calls</div></div>
   <div class="tile"><div class="n">{{bytes .TotalBytesMoved}}</div><div class="k">Bytes moved</div></div>
 </div>
 
 {{if .Profiles}}
-<h2>Where the waste is — profiles by attributed latency</h2>
+<h2>Profiles by modelled latency beyond one call</h2>
 <div class="card">
 <table>
-  <thead><tr><th>Profile</th><th class="num">Runs</th><th class="num">Host calls</th><th class="num">Findings</th><th class="num">Agent-fixable</th><th class="num">API-change</th><th class="num">Extra calls</th><th class="num">Waste</th><th class="num">Bytes</th></tr></thead>
+  <thead><tr><th>Profile</th><th class="num">Runs</th><th class="num">Host calls</th><th class="num">Findings</th><th class="num">Agent-fixable</th><th class="num">API-change</th><th class="num">Extra calls</th><th class="num">Modelled latency</th><th class="num">Bytes</th></tr></thead>
   <tbody>
   {{range .Profiles}}
     <tr>
@@ -147,7 +147,7 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
 <h2>Patterns detected</h2>
 <div class="card">
 <table>
-  <thead><tr><th>Pattern</th><th>Worst severity</th><th>Remedy</th><th class="num">Count</th><th class="num">Agent-fixable</th><th class="num">Extra calls</th><th class="num">Waste</th><th class="num">Bytes</th></tr></thead>
+  <thead><tr><th>Pattern</th><th>Worst severity</th><th>Remedy</th><th class="num">Count</th><th class="num">Agent-fixable</th><th class="num">Extra calls</th><th class="num">Modelled latency</th><th class="num">Bytes</th></tr></thead>
   <tbody>
   {{range .Patterns}}
     <tr>

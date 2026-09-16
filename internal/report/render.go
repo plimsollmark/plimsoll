@@ -156,7 +156,7 @@ func aggregate(records []Record, opts Options) reportData {
 	for _, p := range profiles {
 		d.Profiles = append(d.Profiles, *p)
 	}
-	// Worst waste first; ties broken by profile name for determinism.
+	// Largest modelled latency first; ties broken by profile name for determinism.
 	sort.Slice(d.Profiles, func(i, j int) bool {
 		if d.Profiles[i].AddedLatencyMs != d.Profiles[j].AddedLatencyMs {
 			return d.Profiles[i].AddedLatencyMs > d.Profiles[j].AddedLatencyMs
@@ -212,7 +212,10 @@ func severityKey(s string) string {
 	}
 }
 
-// prettyPattern turns a pattern id (fan_out) into a display label (Fan-out).
+// prettyPattern turns a pattern id (fan_out) into a display label (Fan-out). The
+// aggregate_in_code and sequential_calls detectors were deleted on 2026-09-16; their
+// labels stay so an operator's retained audit stream from before that date still
+// renders as it did, rather than relabelling or dropping history.
 func prettyPattern(p string) string {
 	switch p {
 	case "fan_out":

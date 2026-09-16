@@ -68,8 +68,8 @@ func TestBrokerTraceRecordsTemplateNotRawPath(t *testing.T) {
 	if row.Route != "/items/*" {
 		t.Errorf("row.Route = %q, want the template /items/*", row.Route)
 	}
-	if row.Method != "GET" || row.Status != 200 || row.Seq != 1 {
-		t.Errorf("row = %+v, want GET/200/seq1", row)
+	if row.Method != "GET" || row.Status != 200 || row.Seq != 1 || !row.Delivered {
+		t.Errorf("row = %+v, want GET/200/seq1/delivered", row)
 	}
 	if row.RespBytes != len(`{"ok":true}`) {
 		t.Errorf("row.RespBytes = %d, want %d", row.RespBytes, len(`{"ok":true}`))

@@ -395,19 +395,26 @@ Full rationale: [docs/advisory-privacy.md](docs/advisory-privacy.md).
 
 The broker is the one component that sees every call the agent's code makes and
 holds none of the content, so it is also the place to notice waste. After a run
-finishes, four deterministic detectors read its `CallTrace` and report where the call
+finishes, two deterministic detectors read its `CallTrace` and report where the call
 pattern cost the API more than the question needed: **fan-out** (an N+1 loop over a
-per-item route), **aggregate-in-code** (rows pulled so the guest could reduce them
-locally), **repeated reads** of one fixed route (the same request, since a route
-without a wildcard admits exactly one path, with same-size responses as evidence the
-data did not change), and **sequential calls** that could have run concurrently.
+per-item route) and **repeated reads** of one fixed route (the same request, since a
+route without a wildcard admits exactly one path, with same-size responses as evidence
+the data did not change). Both count only calls the broker delivered with a 2xx
+status; failed calls are named in the finding and never counted as records retrieved.
 Each finding's sentence claims only what the trace can support: a per-item route is
 never reported as a repeated read, because equal response sizes there cannot tell one
-item fetched many times from many items of one size. A small router then asks one question of the profile's allow list:
-does a better route already exist? If it does, the finding is **agent-fixable** and
-names the granted route to switch to. If it does not, it is an **API-change**
-finding, and `insights.Prompt` renders a paste-ready prompt for the API owner's own
-AI to design the missing endpoint. plimsoll never calls a model itself.
+item fetched many times from many items of one size, and every remedy is stated as a
+condition (a collection route helps only if it returns the same items; a cache helps
+only if the data really was unchanged). Two earlier detectors, aggregate-in-code and
+sequential calls, were removed because the trace cannot support them: it holds no
+call start times and no guest content. A small router then asks one question of the
+profile's allow list, for a GET fan-out only: does the collection route already
+exist? If it does, the finding is **agent-fixable** and names the granted route to
+switch to. If it does not, or the fan-out is a write (a collection write's semantics
+cannot be read off its path), it is an **API-change** finding, and `insights.Prompt`
+renders a paste-ready prompt for the API owner's own AI to design the missing
+endpoint, offering a server-side aggregate as an alternative for a read fan-out.
+plimsoll never calls a model itself.
 
 Who sees what is a per-profile setting. `advice: off | operator | caller` chooses the
 audience: `caller` returns the agent-fixable subset on the run result, which the Go

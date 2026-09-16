@@ -28,7 +28,10 @@ import (
 //     redaction invariant the trace and the detectors carry holds at this boundary.
 //
 // ok is false only for an unrecognized remedy class, so a future pattern cannot leak
-// a generic or empty prompt through a caller that forgot to switch on it.
+// a generic or empty prompt through a caller that forgot to switch on it. That
+// includes the retired classes (aggregate, filter, parallel): a historical audit
+// record naming one gets no prompt, since the detector that would have justified it
+// no longer exists.
 func Prompt(f Finding, allow []sandbox.HostRoute) (string, bool) {
 	spec, ok := remedyPrompts[f.Remedy]
 	if !ok {
@@ -48,6 +51,9 @@ func Prompt(f Finding, allow []sandbox.HostRoute) (string, bool) {
 	b.WriteString(routesBlock(allow, f))
 	b.WriteString("\n\nTask: ")
 	b.WriteString(spec.task)
+	if f.Remedy == RemedyBatch && isReadMethod(f.Method) {
+		b.WriteString(batchAggregateAlternative)
+	}
 	b.WriteString("\n\nOutput:\n")
 	b.WriteString(spec.output)
 	b.WriteString("\n\n")
@@ -90,22 +96,11 @@ const cacheOutput = "  1. The exact HTTP response headers to add (Cache-Control 
 // nothing from the trace, so it cannot carry guest-controlled text.
 var remedyPrompts = map[RemedyClass]promptSpec{
 	RemedyBatch: {
-		task: "Design a single batch endpoint that accepts a set of item keys (or a query that " +
-			"selects them) and returns all matching items in one response, so the many per-item " +
-			"round trips collapse into one request.",
-		output: openAPIOutput,
-	},
-	RemedyAggregate: {
-		task: "Design a single endpoint that computes, server-side, the aggregate the client " +
-			"currently derives in code (for example a sum, count, min/max, or group-by over the " +
-			"collection) and returns the result directly, so the client no longer fetches every " +
-			"row to reduce it locally.",
-		output: openAPIOutput,
-	},
-	RemedyFilter: {
-		task: "Design a filter or selection parameter on the collection endpoint so the client " +
-			"can request only the subset it needs, instead of fetching the full collection and " +
-			"filtering in code.",
+		task: "Design a single batch endpoint that covers, in one request, the many per-item " +
+			"calls observed above. For a read, it accepts a set of item keys (or a query that " +
+			"selects them) and returns all matching items in one response. For a write, it " +
+			"applies the same change to a set of items and states its atomicity and " +
+			"partial-failure semantics explicitly.",
 		output: openAPIOutput,
 	},
 	RemedyCache: {
@@ -114,13 +109,16 @@ var remedyPrompts = map[RemedyClass]promptSpec{
 			"conditional-request support.",
 		output: cacheOutput,
 	},
-	RemedyParallel: {
-		task: "Design a compound endpoint that returns, in one response, the several independent " +
-			"resources the client currently fetches across separate routes, so the round trips it " +
-			"waits on serially collapse into one request.",
-		output: openAPIOutput,
-	},
 }
+
+// batchAggregateAlternative is appended to the batch task for a READ fan-out only. The
+// trace shows many per-item reads and nothing about what the code did with the rows,
+// so a server-side aggregate is offered as a conditional alternative for the API owner
+// to weigh, never asserted as a finding of its own (the aggregate-in-code detector was
+// deleted on 2026-09-16 for claiming exactly that).
+const batchAggregateAlternative = " If the client was only reducing those rows in code " +
+	"(a sum, count, min/max, or group-by), a single server-side aggregate endpoint that " +
+	"returns the result directly may be the smaller change; propose that instead if so."
 
 // costLine renders a Finding's attributed waste as one factual sentence, or "" when
 // the cost carries no positive number. Only the trace's own integers and durations

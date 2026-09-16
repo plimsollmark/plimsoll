@@ -13,11 +13,21 @@ import (
 // status, the broker round-trip latency, and a 1-based sequence number within the
 // run. This preserves plimsoll's invariant that telemetry records metadata and
 // never code or secrets.
+//
+// Delivered is the broker's own outcome for the call, kept separately from the
+// upstream status. The broker records a row for every call it forwarded, including
+// one whose response it then refused to deliver (no upstream answer, an oversized or
+// unreadable body, a malformed status), and such a row keeps the upstream status it
+// saw. A 2xx Status with Delivered false is therefore a call the guest never got an
+// answer to, and zero RespBytes cannot stand in for that distinction, because an
+// empty successful response is valid. A consumer asking "did the guest get a
+// successful response" must check both.
 type CallRow struct {
 	Seq       int           // 1-based sequence among a run's recorded calls
 	Method    string        // route method (GET/PUT/POST/DELETE/PATCH), from the Allow list
 	Route     string        // matched HostRoute.Path TEMPLATE, never the raw path
 	Status    int           // upstream HTTP status; 0 if the upstream never responded
+	Delivered bool          // the upstream response reached the guest (false: the broker returned its own error instead)
 	ReqBytes  int           // request body bytes the broker read (<= maxHostRequestBytes)
 	RespBytes int           // response body bytes returned to the guest (<= maxHostResponseBytes)
 	Latency   time.Duration // broker -> upstream -> guest round trip for this call
