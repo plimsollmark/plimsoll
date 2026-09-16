@@ -170,6 +170,15 @@ func run(ctx context.Context, reportPath string) error {
 	if first.audit.AgentFixable != 1 || second.audit.AgentFixable != 0 {
 		return fmt.Errorf("audit lines disagree with the results: agent_fixable %d then %d", first.audit.AgentFixable, second.audit.AgentFixable)
 	}
+	// The twelve per-item reads fetched twelve distinct items, and several of those
+	// responses are the same size. The trace holds the route template and the size,
+	// not the item, so it cannot tell same-size from same-item; the repeated-read
+	// detector therefore leaves wildcard routes alone, and a finding here would be a
+	// claim the evidence does not support.
+	sameSize, perItem := first.largestSameSizeGroup("/items/*")
+	if d, ok := first.audit.finding("repeated_read"); ok {
+		return fmt.Errorf("the per-item loop was flagged as a repeated read of %s %s, but it fetched %d distinct items", d.Method, d.Route, perItem)
+	}
 
 	rows := compare(finding, first, second)
 	fmt.Println("predicted vs measured")
@@ -181,6 +190,8 @@ func run(ctx context.Context, reportPath string) error {
 	fmt.Println("summary   | the finding named the granted route to switch to, so the fix needed no API change")
 	fmt.Println("summary   | the audit lines are the operator's view; the aggregate_in_code finding is an API-change")
 	fmt.Println("summary   | finding, so it is counted there and never returned to the caller")
+	fmt.Printf("summary   | %d of the %d per-item responses were the same size, and none was flagged as a repeated read:\n", sameSize, perItem)
+	fmt.Println("summary   | the trace holds the template and the size, not the item, so it cannot tell same-size from same-item")
 
 	if reportPath != "" {
 		if err := writeReport(reportPath, []outcome{first, second}, rows); err != nil {
@@ -221,6 +232,24 @@ func (o outcome) suggestion(pattern, route string) (sandbox.AdviceFinding, bool)
 		}
 	}
 	return sandbox.AdviceFinding{}, false
+}
+
+// largestSameSizeGroup returns, among the requests the API served under one route
+// template, the size of the largest set sharing a response byte count, and the
+// total. It is the measurement behind the example's repeated-read claim: the API
+// knows these were distinct paths, and the trace knows only the template and the
+// sizes.
+func (o outcome) largestSameSizeGroup(template string) (sameSize, total int) {
+	bySize := make(map[int]int)
+	for _, r := range o.requests {
+		if r.Template != template {
+			continue
+		}
+		total++
+		bySize[r.RespBytes]++
+		sameSize = max(sameSize, bySize[r.RespBytes])
+	}
+	return sameSize, total
 }
 
 // show dispatches one snippet over the wire and prints what came back from each
@@ -414,6 +443,16 @@ type auditLine struct {
 	Details        []auditDetail `json:"advice_finding_details"`
 }
 
+// finding returns the audit line's record for one detector, if it emitted one.
+func (a auditLine) finding(pattern string) (auditDetail, bool) {
+	for _, d := range a.Details {
+		if d.Pattern == pattern {
+			return d, true
+		}
+	}
+	return auditDetail{}, false
+}
+
 type auditDetail struct {
 	Pattern        string `json:"pattern"`
 	Severity       string `json:"severity"`
@@ -588,10 +627,13 @@ func writeReport(path string, runs []outcome, rows []compareRow) error {
 			Advice: o.advice, Audit: o.audit,
 		})
 	}
+	sameSize, perItem := runs[0].largestSameSizeGroup("/items/*")
 	data := struct {
 		Generated  string
 		Runs       []runView
 		Rows       []compareRow
+		SameSize   int
+		PerItem    int
 		PageURL    string
 		CardURL    string
 		RepoURL    string
@@ -599,7 +641,7 @@ func writeReport(path string, runs []outcome, rows []compareRow) error {
 		ReadmeURL  string
 		LessonURL  string
 		LessonsURL string
-	}{time.Now().Format("2006-01-02"), views, rows, pageURL, cardURL, repoURL, sourceURL, readmeURL, lessonURL, lessonsURL}
+	}{time.Now().Format("2006-01-02"), views, rows, sameSize, perItem, pageURL, cardURL, repoURL, sourceURL, readmeURL, lessonURL, lessonsURL}
 	var buf bytes.Buffer
 	if err := reportTemplate.Execute(&buf, data); err != nil {
 		return err
@@ -721,7 +763,7 @@ about {{ms .AddedLatency}} ms beyond one call <span class="muted">(modelled, not
 <pre>git clone {{.RepoURL}}.git && cd plimsoll
 go run ./examples/advisor                    # the run, in the terminal
 go run ./examples/advisor -report out.html   # the same run as a page like this one</pre>
-<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, or if the rewrite comes back with any finding at all. Source: <a href="{{.SourceURL}}">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="{{.ReadmeURL}}">EXTERNAL · source repo ↗ README, efficiency advisor</a>.</p>
+<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, or if the per-item loop is flagged as a repeated read. Source: <a href="{{.SourceURL}}">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="{{.ReadmeURL}}">EXTERNAL · source repo ↗ README, efficiency advisor</a>.</p>
 
 <h2>What this page claims, and what it does not</h2>
 <ul>
@@ -729,6 +771,7 @@ go run ./examples/advisor -report out.html   # the same run as a page like this 
 <li><b>The trace is metadata only.</b> Route templates, verbs, status codes, byte counts, latency. The toggle above shows what that leaves out.</li>
 <li><b>No model is involved.</b> Four deterministic detectors and one question against the granted routes. The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
 <li><b>The numbers are what they say.</b> The call count is measured. The latency and byte figures are a model of the pattern against an ideal of one call, and the table above puts them next to what the API measured.</li>
+<li><b>A finding claims only what the trace can support.</b> In run 1, {{.SameSize}} of the {{.PerItem}} per-item responses were the same size, and the API's log shows they were {{.PerItem}} distinct items. The trace holds the route template and the size, not the item, so it cannot tell same-size from same-item, and the repeated-read detector does not read a wildcard route at all. It reads only a route without a wildcard, where the broker admits exactly one path and every call is the same request; an unchanged size there is evidence the data did not change, and the finding says evidence, not proof.</li>
 <li><b>This run used the WASM provider</b>, which is process-tier isolation and fine for an example. The advisor is provider-independent; the sequential-calls remedy applies to the Docker and E2B guests, since the WASM client issues host calls one at a time.</li>
 <li><b>Status:</b> pre-1.0, single author, no external users yet, no third-party security audit. The lesson <a href="{{.LessonURL}}">INTERNAL · trainer site → API Efficiency Advisor</a> walks the same ground with a 128-call example.</li>
 </ul>

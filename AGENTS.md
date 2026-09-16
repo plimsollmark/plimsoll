@@ -48,7 +48,8 @@ option is intentionally only process-tier.
   in-sandbox multi-file project runner).
 - [examples/](examples/) — four runnable programs: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
-  the injected client and being refused by the broker anyway), `daemon` (the
+  the injected client and being refused by the broker anyway, then the identical
+  request succeeding under a separate per-run grant that lists it), `daemon` (the
   full service path with auth, `Describe`, and an isolation floor being refused),
   and `advisor` (the efficiency advisor over a loopback daemon: a per-item loop,
   the finding that names the granted collection route, the rewrite, and the API's

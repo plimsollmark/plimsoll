@@ -15,7 +15,7 @@ import (
 const (
 	fanOutMinCalls    = 6 // per-item calls to one wildcard route before it is fan-out
 	aggregateMinReads = 6 // reads in a write-free run before it looks like a client-side reduce
-	repeatMinCalls    = 4 // identical-shape reads before caching is worth suggesting
+	repeatMinCalls    = 4 // same-size reads of one fixed route before reuse is worth suggesting
 	seqMinCalls       = 4 // calls before the sequential heuristic considers a run
 )
 
@@ -73,8 +73,9 @@ func AnalyzeWithCatalog(trace *sandbox.CallTrace, allow, catalog []sandbox.HostR
 	return findings
 }
 
-// sizeStat aggregates the calls in one group that share a response size (the
-// arg-shape proxy for the repeated-read heuristic).
+// sizeStat aggregates the calls in one group that share a response size. The
+// repeated-read detector reads an unchanged size across reads of one fixed route as
+// evidence (not proof) that the data did not change between them.
 type sizeStat struct {
 	count    int
 	totalLat time.Duration
@@ -137,7 +138,10 @@ func sortedGroups(calls []sandbox.CallRow) []*group {
 }
 
 // detectFanOut flags each wildcard (per-item) route hit enough times that one batch
-// request would cover them — the "512 GET /items/:id" N+1.
+// request would cover them — the "512 GET /items/:id" N+1. The trace holds the
+// template, not the wildcard segment, so the detector cannot say whether the calls
+// named distinct items or one item repeatedly; the batch remedy covers both, and the
+// detail says only what was measured.
 func detectFanOut(groups []*group) []Finding {
 	var out []Finding
 	for _, g := range groups {
@@ -155,7 +159,7 @@ func detectFanOut(groups []*group) []Finding {
 				AddedLatency: g.totalLat - g.maxLat,
 				BytesMoved:   g.bytes,
 			},
-			Detail: fmt.Sprintf("This run made %d %s %s calls that differ only by the wildcard segment; a batch endpoint would collapse them into one request.",
+			Detail: fmt.Sprintf("This run made %d %s %s calls to one per-item route (the trace holds the template, not the item); a batch endpoint would cover them in one request.",
 				g.count, g.method, g.route),
 		})
 	}
@@ -163,10 +167,12 @@ func detectFanOut(groups []*group) []Finding {
 }
 
 // detectAggregateInCode flags a read-heavy run with no write after its last read: the
-// client pulled distinct rows (a wildcard per-item route dominates the reads) and
-// reduced them in code, where a server-side aggregate would return the result in one
-// call. Requiring a wildcard dominant route keeps this off repeated reads of one
-// fixed collection (that is the repeated-read pattern instead).
+// shape of a client that pulled rows (a wildcard per-item route dominates the reads)
+// and reduced them in code, where a server-side aggregate would return the result in
+// one call. The trace shows the reads and the absence of a later write; that the code
+// reduced the rows is the inference, and the detail says so. Requiring a wildcard
+// dominant route keeps this off repeated reads of one fixed collection (that is the
+// repeated-read pattern instead).
 func detectAggregateInCode(calls []sandbox.CallRow, groups []*group) (Finding, bool) {
 	var reads int
 	var readLat, maxReadLat time.Duration
@@ -211,18 +217,28 @@ func detectAggregateInCode(calls []sandbox.CallRow, groups []*group) (Finding, b
 			AddedLatency: readLat - maxReadLat,
 			BytesMoved:   readBytes,
 		},
-		Detail: fmt.Sprintf("This run made %d read calls (mostly %s %s) with no writes, then reduced the rows in code; a server-side aggregate endpoint would return the result in one call.",
+		Detail: fmt.Sprintf("This run made %d read calls (mostly %s %s) and no write after the last read, the shape of a client-side reduce; if the code was computing an aggregate from the rows, a server-side aggregate endpoint would return it in one call.",
 			reads, dominant.method, dominant.route),
 	}, true
 }
 
-// detectRepeatedReads flags the same read repeated with an identical response shape.
-// The trace holds no id, so an identical response SIZE within one (method,route)
-// group is the arg-shape proxy — a heuristic, so severity is capped at medium.
+// detectRepeatedReads flags one fixed (no-wildcard) read route requested repeatedly
+// with same-size responses. Only a fixed route qualifies, because only there does the
+// trace establish that the calls were the same request: the broker admits a route
+// without a wildcard solely for the byte-exact approved path, with no query, so N
+// calls to it are N copies of one request. An unchanged response size across them is
+// then evidence, not proof, that the data did not change; the trace holds sizes, not
+// content, which is why severity is capped at medium.
+//
+// A wildcard route is deliberately skipped, whatever its sizes. There the same
+// template covers every item, and equal sizes cannot distinguish one item fetched N
+// times from N distinct items that happen to be the same size (the advisor example's
+// twelve inventory rows include eight of one size). That route is fan-out's, whose
+// batch remedy holds either way.
 func detectRepeatedReads(groups []*group) []Finding {
 	var out []Finding
 	for _, g := range groups {
-		if !isReadMethod(g.method) {
+		if !isReadMethod(g.method) || isWildcard(g.route) {
 			continue
 		}
 		for _, size := range sortedSizes(g.sizes) {
@@ -246,8 +262,8 @@ func detectRepeatedReads(groups []*group) []Finding {
 					AddedLatency: s.totalLat - s.totalLat/time.Duration(s.count),
 					BytesMoved:   s.bytes,
 				},
-				Detail: fmt.Sprintf("This run made %d %s %s calls returning an identical %d-byte response; caching the first result would remove the repeats.",
-					s.count, g.method, g.route, size),
+				Detail: fmt.Sprintf("This run repeated the same %s %s request %d times (the route has no wildcard segment) and every response was %d bytes; the trace holds sizes, not content, so equal size is evidence the data did not change, not proof, and reading once and reusing the result would remove the repeats.",
+					g.method, g.route, s.count, size),
 			})
 		}
 	}

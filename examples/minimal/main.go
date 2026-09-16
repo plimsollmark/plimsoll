@@ -99,6 +99,7 @@ func run(ctx context.Context) error {
 	fmt.Printf("isolation  %s\n", result.Isolation)
 	fmt.Printf("exit code  %d\n", result.ExitCode)
 	fmt.Printf("timed out  %t\n", result.TimedOut)
+	fmt.Printf("truncated  stdout=%t stderr=%t\n", result.StdoutTruncated, result.StderrTruncated)
 	fmt.Printf("duration   %s\n", result.Duration.Round(time.Millisecond))
 	fmt.Printf("stdout     %s", result.Stdout)
 	if result.Stderr != "" {

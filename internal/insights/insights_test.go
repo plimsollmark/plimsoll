@@ -17,8 +17,10 @@ func trace(rows ...sandbox.CallRow) *sandbox.CallTrace {
 	return &sandbox.CallTrace{Calls: rows}
 }
 
-// fanoutRows returns n GET calls to route, each with a DISTINCT response size (so the
-// repeated-read size proxy does not also fire) and a fixed latency.
+// fanoutRows returns n GET calls to route, each with a DISTINCT response size and a
+// fixed latency. The distinct sizes keep the rows neutral for the repeated-read
+// detector on a fixed route; on a wildcard route that detector never fires anyway
+// (see TestRepeatedReadIgnoresWildcardRoutes).
 func fanoutRows(route string, n int, lat time.Duration) []sandbox.CallRow {
 	rows := make([]sandbox.CallRow, n)
 	for i := range rows {
@@ -63,9 +65,9 @@ func TestFanOutDetected(t *testing.T) {
 	if _, ok := find(got, PatternAggregateInCode); !ok {
 		t.Error("write-free distinct-row fan-out should also flag aggregate-in-code")
 	}
-	// Distinct response sizes -> repeated-read must NOT fire; one route -> not sequential.
+	// A wildcard route is never a repeated read; one route -> not sequential.
 	if _, ok := find(got, PatternRepeatedRead); ok {
-		t.Error("distinct response sizes must not trigger repeated-read")
+		t.Error("a wildcard route must not trigger repeated-read")
 	}
 	if _, ok := find(got, PatternSequential); ok {
 		t.Error("a single route must not trigger sequential-when-parallel")
@@ -122,14 +124,42 @@ func TestRepeatedReadsDetected(t *testing.T) {
 	if f.Cost.ExtraCalls != 5 {
 		t.Errorf("ExtraCalls = %d, want 5", f.Cost.ExtraCalls)
 	}
-	if !strings.Contains(f.Detail, "512-byte") {
-		t.Errorf("detail should name the identical response size: %q", f.Detail)
+	if !strings.Contains(f.Detail, "512 bytes") {
+		t.Errorf("detail should name the unchanged response size: %q", f.Detail)
+	}
+	// The detail must claim only what the trace holds: the same request (a fixed
+	// route) and the same size, never the same content.
+	if !strings.Contains(f.Detail, "not proof") || strings.Contains(f.Detail, "identical response") {
+		t.Errorf("detail overstates the size evidence: %q", f.Detail)
 	}
 	if _, ok := find(got, PatternFanOut); ok {
 		t.Error("a non-wildcard route must not trigger fan-out")
 	}
 	if _, ok := find(got, PatternAggregateInCode); ok {
 		t.Error("repeated reads of a fixed collection are not aggregate-in-code")
+	}
+}
+
+// TestRepeatedReadIgnoresWildcardRoutes is the advisor example's case: twelve
+// per-item reads of /items/* where eight responses happen to be the same size. The
+// trace holds the template and the size, not the item, so it cannot tell one item
+// fetched eight times from eight same-size items; the detector must not claim it can.
+// The route is fan-out's, and the batch remedy holds either way.
+func TestRepeatedReadIgnoresWildcardRoutes(t *testing.T) {
+	rows := make([]sandbox.CallRow, 12)
+	for i := range rows {
+		size := 40
+		if i < 8 {
+			size = 41
+		}
+		rows[i] = sandbox.CallRow{Method: "GET", Route: "/items/*", Status: 200, RespBytes: size, Latency: time.Millisecond}
+	}
+	got := Analyze(trace(rows...), nil)
+	if f, ok := find(got, PatternRepeatedRead); ok {
+		t.Errorf("same-size reads of a wildcard route must not be a repeated read: %+v", f)
+	}
+	if _, ok := find(got, PatternFanOut); !ok {
+		t.Error("the same-size per-item reads are still a fan-out")
 	}
 }
 

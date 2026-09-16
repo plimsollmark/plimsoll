@@ -1,6 +1,8 @@
 // Command daemon runs the whole service path end to end: it starts plimsolld with a
 // real multi-client auth file, calls it with the official Go client, and shows what
-// the server refuses.
+// the server refuses. Each refusal is checked for the specific error the protection
+// produces, because a request that merely failed (connection refused, a timeout, a
+// rate limit) proves nothing about the check it was meant to exercise.
 //
 // Run it from the repository root, because it builds the daemon from source:
 //
@@ -27,6 +29,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"connectrpc.com/connect"
 
 	"github.com/plimsollmark/plimsoll/client"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -133,6 +137,12 @@ func runCode(ctx context.Context, baseURL, token string) error {
 // compares the floor against current provider evidence before admission, so the
 // refusal means no code ran at all: it is safe to retry elsewhere, which is the whole
 // reason the check happens before dispatch rather than after.
+//
+// "It returned an error" is not the evidence. The client restores the Sandbox
+// sentinels across RPC so that errors.Is works the same against a Remote as against
+// a local provider, and that is what lets this function tell the isolation refusal
+// apart from every other way a request can fail. Anything else is reported as a
+// failure of the example, not as a protection that worked.
 func refuseBelowFloor(ctx context.Context, baseURL, token string) error {
 	remote, err := dial(baseURL, token)
 	if err != nil {
@@ -146,23 +156,34 @@ func refuseBelowFloor(ctx context.Context, baseURL, token string) error {
 	if err == nil {
 		return errors.New("a kernel floor was satisfied by a process-tier provider, which is a bug")
 	}
+	if !errors.Is(err, sandbox.ErrInsufficientIsolation) {
+		return fmt.Errorf("floor: the request failed, but not with the isolation refusal: %w", err)
+	}
 	fmt.Printf("\nfloor     | asked for kernel isolation from a process-tier provider\n")
 	fmt.Printf("floor     | refused: %s\n", oneLine(err))
+	fmt.Printf("floor     | checked: errors.Is(err, sandbox.ErrInsufficientIsolation), not merely err != nil\n")
 	fmt.Printf("floor     | the refusal is pre-dispatch, so the snippet never executed\n")
 	return nil
 }
 
-// refuseBadToken proves auth is fail-closed once configured.
+// refuseBadToken proves auth is fail-closed once configured. The same discipline
+// applies: only a Connect Unauthenticated code counts. A daemon that had crashed, or
+// a port nothing listens on, would also make this call fail, and neither is auth.
 func refuseBadToken(ctx context.Context, baseURL string) error {
 	remote, err := dial(baseURL, "not-the-token")
 	if err != nil {
 		return err
 	}
-	if _, err := remote.Describe(ctx); err != nil {
-		fmt.Printf("\nauth      | a wrong bearer is refused: %s\n", oneLine(err))
-		return nil
+	_, err = remote.Describe(ctx)
+	if err == nil {
+		return errors.New("the server answered an unauthenticated caller, which is a bug")
 	}
-	return errors.New("the server answered an unauthenticated caller, which is a bug")
+	if code := connect.CodeOf(err); code != connect.CodeUnauthenticated {
+		return fmt.Errorf("auth: the request failed with %s, not unauthenticated: %w", code, err)
+	}
+	fmt.Printf("\nauth      | a wrong bearer is refused: %s\n", oneLine(err))
+	fmt.Printf("auth      | checked: connect code unauthenticated, not merely err != nil\n")
+	return nil
 }
 
 // dial builds a client. New is checked: it rejects non-absolute URLs, and refuses

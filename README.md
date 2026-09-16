@@ -398,8 +398,12 @@ holds none of the content, so it is also the place to notice waste. After a run
 finishes, four deterministic detectors read its `CallTrace` and report where the call
 pattern cost the API more than the question needed: **fan-out** (an N+1 loop over a
 per-item route), **aggregate-in-code** (rows pulled so the guest could reduce them
-locally), **repeated reads** of one route, and **sequential calls** that could have
-run concurrently. A small router then asks one question of the profile's allow list:
+locally), **repeated reads** of one fixed route (the same request, since a route
+without a wildcard admits exactly one path, with same-size responses as evidence the
+data did not change), and **sequential calls** that could have run concurrently.
+Each finding's sentence claims only what the trace can support: a per-item route is
+never reported as a repeated read, because equal response sizes there cannot tell one
+item fetched many times from many items of one size. A small router then asks one question of the profile's allow list:
 does a better route already exist? If it does, the finding is **agent-fixable** and
 names the granted route to switch to. If it does not, it is an **API-change**
 finding, and `insights.Prompt` renders a paste-ready prompt for the API owner's own
@@ -506,9 +510,14 @@ provider   wasm
 isolation  process
 exit code  0
 timed out  false
-duration   312ms
+truncated  stdout=false stderr=false
+duration   304ms
 stdout     {"Engineering":59000000,"Sales":20300000,"Operations":9800000}
 ```
+
+The `truncated` flags are the only way a caller learns that output was cut at the
+provider's cap (64 KiB per stream by default): the retained bytes are never
+annotated in-band, so a marker cannot be forged by the guest or mistaken for output.
 
 That `isolation` line is the run's own evidence, not a claim by the example.
 **`process` is not an OS boundary and is not a production posture for hostile
@@ -586,8 +595,8 @@ yourself. Run them from the repository root.
 | Command | What it shows |
 |---|---|
 | `go run ./examples/minimal` | One snippet, its result, and the isolation tier the run reports. |
-| `go run ./examples/grant` | The capability model: a permitted route, a refused one, the same refusal when the guest bypasses the injected client, and a search for the credential that comes back empty. |
-| `go run ./examples/daemon` | The service path: plimsolld started with a real multi-client auth file, called by the Go client, refusing an isolation floor it cannot meet and refusing a wrong bearer. |
+| `go run ./examples/grant` | The capability model: a permitted route, a refused one, the same refusal when the guest bypasses the injected client, the same request succeeding under a separate per-run grant that lists it, and a search for the credential that comes back empty. |
+| `go run ./examples/daemon` | The service path: plimsolld started with a real multi-client auth file, called by the Go client, refusing an isolation floor it cannot meet and refusing a wrong bearer. Each refusal is checked for its specific error (`ErrInsufficientIsolation`, Connect `unauthenticated`), because a request that merely failed is not proof the protection fired. |
 | `go run ./examples/advisor` | The efficiency advisor: one question asked twice of a fake inventory API, first as a per-item loop (13 requests, a `fan_out` finding naming the granted collection route), then as the advice suggests (1 request, no findings), same answer both times. |
 
 `examples/grant` is the one to read if you only read one. It prints the run's
@@ -602,7 +611,14 @@ channel and the audit log are built from:
 3. the same forbidden route, bypassing the client
    guest | broker answered: 403 forbidden by sandbox capability allowlist
    trace | 0 call(s), 1 denied by policy, 0 shed for backpressure, 0 dropped
+
+4. the same request, in a run handed a separate grant that lists the route
+   guest | ok: {"ssn":"000-00-0000"}
+   trace | #1 GET /v1/employees/*/ssn -> 200, 0B in 21B out, 1ms
 ```
+
+Scenes 3 and 4 send the identical request. The guest did not change and the API did
+not change; the run was handed a different grant, and the grant is what decides.
 
 Note what the trace holds: the matched route *template*, never the path that was
 requested. `CallRow` has no field for a path, query, body or credential, so none can

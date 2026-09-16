@@ -83,7 +83,7 @@ const openAPIOutput = "  1. An OpenAPI 3.1 operation stub for the new endpoint: 
 // headers and conditional-request behavior rather than a new operation.
 const cacheOutput = "  1. The exact HTTP response headers to add (Cache-Control with a recommended max-age, and an ETag).\n" +
 	"  2. The conditional-request behavior to honor (If-None-Match returning 304 Not Modified when unchanged).\n" +
-	"  3. A one-paragraph rationale explaining how it removes the repeated identical reads observed above."
+	"  3. A one-paragraph rationale explaining how it removes the repeated reads observed above."
 
 // remedyPrompts holds one template per RemedyClass, matching the detector vocabulary
 // in finding.go. Every task string is a fixed, trusted sentence: it interpolates

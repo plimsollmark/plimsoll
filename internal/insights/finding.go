@@ -28,9 +28,12 @@ const (
 	// PatternAggregateInCode is a burst of reads with no writes after, i.e. the client
 	// pulled rows to reduce them locally (a client-side sum). Fix class: aggregate.
 	PatternAggregateInCode PatternID = "aggregate_in_code"
-	// PatternRepeatedRead is the same read repeated with an identical response shape —
-	// cacheable. Heuristic: the trace holds no id, so identical response SIZE is the
-	// arg-shape proxy. Fix class: cache.
+	// PatternRepeatedRead is one fixed (no-wildcard) read route requested repeatedly
+	// with same-size responses. The fixed route is what makes "the same request"
+	// established rather than guessed; the unchanged size is evidence, not proof, that
+	// the data did not change (the trace holds sizes, not content). Wildcard routes
+	// are never flagged here, since equal size cannot tell one item fetched N times
+	// from N same-size items. Fix class: cache.
 	PatternRepeatedRead PatternID = "repeated_read"
 	// PatternSequential is a run whose summed upstream latency spans several routes and
 	// dominates the wall clock — issuing the independent calls concurrently would cut
@@ -48,7 +51,7 @@ const (
 	RemedyBatch     RemedyClass = "batch"     // one request replaces many per-item calls
 	RemedyAggregate RemedyClass = "aggregate" // compute the reduction server-side
 	RemedyFilter    RemedyClass = "filter"    // push a selection server-side (reserved)
-	RemedyCache     RemedyClass = "cache"     // reuse a prior identical response
+	RemedyCache     RemedyClass = "cache"     // reuse the response to a request already made
 	RemedyParallel  RemedyClass = "parallel"  // issue independent calls concurrently
 )
 

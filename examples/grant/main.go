@@ -3,14 +3,20 @@
 // widen, with a credential it never sees.
 //
 // It needs no daemon, no docker and no credentials of its own. It starts a throwaway
-// HTTP server on loopback to stand in for a customer's host API, then runs three
-// snippets against it in the in-process WASM provider:
+// HTTP server on loopback to stand in for a customer's host API, then runs seven
+// scenes against it in the in-process WASM provider:
 //
 //	go run ./examples/grant
 //
 //	1. a permitted call, which succeeds and is recorded in the call trace;
-//	2. a call to a route the grant does not list, refused before any request is sent;
-//	3. the same permitted code with no grant at all, which reaches nothing.
+//	2. a call to a route the grant does not list, refused by the injected client
+//	   before any request is sent;
+//	3. the same call made by bypassing the client, refused by the broker on the host;
+//	4. the same call again, in a run handed a separate grant that lists the route,
+//	   which succeeds: the request did not change, the grant did;
+//	5. the granted client in a run carrying no grant, which finds no client at all;
+//	6. the raw host call in a run carrying no grant, which finds no broker;
+//	7. the guest hunting for the credential, which is not in the runtime to find.
 //
 // WASM is process tier, chosen here so the example runs anywhere. The capability
 // model is provider-neutral: docker runs enforce the identical allowlist through a
@@ -101,7 +107,7 @@ func run(ctx context.Context) error {
 	// is chosen independently for every dispatch rather than configured once and
 	// inherited. Two routes are listed. Everything else in the API, including routes
 	// that exist and work when called with this same credential from outside, is
-	// unreachable from inside the sandbox.
+	// unreachable from a run carrying this grant.
 	grant := &sandbox.HostAPIGrant{
 		BaseURL: upstream.URL, // loopback, so plain HTTP is allowed here; HTTPS is required off loopback
 		Allow: []sandbox.HostRoute{
@@ -113,6 +119,20 @@ func run(ctx context.Context) error {
 		// an exfiltrated credential dies almost immediately.
 		Minter: sandbox.StaticToken(theCredential),
 		Scopes: []string{"comp:read"},
+	}
+
+	// pii is a second grant for the same host API, listing the one route the first
+	// grant leaves out. The first grant is not widened; a different grant exists, and
+	// scene 4 hands it to a run of the very snippet scenes 2 and 3 refused. Authority
+	// is decided per dispatch, so byte-identical guest code gets a different answer
+	// because it was handed a different grant, not because the guest or the API moved.
+	pii := &sandbox.HostAPIGrant{
+		BaseURL: upstream.URL,
+		Allow: []sandbox.HostRoute{
+			{Method: "GET", Path: "/v1/employees/*/ssn"},
+		},
+		Minter: sandbox.StaticToken(theCredential),
+		Scopes: []string{"pii:read"},
 	}
 
 	provider, err := sandbox.Build(wasmEnv)
@@ -131,6 +151,7 @@ func run(ctx context.Context) error {
 		{"a route the grant lists", permitted, grant},
 		{"a route it does not list, through the client", forbidden, grant},
 		{"the same forbidden route, bypassing the client", bypass, grant},
+		{"the same request, in a run handed a separate grant that lists the route", forbidden, pii},
 		{"the granted client, in a run carrying no grant", permitted, nil},
 		{"the raw host call, in a run carrying no grant", noGrantBypass, nil},
 		{"the guest hunting for the credential", exfiltrate, grant},
