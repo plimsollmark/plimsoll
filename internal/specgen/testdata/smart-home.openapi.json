@@ -62,7 +62,8 @@
     "/status": {
       "get": {
         "operationId": "getStatus",
-        "summary": "Report gateway health and current capacity (in-flight requests, rate-limit headroom)."
+        "summary": "Report gateway health and current capacity (in-flight requests, rate-limit headroom).",
+        "x-plimsoll-health-check": true
       }
     }
   }

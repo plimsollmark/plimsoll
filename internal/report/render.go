@@ -35,7 +35,8 @@ type profileAgg struct {
 	HostCalls      int
 	Findings       int
 	AgentFixable   int
-	APIChange      int
+	GrantRoute     int
+	NoKnownRoute   int
 	ExtraCalls     int
 	AddedLatencyMs int64
 	BytesMoved     int
@@ -71,7 +72,8 @@ type reportData struct {
 	TotalHostCalls      int
 	TotalFindings       int
 	TotalAgentFixable   int
-	TotalAPIChange      int
+	TotalGrantRoute     int
+	TotalNoKnownRoute   int
 	TotalExtraCalls     int
 	TotalAddedLatencyMs int64
 	TotalBytesMoved     int
@@ -123,9 +125,17 @@ func aggregate(records []Record, opts Options) reportData {
 		pa.BytesMoved += r.BytesMoved
 
 		for _, f := range r.Findings {
-			if !f.AgentFixable {
-				pa.APIChange++
-				d.TotalAPIChange++
+			// Counted by what plimsoll actually knows about the fix. A finding with no
+			// granted and no catalogued route is "no known route", not "the API must
+			// change": that claim needs a complete catalog, which a profile need not
+			// declare.
+			switch f.Class() {
+			case ClassGrantRoute:
+				pa.GrantRoute++
+				d.TotalGrantRoute++
+			case ClassNoKnownRoute:
+				pa.NoKnownRoute++
+				d.TotalNoKnownRoute++
 			}
 			key := f.Pattern
 			pat := patterns[key]

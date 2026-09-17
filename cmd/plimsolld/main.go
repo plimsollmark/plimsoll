@@ -243,9 +243,14 @@ func main() {
 	// decompressed message, so neither one substitutes for the other.
 	rpcHandler := rpc.AuthenticateHTTP(verifier, rpc.LimitHTTPConcurrency(maxConcurrent*2, handler))
 	mux.Handle(path, http.MaxBytesHandler(rpcHandler, maxRequestBytes))
+	// The guard URL is public by construction (a microVM must reach it from
+	// outside), so it gets the same treatment as the RPC path: it authenticates on
+	// the per-run guard credential and bounds concurrent decode work before reading
+	// a body. Its own admission lives inside the handler; the bound tracks live
+	// granted runs, since a guest awaits each host.* call rather than pipelining.
 	if guard, ok := sb.(sandbox.EgressGuardCapable); ok {
 		if guardPath := guard.EgressGuardPath(); guardPath != "" {
-			mux.Handle(guardPath, sandbox.EgressGuardHTTPHandler(guard, guardPath))
+			mux.Handle(guardPath, sandbox.EgressGuardHTTPHandler(guard, guardPath, maxConcurrent*2))
 		}
 	}
 

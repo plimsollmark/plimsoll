@@ -11,10 +11,12 @@ import (
 
 // Prospector Phase 3: AI remediation prompts. Prompt turns a Finding plus the
 // profile's declared routes into a paste-ready prompt for the customer's OWN AI to
-// design the API change the finding points at. It is the API-change branch of the
-// advice router: it is meant for findings the agent cannot fix by making a different
-// call (Finding.Suggested nil), where the fix is a new server-side capability rather
-// than a route the profile already exposes.
+// consider the API change the finding points at. It is meant for the narrowest case:
+// a finding the agent cannot fix by calling a route it already has (Finding.Suggested
+// nil) and whose route the profile's catalog does not name either (Finding.CatalogMatch
+// nil) — the only case where "this may need a new server-side capability" is even a
+// candidate answer. A caller that hands it the other two classes is asking a model to
+// invent an endpoint that already exists; cmd/prospector-report filters accordingly.
 //
 // Two decisions are explicit and load-bearing:
 //
@@ -61,14 +63,26 @@ func Prompt(f Finding, allow []sandbox.HostRoute) (string, bool) {
 	return b.String(), true
 }
 
-const promptHeader = "You are an API designer. An AI agent used the API below and hit an " +
-	"efficiency problem that the API's current shape forces on every caller. Propose the " +
-	"smallest API change that removes it."
+// promptHeader states the evidence exactly as strong as it is. It used to open with "an
+// efficiency problem that the API's current shape forces on every caller", which a single
+// run's call trace cannot establish: the trace holds one agent's calls against the routes
+// that agent was granted, and says nothing about the API's other callers or about the
+// routes the grant left out. Overstating it steers the reader's AI straight past the two
+// cheaper answers (fix the caller, or grant a route that already exists).
+const promptHeader = "You are an API designer. An AI agent used the API below and produced " +
+	"the call pattern described here. Propose the smallest API change that would remove it — " +
+	"or say plainly that no API change is warranted, if the pattern is better fixed in the " +
+	"calling code or by granting an endpoint that already exists."
 
 const promptFooter = "Constraints: design only from the route shapes listed above. Do not " +
 	"invent fields, resources, or identifiers those routes do not imply. Where a route shows " +
 	"a \"*\" wildcard, treat it as an opaque per-item key and name the real parameter in your " +
-	"design."
+	"design.\n\nEvidence and its limits: this is ONE run of one agent. The routes listed are " +
+	"the ones that agent was permitted to call, which may be a subset of the API — an endpoint " +
+	"you are about to design may already exist under a name not shown here, so check before " +
+	"adding one. The counts are what the pattern actually did; the \"extra calls\" and latency " +
+	"figures compare it with an assumed ideal of a single call, and are a model rather than a " +
+	"measurement of what a replacement would cost."
 
 // promptSpec is the remedy-specific body of a prompt: the design task and the output
 // format asked of the customer's AI. Everything else (the observed pattern, the cost,

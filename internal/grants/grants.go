@@ -233,10 +233,15 @@ type profileConfig struct {
 	Token    *tokenConfig `json:"token"`    // how to obtain the per-run credential
 	Preamble string       `json:"preamble"` // optional domain-SDK JS layered on the client
 
-	// HealthCheck is an optional concrete "GET /path" the broker probes to detect an
-	// overloaded upstream: after an upstream 429/503 trips the per-run circuit breaker,
-	// the broker sheds calls and uses this route to detect recovery. Empty = reactive
-	// shedding only, no recovery probe.
+	// HealthCheck is an optional concrete "GET /path" the broker probes to detect that a
+	// degraded upstream has recovered: after an upstream 503 trips the per-run circuit
+	// breaker, the broker sheds calls and uses this route to close the breaker early.
+	// Empty = reactive shedding only, no recovery probe.
+	//
+	// It must be a route that answers "can this API take traffic again". A 429 window is
+	// never probed with it (a healthy service does not mean this caller's quota reset),
+	// so a business endpoint that merely returns 200 buys nothing and misleads the next
+	// reader; plimsoll-specgen will not infer one from an endpoint's name for that reason.
 	HealthCheck string `json:"health_check"`
 
 	// PreambleFile points at a .js file (relative to the grants file) to use as the

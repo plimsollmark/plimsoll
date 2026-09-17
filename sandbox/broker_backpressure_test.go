@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // jsonResp is a small helper for the backpressure tests: an upstream response with a
@@ -57,8 +58,9 @@ func TestBrokerShedsAfterUpstreamBackpressure(t *testing.T) {
 }
 
 // TestBrokerHealthProbeClosesBreakerOnRecovery proves the declared health_check route
-// lets a shedding run recover mid-run: while the breaker is open, an elected caller
-// probes the health route, and a 2xx closes the breaker so the call proceeds upstream.
+// lets a shedding run recover mid-run: while the breaker is open after an upstream 503,
+// an elected caller probes the health route, and a 2xx closes the breaker so the call
+// proceeds upstream.
 func TestBrokerHealthProbeClosesBreakerOnRecovery(t *testing.T) {
 	var workHits, healthHits int
 	core, err := newBrokerSession(&HostAPIGrant{
@@ -73,7 +75,7 @@ func TestBrokerHealthProbeClosesBreakerOnRecovery(t *testing.T) {
 		default:
 			workHits++
 			if workHits == 1 {
-				return jsonResp(http.StatusTooManyRequests, "5", `{"error":"slow down"}`), nil
+				return jsonResp(http.StatusServiceUnavailable, "5", `{"error":"overloaded"}`), nil
 			}
 			return jsonResp(http.StatusOK, "", `{"ok":true}`), nil
 		}
@@ -83,9 +85,9 @@ func TestBrokerHealthProbeClosesBreakerOnRecovery(t *testing.T) {
 	}
 	defer core.Close()
 
-	// First call trips the breaker (429).
-	if got := core.Call(context.Background(), brokerCall{Method: "GET", RawTarget: "/work"}); got.Status != http.StatusTooManyRequests {
-		t.Fatalf("first call status=%d, want the forwarded 429", got.Status)
+	// First call trips the breaker (503: the service reports itself degraded).
+	if got := core.Call(context.Background(), brokerCall{Method: "GET", RawTarget: "/work"}); got.Status != http.StatusServiceUnavailable {
+		t.Fatalf("first call status=%d, want the forwarded 503", got.Status)
 	}
 	// Second call is elected to probe; the probe returns 200, so the breaker closes and
 	// the call proceeds upstream (which is healthy now).
@@ -178,5 +180,69 @@ func TestHealthCheckGrantValidation(t *testing.T) {
 				t.Fatalf("Validate() = %v, want substring %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestBrokerDoesNotProbeAfterRateLimit is the counterpart to the recovery test, and the
+// reason the trip carries its cause. A 429 says this caller has spent its allowance; the
+// health route reports whether the SERVICE can serve, which is a different question and
+// is answered 200 by a perfectly healthy API that is still rate-limiting. Probing here
+// would reopen the gate and push the run's traffic straight back into the limiter that
+// just asked it to back off, so a quota window is waited out with no probe at all.
+func TestBrokerDoesNotProbeAfterRateLimit(t *testing.T) {
+	var workHits, healthHits int
+	core, err := newBrokerSession(&HostAPIGrant{
+		BaseURL:     "https://api.internal",
+		Allow:       []HostRoute{{Method: "GET", Path: "/work"}},
+		HealthCheck: &HostRoute{Method: "GET", Path: "/health"},
+	}, "tok", brokerRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/health" {
+			healthHits++
+			return jsonResp(http.StatusOK, "", `{"ok":true}`), nil // the service is fine
+		}
+		workHits++
+		return jsonResp(http.StatusTooManyRequests, "5", `{"error":"slow down"}`), nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.Close()
+
+	if got := core.Call(context.Background(), brokerCall{Method: "GET", RawTarget: "/work"}); got.Status != http.StatusTooManyRequests {
+		t.Fatalf("first call status=%d, want the forwarded 429", got.Status)
+	}
+	for i := 0; i < 3; i++ {
+		got := core.Call(context.Background(), brokerCall{Method: "GET", RawTarget: "/work"})
+		if got.Status != http.StatusServiceUnavailable || !strings.Contains(string(got.Body), "shedding load") {
+			t.Fatalf("call %d after 429 = %+v, want a shed", i, got)
+		}
+	}
+	if healthHits != 0 {
+		t.Fatalf("health probed %d times after a 429; a healthy service does not prove a quota reset", healthHits)
+	}
+	if workHits != 1 {
+		t.Fatalf("upstream hit %d times, want 1: the rate limiter must not be re-entered", workHits)
+	}
+}
+
+// TestBrokerQuotaTripSuppressesProbingForTheWholeWindow proves the suppression is a
+// property of the open window, not of one call: a later 503 that extends a window opened
+// by a 429 must not turn probing back on, since nothing has shown the rate limit cleared.
+func TestBrokerQuotaTripSuppressesProbingForTheWholeWindow(t *testing.T) {
+	var br breaker
+	now := time.Now()
+	br.open(now, 30*time.Second, true) // 429
+	br.open(now, 30*time.Second, false)
+	if shedding, elected := br.gate(now.Add(time.Second), true); !shedding || elected {
+		t.Fatalf("gate = (%v, %v), want shedding with no probe", shedding, elected)
+	}
+
+	// Once the window lapses, the next trip starts clean and is probeable again.
+	if shedding, _ := br.gate(now.Add(time.Minute), true); shedding {
+		t.Fatal("breaker still shedding after its window lapsed")
+	}
+	br.open(now.Add(time.Minute), 30*time.Second, false) // 503
+	if shedding, elected := br.gate(now.Add(time.Minute+time.Second), true); !shedding || !elected {
+		t.Fatalf("gate = (%v, %v), want shedding with an elected prober", shedding, elected)
 	}
 }

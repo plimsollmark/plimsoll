@@ -104,9 +104,14 @@ func run() error {
 	return nil
 }
 
-// attachPrompts fills DesignPrompt on every API-change finding whose profile the
-// registry knows, using insights.Prompt over that profile's Allow list. It mutates
-// the records in place.
+// attachPrompts fills DesignPrompt on every finding that names no route at all, using
+// insights.Prompt over its profile's Allow list. It mutates the records in place.
+//
+// Two classes are deliberately skipped, because a design prompt asks the customer's AI to
+// invent an endpoint: a finding whose route is already granted (the agent switches to it)
+// and one whose route the API already exposes but the profile does not grant (the
+// operator adds an allow line). Handing either of those a "design a new endpoint" prompt
+// would throw away the concrete answer plimsoll already has.
 func attachPrompts(records []report.Record, reg *grants.Registry) {
 	// Cache each profile's Allow list so a busy stream resolves it once.
 	allows := map[string][]sandbox.HostRoute{}
@@ -135,8 +140,8 @@ func attachPrompts(records []report.Record, reg *grants.Registry) {
 		}
 		for fi := range rec.Findings {
 			f := &rec.Findings[fi]
-			if f.AgentFixable {
-				continue // fix is a route switch, not a new endpoint
+			if f.Class() != report.ClassNoKnownRoute {
+				continue // a route already exists; granting or calling it is the fix
 			}
 			prompt, ok := insights.Prompt(toInsightsFinding(*f), allow)
 			if ok {

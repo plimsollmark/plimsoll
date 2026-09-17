@@ -74,12 +74,20 @@ type brokerSession struct {
 
 // breaker is the per-run circuit breaker that implements host-API backpressure. It is
 // closed until an upstream 429/503 opens it for a cooldown; while open the broker sheds
-// calls. When a HealthCheck route is set, one elected caller per breakerProbeInterval
-// probes it and closes the breaker early on recovery.
+// calls. When a HealthCheck route is set AND the trip was an availability failure, one
+// elected caller per breakerProbeInterval probes it and closes the breaker early on
+// recovery.
 type breaker struct {
 	mu        sync.Mutex
 	openUntil time.Time // zero = closed
 	lastProbe time.Time // last elected health probe, to rate-limit probes while open
+	// quotaTrip records that the current window was opened by an upstream 429. A health
+	// route reports whether the SERVICE is available; it cannot report whether this
+	// caller's rate limit or quota has reset, so a 2xx from it is not evidence that a 429
+	// has cleared. Probing such a window would let a healthy-looking service reopen the
+	// gate and put the run's traffic straight back into the limiter it just tripped —
+	// defeating the backoff the 429 asked for. A quota window is therefore waited out.
+	quotaTrip bool
 }
 
 // gate reports the breaker's decision for a call arriving at now. shedding is true when
@@ -89,21 +97,31 @@ func (br *breaker) gate(now time.Time, haveHealth bool) (shedding, electedToProb
 	br.mu.Lock()
 	defer br.mu.Unlock()
 	if br.openUntil.IsZero() || !now.Before(br.openUntil) {
+		br.clearLocked() // the window lapsed; the next trip starts from a clean state
 		return false, false
 	}
-	if haveHealth && (br.lastProbe.IsZero() || now.Sub(br.lastProbe) >= breakerProbeInterval) {
+	if haveHealth && !br.quotaTrip && (br.lastProbe.IsZero() || now.Sub(br.lastProbe) >= breakerProbeInterval) {
 		br.lastProbe = now
 		return true, true
 	}
 	return true, false
 }
 
-// open trips the breaker until at least deadline, extending (never shortening) an
-// existing window.
-func (br *breaker) open(deadline time.Time) {
+// open trips the breaker for cooldown from now, extending (never shortening) an existing
+// window. quota marks a 429 trip, which suppresses health probing for the whole window
+// (see breaker.quotaTrip); a window that carried a quota trip keeps that property even if
+// a later availability failure extends it, since the rate limit has not been shown to
+// have cleared either.
+func (br *breaker) open(now time.Time, cooldown time.Duration, quota bool) {
 	br.mu.Lock()
 	defer br.mu.Unlock()
-	if deadline.After(br.openUntil) {
+	if !br.openUntil.IsZero() && !now.Before(br.openUntil) {
+		br.clearLocked() // a previous window already lapsed; this is a fresh trip
+	}
+	if quota {
+		br.quotaTrip = true
+	}
+	if deadline := now.Add(cooldown); deadline.After(br.openUntil) {
 		br.openUntil = deadline
 	}
 }
@@ -113,8 +131,13 @@ func (br *breaker) open(deadline time.Time) {
 func (br *breaker) reset() {
 	br.mu.Lock()
 	defer br.mu.Unlock()
+	br.clearLocked()
+}
+
+func (br *breaker) clearLocked() {
 	br.openUntil = time.Time{}
 	br.lastProbe = time.Time{}
+	br.quotaTrip = false
 }
 
 // retryAfterCooldown derives the breaker cooldown from an upstream Retry-After header,
@@ -260,8 +283,9 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	// Backpressure gate. An upstream 429/503 opens the per-run breaker; while open the
 	// broker sheds this permitted call instead of adding to the overload. A declared
 	// health route lets one elected caller probe for recovery and proceed if the API
-	// has come back. The route was already authorized above, so a shed is distinct from
-	// a policy denial (recorded as Shed, not Denied).
+	// has come back — for an availability trip only, never a 429 (see breaker.quotaTrip).
+	// The route was already authorized above, so a shed is distinct from a policy denial
+	// (recorded as Shed, not Denied).
 	if shedding, elected := b.breaker.gate(time.Now(), b.health != nil); shedding {
 		recovered := false
 		if elected {
@@ -269,7 +293,7 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 				b.breaker.reset()
 				recovered = true
 			} else {
-				b.breaker.open(time.Now().Add(cooldown))
+				b.breaker.open(time.Now(), cooldown, false)
 			}
 		}
 		if !recovered {
@@ -362,9 +386,11 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	})
 	// The upstream itself signaling overload is the backpressure signal: open the
 	// breaker so subsequent calls in this run shed instead of piling on. The guest still
-	// receives this response; only later calls are affected.
+	// receives this response; only later calls are affected. The two statuses mean
+	// different things — 503 is "the service is struggling" (probeable), 429 is "you have
+	// spent your allowance" (not) — so the trip carries which one it was.
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
-		b.breaker.open(time.Now().Add(retryAfterCooldown(resp.Header.Get("Retry-After"))))
+		b.breaker.open(time.Now(), retryAfterCooldown(resp.Header.Get("Retry-After")), resp.StatusCode == http.StatusTooManyRequests)
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" || strings.IndexFunc(contentType, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
@@ -394,6 +420,10 @@ func (b *brokerSession) matchRawTarget(method, rawTarget string) (HostRoute, boo
 // timeout means still-degraded, and the returned cooldown (from a fresh Retry-After when
 // the probe carries one) refreshes the breaker window. The path was validated concrete
 // at load, so this builds an exact URL with no wildcard to expand.
+//
+// What a 2xx here is evidence OF is narrow, and the caller enforces the limit: the route
+// answers "is this service able to serve", which speaks to a 503 and says nothing about a
+// 429's rate limit or quota. The breaker only elects a prober for an availability trip.
 func (b *brokerSession) probeHealth(ctx context.Context) (healthy bool, cooldown time.Duration) {
 	if b.health == nil {
 		return false, breakerDefaultCooldown

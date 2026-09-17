@@ -326,7 +326,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Cumulative findings by detector pattern and severity, split by whether the agent could fix it now (a better route already exists) or it needs an API change.",
+      "description": "Cumulative findings by detector pattern and severity, split by whether the agent could fix it now (a better route is already granted) or not. agent_fixable=false does not mean the API must change: the route may exist but be ungranted (the audit line names it as grant_route), or the profile may declare no catalog to check against.",
       "fieldConfig": {
         "defaults": { "color": { "mode": "thresholds" }, "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }, "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } },
         "overrides": []

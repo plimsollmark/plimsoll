@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1456" viewBox="0 0 1200 1456" role="img" aria-labelledby="title description">
+  <title id="title">plimsoll: request, execution, and granted API calls</title>
+  <desc id="description">Three views replace a dense topology. First, an MCP server or Go client calls plimsolld, which authenticates the caller, validates the request and grant profile, checks the requested isolation floor, and admits the run through a limiter. The Sandbox interface dispatches to one configured provider. Second, provider cards distinguish WASM in the server process, Docker with container or verified kernel isolation, an E2B microVM, and Disabled, the default. Third, granted guest calls use a provider adapter to reach the shared host-side broker. It checks routes and budgets and attaches a credential before forwarding to the host API. Credentials remain outside guest code, but WASM shares the server process and is not a hard isolation boundary.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#50728b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <style>
+      text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; fill: #203749; }
+      .title { font-size: 38px; font-weight: 720; letter-spacing: -1px; }
+      .section { font-size: 25px; font-weight: 700; }
+      .heading { font-size: 22px; font-weight: 700; }
+      .body { font-size: 18px; }
+      .small { font-size: 16px; }
+      .muted { fill: #50677a; }
+      .eyebrow { font-size: 14px; font-weight: 700; letter-spacing: 1.6px; }
+      .mono { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 16px; }
+      .blue { fill: #175881; }
+      .orange { fill: #8e4c16; }
+      .green { fill: #256341; }
+      .line { fill: none; stroke: #50728b; stroke-width: 2; marker-end: url(#arrow); }
+      .config { stroke-dasharray: 5 5; }
+      .panel { fill: #fff; stroke: #d7e1e8; }
+      .host { fill: #eef6fc; stroke: #b3ccdf; }
+      .guest { fill: #fff5e9; stroke: #e3c6a2; }
+    </style>
+  </defs>
+  <rect width="1200" height="1456" fill="#f5f8fa"/>
+  <text x="48" y="45" class="eyebrow muted">PLIMSOLL / SYSTEM OVERVIEW</text>
+  <text x="48" y="96" class="title">One run. One provider. Explicit authority.</text>
+  <text x="48" y="132" class="body muted">Read top to bottom. Each view answers one question.</text>
+
+  <g id="request-path">
+    <rect x="32" y="164" width="1136" height="380" rx="18" class="panel"/>
+    <circle cx="67" cy="204" r="17" fill="#e4eef5"/><text x="67" y="211" text-anchor="middle" class="body blue">1</text>
+    <text x="97" y="212" class="section">How does a request reach execution?</text>
+    <text x="60" y="249" class="body muted">The caller asks for a minimum isolation tier. The server checks it before code runs.</text>
+
+    <g id="callers">
+      <rect x="60" y="278" width="238" height="178" rx="12" fill="#f6f8fa" stroke="#cbd7e0"/>
+      <text x="82" y="313" class="heading">Caller</text>
+      <text x="82" y="348" class="body">Agent → MCP server</text>
+      <text x="82" y="377" class="body">or service → Go client</text>
+      <text x="82" y="409" class="small muted">Code + profile name</text>
+      <text x="82" y="437" class="small muted">Caller authorization</text>
+    </g>
+    <path d="M304 367 H350" class="line"/>
+    <text x="327" y="345" text-anchor="middle" class="small muted">RPC</text>
+
+    <g id="plimsolld">
+      <rect x="362" y="278" width="434" height="178" rx="12" class="host"/>
+      <text x="384" y="313" class="heading blue">plimsolld</text>
+      <text x="773" y="311" text-anchor="end" class="eyebrow blue">TRUSTED SERVER CODE</text>
+      <text x="384" y="348" class="body">Authenticate the caller</text>
+      <text x="384" y="377" class="body">Validate request + authorize grant profile</text>
+      <text x="384" y="406" class="body">Check current tier + apply admission limits</text>
+      <text x="384" y="437" class="small muted">Server config: clients file + grants file</text>
+    </g>
+    <path d="M802 367 H848" class="line"/>
+
+    <g id="sandboxif">
+      <rect x="860" y="278" width="280" height="178" rx="12" class="host"/>
+      <text x="882" y="313" class="heading blue">Sandbox interface</text>
+      <text x="882" y="348" class="body">RunJavaScript</text>
+      <text x="882" y="377" class="body">or RunProject</text>
+      <text x="882" y="422" class="small muted">Dispatch to one provider ↓</text>
+    </g>
+    <path d="M988 477 V492 H178 V467" class="line"/>
+    <rect x="336" y="475" width="505" height="33" fill="#fff"/>
+    <text x="588" y="498" text-anchor="middle" class="small muted">Result returns: output, exit status, actual isolation tier</text>
+    <text x="60" y="525" class="small muted">The server also writes a run audit record. Code and credentials are excluded from that record.</text>
+  </g>
+
+  <g id="provider-choices">
+    <rect x="32" y="568" width="1136" height="372" rx="18" class="panel"/>
+    <circle cx="67" cy="608" r="17" fill="#e4eef5"/><text x="67" y="615" text-anchor="middle" class="body blue">2</text>
+    <text x="97" y="616" class="section">Where does the code run?</text>
+    <text x="60" y="653" class="body muted">SANDBOX_PROVIDER selects one. These boxes do not represent equivalent security boundaries.</text>
+
+    <g id="wasm">
+      <rect x="60" y="680" width="252" height="204" rx="12" class="guest"/>
+      <text x="80" y="712" class="eyebrow orange">PROCESS</text>
+      <text x="80" y="748" class="heading">WASM / QuickJS</text>
+      <text x="80" y="783" class="body">Shares server process</text>
+      <text x="80" y="812" class="body">JavaScript snippets</text>
+      <text x="80" y="855" class="small orange">No OS or VM boundary</text>
+    </g>
+    <g id="docker">
+      <rect x="336" y="680" width="252" height="204" rx="12" class="guest"/>
+      <text x="356" y="712" class="eyebrow orange">CONTAINER / KERNEL</text>
+      <text x="356" y="748" class="heading">Docker / Node</text>
+      <text x="356" y="783" class="body">runc: shares host kernel</text>
+      <text x="356" y="812" class="body">runsc: verified kernel tier</text>
+      <text x="356" y="855" class="small muted">Snippets + project toolchain</text>
+    </g>
+    <g id="e2b">
+      <rect x="612" y="680" width="252" height="204" rx="12" class="guest"/>
+      <text x="632" y="712" class="eyebrow orange">VM</text>
+      <text x="632" y="748" class="heading">E2B / Firecracker</text>
+      <text x="632" y="783" class="body">Runs in a microVM</text>
+      <text x="632" y="812" class="body">Snippets + projects</text>
+      <text x="632" y="855" class="small muted">Template supplies toolchain</text>
+    </g>
+    <g id="disabled">
+      <rect x="888" y="680" width="252" height="204" rx="12" fill="#f0f4f6" stroke="#c4d1da"/>
+      <text x="908" y="712" class="eyebrow muted">DEFAULT</text>
+      <text x="908" y="748" class="heading">Disabled</text>
+      <text x="908" y="783" class="body">Provider is unset</text>
+      <text x="908" y="812" class="body">Execution is refused</text>
+      <text x="908" y="855" class="small muted">No guest code runs</text>
+    </g>
+    <text x="60" y="916" class="small muted">The current tier must meet the request's isolation floor. Unsupported operations are refused.</text>
+  </g>
+
+  <g id="granted-api-path">
+    <rect x="32" y="964" width="1136" height="440" rx="18" class="panel"/>
+    <circle cx="67" cy="1004" r="17" fill="#e4eef5"/><text x="67" y="1011" text-anchor="middle" class="body blue">3</text>
+    <text x="97" y="1012" class="section">How can guest code call an API?</text>
+    <text x="60" y="1049" class="body muted">Only a per-run grant opens this path. Without one, the guest has no network access.</text>
+
+    <g id="guest-calls">
+      <rect x="60" y="1078" width="330" height="178" rx="12" class="guest"/>
+      <text x="82" y="1112" class="heading">Guest calls host.*</text>
+      <text x="82" y="1147" class="body">WASM → direct host function</text>
+      <text x="82" y="1176" class="body">Docker → Unix socket</text>
+      <text x="82" y="1205" class="body">E2B → configured egress guard</text>
+      <text x="82" y="1237" class="small muted">Injected SDKs run as guest code too</text>
+    </g>
+    <path d="M396 1167 H442" class="line"/>
+
+    <g id="broker">
+      <rect x="454" y="1078" width="338" height="178" rx="12" class="host"/>
+      <text x="476" y="1112" class="heading blue">Shared host-side broker</text>
+      <text x="476" y="1147" class="body">Approve the exact route</text>
+      <text x="476" y="1176" class="body">Enforce call + body budgets</text>
+      <text x="476" y="1205" class="body">Attach the run's credential</text>
+      <text x="476" y="1237" class="small blue">Enforcement lives here</text>
+    </g>
+    <path d="M798 1167 H844" class="line"/>
+    <text x="821" y="1145" text-anchor="middle" class="small muted">HTTP</text>
+
+    <g id="hostapi">
+      <rect x="856" y="1078" width="284" height="178" rx="12" fill="#eff8f2" stroke="#b5d5bf"/>
+      <text x="878" y="1112" class="heading green">Host API</text>
+      <text x="878" y="1147" class="body">Receives allowed calls</text>
+      <text x="878" y="1176" class="body">with authorization</text>
+      <text x="878" y="1221" class="small muted">Responses return through</text>
+      <text x="878" y="1243" class="small muted">the broker to the guest</text>
+    </g>
+
+    <g id="minter">
+      <rect x="454" y="1298" width="338" height="72" rx="10" class="host"/>
+      <text x="623" y="1328" text-anchor="middle" class="body blue">Server-held grant + token minter</text>
+      <text x="623" y="1354" text-anchor="middle" class="small muted">JWT or configured static credential</text>
+      <path d="M623 1292 V1263" class="line config"/>
+    </g>
+    <text x="60" y="1319" class="body green">The credential stays</text>
+    <text x="60" y="1347" class="body green">outside guest code.</text>
+    <text x="856" y="1319" class="small muted">E2B grants require the guard.</text>
+    <text x="856" y="1346" class="small muted">WASM supports snippets only.</text>
+  </g>
+  <text x="48" y="1437" class="small muted">Logical flows, not a deployment map. WASM still shares the trusted server's process.</text>
+</svg>

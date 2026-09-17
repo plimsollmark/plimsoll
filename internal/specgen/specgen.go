@@ -3,14 +3,37 @@
 // three things that must stay in sync — the grant's `allow` route list, the typed
 // JS `preamble` SDK, and the model-facing tool description a gateway shows the agent.
 // specgen emits all three from the ONE spec, plus an optional `health_check`
-// backpressure probe when the spec designates a concrete health/readiness/capacity
-// GET. A consumer can delete the hand-maintained copies and let drift become impossible
-// (see the worked example in docs/examples/specgen).
+// backpressure probe for the operation the spec explicitly marks with
+// x-plimsoll-health-check. A consumer can delete the hand-maintained copies and let
+// drift become impossible (see the worked example in docs/examples/specgen).
 //
 // It is metadata-only and offline: it reads the spec's paths, methods, operationIds,
 // path parameters, and summaries, and emits text. It never fetches the spec's server,
 // never embeds a credential, and produces byte-identical output for a given input, so
 // generation can run in a build step and the artifacts can be committed and diffed.
+//
+// # Supported subset
+//
+// A grant is an allowlist of literal path templates, so the generator can only
+// represent operations a brokered call can actually make. The subset is enforced at
+// parse time rather than documented and hoped for, because the failure mode of
+// accepting more is a generated method that looks right and cannot work:
+//
+//   - Verbs: GET, PUT, POST, DELETE, PATCH. HEAD/OPTIONS/TRACE are reported in
+//     Result.Skipped (the broker does not enforce them).
+//   - Path parameters must be whole segments ("/lights/{id}", never
+//     "/files/{name}.json"), because a segment maps to the broker's "*" wildcard.
+//   - Query, header, and cookie parameters cannot be sent: the broker rejects any
+//     target carrying a query string, and guest code cannot set headers. An operation
+//     that REQUIRES one is reported in Result.Skipped; one that merely offers
+//     optional ones is generated with a warning in Result.Warnings.
+//   - $ref is not resolved. A $ref path item or parameter is an error: following it
+//     is out of scope, and ignoring it would silently drop part of the surface.
+//   - Every operation needs an operationId, unique after JS-identifier sanitizing,
+//     and it may not collide with the injected client's own methods.
+//
+// Anything outside the subset is an error or a reported omission, never a quiet
+// degradation of the emitted grant.
 package specgen
 
 import (
@@ -32,19 +55,35 @@ type Options struct {
 // Operation is one generated method: an OpenAPI operation reduced to what the three
 // artifacts need. Everything here is trusted spec metadata, never request content.
 type Operation struct {
-	ID      string   // operationId -> the JS method name
-	Method  string   // GET, PUT, POST, DELETE, PATCH
-	Path    string   // the spec path template, e.g. /lights/{id}
-	Route   string   // the allowlist template, e.g. /lights/* (path params -> "*")
-	Params  []string // path parameter names, in path order -> the JS method args
-	HasBody bool     // the operation declares a requestBody (adds a trailing body arg)
-	Summary string   // the operation summary, for the model-facing description
+	ID     string // operationId -> the JS method name
+	Method string // GET, PUT, POST, DELETE, PATCH
+	Path   string // the spec path template, e.g. /lights/{id}
+	Route  string // the allowlist template, e.g. /lights/* (path params -> "*")
+	// Params are the JS argument names for the path parameters, in path order. They are
+	// derived from the spec's parameter names but sanitized and deconflicted (jsArgNames),
+	// so they are safe to emit as bindings and are not guaranteed to match the spec text.
+	Params  []string
+	HasBody bool   // the operation declares a requestBody (adds a trailing body arg)
+	Summary string // the operation summary, for the model-facing description
+}
+
+// argList is the emitted method's full argument list: the path parameters, plus a
+// trailing body argument only when the operation declares a request body. Code and
+// description are both rendered from it, so the signature an agent is shown is the
+// signature that exists.
+func (o Operation) argList() []string {
+	args := append([]string(nil), o.Params...)
+	if o.HasBody {
+		args = append(args, "body")
+	}
+	return args
 }
 
 // SkippedOp records an operation the generator could not represent as a grant, so the
-// omission is reported rather than silent. The cause is a verb the host-API broker does
-// not enforce: it allows GET/PUT/POST/DELETE/PATCH, so a spec's HEAD/OPTIONS/TRACE
-// operation is reported here instead of emitted as an allow route the validator rejects.
+// omission is reported rather than silent. Two causes exist: a verb the host-API broker
+// does not enforce (it allows GET/PUT/POST/DELETE/PATCH, so a spec's HEAD/OPTIONS/TRACE
+// operation is reported here instead of emitted as an allow route the validator rejects),
+// and a required query/header/cookie parameter, which a brokered call has no way to send.
 type SkippedOp struct {
 	Method string
 	Path   string
@@ -54,22 +93,26 @@ type SkippedOp struct {
 // Result is the generated grant description: the core artifacts, optional health probe,
 // and the parsed operations they were built from.
 type Result struct {
-	Title       string
-	Version     string
-	Global      string
-	Allow       []sandbox.HostRoute // deduped, sorted; the grant's allow list
-	Operations  []Operation         // sorted by (path, method)
-	Skipped     []SkippedOp         // operations dropped as unrepresentable (with reason)
-	Preamble    string              // typed JS SDK; goes in HostAPIGrant.Preamble
-	Description string              // model-facing text a gateway shows the agent
+	Title      string
+	Version    string
+	Global     string
+	Allow      []sandbox.HostRoute // deduped, sorted; the grant's allow list
+	Operations []Operation         // sorted by (path, method)
+	Skipped    []SkippedOp         // operations dropped as unrepresentable (with reason)
+	// Warnings are non-fatal notes about operations that WERE generated but whose
+	// emitted method is narrower than the spec describes (today: optional query or
+	// header parameters a brokered call cannot send).
+	Warnings    []string
+	Preamble    string // typed JS SDK; goes in HostAPIGrant.Preamble
+	Description string // model-facing text a gateway shows the agent
 	// HealthCheck, when non-empty, is the "GET /path" line for the grant profile's
-	// health_check backpressure probe, derived from the spec: the operation explicitly
-	// marked x-plimsoll-health-check, or (failing that) the single best-ranked
-	// well-known health/readiness/capacity endpoint. Empty when the spec declares none,
-	// or when several equally-ranked candidates made the choice ambiguous (see HealthNote).
+	// health_check backpressure probe: the concrete GET operation the spec marks with
+	// x-plimsoll-health-check. It is empty unless the spec marks one, because the probe
+	// decides when to resume traffic against a degraded upstream and an endpoint's NAME
+	// is not evidence of what it measures (see HealthNote).
 	HealthCheck string
-	// HealthNote explains a non-fatal ambiguity: candidate health routes were found but
-	// none could be auto-selected, so the operator must disambiguate. Empty otherwise.
+	// HealthNote explains why no health route was emitted, so the absence is visible
+	// rather than silent. Empty when one was.
 	HealthNote string
 }
 
@@ -101,94 +144,105 @@ type oaInfo struct {
 }
 
 type oaPathItem struct {
-	Get     *oaOperation `json:"get"`
-	Put     *oaOperation `json:"put"`
-	Post    *oaOperation `json:"post"`
-	Delete  *oaOperation `json:"delete"`
-	Patch   *oaOperation `json:"patch"`
-	Head    *oaOperation `json:"head"`
-	Options *oaOperation `json:"options"`
-	Trace   *oaOperation `json:"trace"`
+	// Ref is a path-item $ref. It is parsed only so it can be REJECTED: the generator
+	// resolves no references, and an unparsed path item would otherwise contribute no
+	// operations and disappear from the generated surface without a word.
+	Ref        string        `json:"$ref"`
+	Parameters []oaParameter `json:"parameters"` // apply to every operation on the path
+	Get        *oaOperation  `json:"get"`
+	Put        *oaOperation  `json:"put"`
+	Post       *oaOperation  `json:"post"`
+	Delete     *oaOperation  `json:"delete"`
+	Patch      *oaOperation  `json:"patch"`
+	Head       *oaOperation  `json:"head"`
+	Options    *oaOperation  `json:"options"`
+	Trace      *oaOperation  `json:"trace"`
 }
 
 type oaOperation struct {
 	OperationID string          `json:"operationId"`
 	Summary     string          `json:"summary"`
 	RequestBody json.RawMessage `json:"requestBody"`
+	Parameters  []oaParameter   `json:"parameters"`
 	// HealthCheck is the `x-plimsoll-health-check` OpenAPI extension: an explicit
 	// operator marker designating THIS operation as the grant's backpressure health
-	// probe. It overrides the endpoint-name heuristic and must resolve to a concrete GET.
+	// probe. It is the ONLY way to designate one, and must resolve to a concrete GET.
 	HealthCheck *bool `json:"x-plimsoll-health-check"`
 }
 
-// healthCand is one heuristic health-route candidate: a concrete GET whose last path
-// segment is a well-known health/readiness/capacity name, tagged with its priority rank.
-type healthCand struct {
-	rank int
-	line string // "GET /path"
+// oaParameter is one declared parameter, read only for its location and whether it is
+// required — enough to decide whether a brokered call can express the operation at all.
+// Its schema is irrelevant here and deliberately unparsed.
+type oaParameter struct {
+	Ref      string `json:"$ref"`
+	Name     string `json:"name"`
+	In       string `json:"in"`
+	Required bool   `json:"required"`
 }
 
-// healthSegmentRanks lists well-known health-endpoint path segments in DESCENDING
-// priority for the backpressure RECOVERY probe. The probe answers "is the upstream ready
-// to take traffic again," so a capacity/readiness signal outranks a bare liveness or
-// ping (a process can be live but still shedding). Matched case-insensitively against the
-// last segment of a concrete GET route, so /capacity, /v1/status and /-/healthz all
-// qualify but /lights/{id} never can. An explicit x-plimsoll-health-check marker
-// bypasses this list entirely.
-var healthSegmentRanks = [][]string{
-	{"capacity", "headroom", "status"},
-	{"ready", "readyz", "readiness"},
-	{"health", "healthz", "healthcheck"},
-	{"live", "livez", "liveness", "ping", "heartbeat"},
-}
-
-// healthRank returns the priority rank of a path segment among the well-known health
-// names, or (-1,false) if it is not one.
-func healthRank(seg string) (int, bool) {
-	seg = strings.ToLower(seg)
-	for i, names := range healthSegmentRanks {
-		for _, n := range names {
-			if seg == n {
-				return i, true
+// classifyParams decides whether a brokered call can express an operation, given the
+// path-item and operation parameter lists (operation-level entries override path-level
+// ones with the same name and location, per OpenAPI).
+//
+// A grant authorizes a literal path template and nothing else: the broker rejects any
+// target containing "?", and guest code cannot set request headers or cookies. So a
+// REQUIRED parameter anywhere but the path makes the operation unexpressable (returned
+// as skip), and an OPTIONAL one makes the generated method narrower than the spec
+// (returned as warn). err is for input the generator refuses to guess about.
+func classifyParams(method, path string, pathLevel, opLevel []oaParameter) (skip, warn string, err error) {
+	type key struct{ in, name string }
+	merged := map[key]oaParameter{}
+	order := []key{}
+	for _, list := range [][]oaParameter{pathLevel, opLevel} {
+		for _, p := range list {
+			if strings.TrimSpace(p.Ref) != "" {
+				return "", "", fmt.Errorf("specgen: %s %s declares a $ref parameter; specgen resolves no references, so bundle/dereference the spec before generating", method, path)
 			}
+			in := strings.ToLower(strings.TrimSpace(p.In))
+			name := strings.TrimSpace(p.Name)
+			switch in {
+			case "path", "query", "header", "cookie":
+			default:
+				return "", "", fmt.Errorf("specgen: %s %s declares parameter %q with unsupported location %q (want path/query/header/cookie)", method, path, name, p.In)
+			}
+			k := key{in, name}
+			if _, dup := merged[k]; !dup {
+				order = append(order, k)
+			}
+			merged[k] = p
 		}
 	}
-	return -1, false
+
+	var required, optional []string
+	for _, k := range order {
+		if k.in == "path" {
+			continue // the path template is authoritative for these
+		}
+		label := fmt.Sprintf("%s %q", k.in, k.name)
+		if merged[k].Required {
+			required = append(required, label)
+		} else {
+			optional = append(optional, label)
+		}
+	}
+	if len(required) > 0 {
+		return fmt.Sprintf("requires %s, which a brokered call cannot send: a grant authorizes a literal path, the broker rejects any query string, and guest code sets no headers", strings.Join(required, ", ")), "", nil
+	}
+	if len(optional) > 0 {
+		return "", fmt.Sprintf("%s %s: optional %s cannot be sent through the broker, so the generated method always calls the bare route", method, path, strings.Join(optional, ", ")), nil
+	}
+	return "", "", nil
 }
 
-// lastSegment returns the final non-empty path segment (trailing slash ignored).
-func lastSegment(path string) string {
-	segs := strings.Split(strings.TrimSuffix(path, "/"), "/")
-	return segs[len(segs)-1]
-}
-
-// pickHealthByRank chooses the single best-ranked heuristic candidate. It returns the
-// route when exactly one candidate holds the top priority, or a note (and no route) when
-// several tie there — never a guess. Fail-soft: health_check is optional, so an ambiguous
-// heuristic is a note the operator can act on, not a generation error (an explicit marker
-// is the fail-closed override for that case).
-func pickHealthByRank(cands []healthCand) (route, note string) {
-	if len(cands) == 0 {
-		return "", ""
-	}
-	minRank := cands[0].rank
-	for _, c := range cands {
-		if c.rank < minRank {
-			minRank = c.rank
-		}
-	}
-	var best []string
-	for _, c := range cands {
-		if c.rank == minRank {
-			best = append(best, c.line)
-		}
-	}
-	sort.Strings(best)
-	if len(best) == 1 {
-		return best[0], ""
-	}
-	return "", fmt.Sprintf("%d candidate health routes share the top priority (%s); none auto-selected — mark one with the x-plimsoll-health-check OpenAPI extension, or set the profile's health_check by hand", len(best), strings.Join(best, ", "))
-}
+// noHealthMarkerNote is the note returned when a spec designates no health route. It
+// says what the absence costs, because the alternative — guessing from an endpoint's
+// NAME — was removed on 2026-09-17: the probe's 2xx is what lets the breaker resume
+// traffic against a struggling API, and "/status" or "/capacity" in a path says nothing
+// about what the endpoint measures. A wrong probe defeats backoff, which is worse than
+// no probe at all (the breaker then simply waits out its cooldown).
+const noHealthMarkerNote = "no operation is marked x-plimsoll-health-check, so the profile gets no health_check: " +
+	"after an upstream 503 the per-run breaker waits out its full cooldown instead of probing for recovery. " +
+	"Mark the one concrete GET that reports whether the API can take traffic again"
 
 // methodOrder fixes iteration and output order so generation is deterministic. Only
 // the five verbs the host-API broker enforces are `supported`; HEAD/OPTIONS/TRACE are
@@ -237,15 +291,18 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 
 	var ops []Operation
 	var skipped []SkippedOp
+	var warnings []string
 	seenMethod := map[string]bool{}   // JS method-name collision guard
 	routeSet := map[string]struct{}{} // dedupe method+route
 	var allow []sandbox.HostRoute
-	var explicitHealth []string  // ops marked x-plimsoll-health-check ("GET /path")
-	var healthCands []healthCand // heuristic candidates (concrete GET on a health-named segment)
+	var explicitHealth []string // ops marked x-plimsoll-health-check ("GET /path")
 
 	for _, path := range paths {
 		item := doc.Paths[path]
-		route, params, err := deriveRoute(path)
+		if strings.TrimSpace(item.Ref) != "" {
+			return nil, fmt.Errorf("specgen: path %q is a $ref (%q); specgen resolves no references, so bundle/dereference the spec before generating", path, item.Ref)
+		}
+		route, rawParams, err := deriveRoute(path)
 		if err != nil {
 			return nil, err
 		}
@@ -254,6 +311,12 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 			if op == nil {
 				continue
 			}
+			// Whether a brokered call can express this operation at all is decided first,
+			// so a marker or an allow entry is never emitted for one that cannot run.
+			skipReason, warning, err := classifyParams(m.name, path, item.Parameters, op.Parameters)
+			if err != nil {
+				return nil, err
+			}
 			// An explicit health-check marker is checked before the verb-support gate so a
 			// marker on an unenforceable verb (HEAD/OPTIONS/TRACE) fails closed too: the
 			// backpressure probe MUST be a concrete GET, so anything else is operator error.
@@ -261,8 +324,11 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 				if m.name != "GET" {
 					return nil, fmt.Errorf("specgen: %s %s is marked x-plimsoll-health-check, but a health_check probe must be GET", m.name, path)
 				}
-				if len(params) != 0 {
+				if len(rawParams) != 0 {
 					return nil, fmt.Errorf("specgen: GET %s is marked x-plimsoll-health-check, but a health_check must be a concrete path (no path parameters)", path)
+				}
+				if skipReason != "" {
+					return nil, fmt.Errorf("specgen: GET %s is marked x-plimsoll-health-check, but it %s", path, skipReason)
 				}
 				explicitHealth = append(explicitHealth, "GET "+path)
 			}
@@ -273,36 +339,42 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 				skipped = append(skipped, SkippedOp{Method: m.name, Path: path, Reason: "host-API grants enforce only GET/PUT/POST/DELETE/PATCH"})
 				continue
 			}
+			if skipReason != "" {
+				skipped = append(skipped, SkippedOp{Method: m.name, Path: path, Reason: skipReason})
+				continue
+			}
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
 			if op.OperationID == "" {
 				return nil, fmt.Errorf("specgen: %s %s has no operationId (needed for a stable method name)", m.name, path)
 			}
 			name := jsIdent(op.OperationID)
+			if clientMethods[name] {
+				// The typed SDK attaches its methods to the SAME object as the generic
+				// client, and its method bodies call that client. A method named after one
+				// of its own primitives would replace it and then call itself.
+				return nil, fmt.Errorf("specgen: operationId %q yields method name %q, which is one of the injected client's own methods (%s); rename the operation", op.OperationID, name, strings.Join(clientMethodList, ", "))
+			}
 			if seenMethod[name] {
 				return nil, fmt.Errorf("specgen: operationId %q collides with another method name %q", op.OperationID, name)
 			}
 			seenMethod[name] = true
 
+			hasBody := len(op.RequestBody) > 0 && bodyAllowed(m.name)
 			ops = append(ops, Operation{
 				ID:      name,
 				Method:  m.name,
 				Path:    path,
 				Route:   route,
-				Params:  params,
-				HasBody: len(op.RequestBody) > 0 && bodyAllowed(m.name),
+				Params:  jsArgNames(rawParams, hasBody),
+				HasBody: hasBody,
 				Summary: strings.TrimSpace(op.Summary),
 			})
 			key := m.name + " " + route
 			if _, ok := routeSet[key]; !ok {
 				routeSet[key] = struct{}{}
 				allow = append(allow, sandbox.HostRoute{Method: m.name, Path: route})
-			}
-			// A concrete GET (no path params) on a well-known health-named segment is a
-			// heuristic candidate for the backpressure probe. Concreteness is required: the
-			// health_check must be a literal path the broker can call without an argument.
-			if m.name == "GET" && len(params) == 0 {
-				if rank, ok := healthRank(lastSegment(path)); ok {
-					healthCands = append(healthCands, healthCand{rank: rank, line: "GET " + path})
-				}
 			}
 		}
 	}
@@ -317,13 +389,12 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 		return allow[i].Method < allow[j].Method
 	})
 
-	// Resolve the backpressure health route: an explicit marker wins (and more than one
-	// is fail-closed operator error); otherwise the best-ranked well-known endpoint, or a
-	// soft note when candidates tie.
+	// Resolve the backpressure health route. Only an explicit marker designates one,
+	// and more than one is fail-closed operator error.
 	var health, healthNote string
 	switch len(explicitHealth) {
 	case 0:
-		health, healthNote = pickHealthByRank(healthCands)
+		healthNote = noHealthMarkerNote
 	case 1:
 		health = explicitHealth[0]
 	default:
@@ -338,6 +409,7 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 		Allow:       allow,
 		Operations:  ops,
 		Skipped:     skipped,
+		Warnings:    warnings,
 		HealthCheck: health,
 		HealthNote:  healthNote,
 	}
@@ -386,6 +458,68 @@ func deriveRoute(path string) (route string, params []string, err error) {
 		segs[i] = "*"
 	}
 	return strings.Join(segs, "/"), params, nil
+}
+
+// clientBinding is the local name the generated preamble binds the injected generic
+// client to. Nothing else in the emitted function bodies is a free variable, so this is
+// the one name a generated argument must never shadow (see jsArgNames).
+const clientBinding = "h"
+
+// clientMethodList is the injected generic client's own surface (sandbox/capability.go).
+// The typed SDK hangs its methods off the SAME object, so a generated method named after
+// one of these would overwrite the primitive its own body then calls.
+var clientMethodList = []string{"call", "del", "get", "patch", "post", "put"}
+
+var clientMethods = func() map[string]bool {
+	m := make(map[string]bool, len(clientMethodList))
+	for _, n := range clientMethodList {
+		m[n] = true
+	}
+	return m
+}()
+
+// jsReserved lists the words that cannot be a binding identifier in a strict-mode
+// module, which is what the preamble is preloaded as. A path parameter named "default"
+// or "new" is legal in a spec and a syntax error in the emitted arrow function, so
+// jsArgNames renames rather than emitting code that will not parse.
+var jsReserved = func() map[string]bool {
+	words := []string{
+		"arguments", "await", "break", "case", "catch", "class", "const", "continue",
+		"debugger", "default", "delete", "do", "else", "enum", "eval", "export",
+		"extends", "false", "finally", "for", "function", "if", "implements", "import",
+		"in", "instanceof", "interface", "let", "new", "null", "package", "private",
+		"protected", "public", "return", "static", "super", "switch", "this", "throw",
+		"true", "try", "typeof", "var", "void", "while", "with", "yield",
+	}
+	m := make(map[string]bool, len(words))
+	for _, w := range words {
+		m[w] = true
+	}
+	return m
+}()
+
+// jsArgNames turns a path template's parameter names into the emitted method's argument
+// names. Spec parameter names are arbitrary text ("item-id", "h", "default"), while these
+// become real bindings in generated code, so each is sanitized and then deconflicted
+// against the client binding, the body argument, JS reserved words, and the arguments
+// already emitted for this operation. Renaming is safe because the arguments are
+// positional and the same list feeds both the code and the description; emitting the raw
+// name is not, since it can produce a syntax error or silently shadow the client.
+func jsArgNames(raw []string, hasBody bool) []string {
+	taken := map[string]bool{clientBinding: true}
+	if hasBody {
+		taken["body"] = true
+	}
+	out := make([]string, 0, len(raw))
+	for _, r := range raw {
+		name := jsIdent(r)
+		for jsReserved[name] || taken[name] {
+			name += "_"
+		}
+		taken[name] = true
+		out = append(out, name)
+	}
+	return out
 }
 
 // jsIdent sanitizes an identifier so it is a safe JS property/argument name: any char
@@ -452,22 +586,30 @@ func jsString(s string) string {
 	return string(b)
 }
 
-// clientCall renders the generic-client call for an operation's verb.
+// clientCall renders the generic-client call for an operation's verb. A body argument
+// is passed only when the operation declared a requestBody: the emitted method has no
+// `body` parameter otherwise, and naming one anyway compiles fine and throws a
+// ReferenceError the first time an agent calls it. The client reads a missing argument
+// as `undefined` and sends no body, which is exactly the bodyless case.
 func clientCall(op Operation, recv, path string) string {
+	args := path
+	if op.HasBody {
+		args = path + ", body"
+	}
 	switch op.Method {
 	case "GET":
 		return fmt.Sprintf("%s.get(%s)", recv, path)
 	case "PUT":
-		return fmt.Sprintf("%s.put(%s, body)", recv, path)
+		return fmt.Sprintf("%s.put(%s)", recv, args)
 	case "POST":
-		return fmt.Sprintf("%s.post(%s, body)", recv, path)
+		return fmt.Sprintf("%s.post(%s)", recv, args)
 	case "DELETE":
 		return fmt.Sprintf("%s.del(%s)", recv, path)
 	case "PATCH":
-		return fmt.Sprintf("%s.patch(%s, body)", recv, path)
+		return fmt.Sprintf("%s.patch(%s)", recv, args)
 	default:
 		// Only the five supported verbs reach here (HEAD/OPTIONS/TRACE are skipped upstream).
-		return fmt.Sprintf("%s.call(%s, %s, body)", recv, jsString(op.Method), path)
+		return fmt.Sprintf("%s.call(%s, %s)", recv, jsString(op.Method), args)
 	}
 }
 
@@ -482,13 +624,9 @@ func buildPreamble(r *Result) string {
 		fmt.Fprintf(&b, " v%s", r.Version)
 	}
 	b.WriteString(". Do not edit by hand.\n")
-	fmt.Fprintf(&b, ";(function () {\n  const h = globalThis[%s];\n  if (!h) return;\n", jsString(r.Global))
+	fmt.Fprintf(&b, ";(function () {\n  const %s = globalThis[%s];\n  if (!%s) return;\n", clientBinding, jsString(r.Global), clientBinding)
 	for _, op := range r.Operations {
-		args := append([]string(nil), op.Params...)
-		if op.HasBody {
-			args = append(args, "body")
-		}
-		fmt.Fprintf(&b, "  h[%s] = (%s) => %s;\n", jsString(op.ID), strings.Join(args, ", "), clientCall(op, "h", pathExpr(op)))
+		fmt.Fprintf(&b, "  %s[%s] = (%s) => %s;\n", clientBinding, jsString(op.ID), strings.Join(op.argList(), ", "), clientCall(op, clientBinding, pathExpr(op)))
 	}
 	b.WriteString("})();\n")
 	return b.String()
@@ -512,11 +650,7 @@ func buildDescription(r *Result) string {
 	b.WriteString("below are permitted. Every call is allow-listed and gets a per-run token injected\n")
 	b.WriteString("host-side, so the code never handles a credential.\n\n")
 	for _, op := range r.Operations {
-		args := append([]string(nil), op.Params...)
-		if op.HasBody {
-			args = append(args, "body")
-		}
-		fmt.Fprintf(&b, "  %s.%s(%s)  ->  %s %s\n", r.Global, op.ID, strings.Join(args, ", "), op.Method, op.Path)
+		fmt.Fprintf(&b, "  %s.%s(%s)  ->  %s %s\n", r.Global, op.ID, strings.Join(op.argList(), ", "), op.Method, op.Path)
 		if op.Summary != "" {
 			fmt.Fprintf(&b, "      %s\n", op.Summary)
 		}

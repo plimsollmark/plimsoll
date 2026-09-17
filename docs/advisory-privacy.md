@@ -80,8 +80,9 @@ finding, `advice_retention` decides **what durable record** the operator keeps.
 - `operator`: findings drive the operator surfaces (`/metrics`, and the audit log subject
   to `advice_retention`). Nothing is returned to the caller.
 - `caller`: additionally returns the agent-fixable subset in the run result, so a product
-  may feed them to its model for self-correction. API-change findings (no better route
-  exists) stay operator-only regardless.
+  may feed them to its model for self-correction. A finding with no granted route stays
+  operator-only regardless, whether its fix is an allow-list line (the catalog names the
+  route) or unknown (nothing names one).
 
 `advice_retention` (governs the durable audit log only; no effect when `advice` is off):
 

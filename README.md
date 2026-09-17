@@ -21,7 +21,7 @@ the runtime implementation underneath it.
 
 The second thing it does is narrower and, for most callers, the more useful one:
 **it lets agent-written code use your API without ever receiving your credential, your
-base URL, or general network access.** The bearer is minted per run, stays in Go, and
+base URL, or general network access.** The bearer is supplied per run, stays in Go, and
 is attached host-side only after the caller and the exact route have been authorized.
 Code that ignores the injected client and calls out by hand does not get further,
 because the broker rather than the client is what enforces the policy. See
@@ -121,6 +121,13 @@ They live in [docs/trainers/](docs/trainers/) and work offline: open any file fr
 clone in a browser. GitHub shows `.html` files as source rather than rendering them,
 which is why the links above point at the published copy instead.
 
+For a visual overview:
+
+- [INTERNAL · system topology diagram →](docs/architecture/topology.svg): request
+  admission, provider boundaries, and brokered API calls.
+- [INTERNAL · credential-minting guide and diagram →](docs/architecture/credential-minting.md):
+  JWT minting, static-token reuse, where credentials stay, and possible enhancements.
+
 ## The problem
 
 Agent frameworks increasingly need to run model-authored code. A single-runtime vendor
@@ -149,7 +156,7 @@ for this project: a popular embeddable JavaScript sandbox advertised a `MemoryLi
 that was a **no-op**. The library promised a limit it did not enforce, and nothing in
 the type system or the docs revealed it.
 
-plimsoll is the policy and attestation layer in front of a sandbox, not a sandbox
+plimsoll is the policy and evidence layer in front of a sandbox, not a sandbox
 itself. Isolation is delegated to gVisor and Firecracker, which are better at it.
 
 ## Isolation tiers
@@ -260,9 +267,11 @@ A grant is **per-run**, not provider state, and it is domain-agnostic. It lets g
 code call an allowlisted HTTP API through an injected generic client
 (`host.get/put/post/del/call`).
 
-**The credential is minted per run and never enters the guest.** A grant carries a
-`TokenMinter`, not a static token, so you can issue short-lived route-scoped
-credentials that die almost immediately if exfiltrated. Enforcement lives in a shared
+**The credential is supplied per run and never injected into guest code.** A grant
+carries a `TokenMinter`: JWT profiles issue fresh, expiring tokens with the caller's
+identity and any declared scopes; static profiles reuse a configured bearer.
+See the [INTERNAL · credential-minting diagram and enhancement notes →](docs/architecture/credential-minting.md).
+Enforcement lives in a shared
 broker on the host side: Docker runs keep `--network none` and frame calls over a
 per-run Unix socket, while WASM uses a direct wazero host function where only
 `{method, path, body}` and a bounded response cross linear memory. In both cases the
@@ -298,10 +307,27 @@ drops** what it cannot express, so a verb the broker cannot enforce (`HEAD`,
 `OPTIONS`, `TRACE`) is a warning rather than a gap you discover later.
 
 ```sh
-plimsoll-specgen -emit grants   api.openapi.json   # the allow list and preamble
-plimsoll-specgen -emit catalog  api.openapi.json   # every route, for operator advice
-plimsoll-specgen -emit health   api.openapi.json   # the recovery probe, if derivable
+plimsoll-specgen -outdir ./generated api.openapi.json  # every artifact, as files
+plimsoll-specgen -emit catalog       api.openapi.json  # every route, for operator advice
+plimsoll-specgen -emit health        api.openapi.json  # the recovery probe, if marked
 ```
+
+**It generates a subset of OpenAPI, and says so when your document leaves it.** A grant
+authorizes a literal path template, so an operation that *requires* a query, header, or
+cookie parameter cannot be called through the broker at all: it is skipped with its
+reason rather than granted as a route the agent can never use, and an operation with
+optional ones is generated with a warning that the method always calls the bare route.
+A `$ref` path item or parameter is an error, not a silent omission. The emitted SDK is
+run in the embedded QuickJS engine by the project's own tests, so a generated method
+that cannot parse or throws on its first call fails the build rather than the agent.
+
+**One decision the generator cannot make for you.** The `allow` list it emits is
+*every* operation in the document, because a spec describes what an API has, not what
+an agent should be able to reach. Pasting it unedited into a profile grants the agent
+the whole API. Trim it to the routes you actually want reachable, and keep the
+untrimmed list in the profile's `catalog` field: the gap between the two is what lets
+the advisor name the specific missing route to add, instead of reporting a vague
+shortfall you still have to diagnose.
 
 Worked example, with the input document and every generated artifact side by side:
 [docs/examples/specgen](docs/examples/specgen).
@@ -315,10 +341,19 @@ protects your upstream API from the agent's behaviour, which is a different fail
 Nothing in a model's training makes it back off. So the broker does it host-side. When
 an upstream returns 429 or 503, a **per-run circuit breaker** opens for a cooldown
 that honours `Retry-After` (capped at 30s), and further permitted calls are *shed* with
-a fast 503 rather than piled onto an API that has already asked for room. While
-shedding, one elected caller per second probes the grant's declared `health_check`
-route and closes the breaker early on a 2xx, so recovery does not wait out the full
-cooldown or burn an expensive call to discover it.
+a fast 503 rather than piled onto an API that has already asked for room.
+
+Recovery depends on which of those two the upstream said, because they ask different
+questions. A **503** means the service is degraded, and the grant's declared
+`health_check` route can speak to that: while shedding, one elected caller per second
+probes it and a 2xx closes the breaker early, so recovery does not wait out the full
+cooldown or burn an expensive call to discover it. A **429** means *this caller* has
+spent its allowance, which a healthy service says nothing about — so that window is
+never probed and is simply waited out. Reopening it on a cheerful 200 would push the
+run's traffic straight back into the limiter that just asked it to stop. For the same
+reason, the generator will not pick a probe because an endpoint is *named* `/status`
+or `/healthz`; you mark the one that answers "can this API take traffic again" with
+`x-plimsoll-health-check`.
 
 The probe uses the run's credential but is neither traced nor charged to the call
 budget. Sheds are counted separately from policy denials (`CallTrace.Shed` versus
@@ -348,10 +383,10 @@ Checked September 2026 against their current documentation, four things differ h
   you write and rejecting the rest there. plimsoll refuses anything that is not
   byte-identical to an approved route, and that refusal is the component rather than an
   integration point.
-- **The credential is minted per run, not attached per sandbox.** Their documented
+- **JWT profiles mint a fresh credential per run.** Their documented
   examples interpolate a long-lived token from the operator's environment. A grant here
   carries a `TokenMinter` called once per run with that run's scopes and the calling
-  principal as the subject.
+  principal as the subject; static profiles deliberately reuse their bearer.
 - **No parallel path to bypass.** Vercel documents that traffic permitted by
   `subnets.allow` "bypasses SNI filtering, credentials brokering, and requests
   proxying", and that domain fronting is possible because matching reads the SNI alone.
@@ -411,15 +446,22 @@ call start times and no guest content. A small router then asks one question of 
 profile's allow list, for a GET fan-out only: does the collection route already
 exist? If it does, the finding is **agent-fixable** and names the granted route to
 switch to. If it does not, or the fan-out is a write (a collection write's semantics
-cannot be read off its path), it is an **API-change** finding, and `insights.Prompt`
-renders a paste-ready prompt for the API owner's own AI to design the missing
-endpoint, offering a server-side aggregate as an alternative for a read fan-out.
-plimsoll never calls a model itself.
+cannot be read off its path), the finding is one of two further things, and the
+second is not a verdict. When the profile declares a `catalog` (its full endpoint
+list) and the catalog exposes the batch route the grant omits, the finding names that
+route as the **one line to add to the allow list**: an operator action, carried on the
+audit line as `grant_route`, and no API change. When no such route is known,
+`insights.Prompt` renders a paste-ready prompt for the API owner's own AI that asks
+for the smallest change that would remove the pattern **or a plain statement that
+none is warranted**: one run's trace cannot show that the API forces the pattern on
+every caller, the granted routes may be a subset of the API, and a profile need not
+declare a catalog at all. For a read fan-out the prompt offers a server-side
+aggregate as a conditional alternative. plimsoll never calls a model itself.
 
 Who sees what is a per-profile setting. `advice: off | operator | caller` chooses the
 audience: `caller` returns the agent-fixable subset on the run result, which the Go
-client exposes as `Result.Advice`; API-change findings stay on operator surfaces
-whatever the mode. `advice_retention: none | aggregate | detailed` chooses what
+client exposes as `Result.Advice`; findings with no granted route stay on operator
+surfaces whatever the mode. `advice_retention: none | aggregate | detailed` chooses what
 reaches the durable audit log, from nothing to one metadata-only record per finding,
 which is the stream [prospector-report](cmd/prospector-report) renders as HTML.
 `/metrics` carries bounded counts by profile, pattern, severity and remedy.
@@ -584,6 +626,24 @@ Stated so you do not have to discover it in review:
 - E2B grants require `E2B_GUARD_URL`; the forced, authenticated guard keeps
   credentials and route enforcement outside the hostile VM. Without a grant,
   E2B runs deny egress.
+- **The E2B guard is process-local, so it does not sit behind an ordinary load
+  balancer.** A run's guard credential lives in the memory of the process that
+  created that run, so a guard request routed to a second replica is rejected as an
+  unknown credential even though it is valid. Whatever serves the public guard URL
+  must be the same process that launches the runs. Running more than one replica
+  needs the guard path pinned per instance (a distinct hostname or path per daemon),
+  not round-robin.
+- **`/readyz` reports configuration and reachable dependencies, not a working run.**
+  For `docker` it probes the pinned daemon and runtime; for `e2b` it validates
+  configuration and does not prove the API is reachable, the key is valid, or the
+  guard is routable. The behavioural proof is the startup `SmokeTest`, which runs
+  once and creates a real (billable) microVM — deliberately not on an unauthenticated
+  poll path. A green `/readyz` on `e2b` means "configured", not "working".
+- **The isolation tiers are evidence, not attestation.** `kernel` and `vm` rest on
+  provider identity and daemon/runtime configuration plus the behavioural smoke
+  tests, as spelled out above. Nothing here measures a hypervisor or verifies a
+  kernel boundary cryptographically. If your threat model needs attestation, no tier
+  in this component supplies it.
 - There is no fleet-level gateway across instances. The control surface is per
   instance.
 - There is no auto-patching supply chain. Images, the QuickJS artifact, gVisor, the

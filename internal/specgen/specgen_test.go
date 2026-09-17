@@ -1,14 +1,19 @@
 package specgen
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/plimsollmark/plimsoll/internal/grants"
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden artifacts under testdata/golden")
@@ -28,8 +33,8 @@ func TestGenerateGolden(t *testing.T) {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	// The spec's /status endpoint is auto-detected as the backpressure health route by
-	// the well-known-name heuristic (no x-plimsoll-health-check marker needed).
+	// The spec marks /status with x-plimsoll-health-check, which is the only way an
+	// operation becomes the backpressure probe.
 	if res.HealthCheck != "GET /status" {
 		t.Errorf("HealthCheck = %q, want %q (note %q)", res.HealthCheck, "GET /status", res.HealthNote)
 	}
@@ -256,9 +261,11 @@ func TestGeneratedProfileLoads(t *testing.T) {
 	}
 }
 
-// TestHealthRouteDetection covers deriving the backpressure health_check from the spec:
-// the well-known-name heuristic (including recovery-priority ranking and tie ambiguity)
-// and the explicit x-plimsoll-health-check override.
+// TestHealthRouteDetection covers deriving the backpressure health_check from the spec.
+// Only an explicit x-plimsoll-health-check marker designates one: the endpoint-name
+// heuristic was deleted on 2026-09-17 because a name is not evidence of what an endpoint
+// measures, and the probe's answer is what lets the breaker resume traffic. Every
+// health-sounding name below must therefore come back with no route and a note.
 func TestHealthRouteDetection(t *testing.T) {
 	op := func(id string) string { return `{"operationId":"` + id + `"}` }
 	spec := func(paths string) string {
@@ -268,48 +275,22 @@ func TestHealthRouteDetection(t *testing.T) {
 		name       string
 		spec       string
 		wantHealth string
-		wantNote   bool // expect a non-empty HealthNote (ambiguous)
 	}{
 		{
-			name:       "single well-known name",
-			spec:       spec(`"/lights":{"get":` + op("l") + `},"/status":{"get":` + op("s") + `}`),
-			wantHealth: "GET /status",
+			name: "a health-sounding name is not a probe",
+			spec: spec(`"/lights":{"get":` + op("l") + `},"/status":{"get":` + op("s") + `}`),
 		},
 		{
-			name:       "nested path uses last segment",
-			spec:       spec(`"/v1/healthz":{"get":` + op("h") + `}`),
-			wantHealth: "GET /v1/healthz",
+			name: "neither is a conventional readiness path",
+			spec: spec(`"/livez":{"get":` + op("a") + `},"/readyz":{"get":` + op("b") + `}`),
 		},
 		{
-			name:       "readiness outranks liveness for recovery",
-			spec:       spec(`"/livez":{"get":` + op("a") + `},"/readyz":{"get":` + op("b") + `}`),
-			wantHealth: "GET /readyz",
+			name: "nor a nested healthz",
+			spec: spec(`"/v1/healthz":{"get":` + op("h") + `}`),
 		},
 		{
-			name:       "capacity outranks health",
-			spec:       spec(`"/health":{"get":` + op("a") + `},"/capacity":{"get":` + op("b") + `}`),
-			wantHealth: "GET /capacity",
-		},
-		{
-			name:       "status is a capacity signal and outranks health",
-			spec:       spec(`"/healthz":{"get":` + op("a") + `},"/status":{"get":` + op("b") + `}`),
-			wantHealth: "GET /status",
-		},
-		{
-			name:       "same-rank tie is ambiguous, none picked",
-			spec:       spec(`"/ready":{"get":` + op("a") + `},"/readyz":{"get":` + op("b") + `}`),
-			wantHealth: "",
-			wantNote:   true,
-		},
-		{
-			name:       "a path param disqualifies a health-named route",
-			spec:       spec(`"/status/{id}":{"get":{"operationId":"s","parameters":[{"name":"id","in":"path"}]}}`),
-			wantHealth: "",
-		},
-		{
-			name:       "no health-named route",
-			spec:       spec(`"/lights":{"get":` + op("l") + `}`),
-			wantHealth: "",
+			name: "no health-named route",
+			spec: spec(`"/lights":{"get":` + op("l") + `}`),
 		},
 		{
 			name:       "explicit marker on a non-standard name",
@@ -317,7 +298,7 @@ func TestHealthRouteDetection(t *testing.T) {
 			wantHealth: "GET /probe",
 		},
 		{
-			name:       "explicit marker overrides a higher-ranked heuristic match",
+			name:       "explicit marker is what selects, not the neighbouring /capacity",
 			spec:       spec(`"/capacity":{"get":` + op("c") + `},"/beat":{"get":{"operationId":"b","x-plimsoll-health-check":true}}`),
 			wantHealth: "GET /beat",
 		},
@@ -331,8 +312,9 @@ func TestHealthRouteDetection(t *testing.T) {
 			if res.HealthCheck != tc.wantHealth {
 				t.Errorf("HealthCheck = %q, want %q", res.HealthCheck, tc.wantHealth)
 			}
-			if (res.HealthNote != "") != tc.wantNote {
-				t.Errorf("HealthNote = %q, wantNote = %v", res.HealthNote, tc.wantNote)
+			// The absence of a probe is always explained, and a resolved one never is.
+			if (res.HealthNote != "") != (tc.wantHealth == "") {
+				t.Errorf("HealthNote = %q with HealthCheck = %q", res.HealthNote, res.HealthCheck)
 			}
 		})
 	}
@@ -387,6 +369,18 @@ func TestGenerateErrors(t *testing.T) {
 		{"empty param", `{"openapi":"3.1.0","paths":{"/x/{}":{"get":{"operationId":"g"}}}}`, "empty {} parameter"},
 		{"duplicate method name", `{"openapi":"3.1.0","paths":{"/a":{"get":{"operationId":"do-it"}},"/b":{"get":{"operationId":"do.it"}}}}`, "collides"},
 		{"no supported ops", `{"openapi":"3.1.0","paths":{"/x":{"head":{"operationId":"h"}}}}`, "no supported operations"},
+		// A method named after one of the injected client's own verbs would replace the
+		// primitive its body calls, so the SDK would recurse into itself on first use.
+		{"operationId shadows the client", `{"openapi":"3.1.0","paths":{"/x":{"get":{"operationId":"get"}}}}`, "injected client's own methods"},
+		{"operationId shadows after sanitizing", `{"openapi":"3.1.0","paths":{"/x":{"delete":{"operationId":"del"}}}}`, "injected client's own methods"},
+		// $ref is not resolved, and a path item that parses to nothing would otherwise
+		// disappear from the generated surface without a word.
+		{"path item $ref", `{"openapi":"3.1.0","paths":{"/x":{"$ref":"#/components/pathItems/X"}}}`, "specgen resolves no references"},
+		{"parameter $ref", `{"openapi":"3.1.0","paths":{"/x":{"get":{"operationId":"g","parameters":[{"$ref":"#/components/parameters/Page"}]}}}}`, "specgen resolves no references"},
+		{"unknown parameter location", `{"openapi":"3.1.0","paths":{"/x":{"get":{"operationId":"g","parameters":[{"name":"p","in":"body"}]}}}}`, "unsupported location"},
+		// A marked probe that cannot actually be called is operator error, not a route to
+		// emit and discover at the first 503.
+		{"health marker on an uncallable op", `{"openapi":"3.1.0","paths":{"/probe":{"get":{"operationId":"p","x-plimsoll-health-check":true,"parameters":[{"name":"q","in":"query","required":true}]}}}}`, "x-plimsoll-health-check"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -398,5 +392,222 @@ func TestGenerateErrors(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tc.want)
 			}
 		})
+	}
+}
+
+// hazardSpec is a spec built entirely from shapes that a real OpenAPI document is
+// allowed to contain and that each broke the generated JavaScript before 2026-09-17:
+// a POST that declares no requestBody, a path parameter named after the preamble's own
+// client binding, one that is not a valid identifier, one that is a reserved word, and
+// two that sanitize to the same name.
+const hazardSpec = `{
+  "openapi": "3.1.0",
+  "info": {"title": "Hazards", "version": "1.0"},
+  "paths": {
+    "/events": {"post": {"operationId": "trigger", "summary": "Fire an event with no body."}},
+    "/things/{h}": {"get": {"operationId": "getThingForH"}},
+    "/items/{item-id}": {"get": {"operationId": "getItem"}},
+    "/nodes/{default}": {"delete": {"operationId": "deleteNode"}},
+    "/pairs/{a-b}/{a.b}": {"get": {"operationId": "getPair"}},
+    "/docs/{id}": {"put": {"operationId": "putDoc", "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}}}}
+  }
+}`
+
+// fakeHostClient stands in for the injected generic client (sandbox/capability.go): the
+// same six methods, returning what they were asked to send instead of sending it. The
+// preamble binds to whatever is on the global, so a generated method that shadowed or
+// overwrote one of these would be visible in the recorded output.
+const fakeHostClient = `
+globalThis.out = [];
+globalThis.host = {
+  call: (m, p, b) => ({ method: m, path: p, hasBody: b !== undefined }),
+  get: (p) => ({ method: "GET", path: p, hasBody: false }),
+  put: (p, b) => ({ method: "PUT", path: p, hasBody: b !== undefined }),
+  post: (p, b) => ({ method: "POST", path: p, hasBody: b !== undefined }),
+  patch: (p, b) => ({ method: "PATCH", path: p, hasBody: b !== undefined }),
+  del: (p) => ({ method: "DELETE", path: p, hasBody: false }),
+};
+globalThis.record = function (id, fn) {
+  var row = { id: id };
+  try {
+    var got = fn();
+    row.method = got.method; row.path = got.path; row.hasBody = got.hasBody;
+  } catch (e) {
+    row.error = String(e);
+  }
+  out.push(row);
+};
+`
+
+// TestGeneratedPreambleExecutes runs the generated SDK in the embedded QuickJS engine
+// and calls every method it defines. This is the test that a string-matching assertion
+// cannot replace: a preamble that does not parse, references an argument it never bound,
+// or shadows the client it calls is textually plausible and fails here. Each hazard in
+// hazardSpec produced exactly one of those before the generator was fixed.
+func TestGeneratedPreambleExecutes(t *testing.T) {
+	res, err := Generate([]byte(hazardSpec), Options{Global: "host"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(res.Operations) != 6 {
+		t.Fatalf("generated %d operations, want 6", len(res.Operations))
+	}
+
+	var code strings.Builder
+	code.WriteString(fakeHostClient)
+	code.WriteString(res.Preamble)
+	want := map[string]struct {
+		method, path string
+		hasBody      bool
+	}{}
+	for _, op := range res.Operations {
+		// Call each method with a distinct dummy per path parameter, so a mis-ordered or
+		// mis-bound argument lands in the wrong path segment rather than going unnoticed.
+		args := make([]string, 0, len(op.Params)+1)
+		path := op.Path
+		for i, p := range op.Params {
+			val := fmt.Sprintf("arg%d", i)
+			args = append(args, strconv.Quote(val))
+			// op.Params is deconflicted, so substitute positionally on the template.
+			open := strings.IndexByte(path, '{')
+			closeIdx := strings.IndexByte(path, '}')
+			if open < 0 || closeIdx < open {
+				t.Fatalf("%s %s: parameter %q has no template slot", op.Method, op.Path, p)
+			}
+			path = path[:open] + val + path[closeIdx+1:]
+		}
+		if op.HasBody {
+			args = append(args, `{"k":1}`)
+		}
+		want[op.ID] = struct {
+			method, path string
+			hasBody      bool
+		}{op.Method, path, op.HasBody}
+		fmt.Fprintf(&code, "record(%q, () => host[%q](%s));\n", op.ID, op.ID, strings.Join(args, ", "))
+	}
+	code.WriteString("console.log(JSON.stringify(out));\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	run, err := sandbox.DefaultWasm().RunJavaScript(ctx, sandbox.Request{Code: code.String(), Timeout: 15 * time.Second})
+	if err != nil {
+		t.Fatalf("run generated preamble: %v", err)
+	}
+	if run.ExitCode != 0 {
+		t.Fatalf("generated preamble exited %d\nstderr: %s\nstdout: %s", run.ExitCode, run.Stderr, run.Stdout)
+	}
+
+	var got []struct {
+		ID      string `json:"id"`
+		Method  string `json:"method"`
+		Path    string `json:"path"`
+		HasBody bool   `json:"hasBody"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(run.Stdout)), &got); err != nil {
+		t.Fatalf("parse run output %q: %v", run.Stdout, err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("called %d methods, generated %d", len(got), len(want))
+	}
+	for _, g := range got {
+		w, ok := want[g.ID]
+		if !ok {
+			t.Errorf("unexpected method %q in output", g.ID)
+			continue
+		}
+		if g.Error != "" {
+			t.Errorf("%s threw: %s", g.ID, g.Error)
+			continue
+		}
+		if g.Method != w.method || g.Path != w.path || g.HasBody != w.hasBody {
+			t.Errorf("%s called %s %s (body %v), want %s %s (body %v)", g.ID, g.Method, g.Path, g.HasBody, w.method, w.path, w.hasBody)
+		}
+	}
+}
+
+// TestBodylessBodyVerbPassesNoBodyArgument pins the emitted form for a POST/PUT/PATCH
+// with no requestBody: no body parameter and no body argument. Passing one anyway is a
+// ReferenceError the first time an agent calls the method.
+func TestBodylessBodyVerbPassesNoBodyArgument(t *testing.T) {
+	res, err := Generate([]byte(hazardSpec), Options{Global: "host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Preamble, `h["trigger"] = () => h.post("/events");`) {
+		t.Errorf("bodyless POST is not emitted without a body argument:\n%s", res.Preamble)
+	}
+	if !strings.Contains(res.Description, "host.trigger()  ->  POST /events") {
+		t.Errorf("description advertises a body argument the method does not take:\n%s", res.Description)
+	}
+}
+
+// TestPathParamsAreDeconflicted proves the emitted argument names are derived from the
+// spec but never trusted as identifiers: the client binding, invalid characters,
+// reserved words, and two names that sanitize alike all come out as distinct, legal
+// bindings that shadow nothing the method body needs.
+func TestPathParamsAreDeconflicted(t *testing.T) {
+	res, err := Generate([]byte(hazardSpec), Options{Global: "host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string][]string{}
+	for _, op := range res.Operations {
+		byID[op.ID] = op.Params
+	}
+	cases := map[string][]string{
+		"getThingForH": {"h_"},          // "h" is the preamble's client binding
+		"getItem":      {"item_id"},     // "-" is not an identifier character
+		"deleteNode":   {"default_"},    // a reserved word cannot be a binding
+		"getPair":      {"a_b", "a_b_"}, // both sanitize to a_b; the second is renamed
+	}
+	for id, want := range cases {
+		got := byID[id]
+		if len(got) != len(want) {
+			t.Errorf("%s params = %v, want %v", id, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s params = %v, want %v", id, got, want)
+				break
+			}
+		}
+	}
+}
+
+// TestQueryParametersReported covers the two honest outcomes for a parameter a brokered
+// call cannot send. A REQUIRED one makes the operation impossible, so it is skipped with
+// a reason; an optional one narrows the generated method, so it is generated with a
+// warning. Neither may pass silently: the emitted allow list would otherwise describe a
+// surface the agent can never reach.
+func TestQueryParametersReported(t *testing.T) {
+	spec := `{"openapi":"3.1.0","info":{"title":"t"},"paths":{
+	  "/search":{"get":{"operationId":"search","parameters":[{"name":"q","in":"query","required":true}]}},
+	  "/feed":{"get":{"operationId":"feed","parameters":[{"name":"page","in":"query"}]}},
+	  "/admin":{"get":{"operationId":"admin","parameters":[{"name":"X-Tenant","in":"header","required":true}]}}
+	}}`
+	res, err := Generate([]byte(spec), Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(res.Operations) != 1 || res.Operations[0].ID != "feed" {
+		t.Fatalf("generated %+v, want only the optional-parameter operation", res.Operations)
+	}
+	for _, r := range res.AllowStrings() {
+		if strings.Contains(r, "/search") || strings.Contains(r, "/admin") {
+			t.Errorf("allow list grants %q for an operation that cannot be called", r)
+		}
+	}
+	if len(res.Skipped) != 2 {
+		t.Fatalf("skipped %+v, want the required query and header operations", res.Skipped)
+	}
+	for _, s := range res.Skipped {
+		if !strings.Contains(s.Reason, "requires") {
+			t.Errorf("skip reason for %s %s does not say what is missing: %q", s.Method, s.Path, s.Reason)
+		}
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "/feed") {
+		t.Errorf("warnings = %v, want one naming GET /feed", res.Warnings)
 	}
 }

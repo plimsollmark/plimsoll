@@ -370,6 +370,13 @@ const E2BGuardHeader = "X-Plimsoll-E2B-Guard"
 // reusable by non-HTTP embedders.
 type EgressGuardCapable interface {
 	EgressGuardPath() string
+	// EgressGuardKnownToken reports whether token currently names a live run, using
+	// only a constant-work lookup: no body is read and no upstream call is made. It
+	// exists so an adapter can reject an unauthenticated request BEFORE spending
+	// memory and parsing work on its body. It is admission, never authority — the
+	// run may end between this call and the next, so EgressGuardCall re-checks and
+	// remains the only thing that can authorize a call.
+	EgressGuardKnownToken(token string) bool
 	EgressGuardCall(ctx context.Context, token, method, rawTarget string, body []byte) EgressGuardResponse
 }
 

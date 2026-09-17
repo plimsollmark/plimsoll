@@ -101,7 +101,10 @@ to the shipped audited allowlist `docker/seccomp.json` to deny non-cap-gated att
 surface like `ptrace`/`io_uring`/`keyctl` — see [docs/seccomp.md](docs/seccomp.md)),
 `SANDBOX_REQUIRE_PINNED_IMAGES` (`=1` to require both images to be
 `@sha256:`-pinned),
-`E2B_API_KEY`, `E2B_TEMPLATE`, `PLIMSOLL_GRANTS_FILE` (named host-API capability
+`E2B_API_KEY`, `E2B_TEMPLATE`, `E2B_GUARD_URL` (the guard is **process-local**: a run's
+guard credential lives only in the memory of the process that opened that run, so the
+public guard URL must resolve to that same process — an ordinary load balancer across
+replicas rejects valid guard calls as unknown credentials), `PLIMSOLL_GRANTS_FILE` (named host-API capability
 profiles selectable via `grant_profile`), and dev-only `PLIMSOLL_INSECURE=1`
 (explicitly permits a real provider without auth). Operational knobs: `SANDBOX_MIN_ISOLATION`
 (refuse to start below a tier: `vm|kernel|container|process`), the per-run resource
@@ -120,11 +123,18 @@ ignored for e2b, whose runners live off-host). Each provider reports its boundar
 `IsolationClass()` and in the RPC response `isolation` field, and the **`Describe`
 RPC** reports the active provider, tier, project support, and operation-specific
 grant support (via `ProjectCapable` / `GrantCapable`) so a gateway does not
-hard-code claims. It also advertises minimum-isolation protocol support; this is
+hard-code claims. **A reported tier is configuration and provider evidence plus the
+behavioral smoke tests below — never runtime attestation**, and any surface that
+advertises a tier has to carry that qualification (README states it in full under the
+provider table). It also advertises minimum-isolation protocol support; this is
 discovery only. Execution uses only the versioned `RunJavaScriptV2` /
 `RunProjectV2` procedures, so an old backend returns Unimplemented before code can
 run rather than silently ignoring a new request field. The daemon serves `GET /healthz`, `/readyz`,
-`/metrics` outside auth. `Describe` reports current isolation evidence but only
+`/metrics` outside auth. `/readyz` re-runs the provider's bounded `Preflight`: for docker
+that probes the pinned daemon and runtime, but for e2b it validates **configuration only**
+and proves nothing about API reachability, key validity, or guard routability — the
+behavioral proof is the one-shot startup `SmokeTest`, which creates a real billable
+microVM and so must never run on an unauthenticated poll path. `Describe` reports current isolation evidence but only
 structural/static operation support. Both real providers run a startup
 **`SmokeTest`** (behavior, not just configuration) via `EnsureReady`, and neither
 serves if it fails. For docker: one throwaway lockdown container per configured
@@ -198,23 +208,36 @@ generator** ([internal/specgen](internal/specgen/), CLI
 [cmd/plimsoll-specgen](cmd/plimsoll-specgen/)) derives all three from one OpenAPI
 3.x document — path params become whole-segment `*` routes, operations become typed
 `globalThis[global]` methods, summaries become the description. It is deterministic and
-offline (no server fetch, no credential), fails closed on ambiguous input, and reports
-rather than drops verbs the broker can't enforce (grants allow GET/PUT/POST/DELETE/PATCH;
-HEAD/OPTIONS/TRACE are skipped with a warning). `-emit catalog` gives the full route list
-for a profile's `catalog` (see the advisory channel). It also derives an optional concrete
-`health_check` recovery probe from a well-known GET route or an explicit
-`x-plimsoll-health-check: true` operation; ambiguous candidates are reported instead of
-guessed. `-emit health` outputs that profile line. Worked example:
+offline (no server fetch, no credential), and enforces its **supported subset at parse
+time** rather than emitting a method that cannot run: it reports rather than drops verbs
+the broker can't enforce (grants allow GET/PUT/POST/DELETE/PATCH; HEAD/OPTIONS/TRACE are
+skipped with a warning) and operations requiring a query/header/cookie parameter (a
+brokered call sends a literal path and no headers, so such an operation is unreachable),
+warns when optional ones are dropped, and errors on a `$ref` path item or parameter rather
+than letting it vanish from the surface. Generated argument names are sanitized and
+deconflicted against the client binding and JS reserved words, a body argument is emitted
+only when the operation declares a request body, and an `operationId` naming one of the
+injected client's own methods (`get`/`put`/`post`/`patch`/`del`/`call`) is refused. The
+generated SDK is **executed in QuickJS by the tests**, so a preamble that does not parse or
+throws on its first call fails the build. `-emit catalog` gives the full route list for a
+profile's `catalog` (see the advisory channel). It emits an optional concrete `health_check`
+recovery probe only for the operation explicitly marked `x-plimsoll-health-check: true`;
+`-emit health` outputs that profile line. Worked example:
 [docs/examples/specgen](docs/examples/specgen/).
 
 **Backpressure.** A grant's optional concrete `HealthCheck` GET route (profile
 `health_check`) drives a per-run circuit breaker: an upstream 429/503 opens it for a
 cooldown (honoring `Retry-After`, capped at 30s) and the broker *sheds* further permitted
-calls (fast 503) rather than pile onto a struggling API; while shedding, one elected
-caller per second probes the health route host-side and closes the breaker early on a 2xx.
-The probe uses the run's credential but is neither traced nor charged to the call budget.
-Sheds are counted in `CallTrace.Shed` (distinct from a policy `Denied`) and surfaced as
-`host_calls_shed` on the audit line.
+calls (fast 503) rather than pile onto a struggling API. **The two statuses recover
+differently, because the probe answers only one of their questions.** A 503 says the
+service is degraded, which the health route can speak to: while shedding, one elected
+caller per second probes it host-side and a 2xx closes the breaker early. A 429 says this
+caller has spent its allowance, which a healthy service says nothing about, so that window
+is never probed and is waited out — reopening it on a 200 would push the run's traffic
+straight back into the limiter that asked it to back off. For the same reason specgen will
+not guess a probe from an endpoint's name. The probe uses the run's credential but is
+neither traced nor charged to the call budget. Sheds are counted in `CallTrace.Shed`
+(distinct from a policy `Denied`) and surfaced as `host_calls_shed` on the audit line.
 
 Grant `BaseURL`s are canonical origins only (scheme + host + optional port; no
 userinfo/path/query/fragment), with HTTPS required off loopback, so every provider
@@ -326,16 +349,22 @@ path into guest content. The pipeline:
    set) and states its condition, that the collection route must return the same
    items, which plimsoll does not verify. A write fan-out is never routed, granted or
    catalogued: a collection write's semantics cannot be read off its path, so it stays
-   an API-change finding until an explicit operation relationship exists. With no
-   suggested route it is an **API-change** finding, and `insights.Prompt` can render a
-   paste-ready prompt for the customer's own AI to design the missing endpoint; for a
-   read fan-out that prompt also offers a server-side aggregate as a conditional
-   alternative, which is where the aggregate idea now lives. plimsoll emits text
-   and **never calls an LLM itself**. When a profile also declares a `catalog` (its full
-   endpoint list, e.g. `plimsoll-specgen -emit catalog`), an API-change finding whose
-   batch route the catalog exposes but the grant omits is annotated with the concrete route
-   to add (`Finding.CatalogMatch`, audit `grant_route`) — an operator action, never
-   returned to the caller, since the agent cannot call an ungranted route.
+   unrouted until an explicit operation relationship exists. When a profile also declares
+   a `catalog` (its full endpoint list, e.g. `plimsoll-specgen -emit catalog`), a finding
+   whose batch route the catalog exposes but the grant omits is annotated with the concrete
+   route to add (`Finding.CatalogMatch`, audit `grant_route`) — an **operator action**,
+   never returned to the caller, since the agent cannot call an ungranted route.
+   **A finding is therefore one of three things, and the third is not a verdict:** a
+   granted route covers it, the catalog names one the profile omits, or *neither is
+   known*. Only in that third case does `insights.Prompt` render a paste-ready prompt for
+   the customer's own AI, and it asks for the smallest change **or for a plain statement
+   that none is warranted** — one run's trace cannot show that an API forces a pattern on
+   every caller, the granted routes may be a subset of what the API offers, and a profile
+   need not declare a catalog at all. For a read fan-out the prompt also offers a
+   server-side aggregate as a conditional alternative, which is where the aggregate idea
+   now lives. plimsoll emits text and **never calls an LLM itself**. The HTML report keeps
+   the three classes distinct (`report.Class`) and carries the WIP notice the advisor
+   example page carries.
 3. **Routing by audience.** Per-profile `advice: off|operator|caller`
    (`grants.AdviceMode`) decides who can act: `off` computes nothing; `operator` keeps
    findings on operator surfaces; `caller` additionally returns the agent-fixable subset
@@ -345,7 +374,7 @@ path into guest content. The pipeline:
    route template, suggested route, and the cost numbers); direct in-process
    providers leave it nil, since advice is a service-side computation. Both `RunJavaScriptV2`
    and `RunProjectV2` compute and route advice the same way over their run's `CallTrace`.
-   API-change findings stay operator-only regardless.
+   Findings with no granted route stay operator-only regardless.
 4. **Retention of durable telemetry.** Per-profile `advice_retention: none|aggregate|detailed`
    (`grants.AdviceRetention`) gates only what reaches the **durable audit log**, orthogonal
    to the audience: `none` (default) writes nothing, `aggregate` writes per-run totals,

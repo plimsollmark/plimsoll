@@ -22,7 +22,7 @@ import (
 
 // Finding is one efficiency observation as it appears in the report. It mirrors the
 // advice_finding_details records on the audit line plus an optional DesignPrompt the
-// caller may attach for API-change findings (Phase 3 surfacing).
+// caller may attach for findings that need a new endpoint (Phase 3 surfacing).
 type Finding struct {
 	Pattern         string `json:"pattern"`
 	Severity        string `json:"severity"`
@@ -33,13 +33,44 @@ type Finding struct {
 	AgentFixable    bool   `json:"agent_fixable"`
 	SuggestedMethod string `json:"suggested_method"`
 	SuggestedRoute  string `json:"suggested_route"`
-	ExtraCalls      int    `json:"extra_calls"`
-	AddedLatencyMs  int64  `json:"added_latency_ms"`
-	BytesMoved      int    `json:"bytes_moved"`
-	// DesignPrompt is an optional API-change design prompt for an operator to paste
-	// into their own AI. It is filled in by the caller (which holds the profile's
-	// route list); the audit stream never carries it. Rendered only when set.
+	// GrantRouteMethod/GrantRoute name a route the API already exposes (per the
+	// profile's catalog) that the profile does not grant. plimsoll writes them on the
+	// audit line as grant_route_method/grant_route; dropping them here is what used to
+	// turn "add one line to the allow list" into "the API needs a change".
+	GrantRouteMethod string `json:"grant_route_method"`
+	GrantRoute       string `json:"grant_route"`
+	ExtraCalls       int    `json:"extra_calls"`
+	AddedLatencyMs   int64  `json:"added_latency_ms"`
+	BytesMoved       int    `json:"bytes_moved"`
+	// DesignPrompt is an optional design prompt for an operator to paste into their own
+	// AI. It is filled in by the caller (which holds the profile's route list); the
+	// audit stream never carries it. Rendered only when set.
 	DesignPrompt string `json:"-"`
+}
+
+// Class is what the report can say about a finding's fix, and it is deliberately three
+// values rather than two. plimsoll knows a route is granted (the agent can switch to it
+// now) or catalogued but ungranted (the operator adds one allow line). Knowing NEITHER is
+// not the same as knowing the API must change: the profile may simply declare no catalog,
+// or expose an equivalent endpoint under a name this run never touched.
+type Class string
+
+const (
+	ClassAgentFixable Class = "agent-fixable" // a granted route covers it
+	ClassGrantRoute   Class = "grant-route"   // the API has it; the profile does not grant it
+	ClassNoKnownRoute Class = "no-known-route"
+)
+
+// Class classifies one finding for display and counting.
+func (f Finding) Class() Class {
+	switch {
+	case f.AgentFixable:
+		return ClassAgentFixable
+	case f.GrantRoute != "":
+		return ClassGrantRoute
+	default:
+		return ClassNoKnownRoute
+	}
 }
 
 // Record is one "code run" audit line reduced to the fields the report renders.

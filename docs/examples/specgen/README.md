@@ -62,21 +62,31 @@ the full list for `catalog` with `plimsoll-specgen -emit catalog`.
 ## The health route wires straight into backpressure
 
 The spec's `GET /status` endpoint is a cheap read that reports the gateway's health and
-current capacity. specgen recognizes it as the profile's `health_check` — the backpressure
-recovery probe — and writes it to `health_check.txt`, so `grants.json` sets
-`"health_check": "GET /status"` with no hand-wiring. At runtime, an upstream `429`/`503`
-trips the per-run circuit breaker; while the broker sheds calls, one elected caller/sec
-probes `GET /status` host-side and closes the breaker early on a `2xx`.
+current capacity, and it carries `"x-plimsoll-health-check": true`. That marker is what
+makes it the profile's `health_check` — the backpressure recovery probe — so specgen
+writes it to `health_check.txt` and `grants.json` sets `"health_check": "GET /status"`
+with no hand-wiring. At runtime an upstream `503` trips the per-run circuit breaker;
+while the broker sheds calls, one elected caller/sec probes `GET /status` host-side and
+closes the breaker early on a `2xx`.
 
-Detection needs no annotation: a concrete `GET` whose last path segment is a well-known
-health/readiness/capacity name (`/status`, `/healthz`, `/readyz`, `/capacity`, …) is
-picked automatically, preferring a readiness/capacity signal over a bare liveness/ping (a
-process can be live but still shedding). To designate a non-standard route, or to
-disambiguate when two equally-ranked names tie, mark exactly one operation with the
-`x-plimsoll-health-check: true` OpenAPI extension — that wins over the heuristic, and a
-marker on a non-`GET` or parameterized path fails generation closed. If the spec declares
-no health route, no `health_check.txt` is written and the profile simply gets reactive
-shedding with no recovery probe. Get just this line with `plimsoll-specgen -emit health`.
+**The marker is the only way to designate one, and that is deliberate.** specgen used to
+pick a route whose last segment looked like a health endpoint (`/status`, `/healthz`,
+`/readyz`, …). That heuristic was deleted on 2026-09-17: a name is not evidence of what
+an endpoint measures, so it would happily select an account-status read, and a probe that
+answers `200` for the wrong reason closes the breaker and puts the traffic straight back
+onto a struggling API. No probe is better than a wrong one — the breaker then simply
+waits out its cooldown.
+
+Mark exactly one operation, and make it an endpoint that answers *"can this API take
+traffic again"*. A marker on a non-`GET`, a parameterized path, or an operation that
+cannot be called at all fails generation closed. With no marker, no `health_check.txt` is
+written, `plimsoll-specgen` says so on stderr, and the profile gets reactive shedding with
+no recovery probe. Get just this line with `plimsoll-specgen -emit health`.
+
+Note what the probe does **not** cover: a `429`. A healthy service says nothing about
+whether *this caller's* rate limit or quota has reset, so a `429` rides out its full
+cooldown (the upstream's own `Retry-After` when it sent one) and is never closed early by
+a probe. Only a `503` — the upstream reporting itself degraded — is probed for recovery.
 
 ## What the generator guarantees
 
@@ -100,6 +110,25 @@ shedding with no recovery probe. Get just this line with `plimsoll-specgen -emit
   ```
   plimsoll-specgen: skipped OPTIONS /lights (host-API grants enforce only GET/PUT/POST/DELETE/PATCH)
   ```
+
+- **Query, header, and cookie parameters cannot be sent.** A grant authorizes a literal
+  path template: the broker rejects any target carrying a `?`, and guest code sets no
+  headers. An operation that *requires* one is skipped with its reason, and one that
+  merely offers optional ones is generated with a warning saying the method always calls
+  the bare route. This spec has none; a spec with a `GET /search?q=` gets:
+
+  ```
+  plimsoll-specgen: skipped GET /search (requires query "q", which a brokered call cannot send: …)
+  ```
+
+- **`$ref` is not resolved.** A `$ref` path item or parameter is an error, not a silent
+  omission — bundle or dereference the spec first. Before 2026-09-17 a `$ref` path item
+  parsed to an empty entry and vanished from the generated surface without a word.
+- **The emitted SDK is executed in tests, not just string-matched.** `internal/specgen`
+  runs the generated preamble in the embedded QuickJS engine and calls every method it
+  defines, so a body argument that was never bound, an operation named after one of the
+  client's own verbs, or a path parameter that is not a legal identifier (`{item-id}`,
+  `{default}`, `{h}`) fails the build rather than the agent's first call.
 
 ## Using it in a build
 

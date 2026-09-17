@@ -41,7 +41,7 @@ the author: the tests, `make audit`, and the isolation evidence each run reports
   kernel tier (Docker under gVisor `runsc`). A Docker provider under stock `runc` is
   container-tier and shares the host kernel.
 - Isolation itself is delegated to gVisor and Firecracker. This project is the policy
-  and attestation layer in front of them; it does not implement a sandbox boundary of
+  and evidence layer in front of them; it does not implement a sandbox boundary of
   its own and does not claim to.
 
 ## Reporting a vulnerability

@@ -112,8 +112,9 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
   <div class="tile"><div class="n">{{.TotalRuns}}</div><div class="k">Runs</div></div>
   <div class="tile"><div class="n">{{.TotalHostCalls}}</div><div class="k">Host calls</div></div>
   <div class="tile{{if .TotalFindings}} warn{{end}}"><div class="n">{{.TotalFindings}}</div><div class="k">Findings</div></div>
-  <div class="tile good"><div class="n">{{.TotalAgentFixable}}</div><div class="k">Agent-fixable</div></div>
-  <div class="tile{{if .TotalAPIChange}} warn{{end}}"><div class="n">{{.TotalAPIChange}}</div><div class="k">API-change</div></div>
+  <div class="tile good"><div class="n">{{.TotalAgentFixable}}</div><div class="k">Agent-fixable (route already granted)</div></div>
+  <div class="tile{{if .TotalGrantRoute}} warn{{end}}"><div class="n">{{.TotalGrantRoute}}</div><div class="k">Route to grant (API has it)</div></div>
+  <div class="tile{{if .TotalNoKnownRoute}} warn{{end}}"><div class="n">{{.TotalNoKnownRoute}}</div><div class="k">No known route</div></div>
   <div class="tile{{if .TotalAddedLatencyMs}} bad{{end}}"><div class="n">{{ms .TotalAddedLatencyMs}}</div><div class="k">Modelled latency beyond one call</div></div>
   <div class="tile"><div class="n">{{.TotalExtraCalls}}</div><div class="k">Extra calls</div></div>
   <div class="tile"><div class="n">{{bytes .TotalBytesMoved}}</div><div class="k">Bytes moved</div></div>
@@ -123,7 +124,7 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
 <h2>Profiles by modelled latency beyond one call</h2>
 <div class="card">
 <table>
-  <thead><tr><th>Profile</th><th class="num">Runs</th><th class="num">Host calls</th><th class="num">Findings</th><th class="num">Agent-fixable</th><th class="num">API-change</th><th class="num">Extra calls</th><th class="num">Modelled latency</th><th class="num">Bytes</th></tr></thead>
+  <thead><tr><th>Profile</th><th class="num">Runs</th><th class="num">Host calls</th><th class="num">Findings</th><th class="num">Agent-fixable</th><th class="num">To grant</th><th class="num">No known route</th><th class="num">Extra calls</th><th class="num">Modelled latency</th><th class="num">Bytes</th></tr></thead>
   <tbody>
   {{range .Profiles}}
     <tr>
@@ -132,7 +133,8 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
       <td class="num">{{.HostCalls}}</td>
       <td class="num">{{.Findings}}</td>
       <td class="num">{{.AgentFixable}}</td>
-      <td class="num">{{.APIChange}}</td>
+      <td class="num">{{.GrantRoute}}</td>
+      <td class="num">{{.NoKnownRoute}}</td>
       <td class="num">{{.ExtraCalls}}</td>
       <td class="num">{{ms .AddedLatencyMs}}</td>
       <td class="num">{{bytes .BytesMoved}}</td>
@@ -194,12 +196,14 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
           <div class="finding-head">
             <span class="badge">{{prettyPattern .Pattern}}</span>
             <span class="badge sev-{{sevKey .Severity}}">{{.Severity}}</span>
-            {{if .AgentFixable}}<span class="badge fix">agent-fixable</span>{{else}}<span class="badge api">API change</span>{{end}}
+            {{if .AgentFixable}}<span class="badge fix">agent-fixable</span>{{else if .GrantRoute}}<span class="badge api">grant a route</span>{{else}}<span class="badge api">no known route</span>{{end}}
             <code>{{.Method}} {{.Route}}</code>
           </div>
           <p>{{.Detail}}</p>
           {{$c := cost .}}{{if $c}}<p class="cost">{{$c}}</p>{{end}}
           {{if .SuggestedRoute}}<p class="suggest">Better route already granted: <code>{{.SuggestedMethod}} {{.SuggestedRoute}}</code> — the agent can switch to it now.</p>{{end}}
+          {{if .GrantRoute}}<p class="suggest">The API exposes <code>{{.GrantRouteMethod}} {{.GrantRoute}}</code> but this profile does not grant it. Operator action: add that one route to the profile's <code>allow</code> list. No API change is needed.</p>{{end}}
+          {{if eq (printf "%s" .Class) "no-known-route"}}<p class="note">No granted route covers this, and the profile's catalog names none either — which may mean the API has no such endpoint, or that the profile declares no catalog to check. Confirm before treating it as missing.</p>{{end}}
           {{if .DesignPrompt}}<details class="prompt"><summary>API-design prompt for this finding</summary><pre>{{.DesignPrompt}}</pre></details>{{end}}
         </div>
       {{end}}
@@ -215,7 +219,12 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
 {{end}}
 
 <footer>
-  plimsoll Prospector · every value above is metadata only — route templates, verbs, counts, and timings — never a request path, body, or credential.
+  <p><b>The advisor is a work in progress, and off unless a profile asks for it.</b> Two detectors ship today
+  (a fan-out over a per-item route, and repeated reads of one fixed route) and the rule set is not settled: two
+  earlier detectors were removed once it was clear the trace could not support them. A finding is evidence about
+  one run, not a verdict on the API. Read the costs as modelled, not measured: "extra calls" compares the pattern
+  with an assumed ideal of one call, and the latency is summed round trips beyond that, not wall time lost.</p>
+  <p>plimsoll Prospector · every value above is metadata only — route templates, verbs, counts, and timings — never a request path, body, or credential.</p>
 </footer>
 </div>
 <script>

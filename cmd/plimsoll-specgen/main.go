@@ -3,7 +3,7 @@
 // hand-writes and must keep in sync: the grant's `allow` route list, the typed JS
 // `preamble` SDK, and the model-facing tool description a gateway shows the agent.
 // Generating all three from the one spec lets a consumer delete the hand-maintained
-// copies. When the spec designates a concrete health/readiness/capacity GET, it also
+// copies. When the spec marks one concrete GET with x-plimsoll-health-check, it also
 // emits the optional `health_check` backpressure probe (see docs/examples/specgen).
 //
 // It is offline and metadata-only: it never fetches the spec's server, embeds no
@@ -25,8 +25,13 @@
 // Prospector reads to name an ungranted batch route worth adding; `allow` is the same
 // list, meant as the starting point an operator trims to the routes it actually grants.
 // The `health` emit is the "GET /path" line for a profile's `health_check` backpressure
-// probe, derived from an operation marked x-plimsoll-health-check or a well-known
-// health/readiness/capacity endpoint name (empty, with a stderr note, if none/ambiguous).
+// probe. Only an operation marked x-plimsoll-health-check designates one, because the
+// probe decides when to resume traffic and an endpoint's name is not evidence of what it
+// measures; with no marker the emit is empty and the reason goes to stderr.
+//
+// Operations the grant model cannot express (an unenforceable verb, a required query or
+// header parameter) are reported on stderr as skips, and generated-but-narrowed ones as
+// warnings. Neither is fatal; both are printed before any artifact.
 package main
 
 import (
@@ -81,8 +86,12 @@ func run() error {
 	for _, s := range res.Skipped {
 		fmt.Fprintf(os.Stderr, "plimsoll-specgen: skipped %s %s (%s)\n", s.Method, s.Path, s.Reason)
 	}
-	// Surface an unresolved health route the same way: the caller learns their spec has
-	// candidates but needs to disambiguate, rather than silently getting no health_check.
+	// Operations that WERE generated but whose emitted method is narrower than the spec.
+	for _, w := range res.Warnings {
+		fmt.Fprintf(os.Stderr, "plimsoll-specgen: warning: %s\n", w)
+	}
+	// Say why there is no health_check, rather than leaving a profile silently without a
+	// recovery probe.
 	if res.HealthNote != "" {
 		fmt.Fprintf(os.Stderr, "plimsoll-specgen: health_check not set: %s\n", res.HealthNote)
 	}
@@ -102,7 +111,7 @@ func run() error {
 		fmt.Fprint(os.Stdout, res.Description)
 	case "health":
 		// A bare line so it composes in a script; empty (with the stderr note above) when
-		// the spec declares no unambiguous health route.
+		// the spec marks no operation as the health probe.
 		if res.HealthCheck != "" {
 			fmt.Fprintln(os.Stdout, res.HealthCheck)
 		}
@@ -143,8 +152,24 @@ type bundle struct {
 	Allow       []string `json:"allow"`
 	Preamble    string   `json:"preamble"`
 	Description string   `json:"description"`
+	Skipped     []string `json:"skipped,omitempty"`
+	Warnings    []string `json:"warnings,omitempty"`
 	HealthCheck string   `json:"health_check,omitempty"`
 	HealthNote  string   `json:"health_note,omitempty"`
+}
+
+// skippedLines renders the skipped operations for the JSON bundle, so a programmatic
+// consumer sees the same omissions the stderr notes report rather than inferring them
+// from a shorter allow list than its spec.
+func skippedLines(res *specgen.Result) []string {
+	if len(res.Skipped) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(res.Skipped))
+	for _, s := range res.Skipped {
+		out = append(out, fmt.Sprintf("%s %s: %s", s.Method, s.Path, s.Reason))
+	}
+	return out
 }
 
 func printBundleJSON(w io.Writer, res *specgen.Result) error {
@@ -155,6 +180,8 @@ func printBundleJSON(w io.Writer, res *specgen.Result) error {
 		Allow:       res.AllowStrings(),
 		Preamble:    res.Preamble,
 		Description: res.Description,
+		Skipped:     skippedLines(res),
+		Warnings:    res.Warnings,
 		HealthCheck: res.HealthCheck,
 		HealthNote:  res.HealthNote,
 	}, "", "  ")

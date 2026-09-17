@@ -29,8 +29,8 @@ func loadSample(t *testing.T) []Record {
 // a foreign/corrupt line and a "code run failed" error line without failing.
 func TestParseSkipsNonCodeRun(t *testing.T) {
 	recs := loadSample(t)
-	if len(recs) != 4 {
-		t.Fatalf("expected 4 code-run records, got %d", len(recs))
+	if len(recs) != 5 {
+		t.Fatalf("expected 5 code-run records, got %d", len(recs))
 	}
 	if recs[0].Profile != "hue" || len(recs[0].Findings) != 2 {
 		t.Errorf("record 0 = %+v, want hue with 2 findings", recs[0])
@@ -94,19 +94,25 @@ func TestRenderFromSample(t *testing.T) {
 		}
 	}
 
-	// Aggregates: 4 findings total (2+1+1), 197 host calls (24+140+30+3), 2 agent-fixable,
-	// 2 API-change.
+	// Aggregates: 5 findings total (2+1+1+1), 238 host calls (24+140+30+3+41),
+	// 2 agent-fixable, 1 route to grant, 2 with no known route.
 	wants := []string{
 		"sample-audit.jsonl",
 		"2026-07-18 12:00:00 UTC",
-		">197<", // total host calls tile
-		">4<",   // total findings tile
+		">238<", // total host calls tile
+		">5<",   // total findings tile
 		"Fan-out",
 		"Aggregate in code",
 		"/v1/lights/*",
 		"Better route already granted",
 		"a batch endpoint would collapse them into one request.",
-		"metadata only", // footer guarantee
+		// The three fix classes the report distinguishes, each on a real record.
+		"agent-fixable",
+		"grant a route",
+		"<code>GET /api/suppliers</code> but this profile does not grant it",
+		"no known route",
+		"work in progress", // the advisor's own status, on the artifact itself
+		"metadata only",    // footer guarantee
 	}
 	for _, w := range wants {
 		if !strings.Contains(out, w) {
@@ -199,5 +205,63 @@ func TestRenderEmpty(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "No") {
 		t.Error("empty report should show an empty-state message")
+	}
+}
+
+// TestParseCarriesGrantRoute proves the report reads the grant_route fields the daemon
+// writes. Dropping them at this boundary is what turned "add one line to the allow list"
+// into "the API needs a change" in the rendered page, even though the audit line named
+// the exact route to grant.
+func TestParseCarriesGrantRoute(t *testing.T) {
+	line := `{"msg":"code run","grant_profile":"inventory","advice_findings":1,"advice_finding_details":[{"pattern":"fan_out","severity":"medium","remedy":"batch","method":"GET","route":"/api/orders/*","agent_fixable":false,"grant_route_method":"GET","grant_route":"/api/orders"}]}`
+	recs, err := Parse(strings.NewReader(line))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || len(recs[0].Findings) != 1 {
+		t.Fatalf("parsed %+v, want one record with one finding", recs)
+	}
+	f := recs[0].Findings[0]
+	if f.GrantRouteMethod != "GET" || f.GrantRoute != "/api/orders" {
+		t.Fatalf("grant route = %q %q, want GET /api/orders", f.GrantRouteMethod, f.GrantRoute)
+	}
+	if f.Class() != ClassGrantRoute {
+		t.Fatalf("class = %q, want %q", f.Class(), ClassGrantRoute)
+	}
+}
+
+// TestRenderClassifiesByWhatIsKnown checks the three classes read differently on the
+// page. The distinction is the point: a granted route is the agent's to use, a catalogued
+// one is an operator's allow-list line, and neither being known is not evidence that the
+// API must change — the profile may simply declare no catalog.
+func TestRenderClassifiesByWhatIsKnown(t *testing.T) {
+	rec := Record{Profile: "inventory", Sandbox: "docker", FindingCount: 3, Findings: []Finding{
+		{Pattern: "fan_out", Severity: "high", Remedy: "batch", Method: "GET", Route: "/a/*", Detail: "granted sibling", AgentFixable: true, SuggestedMethod: "GET", SuggestedRoute: "/a"},
+		{Pattern: "fan_out", Severity: "medium", Remedy: "batch", Method: "GET", Route: "/b/*", Detail: "catalogued sibling", GrantRouteMethod: "GET", GrantRoute: "/b"},
+		{Pattern: "fan_out", Severity: "low", Remedy: "batch", Method: "GET", Route: "/c/*", Detail: "nothing known"},
+	}}
+	var buf bytes.Buffer
+	if err := Render(&buf, []Record{rec}, Options{Generated: fixedTime}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"agent-fixable",
+		"grant a route",
+		"<code>GET /b</code> but this profile does not grant it",
+		"no known route",
+		"the profile declares no catalog to check",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered report is missing %q", want)
+		}
+	}
+	// The old binary label claimed more than the data supports; it must be gone.
+	if strings.Contains(out, ">API change<") {
+		t.Error("report still labels an unresolved finding as an API change")
+	}
+	// The report says the advisor is a work in progress, like the example page does.
+	if !strings.Contains(out, "work in progress") {
+		t.Error("rendered report carries no work-in-progress notice")
 	}
 }

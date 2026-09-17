@@ -81,7 +81,7 @@ func TestE2BGuardLive(t *testing.T) {
 		if err != nil {
 			t.Fatalf("listen for self-served guard on %s: %v", listen, err)
 		}
-		srv := &http.Server{Handler: EgressGuardHTTPHandler(e, e.EgressGuardPath())}
+		srv := &http.Server{Handler: EgressGuardHTTPHandler(e, e.EgressGuardPath(), 0)}
 		go func() { _ = srv.Serve(ln) }()
 		defer func() { _ = srv.Close() }()
 		t.Logf("serving guard handler on %s for %s; the public guard host must route the path here", listen, e.EgressGuardPath())

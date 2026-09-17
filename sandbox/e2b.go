@@ -214,14 +214,28 @@ func (e *E2B) EgressGuardPath() string {
 	return ""
 }
 
+// EgressGuardKnownToken is the pre-body admission check (see EgressGuardCapable).
+// It does exactly what EgressGuardCall's own lookup does and nothing more, so it
+// leaks no fact the authoritative path would not have returned anyway.
+func (e *E2B) EgressGuardKnownToken(token string) bool {
+	return e.guardSession(token) != nil
+}
+
+func (e *E2B) guardSession(token string) *brokerSession {
+	if strings.TrimSpace(token) == "" {
+		return nil
+	}
+	digest := sha256.Sum256([]byte(token))
+	e.guardMu.Lock()
+	defer e.guardMu.Unlock()
+	return e.guards[digest]
+}
+
 func (e *E2B) EgressGuardCall(ctx context.Context, token, method, rawTarget string, body []byte) EgressGuardResponse {
 	if strings.TrimSpace(token) == "" {
 		return EgressGuardResponse{Status: http.StatusUnauthorized, ContentType: "application/json", Body: []byte(`{"error":"missing egress guard credential"}`)}
 	}
-	digest := sha256.Sum256([]byte(token))
-	e.guardMu.Lock()
-	core := e.guards[digest]
-	e.guardMu.Unlock()
+	core := e.guardSession(token)
 	if core == nil {
 		return EgressGuardResponse{Status: http.StatusUnauthorized, ContentType: "application/json", Body: []byte(`{"error":"unknown or expired egress guard credential"}`)}
 	}

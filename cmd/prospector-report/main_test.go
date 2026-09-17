@@ -67,6 +67,17 @@ func TestAttachPrompts(t *testing.T) {
 				Pattern: "fan_out", Remedy: "batch", Method: "GET", Route: "/x/*", AgentFixable: false,
 			}},
 		},
+		{
+			// The catalog names a route the API already exposes; the operator grants it.
+			// Asking a model to design an endpoint that exists is the bug this pins.
+			Profile: "inventory",
+			Findings: []report.Finding{{
+				Pattern: "fan_out", Remedy: "batch", Method: "GET", Route: "/api/orders/*",
+				Detail:       "fan-out; the API exposes a collection route this profile does not grant",
+				AgentFixable: false, GrantRouteMethod: "GET", GrantRoute: "/api/orders",
+				ExtraCalls: 29,
+			}},
+		},
 	}
 
 	attachPrompts(records, reg)
@@ -95,5 +106,14 @@ func TestAttachPrompts(t *testing.T) {
 	// Unknown profile is skipped.
 	if records[3].Findings[0].DesignPrompt != "" {
 		t.Error("unknown profile should receive no prompt")
+	}
+	// A finding that names an existing-but-ungranted route is an operator action, not an
+	// API change: it keeps its concrete answer and gets no "design an endpoint" prompt.
+	grantRoute := records[4].Findings[0]
+	if grantRoute.Class() != report.ClassGrantRoute {
+		t.Errorf("finding with a catalog match classified as %q", grantRoute.Class())
+	}
+	if grantRoute.DesignPrompt != "" {
+		t.Errorf("a route the API already exposes must not get an API-design prompt:\n%s", grantRoute.DesignPrompt)
 	}
 }

@@ -715,8 +715,8 @@ footer{margin-top:40px;padding-top:12px;border-top:1px solid #d1d9e0;color:#5963
 <h1>13 requests became 1, and the sandbox is what said so</h1>
 <p class="muted">One run of plimsoll's efficiency advisor, generated {{.Generated}} by <code>go run ./examples/advisor -report</code>. Every number on this page was measured by the API or read from the daemon's own log, or is labelled as a model.</p>
 
-<p><b>plimsoll</b> is an open source sandbox service for running code that an AI agent wrote. Its broker authorizes every call that code makes to your API, keeps the credential outside the sandbox, and records only route templates, verbs, status codes, byte counts and timings. There is no field for a path, a body or a credential, so none can be recorded by accident.</p>
-<p><b>The efficiency advisor</b> reads that record after a run and reports where the call pattern cost the API more than the question needed. When the profile already grants a better route, the finding names it and comes back to the caller, who can rewrite. When it does not, the finding stays with the operator, because the agent cannot call a route that does not exist. plimsoll never calls a model to do any of this.</p>
+<p><b>plimsoll</b> is an open source sandbox service for running code that an AI agent wrote. Its broker authorizes every call that code makes to your API, keeps the credential outside the sandbox, and records only route templates, verbs, status codes, byte counts and timings. A <b>route template</b> is the granted route with its variable segment left as a <code>*</code>, so a call to <code>/items/i-7</code> is recorded as <code>/items/*</code>: which route the code used, never which item it asked for. There is no field for a path, a body or a credential, so none can be recorded by accident.</p>
+<p><b>The efficiency advisor</b> reads that record after a run and reports where the call pattern cost the API more than the question needed. When the profile already grants a better route, the finding names it and comes back to the caller, who can rewrite. When it does not, the finding stays with the operator, because the agent cannot call a route that does not exist. plimsoll never calls a model to do any of this. It is a work in progress, and it is off unless a profile asks for it: a profile that does not set <code>advice</code> has its traffic left unanalyzed, and nothing is computed.</p>
 <p><b>This page</b> is one real run of the repository's advisor example: a fake inventory API with twelve items, a plimsoll daemon on the WASM provider, and one grant profile with <code>advice: caller</code>. The same question is asked twice, first the way an agent tends to write it, then the way the advice suggests.</p>
 
 <div class="tiles">
@@ -736,25 +736,26 @@ footer{margin-top:40px;padding-top:12px;border-top:1px solid #d1d9e0;color:#5963
 <dt>guest wall time</dt><dd>{{.WallMs}} ms, engine start included</dd>
 <dt>advice on the result</dt><dd>{{if .Advice}}{{len .Advice}} finding(s), below{{else}}none{{end}}</dd></dl>
 {{range .Advice}}
-<div class="card"><b>{{.Pattern}}</b> ({{.Severity}}, remedy {{.Remedy}}) on {{.Method}} {{.Route}}<br>
+<div class="card">detected an unnecessary <b>{{.Pattern}}</b> on {{.Method}} {{.Route}} (severity {{.Severity}}, remedy {{.Remedy}})<br>
 suggested: <b>{{.SuggestedMethod}} {{.SuggestedRoute}}</b>, already granted<br>
 {{.ExtraCalls}} calls beyond one <span class="muted">(measured count minus one)</span> ·
 about {{ms .AddedLatency}} ms beyond one call <span class="muted">(modelled, not wall time)</span> ·
 {{.BytesMoved}} bytes moved in total <span class="muted">(gross, not a saving)</span><br>
-<span class="muted">{{.Detail}}</span></div>
+<span class="muted">{{.Detail}}</span><br>
+<span class="muted"><b>severity</b> ranks nothing but the size of the pattern, for display: <b>low</b> under 25 calls, <b>medium</b> from 25, <b>high</b> from 100. A low finding is the same mistake as a high one over a smaller collection, so it is worth the same rewrite. Severity never gates a run or changes a result.</span></div>
 {{else}}<div class="card ok">No finding. The collection route carried the column, so one request answered the question.</div>{{end}}
 
 <h3>What the API saw, and what plimsoll's trace holds</h3>
 <div class="toggle"><button type="button" class="trace-toggle" aria-pressed="false">Show what plimsoll's trace holds instead</button>
-<span class="muted">The trace never leaves the daemon; this view is reconstructed from the profile's route templates, and the audit line's <code>host_calls={{.Audit.HostCalls}}</code> is what confirms the count.</span></div>
+<span class="muted">Toggling swaps the path column for the route template the trace actually holds, so a path like <code>/items/i-7</code> collapses to <code>/items/*</code>: the record says which route the code called, never which item it asked for. The trace never leaves the daemon, so this view is reconstructed from the profile's route templates, and the audit line's <code>host_calls={{.Audit.HostCalls}}</code> is what confirms the count.</span></div>
 <div class="scroll"><table><thead><tr><th>#</th><th>method</th><th class="path">path as the API saw it</th><th class="tmpl hide">route template in the trace</th><th class="num">request bytes</th><th class="num">response bytes</th></tr></thead>
 <tbody>{{range $i, $r := .Requests}}<tr><td class="num">{{$i}}</td><td>{{$r.Method}}</td><td class="path"><code>{{$r.Path}}</code></td><td class="tmpl hide"><code>{{$r.Template}}</code></td><td class="num">{{$r.ReqBytes}}</td><td class="num">{{$r.RespBytes}}</td></tr>{{end}}
 <tr><th colspan="4">{{.RequestCount}} requests</th><th class="num" colspan="2">{{.BytesServed}} bytes</th></tr></tbody></table></div>
 
 <h3>The operator's view: the daemon's audit line</h3>
 <div class="card op">host_calls={{.Audit.HostCalls}} · advice_findings={{.Audit.AdviceFindings}} · advice_agent_fixable={{.Audit.AgentFixable}}
-{{range .Audit.Details}}<br>{{if .AgentFixable}}returned to the caller{{else}}operator only{{end}}: <b>{{.Pattern}}</b> on {{.Method}} {{.Route}} (remedy {{.Remedy}}){{end}}
-<br><span class="muted">A finding the agent could not act on (no granted route to switch to) would stay here, operator only, with a prompt the API owner can paste into their own AI. This run produced none: the profile already granted the collection route, so the one finding went back to the caller.</span></div>
+{{range .Audit.Details}}<br>detected <b>{{.Pattern}}</b> on {{.Method}} {{.Route}} (severity {{.Severity}}, remedy {{.Remedy}}), and the finding was {{if .AgentFixable}}returned to the caller{{else}}kept operator only{{end}}{{end}}
+<br><span class="muted">A finding the agent could not act on (no granted route to switch to) would stay here, operator only, with a prompt the API owner can paste into their own AI. {{if .Audit.Details}}This run produced none of those: the profile already granted the collection route, so its one finding went back to the caller.{{else}}This run produced no finding at all, so there is nothing here for either audience.{{end}}</span></div>
 </section>
 {{end}}
 
@@ -780,6 +781,7 @@ go run ./examples/advisor -report out.html   # the same run as a page like this 
 <li><b>The numbers are what they say.</b> The call count is measured. The latency and byte figures are a model of the pattern against an ideal of one call, and the table above puts them next to what the API measured.</li>
 <li><b>A finding claims only what the trace can support.</b> In run 1, {{.SameSize}} of the {{.PerItem}} per-item responses were the same size, and the API's log shows they were {{.PerItem}} distinct items. The trace holds the route template and the size, not the item, so it cannot tell same-size from same-item, and the repeated-read detector does not read a wildcard route at all. It reads only a route without a wildcard, where the broker admits exactly one path and every call is the same request; an unchanged size there is evidence the data did not change, and the finding says evidence, not proof.</li>
 <li><b>This run used the WASM provider</b>, which is process-tier isolation and fine for an example. The advisor is provider-independent: the same broker core records the trace under Docker, E2B and WASM, so the findings do not depend on the tier.</li>
+<li><b>The advisor is a work in progress, and off by default.</b> A profile that does not set <code>advice</code> has its traffic left unanalyzed and nothing computed at all; this page had to opt in with <code>advice: caller</code> to produce anything. Two detectors ship today and the rule set is not settled: two earlier ones were removed once it was clear the trace could not support them, because it holds no call start times (so it cannot tell serial calls from concurrent ones) and no guest content (so it cannot tell a client-side reduce from any other loop). Expect the detectors to change.</li>
 <li><b>Status:</b> pre-1.0, single author, no external users yet, no third-party security audit. The lesson <a href="{{.LessonURL}}">INTERNAL · trainer site → API Efficiency Advisor</a> walks the same ground with a 128-call example.</li>
 </ul>
 
