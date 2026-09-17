@@ -73,6 +73,14 @@ func TestTrainerDocuments(t *testing.T) {
 				t.Fatalf("duplicate trainer id %q", doc.ID)
 			}
 			seenTrainerIDs[doc.ID] = true
+			if doc.Mode == "path-explorer" {
+				for _, id := range []string{"architectureExplorer", "architectureMap", "pathCategories", "pathSelect", "providerSelect", "stepInspector", "nodeInspector", "stepTimeline"} {
+					if !strings.Contains(raw, `id="`+id+`"`) {
+						t.Fatalf("path explorer is missing shell element %q", id)
+					}
+				}
+				return
+			}
 			if doc.Mode == "experience" {
 				if !strings.Contains(raw, `id="experienceApp"`) || !strings.Contains(raw, `id="processGraph"`) || !strings.Contains(raw, `id="traceTimeline"`) {
 					t.Fatal("experience trainer is missing its process graph shell")
@@ -221,6 +229,17 @@ func TestTrainerSecurityClaimsStayFailClosed(t *testing.T) {
 func TestSharedAssetsAreLocal(t *testing.T) {
 	for _, page := range trainerPages {
 		raw := readFile(t, page)
+		if page == "architecture.html" {
+			for _, asset := range []string{"architecture.css", "architecture.mjs", "architecture-model.mjs"} {
+				if info, err := os.Stat(asset); err != nil || info.Size() == 0 {
+					t.Errorf("path explorer asset %s is missing or empty: %v", asset, err)
+				}
+			}
+			if !strings.Contains(raw, `href="architecture.css"`) || !strings.Contains(raw, `src="architecture.mjs"`) {
+				t.Error("architecture explorer does not load its local assets")
+			}
+			continue
+		}
 		if page == "private-api.html" {
 			if !strings.Contains(raw, `href="trainer.css"`) || !strings.Contains(raw, `href="private-api.css"`) || !strings.Contains(raw, `src="private-api.js"`) {
 				t.Errorf("%s does not use its local experience assets", page)
