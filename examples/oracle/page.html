@@ -88,7 +88,7 @@
       <dt>What happened to the pole</dt>
       <dd id="fell"></dd>
     </dl>
-    <p class="note">A regression is a different fingerprint, not a tolerance miss. The record is written by the judge after the controller has exited, so the controller cannot touch it.</p>
+    <p class="note">Two different questions. <b>Identity:</b> the same fingerprint means the controller ran identically, to the last bit, and a different one means a different trajectory, which may or may not matter (a controller that changes the last digit of one number gets a different hash and the same balance). <b>Acceptance:</b> whether it balanced, and where the cart ended, are the judge's separate facts above. The record is written by the judge after the controller has exited, so the controller cannot alter it.</p>
   </section>
 </div>
 
@@ -118,6 +118,7 @@
 
 <h2>What this does not show</h2>
 <ul>
+  <li>The controller cannot alter the plant or the record, but it can read them: the judge and the plant sit on the container's read-only root, visible to any process in the run. Nothing here is secret. A hidden plant or a hidden judge needs the controller in its own namespace with only the state-and-force channel crossing, which is a different build of the same idea.</li>
   <li>The judge protects the record from the controller; it does not make the controller's arithmetic portable. A controller that calls <code>Math.sin</code> ties its fingerprint to the JavaScript engine's implementation.</li>
   <li>Forward Euler at 1 ms, the Reference FMUs' solver: adequate for a balancing demo, not a claim about accuracy.</li>
   <li>One plant. A second plant is another model file and another image build.</li>
