@@ -319,6 +319,10 @@ type Sandbox interface {
 	// RunProject writes a multi-file project and runs build/lint/run steps, with the
 	// same per-dispatch MinimumIsolation enforcement as RunJavaScript.
 	RunProject(ctx context.Context, req ProjectRequest) (ProjectResult, error)
+	// RunModule runs a compiled physical model baked into the provider's module
+	// image once per parameter row, with the same per-dispatch MinimumIsolation
+	// enforcement. Providers without a supervised worker return ErrUnsupported.
+	RunModule(ctx context.Context, req ModuleRequest) (ModuleResult, error)
 	// Name identifies the provider (e.g. "docker").
 	Name() string
 	// IsolationClass reports the strength of this provider's boundary around
@@ -334,6 +338,13 @@ type Sandbox interface {
 // the server rather than asserting locally, so treat "not implemented" as false.
 type ProjectCapable interface {
 	SupportsProjects() bool
+}
+
+// ModuleCapable is an optional interface a provider implements to declare whether
+// RunModule works there: a module image is configured and its worker can be
+// supervised. Static discovery, like ProjectCapable.
+type ModuleCapable interface {
+	SupportsModules() bool
 }
 
 // GrantCapable declares which operations can enforce HostAPIGrant without exposing

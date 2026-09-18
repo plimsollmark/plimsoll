@@ -159,7 +159,7 @@ protocol. A gateway reads these; it does not need new hooks in the service.
   observes; it does not become a place credentials or raw grants live.
 
 **Rough shape if built.** A separate small service that periodically calls `Describe` on each
-backend, keeps a capability table, and dispatches a `RunJavaScriptV2`/`RunProjectV2` to a
+backend, keeps a capability table, and dispatches a `Run` (of whatever payload kind) to a
 backend satisfying the request's `minimum_isolation` and `grant_profile`, re-checking the
 returned isolation evidence. It scrapes each backend's `/metrics` and tails their audit
 streams into one dashboard. It is a consumer of the existing wire contract, in its own

@@ -137,7 +137,7 @@ In the daemon's terminal, one audit line per run names the caller and never the
 code or the token:
 
 ```
-level=INFO msg="code run" rpc=RunJavaScriptV2 caller=tutorial code_bytes=18 grant_profile="" sandbox=wasm isolation=process exit_code=0 timed_out=false duration_ms=294
+level=INFO msg="code run" op=javascript caller=tutorial code_bytes=18 grant_profile="" sandbox=wasm isolation=process exit_code=0 timed_out=false duration_ms=292
 ```
 
 ## 5. Change the tier, not the program

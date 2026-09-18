@@ -124,7 +124,7 @@ func TestPrivateAPIFlightRecorderNamesTheRealBoundary(t *testing.T) {
 		"plimsoll / plimsolld", "Guest JavaScript", "Gateway REST route", "WMS / ERP",
 		"POST /mcp", "tools/list", "tools/call", "run_javascript", "inventory.warehouses.list()",
 		"stockroom://sandbox-api.d.ts", "GET /v1/warehouses", "Connect/gRPC", "vendor HTTP(S)", "CodegenService", "StockService",
-		"RunJavaScriptV2",
+		"SandboxService/Run",
 		// The lesson teaches a real boundary through an invented company, so the
 		// sentence that says so is load-bearing: without it the page reads as a
 		// walkthrough of somebody's actual production system.

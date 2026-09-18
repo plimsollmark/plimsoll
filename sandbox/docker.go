@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,13 +37,17 @@ import (
 type DockerSandbox struct {
 	Image        string // snippet image (plain node), for RunJavaScript
 	ProjectImage string // toolchain image (node + tsc/tsx/eslint), for RunProject
-	Runtime      string // OCI runtime, e.g. "runsc" (gVisor). "" = docker default (runc)
-	Memory       string // e.g. "256m"
-	PidsLimit    string // e.g. "128"
-	CPUs         string // e.g. "1"
-	WorkDiskMB   int    // size of the writable /work tmpfs for project runs (MiB); 0 = derived from DiskBudgetMB, else 128
-	TmpDiskMB    int    // size of the writable /tmp tmpfs (MiB); 0 = 16
-	ShmDiskMB    int    // size of the writable /dev/shm tmpfs (MiB); 0 = 16
+	// ModuleImage is the simulation worker image for RunModule
+	// (docker/sim.Dockerfile): the supervised worker plus the AOT-compiled models
+	// it may load, under /models. "" = module runs unsupported.
+	ModuleImage string
+	Runtime     string // OCI runtime, e.g. "runsc" (gVisor). "" = docker default (runc)
+	Memory      string // e.g. "256m"
+	PidsLimit   string // e.g. "128"
+	CPUs        string // e.g. "1"
+	WorkDiskMB  int    // size of the writable /work tmpfs for project runs (MiB); 0 = derived from DiskBudgetMB, else 128
+	TmpDiskMB   int    // size of the writable /tmp tmpfs (MiB); 0 = 16
+	ShmDiskMB   int    // size of the writable /dev/shm tmpfs (MiB); 0 = 16
 
 	// DiskBudgetMB is the AGGREGATE writable-storage budget for one run (MiB).
 	// A container's writable surfaces are separate mounts (/tmp, /dev/shm, and
@@ -505,11 +510,16 @@ func (d *DockerSandbox) Preflight(ctx context.Context) (retErr error) {
 	if err := validateDockerImage(d.ProjectImage); err != nil {
 		return err
 	}
+	if d.ModuleImage != "" {
+		if err := validateDockerImage(d.ModuleImage); err != nil {
+			return err
+		}
+	}
 	if err := d.validateWritableBudget(); err != nil {
 		return err
 	}
 	if d.RequirePinnedImages {
-		for _, img := range []string{d.Image, d.ProjectImage} {
+		for _, img := range d.configuredImages() {
 			if !isDigestPinned(img) {
 				return fmt.Errorf("image %q is not pinned to an immutable @sha256: digest (RequirePinnedImages is on)", img)
 			}
@@ -554,10 +564,7 @@ func (d *DockerSandbox) Preflight(ctx context.Context) (retErr error) {
 	// re-pointing the tag after Preflight. This also requires both images to exist
 	// on the pinned daemon, so readiness reflects the exact artifacts runs will
 	// use rather than a lazy first pull.
-	images := []string{d.Image}
-	if d.ProjectImage != d.Image {
-		images = append(images, d.ProjectImage)
-	}
+	images := d.configuredImages()
 	verifiedIDs := make(map[string]string, len(images))
 	for _, img := range images {
 		id, err := verifyImageForRun(ctx, pinnedHost, img)
@@ -728,6 +735,15 @@ func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 	}{
 		{ref: d.Image, id: state.imageID, workTmpfs: false},
 		{ref: d.ProjectImage, id: state.projectImageID, workTmpfs: true},
+	}
+	if d.ModuleImage != "" {
+		// The module image is a project image with a worker in it: the same
+		// runner, the same writable /work, the same lockdown to prove.
+		probes = append(probes, struct {
+			ref       string
+			id        string
+			workTmpfs bool
+		}{ref: d.ModuleImage, id: state.moduleImageID, workTmpfs: true})
 	}
 	d.stateMu.Lock()
 	d.runtimeBannerLine, d.runtimeBannerRead = "", false
@@ -1056,6 +1072,7 @@ type dockerExecutionState struct {
 	// place of the mutable Image/ProjectImage references.
 	imageID        string
 	projectImageID string
+	moduleImageID  string // "" when no module image is configured
 }
 
 func (d *DockerSandbox) executionState() (dockerExecutionState, error) {
@@ -1065,7 +1082,11 @@ func (d *DockerSandbox) executionState() (dockerExecutionState, error) {
 		return dockerExecutionState{}, errors.New("docker provider is not ready for its current configuration")
 	}
 	imageID, projectImageID := d.verifiedImageIDs[d.Image], d.verifiedImageIDs[d.ProjectImage]
-	if imageID == "" || projectImageID == "" {
+	moduleImageID := ""
+	if d.ModuleImage != "" {
+		moduleImageID = d.verifiedImageIDs[d.ModuleImage]
+	}
+	if imageID == "" || projectImageID == "" || (d.ModuleImage != "" && moduleImageID == "") {
 		// The configured references changed since Preflight verified them; running
 		// the new tags would launch content whose volume config was never checked.
 		return dockerExecutionState{}, errors.New("docker images are not the Preflight-verified ones; re-run Preflight")
@@ -1080,7 +1101,22 @@ func (d *DockerSandbox) executionState() (dockerExecutionState, error) {
 		isolation:      isolation,
 		imageID:        imageID,
 		projectImageID: projectImageID,
+		moduleImageID:  moduleImageID,
 	}, nil
+}
+
+// configuredImages lists every image reference this provider will launch, each
+// once: the snippet image, the project image, and the module image when set.
+// Preflight verifies and pins exactly this set.
+func (d *DockerSandbox) configuredImages() []string {
+	images := []string{d.Image}
+	for _, img := range []string{d.ProjectImage, d.ModuleImage} {
+		if img == "" || slices.Contains(images, img) {
+			continue
+		}
+		images = append(images, img)
+	}
+	return images
 }
 
 func (d *DockerSandbox) ensurePreflight(ctx context.Context) error {
@@ -1318,10 +1354,18 @@ func (d *DockerSandbox) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	if err != nil {
 		return ProjectResult{Sandbox: d.Name(), Isolation: d.IsolationClass()}, err
 	}
-	isolation := execState.isolation
-	if err := CheckMinimumIsolation(isolation, req.MinimumIsolation); err != nil {
-		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, err
+	if err := CheckMinimumIsolation(execState.isolation, req.MinimumIsolation); err != nil {
+		return ProjectResult{Sandbox: d.Name(), Isolation: execState.isolation}, err
 	}
+	return d.runPlan(ctx, execState, execState.projectImageID, req)
+}
+
+// runPlan launches one runner container from a Preflight-verified image ID with
+// req as its plan and classifies what came back. RunProject and RunModule share
+// it: a module run is a project run whose one step is the worker, so every
+// lockdown, timeout, output cap and outcome rule is written once.
+func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionState, imageID string, req ProjectRequest) (ProjectResult, error) {
+	isolation := execState.isolation
 	timeout := d.projectTimeout(req.Timeout)
 
 	// The runner enforces a per-step timeout; the outer context is a hard backstop
@@ -1367,7 +1411,7 @@ func (d *DockerSandbox) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	// image; they are empty for a no-grant run.
 	args := d.lockdownArgs(name, true, execState.runtime)
 	args = append(args, capArgs...)
-	args = append(args, execState.projectImageID)
+	args = append(args, imageID)
 	args, err = dockerArgs(execState.host, args...)
 	if err != nil {
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, err
@@ -1436,6 +1480,130 @@ func (d *DockerSandbox) RunProject(ctx context.Context, req ProjectRequest) (Pro
 		// file path, unwritable file, over-budget result): request-attributable.
 		res.Outcome, res.Detail = ProjectOutcomeSetupFailed, report.Err
 	}
+	return res, nil
+}
+
+// SupportsModules reports whether a module image is configured; RunModule
+// returns ErrUnsupported otherwise.
+func (d *DockerSandbox) SupportsModules() bool { return d.ModuleImage != "" }
+
+// moduleResultsArtifact is the path, under /work, the worker writes its record to
+// and the run captures as its one artifact.
+const moduleResultsArtifact = "results.bin"
+
+// RunModule runs a model baked into ModuleImage once per row through the same
+// runner and lockdown as a project: the parameter table is written into /work as
+// text (shortest round-trip decimals, so every value reaches the worker exactly),
+// one step runs the worker in table mode with the result budget on its command
+// line, and the results come back as one artifact decoded here. The worker
+// refuses a table whose results could exceed the budget before it runs a row
+// (ValidateModuleRequest applied the width-1 necessary condition already), so
+// results are never truncated: that refusal is ErrInvalidRequest, and a worker
+// that accepted the table and still overran the artifact budget is a protocol
+// error, never a shorter answer.
+func (d *DockerSandbox) RunModule(ctx context.Context, req ModuleRequest) (ModuleResult, error) {
+	if err := ValidateModuleRequest(req); err != nil {
+		return ModuleResult{Sandbox: d.Name(), Isolation: d.IsolationClass()}, err
+	}
+	if d.ModuleImage == "" {
+		return ModuleResult{Sandbox: d.Name(), Isolation: d.IsolationClass()},
+			fmt.Errorf("%w: no module image is configured (SANDBOX_DOCKER_MODULE_IMAGE)", ErrUnsupported)
+	}
+	if err := d.ensurePreflight(ctx); err != nil {
+		return ModuleResult{Sandbox: d.Name(), Isolation: d.IsolationClass()}, err
+	}
+	execState, err := d.executionState()
+	if err != nil {
+		return ModuleResult{Sandbox: d.Name(), Isolation: d.IsolationClass()}, err
+	}
+	isolation := execState.isolation
+	if err := CheckMinimumIsolation(isolation, req.MinimumIsolation); err != nil {
+		return ModuleResult{Sandbox: d.Name(), Isolation: isolation}, err
+	}
+
+	var table strings.Builder
+	for _, row := range req.Rows {
+		for j, v := range row {
+			if j > 0 {
+				table.WriteByte(' ')
+			}
+			table.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
+		}
+		table.WriteByte('\n')
+	}
+	step := fmt.Sprintf("sim-worker --table /models/%s.so params.txt %s %s %s %d",
+		req.Model, moduleResultsArtifact,
+		strconv.FormatFloat(req.EndTime, 'g', -1, 64), strconv.FormatFloat(req.Step, 'g', -1, 64),
+		MaxModuleResultBytes)
+	started := time.Now()
+	pr, err := d.runPlan(ctx, execState, execState.moduleImageID, ProjectRequest{
+		Files:     []File{{Path: "params.txt", Content: table.String()}},
+		Steps:     []string{step},
+		Timeout:   req.Timeout,
+		Artifacts: []string{moduleResultsArtifact},
+	})
+	res := ModuleResult{Sandbox: d.Name(), Isolation: isolation, Duration: time.Since(started)}
+	if err != nil {
+		return res, err
+	}
+	return interpretModuleRun(res, pr, req)
+}
+
+// interpretModuleRun turns the runner's report of the one worker step into a
+// ModuleResult. The worker's exit codes are its contract (docker/sim/worker.c):
+// 0 done; 1 the module failed to load or validate; 2 usage; 3 the table was
+// malformed; 4 the results could exceed the byte budget, refused before any row
+// ran; 5 the output was unwritable. 1 to 3 are request-attributable, so
+// setup_failed with the worker's diagnostic; 4 is ErrInvalidRequest; anything
+// else, including a signal, is a protocol error.
+func interpretModuleRun(res ModuleResult, pr ProjectResult, req ModuleRequest) (ModuleResult, error) {
+	res.Outcome, res.Detail = pr.Outcome, pr.Detail
+	if pr.Outcome != ProjectOutcomeCompleted {
+		return res, nil
+	}
+	if len(pr.Steps) != 1 {
+		res.Outcome, res.Detail = ProjectOutcomeProtocolError, fmt.Sprintf("runner reported %d steps for the one worker step", len(pr.Steps))
+		return res, nil
+	}
+	st := pr.Steps[0]
+	res.Stdout, res.Stderr = st.Stdout, st.Stderr
+	diag := strings.TrimSpace(st.Stderr)
+	if st.TimedOut {
+		res.Outcome, res.Detail = ProjectOutcomeTimedOut, "the worker exceeded the time budget"
+		return res, nil
+	}
+	switch st.ExitCode {
+	case 0:
+	case 4:
+		return res, fmt.Errorf("%w: %s", ErrInvalidRequest, diag)
+	case 1, 2, 3:
+		res.Outcome, res.Detail = ProjectOutcomeSetupFailed, "the worker refused the request: "+diag
+		return res, nil
+	default:
+		res.Outcome, res.Detail = ProjectOutcomeProtocolError, fmt.Sprintf("the worker exited %d: %s", st.ExitCode, diag)
+		return res, nil
+	}
+	if pr.ArtifactsTruncated {
+		res.Outcome, res.Detail = ProjectOutcomeProtocolError, "the worker accepted the table but its results exceeded the artifact budget"
+		return res, nil
+	}
+	var rec []byte
+	found := false
+	for _, a := range pr.Artifacts {
+		if a.Path == moduleResultsArtifact {
+			rec, found = a.Content, true
+		}
+	}
+	if !found {
+		res.Outcome, res.Detail = ProjectOutcomeProtocolError, "the worker exited 0 without writing its results"
+		return res, nil
+	}
+	runs, width, err := DecodeModuleResults(rec, len(req.Rows), req.RowWidth())
+	if err != nil {
+		res.Outcome, res.Detail = ProjectOutcomeProtocolError, "undecodable worker results: "+err.Error()
+		return res, nil
+	}
+	res.Runs, res.Width = runs, width
 	return res, nil
 }
 

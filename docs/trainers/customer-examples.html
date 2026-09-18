@@ -117,7 +117,7 @@
         "title": "Recipe: integrate a private plimsolld behind TLS",
         "lede": "If you host plimsoll yourself, you can use the official Go client or the raw generated one. Either way, securing the connection and checking the wall on every result is your job, not plimsoll's.",
         "stats": [{"label":"server transport","value":"h2c behind TLS"},{"label":"remote static tier","value":"unknown","tone":"warn"}],
-        "prompt": "The official adapter keeps the checks compact:<pre><code>r, err := client.New(url, client.WithToken(token))\nif err != nil { return err }\ninfo, err := r.Describe(ctx)\nif err != nil { return err }\nif !info.SupportsMinimumIsolation ||\n   !info.Isolation.Meets(min) { return errDiscovery }\nres, err := r.RunJavaScript(ctx, sandbox.Request{\n  Code: source, MinimumIsolation: min,\n})\nif err != nil { return err } // DataLoss means execution may have occurred\nif !res.Isolation.Meets(min) { return errEvidenceMismatch }</code></pre>",
+        "prompt": "The official adapter keeps the checks compact:<pre><code>r, err := client.New(url, client.WithToken(token))\nif err != nil { return err }\ninfo, err := r.Describe(ctx)\nif err != nil { return err }\nif info.Protocol != client.Protocol ||\n   !info.Isolation.Meets(min) { return errDiscovery }\nres, err := r.RunJavaScript(ctx, sandbox.Request{\n  Code: source, MinimumIsolation: min,\n})\nif err != nil { return err } // DataLoss means execution may have occurred\nif !res.Isolation.Meets(min) { return errEvidenceMismatch }</code></pre>",
         "rowLabel": "Client choice",
         "columns": ["Best fit", "What it preserves", "Customer obligations"],
         "rows": [

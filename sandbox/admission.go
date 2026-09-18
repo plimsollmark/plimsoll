@@ -136,6 +136,18 @@ func (a *admissionSandbox) RunProject(ctx context.Context, req ProjectRequest) (
 	return a.Sandbox.RunProject(ctx, req)
 }
 
+func (a *admissionSandbox) RunModule(ctx context.Context, req ModuleRequest) (ModuleResult, error) {
+	if err := a.checkMinimumIsolation(ctx, req.MinimumIsolation); err != nil {
+		return ModuleResult{Sandbox: a.Name(), Isolation: a.IsolationClass()}, err
+	}
+	release, err := a.acquire()
+	if err != nil {
+		return ModuleResult{Sandbox: a.Name()}, err
+	}
+	defer release()
+	return a.Sandbox.RunModule(ctx, req)
+}
+
 // checkMinimumIsolation keeps deterministic security preconditions ahead of
 // capacity admission. Providers still re-check the exact boundary they snapshot
 // for dispatch (especially Docker); this early check prevents an impossible floor
@@ -172,6 +184,15 @@ func (a *admissionSandbox) checkMinimumIsolation(ctx context.Context, minimum Is
 func (a *admissionSandbox) SupportsProjects() bool {
 	if pc, ok := a.Sandbox.(ProjectCapable); ok {
 		return pc.SupportsProjects()
+	}
+	return false
+}
+
+// SupportsModules forwards the wrapped provider's static capability, like
+// SupportsProjects.
+func (a *admissionSandbox) SupportsModules() bool {
+	if mc, ok := a.Sandbox.(ModuleCapable); ok {
+		return mc.SupportsModules()
 	}
 	return false
 }

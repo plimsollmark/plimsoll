@@ -321,3 +321,15 @@ func (w *WasmSandbox) RunProject(_ context.Context, req ProjectRequest) (Project
 	}
 	return ProjectResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, ErrUnsupported
 }
+
+// RunModule is unsupported for the same reason as RunProject: the in-process
+// engine runs one JavaScript snippet and supervises no worker.
+func (w *WasmSandbox) RunModule(_ context.Context, req ModuleRequest) (ModuleResult, error) {
+	if err := ValidateModuleRequest(req); err != nil {
+		return ModuleResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, err
+	}
+	if err := CheckMinimumIsolation(w.IsolationClass(), req.MinimumIsolation); err != nil {
+		return ModuleResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, err
+	}
+	return ModuleResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, ErrUnsupported
+}

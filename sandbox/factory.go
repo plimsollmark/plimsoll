@@ -75,8 +75,9 @@ func Build(getenv func(string) string) (Provider, error) {
 		if projectImage := getenv("SANDBOX_DOCKER_PROJECT_IMAGE"); projectImage != "" {
 			d.ProjectImage = projectImage
 		}
-		d.Runtime = getenv("SANDBOX_DOCKER_RUNTIME") // e.g. "runsc" (gVisor); "" = runc
-		d.Seccomp = getenv("SANDBOX_DOCKER_SECCOMP") // "" = docker default (explicit); path or "unconfined"
+		d.ModuleImage = getenv("SANDBOX_DOCKER_MODULE_IMAGE") // "" = module runs unsupported
+		d.Runtime = getenv("SANDBOX_DOCKER_RUNTIME")          // e.g. "runsc" (gVisor); "" = runc
+		d.Seccomp = getenv("SANDBOX_DOCKER_SECCOMP")          // "" = docker default (explicit); path or "unconfined"
 		requirePinned, err := optionalBoolEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
 		if err != nil {
 			return Provider{}, err

@@ -16,6 +16,7 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandboxtest"
 )
@@ -135,93 +136,89 @@ func TestNewValidatesBaseURLAndFailsClosedOnRemoteHTTP(t *testing.T) {
 	}
 }
 
-type legacyDescribeServer struct {
-	plimsollv1connect.UnimplementedSandboxServiceHandler
-}
-
 type weakEvidenceServer struct {
 	plimsollv1connect.UnimplementedSandboxServiceHandler
 }
 
-func (weakEvidenceServer) RunJavaScriptV2(context.Context, *connect.Request[plimsollv1.RunJavaScriptV2Request]) (*connect.Response[plimsollv1.RunJavaScriptV2Response], error) {
-	return connect.NewResponse(&plimsollv1.RunJavaScriptV2Response{
-		Stdout: []byte("already executed"), Sandbox: "forged", Isolation: "container",
-	}), nil
+// Run answers with forged evidence of the request's kind: a daemon that ran the
+// code behind a weaker boundary than the floor and says so.
+func (weakEvidenceServer) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	switch req.Msg.GetPayload().(type) {
+	case *plimsollv1.RunRequest_Javascript:
+		return connect.NewResponse(&plimsollv1.RunResponse{Sandbox: "forged", Isolation: "container",
+			Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("already executed")}}}), nil
+	case *plimsollv1.RunRequest_Project:
+		return connect.NewResponse(&plimsollv1.RunResponse{Sandbox: "forged", Isolation: "unknown",
+			Result: &plimsollv1.RunResponse_Project{Project: &plimsollv1.ProjectResult{}}}), nil
+	}
+	return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("no payload"))
 }
 
-func (weakEvidenceServer) RunProjectV2(context.Context, *connect.Request[plimsollv1.RunProjectV2Request]) (*connect.Response[plimsollv1.RunProjectV2Response], error) {
-	return connect.NewResponse(&plimsollv1.RunProjectV2Response{
-		Sandbox: "forged", Isolation: "unknown",
-	}), nil
+// otherProtocolServer is a daemon on another protocol number: it records what
+// the client stated and refuses exactly as plimsolld does, before any dispatch.
+type otherProtocolServer struct {
+	plimsollv1connect.UnimplementedSandboxServiceHandler
+	serves     uint32
+	stated     []uint32
+	dispatched int
 }
 
-func (legacyDescribeServer) Describe(context.Context, *connect.Request[plimsollv1.DescribeRequest]) (*connect.Response[plimsollv1.DescribeResponse], error) {
-	return connect.NewResponse(&plimsollv1.DescribeResponse{Sandbox: "legacy", Isolation: "kernel"}), nil
+func (s *otherProtocolServer) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	s.stated = append(s.stated, req.Msg.GetProtocol())
+	if req.Msg.GetProtocol() != s.serves {
+		return nil, connect.NewError(connect.CodeUnimplemented, errors.New(protocol.Mismatch(s.serves, req.Msg.GetProtocol())))
+	}
+	s.dispatched++
+	return connect.NewResponse(&plimsollv1.RunResponse{Sandbox: "other", Isolation: "vm",
+		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{}}}), nil
 }
 
-type v1OnlyHTTPBackend struct {
-	jsRuns      int
-	projectRuns int
+func (s *otherProtocolServer) Describe(context.Context, *connect.Request[plimsollv1.DescribeRequest]) (*connect.Response[plimsollv1.DescribeResponse], error) {
+	return connect.NewResponse(&plimsollv1.DescribeResponse{Sandbox: "other", Isolation: "vm", Protocol: s.serves}), nil
 }
 
-func (s *v1OnlyHTTPBackend) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// These are the only execution routes an old binary exposes. If the official
-	// client regresses to either path, record that code could have executed.
-	switch req.URL.Path {
-	case "/plimsoll.v1.SandboxService/RunJavaScript":
-		s.jsRuns++
-	case "/plimsoll.v1.SandboxService/RunProject":
-		s.projectRuns++
-	default:
-		_ = connect.NewErrorWriter().Write(w, req,
-			connect.NewError(connect.CodeUnimplemented, errors.New("procedure is not implemented by this old backend")))
+// Describe reports the daemon's protocol number and the client exposes it, so a
+// consumer can compare before it sends anything.
+func TestDescribeReportsProtocol(t *testing.T) {
+	info, err := newRemote(t, startServer(t, nil)).Describe(context.Background())
+	if err != nil || info.Protocol != Protocol {
+		t.Fatalf("Describe = %+v, err=%v; want protocol %d", info, err, Protocol)
 	}
 }
 
-func TestDescribeReportsMinimumIsolationProtocolSupport(t *testing.T) {
-	current := newRemote(t, startServer(t, nil))
-	info, err := current.Describe(context.Background())
-	if err != nil || !info.SupportsMinimumIsolation {
-		t.Fatalf("current Describe = %+v, err=%v; want minimum-isolation support", info, err)
-	}
-
+// Every request states the client's protocol number, and a daemon on another
+// number refuses it before dispatch: the client reports ErrProtocolMismatch, not
+// an unsupported operation, for every payload kind.
+func TestEveryRequestStatesProtocolAndOtherNumberRefusesBeforeDispatch(t *testing.T) {
+	backend := &otherProtocolServer{serves: Protocol + 1}
 	mux := http.NewServeMux()
-	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(legacyDescribeServer{}))
+	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(backend))
 	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	legacy := newRemote(t, server.URL)
-	info, err = legacy.Describe(context.Background())
-	if err != nil {
-		t.Fatalf("legacy Describe: %v", err)
-	}
-	if info.SupportsMinimumIsolation {
-		t.Fatalf("legacy server without feature field reported support: %+v", info)
-	}
-}
-
-func TestEveryRequestUsesV2AndCannotExecuteOnV1OnlyBackend(t *testing.T) {
-	backend := &v1OnlyHTTPBackend{}
-	server := httptest.NewServer(backend)
 	t.Cleanup(server.Close)
 	r := newRemote(t, server.URL)
 
-	for name, minimum := range map[string]sandbox.IsolationClass{
-		"floored":   sandbox.IsolationProcess,
-		"unfloored": sandbox.IsolationUnknown,
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, jsErr := r.RunJavaScript(context.Background(), sandbox.Request{Code: "1", MinimumIsolation: minimum})
-			if connect.CodeOf(jsErr) != connect.CodeUnimplemented {
-				t.Fatalf("JavaScript code = %v, err=%v; want Unimplemented", connect.CodeOf(jsErr), jsErr)
-			}
-			_, projectErr := r.RunProject(context.Background(), sandbox.ProjectRequest{Steps: []string{"true"}, MinimumIsolation: minimum})
-			if connect.CodeOf(projectErr) != connect.CodeUnimplemented {
-				t.Fatalf("project code = %v, err=%v; want Unimplemented", connect.CodeOf(projectErr), projectErr)
-			}
-		})
+	info, err := r.Describe(context.Background())
+	if err != nil || info.Protocol == Protocol {
+		t.Fatalf("Describe = %+v, err=%v; want the other daemon's number", info, err)
 	}
-	if backend.jsRuns != 0 || backend.projectRuns != 0 {
-		t.Fatalf("official client reached old execution routes: JS/project=%d/%d", backend.jsRuns, backend.projectRuns)
+	_, jsErr := r.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+	_, projectErr := r.RunProject(context.Background(), sandbox.ProjectRequest{Steps: []string{"true"}})
+	_, moduleErr := r.RunModule(context.Background(), sandbox.ModuleRequest{Model: "m", Rows: [][]float64{{1}}, EndTime: 1, Step: 0.01})
+	for name, err := range map[string]error{"javascript": jsErr, "project": projectErr, "module": moduleErr} {
+		if !errors.Is(err, ErrProtocolMismatch) || errors.Is(err, sandbox.ErrUnsupported) || connect.CodeOf(err) != connect.CodeUnimplemented {
+			t.Errorf("%s: err = %v; want ErrProtocolMismatch (Unimplemented), not ErrUnsupported", name, err)
+		}
+	}
+	if len(backend.stated) != 3 {
+		t.Fatalf("daemon saw %d requests, want 3", len(backend.stated))
+	}
+	for _, n := range backend.stated {
+		if n != Protocol {
+			t.Fatalf("client stated protocol %d, want %d", n, Protocol)
+		}
+	}
+	if backend.dispatched != 0 {
+		t.Fatalf("a daemon on another number dispatched %d runs", backend.dispatched)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/grants"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -175,8 +176,8 @@ func (s *SandboxService) limit(ctx context.Context) (func(), error) {
 	return s.Limiter.Acquire(ctx, key)
 }
 
-// Describe reports the active provider's current isolation evidence and static
-// operation support. It runs no code and takes no limiter slot. Project support is
+// Describe reports the protocol number, the active provider's current isolation
+// evidence and static operation support. It runs no code and takes no limiter slot. Project support is
 // structural: it does not prove that a selected image/template contains a specific
 // toolchain, so readiness still matters.
 //
@@ -193,6 +194,10 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 	if pc, ok := s.Sandbox.(sandbox.ProjectCapable); ok {
 		supportsProject = pc.SupportsProjects()
 	}
+	supportsModule := false
+	if mc, ok := s.Sandbox.(sandbox.ModuleCapable); ok {
+		supportsModule = mc.SupportsModules()
+	}
 	supportsJavaScriptGrants, supportsProjectGrants := false, false
 	if gc, ok := s.Sandbox.(sandbox.GrantCapable); ok {
 		supportsJavaScriptGrants = gc.SupportsJavaScriptGrants()
@@ -202,30 +207,77 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 		Sandbox:                  s.Sandbox.Name(),
 		Isolation:                s.Sandbox.IsolationClass().String(),
 		SupportsProject:          supportsProject,
+		SupportsModule:           supportsModule,
 		SupportsJavascriptGrants: supportsJavaScriptGrants,
 		SupportsProjectGrants:    supportsProjectGrants,
-		SupportsMinimumIsolation: true,
-		// Protocol feature bit: this build can compute Prospector efficiency advice
-		// for a run whose grant_profile opts in. Discovery only — per-profile
-		// advice config governs whether any given run returns advice.
-		SupportsAdvisory: true,
+		Protocol:                 protocol.Number,
 	}), nil
 }
 
-// RunJavaScriptV2 is the only JavaScript procedure. An old backend cannot
-// accidentally execute it: Connect returns Unimplemented before dispatch because
-// that backend has no V2 route.
-func (s *SandboxService) RunJavaScriptV2(ctx context.Context, req *connect.Request[plimsollv1.RunJavaScriptV2Request]) (*connect.Response[plimsollv1.RunJavaScriptV2Response], error) {
-	code := req.Msg.GetCode()
-	minimum, err := parseMinimumIsolation(req.Msg.GetMinimumIsolation())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+// envelope is the part of a RunRequest every payload kind shares, parsed once
+// before the payload is looked at.
+type envelope struct {
+	minimum sandbox.IsolationClass
+	timeout time.Duration
+	traceID string
+}
+
+// checkEnvelope is the first thing Run does. The protocol number comes before
+// everything else: a request that omits it is a client bug (InvalidArgument) and
+// a request on any other number comes from a client this daemon must not serve
+// (Unimplemented), in both cases before the payload is read, so nothing can run.
+// Then the floor is parsed (an unparseable floor is InvalidArgument, never "no
+// floor") and the timeout clamped.
+func checkEnvelope(req *plimsollv1.RunRequest) (envelope, error) {
+	switch p := req.GetProtocol(); {
+	case p == 0:
+		return envelope{}, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("protocol must be stated; this daemon serves protocol %d", protocol.Number))
+	case p != protocol.Number:
+		return envelope{}, connect.NewError(connect.CodeUnimplemented, errors.New(protocol.Mismatch(protocol.Number, p)))
 	}
-	sbReq := sandbox.Request{Code: code, Timeout: clampTimeoutMs(req.Msg.GetTimeoutMs()), MinimumIsolation: minimum}
+	minimum, err := parseMinimumIsolation(req.GetMinimumIsolation())
+	if err != nil {
+		return envelope{}, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return envelope{minimum: minimum, timeout: clampTimeoutMs(req.GetTimeoutMs()), traceID: req.GetTraceId()}, nil
+}
+
+// Run is the one execution procedure: envelope checked, then exactly one payload
+// kind dispatched. Every kind goes through the same floor check, the same
+// limiter, the same audit line shape, and returns the same evidence fields.
+func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	env, err := checkEnvelope(req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	var resp *plimsollv1.RunResponse
+	switch p := req.Msg.GetPayload().(type) {
+	case *plimsollv1.RunRequest_Javascript:
+		resp, err = s.runJavaScript(ctx, env, p.Javascript)
+	case *plimsollv1.RunRequest_Project:
+		resp, err = s.runProject(ctx, env, p.Project)
+	case *plimsollv1.RunRequest_Module:
+		resp, err = s.runModule(ctx, env, p.Module)
+	default:
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			errors.New("payload must be exactly one of javascript, project, or module"))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(resp), nil
+}
+
+// runJavaScript is the snippet kind. The envelope has been checked; the grant
+// profile is the payload's, because a module payload has no such field.
+func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *plimsollv1.JavaScriptRun) (*plimsollv1.RunResponse, error) {
+	code := p.GetCode()
+	sbReq := sandbox.Request{Code: code, Timeout: env.timeout, MinimumIsolation: env.minimum}
 	if err := sandbox.ValidateRequest(sbReq); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	grant, err := s.grantFor(ctx, req.Msg.GetGrantProfile())
+	grant, err := s.grantFor(ctx, p.GetGrantProfile())
 	if err != nil {
 		return nil, err
 	}
@@ -256,10 +308,10 @@ func (s *SandboxService) RunJavaScriptV2(ctx context.Context, req *connect.Reque
 			s.runsFailed.Add(1)
 		}
 		failed := []slog.Attr{
-			slog.String("rpc", "RunJavaScriptV2"),
+			slog.String("op", "javascript"),
 			slog.String("caller", auditCaller(ctx)),
 			slog.Int("code_bytes", len(code)),
-			slog.String("grant_profile", req.Msg.GetGrantProfile()),
+			slog.String("grant_profile", p.GetGrantProfile()),
 			slog.String("sandbox", s.Sandbox.Name()),
 			slog.String("isolation", s.Sandbox.IsolationClass().String()),
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
@@ -267,15 +319,15 @@ func (s *SandboxService) RunJavaScriptV2(ctx context.Context, req *connect.Reque
 		}
 		// A failed run is exactly the one an operator will go looking for, so it
 		// carries the join key too.
-		failed = append(failed, traceAttrs(req.Msg.GetTraceId())...)
+		failed = append(failed, traceAttrs(env.traceID)...)
 		s.logger().LogAttrs(ctx, slog.LevelError, "code run failed", failed...)
 		return nil, mapSandboxErr(err)
 	}
 	attrs := []slog.Attr{
-		slog.String("rpc", "RunJavaScriptV2"),
+		slog.String("op", "javascript"),
 		slog.String("caller", auditCaller(ctx)),
 		slog.Int("code_bytes", len(code)),
-		slog.String("grant_profile", req.Msg.GetGrantProfile()),
+		slog.String("grant_profile", p.GetGrantProfile()),
 		slog.String("sandbox", res.Sandbox),
 		slog.String("isolation", res.Isolation.String()),
 		slog.Int("exit_code", res.ExitCode),
@@ -284,10 +336,10 @@ func (s *SandboxService) RunJavaScriptV2(ctx context.Context, req *connect.Reque
 	}
 	// The caller's opaque join key, so this metadata-only line can be matched to
 	// the caller's own record of the same request. Recorded, never interpreted.
-	attrs = append(attrs, traceAttrs(req.Msg.GetTraceId())...)
+	attrs = append(attrs, traceAttrs(env.traceID)...)
 	// Fold the run's brokered calls into the labeled /metrics series (metadata only:
 	// profile, method, route template). No-op when the run brokered nothing.
-	s.hostCalls.observe(req.Msg.GetGrantProfile(), res.CallTrace)
+	s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
 	// Bounded, metadata-only summary of the run's brokered host.* calls (never
 	// paths, bodies, or credentials). Emitted only when the run brokered something.
 	if t := res.CallTrace; t != nil {
@@ -312,60 +364,58 @@ func (s *SandboxService) RunJavaScriptV2(ctx context.Context, req *connect.Reque
 	if grant != nil {
 		allow = grant.Allow
 	}
-	mode := s.adviceFor(req.Msg.GetGrantProfile())
-	allFindings, callerFindings := computeAdvice(mode, res.CallTrace, allow, s.catalogFor(req.Msg.GetGrantProfile()))
+	mode := s.adviceFor(p.GetGrantProfile())
+	allFindings, callerFindings := computeAdvice(mode, res.CallTrace, allow, s.catalogFor(p.GetGrantProfile()))
 	// Fold the run's findings into the labeled advice/waste series for /metrics. No-op
 	// when advice is off (no findings computed) or the run tripped no detector. These
 	// aggregates carry no route templates and are not gated by advice_retention: they
 	// are the operator's bounded operational metric, not the durable finding record.
-	s.adviceStats.observe(req.Msg.GetGrantProfile(), allFindings)
+	s.adviceStats.observe(p.GetGrantProfile(), allFindings)
 	// The durable audit-log record of the run's findings is gated by the profile's
 	// retention level (Phase 5); it is off by default, so advice can drive the live
 	// wire hint and /metrics without writing per-run findings to the log.
-	retention := s.adviceRetentionFor(req.Msg.GetGrantProfile())
+	retention := s.adviceRetentionFor(p.GetGrantProfile())
 	attrs = append(attrs, adviceAuditAttrs(mode, retention, allFindings)...)
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "code run", attrs...)
-	return connect.NewResponse(&plimsollv1.RunJavaScriptV2Response{
-		Stdout:          []byte(res.Stdout),
-		Stderr:          []byte(res.Stderr),
-		StdoutTruncated: res.StdoutTruncated,
-		StderrTruncated: res.StderrTruncated,
-		ExitCode:        int32(res.ExitCode),
-		TimedOut:        res.TimedOut,
-		DurationMs:      res.Duration.Milliseconds(),
-		Sandbox:         wireString(res.Sandbox),
-		Isolation:       res.Isolation.String(),
-		Advice:          adviceWire(callerFindings),
-	}), nil
+	return &plimsollv1.RunResponse{
+		Sandbox:    wireString(res.Sandbox),
+		Isolation:  res.Isolation.String(),
+		DurationMs: res.Duration.Milliseconds(),
+		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{
+			Stdout:          []byte(res.Stdout),
+			Stderr:          []byte(res.Stderr),
+			StdoutTruncated: res.StdoutTruncated,
+			StderrTruncated: res.StderrTruncated,
+			ExitCode:        int32(res.ExitCode),
+			TimedOut:        res.TimedOut,
+			Advice:          adviceWire(callerFindings),
+		}},
+	}, nil
 }
 
-// RunProjectV2 is the only project procedure and therefore the mixed-version-safe
-// boundary for every project run, whether or not it requests an isolation floor.
-func (s *SandboxService) RunProjectV2(ctx context.Context, req *connect.Request[plimsollv1.RunProjectV2Request]) (*connect.Response[plimsollv1.RunProjectV2Response], error) {
-	steps := req.Msg.GetSteps()
-	files := req.Msg.GetFiles()
+// runProject is the project kind: files written, steps run in order, artifacts
+// captured. Same envelope, same grant path as a snippet.
+func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimsollv1.ProjectRun) (*plimsollv1.RunResponse, error) {
+	steps := p.GetSteps()
+	files := p.GetFiles()
 	total := 0
 	sbFiles := make([]sandbox.File, 0, len(files))
 	for _, f := range files {
 		total += len(f.GetContent())
 		sbFiles = append(sbFiles, sandbox.File{Path: f.GetPath(), Content: f.GetContent()})
 	}
-	artifacts := req.Msg.GetArtifacts()
-	minimum, err := parseMinimumIsolation(req.Msg.GetMinimumIsolation())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
+	artifacts := p.GetArtifacts()
 	sbReq := sandbox.ProjectRequest{
 		Files:            sbFiles,
 		Steps:            append([]string(nil), steps...),
-		Timeout:          clampTimeoutMs(req.Msg.GetTimeoutMs()),
+		Timeout:          env.timeout,
 		Artifacts:        append([]string(nil), artifacts...),
-		MinimumIsolation: minimum,
+		MinimumIsolation: env.minimum,
 	}
 	if err := sandbox.ValidateProjectRequest(sbReq); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	grant, err := s.grantFor(ctx, req.Msg.GetGrantProfile())
+	grant, err := s.grantFor(ctx, p.GetGrantProfile())
 	if err != nil {
 		return nil, err
 	}
@@ -396,18 +446,18 @@ func (s *SandboxService) RunProjectV2(ctx context.Context, req *connect.Request[
 			s.runsFailed.Add(1)
 		}
 		failed := []slog.Attr{
-			slog.String("rpc", "RunProjectV2"),
+			slog.String("op", "project"),
 			slog.String("caller", auditCaller(ctx)),
 			slog.Int("files", len(files)),
 			slog.Int("steps", len(steps)),
 			slog.Int("total_bytes", total),
-			slog.String("grant_profile", req.Msg.GetGrantProfile()),
+			slog.String("grant_profile", p.GetGrantProfile()),
 			slog.String("sandbox", s.Sandbox.Name()),
 			slog.String("isolation", s.Sandbox.IsolationClass().String()),
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 			slog.String("error", err.Error()),
 		}
-		failed = append(failed, traceAttrs(req.Msg.GetTraceId())...)
+		failed = append(failed, traceAttrs(env.traceID)...)
 		s.logger().LogAttrs(ctx, slog.LevelError, "project run failed", failed...)
 		return nil, mapSandboxErr(err)
 	}
@@ -417,12 +467,12 @@ func (s *SandboxService) RunProjectV2(ctx context.Context, req *connect.Request[
 		exitCode, timedOut = last.ExitCode, last.TimedOut
 	}
 	attrs := []slog.Attr{
-		slog.String("rpc", "RunProjectV2"),
+		slog.String("op", "project"),
 		slog.String("caller", auditCaller(ctx)),
 		slog.Int("files", len(files)),
 		slog.Int("steps", len(steps)),
 		slog.Int("total_bytes", total),
-		slog.String("grant_profile", req.Msg.GetGrantProfile()),
+		slog.String("grant_profile", p.GetGrantProfile()),
 		slog.String("sandbox", res.Sandbox),
 		slog.String("isolation", res.Isolation.String()),
 		slog.String("outcome", res.Outcome.String()),
@@ -432,12 +482,12 @@ func (s *SandboxService) RunProjectV2(ctx context.Context, req *connect.Request[
 		slog.Bool("timed_out", timedOut),
 		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 	}
-	attrs = append(attrs, traceAttrs(req.Msg.GetTraceId())...)
+	attrs = append(attrs, traceAttrs(env.traceID)...)
 	// Prospector: a project run brokers host.* calls through the same core as a snippet,
 	// so it feeds the identical metadata-only surfaces. Fold the run's calls into the
 	// labeled /metrics series and summarize them on the audit line (never paths, bodies,
 	// or credentials). No-op when the run brokered nothing.
-	s.hostCalls.observe(req.Msg.GetGrantProfile(), res.CallTrace)
+	s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
 	if t := res.CallTrace; t != nil {
 		attrs = append(attrs, slog.Int("host_calls", len(t.Calls)))
 		if t.Denied > 0 {
@@ -450,7 +500,7 @@ func (s *SandboxService) RunProjectV2(ctx context.Context, req *connect.Request[
 			attrs = append(attrs, slog.Int("host_calls_shed", t.Shed))
 		}
 	}
-	// Advisory channel (Phase 2), identical to RunJavaScriptV2: post-dispatch analysis
+	// Advisory channel (Phase 2), identical to the snippet kind: post-dispatch analysis
 	// over the immutable CallTrace. res is already final above, so computing advice
 	// cannot change any step's output/exit or the outcome — a project run with advice is
 	// byte-identical in execution to one without. Operator surface (audit/metrics) sees
@@ -460,23 +510,21 @@ func (s *SandboxService) RunProjectV2(ctx context.Context, req *connect.Request[
 	if grant != nil {
 		allow = grant.Allow
 	}
-	mode := s.adviceFor(req.Msg.GetGrantProfile())
-	allFindings, callerFindings := computeAdvice(mode, res.CallTrace, allow, s.catalogFor(req.Msg.GetGrantProfile()))
-	s.adviceStats.observe(req.Msg.GetGrantProfile(), allFindings)
-	retention := s.adviceRetentionFor(req.Msg.GetGrantProfile())
+	mode := s.adviceFor(p.GetGrantProfile())
+	allFindings, callerFindings := computeAdvice(mode, res.CallTrace, allow, s.catalogFor(p.GetGrantProfile()))
+	s.adviceStats.observe(p.GetGrantProfile(), allFindings)
+	retention := s.adviceRetentionFor(p.GetGrantProfile())
 	attrs = append(attrs, adviceAuditAttrs(mode, retention, allFindings)...)
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "project run", attrs...)
 
-	resp := &plimsollv1.RunProjectV2Response{
-		Sandbox:            wireString(res.Sandbox),
-		Isolation:          res.Isolation.String(),
+	result := &plimsollv1.ProjectResult{
 		Outcome:            outcomeWire(res.Outcome),
 		OutcomeDetail:      wireString(res.Detail),
 		ArtifactsTruncated: res.ArtifactsTruncated,
 		Advice:             adviceWire(callerFindings),
 	}
 	for _, st := range res.Steps {
-		resp.Steps = append(resp.Steps, &plimsollv1.StepResult{
+		result.Steps = append(result.Steps, &plimsollv1.StepResult{
 			Command:         wireString(st.Command),
 			Stdout:          []byte(st.Stdout),
 			Stderr:          []byte(st.Stderr),
@@ -488,9 +536,102 @@ func (s *SandboxService) RunProjectV2(ctx context.Context, req *connect.Request[
 		})
 	}
 	for _, a := range res.Artifacts {
-		resp.Artifacts = append(resp.Artifacts, &plimsollv1.Artifact{Path: wireString(a.Path), Content: a.Content})
+		result.Artifacts = append(result.Artifacts, &plimsollv1.Artifact{Path: wireString(a.Path), Content: a.Content})
 	}
-	return connect.NewResponse(resp), nil
+	return &plimsollv1.RunResponse{
+		Sandbox:    wireString(res.Sandbox),
+		Isolation:  res.Isolation.String(),
+		DurationMs: time.Since(started).Milliseconds(),
+		Result:     &plimsollv1.RunResponse_Project{Project: result},
+	}, nil
+}
+
+// runModule is the model kind: a compiled model once per parameter row. No
+// grant: a model has no host API and the payload cannot name one. The audit
+// line names the model (validated to a filename stem), counts rows, values per
+// row and the step bound, and records the outcome; a parameter value never
+// reaches a log.
+func (s *SandboxService) runModule(ctx context.Context, env envelope, p *plimsollv1.ModuleRun) (*plimsollv1.RunResponse, error) {
+	rows := make([][]float64, 0, len(p.GetRows()))
+	for _, r := range p.GetRows() {
+		rows = append(rows, append([]float64(nil), r.GetValues()...))
+	}
+	sbReq := sandbox.ModuleRequest{
+		Model:            p.GetModel(),
+		Rows:             rows,
+		EndTime:          p.GetEndTime(),
+		Step:             p.GetStep(),
+		Timeout:          env.timeout,
+		MinimumIsolation: env.minimum,
+	}
+	if err := sandbox.ValidateModuleRequest(sbReq); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if err := sandbox.CheckMinimumIsolation(s.Sandbox.IsolationClass(), sbReq.MinimumIsolation); err != nil {
+		return nil, mapSandboxErr(err)
+	}
+
+	release, err := s.limit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	s.runsTotal.Add(1)
+	runCtx, cancel := runContext(ctx)
+	defer cancel()
+	started := time.Now()
+	res, err := s.Sandbox.RunModule(runCtx, sbReq)
+	attrs := []slog.Attr{
+		slog.String("op", "module"),
+		slog.String("caller", auditCaller(ctx)),
+		slog.String("model", sbReq.Model),
+		slog.Int("rows", len(sbReq.Rows)),
+		slog.Int("row_width", sbReq.RowWidth()),
+		slog.Int("max_steps", sbReq.MaxSteps()),
+	}
+	if err != nil {
+		if isInfraErr(err) {
+			s.runsFailed.Add(1)
+		}
+		attrs = append(attrs,
+			slog.String("sandbox", s.Sandbox.Name()),
+			slog.String("isolation", s.Sandbox.IsolationClass().String()),
+			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
+			slog.String("error", err.Error()),
+		)
+		attrs = append(attrs, traceAttrs(env.traceID)...)
+		s.logger().LogAttrs(ctx, slog.LevelError, "module run failed", attrs...)
+		return nil, mapSandboxErr(err)
+	}
+	attrs = append(attrs,
+		slog.String("sandbox", res.Sandbox),
+		slog.String("isolation", res.Isolation.String()),
+		slog.String("outcome", res.Outcome.String()),
+		slog.String("outcome_detail", res.Detail),
+		slog.Int("runs", len(res.Runs)),
+		slog.Int("width", res.Width),
+		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
+	)
+	attrs = append(attrs, traceAttrs(env.traceID)...)
+	s.logger().LogAttrs(ctx, slog.LevelInfo, "module run", attrs...)
+
+	result := &plimsollv1.ModuleResult{
+		Width:         int32(res.Width),
+		Outcome:       outcomeWire(res.Outcome),
+		OutcomeDetail: wireString(res.Detail),
+		Stdout:        []byte(res.Stdout),
+		Stderr:        []byte(res.Stderr),
+	}
+	for _, run := range res.Runs {
+		result.Runs = append(result.Runs, &plimsollv1.ModuleRowResult{Status: run.Status, Outputs: run.Outputs})
+	}
+	return &plimsollv1.RunResponse{
+		Sandbox:    wireString(res.Sandbox),
+		Isolation:  res.Isolation.String(),
+		DurationMs: res.Duration.Milliseconds(),
+		Result:     &plimsollv1.RunResponse_Module{Module: result},
+	}, nil
 }
 
 // outcomeWire maps the sandbox package's typed project outcome to its wire enum.

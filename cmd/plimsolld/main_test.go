@@ -16,6 +16,7 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -40,6 +41,9 @@ func (s *countingSandbox) RunJavaScript(_ context.Context, _ sandbox.Request) (s
 func (s *countingSandbox) RunProject(context.Context, sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
 	return sandbox.ProjectResult{}, sandbox.ErrUnsupported
 }
+func (s *countingSandbox) RunModule(context.Context, sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
+	return sandbox.ModuleResult{}, sandbox.ErrUnsupported
+}
 
 func TestNativeHTTP1AndH2PriorKnowledgeEnforceMessageCaps(t *testing.T) {
 	provider := &countingSandbox{}
@@ -62,7 +66,7 @@ func TestNativeHTTP1AndH2PriorKnowledgeEnforceMessageCaps(t *testing.T) {
 	baseURL := "http://" + ln.Addr().String()
 
 	h1 := plimsollv1connect.NewSandboxServiceClient(http.DefaultClient, baseURL)
-	if _, err := h1.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"})); err != nil {
+	if _, err := h1.Run(context.Background(), snippetRequest("1")); err != nil {
 		t.Fatalf("HTTP/1 Connect request failed: %v", err)
 	}
 	h2Transport := &http2.Transport{
@@ -74,7 +78,7 @@ func TestNativeHTTP1AndH2PriorKnowledgeEnforceMessageCaps(t *testing.T) {
 	t.Cleanup(h2Transport.CloseIdleConnections)
 	h2Client := &http.Client{Transport: h2Transport}
 	h2c := plimsollv1connect.NewSandboxServiceClient(h2Client, baseURL)
-	if _, err := h2c.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"})); err != nil {
+	if _, err := h2c.Run(context.Background(), snippetRequest("1")); err != nil {
 		t.Fatalf("HTTP/2 prior-knowledge Connect request failed: %v", err)
 	}
 	if got := provider.runs.Load(); got != 2 {
@@ -82,16 +86,22 @@ func TestNativeHTTP1AndH2PriorKnowledgeEnforceMessageCaps(t *testing.T) {
 	}
 
 	oversized := strings.Repeat("x", maxRequestBytes+1)
-	if _, err := h1.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: oversized})); connect.CodeOf(err) != connect.CodeResourceExhausted {
+	if _, err := h1.Run(context.Background(), snippetRequest(oversized)); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("oversized raw request code = %v, err=%v; want ResourceExhausted", connect.CodeOf(err), err)
 	}
 	gzipH2 := plimsollv1connect.NewSandboxServiceClient(h2Client, baseURL, connect.WithSendGzip())
-	if _, err := gzipH2.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: oversized})); connect.CodeOf(err) != connect.CodeResourceExhausted {
+	if _, err := gzipH2.Run(context.Background(), snippetRequest(oversized)); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("gzip-expanded request code = %v, err=%v; want ResourceExhausted", connect.CodeOf(err), err)
 	}
 	if got := provider.runs.Load(); got != 2 {
 		t.Fatalf("oversized requests reached provider: runs=%d, want 2", got)
 	}
+}
+
+// snippetRequest is a protocol-stamped envelope around one snippet.
+func snippetRequest(code string) *connect.Request[plimsollv1.RunRequest] {
+	return connect.NewRequest(&plimsollv1.RunRequest{Protocol: protocol.Number,
+		Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: code}}})
 }
 
 // envMap returns a getenv func backed by a map, for testing config parsing without

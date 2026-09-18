@@ -18,19 +18,21 @@ type adviceResponseServer struct {
 	advice []*plimsollv1.AdviceFinding
 }
 
-func (s adviceResponseServer) RunJavaScriptV2(context.Context, *connect.Request[plimsollv1.RunJavaScriptV2Request]) (*connect.Response[plimsollv1.RunJavaScriptV2Response], error) {
-	return connect.NewResponse(&plimsollv1.RunJavaScriptV2Response{
-		Stdout: []byte{0xff, 'o', 'k'}, Stderr: []byte("guest failed"), ExitCode: 7,
-		Sandbox: "fixture", Isolation: "process", Advice: s.advice,
-	}), nil
-}
-
-func (s adviceResponseServer) RunProjectV2(context.Context, *connect.Request[plimsollv1.RunProjectV2Request]) (*connect.Response[plimsollv1.RunProjectV2Response], error) {
-	return connect.NewResponse(&plimsollv1.RunProjectV2Response{
-		Sandbox: "fixture", Isolation: "process", Advice: s.advice,
-		Outcome: plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED,
-		Steps:   []*plimsollv1.StepResult{{Command: "node main.js", Stdout: []byte{0xff, 'o', 'k'}, Stderr: []byte("guest failed"), ExitCode: 7}},
-	}), nil
+func (s adviceResponseServer) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	resp := &plimsollv1.RunResponse{Sandbox: "fixture", Isolation: "process"}
+	switch req.Msg.GetPayload().(type) {
+	case *plimsollv1.RunRequest_Javascript:
+		resp.Result = &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{
+			Stdout: []byte{0xff, 'o', 'k'}, Stderr: []byte("guest failed"), ExitCode: 7, Advice: s.advice,
+		}}
+	case *plimsollv1.RunRequest_Project:
+		resp.Result = &plimsollv1.RunResponse_Project{Project: &plimsollv1.ProjectResult{
+			Advice:  s.advice,
+			Outcome: plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED,
+			Steps:   []*plimsollv1.StepResult{{Command: "node main.js", Stdout: []byte{0xff, 'o', 'k'}, Stderr: []byte("guest failed"), ExitCode: 7}},
+		}}
+	}
+	return connect.NewResponse(resp), nil
 }
 
 // The wire already contained these fields before the official client exposed

@@ -57,10 +57,12 @@ buf:
 vuln:
 	govulncheck ./...
 
-## docker-images: pull the snippet image and build the project image the docker suite runs against
+## docker-images: pull the snippet image and build the project images the docker suite runs against
 docker-images:
 	docker pull node:22-alpine
 	docker build -t plimsoll/sandbox:latest docker/
+	docker build -t plimsoll/sandbox-python:latest -f docker/python.Dockerfile docker/
+	docker build -t plimsoll/sandbox-sim:latest -f docker/sim.Dockerfile docker/
 
 # Required mode, twice over. SANDBOX_TEST_REQUIRE_DOCKER=1 makes the test helpers
 # fail instead of skip when the daemon or an image is missing; the scan afterwards

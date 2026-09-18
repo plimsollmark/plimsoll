@@ -108,9 +108,9 @@ func describe(ctx context.Context, baseURL, token string) error {
 	if err != nil {
 		return fmt.Errorf("describe: %w", err)
 	}
-	fmt.Printf("describe  | provider=%s isolation=%s projects=%t js-grants=%t min-isolation=%t\n\n",
+	fmt.Printf("describe  | provider=%s isolation=%s projects=%t js-grants=%t protocol=%d (client speaks %d)\n\n",
 		info.Sandbox, info.Isolation, info.SupportsProject,
-		info.SupportsJavaScriptGrants, info.SupportsMinimumIsolation)
+		info.SupportsJavaScriptGrants, info.Protocol, client.Protocol)
 	return nil
 }
 

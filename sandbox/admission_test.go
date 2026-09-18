@@ -25,6 +25,11 @@ func (b *blockingSandbox) RunProject(ctx context.Context, _ ProjectRequest) (Pro
 	<-b.block
 	return ProjectResult{Sandbox: "fake"}, nil
 }
+func (b *blockingSandbox) RunModule(ctx context.Context, _ ModuleRequest) (ModuleResult, error) {
+	b.enter <- struct{}{}
+	<-b.block
+	return ModuleResult{Sandbox: "fake"}, nil
+}
 func (b *blockingSandbox) Name() string { return "fake" }
 func (b *blockingSandbox) IsolationClass() IsolationClass {
 	if b.isolation == IsolationUnknown {

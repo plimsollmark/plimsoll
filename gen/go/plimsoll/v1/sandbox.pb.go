@@ -133,25 +133,21 @@ type DescribeResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Sandbox string                 `protobuf:"bytes,1,opt,name=sandbox,proto3" json:"sandbox,omitempty"` // active provider id (e.g. "docker")
 	// isolation is the provider's boundary tier ("vm", "kernel", "container",
-	// "process", "none") — see RunJavaScriptV2Response.isolation.
+	// "process", "none") — see RunResponse.isolation.
 	Isolation       string `protobuf:"bytes,2,opt,name=isolation,proto3" json:"isolation,omitempty"`
-	SupportsProject bool   `protobuf:"varint,3,opt,name=supports_project,json=supportsProject,proto3" json:"supports_project,omitempty"` // whether RunProject works on this provider
+	SupportsProject bool   `protobuf:"varint,3,opt,name=supports_project,json=supportsProject,proto3" json:"supports_project,omitempty"` // whether a project payload works on this provider
 	// Grant support is operation-specific. A provider may support isolated project
 	// runs while only having a credential-safe broker for JavaScript snippets.
 	SupportsJavascriptGrants bool `protobuf:"varint,4,opt,name=supports_javascript_grants,json=supportsJavascriptGrants,proto3" json:"supports_javascript_grants,omitempty"`
 	SupportsProjectGrants    bool `protobuf:"varint,5,opt,name=supports_project_grants,json=supportsProjectGrants,proto3" json:"supports_project_grants,omitempty"`
-	// Protocol feature bit: true means this server enforces request
-	// minimum_isolation before admission and dispatch. Older servers omit the
-	// field and therefore decode as false. This is advisory discovery; the V2
-	// execution procedure itself is the atomic mixed-version gate.
-	SupportsMinimumIsolation bool `protobuf:"varint,6,opt,name=supports_minimum_isolation,json=supportsMinimumIsolation,proto3" json:"supports_minimum_isolation,omitempty"`
-	// Protocol feature bit: true means this server can compute efficiency advice
-	// (Prospector) for a run whose grant_profile opts in. It is discovery only:
-	// per-profile `advice: off|operator|caller` config still governs whether any
-	// given run returns advice, and advice never changes a run's execution.
-	SupportsAdvisory bool `protobuf:"varint,7,opt,name=supports_advisory,json=supportsAdvisory,proto3" json:"supports_advisory,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Whether a module payload works on this provider: a module image is configured
+	// and the provider can supervise its worker. Static discovery, like supports_project.
+	SupportsModule bool `protobuf:"varint,8,opt,name=supports_module,json=supportsModule,proto3" json:"supports_module,omitempty"`
+	// The protocol number this daemon serves (see Run). A client compares it with
+	// its own before relying on this daemon; Run checks it again on every request.
+	Protocol      uint32 `protobuf:"varint,9,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DescribeResponse) Reset() {
@@ -219,18 +215,18 @@ func (x *DescribeResponse) GetSupportsProjectGrants() bool {
 	return false
 }
 
-func (x *DescribeResponse) GetSupportsMinimumIsolation() bool {
+func (x *DescribeResponse) GetSupportsModule() bool {
 	if x != nil {
-		return x.SupportsMinimumIsolation
+		return x.SupportsModule
 	}
 	return false
 }
 
-func (x *DescribeResponse) GetSupportsAdvisory() bool {
+func (x *DescribeResponse) GetProtocol() uint32 {
 	if x != nil {
-		return x.SupportsAdvisory
+		return x.Protocol
 	}
-	return false
+	return 0
 }
 
 // AdviceFinding is one metadata-only efficiency observation about a run's brokered
@@ -373,18 +369,14 @@ func (x *AdviceFinding) GetBytesMoved() int64 {
 	return 0
 }
 
-type RunJavaScriptV2Request struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	Code      string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`                             // JavaScript source; engine is provider-dependent
-	TimeoutMs int32                  `protobuf:"varint,2,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"` // optional; defaults and is clamped server-side
-	// grant_profile names a server-configured host-API capability (see
-	// PLIMSOLL_GRANTS_FILE). Empty = fully isolated. The caller can only SELECT a
-	// pre-registered profile; BaseURL, allowed routes, and the token live server-side.
-	GrantProfile string `protobuf:"bytes,3,opt,name=grant_profile,json=grantProfile,proto3" json:"grant_profile,omitempty"`
+type RunRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// protocol is the number the client speaks; see Run. Required: 0 is refused.
+	Protocol uint32 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
 	// Per-run boundary floor. Empty means no request-specific floor; otherwise
 	// one of "process", "container", "kernel", or "vm". The server checks its
 	// current provider evidence immediately before admission and dispatch.
-	MinimumIsolation string `protobuf:"bytes,4,opt,name=minimum_isolation,json=minimumIsolation,proto3" json:"minimum_isolation,omitempty"`
+	MinimumIsolation string `protobuf:"bytes,2,opt,name=minimum_isolation,json=minimumIsolation,proto3" json:"minimum_isolation,omitempty"`
 	// trace_id is an OPAQUE correlation id the caller already uses in its own logs
 	// (e.g. an id carried across an upstream MCP proxy boundary). plimsoll
 	// records it on the run's audit line and does NOTHING else with it: it is never
@@ -399,25 +391,36 @@ type RunJavaScriptV2Request struct {
 	// cannot hold one. The server therefore accepts it only as [A-Za-z0-9._:-] up to
 	// 64 bytes and DROPS it otherwise, recording that it dropped one. Put nothing
 	// meaningful in it: the meaning belongs in the caller's log, not this one.
-	TraceId       string `protobuf:"bytes,5,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	TraceId string `protobuf:"bytes,3,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	// Total wall-clock budget in milliseconds for whatever the payload is;
+	// optional, defaulted and clamped server-side.
+	TimeoutMs int32 `protobuf:"varint,4,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	// Exactly one payload. An empty oneof is InvalidArgument.
+	//
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*RunRequest_Javascript
+	//	*RunRequest_Project
+	//	*RunRequest_Module
+	Payload       isRunRequest_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *RunJavaScriptV2Request) Reset() {
-	*x = RunJavaScriptV2Request{}
+func (x *RunRequest) Reset() {
+	*x = RunRequest{}
 	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *RunJavaScriptV2Request) String() string {
+func (x *RunRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*RunJavaScriptV2Request) ProtoMessage() {}
+func (*RunRequest) ProtoMessage() {}
 
-func (x *RunJavaScriptV2Request) ProtoReflect() protoreflect.Message {
+func (x *RunRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -429,62 +432,293 @@ func (x *RunJavaScriptV2Request) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use RunJavaScriptV2Request.ProtoReflect.Descriptor instead.
-func (*RunJavaScriptV2Request) Descriptor() ([]byte, []int) {
+// Deprecated: Use RunRequest.ProtoReflect.Descriptor instead.
+func (*RunRequest) Descriptor() ([]byte, []int) {
 	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *RunJavaScriptV2Request) GetCode() string {
+func (x *RunRequest) GetProtocol() uint32 {
 	if x != nil {
-		return x.Code
-	}
-	return ""
-}
-
-func (x *RunJavaScriptV2Request) GetTimeoutMs() int32 {
-	if x != nil {
-		return x.TimeoutMs
+		return x.Protocol
 	}
 	return 0
 }
 
-func (x *RunJavaScriptV2Request) GetGrantProfile() string {
-	if x != nil {
-		return x.GrantProfile
-	}
-	return ""
-}
-
-func (x *RunJavaScriptV2Request) GetMinimumIsolation() string {
+func (x *RunRequest) GetMinimumIsolation() string {
 	if x != nil {
 		return x.MinimumIsolation
 	}
 	return ""
 }
 
-func (x *RunJavaScriptV2Request) GetTraceId() string {
+func (x *RunRequest) GetTraceId() string {
 	if x != nil {
 		return x.TraceId
 	}
 	return ""
 }
 
-type RunJavaScriptV2Response struct {
+func (x *RunRequest) GetTimeoutMs() int32 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
+}
+
+func (x *RunRequest) GetPayload() isRunRequest_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *RunRequest) GetJavascript() *JavaScriptRun {
+	if x != nil {
+		if x, ok := x.Payload.(*RunRequest_Javascript); ok {
+			return x.Javascript
+		}
+	}
+	return nil
+}
+
+func (x *RunRequest) GetProject() *ProjectRun {
+	if x != nil {
+		if x, ok := x.Payload.(*RunRequest_Project); ok {
+			return x.Project
+		}
+	}
+	return nil
+}
+
+func (x *RunRequest) GetModule() *ModuleRun {
+	if x != nil {
+		if x, ok := x.Payload.(*RunRequest_Module); ok {
+			return x.Module
+		}
+	}
+	return nil
+}
+
+type isRunRequest_Payload interface {
+	isRunRequest_Payload()
+}
+
+type RunRequest_Javascript struct {
+	Javascript *JavaScriptRun `protobuf:"bytes,10,opt,name=javascript,proto3,oneof"`
+}
+
+type RunRequest_Project struct {
+	Project *ProjectRun `protobuf:"bytes,11,opt,name=project,proto3,oneof"`
+}
+
+type RunRequest_Module struct {
+	Module *ModuleRun `protobuf:"bytes,12,opt,name=module,proto3,oneof"`
+}
+
+func (*RunRequest_Javascript) isRunRequest_Payload() {}
+
+func (*RunRequest_Project) isRunRequest_Payload() {}
+
+func (*RunRequest_Module) isRunRequest_Payload() {}
+
+// JavaScriptRun is a snippet. The engine is provider-dependent (Node on docker
+// and e2b, QuickJS on wasm).
+type JavaScriptRun struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Code  string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"` // JavaScript source
+	// grant_profile names a server-configured host-API capability (see
+	// PLIMSOLL_GRANTS_FILE). Empty = fully isolated. The caller can only SELECT a
+	// pre-registered profile; BaseURL, allowed routes, and the token live server-side.
+	// It lives on the payload, not the envelope, because a module run has no host
+	// API and a payload that cannot express a grant beats a rule that refuses one.
+	GrantProfile  string `protobuf:"bytes,2,opt,name=grant_profile,json=grantProfile,proto3" json:"grant_profile,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JavaScriptRun) Reset() {
+	*x = JavaScriptRun{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JavaScriptRun) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JavaScriptRun) ProtoMessage() {}
+
+func (x *JavaScriptRun) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JavaScriptRun.ProtoReflect.Descriptor instead.
+func (*JavaScriptRun) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *JavaScriptRun) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *JavaScriptRun) GetGrantProfile() string {
+	if x != nil {
+		return x.GrantProfile
+	}
+	return ""
+}
+
+type RunResponse struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Sandbox string                 `protobuf:"bytes,1,opt,name=sandbox,proto3" json:"sandbox,omitempty"` // which provider ran it (e.g. "docker")
+	// isolation is the strength of the boundary the code actually ran behind
+	// ("vm", "kernel", "container", "process", "none"), so a caller is never blind
+	// to the tier. The provider name alone hides it: "docker" is a real kernel
+	// boundary under gVisor but only shared-kernel namespaces under runc. The
+	// official client checks this against the request's floor; a mismatch means
+	// execution may already have happened and is never a safe retry signal.
+	Isolation  string `protobuf:"bytes,2,opt,name=isolation,proto3" json:"isolation,omitempty"`
+	DurationMs int64  `protobuf:"varint,3,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"` // wall time of the run as the daemon measured it
+	// Exactly one result, of the payload's kind.
+	//
+	// Types that are valid to be assigned to Result:
+	//
+	//	*RunResponse_Javascript
+	//	*RunResponse_Project
+	//	*RunResponse_Module
+	Result        isRunResponse_Result `protobuf_oneof:"result"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunResponse) Reset() {
+	*x = RunResponse{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunResponse) ProtoMessage() {}
+
+func (x *RunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunResponse.ProtoReflect.Descriptor instead.
+func (*RunResponse) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *RunResponse) GetSandbox() string {
+	if x != nil {
+		return x.Sandbox
+	}
+	return ""
+}
+
+func (x *RunResponse) GetIsolation() string {
+	if x != nil {
+		return x.Isolation
+	}
+	return ""
+}
+
+func (x *RunResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *RunResponse) GetResult() isRunResponse_Result {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+func (x *RunResponse) GetJavascript() *JavaScriptResult {
+	if x != nil {
+		if x, ok := x.Result.(*RunResponse_Javascript); ok {
+			return x.Javascript
+		}
+	}
+	return nil
+}
+
+func (x *RunResponse) GetProject() *ProjectResult {
+	if x != nil {
+		if x, ok := x.Result.(*RunResponse_Project); ok {
+			return x.Project
+		}
+	}
+	return nil
+}
+
+func (x *RunResponse) GetModule() *ModuleResult {
+	if x != nil {
+		if x, ok := x.Result.(*RunResponse_Module); ok {
+			return x.Module
+		}
+	}
+	return nil
+}
+
+type isRunResponse_Result interface {
+	isRunResponse_Result()
+}
+
+type RunResponse_Javascript struct {
+	Javascript *JavaScriptResult `protobuf:"bytes,10,opt,name=javascript,proto3,oneof"`
+}
+
+type RunResponse_Project struct {
+	Project *ProjectResult `protobuf:"bytes,11,opt,name=project,proto3,oneof"`
+}
+
+type RunResponse_Module struct {
+	Module *ModuleResult `protobuf:"bytes,12,opt,name=module,proto3,oneof"`
+}
+
+func (*RunResponse_Javascript) isRunResponse_Result() {}
+
+func (*RunResponse_Project) isRunResponse_Result() {}
+
+func (*RunResponse_Module) isRunResponse_Result() {}
+
+type JavaScriptResult struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// stdout/stderr are bytes, not strings: guest programs can emit arbitrary
 	// byte sequences, and a protobuf string would repair invalid UTF-8 lossily
 	// during serialization. The caller decides how to decode.
-	Stdout     []byte `protobuf:"bytes,1,opt,name=stdout,proto3" json:"stdout,omitempty"`
-	Stderr     []byte `protobuf:"bytes,2,opt,name=stderr,proto3" json:"stderr,omitempty"`
-	ExitCode   int32  `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
-	TimedOut   bool   `protobuf:"varint,4,opt,name=timed_out,json=timedOut,proto3" json:"timed_out,omitempty"`
-	DurationMs int64  `protobuf:"varint,5,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
-	Sandbox    string `protobuf:"bytes,6,opt,name=sandbox,proto3" json:"sandbox,omitempty"` // which provider ran it (e.g. "docker")
-	// isolation is the strength of the boundary the code actually ran behind
-	// ("vm", "kernel", "container", "process", "none"), so a caller is never blind
-	// to the tier. The provider name alone hides it: "docker" is a real kernel
-	// boundary under gVisor but only shared-kernel namespaces under runc.
-	Isolation string `protobuf:"bytes,7,opt,name=isolation,proto3" json:"isolation,omitempty"`
+	Stdout   []byte `protobuf:"bytes,1,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr   []byte `protobuf:"bytes,2,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	ExitCode int32  `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	TimedOut bool   `protobuf:"varint,4,opt,name=timed_out,json=timedOut,proto3" json:"timed_out,omitempty"`
 	// The provider's output cap dropped bytes from the stream. The retained
 	// prefix is returned unmarked; these flags are the only truncation signal.
 	StdoutTruncated bool `protobuf:"varint,8,opt,name=stdout_truncated,json=stdoutTruncated,proto3" json:"stdout_truncated,omitempty"`
@@ -500,21 +734,21 @@ type RunJavaScriptV2Response struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *RunJavaScriptV2Response) Reset() {
-	*x = RunJavaScriptV2Response{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[4]
+func (x *JavaScriptResult) Reset() {
+	*x = JavaScriptResult{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *RunJavaScriptV2Response) String() string {
+func (x *JavaScriptResult) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*RunJavaScriptV2Response) ProtoMessage() {}
+func (*JavaScriptResult) ProtoMessage() {}
 
-func (x *RunJavaScriptV2Response) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[4]
+func (x *JavaScriptResult) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -525,75 +759,54 @@ func (x *RunJavaScriptV2Response) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use RunJavaScriptV2Response.ProtoReflect.Descriptor instead.
-func (*RunJavaScriptV2Response) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{4}
+// Deprecated: Use JavaScriptResult.ProtoReflect.Descriptor instead.
+func (*JavaScriptResult) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *RunJavaScriptV2Response) GetStdout() []byte {
+func (x *JavaScriptResult) GetStdout() []byte {
 	if x != nil {
 		return x.Stdout
 	}
 	return nil
 }
 
-func (x *RunJavaScriptV2Response) GetStderr() []byte {
+func (x *JavaScriptResult) GetStderr() []byte {
 	if x != nil {
 		return x.Stderr
 	}
 	return nil
 }
 
-func (x *RunJavaScriptV2Response) GetExitCode() int32 {
+func (x *JavaScriptResult) GetExitCode() int32 {
 	if x != nil {
 		return x.ExitCode
 	}
 	return 0
 }
 
-func (x *RunJavaScriptV2Response) GetTimedOut() bool {
+func (x *JavaScriptResult) GetTimedOut() bool {
 	if x != nil {
 		return x.TimedOut
 	}
 	return false
 }
 
-func (x *RunJavaScriptV2Response) GetDurationMs() int64 {
-	if x != nil {
-		return x.DurationMs
-	}
-	return 0
-}
-
-func (x *RunJavaScriptV2Response) GetSandbox() string {
-	if x != nil {
-		return x.Sandbox
-	}
-	return ""
-}
-
-func (x *RunJavaScriptV2Response) GetIsolation() string {
-	if x != nil {
-		return x.Isolation
-	}
-	return ""
-}
-
-func (x *RunJavaScriptV2Response) GetStdoutTruncated() bool {
+func (x *JavaScriptResult) GetStdoutTruncated() bool {
 	if x != nil {
 		return x.StdoutTruncated
 	}
 	return false
 }
 
-func (x *RunJavaScriptV2Response) GetStderrTruncated() bool {
+func (x *JavaScriptResult) GetStderrTruncated() bool {
 	if x != nil {
 		return x.StderrTruncated
 	}
 	return false
 }
 
-func (x *RunJavaScriptV2Response) GetAdvice() []*AdviceFinding {
+func (x *JavaScriptResult) GetAdvice() []*AdviceFinding {
 	if x != nil {
 		return x.Advice
 	}
@@ -610,7 +823,7 @@ type ProjectFile struct {
 
 func (x *ProjectFile) Reset() {
 	*x = ProjectFile{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[5]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -622,7 +835,7 @@ func (x *ProjectFile) String() string {
 func (*ProjectFile) ProtoMessage() {}
 
 func (x *ProjectFile) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[5]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -635,7 +848,7 @@ func (x *ProjectFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProjectFile.ProtoReflect.Descriptor instead.
 func (*ProjectFile) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{5}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ProjectFile) GetPath() string {
@@ -655,7 +868,7 @@ func (x *ProjectFile) GetContent() string {
 type StepResult struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Command string                 `protobuf:"bytes,1,opt,name=command,proto3" json:"command,omitempty"`
-	// bytes for the same reason as RunJavaScriptV2Response.stdout: guest output
+	// bytes for the same reason as JavaScriptResult.stdout: guest output
 	// is arbitrary bytes and must not be repaired during serialization.
 	Stdout     []byte `protobuf:"bytes,2,opt,name=stdout,proto3" json:"stdout,omitempty"`
 	Stderr     []byte `protobuf:"bytes,3,opt,name=stderr,proto3" json:"stderr,omitempty"`
@@ -671,7 +884,7 @@ type StepResult struct {
 
 func (x *StepResult) Reset() {
 	*x = StepResult{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[6]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -683,7 +896,7 @@ func (x *StepResult) String() string {
 func (*StepResult) ProtoMessage() {}
 
 func (x *StepResult) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[6]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -696,7 +909,7 @@ func (x *StepResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepResult.ProtoReflect.Descriptor instead.
 func (*StepResult) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{6}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StepResult) GetCommand() string {
@@ -765,7 +978,7 @@ type Artifact struct {
 
 func (x *Artifact) Reset() {
 	*x = Artifact{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[7]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -777,7 +990,7 @@ func (x *Artifact) String() string {
 func (*Artifact) ProtoMessage() {}
 
 func (x *Artifact) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[7]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -790,7 +1003,7 @@ func (x *Artifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Artifact.ProtoReflect.Descriptor instead.
 func (*Artifact) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{7}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Artifact) GetPath() string {
@@ -807,34 +1020,34 @@ func (x *Artifact) GetContent() []byte {
 	return nil
 }
 
-type RunProjectV2Request struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Files            []*ProjectFile         `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`                                               // written into the work dir before steps run
-	Steps            []string               `protobuf:"bytes,2,rep,name=steps,proto3" json:"steps,omitempty"`                                               // shell commands run in order; stop on first failure
-	TimeoutMs        int32                  `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`                     // total wall-clock budget; clamped server-side
-	Artifacts        []string               `protobuf:"bytes,4,rep,name=artifacts,proto3" json:"artifacts,omitempty"`                                       // relative file paths to capture and return
-	GrantProfile     string                 `protobuf:"bytes,5,opt,name=grant_profile,json=grantProfile,proto3" json:"grant_profile,omitempty"`             // server-configured host-API capability; empty = isolated
-	MinimumIsolation string                 `protobuf:"bytes,6,opt,name=minimum_isolation,json=minimumIsolation,proto3" json:"minimum_isolation,omitempty"` // per-run floor; see RunJavaScriptV2Request.minimum_isolation
-	TraceId          string                 `protobuf:"bytes,7,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`                            // opaque join key for the caller's own log; see RunJavaScriptV2Request.trace_id
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+// ProjectRun writes a multi-file project and runs build/lint/run steps in order.
+// ProjectCapable providers structurally support it; callers must still ensure
+// their selected image/template contains the required tools.
+type ProjectRun struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Files         []*ProjectFile         `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`                                   // written into the work dir before steps run
+	Steps         []string               `protobuf:"bytes,2,rep,name=steps,proto3" json:"steps,omitempty"`                                   // shell commands run in order; stop on first failure
+	Artifacts     []string               `protobuf:"bytes,4,rep,name=artifacts,proto3" json:"artifacts,omitempty"`                           // relative file paths to capture and return
+	GrantProfile  string                 `protobuf:"bytes,5,opt,name=grant_profile,json=grantProfile,proto3" json:"grant_profile,omitempty"` // server-configured host-API capability; empty = isolated
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *RunProjectV2Request) Reset() {
-	*x = RunProjectV2Request{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[8]
+func (x *ProjectRun) Reset() {
+	*x = ProjectRun{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *RunProjectV2Request) String() string {
+func (x *ProjectRun) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*RunProjectV2Request) ProtoMessage() {}
+func (*ProjectRun) ProtoMessage() {}
 
-func (x *RunProjectV2Request) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[8]
+func (x *ProjectRun) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -845,75 +1058,52 @@ func (x *RunProjectV2Request) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use RunProjectV2Request.ProtoReflect.Descriptor instead.
-func (*RunProjectV2Request) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{8}
+// Deprecated: Use ProjectRun.ProtoReflect.Descriptor instead.
+func (*ProjectRun) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{10}
 }
 
-func (x *RunProjectV2Request) GetFiles() []*ProjectFile {
+func (x *ProjectRun) GetFiles() []*ProjectFile {
 	if x != nil {
 		return x.Files
 	}
 	return nil
 }
 
-func (x *RunProjectV2Request) GetSteps() []string {
+func (x *ProjectRun) GetSteps() []string {
 	if x != nil {
 		return x.Steps
 	}
 	return nil
 }
 
-func (x *RunProjectV2Request) GetTimeoutMs() int32 {
-	if x != nil {
-		return x.TimeoutMs
-	}
-	return 0
-}
-
-func (x *RunProjectV2Request) GetArtifacts() []string {
+func (x *ProjectRun) GetArtifacts() []string {
 	if x != nil {
 		return x.Artifacts
 	}
 	return nil
 }
 
-func (x *RunProjectV2Request) GetGrantProfile() string {
+func (x *ProjectRun) GetGrantProfile() string {
 	if x != nil {
 		return x.GrantProfile
 	}
 	return ""
 }
 
-func (x *RunProjectV2Request) GetMinimumIsolation() string {
-	if x != nil {
-		return x.MinimumIsolation
-	}
-	return ""
-}
-
-func (x *RunProjectV2Request) GetTraceId() string {
-	if x != nil {
-		return x.TraceId
-	}
-	return ""
-}
-
-type RunProjectV2Response struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	Steps   []*StepResult          `protobuf:"bytes,1,rep,name=steps,proto3" json:"steps,omitempty"` // one per step that ran
-	Sandbox string                 `protobuf:"bytes,2,opt,name=sandbox,proto3" json:"sandbox,omitempty"`
+type ProjectResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Steps []*StepResult          `protobuf:"bytes,1,rep,name=steps,proto3" json:"steps,omitempty"` // one per step that ran
 	// Typed top-level conclusion of the run. Step failures live in steps;
 	// pre-dispatch/provider failures use the RPC status instead of this field.
 	Outcome   ProjectOutcome `protobuf:"varint,3,opt,name=outcome,proto3,enum=plimsoll.v1.ProjectOutcome" json:"outcome,omitempty"`
 	Artifacts []*Artifact    `protobuf:"bytes,4,rep,name=artifacts,proto3" json:"artifacts,omitempty"` // captured output files (those that existed)
-	Isolation string         `protobuf:"bytes,5,opt,name=isolation,proto3" json:"isolation,omitempty"` // boundary tier the run executed behind (see RunJavaScriptV2Response.isolation)
 	// Human-readable context for a non-completed outcome; empty when completed.
 	OutcomeDetail string `protobuf:"bytes,6,opt,name=outcome_detail,json=outcomeDetail,proto3" json:"outcome_detail,omitempty"`
 	// The aggregate artifact byte budget dropped one or more requested artifacts
 	// that existed.
 	ArtifactsTruncated bool `protobuf:"varint,7,opt,name=artifacts_truncated,json=artifactsTruncated,proto3" json:"artifacts_truncated,omitempty"`
-	// advice mirrors RunJavaScriptV2Response.advice for project runs: a bounded,
+	// advice mirrors JavaScriptResult.advice for project runs: a bounded,
 	// metadata-only list of agent-fixable efficiency findings over the run's brokered
 	// host.* calls. Present only when the grant_profile set advice: caller AND at least
 	// one agent-fixable finding exists; empty otherwise. Advisory only — a run is
@@ -923,21 +1113,21 @@ type RunProjectV2Response struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *RunProjectV2Response) Reset() {
-	*x = RunProjectV2Response{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[9]
+func (x *ProjectResult) Reset() {
+	*x = ProjectResult{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *RunProjectV2Response) String() string {
+func (x *ProjectResult) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*RunProjectV2Response) ProtoMessage() {}
+func (*ProjectResult) ProtoMessage() {}
 
-func (x *RunProjectV2Response) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[9]
+func (x *ProjectResult) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -948,63 +1138,318 @@ func (x *RunProjectV2Response) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use RunProjectV2Response.ProtoReflect.Descriptor instead.
-func (*RunProjectV2Response) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{9}
+// Deprecated: Use ProjectResult.ProtoReflect.Descriptor instead.
+func (*ProjectResult) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *RunProjectV2Response) GetSteps() []*StepResult {
+func (x *ProjectResult) GetSteps() []*StepResult {
 	if x != nil {
 		return x.Steps
 	}
 	return nil
 }
 
-func (x *RunProjectV2Response) GetSandbox() string {
-	if x != nil {
-		return x.Sandbox
-	}
-	return ""
-}
-
-func (x *RunProjectV2Response) GetOutcome() ProjectOutcome {
+func (x *ProjectResult) GetOutcome() ProjectOutcome {
 	if x != nil {
 		return x.Outcome
 	}
 	return ProjectOutcome_PROJECT_OUTCOME_UNSPECIFIED
 }
 
-func (x *RunProjectV2Response) GetArtifacts() []*Artifact {
+func (x *ProjectResult) GetArtifacts() []*Artifact {
 	if x != nil {
 		return x.Artifacts
 	}
 	return nil
 }
 
-func (x *RunProjectV2Response) GetIsolation() string {
-	if x != nil {
-		return x.Isolation
-	}
-	return ""
-}
-
-func (x *RunProjectV2Response) GetOutcomeDetail() string {
+func (x *ProjectResult) GetOutcomeDetail() string {
 	if x != nil {
 		return x.OutcomeDetail
 	}
 	return ""
 }
 
-func (x *RunProjectV2Response) GetArtifactsTruncated() bool {
+func (x *ProjectResult) GetArtifactsTruncated() bool {
 	if x != nil {
 		return x.ArtifactsTruncated
 	}
 	return false
 }
 
-func (x *RunProjectV2Response) GetAdvice() []*AdviceFinding {
+func (x *ProjectResult) GetAdvice() []*AdviceFinding {
 	if x != nil {
 		return x.Advice
+	}
+	return nil
+}
+
+// ModuleRow is one parameter set; one fresh model instance is created for it.
+// Every row in a request has the same number of values, and that number must
+// equal the model's own parameter count, which the worker reads from the module
+// itself (a mismatch is a setup_failed outcome, never a silently reshaped row).
+type ModuleRow struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Values        []float64              `protobuf:"fixed64,1,rep,packed,name=values,proto3" json:"values,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModuleRow) Reset() {
+	*x = ModuleRow{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModuleRow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModuleRow) ProtoMessage() {}
+
+func (x *ModuleRow) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModuleRow.ProtoReflect.Descriptor instead.
+func (*ModuleRow) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ModuleRow) GetValues() []float64 {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+// ModuleRun runs a compiled physical model (an AOT-compiled WebAssembly module
+// baked into the provider's module image) once per parameter row. No grant: a
+// model has no host API, and this payload cannot express one.
+type ModuleRun struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// model is an image-relative id ([A-Za-z0-9][A-Za-z0-9._-]{0,63}); the provider
+	// maps it to a model baked into its module image. A caller can only select a
+	// model the operator built in: no module, no code, arrives over the wire.
+	Model         string       `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
+	Rows          []*ModuleRow `protobuf:"bytes,2,rep,name=rows,proto3" json:"rows,omitempty"`
+	EndTime       float64      `protobuf:"fixed64,3,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"` // simulation horizon, > 0
+	Step          float64      `protobuf:"fixed64,4,opt,name=step,proto3" json:"step,omitempty"`                      // communication step, > 0; end_time / step bounds the step count
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModuleRun) Reset() {
+	*x = ModuleRun{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModuleRun) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModuleRun) ProtoMessage() {}
+
+func (x *ModuleRun) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModuleRun.ProtoReflect.Descriptor instead.
+func (*ModuleRun) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ModuleRun) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *ModuleRun) GetRows() []*ModuleRow {
+	if x != nil {
+		return x.Rows
+	}
+	return nil
+}
+
+func (x *ModuleRun) GetEndTime() float64 {
+	if x != nil {
+		return x.EndTime
+	}
+	return 0
+}
+
+func (x *ModuleRun) GetStep() float64 {
+	if x != nil {
+		return x.Step
+	}
+	return 0
+}
+
+// ModuleRowResult is one row's result. status is the number of steps the
+// instance completed when >= 0, and the model's or worker's negative code when
+// that row failed (the worker records the failure and continues with the next
+// row). outputs holds width values per completed step, step-major; empty when
+// status is not positive.
+type ModuleRowResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
+	Outputs       []float64              `protobuf:"fixed64,2,rep,packed,name=outputs,proto3" json:"outputs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModuleRowResult) Reset() {
+	*x = ModuleRowResult{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModuleRowResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModuleRowResult) ProtoMessage() {}
+
+func (x *ModuleRowResult) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModuleRowResult.ProtoReflect.Descriptor instead.
+func (*ModuleRowResult) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ModuleRowResult) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
+func (x *ModuleRowResult) GetOutputs() []float64 {
+	if x != nil {
+		return x.Outputs
+	}
+	return nil
+}
+
+type ModuleResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Runs  []*ModuleRowResult     `protobuf:"bytes,1,rep,name=runs,proto3" json:"runs,omitempty"`    // one per request row, in order; empty unless outcome is completed
+	Width int32                  `protobuf:"varint,2,opt,name=width,proto3" json:"width,omitempty"` // outputs per step, read from the module
+	// Typed top-level conclusion, with the project run's meanings: completed means
+	// every row has a result; setup_failed means the worker refused the request
+	// (unknown model, malformed table); timed_out and protocol_error as for a
+	// project. Pre-dispatch failures use the RPC status instead.
+	Outcome       ProjectOutcome `protobuf:"varint,5,opt,name=outcome,proto3,enum=plimsoll.v1.ProjectOutcome" json:"outcome,omitempty"`
+	OutcomeDetail string         `protobuf:"bytes,6,opt,name=outcome_detail,json=outcomeDetail,proto3" json:"outcome_detail,omitempty"`
+	// The worker's own streams: one summary line on stdout, diagnostics on stderr.
+	// Bytes for the same reason as JavaScriptResult.stdout.
+	Stdout        []byte `protobuf:"bytes,7,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr        []byte `protobuf:"bytes,8,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModuleResult) Reset() {
+	*x = ModuleResult{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModuleResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModuleResult) ProtoMessage() {}
+
+func (x *ModuleResult) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModuleResult.ProtoReflect.Descriptor instead.
+func (*ModuleResult) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ModuleResult) GetRuns() []*ModuleRowResult {
+	if x != nil {
+		return x.Runs
+	}
+	return nil
+}
+
+func (x *ModuleResult) GetWidth() int32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *ModuleResult) GetOutcome() ProjectOutcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return ProjectOutcome_PROJECT_OUTCOME_UNSPECIFIED
+}
+
+func (x *ModuleResult) GetOutcomeDetail() string {
+	if x != nil {
+		return x.OutcomeDetail
+	}
+	return ""
+}
+
+func (x *ModuleResult) GetStdout() []byte {
+	if x != nil {
+		return x.Stdout
+	}
+	return nil
+}
+
+func (x *ModuleResult) GetStderr() []byte {
+	if x != nil {
+		return x.Stderr
 	}
 	return nil
 }
@@ -1014,15 +1459,15 @@ var File_plimsoll_v1_sandbox_proto protoreflect.FileDescriptor
 const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"\x19plimsoll/v1/sandbox.proto\x12\vplimsoll.v1\"\x11\n" +
-	"\x0fDescribeRequest\"\xd6\x02\n" +
+	"\x0fDescribeRequest\"\xbc\x02\n" +
 	"\x10DescribeResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12)\n" +
 	"\x10supports_project\x18\x03 \x01(\bR\x0fsupportsProject\x12<\n" +
 	"\x1asupports_javascript_grants\x18\x04 \x01(\bR\x18supportsJavascriptGrants\x126\n" +
-	"\x17supports_project_grants\x18\x05 \x01(\bR\x15supportsProjectGrants\x12<\n" +
-	"\x1asupports_minimum_isolation\x18\x06 \x01(\bR\x18supportsMinimumIsolation\x12+\n" +
-	"\x11supports_advisory\x18\a \x01(\bR\x10supportsAdvisory\"\xe3\x02\n" +
+	"\x17supports_project_grants\x18\x05 \x01(\bR\x15supportsProjectGrants\x12'\n" +
+	"\x0fsupports_module\x18\b \x01(\bR\x0esupportsModule\x12\x1a\n" +
+	"\bprotocol\x18\t \x01(\rR\bprotocolJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xe3\x02\n" +
 	"\rAdviceFinding\x12\x18\n" +
 	"\apattern\x18\x01 \x01(\tR\apattern\x12\x1a\n" +
 	"\bseverity\x18\x02 \x01(\tR\bseverity\x12\x16\n" +
@@ -1037,23 +1482,41 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x10added_latency_ms\x18\n" +
 	" \x01(\x03R\x0eaddedLatencyMs\x12\x1f\n" +
 	"\vbytes_moved\x18\v \x01(\x03R\n" +
-	"bytesMoved\"\xb8\x01\n" +
-	"\x16RunJavaScriptV2Request\x12\x12\n" +
-	"\x04code\x18\x01 \x01(\tR\x04code\x12\x1d\n" +
+	"bytesMoved\"\xbf\x02\n" +
 	"\n" +
-	"timeout_ms\x18\x02 \x01(\x05R\ttimeoutMs\x12#\n" +
-	"\rgrant_profile\x18\x03 \x01(\tR\fgrantProfile\x12+\n" +
-	"\x11minimum_isolation\x18\x04 \x01(\tR\x10minimumIsolation\x12\x19\n" +
-	"\btrace_id\x18\x05 \x01(\tR\atraceId\"\xe6\x02\n" +
-	"\x17RunJavaScriptV2Response\x12\x16\n" +
+	"RunRequest\x12\x1a\n" +
+	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
+	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
+	"\btrace_id\x18\x03 \x01(\tR\atraceId\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\x04 \x01(\x05R\ttimeoutMs\x12<\n" +
+	"\n" +
+	"javascript\x18\n" +
+	" \x01(\v2\x1a.plimsoll.v1.JavaScriptRunH\x00R\n" +
+	"javascript\x123\n" +
+	"\aproject\x18\v \x01(\v2\x17.plimsoll.v1.ProjectRunH\x00R\aproject\x120\n" +
+	"\x06module\x18\f \x01(\v2\x16.plimsoll.v1.ModuleRunH\x00R\x06moduleB\t\n" +
+	"\apayload\"H\n" +
+	"\rJavaScriptRun\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\x12#\n" +
+	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\x9e\x02\n" +
+	"\vRunResponse\x12\x18\n" +
+	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
+	"\tisolation\x18\x02 \x01(\tR\tisolation\x12\x1f\n" +
+	"\vduration_ms\x18\x03 \x01(\x03R\n" +
+	"durationMs\x12?\n" +
+	"\n" +
+	"javascript\x18\n" +
+	" \x01(\v2\x1d.plimsoll.v1.JavaScriptResultH\x00R\n" +
+	"javascript\x126\n" +
+	"\aproject\x18\v \x01(\v2\x1a.plimsoll.v1.ProjectResultH\x00R\aproject\x123\n" +
+	"\x06module\x18\f \x01(\v2\x19.plimsoll.v1.ModuleResultH\x00R\x06moduleB\b\n" +
+	"\x06result\"\x86\x02\n" +
+	"\x10JavaScriptResult\x12\x16\n" +
 	"\x06stdout\x18\x01 \x01(\fR\x06stdout\x12\x16\n" +
 	"\x06stderr\x18\x02 \x01(\fR\x06stderr\x12\x1b\n" +
 	"\texit_code\x18\x03 \x01(\x05R\bexitCode\x12\x1b\n" +
-	"\ttimed_out\x18\x04 \x01(\bR\btimedOut\x12\x1f\n" +
-	"\vduration_ms\x18\x05 \x01(\x03R\n" +
-	"durationMs\x12\x18\n" +
-	"\asandbox\x18\x06 \x01(\tR\asandbox\x12\x1c\n" +
-	"\tisolation\x18\a \x01(\tR\tisolation\x12)\n" +
+	"\ttimed_out\x18\x04 \x01(\bR\btimedOut\x12)\n" +
 	"\x10stdout_truncated\x18\b \x01(\bR\x0fstdoutTruncated\x12)\n" +
 	"\x10stderr_truncated\x18\t \x01(\bR\x0fstderrTruncated\x122\n" +
 	"\x06advice\x18\n" +
@@ -1074,34 +1537,45 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x10stderr_truncated\x18\b \x01(\bR\x0fstderrTruncated\"8\n" +
 	"\bArtifact\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\fR\acontent\"\x85\x02\n" +
-	"\x13RunProjectV2Request\x12.\n" +
-	"\x05files\x18\x01 \x03(\v2\x18.plimsoll.v1.ProjectFileR\x05files\x12\x14\n" +
-	"\x05steps\x18\x02 \x03(\tR\x05steps\x12\x1d\n" +
+	"\acontent\x18\x02 \x01(\fR\acontent\"\x95\x01\n" +
 	"\n" +
-	"timeout_ms\x18\x03 \x01(\x05R\ttimeoutMs\x12\x1c\n" +
+	"ProjectRun\x12.\n" +
+	"\x05files\x18\x01 \x03(\v2\x18.plimsoll.v1.ProjectFileR\x05files\x12\x14\n" +
+	"\x05steps\x18\x02 \x03(\tR\x05steps\x12\x1c\n" +
 	"\tartifacts\x18\x04 \x03(\tR\tartifacts\x12#\n" +
-	"\rgrant_profile\x18\x05 \x01(\tR\fgrantProfile\x12+\n" +
-	"\x11minimum_isolation\x18\x06 \x01(\tR\x10minimumIsolation\x12\x19\n" +
-	"\btrace_id\x18\a \x01(\tR\atraceId\"\xf5\x02\n" +
-	"\x14RunProjectV2Response\x12-\n" +
-	"\x05steps\x18\x01 \x03(\v2\x17.plimsoll.v1.StepResultR\x05steps\x12\x18\n" +
-	"\asandbox\x18\x02 \x01(\tR\asandbox\x125\n" +
+	"\rgrant_profile\x18\x05 \x01(\tR\fgrantProfile\"\xb6\x02\n" +
+	"\rProjectResult\x12-\n" +
+	"\x05steps\x18\x01 \x03(\v2\x17.plimsoll.v1.StepResultR\x05steps\x125\n" +
 	"\aoutcome\x18\x03 \x01(\x0e2\x1b.plimsoll.v1.ProjectOutcomeR\aoutcome\x123\n" +
-	"\tartifacts\x18\x04 \x03(\v2\x15.plimsoll.v1.ArtifactR\tartifacts\x12\x1c\n" +
-	"\tisolation\x18\x05 \x01(\tR\tisolation\x12%\n" +
+	"\tartifacts\x18\x04 \x03(\v2\x15.plimsoll.v1.ArtifactR\tartifacts\x12%\n" +
 	"\x0eoutcome_detail\x18\x06 \x01(\tR\routcomeDetail\x12/\n" +
 	"\x13artifacts_truncated\x18\a \x01(\bR\x12artifactsTruncated\x122\n" +
-	"\x06advice\x18\b \x03(\v2\x1a.plimsoll.v1.AdviceFindingR\x06advice*\xb5\x01\n" +
+	"\x06advice\x18\b \x03(\v2\x1a.plimsoll.v1.AdviceFindingR\x06advice\"#\n" +
+	"\tModuleRow\x12\x16\n" +
+	"\x06values\x18\x01 \x03(\x01R\x06values\"|\n" +
+	"\tModuleRun\x12\x14\n" +
+	"\x05model\x18\x01 \x01(\tR\x05model\x12*\n" +
+	"\x04rows\x18\x02 \x03(\v2\x16.plimsoll.v1.ModuleRowR\x04rows\x12\x19\n" +
+	"\bend_time\x18\x03 \x01(\x01R\aendTime\x12\x12\n" +
+	"\x04step\x18\x04 \x01(\x01R\x04step\"C\n" +
+	"\x0fModuleRowResult\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\x12\x18\n" +
+	"\aoutputs\x18\x02 \x03(\x01R\aoutputs\"\xe4\x01\n" +
+	"\fModuleResult\x120\n" +
+	"\x04runs\x18\x01 \x03(\v2\x1c.plimsoll.v1.ModuleRowResultR\x04runs\x12\x14\n" +
+	"\x05width\x18\x02 \x01(\x05R\x05width\x125\n" +
+	"\aoutcome\x18\x05 \x01(\x0e2\x1b.plimsoll.v1.ProjectOutcomeR\aoutcome\x12%\n" +
+	"\x0eoutcome_detail\x18\x06 \x01(\tR\routcomeDetail\x12\x16\n" +
+	"\x06stdout\x18\a \x01(\fR\x06stdout\x12\x16\n" +
+	"\x06stderr\x18\b \x01(\fR\x06stderr*\xb5\x01\n" +
 	"\x0eProjectOutcome\x12\x1f\n" +
 	"\x1bPROJECT_OUTCOME_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19PROJECT_OUTCOME_COMPLETED\x10\x01\x12 \n" +
 	"\x1cPROJECT_OUTCOME_SETUP_FAILED\x10\x02\x12\x1d\n" +
 	"\x19PROJECT_OUTCOME_TIMED_OUT\x10\x03\x12\"\n" +
-	"\x1ePROJECT_OUTCOME_PROTOCOL_ERROR\x10\x042\x8c\x02\n" +
-	"\x0eSandboxService\x12\\\n" +
-	"\x0fRunJavaScriptV2\x12#.plimsoll.v1.RunJavaScriptV2Request\x1a$.plimsoll.v1.RunJavaScriptV2Response\x12S\n" +
-	"\fRunProjectV2\x12 .plimsoll.v1.RunProjectV2Request\x1a!.plimsoll.v1.RunProjectV2Response\x12G\n" +
+	"\x1ePROJECT_OUTCOME_PROTOCOL_ERROR\x10\x042\x93\x01\n" +
+	"\x0eSandboxService\x128\n" +
+	"\x03Run\x12\x17.plimsoll.v1.RunRequest\x1a\x18.plimsoll.v1.RunResponse\x12G\n" +
 	"\bDescribe\x12\x1c.plimsoll.v1.DescribeRequest\x1a\x1d.plimsoll.v1.DescribeResponseB@Z>github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1;plimsollv1b\x06proto3"
 
 var (
@@ -1117,38 +1591,51 @@ func file_plimsoll_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_plimsoll_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_plimsoll_v1_sandbox_proto_goTypes = []any{
-	(ProjectOutcome)(0),             // 0: plimsoll.v1.ProjectOutcome
-	(*DescribeRequest)(nil),         // 1: plimsoll.v1.DescribeRequest
-	(*DescribeResponse)(nil),        // 2: plimsoll.v1.DescribeResponse
-	(*AdviceFinding)(nil),           // 3: plimsoll.v1.AdviceFinding
-	(*RunJavaScriptV2Request)(nil),  // 4: plimsoll.v1.RunJavaScriptV2Request
-	(*RunJavaScriptV2Response)(nil), // 5: plimsoll.v1.RunJavaScriptV2Response
-	(*ProjectFile)(nil),             // 6: plimsoll.v1.ProjectFile
-	(*StepResult)(nil),              // 7: plimsoll.v1.StepResult
-	(*Artifact)(nil),                // 8: plimsoll.v1.Artifact
-	(*RunProjectV2Request)(nil),     // 9: plimsoll.v1.RunProjectV2Request
-	(*RunProjectV2Response)(nil),    // 10: plimsoll.v1.RunProjectV2Response
+	(ProjectOutcome)(0),      // 0: plimsoll.v1.ProjectOutcome
+	(*DescribeRequest)(nil),  // 1: plimsoll.v1.DescribeRequest
+	(*DescribeResponse)(nil), // 2: plimsoll.v1.DescribeResponse
+	(*AdviceFinding)(nil),    // 3: plimsoll.v1.AdviceFinding
+	(*RunRequest)(nil),       // 4: plimsoll.v1.RunRequest
+	(*JavaScriptRun)(nil),    // 5: plimsoll.v1.JavaScriptRun
+	(*RunResponse)(nil),      // 6: plimsoll.v1.RunResponse
+	(*JavaScriptResult)(nil), // 7: plimsoll.v1.JavaScriptResult
+	(*ProjectFile)(nil),      // 8: plimsoll.v1.ProjectFile
+	(*StepResult)(nil),       // 9: plimsoll.v1.StepResult
+	(*Artifact)(nil),         // 10: plimsoll.v1.Artifact
+	(*ProjectRun)(nil),       // 11: plimsoll.v1.ProjectRun
+	(*ProjectResult)(nil),    // 12: plimsoll.v1.ProjectResult
+	(*ModuleRow)(nil),        // 13: plimsoll.v1.ModuleRow
+	(*ModuleRun)(nil),        // 14: plimsoll.v1.ModuleRun
+	(*ModuleRowResult)(nil),  // 15: plimsoll.v1.ModuleRowResult
+	(*ModuleResult)(nil),     // 16: plimsoll.v1.ModuleResult
 }
 var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
-	3,  // 0: plimsoll.v1.RunJavaScriptV2Response.advice:type_name -> plimsoll.v1.AdviceFinding
-	6,  // 1: plimsoll.v1.RunProjectV2Request.files:type_name -> plimsoll.v1.ProjectFile
-	7,  // 2: plimsoll.v1.RunProjectV2Response.steps:type_name -> plimsoll.v1.StepResult
-	0,  // 3: plimsoll.v1.RunProjectV2Response.outcome:type_name -> plimsoll.v1.ProjectOutcome
-	8,  // 4: plimsoll.v1.RunProjectV2Response.artifacts:type_name -> plimsoll.v1.Artifact
-	3,  // 5: plimsoll.v1.RunProjectV2Response.advice:type_name -> plimsoll.v1.AdviceFinding
-	4,  // 6: plimsoll.v1.SandboxService.RunJavaScriptV2:input_type -> plimsoll.v1.RunJavaScriptV2Request
-	9,  // 7: plimsoll.v1.SandboxService.RunProjectV2:input_type -> plimsoll.v1.RunProjectV2Request
-	1,  // 8: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
-	5,  // 9: plimsoll.v1.SandboxService.RunJavaScriptV2:output_type -> plimsoll.v1.RunJavaScriptV2Response
-	10, // 10: plimsoll.v1.SandboxService.RunProjectV2:output_type -> plimsoll.v1.RunProjectV2Response
-	2,  // 11: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
-	9,  // [9:12] is the sub-list for method output_type
-	6,  // [6:9] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	5,  // 0: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	11, // 1: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	14, // 2: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
+	7,  // 3: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
+	12, // 4: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
+	16, // 5: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
+	3,  // 6: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	8,  // 7: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
+	9,  // 8: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
+	0,  // 9: plimsoll.v1.ProjectResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	10, // 10: plimsoll.v1.ProjectResult.artifacts:type_name -> plimsoll.v1.Artifact
+	3,  // 11: plimsoll.v1.ProjectResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	13, // 12: plimsoll.v1.ModuleRun.rows:type_name -> plimsoll.v1.ModuleRow
+	15, // 13: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
+	0,  // 14: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	4,  // 15: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
+	1,  // 16: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
+	6,  // 17: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
+	2,  // 18: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
+	17, // [17:19] is the sub-list for method output_type
+	15, // [15:17] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_plimsoll_v1_sandbox_proto_init() }
@@ -1156,13 +1643,23 @@ func file_plimsoll_v1_sandbox_proto_init() {
 	if File_plimsoll_v1_sandbox_proto != nil {
 		return
 	}
+	file_plimsoll_v1_sandbox_proto_msgTypes[3].OneofWrappers = []any{
+		(*RunRequest_Javascript)(nil),
+		(*RunRequest_Project)(nil),
+		(*RunRequest_Module)(nil),
+	}
+	file_plimsoll_v1_sandbox_proto_msgTypes[5].OneofWrappers = []any{
+		(*RunResponse_Javascript)(nil),
+		(*RunResponse_Project)(nil),
+		(*RunResponse_Module)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plimsoll_v1_sandbox_proto_rawDesc), len(file_plimsoll_v1_sandbox_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   10,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -157,8 +157,9 @@ client program asserting the floor.
 
 ## Examples
 
-Four runnable programs, none needing docker, credentials or a daemon you start
-yourself. Run them from the repository root.
+Five runnable programs. The first four need no docker, credentials or a daemon
+you start yourself; the fifth needs docker and the module image
+(`make docker-images`). Run them from the repository root.
 
 | Command | What it shows |
 |---|---|
@@ -166,6 +167,7 @@ yourself. Run them from the repository root.
 | `go run ./examples/grant` | The capability model: a permitted route, a refused one, the same refusal when the guest bypasses the injected client, the same request succeeding under a separate per-run grant that lists it, and a search for the credential that comes back empty. |
 | `go run ./examples/daemon` | The service path: plimsolld started with a real multi-client auth file, called by the Go client, refusing an isolation floor it cannot meet and refusing a wrong bearer. Each refusal is checked for its specific error (`ErrInsufficientIsolation`, Connect `unauthenticated`), because a request that merely failed is not proof the protection fired. |
 | `go run ./examples/advisor` | The efficiency advisor: one question asked twice of a fake inventory API, first as a per-item loop (13 requests, a `fan_out` finding naming the granted collection route), then as the advice suggests (1 request, no findings), same answer both times. |
+| `go run ./examples/oracle` | The physics oracle: an agent-written controller sent as the only file of a project run, judged against a cart-pole plant compiled to WebAssembly and baked into the module image, by a judge that runs the controller as a separate process and fingerprints the trajectory. The accepted controller twice (one fingerprint), the agent's draft once (another, and it falls at 5.96 s). Writes [docs/examples/oracle/index.html](docs/examples/oracle/index.html), which replays the recorded runs. |
 
 `examples/grant` is the one to read if you only read one. It prints the run's
 `CallTrace` after each step, which is the same metadata-only evidence the advisory
@@ -231,7 +233,9 @@ behaves in production**, and it would be dishonest to imply otherwise:
   undefined under QuickJS and global under Node 22, and there is no npm. A snippet
   passing locally is not evidence it passes on a production tier.
 - `RunProject` is unsupported on `wasm` and always returns `ErrUnsupported`, so
-  multi-file projects cannot be exercised in-process at all.
+  multi-file projects cannot be exercised in-process at all. So is `RunModule`,
+  which needs the docker provider with a module image
+  (`SANDBOX_DOCKER_MODULE_IMAGE`; see [docs/guest-dependencies.md](docs/guest-dependencies.md)).
 - Grant support differs. `wasm` always supports JavaScript grants; `e2b` supports them
   only when `E2B_GUARD_URL` is configured, so a grant that works locally fails there
   until the guard is set up.
@@ -560,7 +564,9 @@ credential attached at the boundary. plimsoll's broker serves JavaScript runs th
 the injected client, and everything else in the guest has no egress whatsoever: the
 project toolchain is baked into the image precisely because runtime has no network. If
 your agent needs to `npm install` mid-run against a private registry, their model covers
-that case and this one does not.
+that case and this one does not. What this one offers instead is dependencies baked
+into the image at build time, with the registry credential never present in a run:
+[docs/guest-dependencies.md](docs/guest-dependencies.md).
 
 Vendor documentation changes; this comparison is dated for that reason. If it is wrong
 or has gone stale, open an issue.
@@ -703,6 +709,13 @@ Stated so you do not have to discover it in review:
 - It does not implement an isolation boundary. gVisor and Firecracker do that.
 - WASM supports snippets only, not multi-file projects, and WASM project grants are
   rejected outright.
+- **No package installation during a run.** A run has no network, so `npm install`
+  cannot happen inside it, from a public registry or a private one. Dependencies are
+  baked into the project image at build time, which is also where the registry
+  credential lives and the only place it ever exists;
+  [docs/guest-dependencies.md](docs/guest-dependencies.md) is the recipe. An agent
+  that must install arbitrary packages mid-run is the case the general-purpose
+  sandbox VMs cover and this component does not.
 - E2B grants require `E2B_GUARD_URL`; the forced, authenticated guard keeps
   credentials and route enforcement outside the hostile VM. Without a grant,
   E2B runs deny egress.

@@ -91,7 +91,7 @@ curl -sS -X POST http://127.0.0.1:8746/plimsoll.v1.SandboxService/Describe \
 ```
 
 ```
-{"sandbox":"wasm", "isolation":"process", "supportsJavascriptGrants":true, "supportsMinimumIsolation":true, "supportsAdvisory":true}
+{"sandbox":"wasm", "isolation":"process", "supportsJavascriptGrants":true, "protocol":1}
 ```
 
 A wrong token and a missing token are both refused before the body is decoded, with

@@ -20,6 +20,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -35,6 +36,16 @@ type Remote struct {
 // being silently downgraded to an isolated remote run. RPC grants are server-held
 // named profiles selected with the operation-specific options below.
 var ErrRawGrantUnsupported = errors.New("client: a raw HostAPIGrant cannot be sent over RPC; configure an operation-specific named grant profile")
+
+// ErrResultKindMismatch means the daemon answered a request of one kind with a
+// result of another (or none). Execution may already have happened, so it is
+// reported as DataLoss and is never a safe retry signal.
+var ErrResultKindMismatch = errors.New("client: the daemon's result is not of the request's kind")
+
+// ErrProtocolMismatch means the daemon serves a different protocol number than
+// this client speaks (Protocol). The daemon refused before reading the payload,
+// so nothing ran; the fix is to run matching versions, not to retry.
+var ErrProtocolMismatch = errors.New("client: the daemon serves a different protocol number than this client")
 
 // Option configures a Remote.
 type Option func(*config)
@@ -223,10 +234,18 @@ type Info struct {
 	Sandbox                  string
 	Isolation                sandbox.IsolationClass
 	SupportsProject          bool
+	SupportsModule           bool
 	SupportsJavaScriptGrants bool
 	SupportsProjectGrants    bool
-	SupportsMinimumIsolation bool
+	// Protocol is the number the daemon serves. Compare it with Protocol before
+	// relying on the daemon; every Run request is checked against it again.
+	Protocol uint32
 }
+
+// Protocol is the wire protocol number this client speaks (protocol.Number). It
+// is stamped on every request; a daemon on another number refuses the request
+// before reading its payload.
+const Protocol = protocol.Number
 
 // Describe asks the server for its active provider's measured capabilities, so a
 // consumer advertises facts instead of assuming a tier the provider may not honor.
@@ -241,9 +260,10 @@ func (r *Remote) Describe(ctx context.Context) (Info, error) {
 		Sandbox:                  resp.Msg.GetSandbox(),
 		Isolation:                sandbox.ParseIsolationClass(resp.Msg.GetIsolation()),
 		SupportsProject:          resp.Msg.GetSupportsProject(),
+		SupportsModule:           resp.Msg.GetSupportsModule(),
 		SupportsJavaScriptGrants: resp.Msg.GetSupportsJavascriptGrants(),
 		SupportsProjectGrants:    resp.Msg.GetSupportsProjectGrants(),
-		SupportsMinimumIsolation: resp.Msg.GetSupportsMinimumIsolation(),
+		Protocol:                 resp.Msg.GetProtocol(),
 	}, nil
 }
 
@@ -254,30 +274,30 @@ func (r *Remote) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbox
 	if in.Grant != nil {
 		return sandbox.Result{Sandbox: r.Name()}, ErrRawGrantUnsupported
 	}
-	req := connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-		Code:             in.Code,
-		TimeoutMs:        timeoutMs(in.Timeout),
-		GrantProfile:     r.jsGrant,
-		MinimumIsolation: minimumIsolationWire(in.MinimumIsolation),
-		TraceId:          TraceIDFrom(ctx),
-	})
-	r.auth(req)
-	resp, err := r.client.RunJavaScriptV2(ctx, req)
+	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation)
+	req.Payload = &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{
+		Code:         in.Code,
+		GrantProfile: r.jsGrant,
+	}}
+	resp, err := r.run(ctx, req)
 	if err != nil {
-		return sandbox.Result{Sandbox: r.Name()}, restoreSandboxError(err)
+		return sandbox.Result{Sandbox: r.Name()}, err
 	}
-	m := resp.Msg
+	m, ok := resp.GetResult().(*plimsollv1.RunResponse_Javascript)
+	if !ok {
+		return sandbox.Result{Sandbox: r.Name()}, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
+	}
 	result := sandbox.Result{
-		Stdout:          string(m.GetStdout()),
-		Stderr:          string(m.GetStderr()),
-		StdoutTruncated: m.GetStdoutTruncated(),
-		StderrTruncated: m.GetStderrTruncated(),
-		ExitCode:        int(m.GetExitCode()),
-		TimedOut:        m.GetTimedOut(),
-		Duration:        time.Duration(m.GetDurationMs()) * time.Millisecond,
-		Sandbox:         m.GetSandbox(),
-		Isolation:       sandbox.ParseIsolationClass(m.GetIsolation()),
-		Advice:          adviceFromWire(m.GetAdvice()),
+		Stdout:          string(m.Javascript.GetStdout()),
+		Stderr:          string(m.Javascript.GetStderr()),
+		StdoutTruncated: m.Javascript.GetStdoutTruncated(),
+		StderrTruncated: m.Javascript.GetStderrTruncated(),
+		ExitCode:        int(m.Javascript.GetExitCode()),
+		TimedOut:        m.Javascript.GetTimedOut(),
+		Duration:        time.Duration(resp.GetDurationMs()) * time.Millisecond,
+		Sandbox:         resp.GetSandbox(),
+		Isolation:       sandbox.ParseIsolationClass(resp.GetIsolation()),
+		Advice:          adviceFromWire(m.Javascript.GetAdvice()),
 	}
 	if err := sandbox.CheckResultIsolation(result.Isolation, in.MinimumIsolation); err != nil {
 		return result, connect.NewError(connect.CodeDataLoss, err)
@@ -292,27 +312,28 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 	if in.Grant != nil {
 		return sandbox.ProjectResult{Sandbox: r.Name()}, ErrRawGrantUnsupported
 	}
-	preq := &plimsollv1.RunProjectV2Request{
-		Steps:            in.Steps,
-		TimeoutMs:        timeoutMs(in.Timeout),
-		Artifacts:        in.Artifacts,
-		GrantProfile:     r.projectGrant,
-		MinimumIsolation: minimumIsolationWire(in.MinimumIsolation),
-		TraceId:          TraceIDFrom(ctx),
+	preq := &plimsollv1.ProjectRun{
+		Steps:        in.Steps,
+		Artifacts:    in.Artifacts,
+		GrantProfile: r.projectGrant,
 	}
 	for _, f := range in.Files {
 		preq.Files = append(preq.Files, &plimsollv1.ProjectFile{Path: f.Path, Content: f.Content})
 	}
-	req := connect.NewRequest(preq)
-	r.auth(req)
-	resp, err := r.client.RunProjectV2(ctx, req)
+	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation)
+	req.Payload = &plimsollv1.RunRequest_Project{Project: preq}
+	resp, err := r.run(ctx, req)
 	if err != nil {
-		return sandbox.ProjectResult{Sandbox: r.Name()}, restoreSandboxError(err)
+		return sandbox.ProjectResult{Sandbox: r.Name()}, err
 	}
-	m := resp.Msg
+	pm, ok := resp.GetResult().(*plimsollv1.RunResponse_Project)
+	if !ok {
+		return sandbox.ProjectResult{Sandbox: r.Name()}, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
+	}
+	m := pm.Project
 	out := sandbox.ProjectResult{
-		Sandbox:            m.GetSandbox(),
-		Isolation:          sandbox.ParseIsolationClass(m.GetIsolation()),
+		Sandbox:            resp.GetSandbox(),
+		Isolation:          sandbox.ParseIsolationClass(resp.GetIsolation()),
 		Outcome:            outcomeFromWire(m.GetOutcome()),
 		Detail:             m.GetOutcomeDetail(),
 		ArtifactsTruncated: m.GetArtifactsTruncated(),
@@ -337,6 +358,75 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 		return out, connect.NewError(connect.CodeDataLoss, err)
 	}
 	return out, nil
+}
+
+// RunModule runs a compiled model once per row on the remote provider. The
+// request is validated here first, so a malformed table never leaves the
+// process, and the returned isolation evidence is checked against the floor
+// exactly as for the other two operations.
+func (r *Remote) RunModule(ctx context.Context, in sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
+	if err := sandbox.ValidateModuleRequest(in); err != nil {
+		return sandbox.ModuleResult{Sandbox: r.Name()}, err
+	}
+	mreq := &plimsollv1.ModuleRun{
+		Model:   in.Model,
+		EndTime: in.EndTime,
+		Step:    in.Step,
+	}
+	for _, row := range in.Rows {
+		mreq.Rows = append(mreq.Rows, &plimsollv1.ModuleRow{Values: row})
+	}
+	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation)
+	req.Payload = &plimsollv1.RunRequest_Module{Module: mreq}
+	resp, err := r.run(ctx, req)
+	if err != nil {
+		return sandbox.ModuleResult{Sandbox: r.Name()}, err
+	}
+	mm, ok := resp.GetResult().(*plimsollv1.RunResponse_Module)
+	if !ok {
+		return sandbox.ModuleResult{Sandbox: r.Name()}, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
+	}
+	m := mm.Module
+	out := sandbox.ModuleResult{
+		Width:     int(m.GetWidth()),
+		Sandbox:   resp.GetSandbox(),
+		Isolation: sandbox.ParseIsolationClass(resp.GetIsolation()),
+		Outcome:   outcomeFromWire(m.GetOutcome()),
+		Detail:    m.GetOutcomeDetail(),
+		Stdout:    string(m.GetStdout()),
+		Stderr:    string(m.GetStderr()),
+		Duration:  time.Duration(resp.GetDurationMs()) * time.Millisecond,
+	}
+	for _, run := range m.GetRuns() {
+		out.Runs = append(out.Runs, sandbox.ModuleRun{Status: run.GetStatus(), Outputs: run.GetOutputs()})
+	}
+	if err := sandbox.CheckResultIsolation(out.Isolation, in.MinimumIsolation); err != nil {
+		return out, connect.NewError(connect.CodeDataLoss, err)
+	}
+	return out, nil
+}
+
+// envelope builds the shared part of every request: the protocol number this
+// client speaks, the caller's floor, the trace id from ctx, and the timeout.
+func (r *Remote) envelope(ctx context.Context, timeout time.Duration, minimum sandbox.IsolationClass) *plimsollv1.RunRequest {
+	return &plimsollv1.RunRequest{
+		Protocol:         Protocol,
+		MinimumIsolation: minimumIsolationWire(minimum),
+		TraceId:          TraceIDFrom(ctx),
+		TimeoutMs:        timeoutMs(timeout),
+	}
+}
+
+// run sends one envelope and returns the response envelope. A transport or
+// server error is restored to the sandbox package's sentinels where one applies.
+func (r *Remote) run(ctx context.Context, msg *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error) {
+	req := connect.NewRequest(msg)
+	r.auth(req)
+	resp, err := r.client.Run(ctx, req)
+	if err != nil {
+		return nil, restoreSandboxError(err)
+	}
+	return resp.Msg, nil
 }
 
 // adviceFromWire retains the caller's post-dispatch evidence for both operations.
@@ -401,7 +491,14 @@ func restoreSandboxError(err error) error {
 			sentinel = sandbox.ErrDisabled
 		}
 	case connect.CodeUnimplemented:
-		sentinel = sandbox.ErrUnsupported
+		// Unimplemented is also how a daemon refuses a request on another protocol
+		// number; that refusal names itself so it is not mistaken for a provider
+		// that cannot do the operation.
+		if protocol.IsMismatch(err.Error()) {
+			sentinel = ErrProtocolMismatch
+		} else {
+			sentinel = sandbox.ErrUnsupported
+		}
 	case connect.CodeResourceExhausted:
 		sentinel = sandbox.ErrAtCapacity
 	case connect.CodeInvalidArgument:

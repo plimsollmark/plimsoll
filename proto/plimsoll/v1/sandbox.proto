@@ -10,43 +10,53 @@ option go_package = "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1;plimsol
 
 // SandboxService runs untrusted, agent-authored code in an isolated runtime.
 service SandboxService {
-  // RunJavaScriptV2 runs a JavaScript snippet. The versioned procedure is an
-  // atomic protocol boundary: an old backend returns Unimplemented before code
-  // can execute, including when minimum_isolation is requested.
-  rpc RunJavaScriptV2(RunJavaScriptV2Request) returns (RunJavaScriptV2Response);
-  // RunProject writes a multi-file project and runs a sequence of build/lint/run
-  // steps. ProjectCapable providers structurally support this protocol; callers
-  // must still ensure their selected image/template contains the required tools.
-  // RunProjectV2 provides the same mixed-version safety for project runs.
-  rpc RunProjectV2(RunProjectV2Request) returns (RunProjectV2Response);
-  // Describe reports the active provider, current isolation evidence, and static
-  // operation support. Project support is structural and does not prove that the
-  // selected image/template contains a particular toolchain.
+  // Run executes exactly one operation: a JavaScript snippet, a multi-file
+  // project, or a compiled model over a parameter table. The request is an
+  // envelope (protocol number, isolation floor, trace id, timeout) around a
+  // oneof payload; the response is an envelope (provider, isolation evidence,
+  // duration) around the matching result. One procedure, one scope, one place
+  // where the floor is checked before admission and dispatch.
+  //
+  // The protocol number is the mixed-version gate. Protobuf drops fields a
+  // receiver does not know, so a daemon that predates a security-relevant
+  // request field (a floor, a limit, a capability restriction) would execute the
+  // request without it. A client therefore states the protocol it speaks and a
+  // daemon serves exactly one: a request that omits it is InvalidArgument and a
+  // request on any other number is Unimplemented, in both cases before the
+  // payload is read. The number is bumped when such a field is added; an
+  // informational field does not bump it. Current number: 1 (the Go constant
+  // rpc.Protocol, which Describe reports).
+  rpc Run(RunRequest) returns (RunResponse);
+  // Describe reports the protocol number, the active provider, current isolation
+  // evidence, and static operation support. Project and module support are
+  // structural: they do not prove that the selected image/template contains a
+  // particular toolchain or model.
   rpc Describe(DescribeRequest) returns (DescribeResponse);
 }
 
 message DescribeRequest {}
 
 message DescribeResponse {
+  // 6 was supports_minimum_isolation and 7 was supports_advisory: feature bits
+  // whose only reading was "an older server omits them". The protocol number is
+  // the one statement of what this daemon speaks; the numbers stay reserved so
+  // they can never be reused with another meaning.
+  reserved 6, 7;
   string sandbox = 1; // active provider id (e.g. "docker")
   // isolation is the provider's boundary tier ("vm", "kernel", "container",
-  // "process", "none") — see RunJavaScriptV2Response.isolation.
+  // "process", "none") — see RunResponse.isolation.
   string isolation = 2;
-  bool supports_project = 3; // whether RunProject works on this provider
+  bool supports_project = 3; // whether a project payload works on this provider
   // Grant support is operation-specific. A provider may support isolated project
   // runs while only having a credential-safe broker for JavaScript snippets.
   bool supports_javascript_grants = 4;
   bool supports_project_grants = 5;
-  // Protocol feature bit: true means this server enforces request
-  // minimum_isolation before admission and dispatch. Older servers omit the
-  // field and therefore decode as false. This is advisory discovery; the V2
-  // execution procedure itself is the atomic mixed-version gate.
-  bool supports_minimum_isolation = 6;
-  // Protocol feature bit: true means this server can compute efficiency advice
-  // (Prospector) for a run whose grant_profile opts in. It is discovery only:
-  // per-profile `advice: off|operator|caller` config still governs whether any
-  // given run returns advice, and advice never changes a run's execution.
-  bool supports_advisory = 7;
+  // Whether a module payload works on this provider: a module image is configured
+  // and the provider can supervise its worker. Static discovery, like supports_project.
+  bool supports_module = 8;
+  // The protocol number this daemon serves (see Run). A client compares it with
+  // its own before relying on this daemon; Run checks it again on every request.
+  uint32 protocol = 9;
 }
 
 // AdviceFinding is one metadata-only efficiency observation about a run's brokered
@@ -79,17 +89,13 @@ message AdviceFinding {
   int64 bytes_moved = 11;
 }
 
-message RunJavaScriptV2Request {
-  string code = 1; // JavaScript source; engine is provider-dependent
-  int32 timeout_ms = 2; // optional; defaults and is clamped server-side
-  // grant_profile names a server-configured host-API capability (see
-  // PLIMSOLL_GRANTS_FILE). Empty = fully isolated. The caller can only SELECT a
-  // pre-registered profile; BaseURL, allowed routes, and the token live server-side.
-  string grant_profile = 3;
+message RunRequest {
+  // protocol is the number the client speaks; see Run. Required: 0 is refused.
+  uint32 protocol = 1;
   // Per-run boundary floor. Empty means no request-specific floor; otherwise
   // one of "process", "container", "kernel", or "vm". The server checks its
   // current provider evidence immediately before admission and dispatch.
-  string minimum_isolation = 4;
+  string minimum_isolation = 2;
   // trace_id is an OPAQUE correlation id the caller already uses in its own logs
   // (e.g. an id carried across an upstream MCP proxy boundary). plimsoll
   // records it on the run's audit line and does NOTHING else with it: it is never
@@ -104,10 +110,49 @@ message RunJavaScriptV2Request {
   // cannot hold one. The server therefore accepts it only as [A-Za-z0-9._:-] up to
   // 64 bytes and DROPS it otherwise, recording that it dropped one. Put nothing
   // meaningful in it: the meaning belongs in the caller's log, not this one.
-  string trace_id = 5;
+  string trace_id = 3;
+  // Total wall-clock budget in milliseconds for whatever the payload is;
+  // optional, defaulted and clamped server-side.
+  int32 timeout_ms = 4;
+  // Exactly one payload. An empty oneof is InvalidArgument.
+  oneof payload {
+    JavaScriptRun javascript = 10;
+    ProjectRun project = 11;
+    ModuleRun module = 12;
+  }
 }
 
-message RunJavaScriptV2Response {
+// JavaScriptRun is a snippet. The engine is provider-dependent (Node on docker
+// and e2b, QuickJS on wasm).
+message JavaScriptRun {
+  string code = 1; // JavaScript source
+  // grant_profile names a server-configured host-API capability (see
+  // PLIMSOLL_GRANTS_FILE). Empty = fully isolated. The caller can only SELECT a
+  // pre-registered profile; BaseURL, allowed routes, and the token live server-side.
+  // It lives on the payload, not the envelope, because a module run has no host
+  // API and a payload that cannot express a grant beats a rule that refuses one.
+  string grant_profile = 2;
+}
+
+message RunResponse {
+  string sandbox = 1; // which provider ran it (e.g. "docker")
+  // isolation is the strength of the boundary the code actually ran behind
+  // ("vm", "kernel", "container", "process", "none"), so a caller is never blind
+  // to the tier. The provider name alone hides it: "docker" is a real kernel
+  // boundary under gVisor but only shared-kernel namespaces under runc. The
+  // official client checks this against the request's floor; a mismatch means
+  // execution may already have happened and is never a safe retry signal.
+  string isolation = 2;
+  int64 duration_ms = 3; // wall time of the run as the daemon measured it
+  // Exactly one result, of the payload's kind.
+  oneof result {
+    JavaScriptResult javascript = 10;
+    ProjectResult project = 11;
+    ModuleResult module = 12;
+  }
+}
+
+message JavaScriptResult {
   // stdout/stderr are bytes, not strings: guest programs can emit arbitrary
   // byte sequences, and a protobuf string would repair invalid UTF-8 lossily
   // during serialization. The caller decides how to decode.
@@ -115,13 +160,6 @@ message RunJavaScriptV2Response {
   bytes stderr = 2;
   int32 exit_code = 3;
   bool timed_out = 4;
-  int64 duration_ms = 5;
-  string sandbox = 6; // which provider ran it (e.g. "docker")
-  // isolation is the strength of the boundary the code actually ran behind
-  // ("vm", "kernel", "container", "process", "none"), so a caller is never blind
-  // to the tier. The provider name alone hides it: "docker" is a real kernel
-  // boundary under gVisor but only shared-kernel namespaces under runc.
-  string isolation = 7;
   // The provider's output cap dropped bytes from the stream. The retained
   // prefix is returned unmarked; these flags are the only truncation signal.
   bool stdout_truncated = 8;
@@ -142,7 +180,7 @@ message ProjectFile {
 
 message StepResult {
   string command = 1;
-  // bytes for the same reason as RunJavaScriptV2Response.stdout: guest output
+  // bytes for the same reason as JavaScriptResult.stdout: guest output
   // is arbitrary bytes and must not be repaired during serialization.
   bytes stdout = 2;
   bytes stderr = 3;
@@ -179,33 +217,77 @@ message Artifact {
   bytes content = 2;
 }
 
-message RunProjectV2Request {
+// ProjectRun writes a multi-file project and runs build/lint/run steps in order.
+// ProjectCapable providers structurally support it; callers must still ensure
+// their selected image/template contains the required tools.
+message ProjectRun {
   repeated ProjectFile files = 1; // written into the work dir before steps run
   repeated string steps = 2; // shell commands run in order; stop on first failure
-  int32 timeout_ms = 3; // total wall-clock budget; clamped server-side
   repeated string artifacts = 4; // relative file paths to capture and return
   string grant_profile = 5; // server-configured host-API capability; empty = isolated
-  string minimum_isolation = 6; // per-run floor; see RunJavaScriptV2Request.minimum_isolation
-  string trace_id = 7; // opaque join key for the caller's own log; see RunJavaScriptV2Request.trace_id
 }
 
-message RunProjectV2Response {
+message ProjectResult {
   repeated StepResult steps = 1; // one per step that ran
-  string sandbox = 2;
   // Typed top-level conclusion of the run. Step failures live in steps;
   // pre-dispatch/provider failures use the RPC status instead of this field.
   ProjectOutcome outcome = 3;
   repeated Artifact artifacts = 4; // captured output files (those that existed)
-  string isolation = 5; // boundary tier the run executed behind (see RunJavaScriptV2Response.isolation)
   // Human-readable context for a non-completed outcome; empty when completed.
   string outcome_detail = 6;
   // The aggregate artifact byte budget dropped one or more requested artifacts
   // that existed.
   bool artifacts_truncated = 7;
-  // advice mirrors RunJavaScriptV2Response.advice for project runs: a bounded,
+  // advice mirrors JavaScriptResult.advice for project runs: a bounded,
   // metadata-only list of agent-fixable efficiency findings over the run's brokered
   // host.* calls. Present only when the grant_profile set advice: caller AND at least
   // one agent-fixable finding exists; empty otherwise. Advisory only — a run is
   // byte-identical with or without it; API-change findings stay on the operator surface.
   repeated AdviceFinding advice = 8;
+}
+
+// ModuleRow is one parameter set; one fresh model instance is created for it.
+// Every row in a request has the same number of values, and that number must
+// equal the model's own parameter count, which the worker reads from the module
+// itself (a mismatch is a setup_failed outcome, never a silently reshaped row).
+message ModuleRow {
+  repeated double values = 1;
+}
+
+// ModuleRun runs a compiled physical model (an AOT-compiled WebAssembly module
+// baked into the provider's module image) once per parameter row. No grant: a
+// model has no host API, and this payload cannot express one.
+message ModuleRun {
+  // model is an image-relative id ([A-Za-z0-9][A-Za-z0-9._-]{0,63}); the provider
+  // maps it to a model baked into its module image. A caller can only select a
+  // model the operator built in: no module, no code, arrives over the wire.
+  string model = 1;
+  repeated ModuleRow rows = 2;
+  double end_time = 3; // simulation horizon, > 0
+  double step = 4; // communication step, > 0; end_time / step bounds the step count
+}
+
+// ModuleRowResult is one row's result. status is the number of steps the
+// instance completed when >= 0, and the model's or worker's negative code when
+// that row failed (the worker records the failure and continues with the next
+// row). outputs holds width values per completed step, step-major; empty when
+// status is not positive.
+message ModuleRowResult {
+  int32 status = 1;
+  repeated double outputs = 2;
+}
+
+message ModuleResult {
+  repeated ModuleRowResult runs = 1; // one per request row, in order; empty unless outcome is completed
+  int32 width = 2; // outputs per step, read from the module
+  // Typed top-level conclusion, with the project run's meanings: completed means
+  // every row has a result; setup_failed means the worker refused the request
+  // (unknown model, malformed table); timed_out and protocol_error as for a
+  // project. Pre-dispatch failures use the RPC status instead.
+  ProjectOutcome outcome = 5;
+  string outcome_detail = 6;
+  // The worker's own streams: one summary line on stdout, diagnostics on stderr.
+  // Bytes for the same reason as JavaScriptResult.stdout.
+  bytes stdout = 7;
+  bytes stderr = 8;
 }

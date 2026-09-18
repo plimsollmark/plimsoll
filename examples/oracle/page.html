@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The physics oracle: an AI-written controller, judged by a compiled plant</title>
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --grid: #e6e6e6; --axis: #bdbdbd; --blue: #2a78d6; --orange: #eb6834; --aqua: #1baf7a; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  p { margin: 6px 0; }
+  .sub { color: var(--ink2); margin-bottom: 18px; }
+  .row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: stretch; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .panel h3 { margin: 0 0 8px; font-size: 14px; letter-spacing: .02em; text-transform: uppercase; color: var(--ink2); }
+  .tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+  .tabs button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; color: var(--ink); }
+  .tabs button[aria-pressed="true"] { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+  pre { margin: 0; padding: 10px 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; white-space: pre; color: var(--ink); }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .badge.same { background: #e6f4ea; color: #1e6b2f; }
+  .badge.diff { background: #fdecea; color: #8a1c1c; }
+  .fp { display: block; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; color: var(--ink); }
+  .verdict dt { color: var(--ink2); font-size: 13px; margin-top: 10px; }
+  .verdict dd { margin: 2px 0 0; }
+  .controls { display: flex; gap: 10px; align-items: center; margin-top: 8px; color: var(--ink2); font-size: 13px; }
+  .controls button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; color: var(--ink); }
+  .controls input[type=range] { flex: 1; }
+  .note { color: var(--ink2); font-size: 13px; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .legend { display: flex; gap: 18px; font-size: 13px; color: #333; margin: 4px 0 2px; }
+  .legend span::before { content: ""; display: inline-block; width: 26px; height: 0; border-top: 2px solid; margin-right: 8px; vertical-align: middle; }
+  .legend .a::before { border-color: var(--blue); }
+  .legend .d::before { border-color: var(--orange); border-top-style: dashed; }
+  ol li, ul li { margin: 4px 0; }
+  a { color: var(--blue); }
+  @media (max-width: 900px) { .row, .row2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<h1>The physics oracle: an AI-written controller, judged by a compiled plant</h1>
+<p class="sub">Every number on this page came from a real run through plimsoll's docker tier ({{.Isolation}}) on {{.Date}}. The controller is the only thing the caller sent. The plant, a cart-pole compiled to WebAssembly, and the judge that closes the loop are baked into the sandbox image. The judge ran the controller as a separate process, recorded every 10 ms tick, and the SHA-256 of that record is the fingerprint.</p>
+
+<div class="row">
+  <section class="panel">
+    <h3>What the plant did, replaying the judge's record</h3>
+    <div class="tabs" role="tablist">
+      <button id="tab-accepted" aria-pressed="true">Accepted controller</button>
+      <button id="tab-draft" aria-pressed="false">The agent's first draft</button>
+    </div>
+    <svg id="stage" viewBox="0 0 760 330" width="100%" role="img" aria-label="A cart on a rail with a pole hinged on it, replaying the recorded run"></svg>
+    <div class="controls">
+      <button id="play">Pause</button>
+      <input id="scrub" type="range" min="0" max="1999" value="0" aria-label="time">
+      <span id="clock">t = 0.00 s</span>
+    </div>
+    <p class="note" id="code-note">Linear state feedback. Only + and *, so its arithmetic is plain IEEE doubles with no engine-specific libm.</p>
+    <p class="note">The browser only replays the judge's record; no physics runs here. Loops every 20 s; a fall holds for two seconds, then loops.</p>
+  </section>
+
+  <section class="panel">
+    <h3>The verdict</h3>
+    <dl class="verdict">
+      <dt>Accepted controller, run 1</dt>
+      <dd class="fp" id="fp-1"></dd>
+      <dt>Accepted controller, run 2</dt>
+      <dd><span class="badge same">IDENTICAL</span> <span class="fp" id="fp-2"></span></dd>
+      <dt>The agent's first draft</dt>
+      <dd><span class="badge diff">DIFFERS</span> <span class="fp" id="fp-d"></span></dd>
+      <dt>Where the draft parts from the accepted run</dt>
+      <dd id="diverge"></dd>
+      <dt>What happened to the pole</dt>
+      <dd id="fell"></dd>
+    </dl>
+    <p class="note">A regression is a different fingerprint, not a tolerance miss. The record is written by the judge after the controller has exited, so the controller cannot touch it.</p>
+  </section>
+</div>
+
+<div class="row2">
+  <section class="panel">
+    <h3>The accepted controller, the only file the caller sent</h3>
+    <pre id="code-accepted">{{.AcceptedSource}}</pre>
+  </section>
+  <section class="panel">
+    <h3>The agent's first draft</h3>
+    <pre id="code-draft">{{.DraftSource}}</pre>
+  </section>
+</div>
+
+<h2>The two runs, side by side</h2>
+<div class="legend"><span class="a">Accepted controller</span><span class="d">The agent's first draft</span></div>
+<svg id="chart" viewBox="0 0 1140 300" width="100%" role="img" aria-label="Pole angle and cart position over time for both controllers"></svg>
+<p class="note">Left: pole angle, clipped at the horizontal (±1.57 rad). Right: cart position, clipped at ±3 m. The draft balances the pole for a few seconds and then the cart runs away; the dotted line marks the first tick at which its record differs from the accepted one.</p>
+
+<h2>How it works</h2>
+<ol>
+  <li><b>The plant is image content.</b> A cart-pole model in the Reference FMU style, force as an input and no controller inside, compiled to WebAssembly and baked into plimsoll's module image at <code>/models/cartpole.wasm</code>. Register a model = build an image.</li>
+  <li><b>The judge is image content too.</b> <code>/oracle/run.mjs</code> loads the plant through Node's WASI support, spawns the caller's controller as a separate process, and each tick sends the state on its stdin and reads one number back, the force. It records every tick and writes the trajectory after the controller has exited.</li>
+  <li><b>The run is an ordinary project run.</b> One file, one step, one artifact, through plimsoll's ordinary project API on the docker tier: read-only root, no network, the syscall allowlist. The daemon knows nothing about physics.</li>
+  <li><b>The fingerprint holds because of where the arithmetic lives.</b> The plant's <code>sin</code> and <code>cos</code> are wasi-libc code inside the module, WebAssembly has no fused multiply-add and rounds once per operation, and the controller's own arithmetic is plain doubles. Same bytes in, same bytes out: the sister repository's local run on a different Node major produced this exact fingerprint before the image did.</li>
+</ol>
+
+<h2>What this does not show</h2>
+<ul>
+  <li>The judge protects the record from the controller; it does not make the controller's arithmetic portable. A controller that calls <code>Math.sin</code> ties its fingerprint to the JavaScript engine's implementation.</li>
+  <li>Forward Euler at 1 ms, the Reference FMUs' solver: adequate for a balancing demo, not a claim about accuracy.</li>
+  <li>One plant. A second plant is another model file and another image build.</li>
+</ul>
+<p class="note">Reproduce: <code>make docker-images &amp;&amp; go run ./examples/oracle</code> in the plimsoll repository, with docker. The page is written from the run.</p>
+
+<script type="application/json" id="data">{{.Data}}</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById('data').textContent);
+  const h = D.h, N = D.ticks;
+  const acc = D.accepted, dr = D.draft;
+  document.getElementById('fp-1').textContent = acc.fingerprint;
+  document.getElementById('fp-2').textContent = D.accepted_second_fingerprint;
+  document.getElementById('fp-d').textContent = dr.fingerprint;
+  document.getElementById('diverge').textContent = `tick ${D.diverge_tick} of ${N}, t = ${(D.diverge_tick * h).toFixed(2)} s`;
+  document.getElementById('fell').textContent = `accepted: balanced for ${(N * h).toFixed(0)} s (final x ${acc.final_x.toFixed(3)} m, angle ${acc.final_theta.toExponential(2)} rad); draft: ${dr.fell_at == null ? 'did not fall' : 'fell at ' + dr.fell_at.toFixed(2) + ' s'}`;
+
+  // ---- tabs: which run the stage replays and which code is shown ----
+  let which = 'accepted';
+  const tabA = document.getElementById('tab-accepted'), tabD = document.getElementById('tab-draft');
+  const note = document.getElementById('code-note');
+  function select(w) {
+    which = w;
+    tabA.setAttribute('aria-pressed', w === 'accepted'); tabD.setAttribute('aria-pressed', w === 'draft');
+    note.textContent = w === 'accepted'
+      ? 'Linear state feedback. Only + and *, so its arithmetic is plain IEEE doubles with no engine-specific libm.'
+      : 'The same structure with the position and velocity gains of the wrong sign: the cart moves away from under the pole instead of under it.';
+    k = 0;
+  }
+  tabA.onclick = () => select('accepted'); tabD.onclick = () => select('draft');
+
+  // ---- the stage: rail, cart, pole, replayed from the record ----
+  const stage = document.getElementById('stage');
+  const W = 760, H = 330, railY = 250, mPerPx = 5 / W; // 5 m across the panel
+  const L = 1.0; // drawn pole length, 2 * half-length (m)
+  const ns = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const [a, v] of Object.entries(attrs)) e.setAttribute(a, v); return e; };
+  stage.append(el('rect', { x: 0, y: 0, width: W, height: H, fill: '#ffffff' }));
+  for (let m = -2; m <= 2; m++) { const px = W / 2 + m / mPerPx; stage.append(el('line', { x1: px, y1: railY - 6, x2: px, y2: railY + 6, stroke: '#bdbdbd', 'stroke-width': 1 })); stage.append(Object.assign(el('text', { x: px, y: railY + 22, 'text-anchor': 'middle', 'font-size': 11, fill: '#5a5a5a' }), { textContent: m + ' m' })); }
+  stage.append(el('line', { x1: 0, y1: railY, x2: W, y2: railY, stroke: '#bdbdbd', 'stroke-width': 2 }));
+  const cart = el('rect', { width: 84, height: 36, rx: 6, fill: '#2a78d6' });
+  const wheelA = el('circle', { r: 8, fill: '#1a1a1a' }), wheelB = el('circle', { r: 8, fill: '#1a1a1a' });
+  const pole = el('line', { stroke: '#eb6834', 'stroke-width': 8, 'stroke-linecap': 'round' });
+  const bob = el('circle', { r: 11, fill: '#eb6834' });
+  const label = Object.assign(el('text', { x: 12, y: 24, 'font-size': 13, fill: '#1a1a1a', 'font-weight': 600 }), { textContent: '' });
+  const status = Object.assign(el('text', { x: 12, y: 44, 'font-size': 12, fill: '#5a5a5a' }), { textContent: '' });
+  const force = Object.assign(el('text', { x: W - 12, y: 24, 'font-size': 12, fill: '#5a5a5a', 'text-anchor': 'end' }), { textContent: '' });
+  stage.append(cart, wheelA, wheelB, pole, bob, label, status, force);
+
+  let k = 0, playing = true, last = null;
+  const scrub = document.getElementById('scrub'), clock = document.getElementById('clock'), play = document.getElementById('play');
+  function draw() {
+    const r = which === 'accepted' ? acc : dr;
+    let x = r.x[k], th = r.theta[k];
+    const fellTick = r.fell_at == null ? null : Math.round(r.fell_at / h);
+    const gone = Math.abs(x) > 2.6;
+    const cx = gone ? (x > 0 ? W - 44 : 44) : W / 2 + x / mPerPx;
+    cart.setAttribute('x', cx - 42); cart.setAttribute('y', railY - 36);
+    wheelA.setAttribute('cx', cx - 26); wheelA.setAttribute('cy', railY); wheelB.setAttribute('cx', cx + 26); wheelB.setAttribute('cy', railY);
+    const px = L / mPerPx * 1.0; // drawn length in px: 1 m, the pole's full length
+    const ex = cx + px * Math.sin(th), ey = railY - 36 - px * Math.cos(th);
+    pole.setAttribute('x1', cx); pole.setAttribute('y1', railY - 36); pole.setAttribute('x2', ex); pole.setAttribute('y2', ey);
+    bob.setAttribute('cx', ex); bob.setAttribute('cy', ey);
+    label.textContent = which === 'accepted' ? 'Accepted controller' : "The agent's first draft";
+    status.textContent = fellTick != null && k >= fellTick ? `fell at ${r.fell_at.toFixed(2)} s` + (gone ? ', cart off the rail' : '') : `angle ${(th * 180 / Math.PI).toFixed(1)}°, x ${x.toFixed(2)} m`;
+    force.textContent = `force ${r.force[k].toFixed(1)} N`;
+    scrub.value = k; clock.textContent = `t = ${(k * h).toFixed(2)} s`;
+  }
+  function tick(ts) {
+    if (playing) {
+      if (last == null) last = ts;
+      const dt = (ts - last) / 1000; last = ts;
+      const r = which === 'accepted' ? acc : dr;
+      const stopAt = r.fell_at == null ? N - 1 : Math.min(N - 1, Math.round((r.fell_at + 2) / h)); // hold two seconds after a fall, then loop
+      k += Math.round(dt / h);
+      if (k > stopAt) k = 0;
+    } else last = null;
+    draw();
+    requestAnimationFrame(tick);
+  }
+  play.onclick = () => { playing = !playing; play.textContent = playing ? 'Pause' : 'Play'; };
+  scrub.oninput = () => { playing = false; play.textContent = 'Play'; k = Number(scrub.value); draw(); };
+  requestAnimationFrame(tick);
+
+  // ---- the chart: pole angle and cart position, both runs ----
+  const chart = document.getElementById('chart');
+  const CW = 1140, CH = 300;
+  chart.append(el('rect', { x: 0, y: 0, width: CW, height: CH, fill: '#ffffff' }));
+  function frame(px, py, pw, ph, ymin, ymax, ylab, yticks, title) {
+    const sx = t => px + t / (N * h) * pw, sy = v => py + ph - (Math.min(ymax, Math.max(ymin, v)) - ymin) / (ymax - ymin) * ph;
+    chart.append(Object.assign(el('text', { x: px, y: py - 10, 'font-size': 13, fill: '#1a1a1a', 'font-weight': 600 }), { textContent: title }));
+    for (const v of yticks) { chart.append(el('line', { x1: px, y1: sy(v), x2: px + pw, y2: sy(v), stroke: '#e6e6e6' })); chart.append(Object.assign(el('text', { x: px - 6, y: sy(v) + 4, 'font-size': 11, fill: '#5a5a5a', 'text-anchor': 'end' }), { textContent: v })); }
+    for (let t = 0; t <= 20; t += 5) { chart.append(el('line', { x1: sx(t), y1: py, x2: sx(t), y2: py + ph, stroke: '#e6e6e6' })); chart.append(Object.assign(el('text', { x: sx(t), y: py + ph + 16, 'font-size': 11, fill: '#5a5a5a', 'text-anchor': 'middle' }), { textContent: t + ' s' })); }
+    chart.append(el('line', { x1: px, y1: py + ph, x2: px + pw, y2: py + ph, stroke: '#bdbdbd' }));
+    chart.append(Object.assign(el('text', { x: px - 6, y: py - 10, 'font-size': 11, fill: '#5a5a5a', 'text-anchor': 'end' }), { textContent: ylab }));
+    return { sx, sy };
+  }
+  function series(f, arr, color, dash) {
+    const pts = arr.map((v, i) => `${f.sx(i * h).toFixed(1)},${f.sy(v).toFixed(1)}`).join(' ');
+    chart.append(el('polyline', { points: pts, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-dasharray': dash, 'stroke-linejoin': 'round' }));
+  }
+  const fa = frame(60, 40, 480, 200, -1.57, 1.57, 'rad', [-1.5, -1, -0.5, 0, 0.5, 1, 1.5], 'Pole angle from upright');
+  series(fa, acc.theta, '#2a78d6', ''); series(fa, dr.theta, '#eb6834', '8 4');
+  const fb = frame(640, 40, 480, 200, -3, 3, 'm', [-3, -2, -1, 0, 1, 2, 3], 'Cart position');
+  series(fb, acc.x, '#2a78d6', ''); series(fb, dr.x, '#eb6834', '8 4');
+  for (const f of [fa, fb]) {
+    const tx = f.sx(D.diverge_tick * h);
+    chart.append(el('line', { x1: tx, y1: 40, x2: tx, y2: 240, stroke: '#bdbdbd', 'stroke-dasharray': '3 3' }));
+  }
+  if (dr.fell_at != null) {
+    chart.append(Object.assign(el('text', { x: fa.sx(dr.fell_at) + 6, y: 58, 'font-size': 12, fill: '#5a5a5a' }), { textContent: `draft fell at ${dr.fell_at.toFixed(2)} s` }));
+  }
+  chart.append(Object.assign(el('text', { x: fa.sx(19.8), y: fa.sy(acc.theta[N - 1]) - 6, 'font-size': 12, fill: '#333', 'text-anchor': 'end' }), { textContent: 'accepted' }));
+})();
+</script>
+</main>
+</body>
+</html>

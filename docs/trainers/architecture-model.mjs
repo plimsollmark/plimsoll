@@ -81,15 +81,15 @@ function add(id, from, to, kind, title, moves, why, payload, source, via) {
 add('submit', 'caller', 'ingress', 'request', 'The program submits code',
   'Code, a time budget, a minimum isolation tier, and optionally a profile name.',
   'Before this request, the operator (the person running plimsoll) gives the caller a secret token and configures plimsolld to recognize it. The caller presents that token in the Authorization header. The daemon checks a previously supplied token; it does not issue caller tokens. The model-written code is still request data.',
-  'RunJavaScriptV2\ncode: console.log("hello")\nminimum_isolation: {{tier}}\nAuthorization: Bearer [caller credential]', 'client/client.go');
+  'Run\nprotocol: 1\nminimum_isolation: {{tier}}\njavascript: { code: console.log("hello") }\nAuthorization: Bearer [caller credential]', 'client/client.go');
 add('submit-grant', 'caller', 'ingress', 'request', 'Select a profile by name',
   'The code and grant_profile travel over the RPC, with the caller’s credential.',
   'The caller presents the secret token supplied beforehand by the operator. Plimsolld matches it to a configured caller identity and permissions. The chosen profile, “inventory-read”, defines separate API permissions held by the server. Any token minted for those API calls stays in the broker, not with the caller. The item ID is an invented example.',
-  'RunJavaScriptV2\ncode: console.log(await host.get("/items/42"))\ngrant_profile: inventory-read\nminimum_isolation: {{tier}}\nAuthorization: Bearer [caller credential]', 'client/client.go');
+  'Run\nprotocol: 1\nminimum_isolation: {{tier}}\njavascript: { code: console.log(await host.get("/items/42")), grant_profile: inventory-read }\nAuthorization: Bearer [caller credential]', 'client/client.go');
 add('submit-project', 'caller', 'ingress', 'request', 'Submit files and ordered steps',
   'A file list, build/lint/run commands, requested artifacts, and a profile name.',
-  'RunProjectV2 carries a project instead of a single snippet. Docker and E2B support project grants; WASM refuses the operation.',
-  'RunProjectV2\nfiles: [package.json, src/main.ts, …]\nsteps: [build, lint, run]\nartifacts: [dist/report.json]\ngrant_profile: inventory-read', 'internal/rpc/sandbox_service.go');
+  'The same Run procedure carries a project payload instead of a javascript one. Docker and E2B support project grants; WASM refuses the operation.',
+  'Run\nprotocol: 1\nproject: { files: [package.json, src/main.ts, …], steps: [build, lint, run], artifacts: [dist/report.json], grant_profile: inventory-read }', 'internal/rpc/sandbox_service.go');
 add('authenticate', 'ingress', 'service', 'request', 'Authenticate before decoding',
   'A decoded request plus the configured caller ID and permissions found by checking the token.',
   'In the illustrated multi-client mode, plimsolld computes a SHA-256 fingerprint of the received token and looks it up in its configured client list. The matching entry supplies client-a and its permissions. Anyone holding that token is treated as client-a. HTTP middleware requires code:run permission before decoding the body. The handler then validates the code or file bounds.',
@@ -173,7 +173,7 @@ add('audit', 'service', 'operator', 'observe', 'Emit a metadata-only run record'
 add('wire-result', 'service', 'ingress', 'response', 'Encode the result and release admission',
   'The final response fields are mapped to protobuf; stdout and stderr are bytes.',
   'The handler returns and releases its limiter slot. Raw CallTrace is not a response field. Only eligible caller advice is added when the profile permits it.',
-  'RunJavaScriptV2Response or RunProjectV2Response\nstdout / stderr: bytes\nisolation: {{tier}}\nproject: steps, outcome, artifacts', 'internal/rpc/sandbox_service.go', [[625, 25], [375, 25]]);
+  'RunResponse\nsandbox, isolation: {{tier}}, duration_ms\njavascript: { stdout / stderr: bytes, exit_code }\nor project: { steps, outcome, artifacts }', 'internal/rpc/sandbox_service.go', [[625, 25], [375, 25]]);
 add('caller-result', 'ingress', 'caller', 'response', 'The caller gets the answer',
   'The RPC response, including the evidence for this completed execution.',
   'The official Go client checks the returned isolation against the requested floor. The caller decides what to show a model or user. A successful RPC can still contain a failed guest program.',
@@ -297,10 +297,10 @@ add('describe-handler', 'ingress', 'service', 'request', 'Read the provider’s 
 add('describe-result', 'service', 'ingress', 'response', 'Return discovery, without executing',
   'Provider, current tier, and operation-specific support bits.',
   'An E2B grant support bit depends on configured guard support; it does not prove the guard is reachable. Describe never substitutes for the next run’s isolation check.',
-  'sandbox: {{provider}}\nisolation: {{tier}}\nsupports_project / supports_javascript_grants\nsupports_project_grants', 'internal/rpc/sandbox_service.go');
+  'sandbox: {{provider}}\nisolation: {{tier}}\nprotocol: 1\nsupports_project / supports_javascript_grants\nsupports_project_grants', 'internal/rpc/sandbox_service.go');
 add('describe-caller', 'ingress', 'caller', 'response', 'Use discovery to prepare a request',
   'Capability information for the caller’s integration.',
-  'Attach minimum_isolation to the actual V2 run request. An old backend with no V2 procedure returns Unimplemented before code can run, rather than silently ignoring a new field.',
+  'Attach minimum_isolation to the actual Run request, which also states the protocol number this client speaks. A daemon on another number refuses before it reads the payload, rather than silently ignoring a field it does not know.',
   'Discovery complete\nGuest launched: no\nAdmission slot taken: no', 'client/client.go');
 add('ready', 'operator', 'provider', 'observe', 'Poll /readyz without starting a guest',
   'An unauthenticated HTTP readiness probe, routed by the daemon to Preflight.',
@@ -382,15 +382,15 @@ export const paths = [
 const byID = id => paths.find(path => path.id === id);
 byID('startup').variants = {wasm:['configure','wasm-ready','startup-profile','serve']};
 byID('route-denied').overrides = {
-  'submit-grant': {payload:'RunJavaScriptV2\ncode: try DELETE /items/42 and catch any error\ngrant_profile: inventory-read\nminimum_isolation: {{tier}}'},
+  'submit-grant': {payload:'Run\nprotocol: 1\nminimum_isolation: {{tier}}\njavascript: { code: try DELETE /items/42 and catch any error, grant_profile: inventory-read }'},
   'launch-grant': {payload:'Guest tries a write under a read-only grant\nawait host.del("/items/42")\nNo downstream credential in guest code'},
   'guest-call': {moves:'The guest asks to delete an item, using a grant that permits only GET.', payload:'{ method: "DELETE", path: "/items/42", body: null }\n{{channelShort}}', why:'The adapter carries the requested operation. It does not turn that request into permission. {{channel}}'}
 };
 byID('floor-denied').overrides = {
-  submit:{payload:'RunJavaScriptV2\nminimum_isolation: [required tier]\nAssumption: current evidence is weaker or unknown\nAuthorization: Bearer [caller credential]'}
+  submit:{payload:'Run\nprotocol: 1\nminimum_isolation: [required tier]\nAssumption: current evidence is weaker or unknown\nAuthorization: Bearer [caller credential]'}
 };
 byID('disabled').overrides = {
-  submit:{payload:'RunJavaScriptV2\ncode: console.log("hello")\nminimum_isolation: omitted\nSANDBOX_PROVIDER: unset'},
+  submit:{payload:'Run\nprotocol: 1\nminimum_isolation: omitted\njavascript: { code: console.log("hello") }\nSANDBOX_PROVIDER: unset'},
   admit:{title:'No floor is requested; reserve admission',moves:'A valid request without a minimum isolation requirement.',why:'This worked request omits its floor so it reaches the disabled provider’s own refusal. A required tier would be refused earlier by the handler.',payload:'minimum_isolation: omitted\nAcquire("client-a") → admitted'}
 };
 byID('evidence-mismatch').overrides = {
@@ -398,12 +398,12 @@ byID('evidence-mismatch').overrides = {
   'wire-result':{payload:'Result encoded by a faulty backend\nisolation: [weaker or unknown tier]\nNot the requested {{tier}} evidence'}
 };
 byID('advice').overrides = {
-  'submit-grant':{payload:'RunJavaScriptV2\ncode: repeated host.get calls in a loop\ngrant_profile: inventory-read\nProfile advice configured by operator'},
+  'submit-grant':{payload:'Run\nprotocol: 1\njavascript: { code: repeated host.get calls in a loop, grant_profile: inventory-read }\nProfile advice configured by operator'},
   'guest-call':{title:'Broker calls repeat during the run',moves:'A series of successful API calls, collapsed here to one representative round trip.',why:'This path assumes repeated successful calls sufficient to produce a finding. The map shows one representative call; analysis only happens after all calls and execution finish.',payload:'for each item: host.get("/items/…")\nRepeated calls, collapsed in this walkthrough\nMetadata retains /items/*, never the concrete IDs'},
   advice:{payload:'Assumed: repeated delivered 2xx calls\nGranted alternative: GET /items, if it returns the same items\nadvice: caller\nadvice_retention: detailed\nThese illustrative settings are opt-in'}
 };
 byID('guest-failure').overrides = {
-  submit:{payload:'RunJavaScriptV2\ncode: throw new Error("example guest failure")\nminimum_isolation: {{tier}}'},
+  submit:{payload:'Run\nprotocol: 1\nminimum_isolation: {{tier}}\njavascript: { code: throw new Error("example guest failure") }'},
   launch:{payload:'engine: {{engine}}\nthrow new Error("example guest failure")\nHost API grant: none'}
 };
 

@@ -49,7 +49,7 @@
     runner: {
       label: "plimsoll / plimsolld",
       source: "The plimsoll Go sandbox package is embedded locally or reached through plimsolld's versioned Connect API.",
-      input: "RunJavaScriptV2 or an in-process sandbox.Request, including a named server-side grant profile in remote mode.",
+      input: "A Run request with a javascript payload, or an in-process sandbox.Request, including a named server-side grant profile in remote mode.",
       output: "A result with stdout, stderr, exit status, isolation evidence, and optional metadata-only advice.",
       boundary: "The broker owns the BaseURL, allowlist match, minted credential, transport, and call budgets.",
       links: [
@@ -134,8 +134,8 @@
   const codeTrace = (deployment) => {
     const runner = deployment === "remote" ? {
       process: ["runner"], title: "The remote runner receives versioned RPC", actor: "plimsolld",
-      body: "The Go dataplane's remote client calls plimsolld's RunJavaScriptV2. It selects a server-side grant_profile; it does not send a raw BaseURL or token from the caller.",
-      wire: "Connect RPC\nplimsoll.v1.SandboxService/RunJavaScriptV2\ngrant_profile: stockroom",
+      body: "The Go dataplane's remote client calls plimsolld's one procedure, Run, with a javascript payload inside a protocol-numbered envelope. It selects a server-side grant_profile; it does not send a raw BaseURL or token from the caller.",
+      wire: "Connect RPC\nplimsoll.v1.SandboxService/Run\nprotocol: 1\njavascript: { code, grant_profile: stockroom }",
       boundary: "A remote hop adds process separation. plimsolld still validates the request and owns the grant registry.", tag: "remote hop"
     } : {
       process: ["runner"], title: "The dataplane enters a local provider", actor: "plimsoll in-process",
@@ -301,7 +301,7 @@
       from: "Node gateway → Stockroom Go dataplane :8746",
       intro: "Connect is the RPC layer generated from a .proto service definition. In this project the gateway uses createGrpcTransport, so the normal hop is gRPC over HTTP/2 with a typed protobuf request. The Go server also exposes gRPC-Web and Connect/JSON on the same handler.",
       code: `HTTP/2\nPOST /stockroom.v1.StockService/ListWarehouses\nContent-Type: application/grpc+proto\nAuthorization: Bearer <caller token>\n\nprotobuf: ListWarehousesRequest{}\n\nGo handler:\n  StockService.ListWarehouses(ctx, request)\n  → internal/wms.Client.ListWarehouses()`,
-      note: "This is not a REST route and it is not an MCP tools/call. The method name and request/response types come from StockService in stock.proto. Code mode uses the same RPC family for CodegenService/RunJavaScript; remote plimsoll uses its own SandboxService/RunJavaScriptV2.",
+      note: "This is not a REST route and it is not an MCP tools/call. The method name and request/response types come from StockService in stock.proto. Code mode uses the same RPC family for CodegenService/RunJavaScript; remote plimsoll uses its own SandboxService/Run, one procedure whose payload names the kind.",
       links: [
         {href: "https://connectrpc.com/", label: "Connect RPC overview", external: true},
         {href: "https://grpc.io/docs/what-is-grpc/core-concepts/", label: "gRPC core concepts", external: true},
@@ -326,7 +326,7 @@
       title: "Code execution is local or a versioned remote RPC",
       from: "Stockroom Go dataplane → plimsoll",
       intro: "The Go CodegenService is the Stockroom admission point. With a local provider, it calls the sandbox package in-process. With PLIMSOLL_URL configured, it uses the standalone plimsolld Connect/gRPC service.",
-      code: `LOCAL\nGo CodegenService\n  → sandbox.Request{Code, Grant}\n  → Docker or WASM provider\n\nREMOTE\nGo CodegenService\n  → SandboxService/RunJavaScriptV2\n    grant_profile: stockroom\n  → plimsolld\n  → Docker or E2B provider`,
+      code: `LOCAL\nGo CodegenService\n  → sandbox.Request{Code, Grant}\n  → Docker or WASM provider\n\nREMOTE\nGo CodegenService\n  → SandboxService/Run\n    protocol: 1\n    javascript: { code, grant_profile: stockroom }\n  → plimsolld\n  → Docker or E2B provider`,
       note: "The remote request selects a server-side grant profile. It does not send a raw BaseURL or bearer from the model. The local option is not a native-process escape: the selected provider still owns the execution boundary.",
       links: [
         {href: "integrations.html", label: "Integration trainer"},

@@ -26,3 +26,9 @@ func (Disabled) RunJavaScript(context.Context, Request) (Result, error) {
 func (Disabled) RunProject(context.Context, ProjectRequest) (ProjectResult, error) {
 	return ProjectResult{Sandbox: "disabled", Isolation: IsolationNone}, ErrDisabled
 }
+
+func (Disabled) SupportsModules() bool { return false }
+
+func (Disabled) RunModule(context.Context, ModuleRequest) (ModuleResult, error) {
+	return ModuleResult{Sandbox: "disabled", Isolation: IsolationNone}, ErrDisabled
+}

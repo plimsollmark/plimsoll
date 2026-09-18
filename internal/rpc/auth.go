@@ -26,8 +26,7 @@ const ScopeCodeRun = "code:run"
 // is NOT listed is denied by default — new RPCs are locked down until explicitly
 // granted a scope here (fail-closed).
 var requiredScopes = map[string]string{
-	plimsollv1connect.SandboxServiceRunJavaScriptV2Procedure: ScopeCodeRun,
-	plimsollv1connect.SandboxServiceRunProjectV2Procedure:    ScopeCodeRun,
+	plimsollv1connect.SandboxServiceRunProcedure: ScopeCodeRun,
 	// Describe runs no code, but it describes the code-running boundary; its only
 	// audience is code-running callers, so it shares their scope.
 	plimsollv1connect.SandboxServiceDescribeProcedure: ScopeCodeRun,

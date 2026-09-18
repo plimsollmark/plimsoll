@@ -73,6 +73,10 @@ The daemon takes no arguments. Configuration is by environment variable:
   SANDBOX_DOCKER_IMAGE       snippet image (default node:22-alpine)
   SANDBOX_DOCKER_PROJECT_IMAGE
                              project toolchain image (default plimsoll/sandbox:latest)
+  SANDBOX_DOCKER_MODULE_IMAGE
+                             simulation worker image for module runs (built by
+                             make docker-images as plimsoll/sandbox-sim:latest);
+                             unset = module runs unsupported
   SANDBOX_DOCKER_RUNTIME     runsc (gVisor) for the docker provider; "" = runc
   SANDBOX_DOCKER_SECCOMP     seccomp profile path (or "unconfined") for docker; ""
                              keeps docker's built-in default. Set it to the shipped

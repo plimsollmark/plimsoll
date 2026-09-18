@@ -17,6 +17,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/internal/grants"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -26,8 +27,11 @@ type fakeSandbox struct {
 	jsErr      error
 	projResult sandbox.ProjectResult
 	projErr    error
+	modResult  sandbox.ModuleResult
+	modErr     error
 	lastReq    sandbox.Request
 	lastProj   sandbox.ProjectRequest
+	lastMod    sandbox.ModuleRequest
 }
 
 func (f *fakeSandbox) Name() string                           { return "fake" }
@@ -40,11 +44,19 @@ func (f *fakeSandbox) RunProject(_ context.Context, req sandbox.ProjectRequest) 
 	f.lastProj = req
 	return f.projResult, f.projErr
 }
+func (f *fakeSandbox) RunModule(_ context.Context, req sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
+	f.lastMod = req
+	if f.modErr == nil && f.modResult.Outcome == sandbox.ProjectOutcomeUnspecified {
+		return sandbox.ModuleResult{}, sandbox.ErrUnsupported
+	}
+	return f.modResult, f.modErr
+}
 
 // projectCapableFake wraps fakeSandbox with a declared project capability.
 type projectCapableFake struct {
 	fakeSandbox
 	supports                bool
+	supportsModule          bool
 	supportsJavaScriptGrant bool
 	supportsProjectGrant    bool
 }
@@ -64,6 +76,7 @@ func (f *contextDeadlineSandbox) RunJavaScript(ctx context.Context, _ sandbox.Re
 }
 
 func (f *projectCapableFake) SupportsProjects() bool { return f.supports }
+func (f *projectCapableFake) SupportsModules() bool  { return f.supportsModule }
 func (f *projectCapableFake) SupportsJavaScriptGrants() bool {
 	return f.supportsJavaScriptGrant
 }
@@ -82,8 +95,7 @@ func TestDescribeReportsMeasuredCapabilities(t *testing.T) {
 		t.Fatalf("describe: %v", err)
 	}
 	if resp.Msg.GetSandbox() != "fake" || resp.Msg.GetIsolation() != "vm" || !resp.Msg.GetSupportsProject() ||
-		!resp.Msg.GetSupportsJavascriptGrants() || !resp.Msg.GetSupportsProjectGrants() || !resp.Msg.GetSupportsMinimumIsolation() ||
-		!resp.Msg.GetSupportsAdvisory() {
+		!resp.Msg.GetSupportsJavascriptGrants() || !resp.Msg.GetSupportsProjectGrants() || resp.Msg.GetProtocol() != protocol.Number {
 		t.Fatalf("bad describe: %+v", resp.Msg)
 	}
 
@@ -94,19 +106,19 @@ func TestDescribeReportsMeasuredCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("describe: %v", err)
 	}
-	if resp.Msg.GetSupportsProject() || resp.Msg.GetSupportsJavascriptGrants() || resp.Msg.GetSupportsProjectGrants() || !resp.Msg.GetSupportsMinimumIsolation() {
-		t.Fatal("undeclared provider capabilities must be false and protocol minimum-isolation support true")
+	if resp.Msg.GetSupportsProject() || resp.Msg.GetSupportsJavascriptGrants() || resp.Msg.GetSupportsProjectGrants() || resp.Msg.GetProtocol() != protocol.Number {
+		t.Fatal("undeclared provider capabilities must be false and the protocol number stated")
 	}
 }
 
 func TestRunJavaScriptMapsResult(t *testing.T) {
 	fake := &fakeSandbox{jsResult: sandbox.Result{Stdout: "hi 3", ExitCode: 0, Sandbox: "fake", Duration: 7 * time.Millisecond}}
 	svc := NewSandboxService(fake)
-	resp, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "console.log('hi', 1+2)", TimeoutMs: 1500}))
+	resp, err := svc.Run(context.Background(), withTimeout(jsReq("console.log('hi', 1+2)"), 1500))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if string(resp.Msg.GetStdout()) != "hi 3" || resp.Msg.GetSandbox() != "fake" || resp.Msg.GetDurationMs() != 7 {
+	if string(resp.Msg.GetJavascript().GetStdout()) != "hi 3" || resp.Msg.GetSandbox() != "fake" || resp.Msg.GetDurationMs() != 7 {
 		t.Fatalf("bad response: %+v", resp.Msg)
 	}
 	if fake.lastReq.Timeout != 1500*time.Millisecond {
@@ -117,9 +129,7 @@ func TestRunJavaScriptMapsResult(t *testing.T) {
 func TestRunJavaScriptEnforcesMinimumIsolationBeforeAdmissionAndDispatch(t *testing.T) {
 	fake := &fakeSandbox{}
 	svc := NewSandboxService(&isolationFake{fakeSandbox: fake, isolation: sandbox.IsolationContainer})
-	_, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-		Code: "1", MinimumIsolation: "kernel",
-	}))
+	_, err := svc.Run(context.Background(), withFloor(jsReq("1"), "kernel"))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), sandbox.ErrInsufficientIsolation.Error()) {
 		t.Fatalf("error = %v, want FailedPrecondition with isolation detail", err)
 	}
@@ -131,9 +141,7 @@ func TestRunJavaScriptEnforcesMinimumIsolationBeforeAdmissionAndDispatch(t *test
 	}
 
 	fake.jsResult = sandbox.Result{Sandbox: "fake", Isolation: sandbox.IsolationContainer}
-	if _, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-		Code: "1", MinimumIsolation: "container",
-	})); err != nil {
+	if _, err := svc.Run(context.Background(), withFloor(jsReq("1"), "container")); err != nil {
 		t.Fatalf("matching floor rejected: %v", err)
 	}
 	if fake.lastReq.MinimumIsolation != sandbox.IsolationContainer {
@@ -146,9 +154,7 @@ func TestRunRequestsRejectInvalidMinimumIsolation(t *testing.T) {
 		t.Run(raw, func(t *testing.T) {
 			fake := &fakeSandbox{}
 			svc := NewSandboxService(fake)
-			_, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-				Code: "1", MinimumIsolation: raw,
-			}))
+			_, err := svc.Run(context.Background(), withFloor(jsReq("1"), raw))
 			if connect.CodeOf(err) != connect.CodeInvalidArgument || !errors.Is(err, sandbox.ErrInvalidRequest) {
 				t.Fatalf("error = %v, want InvalidArgument/ErrInvalidRequest", err)
 			}
@@ -161,9 +167,7 @@ func TestRunRequestsRejectInvalidMinimumIsolation(t *testing.T) {
 
 func TestRunJavaScriptUnknownGrantProfile(t *testing.T) {
 	svc := NewSandboxService(&fakeSandbox{}) // no Grants registry configured
-	_, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-		Code: "1", GrantProfile: "nope",
-	}))
+	_, err := svc.Run(context.Background(), jsGrantReq("1", "nope"))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument for an unknown grant_profile", connect.CodeOf(err))
 	}
@@ -182,9 +186,7 @@ func TestRunJavaScriptGrantProfileFlowsToRequest(t *testing.T) {
 	fake := &fakeSandbox{jsResult: sandbox.Result{Sandbox: "fake"}}
 	svc := NewSandboxService(fake)
 	svc.Grants = reg
-	if _, err := svc.RunJavaScriptV2(authenticatedContext("mcp-a"), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-		Code: "1", GrantProfile: "hue",
-	})); err != nil {
+	if _, err := svc.Run(authenticatedContext("mcp-a"), jsGrantReq("1", "hue")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if fake.lastReq.Grant == nil {
@@ -208,11 +210,11 @@ func TestRunJavaScriptGrantProfileEnforcesCallerACL(t *testing.T) {
 	fake := &fakeSandbox{}
 	svc := NewSandboxService(fake)
 	svc.Grants = reg
-	req := connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1", GrantProfile: "hue"})
-	if _, err := svc.RunJavaScriptV2(authenticatedContext("mcp-b"), req); connect.CodeOf(err) != connect.CodePermissionDenied {
+	req := jsGrantReq("1", "hue")
+	if _, err := svc.Run(authenticatedContext("mcp-b"), req); connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("other caller code = %v, want PermissionDenied", connect.CodeOf(err))
 	}
-	if _, err := svc.RunJavaScriptV2(context.Background(), req); connect.CodeOf(err) != connect.CodePermissionDenied {
+	if _, err := svc.Run(context.Background(), req); connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("anonymous caller code = %v, want PermissionDenied", connect.CodeOf(err))
 	}
 	if fake.lastReq.Code != "" {
@@ -226,11 +228,11 @@ func TestRunJavaScriptEmitsAuditLog(t *testing.T) {
 	svc := NewSandboxService(fake)
 	svc.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	if _, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "console.log(1)"})); err != nil {
+	if _, err := svc.Run(context.Background(), jsReq("console.log(1)")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{`"msg":"code run"`, `"rpc":"RunJavaScriptV2"`, `"caller":"anon"`, `"sandbox":"fake"`, `"code_bytes":14`} {
+	for _, want := range []string{`"msg":"code run"`, `"op":"javascript"`, `"caller":"anon"`, `"sandbox":"fake"`, `"code_bytes":14`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("audit log missing %q\nlog: %s", want, out)
 		}
@@ -248,10 +250,7 @@ func TestRunJavaScriptAuditCarriesTraceID(t *testing.T) {
 	svc := NewSandboxService(fake)
 	svc.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	if _, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-		Code:    "console.log(1)",
-		TraceId: "9af31c02",
-	})); err != nil {
+	if _, err := svc.Run(context.Background(), withTrace(jsReq("console.log(1)"), "9af31c02")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out := buf.String(); !strings.Contains(out, `"trace_id":"9af31c02"`) {
@@ -266,7 +265,7 @@ func TestRunJavaScriptAuditOmitsAbsentTraceID(t *testing.T) {
 	svc := NewSandboxService(&fakeSandbox{jsResult: sandbox.Result{Stdout: "ok", Sandbox: "fake"}})
 	svc.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	if _, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"})); err != nil {
+	if _, err := svc.Run(context.Background(), jsReq("1")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out := buf.String(); strings.Contains(out, "trace_id") {
@@ -283,10 +282,7 @@ func TestRunJavaScriptAuditRejectsHostileTraceID(t *testing.T) {
 	svc := NewSandboxService(&fakeSandbox{jsResult: sandbox.Result{Stdout: "ok", Sandbox: "fake"}})
 	svc.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	if _, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-		Code:    "1",
-		TraceId: "/v1/customers/8821?ssn=123-45-6789",
-	})); err != nil {
+	if _, err := svc.Run(context.Background(), withTrace(jsReq("1"), "/v1/customers/8821?ssn=123-45-6789")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -305,11 +301,7 @@ func TestRunProjectAuditCarriesTraceID(t *testing.T) {
 	svc := NewSandboxService(&fakeSandbox{})
 	svc.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	if _, err := svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{
-		Files:   []*plimsollv1.ProjectFile{{Path: "main.js", Content: "1"}},
-		Steps:   []string{"node main.js"},
-		TraceId: "9af31c02",
-	})); err != nil {
+	if _, err := svc.Run(context.Background(), withTrace(projectReq(&plimsollv1.ProjectRun{Files: []*plimsollv1.ProjectFile{{Path: "main.js", Content: "1"}}, Steps: []string{"node main.js"}}), "9af31c02")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out := buf.String(); !strings.Contains(out, `"trace_id":"9af31c02"`) {
@@ -319,7 +311,7 @@ func TestRunProjectAuditCarriesTraceID(t *testing.T) {
 
 func TestRunJavaScriptRejectsEmptyCode(t *testing.T) {
 	svc := NewSandboxService(&fakeSandbox{})
-	_, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: ""}))
+	_, err := svc.Run(context.Background(), jsReq(""))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument", connect.CodeOf(err))
 	}
@@ -327,7 +319,7 @@ func TestRunJavaScriptRejectsEmptyCode(t *testing.T) {
 
 func TestDisabledSandboxIsFailedPrecondition(t *testing.T) {
 	svc := NewSandboxService(sandbox.Disabled{})
-	_, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"}))
+	_, err := svc.Run(context.Background(), jsReq("1"))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("code = %v, want FailedPrecondition", connect.CodeOf(err))
 	}
@@ -335,10 +327,7 @@ func TestDisabledSandboxIsFailedPrecondition(t *testing.T) {
 
 func TestRunProjectRejectsTraversalPath(t *testing.T) {
 	svc := NewSandboxService(&fakeSandbox{})
-	_, err := svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{
-		Files: []*plimsollv1.ProjectFile{{Path: "../escape.js", Content: "x"}},
-		Steps: []string{"node escape.js"},
-	}))
+	_, err := svc.Run(context.Background(), projectReq(&plimsollv1.ProjectRun{Files: []*plimsollv1.ProjectFile{{Path: "../escape.js", Content: "x"}}, Steps: []string{"node escape.js"}}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument for traversal path", connect.CodeOf(err))
 	}
@@ -346,7 +335,7 @@ func TestRunProjectRejectsTraversalPath(t *testing.T) {
 
 func TestRunProjectRequiresSteps(t *testing.T) {
 	svc := NewSandboxService(&fakeSandbox{})
-	_, err := svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{}))
+	_, err := svc.Run(context.Background(), projectReq(&plimsollv1.ProjectRun{}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument when no steps", connect.CodeOf(err))
 	}
@@ -359,28 +348,22 @@ func TestRunProjectMapsStepsAndArtifacts(t *testing.T) {
 		Artifacts: []sandbox.Artifact{{Path: "out.txt", Content: []byte("data")}},
 	}}
 	svc := NewSandboxService(fake)
-	resp, err := svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{
-		Files:     []*plimsollv1.ProjectFile{{Path: "main.js", Content: "console.log('ok')"}},
-		Steps:     []string{"node main.js"},
-		Artifacts: []string{"out.txt"},
-	}))
+	resp, err := svc.Run(context.Background(), projectReq(&plimsollv1.ProjectRun{Files: []*plimsollv1.ProjectFile{{Path: "main.js", Content: "console.log('ok')"}}, Steps: []string{"node main.js"}, Artifacts: []string{"out.txt"}}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(resp.Msg.GetSteps()) != 1 || string(resp.Msg.GetSteps()[0].GetStdout()) != "ok" {
-		t.Fatalf("bad steps: %+v", resp.Msg.GetSteps())
+	if len(resp.Msg.GetProject().GetSteps()) != 1 || string(resp.Msg.GetProject().GetSteps()[0].GetStdout()) != "ok" {
+		t.Fatalf("bad steps: %+v", resp.Msg.GetProject().GetSteps())
 	}
-	if len(resp.Msg.GetArtifacts()) != 1 || string(resp.Msg.GetArtifacts()[0].GetContent()) != "data" {
-		t.Fatalf("bad artifacts: %+v", resp.Msg.GetArtifacts())
+	if len(resp.Msg.GetProject().GetArtifacts()) != 1 || string(resp.Msg.GetProject().GetArtifacts()[0].GetContent()) != "data" {
+		t.Fatalf("bad artifacts: %+v", resp.Msg.GetProject().GetArtifacts())
 	}
 }
 
 func TestRunProjectEnforcesMinimumIsolationBeforeDispatch(t *testing.T) {
 	fake := &fakeSandbox{}
 	svc := NewSandboxService(&isolationFake{fakeSandbox: fake, isolation: sandbox.IsolationProcess})
-	_, err := svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{
-		Steps: []string{"true"}, MinimumIsolation: "vm",
-	}))
+	_, err := svc.Run(context.Background(), withFloor(projectReq(&plimsollv1.ProjectRun{Steps: []string{"true"}}), "vm"))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("code = %v, want FailedPrecondition (err: %v)", connect.CodeOf(err), err)
 	}
@@ -395,16 +378,12 @@ func TestRunProjectRejectsArtifactAmplification(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = fmt.Sprintf("out-%d", i)
 	}
-	_, err := svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{
-		Steps: []string{"true"}, Artifacts: tooMany,
-	}))
+	_, err := svc.Run(context.Background(), projectReq(&plimsollv1.ProjectRun{Steps: []string{"true"}, Artifacts: tooMany}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("too-many artifact code = %v, want InvalidArgument", connect.CodeOf(err))
 	}
 
-	_, err = svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{
-		Steps: []string{"true"}, Artifacts: []string{"empty", "empty"},
-	}))
+	_, err = svc.Run(context.Background(), projectReq(&plimsollv1.ProjectRun{Steps: []string{"true"}, Artifacts: []string{"empty", "empty"}}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("duplicate artifact code = %v, want InvalidArgument", connect.CodeOf(err))
 	}
@@ -413,9 +392,7 @@ func TestRunProjectRejectsArtifactAmplification(t *testing.T) {
 func TestRunProjectRejectsNonCanonicalAndNULPaths(t *testing.T) {
 	svc := NewSandboxService(&fakeSandbox{})
 	for _, p := range []string{"./a.js", "dir//a.js", "a\x00b.js"} {
-		_, err := svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{
-			Files: []*plimsollv1.ProjectFile{{Path: p, Content: "1"}}, Steps: []string{"true"},
-		}))
+		_, err := svc.Run(context.Background(), projectReq(&plimsollv1.ProjectRun{Files: []*plimsollv1.ProjectFile{{Path: p, Content: "1"}}, Steps: []string{"true"}}))
 		if connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Errorf("path %q code = %v, want InvalidArgument", p, connect.CodeOf(err))
 		}
@@ -427,12 +404,12 @@ func TestProviderOutputBytesPassThroughVerbatim(t *testing.T) {
 	// UNCHANGED \u2014 the old string fields repaired it lossily during serialization.
 	bad := string([]byte{'o', 'k', 0xff})
 	fake := &fakeSandbox{jsResult: sandbox.Result{Stdout: bad, Stderr: bad, Sandbox: "fake"}}
-	resp, err := NewSandboxService(fake).RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"}))
+	resp, err := NewSandboxService(fake).Run(context.Background(), jsReq("1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(resp.Msg.GetStdout(), []byte(bad)) || !bytes.Equal(resp.Msg.GetStderr(), []byte(bad)) {
-		t.Fatalf("guest output bytes were altered on the wire: %q", resp.Msg.GetStdout())
+	if !bytes.Equal(resp.Msg.GetJavascript().GetStdout(), []byte(bad)) || !bytes.Equal(resp.Msg.GetJavascript().GetStderr(), []byte(bad)) {
+		t.Fatalf("guest output bytes were altered on the wire: %q", resp.Msg.GetJavascript().GetStdout())
 	}
 }
 
@@ -441,15 +418,15 @@ func TestOutcomeDetailIsValidUTF8OnWire(t *testing.T) {
 	// repair guard that protobuf string fields require.
 	bad := string([]byte{'e', 0xff})
 	fake := &fakeSandbox{projResult: sandbox.ProjectResult{Sandbox: "fake", Outcome: sandbox.ProjectOutcomeProtocolError, Detail: bad}}
-	resp, err := NewSandboxService(fake).RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{Steps: []string{"true"}}))
+	resp, err := NewSandboxService(fake).Run(context.Background(), projectReq(&plimsollv1.ProjectRun{Steps: []string{"true"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !utf8.ValidString(resp.Msg.GetOutcomeDetail()) {
-		t.Fatalf("invalid UTF-8 escaped the response boundary: %q", resp.Msg.GetOutcomeDetail())
+	if !utf8.ValidString(resp.Msg.GetProject().GetOutcomeDetail()) {
+		t.Fatalf("invalid UTF-8 escaped the response boundary: %q", resp.Msg.GetProject().GetOutcomeDetail())
 	}
-	if !strings.Contains(resp.Msg.GetOutcomeDetail(), "\uFFFD") {
-		t.Fatalf("invalid byte was not replaced: %q", resp.Msg.GetOutcomeDetail())
+	if !strings.Contains(resp.Msg.GetProject().GetOutcomeDetail(), "\uFFFD") {
+		t.Fatalf("invalid byte was not replaced: %q", resp.Msg.GetProject().GetOutcomeDetail())
 	}
 }
 
@@ -466,28 +443,28 @@ func TestRunResponsesCarryTypedOutcomeAndTruncation(t *testing.T) {
 	}
 	svc := NewSandboxService(fake)
 
-	js, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"}))
+	js, err := svc.Run(context.Background(), jsReq("1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !js.Msg.GetStdoutTruncated() || !js.Msg.GetStderrTruncated() {
+	if !js.Msg.GetJavascript().GetStdoutTruncated() || !js.Msg.GetJavascript().GetStderrTruncated() {
 		t.Fatalf("truncation flags lost on the JS wire: %+v", js.Msg)
 	}
 
-	proj, err := svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{Steps: []string{"node x.js"}}))
+	proj, err := svc.Run(context.Background(), projectReq(&plimsollv1.ProjectRun{Steps: []string{"node x.js"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if proj.Msg.GetOutcome() != plimsollv1.ProjectOutcome_PROJECT_OUTCOME_SETUP_FAILED {
-		t.Fatalf("outcome = %v, want SETUP_FAILED", proj.Msg.GetOutcome())
+	if proj.Msg.GetProject().GetOutcome() != plimsollv1.ProjectOutcome_PROJECT_OUTCOME_SETUP_FAILED {
+		t.Fatalf("outcome = %v, want SETUP_FAILED", proj.Msg.GetProject().GetOutcome())
 	}
-	if proj.Msg.GetOutcomeDetail() != "illegal file path: ../x" {
-		t.Fatalf("outcome detail = %q", proj.Msg.GetOutcomeDetail())
+	if proj.Msg.GetProject().GetOutcomeDetail() != "illegal file path: ../x" {
+		t.Fatalf("outcome detail = %q", proj.Msg.GetProject().GetOutcomeDetail())
 	}
-	if !proj.Msg.GetArtifactsTruncated() {
+	if !proj.Msg.GetProject().GetArtifactsTruncated() {
 		t.Fatal("artifact truncation flag lost on the wire")
 	}
-	st := proj.Msg.GetSteps()
+	st := proj.Msg.GetProject().GetSteps()
 	if len(st) != 1 || !st[0].GetStdoutTruncated() || !st[0].GetStderrTruncated() {
 		t.Fatalf("step truncation flags lost on the wire: %+v", st)
 	}
@@ -499,7 +476,7 @@ func TestContextErrorsPreserveRPCSemanticsAndMetrics(t *testing.T) {
 		code connect.Code
 	}{{context.Canceled, connect.CodeCanceled}, {context.DeadlineExceeded, connect.CodeDeadlineExceeded}} {
 		svc := NewSandboxService(&fakeSandbox{jsErr: tc.err})
-		_, err := svc.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"}))
+		_, err := svc.Run(context.Background(), jsReq("1"))
 		if connect.CodeOf(err) != tc.code {
 			t.Errorf("%v mapped to %v, want %v", tc.err, connect.CodeOf(err), tc.code)
 		}
@@ -515,7 +492,7 @@ func TestRunProjectAuditIncludesOutcome(t *testing.T) {
 		Steps: []sandbox.StepResult{{Command: "slow", ExitCode: 124, TimedOut: true}}}}
 	svc := NewSandboxService(fake)
 	svc.Logger = slog.New(slog.NewJSONHandler(&buf, nil))
-	if _, err := svc.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{Steps: []string{"slow"}})); err != nil {
+	if _, err := svc.Run(context.Background(), projectReq(&plimsollv1.ProjectRun{Steps: []string{"slow"}})); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`"msg":"project run"`, `"exit_code":124`, `"timed_out":true`, `"duration_ms":`} {
@@ -528,23 +505,21 @@ func TestRunProjectAuditIncludesOutcome(t *testing.T) {
 func TestUnsupportedAndDisabledNotCountedAsFailed(t *testing.T) {
 	// ErrUnsupported (wasm project) is a client/config condition, not an infra fault.
 	unsup := NewSandboxService(&fakeSandbox{projErr: sandbox.ErrUnsupported})
-	_, _ = unsup.RunProjectV2(context.Background(), connect.NewRequest(&plimsollv1.RunProjectV2Request{
-		Files: []*plimsollv1.ProjectFile{{Path: "a.js", Content: "1"}}, Steps: []string{"node a.js"},
-	}))
+	_, _ = unsup.Run(context.Background(), projectReq(&plimsollv1.ProjectRun{Files: []*plimsollv1.ProjectFile{{Path: "a.js", Content: "1"}}, Steps: []string{"node a.js"}}))
 	if _, failed := unsup.RunCounts(); failed != 0 {
 		t.Errorf("runsFailed = %d after ErrUnsupported, want 0", failed)
 	}
 
 	// ErrDisabled likewise (a deliberately-off provider is not an infra failure).
 	dis := NewSandboxService(sandbox.Disabled{})
-	_, _ = dis.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"}))
+	_, _ = dis.Run(context.Background(), jsReq("1"))
 	if _, failed := dis.RunCounts(); failed != 0 {
 		t.Errorf("runsFailed = %d after ErrDisabled, want 0", failed)
 	}
 
 	// Admission shedding is expected backpressure, not a broken provider.
 	busy := NewSandboxService(&fakeSandbox{jsErr: sandbox.ErrAtCapacity})
-	_, err := busy.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"}))
+	_, err := busy.Run(context.Background(), jsReq("1"))
 	if connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Errorf("ErrAtCapacity mapped to %v, want ResourceExhausted", connect.CodeOf(err))
 	}
@@ -554,7 +529,7 @@ func TestUnsupportedAndDisabledNotCountedAsFailed(t *testing.T) {
 
 	// A real infrastructure error DOES count.
 	infra := NewSandboxService(&fakeSandbox{jsErr: errors.New("docker daemon unreachable")})
-	_, _ = infra.RunJavaScriptV2(context.Background(), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1"}))
+	_, _ = infra.Run(context.Background(), jsReq("1"))
 	if _, failed := infra.RunCounts(); failed != 1 {
 		t.Errorf("runsFailed = %d after infra error, want 1", failed)
 	}
@@ -676,9 +651,7 @@ func TestRPCDeadlineIsEnforcedThroughContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	_, err := svc.RunJavaScriptV2(ctx, connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-		Code: "1",
-	}))
+	_, err := svc.Run(ctx, jsReq("1"))
 	if connect.CodeOf(err) != connect.CodeDeadlineExceeded {
 		t.Fatalf("code = %v, want DeadlineExceeded", connect.CodeOf(err))
 	}

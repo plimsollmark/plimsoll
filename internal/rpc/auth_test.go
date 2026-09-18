@@ -33,7 +33,7 @@ func (b *panicOnReadBody) Close() error {
 
 func TestAuthenticateHTTPRejectsBeforeReadingBody(t *testing.T) {
 	body := &panicOnReadBody{}
-	req := httptest.NewRequest(http.MethodPost, plimsollv1connect.SandboxServiceRunJavaScriptV2Procedure, nil)
+	req := httptest.NewRequest(http.MethodPost, plimsollv1connect.SandboxServiceRunProcedure, nil)
 	req.Body = body
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -63,7 +63,10 @@ func (v fakeVerifier) VerifyToken(_ context.Context, token string) (Principal, b
 
 func newAuthTestClient(t *testing.T, verifier TokenVerifier) plimsollv1connect.SandboxServiceClient {
 	t.Helper()
-	svc := NewSandboxService(&fakeSandbox{jsResult: sandbox.Result{Stdout: "ok", Sandbox: "fake"}})
+	svc := NewSandboxService(&fakeSandbox{
+		jsResult:  sandbox.Result{Stdout: "ok", Sandbox: "fake"},
+		modResult: sandbox.ModuleResult{Sandbox: "fake", Outcome: sandbox.ProjectOutcomeCompleted},
+	})
 	mux := http.NewServeMux()
 	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(AuthInterceptor(verifier)))
 	mux.Handle(path, h)
@@ -73,11 +76,11 @@ func newAuthTestClient(t *testing.T, verifier TokenVerifier) plimsollv1connect.S
 }
 
 func callRun(client plimsollv1connect.SandboxServiceClient, token string) error {
-	req := connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "console.log(1)"})
+	req := jsReq("console.log(1)")
 	if token != "" {
 		req.Header().Set("Authorization", "Bearer "+token)
 	}
-	_, err := client.RunJavaScriptV2(context.Background(), req)
+	_, err := client.Run(context.Background(), req)
 	return err
 }
 
@@ -88,17 +91,21 @@ func TestAuthAllowsTokenWithScope(t *testing.T) {
 	}
 }
 
-func TestAuthAllowsV2IsolationProceduresWithCodeRunScope(t *testing.T) {
+// Every payload kind rides the one procedure and so the one scope entry. The
+// module case is the regression: before the envelope, the module procedure was
+// absent from the scope map, and an unlisted procedure is refused whenever a
+// verifier is configured, so module runs worked only in open dev mode.
+func TestAuthAllowsEveryKindWithCodeRunScope(t *testing.T) {
 	client := newAuthTestClient(t, fakeVerifier{token: "good", scopes: []string{ScopeCodeRun}})
-	js := connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{Code: "1", MinimumIsolation: "process"})
-	js.Header().Set("Authorization", "Bearer good")
-	if _, err := client.RunJavaScriptV2(context.Background(), js); err != nil {
-		t.Fatalf("RunJavaScriptV2 auth: %v", err)
-	}
-	project := connect.NewRequest(&plimsollv1.RunProjectV2Request{Steps: []string{"true"}, MinimumIsolation: "process"})
-	project.Header().Set("Authorization", "Bearer good")
-	if _, err := client.RunProjectV2(context.Background(), project); err != nil {
-		t.Fatalf("RunProjectV2 auth: %v", err)
+	for name, req := range map[string]*connect.Request[plimsollv1.RunRequest]{
+		"javascript": withFloor(jsReq("1"), "process"),
+		"project":    withFloor(projectReq(&plimsollv1.ProjectRun{Steps: []string{"true"}}), "process"),
+		"module":     withFloor(moduleReq(moduleRequest([]float64{1, 2, 0})), "process"),
+	} {
+		req.Header().Set("Authorization", "Bearer good")
+		if _, err := client.Run(context.Background(), req); err != nil {
+			t.Fatalf("%s under a configured verifier: %v", name, err)
+		}
 	}
 }
 

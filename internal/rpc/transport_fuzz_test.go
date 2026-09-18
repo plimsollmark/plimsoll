@@ -21,15 +21,21 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/protocol"
 )
 
-// fuzzProcedures are the live procedure paths plus one retired V1 name, which
+// fuzzProcedures are the two live procedure paths plus two retired names, which
 // must stay unmapped — never executable.
 var fuzzProcedures = []string{
-	"/plimsoll.v1.SandboxService/RunJavaScriptV2",
-	"/plimsoll.v1.SandboxService/RunProjectV2",
+	"/plimsoll.v1.SandboxService/Run",
 	"/plimsoll.v1.SandboxService/Describe",
+	"/plimsoll.v1.SandboxService/RunJavaScriptV2",
 	"/plimsoll.v1.SandboxService/RunJavaScript",
+}
+
+// validRun is a well-formed snippet request on the current protocol.
+func validRun() *plimsollv1.RunRequest {
+	return &plimsollv1.RunRequest{Protocol: protocol.Number, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1"}}}
 }
 
 // newFuzzEdge assembles the daemon's exact HTTP middleware stack around a fake
@@ -49,7 +55,7 @@ func newFuzzEdge() (http.Handler, *SandboxService) {
 func FuzzHTTPTransport(f *testing.F) {
 	edge, svc := newFuzzEdge()
 
-	validJS, _ := proto.Marshal(&plimsollv1.RunJavaScriptV2Request{Code: "1"})
+	validJS, _ := proto.Marshal(validRun())
 	var gz bytes.Buffer
 	zw := gzip.NewWriter(&gz)
 	_, _ = zw.Write(validJS)
@@ -57,14 +63,17 @@ func FuzzHTTPTransport(f *testing.F) {
 
 	f.Add(uint8(0), true, "application/proto", "", validJS)
 	f.Add(uint8(0), true, "application/proto", "gzip", gz.Bytes())
-	f.Add(uint8(0), true, "application/json", "", []byte(`{"code":"1"}`))
+	f.Add(uint8(0), true, "application/json", "", []byte(`{"protocol":1,"javascript":{"code":"1"}}`))
+	f.Add(uint8(0), true, "application/json", "", []byte(`{"javascript":{"code":"1"}}`))              // protocol omitted
+	f.Add(uint8(0), true, "application/json", "", []byte(`{"protocol":2,"javascript":{"code":"1"}}`)) // protocol from the future
 	f.Add(uint8(0), true, "application/connect+proto", "", append([]byte{0, 0, 0, 0, byte(len(validJS))}, validJS...))
 	f.Add(uint8(0), true, "application/grpc", "", append([]byte{0, 0, 0, 0, byte(len(validJS))}, validJS...))
 	f.Add(uint8(1), true, "application/proto", "", []byte("\xff\xff\xff"))
 	f.Add(uint8(0), true, "application/proto", "gzip", []byte("not gzip at all"))
 	f.Add(uint8(0), false, "application/proto", "", validJS)                              // unauthenticated
 	f.Add(uint8(0), false, "application/grpc", "", validJS)                               // unauthenticated, 200-encoding protocol
-	f.Add(uint8(3), true, "application/proto", "", validJS)                               // retired V1 route
+	f.Add(uint8(2), true, "application/proto", "", validJS)                               // retired route
+	f.Add(uint8(3), true, "application/proto", "", validJS)                               // retired route
 	f.Add(uint8(2), true, "text/html", "br", []byte("<html>"))                            // junk everywhere
 	f.Add(uint8(0), true, "application/connect+proto", "", []byte{0, 255, 255, 255, 255}) // huge envelope claim
 
@@ -90,8 +99,8 @@ func FuzzHTTPTransport(f *testing.F) {
 		if !auth && after != before {
 			t.Fatalf("unauthenticated %s request dispatched a run (content-type %q)", target, contentType)
 		}
-		if target == "/plimsoll.v1.SandboxService/RunJavaScript" && after != before {
-			t.Fatalf("retired V1 procedure dispatched a run")
+		if target != "/plimsoll.v1.SandboxService/Run" && after != before {
+			t.Fatalf("%s dispatched a run; only Run may", target)
 		}
 	})
 }
@@ -101,8 +110,8 @@ func FuzzHTTPTransport(f *testing.F) {
 // no-dispatch assertions above cannot pass vacuously.
 func TestFuzzEdgeDispatchesValidRequests(t *testing.T) {
 	edge, svc := newFuzzEdge()
-	body, _ := proto.Marshal(&plimsollv1.RunJavaScriptV2Request{Code: "1"})
-	req := httptest.NewRequest(http.MethodPost, "/plimsoll.v1.SandboxService/RunJavaScriptV2", bytes.NewReader(body))
+	body, _ := proto.Marshal(validRun())
+	req := httptest.NewRequest(http.MethodPost, "/plimsoll.v1.SandboxService/Run", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/proto")
 	req.Header.Set("Authorization", "Bearer good")
 	rr := httptest.NewRecorder()

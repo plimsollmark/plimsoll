@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -107,20 +105,18 @@ func adviceService(t *testing.T, logw *bytes.Buffer) *SandboxService {
 	return svc
 }
 
-func runWithProfile(t *testing.T, svc *SandboxService, profile string) *plimsollv1.RunJavaScriptV2Response {
+func runWithProfile(t *testing.T, svc *SandboxService, profile string) *plimsollv1.RunResponse {
 	t.Helper()
-	resp, err := svc.RunJavaScriptV2(authenticatedContext("mcp-a"), connect.NewRequest(&plimsollv1.RunJavaScriptV2Request{
-		Code: "host.get('/v1/lights/1')", GrantProfile: profile,
-	}))
+	resp, err := svc.Run(authenticatedContext("mcp-a"), jsGrantReq("host.get('/v1/lights/1')", profile))
 	if err != nil {
 		t.Fatalf("run %s: %v", profile, err)
 	}
 	return resp.Msg
 }
 
-func runProjectWithProfile(t *testing.T, svc *SandboxService, profile string) *plimsollv1.RunProjectV2Response {
+func runProjectWithProfile(t *testing.T, svc *SandboxService, profile string) *plimsollv1.RunResponse {
 	t.Helper()
-	resp, err := svc.RunProjectV2(authenticatedContext("mcp-a"), connect.NewRequest(&plimsollv1.RunProjectV2Request{
+	resp, err := svc.Run(authenticatedContext("mcp-a"), projectReq(&plimsollv1.ProjectRun{
 		Files:        []*plimsollv1.ProjectFile{{Path: "main.mjs", Content: "await host.get('/v1/lights/1')"}},
 		Steps:        []string{"node main.mjs"},
 		GrantProfile: profile,
@@ -142,12 +138,12 @@ func TestProjectAdviceMirrorsSnippet(t *testing.T) {
 	caller := runProjectWithProfile(t, svc, "p-caller")
 
 	// Execution is byte-identical across modes; only advice differs.
-	for _, got := range []*plimsollv1.RunProjectV2Response{operator, caller} {
-		if got.GetOutcome() != off.GetOutcome() || len(got.GetSteps()) != len(off.GetSteps()) {
+	for _, got := range []*plimsollv1.RunResponse{operator, caller} {
+		if got.GetProject().GetOutcome() != off.GetProject().GetOutcome() || len(got.GetProject().GetSteps()) != len(off.GetProject().GetSteps()) {
 			t.Fatalf("advice changed the project run:\n off=%+v\n got=%+v", off, got)
 		}
-		for i, st := range got.GetSteps() {
-			o := off.GetSteps()[i]
+		for i, st := range got.GetProject().GetSteps() {
+			o := off.GetProject().GetSteps()[i]
 			if !bytes.Equal(st.GetStdout(), o.GetStdout()) || !bytes.Equal(st.GetStderr(), o.GetStderr()) ||
 				st.GetExitCode() != o.GetExitCode() || st.GetDurationMs() != o.GetDurationMs() {
 				t.Fatalf("advice changed step %d:\n off=%+v\n got=%+v", i, o, st)
@@ -155,17 +151,17 @@ func TestProjectAdviceMirrorsSnippet(t *testing.T) {
 		}
 	}
 
-	if len(off.GetAdvice()) != 0 {
-		t.Errorf("off mode returned advice: %+v", off.GetAdvice())
+	if len(off.GetProject().GetAdvice()) != 0 {
+		t.Errorf("off mode returned advice: %+v", off.GetProject().GetAdvice())
 	}
-	if len(operator.GetAdvice()) != 0 {
-		t.Errorf("operator mode leaked advice to the caller: %+v", operator.GetAdvice())
+	if len(operator.GetProject().GetAdvice()) != 0 {
+		t.Errorf("operator mode leaked advice to the caller: %+v", operator.GetProject().GetAdvice())
 	}
-	if len(caller.GetAdvice()) == 0 {
+	if len(caller.GetProject().GetAdvice()) == 0 {
 		t.Fatal("caller mode returned no advice")
 	}
 	// Same router split as the snippet path: caller findings are agent-fixable only.
-	for _, f := range caller.GetAdvice() {
+	for _, f := range caller.GetProject().GetAdvice() {
 		if f.GetSuggestedRoute() == "" || f.GetSuggestedMethod() == "" {
 			t.Errorf("caller finding is not agent-fixable (no suggested route): %+v", f)
 		}
@@ -183,28 +179,28 @@ func TestAdviceNonBlockingByteIdenticalExecution(t *testing.T) {
 	caller := runWithProfile(t, svc, "p-caller")
 
 	// Every execution field is identical across the three modes.
-	for _, got := range []*plimsollv1.RunJavaScriptV2Response{operator, caller} {
-		if !bytes.Equal(got.GetStdout(), off.GetStdout()) ||
-			!bytes.Equal(got.GetStderr(), off.GetStderr()) ||
-			got.GetExitCode() != off.GetExitCode() ||
-			got.GetTimedOut() != off.GetTimedOut() ||
+	for _, got := range []*plimsollv1.RunResponse{operator, caller} {
+		if !bytes.Equal(got.GetJavascript().GetStdout(), off.GetJavascript().GetStdout()) ||
+			!bytes.Equal(got.GetJavascript().GetStderr(), off.GetJavascript().GetStderr()) ||
+			got.GetJavascript().GetExitCode() != off.GetJavascript().GetExitCode() ||
+			got.GetJavascript().GetTimedOut() != off.GetJavascript().GetTimedOut() ||
 			got.GetDurationMs() != off.GetDurationMs() ||
 			got.GetSandbox() != off.GetSandbox() ||
 			got.GetIsolation() != off.GetIsolation() ||
-			got.GetStdoutTruncated() != off.GetStdoutTruncated() ||
-			got.GetStderrTruncated() != off.GetStderrTruncated() {
+			got.GetJavascript().GetStdoutTruncated() != off.GetJavascript().GetStdoutTruncated() ||
+			got.GetJavascript().GetStderrTruncated() != off.GetJavascript().GetStderrTruncated() {
 			t.Fatalf("advice changed execution output:\n off=%+v\n got=%+v", off, got)
 		}
 	}
 
 	// Only caller mode surfaces advice to the caller.
-	if len(off.GetAdvice()) != 0 {
-		t.Errorf("off mode returned advice: %+v", off.GetAdvice())
+	if len(off.GetJavascript().GetAdvice()) != 0 {
+		t.Errorf("off mode returned advice: %+v", off.GetJavascript().GetAdvice())
 	}
-	if len(operator.GetAdvice()) != 0 {
-		t.Errorf("operator mode leaked advice to the caller: %+v", operator.GetAdvice())
+	if len(operator.GetJavascript().GetAdvice()) != 0 {
+		t.Errorf("operator mode leaked advice to the caller: %+v", operator.GetJavascript().GetAdvice())
 	}
-	if len(caller.GetAdvice()) == 0 {
+	if len(caller.GetJavascript().GetAdvice()) == 0 {
 		t.Error("caller mode returned no advice")
 	}
 }
@@ -217,7 +213,7 @@ func TestAdviceCallerReturnsOnlyAgentFixable(t *testing.T) {
 	svc := adviceService(t, &logbuf)
 	msg := runWithProfile(t, svc, "p-caller")
 
-	adv := msg.GetAdvice()
+	adv := msg.GetJavascript().GetAdvice()
 	if len(adv) == 0 {
 		t.Fatal("caller advice is empty")
 	}
@@ -349,7 +345,7 @@ func TestAdviceRetentionGatesAuditLog(t *testing.T) {
 	var quietBuf bytes.Buffer
 	quietSvc := adviceService(t, &quietBuf)
 	msg := runWithProfile(t, quietSvc, "p-caller-quiet")
-	if len(msg.GetAdvice()) == 0 {
+	if len(msg.GetJavascript().GetAdvice()) == 0 {
 		t.Fatal("retention none suppressed the caller wire hint (it should gate only the log)")
 	}
 	if len(quietSvc.AdviceStats()) == 0 {
@@ -370,8 +366,8 @@ func TestAdviceOperatorWithholdsFromCaller(t *testing.T) {
 	svc := adviceService(t, &logbuf)
 	msg := runWithProfile(t, svc, "p-operator")
 
-	if len(msg.GetAdvice()) != 0 {
-		t.Fatalf("operator mode returned advice to the caller: %+v", msg.GetAdvice())
+	if len(msg.GetJavascript().GetAdvice()) != 0 {
+		t.Fatalf("operator mode returned advice to the caller: %+v", msg.GetJavascript().GetAdvice())
 	}
 	entry := lastCodeRunLog(t, &logbuf)
 	if entry["advice"] != "operator" {
@@ -389,8 +385,8 @@ func TestAdviceOffComputesNothing(t *testing.T) {
 	svc := adviceService(t, &logbuf)
 	msg := runWithProfile(t, svc, "p-off")
 
-	if len(msg.GetAdvice()) != 0 {
-		t.Errorf("off mode returned advice: %+v", msg.GetAdvice())
+	if len(msg.GetJavascript().GetAdvice()) != 0 {
+		t.Errorf("off mode returned advice: %+v", msg.GetJavascript().GetAdvice())
 	}
 	entry := lastCodeRunLog(t, &logbuf)
 	if _, present := entry["advice"]; present {
@@ -436,7 +432,7 @@ func TestAdviceCatalogNamesUngrantedRoute(t *testing.T) {
 	// lights fan-out, and no caller finding carries a grant_route (that field is not on
 	// the caller wire at all).
 	callerMsg := runWithProfile(t, svc, "p-catalog-caller")
-	for _, f := range callerMsg.GetAdvice() {
+	for _, f := range callerMsg.GetJavascript().GetAdvice() {
 		if f.GetRoute() == "/v1/sensors/*" {
 			t.Errorf("ungranted sensors route leaked to the caller: %+v", f)
 		}

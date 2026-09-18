@@ -37,30 +37,35 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
-	// SandboxServiceRunJavaScriptV2Procedure is the fully-qualified name of the SandboxService's
-	// RunJavaScriptV2 RPC.
-	SandboxServiceRunJavaScriptV2Procedure = "/plimsoll.v1.SandboxService/RunJavaScriptV2"
-	// SandboxServiceRunProjectV2Procedure is the fully-qualified name of the SandboxService's
-	// RunProjectV2 RPC.
-	SandboxServiceRunProjectV2Procedure = "/plimsoll.v1.SandboxService/RunProjectV2"
+	// SandboxServiceRunProcedure is the fully-qualified name of the SandboxService's Run RPC.
+	SandboxServiceRunProcedure = "/plimsoll.v1.SandboxService/Run"
 	// SandboxServiceDescribeProcedure is the fully-qualified name of the SandboxService's Describe RPC.
 	SandboxServiceDescribeProcedure = "/plimsoll.v1.SandboxService/Describe"
 )
 
 // SandboxServiceClient is a client for the plimsoll.v1.SandboxService service.
 type SandboxServiceClient interface {
-	// RunJavaScriptV2 runs a JavaScript snippet. The versioned procedure is an
-	// atomic protocol boundary: an old backend returns Unimplemented before code
-	// can execute, including when minimum_isolation is requested.
-	RunJavaScriptV2(context.Context, *connect.Request[v1.RunJavaScriptV2Request]) (*connect.Response[v1.RunJavaScriptV2Response], error)
-	// RunProject writes a multi-file project and runs a sequence of build/lint/run
-	// steps. ProjectCapable providers structurally support this protocol; callers
-	// must still ensure their selected image/template contains the required tools.
-	// RunProjectV2 provides the same mixed-version safety for project runs.
-	RunProjectV2(context.Context, *connect.Request[v1.RunProjectV2Request]) (*connect.Response[v1.RunProjectV2Response], error)
-	// Describe reports the active provider, current isolation evidence, and static
-	// operation support. Project support is structural and does not prove that the
-	// selected image/template contains a particular toolchain.
+	// Run executes exactly one operation: a JavaScript snippet, a multi-file
+	// project, or a compiled model over a parameter table. The request is an
+	// envelope (protocol number, isolation floor, trace id, timeout) around a
+	// oneof payload; the response is an envelope (provider, isolation evidence,
+	// duration) around the matching result. One procedure, one scope, one place
+	// where the floor is checked before admission and dispatch.
+	//
+	// The protocol number is the mixed-version gate. Protobuf drops fields a
+	// receiver does not know, so a daemon that predates a security-relevant
+	// request field (a floor, a limit, a capability restriction) would execute the
+	// request without it. A client therefore states the protocol it speaks and a
+	// daemon serves exactly one: a request that omits it is InvalidArgument and a
+	// request on any other number is Unimplemented, in both cases before the
+	// payload is read. The number is bumped when such a field is added; an
+	// informational field does not bump it. Current number: 1 (the Go constant
+	// rpc.Protocol, which Describe reports).
+	Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error)
+	// Describe reports the protocol number, the active provider, current isolation
+	// evidence, and static operation support. Project and module support are
+	// structural: they do not prove that the selected image/template contains a
+	// particular toolchain or model.
 	Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error)
 }
 
@@ -75,16 +80,10 @@ func NewSandboxServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 	baseURL = strings.TrimRight(baseURL, "/")
 	sandboxServiceMethods := v1.File_plimsoll_v1_sandbox_proto.Services().ByName("SandboxService").Methods()
 	return &sandboxServiceClient{
-		runJavaScriptV2: connect.NewClient[v1.RunJavaScriptV2Request, v1.RunJavaScriptV2Response](
+		run: connect.NewClient[v1.RunRequest, v1.RunResponse](
 			httpClient,
-			baseURL+SandboxServiceRunJavaScriptV2Procedure,
-			connect.WithSchema(sandboxServiceMethods.ByName("RunJavaScriptV2")),
-			connect.WithClientOptions(opts...),
-		),
-		runProjectV2: connect.NewClient[v1.RunProjectV2Request, v1.RunProjectV2Response](
-			httpClient,
-			baseURL+SandboxServiceRunProjectV2Procedure,
-			connect.WithSchema(sandboxServiceMethods.ByName("RunProjectV2")),
+			baseURL+SandboxServiceRunProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("Run")),
 			connect.WithClientOptions(opts...),
 		),
 		describe: connect.NewClient[v1.DescribeRequest, v1.DescribeResponse](
@@ -98,19 +97,13 @@ func NewSandboxServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // sandboxServiceClient implements SandboxServiceClient.
 type sandboxServiceClient struct {
-	runJavaScriptV2 *connect.Client[v1.RunJavaScriptV2Request, v1.RunJavaScriptV2Response]
-	runProjectV2    *connect.Client[v1.RunProjectV2Request, v1.RunProjectV2Response]
-	describe        *connect.Client[v1.DescribeRequest, v1.DescribeResponse]
+	run      *connect.Client[v1.RunRequest, v1.RunResponse]
+	describe *connect.Client[v1.DescribeRequest, v1.DescribeResponse]
 }
 
-// RunJavaScriptV2 calls plimsoll.v1.SandboxService.RunJavaScriptV2.
-func (c *sandboxServiceClient) RunJavaScriptV2(ctx context.Context, req *connect.Request[v1.RunJavaScriptV2Request]) (*connect.Response[v1.RunJavaScriptV2Response], error) {
-	return c.runJavaScriptV2.CallUnary(ctx, req)
-}
-
-// RunProjectV2 calls plimsoll.v1.SandboxService.RunProjectV2.
-func (c *sandboxServiceClient) RunProjectV2(ctx context.Context, req *connect.Request[v1.RunProjectV2Request]) (*connect.Response[v1.RunProjectV2Response], error) {
-	return c.runProjectV2.CallUnary(ctx, req)
+// Run calls plimsoll.v1.SandboxService.Run.
+func (c *sandboxServiceClient) Run(ctx context.Context, req *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error) {
+	return c.run.CallUnary(ctx, req)
 }
 
 // Describe calls plimsoll.v1.SandboxService.Describe.
@@ -120,18 +113,27 @@ func (c *sandboxServiceClient) Describe(ctx context.Context, req *connect.Reques
 
 // SandboxServiceHandler is an implementation of the plimsoll.v1.SandboxService service.
 type SandboxServiceHandler interface {
-	// RunJavaScriptV2 runs a JavaScript snippet. The versioned procedure is an
-	// atomic protocol boundary: an old backend returns Unimplemented before code
-	// can execute, including when minimum_isolation is requested.
-	RunJavaScriptV2(context.Context, *connect.Request[v1.RunJavaScriptV2Request]) (*connect.Response[v1.RunJavaScriptV2Response], error)
-	// RunProject writes a multi-file project and runs a sequence of build/lint/run
-	// steps. ProjectCapable providers structurally support this protocol; callers
-	// must still ensure their selected image/template contains the required tools.
-	// RunProjectV2 provides the same mixed-version safety for project runs.
-	RunProjectV2(context.Context, *connect.Request[v1.RunProjectV2Request]) (*connect.Response[v1.RunProjectV2Response], error)
-	// Describe reports the active provider, current isolation evidence, and static
-	// operation support. Project support is structural and does not prove that the
-	// selected image/template contains a particular toolchain.
+	// Run executes exactly one operation: a JavaScript snippet, a multi-file
+	// project, or a compiled model over a parameter table. The request is an
+	// envelope (protocol number, isolation floor, trace id, timeout) around a
+	// oneof payload; the response is an envelope (provider, isolation evidence,
+	// duration) around the matching result. One procedure, one scope, one place
+	// where the floor is checked before admission and dispatch.
+	//
+	// The protocol number is the mixed-version gate. Protobuf drops fields a
+	// receiver does not know, so a daemon that predates a security-relevant
+	// request field (a floor, a limit, a capability restriction) would execute the
+	// request without it. A client therefore states the protocol it speaks and a
+	// daemon serves exactly one: a request that omits it is InvalidArgument and a
+	// request on any other number is Unimplemented, in both cases before the
+	// payload is read. The number is bumped when such a field is added; an
+	// informational field does not bump it. Current number: 1 (the Go constant
+	// rpc.Protocol, which Describe reports).
+	Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error)
+	// Describe reports the protocol number, the active provider, current isolation
+	// evidence, and static operation support. Project and module support are
+	// structural: they do not prove that the selected image/template contains a
+	// particular toolchain or model.
 	Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error)
 }
 
@@ -142,16 +144,10 @@ type SandboxServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewSandboxServiceHandler(svc SandboxServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	sandboxServiceMethods := v1.File_plimsoll_v1_sandbox_proto.Services().ByName("SandboxService").Methods()
-	sandboxServiceRunJavaScriptV2Handler := connect.NewUnaryHandler(
-		SandboxServiceRunJavaScriptV2Procedure,
-		svc.RunJavaScriptV2,
-		connect.WithSchema(sandboxServiceMethods.ByName("RunJavaScriptV2")),
-		connect.WithHandlerOptions(opts...),
-	)
-	sandboxServiceRunProjectV2Handler := connect.NewUnaryHandler(
-		SandboxServiceRunProjectV2Procedure,
-		svc.RunProjectV2,
-		connect.WithSchema(sandboxServiceMethods.ByName("RunProjectV2")),
+	sandboxServiceRunHandler := connect.NewUnaryHandler(
+		SandboxServiceRunProcedure,
+		svc.Run,
+		connect.WithSchema(sandboxServiceMethods.ByName("Run")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sandboxServiceDescribeHandler := connect.NewUnaryHandler(
@@ -162,10 +158,8 @@ func NewSandboxServiceHandler(svc SandboxServiceHandler, opts ...connect.Handler
 	)
 	return "/plimsoll.v1.SandboxService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case SandboxServiceRunJavaScriptV2Procedure:
-			sandboxServiceRunJavaScriptV2Handler.ServeHTTP(w, r)
-		case SandboxServiceRunProjectV2Procedure:
-			sandboxServiceRunProjectV2Handler.ServeHTTP(w, r)
+		case SandboxServiceRunProcedure:
+			sandboxServiceRunHandler.ServeHTTP(w, r)
 		case SandboxServiceDescribeProcedure:
 			sandboxServiceDescribeHandler.ServeHTTP(w, r)
 		default:
@@ -177,12 +171,8 @@ func NewSandboxServiceHandler(svc SandboxServiceHandler, opts ...connect.Handler
 // UnimplementedSandboxServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedSandboxServiceHandler struct{}
 
-func (UnimplementedSandboxServiceHandler) RunJavaScriptV2(context.Context, *connect.Request[v1.RunJavaScriptV2Request]) (*connect.Response[v1.RunJavaScriptV2Response], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("plimsoll.v1.SandboxService.RunJavaScriptV2 is not implemented"))
-}
-
-func (UnimplementedSandboxServiceHandler) RunProjectV2(context.Context, *connect.Request[v1.RunProjectV2Request]) (*connect.Response[v1.RunProjectV2Response], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("plimsoll.v1.SandboxService.RunProjectV2 is not implemented"))
+func (UnimplementedSandboxServiceHandler) Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("plimsoll.v1.SandboxService.Run is not implemented"))
 }
 
 func (UnimplementedSandboxServiceHandler) Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error) {

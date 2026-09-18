@@ -49,15 +49,33 @@ option is intentionally only process-tier.
 - [docker/](docker/) — build recipe for the project-run toolchain image:
   [docker/Dockerfile](docker/Dockerfile) (node + tsc/tsx/eslint, baked in so
   runtime needs no egress) and [docker/runner.mjs](docker/runner.mjs) (the
-  in-sandbox multi-file project runner).
-- [examples/](examples/) — four runnable programs: `minimal` (one snippet and the
+  in-sandbox multi-file project runner). Third-party packages for projects are baked
+  into a derived image at `/node_modules` at build time, where Node's parent-directory
+  walk from `/work` finds them; a run never installs anything
+  ([docs/guest-dependencies.md](docs/guest-dependencies.md)). Other runtimes are
+  the same recipe: [docker/python.Dockerfile](docker/python.Dockerfile) derives
+  `plimsoll/sandbox-python` (python3, NumPy, SciPy, one BLAS thread) from the base
+  image with no runner, API, or environment-variable change.
+  [docker/sim.Dockerfile](docker/sim.Dockerfile) derives `plimsoll/sandbox-sim` on a
+  glibc base: a WasmEdge AOT worker ([docker/sim/](docker/sim/)) plus two Reference
+  FMUs and a Lorenz model of our own compiled to WebAssembly under `/models`, run through the unchanged project
+  API and proven byte-identical to native by `sandbox/docker_sim_test.go`. The same
+  image carries the Greedy fixture that proves the worker's per-instance memory cap
+  (256 pages; a greedy row fails alone), and the physics oracle: a cart-pole plant
+  kept as WebAssembly at `/models/cartpole.wasm` behind a stepping shim, and the
+  judge `/oracle/run.mjs` that runs a caller's controller as a separate process and
+  fingerprints the trajectory (`sandbox/docker_oracle_test.go`).
+- [examples/](examples/) — five runnable programs: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
   the injected client and being refused by the broker anyway, then the identical
   request succeeding under a separate per-run grant that lists it), `daemon` (the
   full service path with auth, `Describe`, and an isolation floor being refused),
-  and `advisor` (the efficiency advisor over a loopback daemon: a per-item loop,
+  `advisor` (the efficiency advisor over a loopback daemon: a per-item loop,
   the finding that names the granted collection route, the rewrite, and the API's
-  own request count as the witness).
+  own request count as the witness), and `oracle` (needs docker: an agent-written
+  controller judged against the module image's cart-pole plant by trajectory
+  fingerprint, through the ordinary project API; the page it writes replays the
+  runs, and `sandbox/docker_oracle_test.go` asserts the fingerprints).
 - [docs/trainers/](docs/trainers/) — dependency-free interactive lessons covering
   the execution model, architecture, providers, capabilities, operations,
   dependencies, MCP/agent integration, customer patterns, and product planning.
@@ -69,6 +87,9 @@ Every provider implements [sandbox/sandbox.go](sandbox/sandbox.go):
   on Docker/E2B, QuickJS on WASM).
 - `RunProject(ctx, ProjectRequest) (ProjectResult, error)` — write a multi-file
   project, then run build/lint/run steps in order (stop on first failure).
+- `RunModule(ctx, ModuleRequest) (ModuleResult, error)` — run a compiled physical
+  model baked into the provider's module image once per parameter row (docker only;
+  see "Module runs" below).
 - `Name() string` — the provider id.
 
 Result semantics: a non-zero `ExitCode` is a **normal result** (the user's code
@@ -99,6 +120,8 @@ unrecognized provider names are explicit errors, and the default (unset) is
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
 
 Relevant env: `SANDBOX_DOCKER_IMAGE`, `SANDBOX_DOCKER_PROJECT_IMAGE`,
+`SANDBOX_DOCKER_MODULE_IMAGE` (the simulation worker image; unset = module runs
+unsupported),
 `SANDBOX_DOCKER_RUNTIME` (`runsc` for a real gVisor boundary),
 `SANDBOX_DOCKER_SECCOMP` (path to a syscall-filter profile; set it
 to the shipped audited allowlist `docker/seccomp.json` to deny non-cap-gated attack
@@ -125,15 +148,25 @@ limiter `SANDBOX_MAX_CONCURRENT`/`SANDBOX_PER_KEY_CONCURRENT`/`SANDBOX_RATE_PER_
 max-concurrent to total/per-run so concurrent runners cannot oversubscribe the host;
 ignored for e2b, whose runners live off-host). Each provider reports its boundary via
 `IsolationClass()` and in the RPC response `isolation` field, and the **`Describe`
-RPC** reports the active provider, tier, project support, and operation-specific
-grant support (via `ProjectCapable` / `GrantCapable`) so a gateway does not
+RPC** reports the active provider, tier, project and module support, and
+operation-specific grant support (via `ProjectCapable` / `ModuleCapable` /
+`GrantCapable`) so a gateway does not
 hard-code claims. **A reported tier is configuration and provider evidence plus the
 behavioral smoke tests below — never runtime attestation**, and any surface that
 advertises a tier has to carry that qualification (README states it in full under the
 provider table). It also advertises minimum-isolation protocol support; this is
-discovery only. Execution uses only the versioned `RunJavaScriptV2` /
-`RunProjectV2` procedures, so an old backend returns Unimplemented before code can
-run rather than silently ignoring a new request field. The daemon serves `GET /healthz`, `/readyz`,
+discovery only. Execution is one procedure, **`Run`**: an envelope (a `protocol`
+number, the `minimum_isolation` floor, the opaque `trace_id`, the timeout) around
+exactly one payload (`javascript`, `project` or `module`), answered by an envelope
+(provider, isolation evidence, duration) around a result of the same kind. The
+protocol number is the mixed-version gate: protobuf drops fields a receiver does not
+know, so a daemon that predates a security-relevant request field would execute a
+request without it. A client states the number it speaks (`protocol.Number`, which
+the official client stamps as `client.Protocol`) and a daemon serves exactly one: a
+request that omits it is InvalidArgument and a request on another number is
+Unimplemented, both before the payload is read. `Describe` reports the daemon's
+number. Bump `protocol.Number` when a request field is added whose omission would
+change what a daemon may execute; an informational field does not bump it. The daemon serves `GET /healthz`, `/readyz`,
 `/metrics` outside auth. `/readyz` re-runs the provider's bounded `Preflight`: for docker
 that probes the pinned daemon and runtime, but for e2b it validates **configuration only**
 and proves nothing about API reachability, key validity, or guard routability — the
@@ -192,6 +225,50 @@ a stale `Describe` or readiness result cannot authorize a later downgrade. The
 official client also checks returned evidence; a mismatch is
 `ErrIsolationEvidenceMismatch`/DataLoss and means execution may already have
 occurred, so it is never a safe automatic-retry signal.
+
+## Module runs (the `module` payload)
+A *module run* executes a compiled physical model once per parameter row. The
+model is an AOT-compiled WebAssembly module (a source-form FMU or any C behind
+`docker/sim/shim.c`) baked into the **module image** at `/models/<id>.so`; the
+worker (`docker/sim/worker.c`, a C program on WasmEdge's C API, vendored from the
+sister repository) loads it once and runs one fresh instance per row. Register a
+model = build an image: an AOT model is machine code that must be mapped
+executable, every writable mount is `noexec`, and the image root is the only place
+it can load from. plimsoll supervises the worker as a process inside its container
+tier and **never links the runtime**: the Go TCB stays pure Go, wazero keeps the
+snippet tier.
+
+The operation reuses the project machinery end to end (`DockerSandbox.runPlan`):
+the parameter table is written into `/work` as text (shortest round-trip
+decimals), one step runs `sim-worker --table` with the result budget on its command
+line, and the results come back as one artifact in a versioned record (`"PLSM"`,
+version, rows, width, params; then per row an int32 status and status × width
+float64 outputs) that `sandbox.DecodeModuleResults` bounds-checks before anything
+is trusted. The row width must equal the model's own `sim_run` parameter count and
+the output width is the module's exported `sim_width()`; the worker reads both from
+the module, so the daemon assumes no layout. `ModuleResult.Outcome` reuses the
+project outcome type: `completed` (every row has a status; a failed row is a
+negative status, the table continues), `setup_failed` (the worker refused: unknown
+model, a row of the wrong width), `timed_out`, `protocol_error` (an undecodable
+record, a signal). **Results are never truncated.** `ValidateModuleRequest` refuses
+pre-dispatch a table whose results could not fit the 8 MiB artifact budget even at
+one output per step; the worker refuses with the true width before running any row
+(exit 4, surfaced as `ErrInvalidRequest`); a worker that accepted a table and still
+overran the budget is a protocol error, not a shorter answer. Limits:
+`MaxModuleRows` 100,000, `MaxModuleRowWidth` 64, `MaxModuleSteps` 1,000,000, the
+project timeout ceiling. Every row of a table is one instance in one process; a
+caller shards a big table across calls, because WasmEdge instantiation contends
+across threads in one process and not across processes.
+
+`Describe` advertises `supports_module` (a module image is configured). The audit
+line carries the model id (validated to a filename stem), row count, row width,
+step bound, outcome and duration, never a parameter value. `wasm` and `e2b` return
+`ErrUnsupported`; the E2B shape would be the same worker in a template, later.
+What the test proves (`sandbox/docker_sim_test.go`, required mode in CI): 100
+VanDerPol rows through `RunModule`, re-encoded, hash to the native C checksum, then
+50 Lorenz rows of 60 s (three outputs, 6,000 steps each: chaos would turn a one-ulp
+difference anywhere into a checksum miss), and every refusal above behaves as stated
+under the shipped seccomp profile.
 
 ## Capability model (`HostAPIGrant`)
 A grant is a **per-run** capability: it rides on `Request.Grant` /
@@ -384,8 +461,8 @@ path into guest content. The pipeline:
    client maps that field onto `sandbox.Result.Advice` and `ProjectResult.Advice`
    (`[]sandbox.AdviceFinding`, transport-independent: pattern, severity, remedy,
    route template, suggested route, and the cost numbers); direct in-process
-   providers leave it nil, since advice is a service-side computation. Both `RunJavaScriptV2`
-   and `RunProjectV2` compute and route advice the same way over their run's `CallTrace`.
+   providers leave it nil, since advice is a service-side computation. The `javascript`
+   and `project` payload kinds compute and route advice the same way over their run's `CallTrace`.
    Findings with no granted route stay operator-only regardless.
 4. **Retention of durable telemetry.** Per-profile `advice_retention: none|aggregate|detailed`
    (`grants.AdviceRetention`) gates only what reaches the **durable audit log**, orthogonal

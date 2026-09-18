@@ -196,7 +196,7 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 		if err != nil {
 			violations = append(violations, err)
 		} else if !pinned {
-			fail("hardened mode requires SANDBOX_REQUIRE_PINNED_IMAGES=1 so both docker images are immutable @sha256 digests (a mutable tag can be repushed under you)")
+			fail("hardened mode requires SANDBOX_REQUIRE_PINNED_IMAGES=1 so every configured docker image is an immutable @sha256 digest (a mutable tag can be repushed under you)")
 		}
 		// The vm/kernel requirement above already forces runsc, whose user-space
 		// kernel does its own syscall interception (the host seccomp profile is

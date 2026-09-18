@@ -483,6 +483,19 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (Result, error) {
 	return res, nil
 }
 
+// RunModule is unsupported: the module worker image is a docker recipe, and no
+// E2B template carries it. Same shape as the docker provider, later, if a
+// template is built for it.
+func (e *E2B) RunModule(_ context.Context, req ModuleRequest) (ModuleResult, error) {
+	if err := ValidateModuleRequest(req); err != nil {
+		return ModuleResult{Sandbox: "e2b", Isolation: IsolationVM}, err
+	}
+	if err := CheckMinimumIsolation(IsolationVM, req.MinimumIsolation); err != nil {
+		return ModuleResult{Sandbox: "e2b", Isolation: IsolationVM}, err
+	}
+	return ModuleResult{Sandbox: "e2b", Isolation: IsolationVM}, ErrUnsupported
+}
+
 // RunProject writes the files then runs each step in order, stopping on failure.
 func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult, error) {
 	if err := ValidateProjectRequest(req); err != nil {
