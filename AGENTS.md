@@ -42,6 +42,10 @@ option is intentionally only process-tier.
   - [sandbox/wasm/qjs-wasi.wasm](sandbox/wasm/) — embedded QuickJS-ng WASI build
     (`//go:embed`); MIT plus a minimal checked-in host-call shim. Rebuild from
     pinned inputs with [sandbox/wasm/build.sh](sandbox/wasm/build.sh).
+- [cmd/plimsoll-clients/](cmd/plimsoll-clients/) — offline operator CLI over the
+  caller registry the daemon loads from `PLIMSOLL_CLIENTS_FILE`; the shared format
+  and validation live in [internal/clientconfig/](internal/clientconfig/). Usage:
+  [docs/callers.md](docs/callers.md).
 - [docker/](docker/) — build recipe for the project-run toolchain image:
   [docker/Dockerfile](docker/Dockerfile) (node + tsc/tsx/eslint, baked in so
   runtime needs no egress) and [docker/runner.mjs](docker/runner.mjs) (the
@@ -160,7 +164,9 @@ complete secured create (both access tokens), live resource verification,
 multi-file staging into the project dir, and a probe run through the exact
 project-step path (`sh` script → node) — proving the configured template bakes
 the toolchain, honors the step cwd, and (checked live) actually denies egress.
-See [cmd/plimsolld/main.go](cmd/plimsolld/main.go) for the full env list.
+`plimsolld -h` prints the full env list; the text is the `usage` constant in
+[cmd/plimsolld/main.go](cmd/plimsolld/main.go), and a test fails if the package
+reads a variable that text omits. The daemon refuses any other argument.
 
 **Hardened mode (`PLIMSOLL_HARDENED=1`)** turns the soft production posture into
 an enforced startup policy: a warning is not a policy. It refuses to serve unless
@@ -302,8 +308,14 @@ list of `{id, token_sha256, scopes}`; see
 token) → open dev mode (logs a warning). The multi-client verifier is what makes
 per-session token minting real: each client's `id` becomes its `Principal.UserID`,
 which the service stamps as the minted token's `sub`. Tokens are stored as SHA-256
-hex (`printf %s "<token>" | sha256sum`), so the file holds no live secrets. Generated
-code lives in `gen/go` (regenerate with `buf generate`; local plugins, no network).
+hex, so the file holds no live secrets. The file is managed offline by
+[cmd/plimsoll-clients](cmd/plimsoll-clients/) (`create`, `import`, `list`, `rotate`,
+`revoke`), which shares its parser and validator with the verifier through
+[internal/clientconfig](internal/clientconfig/), emits a generated token only on an
+explicitly requested stdout, and stores fingerprints only; the daemon reads the file
+once at startup, so every change needs a restart to take effect
+([docs/callers.md](docs/callers.md)). Generated code lives in `gen/go` (regenerate
+with `buf generate`; local plugins, no network).
 
 Every run is **audit-logged** (`slog`): one structured line per RunJavaScript/
 RunProject with the caller (principal UserID, never the token), code/file sizes,

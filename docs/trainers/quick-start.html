@@ -27,33 +27,45 @@
     <header class="customer-page-head">
       <p class="catalog-eyebrow">self-managed evaluation · 10 minutes</p>
       <h1>Start with a smoke.<br><em>Then choose your wall.</em></h1>
-      <p>This path runs a local process-tier smoke against the checked-in WASM provider. It proves the request and result shape, not hostile-production isolation. For customer-authored code in production, use verified Docker/runsc kernel evidence or the E2B VM provider.</p>
+      <p>This path runs one authenticated request against a loopback daemon using the checked-in WASM provider. It proves the caller setup and the request and result shape, not hostile-production isolation. For customer-authored code in production, use verified Docker/runsc kernel evidence or the E2B VM provider.</p>
     </header>
     <div class="customer-layout">
       <section class="customer-panel">
-        <h2>1. Build and start the local smoke</h2>
-        <p>From the repository root, build the module and start the daemon in explicitly acknowledged development mode. The default provider is disabled; nothing executes until you opt in.</p>
-        <pre><code>go build ./...
-
-SANDBOX_PROVIDER=wasm \
-PLIMSOLL_INSECURE=1 \
+        <h2>1. Create a caller</h2>
+        <p>From the repository root, mint a credential for the program that will call the daemon. The token is printed once, to stdout; the file keeps only its SHA-256 fingerprint.</p>
+        <pre><code>TOKEN="$(go run ./cmd/plimsoll-clients create \
+  -file clients.json -id tutorial -token-stdout)"</code></pre>
+        <h2>2. Start the daemon on loopback</h2>
+        <p>The default provider is disabled; nothing executes until you opt in. <code>PLIMSOLL_ADDR</code> binds loopback only, because the default <code>:8746</code> listens on every interface. The clients file turns authentication on, and it fails closed.</p>
+        <pre><code>SANDBOX_PROVIDER=wasm \
+PLIMSOLL_ADDR=127.0.0.1:8746 \
+PLIMSOLL_CLIENTS_FILE=clients.json \
 go run ./cmd/plimsolld</code></pre>
-        <h2>2. Run one bounded snippet</h2>
-        <p>In a second terminal, send a versioned request. The response includes the exit status, output, duration, provider, and actual isolation tier.</p>
+        <p>Expect <code>multi-client auth enabled clients=1</code> and a <code>plimsolld listening</code> line with <code>auth=true</code>.</p>
+        <h2>3. Run one bounded snippet</h2>
+        <p>In a second terminal, in the shell that holds <code>TOKEN</code>, send a versioned request with the bearer header.</p>
         <pre><code>curl -sS \
   http://127.0.0.1:8746/plimsoll.v1.SandboxService/RunJavaScriptV2 \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   --data-binary '{"code":"console.log(6 * 7)","timeoutMs":1000,"minimumIsolation":"process"}'</code></pre>
-        <h2>3. Read the receipt</h2>
-        <p>Expect a successful guest result with <code>stdout</code> containing <code>42</code> and an isolation value of <code>process</code>. A non-zero guest exit code is a normal run result; a typed RPC error means the request was rejected or infrastructure failed.</p>
+        <h2>4. Read the receipt</h2>
+        <p>The response is the run's own evidence: the provider, the isolation tier it actually ran behind, the duration, and the output.</p>
+        <pre><code>{"stdout":"NDIK", "durationMs":"294", "sandbox":"wasm", "isolation":"process"}</code></pre>
+        <p>Output is <strong>bytes</strong> on the wire, so the JSON form carries it base64-encoded: <code>NDIK</code> is <code>42</code> and a newline. Decode it with <code>printf %s NDIK | base64 -d</code>. The Go client hands you the decoded bytes; curl does not. A zero exit code is omitted from the JSON.</p>
+        <p>Three other answers you should be able to tell apart:</p>
+        <pre><code>{"stdout":"cGFydGlhbAo=", "stderr":"RXJyb3I6IGJvb20K...", "exitCode":1, "durationMs":"291", "sandbox":"wasm", "isolation":"process"}
+{"code":"failed_precondition","message":"sandbox isolation requirement not met: provider isolation process is below requested minimum kernel"}
+{"code":"unauthenticated","message":"invalid or expired token"}</code></pre>
+        <p>The first is HTTP 200 with a non-zero <code>exitCode</code>: the guest program failed, which is a normal result, and both streams are there to read. The second is what <code>"minimumIsolation":"kernel"</code> gets from this daemon: a typed refusal before dispatch, so <strong>no code ran</strong>. The third is a wrong or missing token, refused before the body was decoded.</p>
         <div class="customer-callout">This smoke uses WASM in the plimsolld process. It is useful for learning the API, but it is not an operating-system or VM boundary.</div>
       </section>
       <aside class="customer-panel">
         <h2>What to verify next</h2>
         <ol>
-          <li>Run <code>go vet ./...</code> and <code>go test ./...</code>.</li>
+          <li>Make the same request from your own Go program with <code>client.WithToken</code>, then switch the daemon to Docker and watch the reported tier move without the program changing. The getting-started guide in the reference shelf below walks it.</li>
           <li>Move to Docker with verified <code>runsc</code> when the workload is hostile and needs a kernel tier.</li>
-          <li>Set a per-run resource envelope, an aggregate memory budget, caller auth, and a minimum isolation floor.</li>
+          <li>Set a per-run resource envelope, an aggregate memory budget, and a minimum isolation floor, then turn on <code>PLIMSOLL_HARDENED=1</code> so the daemon refuses to serve without them.</li>
           <li>Use a named server-side grant only when the product has deliberately approved a narrow host API.</li>
         </ol>
         <div class="customer-callout good"><strong>Safe default:</strong> leave <code>SANDBOX_PROVIDER</code> unset when you are not intentionally running code. The default is Disabled.</div>
@@ -69,6 +81,8 @@ go run ./cmd/plimsolld</code></pre>
       <div class="customer-reference-grid">
         <a class="internal" href="plain-english.html"><b>INTERNAL · trainer site →</b><strong>Plain English</strong><small>Decode WASM, containers, gVisor, VMs, and RPC.</small></a>
         <a class="internal" href="providers.html"><b>INTERNAL · trainer site →</b><strong>Providers</strong><small>Compare the execution boundaries plimsoll can use.</small></a>
+        <a class="external" href="https://github.com/plimsollmark/plimsoll/blob/main/docs/getting-started.md" target="_blank" rel="noopener"><b>EXTERNAL · source repo ↗</b><strong>Getting started</strong><small>The same path continued: your own Go client, then the tier changed under it.</small></a>
+        <a class="external" href="https://github.com/plimsollmark/plimsoll/blob/main/docs/callers.md" target="_blank" rel="noopener"><b>EXTERNAL · source repo ↗</b><strong>Caller credentials</strong><small>Create, rotate, revoke and import caller tokens; what a running daemon does with a changed file.</small></a>
         <a class="external" href="https://hono.dev/docs" target="_blank" rel="noopener"><b>EXTERNAL · official docs ↗</b><strong>Hono</strong><small>The web framework a gateway in front of plimsoll is commonly built on.</small></a>
         <a class="external" href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports" target="_blank" rel="noopener"><b>EXTERNAL · official docs ↗</b><strong>MCP transports</strong><small>The official Streamable HTTP and stdio specification.</small></a>
         <a class="external" href="https://www.jsonrpc.org/specification" target="_blank" rel="noopener"><b>EXTERNAL · official docs ↗</b><strong>JSON-RPC 2.0</strong><small>The request and response envelope used by MCP.</small></a>

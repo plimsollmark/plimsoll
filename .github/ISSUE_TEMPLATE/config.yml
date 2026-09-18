@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/plimsollmark/plimsoll/security/advisories/new
+    about: Do not open a public issue for a vulnerability. Report it privately through a GitHub security advisory, as SECURITY.md describes.
+  - name: Interactive lessons
+    url: https://plimsollmark.github.io/plimsoll/trainers/
+    about: The execution model, tiers, capability broker and advisor, explained without a clone. Check here before asking how something is meant to work.

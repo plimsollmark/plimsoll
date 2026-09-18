@@ -1,61 +1,15 @@
 // Command plimsolld serves the plimsoll SandboxService over Connect (h2c, so
 // Connect, gRPC, and gRPC-Web clients all work). The execution provider is chosen
-// by SANDBOX_PROVIDER (default: disabled — code execution is opt-in).
+// by SANDBOX_PROVIDER (default: disabled; code execution is opt-in).
 //
 // Authenticated callers need the code:run scope. A real provider refuses to start
 // without PLIMSOLL_TOKEN or PLIMSOLL_CLIENTS_FILE unless the operator explicitly
 // acknowledges open development mode with PLIMSOLL_INSECURE=1.
 //
-// Env:
-//
-//	PLIMSOLL_ADDR           listen address (default :8746)
-//	PLIMSOLL_LOG_FORMAT     json (default) or text; the audit stream is a
-//	                          machine-read record, and prospector-report consumes
-//	                          newline-delimited JSON. Use text only for eyeballing
-//	                          a local run.
-//	PLIMSOLL_TOKEN          single shared bearer granting code:run
-//	PLIMSOLL_CLIENTS_FILE   JSON client list for multi-client auth (each caller its
-//	                          own principal); takes precedence over PLIMSOLL_TOKEN
-//	PLIMSOLL_INSECURE       =1 explicitly permits a real provider with auth disabled
-//	                          (development only; never expose that listener)
-//	PLIMSOLL_TLS_CERT / PLIMSOLL_TLS_KEY
-//	                          PEM certificate/key pair; when set the daemon serves
-//	                          TLS (HTTP/1.1 + HTTP/2 via ALPN) instead of cleartext
-//	PLIMSOLL_HARDENED       =1 enforces the production policy at startup: vm or
-//	                          verified kernel isolation, multi-client auth, TLS off
-//	                          loopback, pinned images / explicit E2B template, no
-//	                          unconfined seccomp, an explicit resource envelope +
-//	                          aggregate budget, and per-caller rate limiting. Any
-//	                          violation refuses to serve (a warning is not a policy)
-//	SANDBOX_PROVIDER          wasm | docker | e2b | (unset = disabled)
-//	SANDBOX_DOCKER_IMAGE     snippet image (default node:22-alpine)
-//	SANDBOX_DOCKER_PROJECT_IMAGE  project toolchain image (default plimsoll/sandbox:latest)
-//	SANDBOX_DOCKER_RUNTIME    runsc (gVisor) for the docker provider; "" = runc
-//	SANDBOX_DOCKER_SECCOMP    seccomp profile path (or "unconfined") for docker; ""
-//	                          keeps docker's built-in default. Set to the shipped
-//	                          audited profile (docker/seccomp.json) to also deny
-//	                          ptrace/io_uring/keyctl/etc. — see docs/seccomp.md
-//	SANDBOX_REQUIRE_PINNED_IMAGES  =1 to refuse mutable image tags (require @sha256:)
-//	E2B_API_KEY / E2B_TEMPLATE  E2B credentials and toolchain template
-//	E2B_GUARD_URL               absolute HTTPS Plimsoll egress-guard endpoint;
-//	                             enables E2B grants (allowlist + beta header transform)
-//	SANDBOX_MIN_ISOLATION     refuse to start unless the provider meets this tier
-//	                          (vm | kernel | container | process); unset = no floor
-//	SANDBOX_MAX_CONCURRENT    global max in-flight runs (default 8)
-//	SANDBOX_TOTAL_MEMORY_MB   aggregate host memory budget for runners; clamps
-//	                          max-concurrent to total/per-run so concurrent runs
-//	                          cannot oversubscribe the host (ignored for e2b,
-//	                          whose runners live off-host)
-//	SANDBOX_PER_KEY_CONCURRENT max in-flight runs per caller (default max_concurrent/2)
-//	SANDBOX_RATE_PER_MIN      per-caller runs/min (default 30; 0 = disabled)
-//	SANDBOX_RATE_BURST        per-caller token-bucket burst (default = rate_per_min)
-//	SANDBOX_MEMORY_MB / SANDBOX_CPUS / SANDBOX_PIDS / SANDBOX_DISK_MB
-//	                          per-run resource envelope applied to the provider
-//	PLIMSOLL_GRANTS_FILE    JSON file of named host-API capability profiles a caller
-//	                          may select via grant_profile (see internal/grants)
-//
-// Endpoints (outside auth): GET /healthz (liveness), GET /readyz (provider
-// readiness), GET /metrics (Prometheus text: run and shed-load counters).
+// The daemon takes no arguments; every setting is an environment variable.
+// `plimsolld -h` prints the full reference. That text is the usage constant in
+// this file, and a test requires every variable the package reads to appear in it,
+// so the binary's own help cannot fall behind the code.
 package main
 
 import (
@@ -81,7 +35,92 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
+// usage is what -h prints. It is the daemon's configuration reference; keep every
+// variable the package reads listed here (TestUsageNamesEveryVariable enforces it).
+const usage = `plimsolld serves the plimsoll SandboxService over Connect (h2c).
+
+Usage: plimsolld [-h]
+
+The daemon takes no arguments. Configuration is by environment variable:
+
+  PLIMSOLL_ADDR              listen address (default :8746, every interface;
+                             set 127.0.0.1:8746 for a loopback-only daemon)
+  PLIMSOLL_LOG_FORMAT        json (default) or text; the audit stream is a
+                             machine-read record and prospector-report consumes
+                             newline-delimited JSON. Use text only for eyeballing
+                             a local run.
+  PLIMSOLL_CLIENTS_FILE      JSON caller registry for multi-client auth (each
+                             caller its own principal; managed by plimsoll-clients);
+                             takes precedence over PLIMSOLL_TOKEN
+  PLIMSOLL_TOKEN             one shared bearer granting code:run to every caller
+  PLIMSOLL_INSECURE          =1 explicitly permits a real provider with auth
+                             disabled (development only; never expose that listener)
+  PLIMSOLL_TLS_CERT / PLIMSOLL_TLS_KEY
+                             PEM certificate and key; when set the daemon serves
+                             TLS (HTTP/1.1 + HTTP/2 via ALPN) instead of cleartext
+  PLIMSOLL_HARDENED          =1 enforces the production policy at startup: vm or
+                             verified kernel isolation, multi-client auth, TLS off
+                             loopback, pinned images or an explicit E2B template,
+                             no unconfined seccomp, an explicit resource envelope
+                             plus aggregate budget, and per-caller rate limiting.
+                             Any violation refuses to serve.
+  PLIMSOLL_GRANTS_FILE       JSON file of named host-API capability profiles a
+                             caller may select via grant_profile
+
+  SANDBOX_PROVIDER           wasm | docker | e2b | (unset = disabled)
+  SANDBOX_MIN_ISOLATION      refuse to start unless the provider meets this tier
+                             (vm | kernel | container | process); unset = no floor
+  SANDBOX_DOCKER_IMAGE       snippet image (default node:22-alpine)
+  SANDBOX_DOCKER_PROJECT_IMAGE
+                             project toolchain image (default plimsoll/sandbox:latest)
+  SANDBOX_DOCKER_RUNTIME     runsc (gVisor) for the docker provider; "" = runc
+  SANDBOX_DOCKER_SECCOMP     seccomp profile path (or "unconfined") for docker; ""
+                             keeps docker's built-in default. Set it to the shipped
+                             audited profile (docker/seccomp.json) to also deny
+                             ptrace, io_uring, keyctl and similar; see docs/seccomp.md
+  SANDBOX_REQUIRE_PINNED_IMAGES
+                             =1 to refuse mutable image tags (require @sha256:)
+  E2B_API_KEY / E2B_TEMPLATE E2B credentials and toolchain template
+  E2B_GUARD_URL              absolute HTTPS egress-guard endpoint; enables E2B
+                             grants (allowlist plus beta header transform)
+
+  SANDBOX_MAX_CONCURRENT     global max in-flight runs (default 8)
+  SANDBOX_PER_KEY_CONCURRENT max in-flight runs per caller (default max/2)
+  SANDBOX_RATE_PER_MIN       per-caller runs per minute (default 30; 0 = disabled)
+  SANDBOX_RATE_BURST         per-caller token-bucket burst (default = rate)
+  SANDBOX_TOTAL_MEMORY_MB    aggregate host memory budget for runners; clamps
+                             max-concurrent to total/per-run so concurrent runs
+                             cannot oversubscribe the host (ignored for e2b, whose
+                             runners live off-host)
+  SANDBOX_MEMORY_MB / SANDBOX_CPUS / SANDBOX_PIDS / SANDBOX_DISK_MB
+                             per-run resource envelope applied to the provider
+
+Endpoints outside auth: GET /healthz (liveness), GET /readyz (provider readiness),
+GET /metrics (Prometheus text: run and shed-load counters).
+`
+
+// parseArgs accepts only a help request. Any other argument is refused rather
+// than ignored: a daemon that silently starts despite a misspelt flag leaves its
+// operator believing a setting is in force when it is not.
+func parseArgs(args []string) (help bool, err error) {
+	switch {
+	case len(args) == 0:
+		return false, nil
+	case len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help"):
+		return true, nil
+	default:
+		return false, fmt.Errorf("unexpected argument %q: plimsolld takes no arguments; configuration is by environment variable", args[0])
+	}
+}
+
 func main() {
+	if help, err := parseArgs(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "plimsolld: %v\n\n%s", err, usage)
+		os.Exit(2)
+	} else if help {
+		fmt.Print(usage)
+		return
+	}
 	configureLogging(os.Getenv)
 
 	addr := getenv("PLIMSOLL_ADDR", ":8746")

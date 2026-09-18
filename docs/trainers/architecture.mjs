@@ -58,6 +58,7 @@ function choose(path, index = 0, provider = state.provider) {
   state.filter = 'all';
   save();
   render();
+  revealCurrent();
 }
 
 function move(index, auto = false) {
@@ -84,12 +85,21 @@ function revealCurrent() {
   const item = timeline.querySelector('[aria-current="step"]');
   if (item) timeline.scrollTo({left:item.parentElement.offsetLeft - timeline.offsetLeft - 10, behavior:reducedMotion.matches ? 'instant' : 'smooth'});
   // Move only the map's own scroll area, never the document or user's reading position.
-  const map = $('architectureMap');
   const scroller = $('mapScroll');
   if (scroller.scrollWidth > scroller.clientWidth) {
-    const target = nodes[current().to];
-    const scale = map.getBoundingClientRect().width / 1010;
-    scroller.scrollTo({left:(target.x + 90) * scale - scroller.clientWidth / 2, behavior:reducedMotion.matches ? 'instant' : 'smooth'});
+    // Keep both endpoint cards readable when they fit. For a wider connection,
+    // reveal its destination, moving only as far as needed to bring it into view.
+    const step = current();
+    const cards = [step.from, step.to].map(id => $('architectureMap').querySelector(`[data-node="${id}"] .node-card`).getBoundingClientRect());
+    const padding = 8; // Leave room for the card's stroke and focus outline.
+    const viewLeft = scroller.getBoundingClientRect().left + scroller.clientLeft + padding;
+    const viewRight = viewLeft + scroller.clientWidth - 2 * padding;
+    let left = Math.min(...cards.map(card => card.left));
+    let right = Math.max(...cards.map(card => card.right));
+    if (right - left > viewRight - viewLeft) ({left, right} = cards[1]);
+    const offset = left < viewLeft ? left - viewLeft : right > viewRight ? right - viewRight : 0;
+    // A zero-distance request also cancels an unfinished pan from the last step.
+    scroller.scrollTo({left:scroller.scrollLeft + offset, behavior:reducedMotion.matches ? 'instant' : 'smooth'});
   }
 }
 

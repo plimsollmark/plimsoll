@@ -202,6 +202,8 @@ func dial(baseURL, token string) (*client.Remote, error) {
 
 // writeClientsFile creates the multi-client auth file. Tokens are stored as SHA-256
 // hex, never in the clear, so possessing the file does not give you a way in.
+// Outside an example, `plimsoll-clients create` writes the same file (see
+// docs/callers.md); this one is inlined so the program stays self-contained.
 func writeClientsFile(dir string) (token, path string, err error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {

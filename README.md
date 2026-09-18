@@ -35,13 +35,170 @@ res, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
 // res.Isolation reports the boundary that actually ran.
 ```
 
+The [Quick start](#quick-start) and the [examples](#examples) come next. For the
+whole path in order, a caller credential, an authenticated daemon, your own Go
+client, and a floor refusing a run before it starts, follow
+[docs/getting-started.md](docs/getting-started.md). The rest of this page, in order:
+[the workflow](#the-workflow-this-is-built-for) ·
+[status](#status-plainly) ·
+[lessons](#learn-how-it-works) ·
+[the problem](#the-problem) ·
+[isolation tiers](#isolation-tiers) ·
+[asserting a floor](#asserting-a-floor) ·
+[what comes back](#what-comes-back-and-what-it-means) ·
+[capability grants](#capability-grants) ·
+[telemetry](#telemetry-is-metadata-only-by-construction) ·
+[efficiency advisor](#efficiency-advisor) ·
+[hardened mode](#hardened-mode) ·
+[dependencies](#the-dependency-list-and-who-checks-the-checkers) ·
+[what it does not do](#what-it-does-not-do) ·
+[documentation](#documentation).
+
+## Quick start
+
+The module floor is Go 1.26.2, so consumers build unchanged. Build the daemon itself
+with **1.26.6 or newer**, the toolchain this module pins: `govulncheck` is clean
+there, while earlier 1.26.x carried stdlib advisories in the reverse-proxy and HTTP/2
+paths this code actually calls.
+
+Run something first. This needs no daemon, no docker, no credentials and no
+network, because it selects the in-process WASM provider:
+
+```sh
+git clone https://github.com/plimsollmark/plimsoll && cd plimsoll
+go run ./examples/minimal
+```
+
+```
+provider   wasm
+isolation  process
+exit code  0
+timed out  false
+truncated  stdout=false stderr=false
+duration   304ms
+stdout     {"Engineering":59000000,"Sales":20300000,"Operations":9800000}
+```
+
+The `truncated` flags are the only way a caller learns that output was cut at the
+provider's cap (64 KiB per stream by default): the retained bytes are never
+annotated in-band, so a marker cannot be forged by the guest or mistaken for output.
+
+That `isolation` line is the run's own evidence, not a claim by the example.
+**`process` is not an OS boundary and is not a production posture for hostile
+code** (see [Isolation tiers](#isolation-tiers)). The same snippet runs behind a
+real kernel boundary once gVisor is installed:
+
+```sh
+SANDBOX_PROVIDER=docker SANDBOX_DOCKER_RUNTIME=runsc go run ./examples/minimal
+```
+
+The line then reads `isolation  kernel`, and nothing else about the program
+changes. [examples/minimal/main.go](examples/minimal/main.go) is about forty
+lines and comments each step.
+
+To embed it:
+
+```sh
+go get github.com/plimsollmark/plimsoll
+```
+
+```go
+provider, err := sandbox.Build(os.Getenv)   // errors rather than guessing
+if err != nil { return err }
+if err := provider.EnsureReady(ctx); err != nil { return err } // preflight + smoke test
+
+result, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
+    Code:    userCode,
+    Timeout: 10 * time.Second,
+})
+// err means the run never happened. Code that merely failed returns
+// result.ExitCode != 0, which is a normal result, not an error.
+```
+
+With `SANDBOX_PROVIDER` unset, `Build` selects the Disabled provider and runs
+nothing. That is deliberate: execution is opt-in and cannot be switched on by
+accident.
+
+As a service, first give the first caller a credential, then start the daemon with
+the registry that holds its fingerprint:
+
+```sh
+TOKEN="$(go run ./cmd/plimsoll-clients create \
+  -file clients.json -id mcp-gateway -token-stdout)"
+
+SANDBOX_PROVIDER=docker \
+SANDBOX_DOCKER_RUNTIME=runsc \
+PLIMSOLL_CLIENTS_FILE=clients.json \
+go run ./cmd/plimsolld
+```
+
+The daemon serves `plimsoll.v1.SandboxService` over Connect, plus `/healthz`,
+`/readyz`, and `/metrics` outside auth. Auth is fail-closed once configured. The
+registry stores SHA-256 fingerprints, never tokens; the same command lists, rotates
+and revokes callers, and every change takes effect only when the daemons that load
+the file restart. [docs/callers.md](docs/callers.md) walks the whole path, including
+calling the daemon from the Go client with `client.WithToken`. `plimsolld -h` prints
+every environment variable it reads.
+
+To install both on a machine without a clone:
+
+```sh
+go install github.com/plimsollmark/plimsoll/cmd/plimsolld@latest
+go install github.com/plimsollmark/plimsoll/cmd/plimsoll-clients@latest
+```
+
+There are no prebuilt binaries or a daemon container image yet; `go install` builds
+from the tagged module source, verified against `sum.golang.org` like any other
+module.
+
+**Next:** [docs/getting-started.md](docs/getting-started.md) takes the same pieces in
+order on one machine, from an in-process daemon to a kernel-tier one, with your own
+client program asserting the floor.
+
+## Examples
+
+Four runnable programs, none needing docker, credentials or a daemon you start
+yourself. Run them from the repository root.
+
+| Command | What it shows |
+|---|---|
+| `go run ./examples/minimal` | One snippet, its result, and the isolation tier the run reports. |
+| `go run ./examples/grant` | The capability model: a permitted route, a refused one, the same refusal when the guest bypasses the injected client, the same request succeeding under a separate per-run grant that lists it, and a search for the credential that comes back empty. |
+| `go run ./examples/daemon` | The service path: plimsolld started with a real multi-client auth file, called by the Go client, refusing an isolation floor it cannot meet and refusing a wrong bearer. Each refusal is checked for its specific error (`ErrInsufficientIsolation`, Connect `unauthenticated`), because a request that merely failed is not proof the protection fired. |
+| `go run ./examples/advisor` | The efficiency advisor: one question asked twice of a fake inventory API, first as a per-item loop (13 requests, a `fan_out` finding naming the granted collection route), then as the advice suggests (1 request, no findings), same answer both times. |
+
+`examples/grant` is the one to read if you only read one. It prints the run's
+`CallTrace` after each step, which is the same metadata-only evidence the advisory
+channel and the audit log are built from:
+
+```
+1. a route the grant lists
+   guest | ok: Engineering 46600000
+   trace | #1 GET /v1/employees/*/comp -> 200, 0B in 39B out, 1ms
+
+3. the same forbidden route, bypassing the client
+   guest | broker answered: 403 forbidden by sandbox capability allowlist
+   trace | 0 call(s), 1 denied by policy, 0 shed for backpressure, 0 dropped
+
+4. the same request, in a run handed a separate grant that lists the route
+   guest | ok: {"ssn":"000-00-0000"}
+   trace | #1 GET /v1/employees/*/ssn -> 200, 0B in 21B out, 1ms
+```
+
+Scenes 3 and 4 send the identical request. The guest did not change and the API did
+not change; the run was handed a different grant, and the grant is what decides.
+
+Note what the trace holds: the matched route *template*, never the path that was
+requested. `CallRow` has no field for a path, query, body or credential, so none can
+be recorded by accident.
+
 ## The workflow this is built for
 
-Running agent-authored code costs something in every environment, and the cost is
-wrong in both directions. A microVM per run is right for production and absurd for
-the *inner loop*, meaning the edit-run-debug cycle a developer repeats hundreds of
-times a day. But developing against a weak sandbox and deploying against a strong one
-is how a weak sandbox reaches production.
+A microVM per run is the right cost for production and an absurd one for the
+*inner loop*, meaning the edit-run-debug cycle a developer repeats hundreds of times
+a day. An in-process engine is the opposite: fast enough for that loop, and not a
+boundary for hostile code. But developing against a weak sandbox and deploying
+against a strong one is how a weak sandbox reaches production.
 
 Plimsoll's answer is that the tier is chosen by configuration and **demanded by each
 request**, so the two decisions are made by different people at different times:
@@ -539,83 +696,6 @@ green check that means "it passed under whatever happened to be on this `PATH`",
 is not the claim the gate is making. The codegen plugins are pinned separately, by
 go.mod `tool` directives, so `buf generate` is reproducible with no network.
 
-## Quick start
-
-The module floor is Go 1.26.2, so consumers build unchanged. Build the daemon itself
-with **1.26.6 or newer**, the toolchain this module pins: `govulncheck` is clean
-there, while earlier 1.26.x carried stdlib advisories in the reverse-proxy and HTTP/2
-paths this code actually calls.
-
-Run something first. This needs no daemon, no docker, no credentials and no
-network, because it selects the in-process WASM provider:
-
-```sh
-git clone https://github.com/plimsollmark/plimsoll && cd plimsoll
-go run ./examples/minimal
-```
-
-```
-provider   wasm
-isolation  process
-exit code  0
-timed out  false
-truncated  stdout=false stderr=false
-duration   304ms
-stdout     {"Engineering":59000000,"Sales":20300000,"Operations":9800000}
-```
-
-The `truncated` flags are the only way a caller learns that output was cut at the
-provider's cap (64 KiB per stream by default): the retained bytes are never
-annotated in-band, so a marker cannot be forged by the guest or mistaken for output.
-
-That `isolation` line is the run's own evidence, not a claim by the example.
-**`process` is not an OS boundary and is not a production posture for hostile
-code** (see [Isolation tiers](#isolation-tiers)). The same snippet runs behind a
-real kernel boundary once gVisor is installed:
-
-```sh
-SANDBOX_PROVIDER=docker SANDBOX_DOCKER_RUNTIME=runsc go run ./examples/minimal
-```
-
-The line then reads `isolation  kernel`, and nothing else about the program
-changes. [examples/minimal/main.go](examples/minimal/main.go) is about forty
-lines and comments each step.
-
-To embed it:
-
-```sh
-go get github.com/plimsollmark/plimsoll
-```
-
-```go
-provider, err := sandbox.Build(os.Getenv)   // errors rather than guessing
-if err != nil { return err }
-if err := provider.EnsureReady(ctx); err != nil { return err } // preflight + smoke test
-
-result, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
-    Code:    userCode,
-    Timeout: 10 * time.Second,
-})
-// err means the run never happened. Code that merely failed returns
-// result.ExitCode != 0, which is a normal result, not an error.
-```
-
-With `SANDBOX_PROVIDER` unset, `Build` selects the Disabled provider and runs
-nothing. That is deliberate: execution is opt-in and cannot be switched on by
-accident.
-
-As a service:
-
-```sh
-SANDBOX_PROVIDER=docker \
-SANDBOX_DOCKER_RUNTIME=runsc \
-PLIMSOLL_CLIENTS_FILE=clients.json \
-go run ./cmd/plimsolld
-```
-
-The daemon serves `plimsoll.v1.SandboxService` over Connect, plus `/healthz`,
-`/readyz`, and `/metrics` outside auth. Auth is fail-closed once configured.
-
 ## What it does not do
 
 Stated so you do not have to discover it in review:
@@ -654,47 +734,16 @@ Stated so you do not have to discover it in review:
   repository only for x86_64. Elsewhere it verifies the release bucket's own
   `.sha512`, which catches a corrupted transfer, not a compromised bucket.
 
-## Examples
-
-Four runnable programs, none needing docker, credentials or a daemon you start
-yourself. Run them from the repository root.
-
-| Command | What it shows |
-|---|---|
-| `go run ./examples/minimal` | One snippet, its result, and the isolation tier the run reports. |
-| `go run ./examples/grant` | The capability model: a permitted route, a refused one, the same refusal when the guest bypasses the injected client, the same request succeeding under a separate per-run grant that lists it, and a search for the credential that comes back empty. |
-| `go run ./examples/daemon` | The service path: plimsolld started with a real multi-client auth file, called by the Go client, refusing an isolation floor it cannot meet and refusing a wrong bearer. Each refusal is checked for its specific error (`ErrInsufficientIsolation`, Connect `unauthenticated`), because a request that merely failed is not proof the protection fired. |
-| `go run ./examples/advisor` | The efficiency advisor: one question asked twice of a fake inventory API, first as a per-item loop (13 requests, a `fan_out` finding naming the granted collection route), then as the advice suggests (1 request, no findings), same answer both times. |
-
-`examples/grant` is the one to read if you only read one. It prints the run's
-`CallTrace` after each step, which is the same metadata-only evidence the advisory
-channel and the audit log are built from:
-
-```
-1. a route the grant lists
-   guest | ok: Engineering 46600000
-   trace | #1 GET /v1/employees/*/comp -> 200, 0B in 39B out, 1ms
-
-3. the same forbidden route, bypassing the client
-   guest | broker answered: 403 forbidden by sandbox capability allowlist
-   trace | 0 call(s), 1 denied by policy, 0 shed for backpressure, 0 dropped
-
-4. the same request, in a run handed a separate grant that lists the route
-   guest | ok: {"ssn":"000-00-0000"}
-   trace | #1 GET /v1/employees/*/ssn -> 200, 0B in 21B out, 1ms
-```
-
-Scenes 3 and 4 send the identical request. The guest did not change and the API did
-not change; the run was handed a different grant, and the grant is what decides.
-
-Note what the trace holds: the matched route *template*, never the path that was
-requested. `CallRow` has no field for a path, query, body or credential, so none can
-be recorded by accident.
-
 ## Documentation
 
+- [docs/getting-started.md](docs/getting-started.md) is the tutorial: one machine,
+  from an in-process daemon with a real caller credential to a kernel-tier one, with
+  a client program that asserts the floor.
 - [AGENTS.md](AGENTS.md) is the architecture reference: providers, invariants, the
   full environment list.
+- [docs/callers.md](docs/callers.md) covers caller credentials: creating, rotating
+  and revoking them with `plimsoll-clients`, and what a running daemon does with a
+  changed file.
 - [docs/seccomp.md](docs/seccomp.md) and [docs/gvisor.md](docs/gvisor.md) cover the
   syscall filter and the kernel-tier boundary.
 - [docs/advisory-privacy.md](docs/advisory-privacy.md) covers the advisory channel and
