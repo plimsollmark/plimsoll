@@ -75,6 +75,27 @@ type HostAPIGrant struct {
 	// probe returns 2xx. Must be a concrete GET path (no wildcard), since the broker
 	// sends an exact URL. Nil means reactive shedding only, with no recovery probe.
 	HealthCheck *HostRoute
+	// MaxCalls is the run's brokered-call budget, allowed and denied attempts
+	// combined; 0 means DefaultMaxHostCalls. A profile raises it knowingly for a
+	// workload that is a loop by design (a controller stepping a plant behind the
+	// broker, one call per tick), never above MaxHostCallsCeiling, so a run can
+	// still not make an unbounded number of upstream requests.
+	MaxCalls int
+}
+
+// DefaultMaxHostCalls is a run's brokered-call budget when its grant sets none.
+// MaxHostCallsCeiling is the most a grant may ask for.
+const (
+	DefaultMaxHostCalls = 256
+	MaxHostCallsCeiling = 100_000
+)
+
+// CallBudget is the budget the broker enforces for this grant.
+func (g *HostAPIGrant) CallBudget() int {
+	if g == nil || g.MaxCalls <= 0 {
+		return DefaultMaxHostCalls
+	}
+	return g.MaxCalls
 }
 
 // Clone returns an independent deep copy of the grant (nil-safe). Registry-style
@@ -182,6 +203,9 @@ func (g *HostAPIGrant) Validate() error {
 	}
 	if !utf8.ValidString(g.Global) || !utf8.ValidString(g.Preamble) {
 		return errors.New("host-api grant: Global and Preamble must be valid UTF-8")
+	}
+	if g.MaxCalls < 0 || g.MaxCalls > MaxHostCallsCeiling {
+		return fmt.Errorf("host-api grant: MaxCalls must be 0 (the default, %d) or between 1 and %d", DefaultMaxHostCalls, MaxHostCallsCeiling)
 	}
 	u, err := url.Parse(g.BaseURL)
 	if err != nil || u.Hostname() == "" {

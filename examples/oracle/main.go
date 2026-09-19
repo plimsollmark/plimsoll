@@ -1,4 +1,4 @@
-// Command oracle is the physics oracle demo (docs/architecture/oracle-demo-plan.md):
+// Command oracle is the physics oracle demo (private/architecture/oracle-demo-plan.md):
 // an agent writes a controller, plimsoll runs it against a compiled cart-pole
 // plant, and the trajectory's fingerprint is the acceptance test.
 //

@@ -1,31 +1,53 @@
 # plimsoll
 
-A sandbox service for running untrusted, agent-authored code that **reports the
+**A sandbox service for running untrusted, agent-authored code that reports the
 isolation boundary each run executed behind, and refuses the run when it is weaker
-than the caller demanded**.
+than the caller demanded.**
 
-Lessons, no clone needed: [eighteen interactive lessons](https://plimsollmark.github.io/plimsoll/trainers/)
-on GitHub Pages cover the execution model, the tiers, the capability broker, and the
-efficiency advisor. Static pages: no network calls, no analytics, no third-party
-scripts.
+[![audit](https://github.com/plimsollmark/plimsoll/actions/workflows/audit.yml/badge.svg)](https://github.com/plimsollmark/plimsoll/actions/workflows/audit.yml)
+[![gvisor](https://github.com/plimsollmark/plimsoll/actions/workflows/gvisor.yml/badge.svg)](https://github.com/plimsollmark/plimsoll/actions/workflows/gvisor.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/plimsollmark/plimsoll.svg)](https://pkg.go.dev/github.com/plimsollmark/plimsoll)
+[![Go version](https://img.shields.io/github/go-mod/go-version/plimsollmark/plimsoll)](go.mod)
+[![release](https://img.shields.io/github/v/release/plimsollmark/plimsoll)](https://github.com/plimsollmark/plimsoll/releases)
+[![license](https://img.shields.io/github/license/plimsollmark/plimsoll)](LICENSE)
 
 A Plimsoll line is the load limit painted on a ship's hull. It is mandatory, and it
 is on the outside where anyone can check it. That is the idea here: the isolation
 tier is a value the caller reads, asserts a floor against, and re-checks on the
 response, not a sentence in a datasheet.
 
-What backs that value is provider-specific startup evidence, described exactly under
-[Isolation tiers](#isolation-tiers) below. Read the tier as evidence this daemon
-collected, not as a remote attestation: no provider here cryptographically attests
-the runtime implementation underneath it.
+## See one real run
 
-The second thing it does is narrower and, for most callers, the more useful one:
-**it lets agent-written code use your API without ever receiving your credential, your
-base URL, or general network access.** The bearer is supplied per run, stays in Go, and
-is attached host-side only after the caller and the exact route have been authorized.
-Code that ignores the injected client and calls out by hand does not get further,
-because the broker rather than the client is what enforces the policy. See
-[Capability grants](#capability-grants).
+An agent wrote a controller. A cart-pole, compiled to WebAssembly and baked into the
+sandbox image, judged it. The controller was the only file the caller sent, through
+the ordinary project API, on the container tier.
+
+[![The physics oracle: a cart with a pole balanced on it by an agent-written controller, beside the SHA-256 fingerprint of each run's trajectory](docs/examples/oracle/hero.png)](https://plimsollmark.github.io/plimsoll/examples/oracle/index.html)
+
+A cart-pole is a cart on a rail with a pole hinged on top of it, the standard teaching
+problem in control engineering: push the cart left and right to keep the pole upright.
+Run the accepted controller twice and the fingerprints of the two trajectories match
+to the last bit. The agent's first draft, with two gains of the wrong sign, drops the
+pole at 5.96 seconds and fingerprints differently.
+
+[![Pole angle and cart position over twenty seconds, for the accepted controller and for the draft that fell](docs/examples/oracle/chart.png)](https://plimsollmark.github.io/plimsoll/examples/oracle/index.html)
+
+**[Open the live run report ↗](https://plimsollmark.github.io/plimsoll/examples/oracle/index.html)**
+to replay both runs in the browser, read the controller the agent wrote, and see what
+the page deliberately does not claim. Every number on it came from one run you can
+reproduce with `make docker-images && go run ./examples/oracle`.
+
+| More to look at | What it is |
+|---|---|
+| [The efficiency advisor's report ↗](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html) | One measured run, rendered: the same question asked as 13 calls and then as 1, and the finding that names the route to batch on. |
+| [Twelve interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | The execution model, the providers, the API broker, and integrating with an agent. Static pages: no network calls, no analytics, no third-party scripts. |
+| [System topology diagram](docs/architecture/topology.svg) | Request admission, provider boundaries, and brokered API calls, on one page. |
+
+## The two things it does
+
+**It reports the boundary.** Every result carries the isolation tier the run actually
+executed behind, and every request can carry a floor. A request below the floor is
+refused before dispatch, so `ErrInsufficientIsolation` means no submitted code ran.
 
 ```go
 res, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
@@ -35,34 +57,22 @@ res, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
 // res.Isolation reports the boundary that actually ran.
 ```
 
-The [Quick start](#quick-start) and the [examples](#examples) come next. For the
-whole path in order, a caller credential, an authenticated daemon, your own Go
-client, and a floor refusing a run before it starts, follow
-[docs/getting-started.md](docs/getting-started.md). The rest of this page, in order:
-[the workflow](#the-workflow-this-is-built-for) ·
-[status](#status-plainly) ·
-[lessons](#learn-how-it-works) ·
-[the problem](#the-problem) ·
-[isolation tiers](#isolation-tiers) ·
-[asserting a floor](#asserting-a-floor) ·
-[what comes back](#what-comes-back-and-what-it-means) ·
-[capability grants](#capability-grants) ·
-[telemetry](#telemetry-is-metadata-only-by-construction) ·
-[efficiency advisor](#efficiency-advisor) ·
-[hardened mode](#hardened-mode) ·
-[dependencies](#the-dependency-list-and-who-checks-the-checkers) ·
-[what it does not do](#what-it-does-not-do) ·
-[documentation](#documentation).
+Read the tier as evidence this daemon collected, not as a remote attestation: no
+provider here cryptographically attests the runtime implementation underneath it.
+What each tier rests on is spelled out in
+[docs/isolation-tiers.md](docs/isolation-tiers.md).
 
-## Quick start
+**It lets agent-written code use your API without ever receiving your credential,
+your base URL, or general network access.** The bearer is minted per run, stays in
+Go, and is attached host-side only after the caller and the exact route have been
+authorized. Code that ignores the injected client and calls out by hand does not get
+further, because the broker rather than the client is what enforces the policy.
+See [docs/capability-grants.md](docs/capability-grants.md).
 
-The module floor is Go 1.26.2, so consumers build unchanged. Build the daemon itself
-with **1.26.6 or newer**, the toolchain this module pins: `govulncheck` is clean
-there, while earlier 1.26.x carried stdlib advisories in the reverse-proxy and HTTP/2
-paths this code actually calls.
+## Run something in one minute
 
-Run something first. This needs no daemon, no docker, no credentials and no
-network, because it selects the in-process WASM provider:
+No daemon, no docker, no credentials, no network: this selects the in-process WASM
+provider.
 
 ```sh
 git clone https://github.com/plimsollmark/plimsoll && cd plimsoll
@@ -79,171 +89,61 @@ duration   304ms
 stdout     {"Engineering":59000000,"Sales":20300000,"Operations":9800000}
 ```
 
-The `truncated` flags are the only way a caller learns that output was cut at the
-provider's cap (64 KiB per stream by default): the retained bytes are never
-annotated in-band, so a marker cannot be forged by the guest or mistaken for output.
-
 That `isolation` line is the run's own evidence, not a claim by the example.
-**`process` is not an OS boundary and is not a production posture for hostile
-code** (see [Isolation tiers](#isolation-tiers)). The same snippet runs behind a
-real kernel boundary once gVisor is installed:
+**`process` is not an OS boundary and is not a production posture for hostile code.**
+The same snippet runs behind a real kernel boundary once gVisor is installed, and
+nothing else about the program changes:
 
 ```sh
 SANDBOX_PROVIDER=docker SANDBOX_DOCKER_RUNTIME=runsc go run ./examples/minimal
 ```
 
-The line then reads `isolation  kernel`, and nothing else about the program
-changes. [examples/minimal/main.go](examples/minimal/main.go) is about forty
-lines and comments each step.
-
-To embed it:
-
-```sh
-go get github.com/plimsollmark/plimsoll
-```
-
-```go
-provider, err := sandbox.Build(os.Getenv)   // errors rather than guessing
-if err != nil { return err }
-if err := provider.EnsureReady(ctx); err != nil { return err } // preflight + smoke test
-
-result, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
-    Code:    userCode,
-    Timeout: 10 * time.Second,
-})
-// err means the run never happened. Code that merely failed returns
-// result.ExitCode != 0, which is a normal result, not an error.
-```
-
-With `SANDBOX_PROVIDER` unset, `Build` selects the Disabled provider and runs
-nothing. That is deliberate: execution is opt-in and cannot be switched on by
-accident.
-
-As a service, first give the first caller a credential, then start the daemon with
-the registry that holds its fingerprint:
-
-```sh
-TOKEN="$(go run ./cmd/plimsoll-clients create \
-  -file clients.json -id mcp-gateway -token-stdout)"
-
-SANDBOX_PROVIDER=docker \
-SANDBOX_DOCKER_RUNTIME=runsc \
-PLIMSOLL_CLIENTS_FILE=clients.json \
-go run ./cmd/plimsolld
-```
-
-The daemon serves `plimsoll.v1.SandboxService` over Connect, plus `/healthz`,
-`/readyz`, and `/metrics` outside auth. Auth is fail-closed once configured. The
-registry stores SHA-256 fingerprints, never tokens; the same command lists, rotates
-and revokes callers, and every change takes effect only when the daemons that load
-the file restart. [docs/callers.md](docs/callers.md) walks the whole path, including
-calling the daemon from the Go client with `client.WithToken`. `plimsolld -h` prints
-every environment variable it reads.
-
-To install both on a machine without a clone:
-
-```sh
-go install github.com/plimsollmark/plimsoll/cmd/plimsolld@latest
-go install github.com/plimsollmark/plimsoll/cmd/plimsoll-clients@latest
-```
-
-There are no prebuilt binaries or a daemon container image yet; `go install` builds
-from the tagged module source, verified against `sum.golang.org` like any other
-module.
+With `SANDBOX_PROVIDER` unset, the factory selects the Disabled provider and runs
+nothing. Execution is opt-in and cannot be switched on by accident.
 
 **Next:** [docs/getting-started.md](docs/getting-started.md) takes the same pieces in
-order on one machine, from an in-process daemon to a kernel-tier one, with your own
-client program asserting the floor.
+order on one machine, from an in-process daemon to a kernel-tier one, with a caller
+credential, your own client program, and a floor refusing a run before it starts. It
+also covers embedding the package instead of running the daemon.
 
-## Examples
+## Where the pieces sit
 
-Five runnable programs. The first four need no docker, credentials or a daemon
-you start yourself; the fifth needs docker and the module image
-(`make docker-images`). Run them from the repository root.
+```mermaid
+flowchart LR
+  A["Agent or MCP gateway"] -->|"Run: one payload, a protocol number, minimum_isolation"| AU
 
-| Command | What it shows |
-|---|---|
-| `go run ./examples/minimal` | One snippet, its result, and the isolation tier the run reports. |
-| `go run ./examples/grant` | The capability model: a permitted route, a refused one, the same refusal when the guest bypasses the injected client, the same request succeeding under a separate per-run grant that lists it, and a search for the credential that comes back empty. |
-| `go run ./examples/daemon` | The service path: plimsolld started with a real multi-client auth file, called by the Go client, refusing an isolation floor it cannot meet and refusing a wrong bearer. Each refusal is checked for its specific error (`ErrInsufficientIsolation`, Connect `unauthenticated`), because a request that merely failed is not proof the protection fired. |
-| `go run ./examples/advisor` | The efficiency advisor: one question asked twice of a fake inventory API, first as a per-item loop (13 requests, a `fan_out` finding naming the granted collection route), then as the advice suggests (1 request, no findings), same answer both times. |
-| `go run ./examples/oracle` | The physics oracle: an agent-written controller sent as the only file of a project run, judged against a cart-pole plant compiled to WebAssembly and baked into the module image, by a judge that runs the controller as a separate process and fingerprints the trajectory. The accepted controller twice (one fingerprint), the agent's draft once (another, and it falls at 5.96 s). The page it writes, live: [the physics oracle](https://plimsollmark.github.io/plimsoll/examples/oracle/index.html), which replays the recorded runs (source: `docs/examples/oracle/index.html`). |
+  subgraph D["plimsolld"]
+    AU["authenticate the caller"] --> FL["compare the floor with current provider evidence"]
+    FL --> DI["dispatch"]
+    BR["broker: holds the minted credential, matches the exact route, counts every call"]
+  end
 
-`examples/grant` is the one to read if you only read one. It prints the run's
-`CallTrace` after each step, which is the same metadata-only evidence the advisory
-channel and the audit log are built from:
+  DI --> W["wasm: QuickJS on wazero (process tier)"]
+  DI --> K["docker with runsc (kernel tier)"]
+  DI --> V["e2b Firecracker (VM tier)"]
 
-```
-1. a route the grant lists
-   guest | ok: Engineering 46600000
-   trace | #1 GET /v1/employees/*/comp -> 200, 0B in 39B out, 1ms
-
-3. the same forbidden route, bypassing the client
-   guest | broker answered: 403 forbidden by sandbox capability allowlist
-   trace | 0 call(s), 1 denied by policy, 0 shed for backpressure, 0 dropped
-
-4. the same request, in a run handed a separate grant that lists the route
-   guest | ok: {"ssn":"000-00-0000"}
-   trace | #1 GET /v1/employees/*/ssn -> 200, 0B in 21B out, 1ms
+  W -. "host.get / host.post" .-> BR
+  K -. "per-run Unix socket" .-> BR
+  V -. "authenticated guard" .-> BR
+  BR ==> |"your credential, attached host-side"| API["Your API"]
 ```
 
-Scenes 3 and 4 send the identical request. The guest did not change and the API did
-not change; the run was handed a different grant, and the grant is what decides.
+The guest never holds the credential and never reaches the network directly. A run
+with no grant reaches nothing at all.
 
-Note what the trace holds: the matched route *template*, never the path that was
-requested. `CallRow` has no field for a path, query, body or credential, so none can
-be recorded by accident.
+## Isolation tiers
 
-## The workflow this is built for
+| Provider | Boundary | Tier reported | Use |
+|---|---|---|---|
+| `wasm` | QuickJS on wazero, inside `plimsolld` itself | `process` | The inner loop. An engine escape lands in your daemon. |
+| `docker` with `runc` | container, sharing the host kernel | `container` | Self-hosting where the kernel boundary is not the threat model. |
+| `docker` with `runsc` | gVisor, after a verified preflight | `kernel` | Hostile code, self-hosted. |
+| `e2b` | Firecracker microVM | `vm` | Hostile code, on runners off your host. |
+| unset | nothing runs | n/a | The default. |
 
-A microVM per run is the right cost for production and an absurd one for the
-*inner loop*, meaning the edit-run-debug cycle a developer repeats hundreds of times
-a day. An in-process engine is the opposite: fast enough for that loop, and not a
-boundary for hostile code. But developing against a weak sandbox and deploying
-against a strong one is how a weak sandbox reaches production.
-
-Plimsoll's answer is that the tier is chosen by configuration and **demanded by each
-request**, so the two decisions are made by different people at different times:
-
-1. **Locally, run in-process.** `SANDBOX_PROVIDER=wasm` executes JavaScript on an
-   embedded QuickJS build through wazero. No sandbox account, no API key, no docker
-   daemon, no network, no per-run cost. It is process-tier isolation and the README
-   says so everywhere: an engine escape lands in your own daemon.
-2. **In production, demand the tier your threat model requires.** Every request
-   carries `MinimumIsolation`, so the caller states its own floor rather than trusting
-   whatever the operator configured.
-3. **Then ship the configuration mistake.** A deploy still pointing at `wasm` while
-   the caller demands `IsolationVM` is the failure this design exists to catch.
-4. **The run is refused before dispatch.** The handler compares the floor against
-   current provider evidence immediately before admission, and returns
-   `ErrInsufficientIsolation`. **No submitted code ran.** The caller also re-checks the
-   evidence on the response; a mismatch there is `ErrIsolationEvidenceMismatch`, which
-   is a weaker guarantee and deliberately described as one, because by then execution
-   may already have happened.
-
-This is enforcement at runtime, expressed through a typed request field. Nothing in
-the type system forces a production caller to ask for `IsolationVM`; what the design
-gives you is that asking is one field, and that asking is checked before anything
-executes rather than reported afterwards.
-
-**What this workflow does not give you is a guarantee that code behaving locally
-behaves in production**, and it would be dishonest to imply otherwise:
-
-- The engines differ. `wasm` runs QuickJS; `docker` and `e2b` run Node. `fetch` is
-  undefined under QuickJS and global under Node 22, and there is no npm. A snippet
-  passing locally is not evidence it passes on a production tier.
-- `RunProject` is unsupported on `wasm` and always returns `ErrUnsupported`, so
-  multi-file projects cannot be exercised in-process at all. So is `RunModule`,
-  which needs the docker provider with a module image
-  (`SANDBOX_DOCKER_MODULE_IMAGE`; see [docs/guest-dependencies.md](docs/guest-dependencies.md)).
-- Grant support differs. `wasm` always supports JavaScript grants; `e2b` supports them
-  only when `E2B_GUARD_URL` is configured, so a grant that works locally fails there
-  until the guard is set up.
-
-Treat the in-process tier as a fast way to iterate on your integration, not as a
-staging environment. `Describe` reports what the active provider actually supports, so
-a gateway can find these differences at startup instead of discovering them in
-production.
+Every tier is configuration plus provider evidence plus a behavioural startup smoke
+test, never runtime attestation. The full evidence chain, and how a caller demands a
+floor per request, are in [docs/isolation-tiers.md](docs/isolation-tiers.md).
 
 ## Status, plainly
 
@@ -268,503 +168,36 @@ production.
 ## Learn how it works
 
 The [interactive lessons](https://plimsollmark.github.io/plimsoll/trainers/) are the
-fastest way in if you would rather read than clone. They are plain HTML pages with no
-build step, no dependencies and no network calls, covering the execution model,
-architecture, the four providers, the capability model, operations, and integrating
-with an agent or MCP server.
-
-Start with **[Plain English](https://plimsollmark.github.io/plimsoll/trainers/plain-english.html)**
+fastest way in if you would rather read than clone. Start with
+**[Plain English](https://plimsollmark.github.io/plimsoll/trainers/plain-english.html)**
 if you want the idea before the API, or
 **[Quick start](https://plimsollmark.github.io/plimsoll/trainers/quick-start.html)**
-if you want to run something.
-
-They live in [docs/trainers/](docs/trainers/) and work offline: open any file from a
-clone in a browser. GitHub shows `.html` files as source rather than rendering them,
-which is why the links above point at the published copy instead.
-
-For a visual overview:
-
-- [INTERNAL · system topology diagram →](docs/architecture/topology.svg): request
-  admission, provider boundaries, and brokered API calls.
-- [INTERNAL · credential-minting guide and diagram →](docs/architecture/credential-minting.md):
-  JWT minting, static-token reuse, where credentials stay, and possible enhancements.
-
-## The problem
-
-Agent frameworks increasingly need to run model-authored code. A single-runtime vendor
-has exactly one boundary to describe, so the products that offer this converge on one
-security sentence: "isolated per request, nothing persists."
-
-Checked in September 2026 against the current documentation for E2B, Modal, Daytona,
-Vercel Sandbox, Cloudflare and Northflank: none of them returns the isolation boundary a
-run executed behind, and none refuses a run that would execute below a minimum the
-caller stated. Modal comes closest, in the other direction: passing
-`experimental_options={"vm_runtime": True}` to `Sandbox.create()` opts into a full VM
-instead of the gVisor default, but nothing reports back which runtime served a given
-call. Kubernetes RuntimeClass (`runtimeClassName: gvisor`) is the same shape one layer
-down, a declaration in a pod spec rather than a per-request floor.
-
-The case this is built for is the one Northflank documents plainly: it runs Kata
-Containers where nested virtualization is available and gVisor where it is not. That is
-a reasonable engineering decision, and it means the boundary your code ran behind is a
-property of the host it landed on. The caller has no way to ask which it got.
-
-If your service does report the tier and enforce a caller's floor, open an issue and
-this section gets corrected.
-
-Meanwhile the ecosystem ships safety claims that nothing checks. The founding example
-for this project: a popular embeddable JavaScript sandbox advertised a `MemoryLimit`
-that was a **no-op**. The library promised a limit it did not enforce, and nothing in
-the type system or the docs revealed it.
-
-plimsoll is the policy and evidence layer in front of a sandbox, not a sandbox
-itself. Isolation is delegated to gVisor and Firecracker, which are better at it.
-
-## Isolation tiers
-
-Select a provider with `SANDBOX_PROVIDER`. **The default is Disabled**, so nothing
-executes unless you opt in explicitly.
-
-| `SANDBOX_PROVIDER` | Provider | Tier | Use it for |
-|---|---|---|---|
-| unset | Disabled | none | the default; returns `ErrDisabled` |
-| `wasm` | in-process QuickJS via wazero | **process** | dev and low-latency snippets, **not hostile code** |
-| `docker` | locked-down `docker run` | container, or **kernel** under verified gVisor `runsc` | self-hosted production |
-| `e2b` | E2B Firecracker microVM | **VM** | hardware-virtualized isolation |
-
-> **The WASM tier is in-process.** It is not an OS boundary and not a VM boundary. A
-> QuickJS engine escape lands in the daemon process. It exists for latency and for
-> development. Do not point it at genuinely hostile code.
-
-Container tier under stock `runc` shares the host kernel. For hostile production
-input, use `e2b`, or `docker` with `SANDBOX_DOCKER_RUNTIME=runsc`.
-
-Both real providers run a startup **`SmokeTest`** that checks behavior rather than
-configuration, and neither serves if it fails. The Docker smoke test launches a
-throwaway container and proves, from its own mount table and by attempting a real
-write at every mount point, that the root filesystem is read-only and that the
-promised `noexec` tmpfs mounts are the only writable ones. The E2B smoke test
-completes a real secured microVM create, stages files, runs a probe through the
-actual project-step path, and checks live that egress is denied.
-
-**Exactly what the kernel and VM tiers rest on**, since a security claim that is not
-falsifiable is not worth reading. For `docker`, kernel tier requires that the daemon
-this provider is actually connected to registers the configured OCI runtime, and
-that `runsc` resolves there to an executable named `runsc`; runs then launch under
-that runtime. That is daemon-registration evidence plus the behavioral smoke above.
-It is not proof that the running kernel boundary is gVisor, and the code says so at
-[docker.go](sandbox/docker.go) `Preflight`. For `e2b`, VM tier follows from provider
-identity: E2B runs each sandbox in a Firecracker microVM, and plimsoll reports that
-rather than measuring it. Its smoke test proves the microVM behaves as promised,
-including denied egress, not that a hypervisor is present. Both are stronger than a
-datasheet sentence and weaker than attestation; if your threat model needs the
-latter, neither tier here supplies it.
-
-## Asserting a floor
-
-`MinimumIsolation` on a request is a per-dispatch security floor, compared against
-current provider evidence immediately before admission. `ErrInsufficientIsolation`
-means **no code ran**.
-
-The client also checks the evidence that comes back. A mismatch is
-`ErrIsolationEvidenceMismatch`, and it is deliberately not a safe retry signal:
-execution may already have happened.
-
-`SANDBOX_MIN_ISOLATION` is the operator-wide startup floor. It is not a substitute for
-a caller asserting its own requirement, because a stale `Describe` response must never
-be able to authorize a later downgrade.
-
-## What comes back, and what it means
-
-Most sandboxes flatten every bad outcome into one error, and the caller then cannot
-tell a user's broken code from a refused request from a run that may have half
-happened. That distinction is the difference between retrying safely and repeating
-something with side effects.
-
-**A non-zero exit code is a normal result, not a Go error.** The user's code failed;
-nothing went wrong with the sandbox. Errors are reserved for pre-dispatch failures
-(`ErrInvalidRequest`, `ErrUnsupported`, `ErrDisabled`, `ErrAtCapacity`), cancellation,
-and unmatched infrastructure faults.
-
-For projects, per-step failures live in `Steps` and the run's conclusion is a typed
-`ProjectResult.Outcome`, which is a stable retry classification rather than a message
-to regex:
-
-| Outcome | What happened | Retryable |
-|---|---|---|
-| `completed` | every step ran; read `Steps` for pass or fail | no, the answer is in the result |
-| `setup_failed` | staging the project never got as far as your code | yes, nothing of yours ran |
-| `timed_out` | the run exceeded its deadline | with care; side effects may exist |
-| `protocol_error` | the runner and the host disagreed | no, this is a bug to report |
-
-Read the isolation errors the same way. `ErrInsufficientIsolation` means **no code
-ran**. `ErrIsolationEvidenceMismatch` means execution **may already have happened**,
-which is why it is never a safe automatic retry. `ErrAtCapacity` is the one that is
-cleanly retryable with backoff, because admission refused the run before it started.
-
-### Output comes back exactly as the guest wrote it
-
-Guest output is `bytes` on the wire, not a string, so arbitrary bytes survive verbatim
-instead of being lossily repaired into UTF-8. If your agent emits a binary blob, a lone
-surrogate, or invalid UTF-8, you receive what it actually wrote.
-
-**Truncation is a field, never a marker injected into your data.** Results carry
-`StdoutTruncated`, `StderrTruncated` and `ArtifactsTruncated`, and the retained output
-is not annotated in-band. Nothing appends `...[truncated]` into a stream you are about
-to parse, so a run that produces JSON still produces parseable JSON right up to the
-cut.
-
-Flooding is classified as what it is. An E2B guest that pushes its output past the
-transfer budget is a **failed user run** (exit 153, both streams flagged truncated),
-not an infrastructure error, so it does not page anyone and it does not get retried as
-though the platform failed.
-
-## Capability grants
-
-Without a grant, a run has **no network at all**. A grant is opt-in twice over: a nil
-grant reaches nothing, and a grant with an empty allow list also reaches nothing.
-
-A grant is **per-run**, not provider state, and it is domain-agnostic. It lets guest
-code call an allowlisted HTTP API through an injected generic client
-(`host.get/put/post/del/call`).
-
-**The credential is supplied per run and never injected into guest code.** A grant
-carries a `TokenMinter`: JWT profiles issue fresh, expiring tokens with the caller's
-identity and any declared scopes; static profiles reuse a configured bearer.
-See the [INTERNAL · credential-minting diagram and enhancement notes →](docs/architecture/credential-minting.md).
-Enforcement lives in a shared
-broker on the host side: Docker runs keep `--network none` and frame calls over a
-per-run Unix socket, while WASM uses a direct wazero host function where only
-`{method, path, body}` and a bounded response cross linear memory. In both cases the
-token stays in Go.
-
-The broker accepts only decoded, canonical paths that are byte-identical to an
-approved route. Queries, traversal, and percent-encoding tricks are rejected before
-anything is dispatched upstream.
-
-Over RPC, a caller selects a **named server-side profile** by id. Raw caller-supplied
-grants are intentionally not accepted over the wire, so base URL, routes, and
-credential all stay server-side, and every profile carries an `allowed_callers` ACL.
-
-### The policy and the tool description are generated from one source
-
-Three things describe the same API surface, and in every hand-maintained setup they
-drift apart:
-
-- the **allow list**, which is what the broker enforces,
-- the **preamble**, the JavaScript client the agent actually calls,
-- the **tool description**, the text a gateway shows the model so it knows what exists.
-
-When they disagree the failure is quiet and specific: the model is told about a route
-the broker will refuse, or the client offers a method the policy never approved. You
-find out at runtime, in an agent transcript.
-
-[`plimsoll-specgen`](cmd/plimsoll-specgen) derives **all three from one OpenAPI 3.x
-document**, so they cannot disagree. Path parameters become whole-segment `*` routes,
-operations become typed methods on a global, and summaries become the description. It
-is deterministic and fully offline: no server is contacted and no credential is
-needed. It fails closed on ambiguous input, and it **reports rather than silently
-drops** what it cannot express, so a verb the broker cannot enforce (`HEAD`,
-`OPTIONS`, `TRACE`) is a warning rather than a gap you discover later.
-
-```sh
-plimsoll-specgen -outdir ./generated api.openapi.json  # every artifact, as files
-plimsoll-specgen -emit catalog       api.openapi.json  # every route, for operator advice
-plimsoll-specgen -emit health        api.openapi.json  # the recovery probe, if marked
-```
-
-**It generates a subset of OpenAPI, and says so when your document leaves it.** A grant
-authorizes a literal path template, so an operation that *requires* a query, header, or
-cookie parameter cannot be called through the broker at all: it is skipped with its
-reason rather than granted as a route the agent can never use, and an operation with
-optional ones is generated with a warning that the method always calls the bare route.
-A `$ref` path item or parameter is an error, not a silent omission. The emitted SDK is
-run in the embedded QuickJS engine by the project's own tests, so a generated method
-that cannot parse or throws on its first call fails the build rather than the agent.
-
-**One decision the generator cannot make for you.** The `allow` list it emits is
-*every* operation in the document, because a spec describes what an API has, not what
-an agent should be able to reach. Pasting it unedited into a profile grants the agent
-the whole API. Trim it to the routes you actually want reachable, and keep the
-untrimmed list in the profile's `catalog` field: the gap between the two is what lets
-the advisor name the specific missing route to add, instead of reporting a vague
-shortfall you still have to diagnose.
-
-Worked example, with the input document and every generated artifact side by side:
-[docs/examples/specgen](docs/examples/specgen).
-
-### The broker also protects the API from the agent
-
-A sandbox usually protects your infrastructure from the agent's code. This one also
-protects your upstream API from the agent's behaviour, which is a different failure:
-**an agent loop that reacts to a 429 by trying again, faster.**
-
-Nothing in a model's training makes it back off. So the broker does it host-side. When
-an upstream returns 429 or 503, a **per-run circuit breaker** opens for a cooldown
-that honours `Retry-After` (capped at 30s), and further permitted calls are *shed* with
-a fast 503 rather than piled onto an API that has already asked for room.
-
-Recovery depends on which of those two the upstream said, because they ask different
-questions. A **503** means the service is degraded, and the grant's declared
-`health_check` route can speak to that: while shedding, one elected caller per second
-probes it and a 2xx closes the breaker early, so recovery does not wait out the full
-cooldown or burn an expensive call to discover it. A **429** means *this caller* has
-spent its allowance, which a healthy service says nothing about — so that window is
-never probed and is simply waited out. Reopening it on a cheerful 200 would push the
-run's traffic straight back into the limiter that just asked it to stop. For the same
-reason, the generator will not pick a probe because an endpoint is *named* `/status`
-or `/healthz`; you mark the one that answers "can this API take traffic again" with
-`x-plimsoll-health-check`.
-
-The probe uses the run's credential but is neither traced nor charged to the call
-budget. Sheds are counted separately from policy denials (`CallTrace.Shed` versus
-`Denied`) and surface on the audit line as `host_calls_shed`, so "the agent was
-throttled" and "the agent tried something it was not allowed to" never look alike.
-
-**The scope is one run.** This is not fleet-wide overload protection and does not
-coordinate across concurrent runs; it stops a single agent loop from hammering an
-endpoint that is already struggling.
-
-### Prior art, and what differs here
-
-Keeping the credential out of the guest is not a new idea, and two funded platforms
-ship a version of it. Vercel Sandbox's **credentials brokering** injects the credential
-into egressing traffic host-side, so that "the secrets never enter the sandbox, so code
-running inside it cannot exfiltrate them." Cloudflare's **Code Mode** holds the access
-tokens in a supervisor outside the isolate and makes `fetch()` and `connect()` throw
-inside it. Two teams building the same control independently is the best evidence
-available that it is the right control.
-
-Checked September 2026 against their current documentation, four things differ here:
-
-- **Route granularity, and denial as the default.** Vercel states plainly that
-  "Matchers never block traffic": access is decided per domain from the TLS SNI, and a
-  request matching no rule still reaches that domain, simply without the credential
-  attached. Restricting a domain to particular paths means routing it through a proxy
-  you write and rejecting the rest there. plimsoll refuses anything that is not
-  byte-identical to an approved route, and that refusal is the component rather than an
-  integration point.
-- **JWT profiles mint a fresh credential per run.** Their documented
-  examples interpolate a long-lived token from the operator's environment. A grant here
-  carries a `TokenMinter` called once per run with that run's scopes and the calling
-  principal as the subject; static profiles deliberately reuse their bearer.
-- **No parallel path to bypass.** Vercel documents that traffic permitted by
-  `subnets.allow` "bypasses SNI filtering, credentials brokering, and requests
-  proxying", and that domain fronting is possible because matching reads the SNI alone.
-  A plimsoll guest has no network at all outside the broker: Docker runs with
-  `--network none`, and the WASM guest has a host function and no sockets.
-- **Backpressure and generation.** Neither documents a circuit breaker or backoff on an
-  upstream 429/503, and while generating a model-facing tool surface from OpenAPI is
-  well populated, generating the *enforced* allow list from the same document is not
-  something this project has found elsewhere.
-
-**Where theirs is broader, and it is a real trade.** Vercel's firewall governs whatever
-the sandbox runs, so package installs, `git`, and Postgres clients all work with a
-credential attached at the boundary. plimsoll's broker serves JavaScript runs through
-the injected client, and everything else in the guest has no egress whatsoever: the
-project toolchain is baked into the image precisely because runtime has no network. If
-your agent needs to `npm install` mid-run against a private registry, their model covers
-that case and this one does not. What this one offers instead is dependencies baked
-into the image at build time, with the registry credential never present in a run:
-[docs/guest-dependencies.md](docs/guest-dependencies.md).
-
-Vendor documentation changes; this comparison is dated for that reason. If it is wrong
-or has gone stale, open an issue.
-
-## Telemetry is metadata-only by construction
-
-Every brokered call is recorded in a `CallTrace` holding the matched route
-**template**, verb, status, byte counts, and latency. `CallRow` has **no field** for a
-path, query, body, or credential, so none can be captured by accident.
-
-The honest form of that claim is the correlation id. `trace_id` on a request is an
-opaque join key that gets echoed onto the audit line and is never parsed, routed on,
-or sent upstream. The sensitive payload lives in exactly one place, one layer up, in
-your own log. This is the difference between "we record less" and "we record the part
-that is ours."
-
-Because that field is caller-controlled, it is validated as `[A-Za-z0-9._:-]{1,64}`
-and a non-conforming id is **dropped whole** rather than truncated. A truncated id
-would look joinable and join to nothing.
-
-Full rationale: [docs/advisory-privacy.md](docs/advisory-privacy.md).
-
-## Efficiency advisor
-
-The broker is the one component that sees every call the agent's code makes and
-holds none of the content, so it is also the place to notice waste. After a run
-finishes, two deterministic detectors read its `CallTrace` and report where the call
-pattern cost the API more than the question needed: **fan-out** (an N+1 loop over a
-per-item route) and **repeated reads** of one fixed route (the same request, since a
-route without a wildcard admits exactly one path, with same-size responses as evidence
-the data did not change). Both count only calls the broker delivered with a 2xx
-status; failed calls are named in the finding and never counted as records retrieved.
-Each finding's sentence claims only what the trace can support: a per-item route is
-never reported as a repeated read, because equal response sizes there cannot tell one
-item fetched many times from many items of one size, and every remedy is stated as a
-condition (a collection route helps only if it returns the same items; a cache helps
-only if the data really was unchanged). Two earlier detectors, aggregate-in-code and
-sequential calls, were removed because the trace cannot support them: it holds no
-call start times and no guest content. A small router then asks one question of the
-profile's allow list, for a GET fan-out only: does the collection route already
-exist? If it does, the finding is **agent-fixable** and names the granted route to
-switch to. If it does not, or the fan-out is a write (a collection write's semantics
-cannot be read off its path), the finding is one of two further things, and the
-second is not a verdict. When the profile declares a `catalog` (its full endpoint
-list) and the catalog exposes the batch route the grant omits, the finding names that
-route as the **one line to add to the allow list**: an operator action, carried on the
-audit line as `grant_route`, and no API change. When no such route is known,
-`insights.Prompt` renders a paste-ready prompt for the API owner's own AI that asks
-for the smallest change that would remove the pattern **or a plain statement that
-none is warranted**: one run's trace cannot show that the API forces the pattern on
-every caller, the granted routes may be a subset of the API, and a profile need not
-declare a catalog at all. For a read fan-out the prompt offers a server-side
-aggregate as a conditional alternative. plimsoll never calls a model itself.
-
-Who sees what is a per-profile setting. `advice: off | operator | caller` chooses the
-audience: `caller` returns the agent-fixable subset on the run result, which the Go
-client exposes as `Result.Advice`; findings with no granted route stay on operator
-surfaces whatever the mode. `advice_retention: none | aggregate | detailed` chooses what
-reaches the durable audit log, from nothing to one metadata-only record per finding,
-which is the stream [prospector-report](cmd/prospector-report) renders as HTML.
-`/metrics` carries bounded counts by profile, pattern, severity and remedy.
-
-Two constraints hold on every surface. Advice is **evidence, never authority**: it
-is computed after dispatch over the already-final result, so a run with advice is
-byte-identical in execution to one without, and it never gates admission or changes
-an exit code, an output byte or the tier. And it is **metadata only**: findings are
-templated from route templates and numbers, and no guest-controlled string is ever
-copied through. It is off by default; a profile opts in.
-
-Read the three numbers on a finding for what they are. `extra_calls` is the measured
-call count minus one, and it is rigorous when a granted batch route is named. The
-other two compare the measured pattern with an ideal that is never measured:
-`added_latency_ms` is the summed round-trip time beyond one call, a model rather than
-wall time lost, and `bytes_moved` is the gross bytes the flagged calls moved, not a
-saving. Quote the first; treat the others as order-of-magnitude context.
-
-`go run ./examples/advisor` shows the whole loop in one screen: the per-item loop, the
-finding that comes back, the rewrite it suggests, and the API's own request and byte
-counts beside the finding's predictions. Add `-report out.html` for the same run as a
-self-contained page; one such run is published at
-[plimsollmark.github.io/plimsoll/examples/advisor/report.html](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html). The lesson
-[API Efficiency Advisor](https://plimsollmark.github.io/plimsoll/trainers/advisor.html)
-walks the same ground with a 128-call example.
-
-## Hardened mode
-
-`PLIMSOLL_HARDENED=1` turns the soft production posture into an enforced startup
-policy, because a warning is not a policy. The daemon refuses to serve unless all of
-the following are verifiably in force: VM or verified kernel isolation, multi-client
-auth, TLS on any non-loopback listener, pinned images with no `unconfined` seccomp, an
-explicit per-run resource envelope with an aggregate memory budget, and per-caller
-rate limiting. Every violation is reported at once, so it is one fix pass rather than
-a startup loop.
-
-## The dependency list, and who checks the checkers
-
-This runs hostile code, so every dependency is attack surface someone else controls.
-There are **four direct dependencies**, and the whole list fits here:
-
-```
-connectrpc.com/connect      the RPC transport
-google.golang.org/protobuf  the wire format
-github.com/tetratelabs/wazero  the WebAssembly runtime
-golang.org/x/net            HTTP/2
-```
-
-`golang.org/x/sys` and `golang.org/x/text` come along indirectly. That is the entire
-graph. Adding to it is a decision, not a convenience.
-
-**One library is banned by name, in the linter, with the reason attached.**
-`github.com/fastschema/qjs` looked like the obvious way to embed a JavaScript engine,
-and its `MemoryLimit` is a no-op: it accepts a limit and does not enforce one. In an
-in-process sandbox an unenforced memory cap is a direct route to taking down the host.
-So plimsoll drives wazero directly with `WithMemoryLimitPages` for a real per-run cap,
-a `depguard` rule fails the build if the import returns, and a test asserts the same
-thing independently of the linter. The generalisable part is not the library, it is
-that a dependency claiming a safety property is not evidence that it has one.
-
-The embedded QuickJS artifact is pinned to quickjs-ng v0.15.1 **by SHA-256** and
-guarded by a provenance test, and `docker/install-gvisor.sh` pins a specific gVisor
-release and checksum rather than tracking `latest`.
-
-### The gate pins the tools that run the gate
-
-`make audit` shells out to `buf`, `golangci-lint` and `govulncheck`. Those are not Go
-dependencies, so nothing in `go.mod` pins them, and without something else doing it
-every machine would run a different gate while reporting the same `audit: OK`.
-
-So [gate-tools.versions](gate-tools.versions) pins all three, and `tools-check` is a
-prerequisite of `audit`: **the gate refuses to run against anything else.** `make
-tools` installs exactly the pinned set. This matters because the alternative is a
-green check that means "it passed under whatever happened to be on this `PATH`", which
-is not the claim the gate is making. The codegen plugins are pinned separately, by
-go.mod `tool` directives, so `buf generate` is reproducible with no network.
-
-## What it does not do
-
-Stated so you do not have to discover it in review:
-
-- It does not implement an isolation boundary. gVisor and Firecracker do that.
-- WASM supports snippets only, not multi-file projects, and WASM project grants are
-  rejected outright.
-- **No package installation during a run.** A run has no network, so `npm install`
-  cannot happen inside it, from a public registry or a private one. Dependencies are
-  baked into the project image at build time, which is also where the registry
-  credential lives and the only place it ever exists;
-  [docs/guest-dependencies.md](docs/guest-dependencies.md) is the recipe. An agent
-  that must install arbitrary packages mid-run is the case the general-purpose
-  sandbox VMs cover and this component does not.
-- E2B grants require `E2B_GUARD_URL`; the forced, authenticated guard keeps
-  credentials and route enforcement outside the hostile VM. Without a grant,
-  E2B runs deny egress.
-- **The E2B guard is process-local, so it does not sit behind an ordinary load
-  balancer.** A run's guard credential lives in the memory of the process that
-  created that run, so a guard request routed to a second replica is rejected as an
-  unknown credential even though it is valid. Whatever serves the public guard URL
-  must be the same process that launches the runs. Running more than one replica
-  needs the guard path pinned per instance (a distinct hostname or path per daemon),
-  not round-robin.
-- **`/readyz` reports configuration and reachable dependencies, not a working run.**
-  For `docker` it probes the pinned daemon and runtime; for `e2b` it validates
-  configuration and does not prove the API is reachable, the key is valid, or the
-  guard is routable. The behavioural proof is the startup `SmokeTest`, which runs
-  once and creates a real (billable) microVM — deliberately not on an unauthenticated
-  poll path. A green `/readyz` on `e2b` means "configured", not "working".
-- **The isolation tiers are evidence, not attestation.** `kernel` and `vm` rest on
-  provider identity and daemon/runtime configuration plus the behavioural smoke
-  tests, as spelled out above. Nothing here measures a hypervisor or verifies a
-  kernel boundary cryptographically. If your threat model needs attestation, no tier
-  in this component supplies it.
-- There is no fleet-level gateway across instances. The control surface is per
-  instance.
-- There is no auto-patching supply chain. Images, the QuickJS artifact, gVisor, the
-  codegen plugins, and the three tools the gate shells out to are pinned instead,
-  which buys determinism and gives up automatic updates. One qualification, because
-  "verified by digest" is not uniformly true: the gVisor installer pins the release
-  on every architecture, but the checksum it compares against is recorded in this
-  repository only for x86_64. Elsewhere it verifies the release bucket's own
-  `.sha512`, which catches a corrupted transfer, not a compromised bucket.
+if you want to run something. They live in [docs/trainers/](docs/trainers/) and work
+offline: open any file from a clone in a browser. GitHub shows `.html` files as source
+rather than rendering them, which is why the links above point at the published copy.
 
 ## Documentation
 
-- [docs/getting-started.md](docs/getting-started.md) is the tutorial: one machine,
-  from an in-process daemon with a real caller credential to a kernel-tier one, with
-  a client program that asserts the floor.
-- [AGENTS.md](AGENTS.md) is the architecture reference: providers, invariants, the
-  full environment list.
-- [docs/callers.md](docs/callers.md) covers caller credentials: creating, rotating
-  and revoking them with `plimsoll-clients`, and what a running daemon does with a
-  changed file.
-- [docs/seccomp.md](docs/seccomp.md) and [docs/gvisor.md](docs/gvisor.md) cover the
-  syscall filter and the kernel-tier boundary.
-- [docs/advisory-privacy.md](docs/advisory-privacy.md) covers the advisory channel and
-  why its telemetry cannot carry payloads.
-- [The interactive lessons](https://plimsollmark.github.io/plimsoll/trainers/) cover
-  the execution model, providers, capabilities, and operations. Source in
-  [docs/trainers/](docs/trainers/); open any file from a clone to read them offline.
-- [docs/seams.md](docs/seams.md) maps the deliberate extension points.
+Each of these answers one question, end to end.
+
+| Document | Answers |
+|---|---|
+| [docs/getting-started.md](docs/getting-started.md) | How do I build it, embed it, start it as an authenticated service, and watch a floor be refused? |
+| [docs/example-programs.md](docs/example-programs.md) | What do the five runnable examples prove, and which should I read first? |
+| [docs/isolation-tiers.md](docs/isolation-tiers.md) | What does each tier rest on, and how do I demand one per request? |
+| [docs/capability-grants.md](docs/capability-grants.md) | How does agent code call my API without ever holding my credential? |
+| [docs/run-results.md](docs/run-results.md) | What comes back, and when is a failure an error rather than a result? |
+| [docs/inner-loop-workflow.md](docs/inner-loop-workflow.md) | How do I iterate fast locally without shipping a weak sandbox to production? |
+| [docs/efficiency-advisor.md](docs/efficiency-advisor.md) | What does the advisor see, why can its telemetry not carry guest content, and how do I configure what it emits? |
+| [docs/hardened-mode.md](docs/hardened-mode.md) | How do I turn the production posture into an enforced startup policy? |
+| [docs/dependencies.md](docs/dependencies.md) | What is in the trusted surface, and who checks the checkers? |
+| [docs/limitations.md](docs/limitations.md) | What does this deliberately not do? |
+| [docs/callers.md](docs/callers.md) | How do I create, rotate and revoke caller credentials? |
+| [docs/seccomp.md](docs/seccomp.md) and [docs/gvisor.md](docs/gvisor.md) | What do the syscall filter and the kernel-tier boundary enforce? |
+| [docs/guest-dependencies.md](docs/guest-dependencies.md) | How do guest packages get in when a run has no network? |
+| [docs/architecture/credential-minting.md](docs/architecture/credential-minting.md) | Where does a per-run credential come from, and where does it stay? |
+| [docs/seams.md](docs/seams.md) | Where are the deliberate extension points? |
+| [AGENTS.md](AGENTS.md) | The architecture reference: providers, invariants, the full environment list. |
 
 ## License
 

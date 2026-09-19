@@ -1,6 +1,7 @@
 package grants
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -410,5 +411,59 @@ func TestRegistryIsFrozenAfterLoad(t *testing.T) {
 	}
 	if first == second {
 		t.Fatal("Grant() returned the same pointer twice")
+	}
+}
+
+// A profile may raise its run's brokered-call budget for a workload that is a loop by
+// design, and the ceiling is enforced at load time rather than at the first call, so a
+// misconfigured profile fails while an operator is still looking at it.
+func TestLoadMaxCalls(t *testing.T) {
+	t.Setenv("HUE_TOKEN", "tok-123")
+	body := func(maxCalls string) string {
+		return `{
+	  "profiles": {
+	    "stepper": {
+	      "base_url": "https://plant.internal",
+	      "allow": ["POST /v1/step"],
+	      "allowed_callers": ["mcp-a"],
+	      "token": {"type": "static", "env": "HUE_TOKEN"}` + maxCalls + `
+	    }
+	  }
+	}`
+	}
+
+	r, err := Load(writeGrants(t, body(`, "max_calls": 6000`)))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	profile, _ := r.Get("stepper")
+	if got := profile.Grant().MaxCalls; got != 6000 {
+		t.Errorf("MaxCalls = %d, want 6000", got)
+	}
+	if got := profile.Grant().CallBudget(); got != 6000 {
+		t.Errorf("CallBudget() = %d, want 6000", got)
+	}
+
+	// Omitted means the default, and the grant says so by holding zero rather than by
+	// copying the number, so a later change to the default cannot leave a stale copy.
+	r, err = Load(writeGrants(t, body("")))
+	if err != nil {
+		t.Fatalf("load without max_calls: %v", err)
+	}
+	profile, _ = r.Get("stepper")
+	if got := profile.Grant().MaxCalls; got != 0 {
+		t.Errorf("MaxCalls = %d with no max_calls set, want 0", got)
+	}
+	if got := profile.Grant().CallBudget(); got != sandbox.DefaultMaxHostCalls {
+		t.Errorf("CallBudget() = %d, want the default %d", got, sandbox.DefaultMaxHostCalls)
+	}
+
+	for _, bad := range []string{
+		fmt.Sprintf(`, "max_calls": %d`, sandbox.MaxHostCallsCeiling+1),
+		`, "max_calls": -1`,
+	} {
+		if _, err := Load(writeGrants(t, body(bad))); err == nil {
+			t.Errorf("Load accepted%s; want a refusal", bad)
+		}
 	}
 }

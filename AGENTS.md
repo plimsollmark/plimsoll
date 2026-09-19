@@ -61,7 +61,8 @@ option is intentionally only process-tier.
   FMUs and a Lorenz model of our own compiled to WebAssembly under `/models`, run through the unchanged project
   API and proven byte-identical to native by `sandbox/docker_sim_test.go`. The same
   image carries the Greedy fixture that proves the worker's per-instance memory cap
-  (256 pages; a greedy row fails alone), and the physics oracle: a cart-pole plant
+  (256 pages; a greedy row fails alone), and the physics oracle: a cart-pole *plant*
+  (control engineering's term for the system being controlled)
   kept as WebAssembly at `/models/cartpole.wasm` behind a stepping shim, and the
   judge `/oracle/run.mjs` that runs a caller's controller as a separate process and
   fingerprints the trajectory (`sandbox/docker_oracle_test.go`).
@@ -77,8 +78,9 @@ option is intentionally only process-tier.
   fingerprint, through the ordinary project API; the page it writes replays the
   runs, and `sandbox/docker_oracle_test.go` asserts the fingerprints).
 - [docs/trainers/](docs/trainers/) — dependency-free interactive lessons covering
-  the execution model, architecture, providers, capabilities, operations,
-  dependencies, MCP/agent integration, customer patterns, and product planning.
+  the execution model, architecture, providers, dependencies, the API broker and
+  its capacity signal, MCP/agent integration, customer patterns, and product
+  planning.
   The pricing lesson is a planning hypothesis, not a current commercial offer.
 
 ## The `Sandbox` interface
@@ -336,7 +338,10 @@ include `code:run` or `*`.
 
 **Enforcement is shared; transports are narrow.** `brokerSession` owns the frozen
 per-run grant, minted token, exact approve==wire check, proxy-free/no-redirect
-upstream request, traffic budgets (max 256 calls, 1 MiB request, 4 MiB response),
+upstream request, traffic budgets (256 calls by default, 1 MiB request, 4 MiB
+response; a profile's `max_calls` raises the call budget for a workload that is a
+loop by design, never past `MaxHostCallsCeiling` of 100,000, and the metadata trace
+stays capped at the default 256 rows either way, counting the rest as `Dropped`),
 and metadata-only trace. Docker JavaScript keeps `--network none` and frames calls
 over a per-run Unix socket. WASM JavaScript uses a direct, quota-bounded wazero
 host function; only `{method,path,body}` and the bounded response cross WASM linear
@@ -472,7 +477,7 @@ path into guest content. The pipeline:
    hint and the bounded `/metrics` aggregates (labels only: profile/pattern/severity/remedy,
    no route templates) are governed by `advice` alone, not by retention. plimsoll is
    stateless: it stores nothing, so retention is about what it *emits*. Full rationale in
-   [docs/advisory-privacy.md](docs/advisory-privacy.md).
+   [docs/efficiency-advisor.md](docs/efficiency-advisor.md).
 
 ## Build, vet, test
 ```sh
@@ -614,7 +619,7 @@ a specific gVisor release and checksum rather than tracking `latest`.
   has no body/credential field by construction; findings and prompts are templated from
   trusted inputs only (route templates + numbers) and must never echo a guest-controlled
   string. Preserve this on every new advisory surface, and never let advisory code call
-  an LLM. See [docs/advisory-privacy.md](docs/advisory-privacy.md).
+  an LLM. See [docs/efficiency-advisor.md](docs/efficiency-advisor.md).
 - **The correlation id is the answer to "so you just record less".** Declining to keep
   the path and body is only defensible if the question they answer is still answerable
   somewhere. `trace_id` on the run request is an **opaque** join key the caller already

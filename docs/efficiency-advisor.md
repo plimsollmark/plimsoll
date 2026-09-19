@@ -1,11 +1,11 @@
-# Advisory telemetry: privacy and retention
+# Telemetry and the efficiency advisor
 
-The Prospector efficiency advisor (see the
-[advisor trainer](trainers/advisor.html)) watches a run's brokered host-API traffic and
-emits findings about wasteful call patterns. Because it observes real customer traffic,
-its privacy properties are load-bearing. This doc states exactly what it records, what it
-can never record, and how an operator controls retention. Every property here is enforced
-in code, not a promise.
+Why the telemetry cannot carry payloads by construction, and what the shipped advisor does with the metadata it can carry.
+
+Part of the [plimsoll README](../README.md).
+
+Every property stated here is enforced in code rather than promised. Because the
+advisor observes real customer traffic, its privacy properties are load-bearing.
 
 ## Metadata only, by construction
 
@@ -32,6 +32,80 @@ templated from trusted inputs only: route templates from the profile, plus count
 timings. No guest-controlled string is ever echoed, so a finding cannot become a
 prompt-injection or covert channel. This is the same rule as the base audit log:
 metadata yes, code and credentials never.
+
+### The correlation id is the honest form of the claim
+
+The honest form of that claim is the correlation id. `trace_id` on a request is an
+opaque join key that gets echoed onto the audit line and is never parsed, routed on,
+or sent upstream. The sensitive payload lives in exactly one place, one layer up, in
+your own log. This is the difference between "we record less" and "we record the part
+that is ours."
+
+Because that field is caller-controlled, it is validated as `[A-Za-z0-9._:-]{1,64}`
+and a non-conforming id is **dropped whole** rather than truncated. A truncated id
+would look joinable and join to nothing.
+
+## Efficiency advisor
+
+The broker is the one component that sees every call the agent's code makes and
+holds none of the content, so it is also the place to notice waste. After a run
+finishes, two deterministic detectors read its `CallTrace` and report where the call
+pattern cost the API more than the question needed: **fan-out** (an N+1 loop over a
+per-item route) and **repeated reads** of one fixed route (the same request, since a
+route without a wildcard admits exactly one path, with same-size responses as evidence
+the data did not change). Both count only calls the broker delivered with a 2xx
+status; failed calls are named in the finding and never counted as records retrieved.
+Each finding's sentence claims only what the trace can support: a per-item route is
+never reported as a repeated read, because equal response sizes there cannot tell one
+item fetched many times from many items of one size, and every remedy is stated as a
+condition (a collection route helps only if it returns the same items; a cache helps
+only if the data really was unchanged). Two earlier detectors, aggregate-in-code and
+sequential calls, were removed because the trace cannot support them: it holds no
+call start times and no guest content. A small router then asks one question of the
+profile's allow list, for a GET fan-out only: does the collection route already
+exist? If it does, the finding is **agent-fixable** and names the granted route to
+switch to. If it does not, or the fan-out is a write (a collection write's semantics
+cannot be read off its path), the finding is one of two further things, and the
+second is not a verdict. When the profile declares a `catalog` (its full endpoint
+list) and the catalog exposes the batch route the grant omits, the finding names that
+route as the **one line to add to the allow list**: an operator action, carried on the
+audit line as `grant_route`, and no API change. When no such route is known,
+`insights.Prompt` renders a paste-ready prompt for the API owner's own AI that asks
+for the smallest change that would remove the pattern **or a plain statement that
+none is warranted**: one run's trace cannot show that the API forces the pattern on
+every caller, the granted routes may be a subset of the API, and a profile need not
+declare a catalog at all. For a read fan-out the prompt offers a server-side
+aggregate as a conditional alternative. plimsoll never calls a model itself.
+
+Who sees what is a per-profile setting. `advice: off | operator | caller` chooses the
+audience: `caller` returns the agent-fixable subset on the run result, which the Go
+client exposes as `Result.Advice`; findings with no granted route stay on operator
+surfaces whatever the mode. `advice_retention: none | aggregate | detailed` chooses what
+reaches the durable audit log, from nothing to one metadata-only record per finding,
+which is the stream [prospector-report](../cmd/prospector-report) renders as HTML.
+`/metrics` carries bounded counts by profile, pattern, severity and remedy.
+
+Two constraints hold on every surface. Advice is **evidence, never authority**: it
+is computed after dispatch over the already-final result, so a run with advice is
+byte-identical in execution to one without, and it never gates admission or changes
+an exit code, an output byte or the tier. And it is **metadata only**: findings are
+templated from route templates and numbers, and no guest-controlled string is ever
+copied through. It is off by default; a profile opts in.
+
+Read the three numbers on a finding for what they are. `extra_calls` is the measured
+call count minus one, and it is rigorous when a granted batch route is named. The
+other two compare the measured pattern with an ideal that is never measured:
+`added_latency_ms` is the summed round-trip time beyond one call, a model rather than
+wall time lost, and `bytes_moved` is the gross bytes the flagged calls moved, not a
+saving. Quote the first; treat the others as order-of-magnitude context.
+
+`go run ./examples/advisor` shows the whole loop in one screen: the per-item loop, the
+finding that comes back, the rewrite it suggests, and the API's own request and byte
+counts beside the finding's predictions. Add `-report out.html` for the same run as a
+self-contained page; one such run is published at
+[plimsollmark.github.io/plimsoll/examples/advisor/report.html](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html). The lesson
+[API Efficiency Advisor](https://plimsollmark.github.io/plimsoll/trainers/advisor.html)
+walks the same ground with a 128-call example.
 
 ## plimsoll stores nothing: "retention" is about emission
 

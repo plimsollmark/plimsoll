@@ -15,143 +15,253 @@
   <meta property="og:image:height" content="640">
   <meta name="twitter:card" content="summary_large_image">
   <title>Dependencies · plimsoll trainer</title>
-  <link rel="stylesheet" href="trainer.css">
-  <script src="trainer.js" defer></script>
+  <link rel="stylesheet" href="plain.css">
+  <style>
+  /* Page-local styles; the base every plain page shares is plain.css. No script: the
+     subject is a list of things and the reasons they are trusted, which a reader wants
+     to scan and search, not click through a chapter at a time. */
+  dl { margin: 12px 0 0; }
+  dt { margin-top: 12px; font-weight: 700; }
+  dt:first-child { margin-top: 0; }
+  dd { margin: 2px 0 0; color: var(--muted); }
+  .tier {
+    display: inline-block; margin-left: 0; padding: 3px 9px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent-deep);
+    font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  ol.gate { margin: 12px 0 0; padding-left: 1.3rem; }
+  ol.gate li { margin-bottom: 12px; }
+  ol.gate li:last-child { margin-bottom: 0; }
+  </style>
 </head>
 <body>
-  <div class="trainer-shell">
-    <aside class="trainer-rail">
-      <a class="trainer-back" href="index.html">← All trainers</a>
-      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Dependencies</strong><small id="trainerTagline">Loading…</small></span></div>
-      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
-      <p class="rail-note">New to the words here? <a href="plain-english.html">Start with Plain English</a>. A hostile-code runner has two dependency lists: what ships inside plimsolld, and what each runner needs when it runs.</p>
-    </aside>
-    <main class="trainer-main">
-      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
-      <section class="trainer-stage" id="stage" aria-live="polite"></section>
-      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
-      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
-    </main>
+<div class="wrap">
+
+  <nav class="top"><a href="index.html">← All trainers</a></nav>
+
+  <p class="eyebrow">plimsoll trainer</p>
+  <h1>Dependencies</h1>
+  <p class="promise">Two lists, not one. What is compiled into the daemon, and what a
+  provider needs while it is running, are different questions with different failure
+  modes. This page is the whole list, short enough to read on a phone.</p>
+
+  <h2>The two lists</h2>
+  <div class="card">
+    <h3>Compiled in</h3>
+    <p>Four Go modules, linked into <code>plimsolld</code>. They are in the process that
+    handles hostile input, so each one is part of the trusted computing base whether or
+    not a particular run touches it.</p>
+    <h3>Needed at run time</h3>
+    <p>Whatever the selected provider reaches outside the binary: a container daemon and
+    its images, or a cloud API and a template. Nothing here is linked into plimsoll. A
+    missing one stops runs from starting; it does not weaken the boundary of a run that
+    did start.</p>
+  </div>
+  <p>Those two failure modes are why the daemon checks them separately. A dependency
+  that is absent makes the service refuse to serve. A dependency that is present but
+  weaker than promised is the thing the startup smoke test exists to catch.</p>
+
+  <h2>Compiled in: four modules</h2>
+  <p>Tap one for what it does, what hostile input reaches it, and what an upgrade has to
+  re-prove. Versions are not on this page on purpose, because they change; they live in
+  <code>go.mod</code>.</p>
+
+  <details>
+    <summary>Connect <span class="what">the RPC layer</span></summary>
+    <div>
+      <p><span class="label">Does:</span> serves the <code>SandboxService</code> over
+      HTTP, decodes each request, and returns each result.</p>
+      <p><span class="label">Hostile input reaches it:</span> yes, first and always. Every
+      request arrives through it before any plimsoll code runs.</p>
+      <p><span class="label">An upgrade re-proves:</span> that request bodies and
+      decompressed messages are still independently capped, and that authentication still
+      runs before the body is read.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>protobuf <span class="what">the wire format</span></summary>
+    <div>
+      <p><span class="label">Does:</span> encodes and decodes every request and response.</p>
+      <p><span class="label">Hostile input reaches it:</span> yes. A caller controls the
+      bytes it parses.</p>
+      <p><span class="label">An upgrade re-proves:</span> that the generated code still
+      matches the schema. The gate regenerates and fails on any drift, so a bump cannot
+      quietly change the wire contract.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>wazero <span class="what">the WebAssembly runtime</span></summary>
+    <div>
+      <p><span class="label">Does:</span> runs the embedded JavaScript engine for the
+      WASM provider, and applies the per-run memory cap in pages.</p>
+      <p><span class="label">Hostile input reaches it:</span> yes, the most directly of
+      the four. It executes the guest.</p>
+      <p><span class="label">An upgrade re-proves:</span> that the memory cap is still
+      enforced by the runtime rather than by a wrapper that reports it. This is the whole
+      reason plimsoll drives wazero itself.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>golang.org/x/net <span class="what">HTTP/2 plumbing</span></summary>
+    <div>
+      <p><span class="label">Does:</span> the HTTP/2 paths the daemon serves and the
+      broker calls out through.</p>
+      <p><span class="label">Hostile input reaches it:</span> indirectly, on both sides of
+      the broker.</p>
+      <p><span class="label">An upgrade re-proves:</span> nothing new, but this is the
+      module whose advisories most often decide which toolchain the canonical build pins.
+      See the two numbers below.</p>
+    </div>
+  </details>
+
+  <p><code>golang.org/x/sys</code> and <code>golang.org/x/text</code> come along
+  indirectly. Adding a fifth direct module is a decision about the trusted surface, not a
+  convenience: anything that parses input or runs code has to earn its place.</p>
+
+  <div class="card bad">
+    <h3>One module is banned by name</h3>
+    <p><code>github.com/fastschema/qjs</code> wraps the same JavaScript engine and offers
+    a <code>MemoryLimit</code> setting. The setting does nothing. A run configured with a
+    limit through that wrapper is a run with no limit, and it reports success either way,
+    which is worse than an error. plimsoll drives wazero directly instead, so the cap is
+    applied by the thing that owns the memory. Do not reintroduce it.</p>
   </div>
 
-  <script id="trainerData" type="application/json">
-  {
-    "id":"dependencies",
-    "title":"plimsoll dependencies",
-    "tagline":"keep the trusted surface explainable",
-    "chapters":[
-      {
-        "id":"two-graphs",
-        "label":"Two dependency graphs",
-        "kind":"matrix",
-        "title":"Build dependencies and runtime dependencies are different",
-        "lede":"plimsoll has two separate dependency lists: the small set of Go libraries baked into the daemon itself, and the outside things a chosen runner pulls in at run time, like a container runtime, images, or a cloud service. Keep them straight.",
-        "stats":[{"label":"direct Go deps","value":"4","tone":"good"},{"label":"native fallback","value":"0","tone":"good"}],
-        "prompt":"Place each dependency at the layer whose compromise or outage it affects.",
-        "rowLabel":"Layer",
-        "columns":["Examples","Present when","Failure scope"],
-        "rows":[
-          {"label":"Go control plane", "cells":[{"text":"Connect, protobuf, x/net","tone":"neutral"},{"text":"every daemon","tone":"warn"},{"text":"RPC/control process","tone":"warn"}]},
-          {"label":"Embedded JS engine", "cells":[{"text":"wazero + qjs-wasi.wasm","tone":"neutral"},{"text":"WASM provider","tone":"warn"},{"text":"same process","tone":"bad"}]},
-          {"label":"Local execution plane", "cells":[{"text":"Docker, runtime, images, seccomp","tone":"neutral"},{"text":"Docker provider","tone":"warn"},{"text":"host kernel boundary","tone":"warn"}]},
-          {"label":"Remote execution plane", "cells":[{"text":"E2B API, envd, template","tone":"neutral"},{"text":"E2B provider","tone":"warn"},{"text":"off-host availability","tone":"warn"}]},
-          {"label":"Guest toolchain", "cells":[{"text":"Node, tsc, tsx, eslint","tone":"neutral"},{"text":"project image/template","tone":"warn"},{"text":"individual project run","tone":"neutral"}]}
-        ],
-        "explainer":{"try":"For a Docker-only deployment, cross out dependencies that are compiled in but not invoked, then identify which still remain in the process TCB.","idea":"Not every library baked in is a wall, but anything that reads untrusted input or runs code still has to be watched closely.","points":["The <code>sandbox</code> package stays transport-neutral.","Provider Preflight turns external dependencies into explicit readiness evidence.","No provider ever falls back to host Node or a host shell."]}
-      },
-      {
-        "id":"go-modules",
-        "label":"Go modules",
-        "kind":"matrix",
-        "title":"Four direct modules carry the control plane",
-        "lede":"The Go dependency list is kept small on purpose. Every new library that parses input or runs code is one more thing hostile code could exploit, so it has to earn its place.",
-        "stats":[{"label":"Go","value":"1.26.2"},{"label":"direct","value":"4","tone":"good"}],
-        "prompt":"Versions shown here mirror <code>go.mod</code>. Indirect modules arrive through the direct graph.",
-        "rowLabel":"Module",
-        "columns":["Version","Role","Trust note"],
-        "rows":[
-          {"label":"connectrpc.com/connect", "cells":[{"text":"v1.20.0","tone":"neutral"},{"text":"RPC client/server","tone":"good"},{"text":"wire/body parsing","tone":"warn"}]},
-          {"label":"github.com/tetratelabs/wazero", "cells":[{"text":"v1.12.0","tone":"neutral"},{"text":"WASM runtime + WASI","tone":"good"},{"text":"in-process engine","tone":"bad"}]},
-          {"label":"golang.org/x/net", "cells":[{"text":"v0.56.0","tone":"neutral"},{"text":"network/HTTP support","tone":"good"},{"text":"protocol surface","tone":"warn"}]},
-          {"label":"google.golang.org/protobuf", "cells":[{"text":"v1.36.11","tone":"neutral"},{"text":"wire messages","tone":"good"},{"text":"generated parser","tone":"warn"}]},
-          {"label":"golang.org/x/sys", "cells":[{"text":"v0.46.0 indirect","tone":"neutral"},{"text":"low-level OS support","tone":"neutral"},{"text":"transitive","tone":"warn"}]},
-          {"label":"golang.org/x/text", "cells":[{"text":"v0.38.0 indirect","tone":"neutral"},{"text":"text support","tone":"neutral"},{"text":"transitive","tone":"warn"}]}
-        ],
-        "explainer":{"try":"Choose which update deserves the most adversarial isolation testing: a docs-only tool, protobuf, or wazero.","idea":"The goal isn't the fewest dependencies for its own sake; it's a trusted surface small enough to understand and test.","points":["Generated Connect/protobuf code is checked into <code>gen/go</code>.","buf generation uses local plugins and needs no network.","Do not add a dependency casually to the hostile-code TCB."]}
-      },
-      {
-        "id":"wasm-stack",
-        "label":"WASM stack",
-        "kind":"quiz",
-        "title":"wazero supplies the real memory control",
-        "lede":"The WASM runner bundles a small JavaScript engine and runs it on the wazero host, setting a real memory cap for each run itself instead of trusting a wrapper to do it.",
-        "stats":[{"label":"artifact","value":"embedded"},{"label":"boundary","value":"process","tone":"warn"}],
-        "prompt":"A proposed wrapper claims to expose <code>MemoryLimit</code>, but the setting is a no-op. What should plimsoll do?",
-        "options":[
-          {"label":"Keep the wrapper for convenience","note":"Document that the limit is best-effort.","correct":false,"result":"a safety control becomes fictional","detail":"An unenforced memory setting is worse than an explicit unsupported error in a hostile-code runner."},
-          {"label":"Drive wazero directly","note":"Use WithMemoryLimitPages for a real per-run cap.","correct":true,"result":"the limit is enforceable","detail":"This is why <code>github.com/fastschema/qjs</code> is banned. plimsoll embeds the QuickJS-ng WASI artifact but owns the wazero configuration.","facts":["qjs wrapper banned","page limit","no FS/network"]},
-          {"label":"Use host Node instead","note":"Avoid WASM complexity by evaluating the snippet natively.","correct":false,"result":"host execution violates the invariant","detail":"There is never a native-process fallback for agent-authored code."}
-        ],
-        "explainer":{"try":"Separate the engine from the boundary: QuickJS interprets JavaScript; wazero constrains WASM memory; neither creates an OS or VM boundary.","idea":"A safety setting only counts if plimsoll can prove the engine underneath actually enforces it, not just that a label says so.","points":["The embedded artifact checksum is test-pinned.","QuickJS source, wasi-sdk, CMake, the local host-call shim, and a deterministic build script are all pinned and documented.","An engine escape lands in plimsolld, so this tier is for lower-risk use only."]}
-      },
-      {
-        "id":"provider-dependencies",
-        "label":"Provider externals",
-        "kind":"matrix",
-        "title":"Each provider fails on a different external edge",
-        "lede":"Each runner leans on different outside things, so the startup check is different for each: WASM needs almost nothing, Docker needs a working daemon and images, E2B needs the cloud API and a template.",
-        "stats":[{"label":"providers","value":"3"},{"label":"offline default","value":"yes","tone":"good"}],
-        "prompt":"Use this map when deciding readiness, rollout strategy, and where immutable artifacts must live.",
-        "rowLabel":"Provider",
-        "columns":["External/runtime needs","Artifact needs","Preflight focus"],
-        "rows":[
-          {"label":"WASM", "cells":[{"text":"none after build","tone":"good"},{"text":"embedded qjs WASM","tone":"warn"},{"text":"configuration enforceable","tone":"good"}]},
-          {"label":"Docker", "cells":[{"text":"daemon + OCI runtime","tone":"warn"},{"text":"snippet + project images, seccomp","tone":"warn"},{"text":"endpoint, images, runsc evidence","tone":"good"}]},
-          {"label":"E2B", "cells":[{"text":"E2B control API + envd","tone":"warn"},{"text":"template / baked toolchain","tone":"warn"},{"text":"API key, tokens, allocations","tone":"good"}]},
-          {"label":"Disabled", "cells":[{"text":"none","tone":"good"},{"text":"none","tone":"good"},{"text":"always refuses","tone":"neutral"}]}
-        ],
-        "explainer":{"try":"Simulate an air-gapped host after artifacts are present. Which configured provider can still create new runners?","idea":"Whether a runner can start right now, meaning are its dependencies up, is a separate question from how strong its wall is. Both matter.","points":["Docker runs guests with network disabled.","No-grant E2B denies outbound internet and public traffic.","Mutable external state should be probed, not assumed from startup config alone."]}
-      },
-      {
-        "id":"toolchain-lockstep",
-        "label":"Guest toolchain",
-        "kind":"scenario",
-        "title":"Bake tools once; deny installs at runtime",
-        "lede":"The Docker and E2B project runners bake in the same fixed set of TypeScript tools, so projects can build without ever letting the code reach the internet to install anything.",
-        "stats":[{"label":"Node image","value":"22-alpine"},{"label":"runtime egress","value":"off","tone":"good"}],
-        "promptLabel":"Change one dependency",
-        "prompt":"Select an update path and inspect whether it preserves the lockstep contract.",
-        "options":[
-          {"label":"npm install during every run","note":"Fetch the newest tools inside the sandbox.","result":"rejected supply-chain path","detail":"Runtime network is denied. Dynamic installs add non-reproducible code and an exfiltration path.","tone":"bad"},
-          {"label":"Bump Docker only","note":"Change tsc in the local project image.","result":"provider drift","detail":"The toolchain test detects that Docker and the E2B template no longer match <code>toolchain.versions</code>.","tone":"warn"},
-          {"label":"Update all three sources","note":"toolchain.versions plus both Dockerfiles, then rebuild/smoke.","result":"lockstep preserved","detail":"Current pins are TypeScript 5.6.3, tsx 4.19.2, and ESLint 9.13.0. Build-time installation leaves runtime network off.","tone":"good","facts":["single version file","two images/templates","smoke after build"]}
-        ],
-        "explainer":{"try":"Imagine only snippet execution is enabled. Decide which toolchain artifacts are unnecessary at runtime and which base image still matters.","idea":"Baking a fixed set of tools into the image turns a live download you can't vouch for into a reviewed, known ingredient.","points":["Project steps stop on first failure.","The in-container runner is a preloaded Node ESM process.","Structural project support still needs artifact smoke evidence."]}
-      },
-      {
-        "id":"upgrade-gate",
-        "label":"Upgrade gate",
-        "kind":"checklist",
-        "title":"Review dependency changes as boundary changes",
-        "lede":"Bumping a dependency isn't done when the number changes. It's done when you've re-checked where it came from, what it now does, and that each runner's safety controls still hold.",
-        "stats":[],
-        "prompt":"Check the evidence required for a dependency or execution artifact upgrade.",
-        "items":[
-          {"label":"Record the exact source and immutable digest","why":"A tag or unexplained embedded binary cannot be reproduced reliably."},
-          {"label":"Review changelog and security impact","why":"Prioritize parsers, runtimes, syscall surface, and boundary behavior."},
-          {"label":"Update all lockstep version sources","why":"The shared toolchain file and both provider images must agree."},
-          {"label":"Run build, vet, unit, race, proto, and lint checks","why":"Control-plane and concurrency regressions need broad local evidence."},
-          {"label":"Run provider and negative security smokes","why":"Prove denied network/routes/syscalls as well as successful execution."},
-          {"label":"Re-run Preflight against the deployment artifact","why":"Local unit tests do not prove an OCI runtime, image, or E2B template exists."},
-          {"label":"Update architecture and audit records","why":"The documented TCB must match what operators actually deploy."},
-          {"label":"Generate an SBOM for release artifacts","why":"Useful supply-chain evidence beyond the current minimum.","required":false}
-        ],
-        "ready":"The change has source, behavioral, concurrency, and live provider evidence. It can enter the normal rollout process.",
-        "notReady":"The new dependency has not re-earned trust. Keep the previous artifact or leave execution disabled.",
-        "explainer":{"try":"Check only unit tests and observe why that cannot prove the artifact digest or live runtime contract.","idea":"An upgrade has to clear the same safety bar as the first launch; a new version has to re-earn trust, not inherit it.","points":["Never reintroduce <code>fastschema/qjs</code>.","Prefer standard library and existing primitives when they fit.","Close known provenance gaps before claiming reproducible supply-chain inputs."]}
-      }
-    ]
-  }
-  </script>
+  <h2>Needed at run time, per provider</h2>
+
+  <div class="card">
+    <h3>WASM <span class="tier">process tier</span></h3>
+    <dl>
+      <dt>Needs outside the binary</dt>
+      <dd>Nothing. The engine is embedded in the executable.</dd>
+      <dt>Fails when</dt>
+      <dd>Effectively never for missing dependencies. It is the provider that still works
+      on an air-gapped host with nothing installed.</dd>
+      <dt>The trade</dt>
+      <dd>An escape from the engine lands inside <code>plimsolld</code> itself, so this
+      tier is for development and for code you are not treating as hostile.</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h3>Docker <span class="tier">container, or kernel with runsc</span></h3>
+    <dl>
+      <dt>Needs outside the binary</dt>
+      <dd>A reachable container daemon, a runtime (<code>runc</code>, or
+      <code>runsc</code> for a gVisor boundary), and the images named by
+      <code>SANDBOX_DOCKER_IMAGE</code> and <code>SANDBOX_DOCKER_PROJECT_IMAGE</code>.
+      Simulation runs add <code>SANDBOX_DOCKER_MODULE_IMAGE</code>.</dd>
+      <dt>Fails when</dt>
+      <dd>The daemon is down, an image is absent, or the runtime is not registered. All
+      three are startup failures, not run failures: the daemon refuses to serve.</dd>
+      <dt>Worth knowing</dt>
+      <dd>Set <code>SANDBOX_REQUIRE_PINNED_IMAGES</code> and both images must be named by
+      digest. Every run then launches the exact image the startup check inspected, so
+      re-pointing a mutable tag cannot smuggle a different image past it.</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h3>E2B <span class="tier">virtual machine</span></h3>
+    <dl>
+      <dt>Needs outside the binary</dt>
+      <dd>The E2B API, an <code>E2B_API_KEY</code>, and a template named by
+      <code>E2B_TEMPLATE</code> that already bakes the toolchain. Host-API grants need
+      <code>E2B_GUARD_URL</code> as well.</dd>
+      <dt>Fails when</dt>
+      <dd>The network is down, the key is wrong, or the template is missing. Its startup
+      configuration check cannot tell you any of that, which is why the behavioural smoke
+      test creates one real sandbox before the service will serve.</dd>
+      <dt>Worth knowing</dt>
+      <dd>This is the only provider whose dependency is somebody else's service, and the
+      only one that bills. That is also why no automated run in this project touches it.</dd>
+    </dl>
+  </div>
+
+  <h2>Guest tools are baked, never fetched</h2>
+  <p>A project run compiles and lints inside a sandbox with no network. That works
+  because the tools are already in the image: the project image carries Node and the
+  TypeScript toolchain, a derived image carries Python with NumPy and SciPy, and a third
+  carries the simulation worker with its compiled models. Third-party packages for
+  projects are baked into a derived image at build time, where Node's own lookup finds
+  them.</p>
+  <p>The point is not convenience. A live install inside a run would mean fetching code
+  you have not reviewed, at the moment you are least able to review it, into the process
+  you trust least. Baking turns that into a reviewed ingredient of an image you built.</p>
+
+  <h2>Pinned, because a tag is mutable</h2>
+  <p>Anything fetched from outside the module is pinned to exact bytes, and each pin has
+  a file that holds it.</p>
+  <dl>
+    <dt>The embedded JavaScript engine</dt>
+    <dd>A QuickJS-ng build, pinned by SHA-256, with a test that fails if the embedded
+    artifact stops matching. Recorded in <code>sandbox/wasm/README.md</code>.</dd>
+    <dt>The gVisor release</dt>
+    <dd>Installed by a script that pins a specific release and its checksum rather than
+    tracking the latest one.</dd>
+    <dt>The three gate tools</dt>
+    <dd>The gate shells out to tools that are not Go dependencies, so nothing in
+    <code>go.mod</code> can pin them. <code>gate-tools.versions</code> does, and the
+    gate's first step refuses to run against any other version. Otherwise a passing gate
+    would only mean it passed against whatever happened to be installed.</dd>
+    <dt>The code generators</dt>
+    <dd>Pinned by <code>go.mod</code> tool directives and run through the Go toolchain,
+    so regeneration needs no network at all.</dd>
+    <dt>Third-party CI actions</dt>
+    <dd>Pinned by commit, not by tag, for exactly the same reason as everything above.</dd>
+  </dl>
+
+  <h2>The toolchain is two numbers on purpose</h2>
+  <p><code>go.mod</code> carries a language floor and a pinned toolchain, and they are
+  deliberately different. The floor is the oldest version that can build this module, kept
+  low so a project that depends on plimsoll is not forced to upgrade. The pinned toolchain
+  is the one the canonical build uses, kept current because the standard library it ships
+  had advisories in the HTTP/2 and reverse-proxy paths this code actually calls. Build the
+  daemon with the pinned one or newer.</p>
+
+  <h2>Bumping any of it</h2>
+  <p>An upgrade is not finished when the number changes. It is finished when the same
+  checks that let the thing in the first time pass again, in this order.</p>
+  <ol class="gate">
+    <li><strong>The local gate.</strong> Build, vet, race tests, lint, schema lint with a
+    generated-code drift check, and a vulnerability scan.
+    <pre><code>make audit</code></pre></li>
+    <li><strong>The container suite.</strong> Adds the real isolation tests: a container
+    comes up read-only, every writable mount is a sized no-execute temporary filesystem,
+    the syscall profile loads, and the broker refuses what it should. Under this flag a
+    missing daemon fails instead of skipping.
+    <pre><code>make audit DOCKER=1</code></pre></li>
+    <li><strong>The kernel-tier run.</strong> The same suite again under
+    <code>runsc</code>, as its own run so a gVisor failure is attributable on its own.</li>
+    <li><strong>The live VM suite, by hand.</strong> It drives a paid service, so it is
+    never part of an automated run and never has a key in CI. A green automated gate
+    therefore proves strictly less than a full local one, and the repository says so
+    rather than implying coverage it does not have.</li>
+  </ol>
+  <p>Unit tests alone cannot do this job. They cannot tell you that an artifact is the one
+  you pinned, or that a runtime still enforces what its flag claims. Those are questions
+  about the world, and only a run against the world answers them.</p>
+
+  <h2>Keep reading</h2>
+  <ul class="links">
+    <li><a href="concepts.html"><b>Internal · trainer site →</b><strong>Concepts and providers</strong><small>Why nothing runs by default, what each provider's wall is, and what its startup check can and cannot prove.</small></a></li>
+    <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>How agent code reaches an API without ever holding the credential, and why each provider frames that differently.</small></a></li>
+    <li><a href="https://connectrpc.com/docs/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Connect</strong><small>The RPC framework this service is built on.</small></a></li>
+    <li><a href="https://protobuf.dev/overview/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Protocol Buffers</strong><small>The schema and wire format underneath every request.</small></a></li>
+    <li><a href="https://wazero.io/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>wazero</strong><small>The zero-dependency WebAssembly runtime that runs the embedded engine and applies its memory cap.</small></a></li>
+    <li><a href="https://gvisor.dev/docs/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>gVisor</strong><small>The user-space kernel behind the <code>runsc</code> runtime and the kernel tier.</small></a></li>
+    <li><a href="https://github.com/quickjs-ng/quickjs" target="_blank" rel="noopener"><b>External · source repo ↗</b><strong>QuickJS-ng</strong><small>Home of the JavaScript engine that is compiled to WebAssembly and embedded by digest.</small></a></li>
+  </ul>
+
+  <footer>
+    <p>Every claim here is checked against the shipping source by the tests in this
+    directory: the environment variables must be ones the daemon reads, and any Go name,
+    metric, or numeric limit must match the code. A page that drifts fails the gate.</p>
+  </footer>
+
+</div>
 </body>
 </html>

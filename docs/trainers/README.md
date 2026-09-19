@@ -19,8 +19,7 @@ hands off to the Architecture trainer, which walks the same trip with the real g
 
 The curriculum then flows in two tracks:
 
-1. Learn the system: concepts, architecture, providers, capabilities, operations,
-   and dependencies.
+1. Learn the system: concepts, architecture, providers, and dependencies.
 2. Build with it: client integrations, MCP/agent product design, making that surface
    self-describing (schemas, annotations, typed sandbox globals, a drift test), and
    customer recipes.
@@ -28,28 +27,59 @@ The curriculum then flows in two tracks:
    API lab against the fictional inventory API, and inspect the shipped metadata-only
    efficiency advisor plus the E2B guard-backed grant path.
 
-Most trainers are one HTML file containing an embedded JSON lesson model. Shared
-rendering and styles live in `trainer.js` and `trainer.css`. The Private API Lab
-is intentionally a page-local experience: its process graph, wire inspector, and
-two trace modes live in `private-api.js` and `private-api.css` because a chapter
-renderer would hide the process ownership the lesson is trying to make obvious.
+Every trainer is one HTML file on the shared base `plain.css`, with its own markup,
+its own `<style>` for whatever makes it itself, and its own script when it has an
+instrument to drive (a load-line console, a route checker, a breaker strip chart, a
+call ledger). The one exception is the Architecture explorer, which is an interactive
+map with its own model and script. See **Page shapes** below.
 
 No page in the catalog calls a network API at runtime. Every number a lesson shows
 is either part of its embedded lesson model or computed in the page, so a trainer
 cannot present fixture output as if it were a live run.
 
+## Page shapes
+
+Which shape a page uses is declared in `pageShape` in
+[`trainer_test.go`](trainer_test.go), and the structural checks follow that
+declaration, so a page that is deliberately different is a row of data rather than an
+exception inside each test.
+
+| Shape | What it is | Pages |
+| --- | --- | --- |
+| `plain` (default) | One scrolling document on the shared base `plain.css` (palette, type, section rhythm with the draft numerals, cards, native disclosures, segmented controls, sliders, tone chips, reading list, footer), with its own markup, its own `<style>` for whatever makes it itself, and its own script if it has an instrument to drive. Everything the page computes, it computes in the page from the daemon's published rules; nothing calls a network. | every page but one |
+| `explorer` | `trainerData` in `path-explorer` mode plus a page-local interactive map (`architecture.css`, `architecture.mjs`, `architecture-model.mjs`). | `architecture.html` |
+
+The chapter renderer (`trainer.js`, `trainer.css`) was the default until 2026-09-19.
+No catalog page uses it now: eleven pages were rebuilt as plain pages with their own
+instruments, because a chapter-at-a-time renderer could not draw the picture each
+subject needed. `trainer.css` still styles the catalog, the quick start and the demo
+page, and `trainer.js` still drives the private positioning page (see **Pages that are
+not in this directory**), which is why both are kept.
+
+A `plain` page is checked for what that shape promises: it loads `plain.css` and not
+the lesson stylesheet, it has one `<h1>`, it links back to the catalog, and its own
+markup uses neither a fixed position nor `100vw`, the two things that make a page
+awkward on a phone. `plain.css` itself is checked once for being mobile first (the
+narrow layout is the base, a `min-width` media query is the enhancement, no
+`prefers-color-scheme`). Adding a plain page means adding its row to `pageShape`;
+nothing else.
+
 ## Editing a trainer
 
-- Keep one decision or mental model per chapter, unless a process graph makes
-  the boundary clearer as one continuous experience.
-- Use one of the renderer kinds declared in `trainer.js`: `scenario`, `quiz`,
-  `pipeline`, `matrix`, `budget`, `checklist`, or `sim`. Simulators are
-  named entries in a small registry and keep their behavior in page-local assets.
-- Keep learner-controlled text escaped. The embedded lesson copy is trusted and
-  may use small amounts of HTML for code and links.
-- Update the catalog when adding or renaming a page.
-- Run `go test ./docs/trainers` and `node --check docs/trainers/trainer.js`.
-  For the Flight Recorder, also run `node --check docs/trainers/private-api.js`.
+- Give each page one instrument that shows the subject's own mechanism (the floor
+  against the evidence, the route check, the breaker, the detector), computed in the
+  page from the daemon's published rules, and keep the rest short enough to read on a
+  phone. Section numbers are the faint draft numerals; headings state a fact, never a
+  play on words.
+- Keep learner-controlled text as `textContent`. Page copy is trusted and may use
+  small amounts of HTML for code and links; anything a reader types (the route
+  checker's path) is never placed with `innerHTML`.
+- Update the catalog when adding or renaming a page, and regenerate the social cards
+  when a title or description changes (`docs/social/gen-cards.mjs`).
+- Run `go test ./docs/trainers`. To see a page at phone and desktop width with a
+  check for page errors and horizontal overflow, render it headless (a script for
+  this lives under the gitignored `tmp/` while a session is open; the shape is six
+  lines of Playwright).
 
 The facts about providers and grants follow [`AGENTS.md`](../../AGENTS.md), not the
 older archived architecture HTML. In particular, WASM is only process-tier;

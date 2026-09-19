@@ -70,11 +70,13 @@ func (t *CallTrace) Len() int {
 	return len(t.Calls)
 }
 
-// maxTraceRows caps a run's recorded calls. The broker already bounds a run to
-// maxHostCallsPerRun brokered calls, so this is a defensive ceiling that keeps the
-// trace cardinality-safe even if that budget later changes; overflow increments
-// CallTrace.Dropped rather than growing the slice.
-const maxTraceRows = maxHostCallsPerRun
+// maxTraceRows caps a run's recorded calls, and deliberately does NOT follow a grant
+// that raises its call budget: a profile may allow 100,000 brokered calls (a controller
+// stepping a plant once per tick), and holding 100,000 rows per run would make the
+// trace a ledger rather than bounded evidence. Beyond the cap a call is counted in
+// CallTrace.Dropped instead of stored, which is the signal the detectors already read
+// to report a count as "at least".
+const maxTraceRows = DefaultMaxHostCalls
 
 // callTrace accumulates CallRows for one run. Broker handlers run concurrently, so
 // every mutation takes the mutex. Construct with newCallTrace; a nil *callTrace is

@@ -8,8 +8,11 @@ stronger tier. Everything up to the last step runs on one machine with no docker
 no account and no network. Nothing here spends money; the E2B provider is not part
 of this page.
 
-You need Go 1.26.6 or newer and git. The last step needs Linux, docker, and root
-for the gVisor installer.
+You need Go 1.26.6 or newer and git. The module's own floor is lower, so a project
+that depends on plimsoll builds unchanged, but the daemon wants the pinned
+toolchain: `govulncheck` is clean there, while earlier 1.26.x carried standard
+library advisories in the reverse-proxy and HTTP/2 paths this code calls. The last
+step needs Linux, docker, and root for the gVisor installer.
 
 ## 1. Clone and build
 
@@ -193,18 +196,57 @@ kernel`, because the floor is now met; the daemon's startup log carries
 `isolation=kernel` after it has verified the runtime registration and run the same
 mount checks under it. That tier is provider and configuration evidence plus the
 behavioral smoke test, not an attestation, and the README says exactly what it
-rests on under [Isolation tiers](../README.md#isolation-tiers).
+rests on under [docs/isolation-tiers.md](isolation-tiers.md).
+
+## Embedding it instead of running the daemon
+
+If your program is the one that should run the code, skip the daemon and use the
+package. `sandbox.Build` reads the environment, returns an error rather than guessing,
+and selects the Disabled provider when `SANDBOX_PROVIDER` is unset, so execution is
+opt-in and cannot be switched on by accident.
+
+```sh
+go get github.com/plimsollmark/plimsoll
+```
+
+```go
+provider, err := sandbox.Build(os.Getenv)   // errors rather than guessing
+if err != nil { return err }
+if err := provider.EnsureReady(ctx); err != nil { return err } // preflight + smoke test
+
+result, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
+    Code:    userCode,
+    Timeout: 10 * time.Second,
+})
+// err means the run never happened. Code that merely failed returns
+// result.ExitCode != 0, which is a normal result, not an error.
+```
+
+The output caps apply either way: a stream is cut at the provider's limit (64 KiB per
+stream by default) and the result's truncation flags are the only way a caller learns
+it happened, because the retained bytes are never annotated in band. See
+[what comes back](run-results.md).
+
+## Installing without a clone
+
+```sh
+go install github.com/plimsollmark/plimsoll/cmd/plimsolld@latest
+go install github.com/plimsollmark/plimsoll/cmd/plimsoll-clients@latest
+```
+
+There are no prebuilt binaries and no daemon container image yet; `go install` builds
+from the tagged module source, verified against `sum.golang.org` like any other module.
 
 ## Where next
 
-- The README's [what comes back](../README.md#what-comes-back-and-what-it-means)
+- [What comes back, and what it means](run-results.md)
   explains every outcome the client can see and which ones are safe to retry.
 - [docs/callers.md](callers.md) for a second caller, rotation, revocation, and what
   a running daemon does with a changed file.
 - Grants, for letting the snippet call your own API without ever holding the
-  credential: README [capability grants](../README.md#capability-grants), then
+  credential: [capability grants](capability-grants.md), then
   `go run ./examples/grant`.
 - Production posture: `PLIMSOLL_HARDENED=1` refuses to serve unless every advertised
-  property is verifiably in force (README [hardened mode](../README.md#hardened-mode)).
+  property is verifiably in force ([hardened mode](hardened-mode.md)).
 - The [interactive lessons](https://plimsollmark.github.io/plimsoll/trainers/) cover
   the same ground with pictures and no clone.

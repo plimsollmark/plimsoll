@@ -26,9 +26,16 @@
 
     <header class="catalog-head">
       <p class="catalog-eyebrow">interactive field guide</p>
-      <h2>Learn the boundary, then trust the signal.</h2>
-      <p>Eighteen compact trainers turn plimsoll's security model and product shape into decisions you can make. Change configurations, trace requests, design integrations, compare Docker's agent products, and test deployment gates without running untrusted code. The final four go deeper on the shared API broker, the caller's private API boundary, its shipped metadata-only advisor, and the capacity endpoint that makes backpressure recover early.</p>
+      <h2>Lessons on running code you do not trust.</h2>
+      <p>Twelve compact trainers, each one page, with no build step and no network calls. They cover what the walls are and how the daemon proves them, how to call it from Go or from an agent, and how the broker lets sandboxed code reach an API without ever holding the key. Four go deeper: the broker's transports, a caller's own private API, the metadata-only efficiency advisor, and the capacity signal that lets the broker back off from an overloaded API.</p>
     </header>
+
+    <a class="catalog-live" href="../examples/oracle/index.html">
+      <p class="catalog-eyebrow">see one real run · physics oracle</p>
+      <strong>An agent wrote a controller. A compiled cart-pole judged it.</strong>
+      <p>Not a lesson: every number on that page came from one run through the docker tier on 2026-09-18. The controller was the only file the caller sent, the plant and the judge were baked into the sandbox image, and the judge recorded every 10 ms tick after running the controller as a separate process. The accepted controller balanced for 20 s and produced the same trajectory fingerprint twice; the agent's first draft dropped the pole at 5.96 s. Replay both in the browser.</p>
+      <span class="catalog-cta">Open the run report →</span>
+    </a>
 
     <h2 class="catalog-section-title">Learn the system</h2>
     <section class="catalog-grid" aria-label="System trainers">
@@ -42,10 +49,10 @@
 
       <a class="catalog-card" href="concepts.html" style="--card-accent:#177f99">
         <span class="catalog-number">01 / FOUNDATIONS</span>
-        <h2>Concepts</h2>
-        <p>Choose providers, compare isolation tiers, distinguish guest failures from infrastructure errors, and tune admission capacity.</p>
-        <div class="catalog-topics"><span>safe default</span><span>isolation</span><span>capabilities</span><span>results</span></div>
-        <span class="catalog-cta">Start the concepts trainer →</span>
+        <h2>Concepts and providers</h2>
+        <p>The boundary as the load line the project is named for: paint a provider's mark, set the caller's floor, and read the dispatch ticket. Then what each provider must prove at startup, what a grant is and is not, the three result channels, admission, and the switch-on checklist.</p>
+        <div class="catalog-topics"><span>load line</span><span>WASM/gVisor/E2B</span><span>Preflight</span><span>results</span><span>admission</span></div>
+        <span class="catalog-cta">Read the line →</span>
       </a>
 
       <a class="catalog-card" href="architecture.html" style="--card-accent:#b46b18">
@@ -56,43 +63,19 @@
         <span class="catalog-cta">Open the path explorer →</span>
       </a>
 
-      <a class="catalog-card" href="providers.html" style="--card-accent:#39765c">
-        <span class="catalog-number">03 / EXECUTION PLANES</span>
-        <h2>Providers</h2>
-        <p>Choose WASM, Docker/runc, Docker/runsc, or E2B from the boundary and operation you actually require.</p>
-        <div class="catalog-topics"><span>WASM</span><span>gVisor</span><span>E2B</span><span>Preflight</span></div>
-        <span class="catalog-cta">Choose a provider →</span>
-      </a>
-
-      <a class="catalog-card" href="capabilities.html" style="--card-accent:#934954">
-        <span class="catalog-number">04 / DELEGATED AUTHORITY</span>
-        <h2>Capabilities</h2>
-        <p>Follow named profiles, route allowlists, per-run tokens, caller ACLs, and the shared broker behind Docker and WASM JavaScript grants.</p>
-        <div class="catalog-topics"><span>grants</span><span>routes</span><span>JWT</span><span>broker</span></div>
-        <span class="catalog-cta">Narrow the authority →</span>
-      </a>
-
-      <a class="catalog-card" href="operations.html" style="--card-accent:#6754a6">
-        <span class="catalog-number">05 / PRODUCTION</span>
-        <h2>Operations</h2>
-        <p>Configure resource envelopes, size admission, interpret probes, and assemble launch evidence.</p>
-        <div class="catalog-topics"><span>resources</span><span>capacity</span><span>readyz</span><span>audit</span></div>
-        <span class="catalog-cta">Operate the service →</span>
-      </a>
-
       <a class="catalog-card" href="dependencies.html" style="--card-accent:#9a4e78">
-        <span class="catalog-number">06 / TRUSTED SURFACE</span>
+        <span class="catalog-number">03 / TRUSTED SURFACE</span>
         <h2>Dependencies</h2>
-        <p>Map the small Go dependency graph, provider-specific runtimes, baked toolchains, and the checks required before an upgrade lands.</p>
+        <p>The whole trusted surface on one page: four Go modules and what each one touches, what every provider needs outside the binary, what is pinned by digest, and the checks an upgrade has to clear. A reference sheet, not a lesson.</p>
         <div class="catalog-topics"><span>Go modules</span><span>runtimes</span><span>TCB</span><span>supply chain</span></div>
-        <span class="catalog-cta">Inspect the dependency map →</span>
+        <span class="catalog-cta">Read the dependency list →</span>
       </a>
     </section>
 
     <h2 class="catalog-section-title">Build with it</h2>
     <section class="catalog-grid product-grid" aria-label="Product and integration trainers">
       <a class="catalog-card" href="integrations.html" style="--card-accent:#1c779f">
-        <span class="catalog-number">07 / CLIENT CONTRACT</span>
+        <span class="catalog-number">04 / CLIENT CONTRACT</span>
         <h2>Integrations</h2>
         <p>Embed a local provider or use the official remote client without losing validation, capability, or isolation semantics.</p>
         <div class="catalog-topics"><span>Go client</span><span>Connect</span><span>projects</span><span>results</span></div>
@@ -100,7 +83,7 @@
       </a>
 
       <a class="catalog-card" href="agent-products.html" style="--card-accent:#c06c26">
-        <span class="catalog-number">08 / MCP + AGENTS</span>
+        <span class="catalog-number">05 / MCP + AGENTS</span>
         <h2>Agent products</h2>
         <p>Design a bounded <code>run_code</code> surface with tenant identity, strict envelopes, quotas, and useful failure UX.</p>
         <div class="catalog-topics"><span>MCP</span><span>code mode</span><span>identity</span><span>quotas</span></div>
@@ -108,7 +91,7 @@
       </a>
 
       <a class="catalog-card" href="discoverability.html" style="--card-accent:#7857c8">
-        <span class="catalog-number">09 / DISCOVERABLE CONTRACT</span>
+        <span class="catalog-number">06 / DISCOVERABLE CONTRACT</span>
         <h2>Discoverable tools</h2>
         <p>Stop clients guessing: give every tool an <code>outputSchema</code> and honest annotations, type the injected sandbox globals, serve the contract at runtime, and gate it with a drift test.</p>
         <div class="catalog-topics"><span>outputSchema</span><span>annotations</span><span>.d.ts</span><span>drift test</span></div>
@@ -116,7 +99,7 @@
       </a>
 
       <a class="catalog-card" href="customer-examples.html" style="--card-accent:#287d69">
-        <span class="catalog-number">10 / COOKBOOK</span>
+        <span class="catalog-number">07 / COOKBOOK</span>
         <h2>Customer examples</h2>
         <p>Apply concrete recipes for SaaS code mode, analytics, approved automation, project evaluation, and private deployment.</p>
         <div class="catalog-topics"><span>recipes</span><span>SDK preamble</span><span>approval</span><span>private</span></div>
@@ -127,7 +110,7 @@
     <h2 class="catalog-section-title">Broker deep dives</h2>
     <section class="catalog-grid" aria-label="Broker deep-dive trainers">
       <a class="catalog-card" href="brokering.html" style="--card-accent:#177f99">
-        <span class="catalog-number">11 / BROKER TRANSPORTS</span>
+        <span class="catalog-number">08 / BROKER TRANSPORTS</span>
         <h2>The API Broker</h2>
         <p>How agent code reaches your API without ever holding the key, how Docker and WASM use one shared guard through different transports, and why E2B remains the hard case.</p>
         <div class="catalog-topics"><span>broker</span><span>egress</span><span>forward proxy</span><span>E2B</span></div>
@@ -135,7 +118,7 @@
       </a>
 
       <a class="catalog-card" href="private-api.html" style="--card-accent:#6754a6">
-        <span class="catalog-number">12 / PRIVATE API LAB</span>
+        <span class="catalog-number">09 / PRIVATE API LAB</span>
         <h2>Private API Flight Recorder</h2>
         <p>Stop guessing about the call graph. Follow the LLM, MCP host, Node gateway, Go dataplane, plimsoll, isolated guest, and private API as two traces diverge and return.</p>
         <div class="catalog-topics"><span>process graph</span><span>MCP wire</span><span>private REST</span><span>code mode</span></div>
@@ -143,7 +126,7 @@
       </a>
 
       <a class="catalog-card" href="advisor.html" style="--card-accent:#b8860b">
-        <span class="catalog-number">13 / ADVISORY EVIDENCE</span>
+        <span class="catalog-number">10 / ADVISORY EVIDENCE</span>
         <h2>Efficiency Advisor</h2>
         <p>See how the shipped advisor analyzes bounded broker metadata after a run, routes a fix to the agent or operator, and never changes execution.</p>
         <div class="catalog-topics"><span>metadata</span><span>broker</span><span>call patterns</span><span>insights</span></div>
@@ -151,7 +134,7 @@
       </a>
 
       <a class="catalog-card" href="capacity-endpoint.html" style="--card-accent:#3d8168">
-        <span class="catalog-number">14 / BACKPRESSURE</span>
+        <span class="catalog-number">11 / BACKPRESSURE</span>
         <h2>The capacity endpoint</h2>
         <p>See how a cheap readiness or capacity read lets the broker shed calls under upstream overload, detect recovery early, and wire the probe from OpenAPI.</p>
         <div class="catalog-topics"><span>429/503</span><span>circuit breaker</span><span>health_check</span><span>specgen</span></div>
@@ -159,16 +142,6 @@
       </a>
     </section>
 
-    <h2 class="catalog-section-title">API surface</h2>
-    <section class="catalog-grid" aria-label="API surface trainers">
-      <a class="catalog-card" href="two-entry-points.html" style="--card-accent:#c06c26">
-        <span class="catalog-number">15 / TWO OPERATIONS</span>
-        <h2>Two entry points</h2>
-        <p>Why <code>run_javascript</code> and <code>run_project</code> are separate contracts rather than one tool with a mode flag: different providers support them, they fail differently, and they cost differently.</p>
-        <div class="catalog-topics"><span>snippet vs project</span><span>ErrUnsupported</span><span>Outcome</span><span>tool design</span></div>
-        <span class="catalog-cta">Compare the contracts →</span>
-      </a>
-    </section>
 
     <p class="catalog-note"><strong>How to use these:</strong> open any page directly or serve this directory as static files. Progress stays in your browser. The lessons have no build step, analytics, or third-party JavaScript.</p>
   </main>

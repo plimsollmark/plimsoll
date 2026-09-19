@@ -243,6 +243,10 @@ type profileConfig struct {
 	// so a business endpoint that merely returns 200 buys nothing and misleads the next
 	// reader; plimsoll-specgen will not infer one from an endpoint's name for that reason.
 	HealthCheck string `json:"health_check"`
+	// MaxCalls raises the run's brokered-call budget above the default (256) for a
+	// workload that is a loop by design, such as a controller stepping a plant one
+	// call per tick; the sandbox package caps it at its ceiling (100,000).
+	MaxCalls int `json:"max_calls"`
 
 	// PreambleFile points at a .js file (relative to the grants file) to use as the
 	// preamble, for SDKs too large to inline. Mutually exclusive with Preamble.
@@ -404,6 +408,7 @@ func Load(path string) (*Registry, error) {
 			Preamble:    preamble,
 			Minter:      minter,
 			HealthCheck: health,
+			MaxCalls:    pc.MaxCalls,
 		}
 		if err := grant.Validate(); err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)

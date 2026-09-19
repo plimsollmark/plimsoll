@@ -15,138 +15,416 @@
   <meta property="og:image:height" content="640">
   <meta name="twitter:card" content="summary_large_image">
   <title>Plain English · plimsoll trainer</title>
-  <link rel="stylesheet" href="trainer.css">
-  <script src="trainer.js" defer></script>
+  <link rel="stylesheet" href="plain.css">
+  <style>
+  /* Page-local styles; the base every plain page shares is plain.css. This page assumes
+     no vocabulary at all. Its two instruments: a cross-section you can move a stranger's
+     code around in, and one sentence that rewrites itself between jargon and plain
+     words. */
+
+  /* 01: the cross-section. */
+  .scene { margin-top: 12px; padding: 10px 10px 4px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); }
+  .scene svg { display: block; width: 100%; height: auto; }
+  .scene-caption { margin: 8px 6px 10px; font-size: 0.92rem; }
+  .scene-caption b { color: var(--ink); }
+  .walls { display: flex; gap: 6px; align-items: center; margin: 0 6px 12px; font-size: 0.82rem; color: var(--muted); }
+  .walls i { display: inline-block; width: 10px; height: 22px; border-radius: 3px; background: var(--hull); }
+  .walls i.off { background: #e4dfd2; }
+
+  /* 02: the sentence and its terms. A term is a button so a thumb can tap it; the
+     inked one is the term whose card is open below. */
+  .sentence { margin: 12px 0 0; padding: 16px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); font-family: var(--serif); font-size: 1.28rem; line-height: 1.55; }
+  .term { display: inline; padding: 0 3px; border: 0; border-bottom: 2px solid var(--accent); border-radius: 3px 3px 0 0; background: var(--accent-soft); cursor: pointer; font: inherit; line-height: inherit; }
+  .term[aria-pressed="true"] { background: var(--hull); color: #fff; border-bottom-color: var(--hull); }
+  .term:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .term-card { margin-top: 10px; }
+  .term-card .word { font-family: var(--mono); font-weight: 700; color: var(--accent-deep); }
+  .term-card dl { margin: 8px 0 0; }
+  .term-card dt { margin-top: 8px; font-size: 0.78rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+  .term-card dd { margin: 2px 0 0; }
+  .glossary { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+  .glossary button { min-height: 40px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); cursor: pointer; font-family: var(--mono); font-size: 0.86rem; font-weight: 700; }
+  .glossary button[aria-pressed="true"] { background: var(--hull); color: #fff; border-color: var(--hull); }
+
+  /* 03: the trip, five numbered cards. */
+  .trip { margin: 12px 0 0; padding: 0; list-style: none; counter-reset: step; display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .trip li { position: relative; padding: 14px 14px 14px 56px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+  .trip li::before { counter-increment: step; content: counter(step); position: absolute; left: 14px; top: 12px; width: 30px; height: 30px; border-radius: 50%; background: var(--hull); color: #fff; font-family: var(--serif); font-weight: 700; font-size: 1.1rem; display: grid; place-items: center; }
+  .trip b { display: block; }
+  .trip small { display: block; color: var(--muted); font-size: 0.94rem; line-height: 1.45; margin-top: 2px; }
+  .trip li.wall { border-left: 5px solid var(--warn); }
+  .trip li.receipt { border-left: 5px solid var(--good); }
+
+  /* 04: three doors, and a job to match to one. */
+  .doors { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
+  .door { padding: 14px; border-radius: 14px; background: var(--panel); border: 2px solid var(--line); transition: border-color 0.15s, box-shadow 0.15s; }
+  .door.lit { border-color: var(--hull); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .door.dim { opacity: 0.55; }
+  .door h3 { margin: 0; font-family: var(--serif); font-size: 1.3rem; }
+  .door h3 small { display: block; font-family: var(--mono); font-size: 0.72rem; font-weight: 600; color: var(--faint); letter-spacing: 0.06em; margin-top: 2px; }
+  .door dl { margin: 10px 0 0; font-size: 0.92rem; }
+  .door dt { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-top: 8px; }
+  .door dd { margin: 1px 0 0; }
+  .job-answer { margin-top: 12px; }
+
+  @media (min-width: 860px) {
+    .trip { grid-template-columns: 1fr 1fr; }
+    .trip li:last-child { grid-column: 1 / -1; }
+    .doors { grid-template-columns: 1fr 1fr 1fr; }
+  }
+  </style>
 </head>
 <body>
-  <div class="trainer-shell">
-    <aside class="trainer-rail">
-      <a class="trainer-back" href="index.html">← All trainers</a>
-      <div class="trainer-brand"><span class="trainer-mark">PL</span><span><strong id="trainerTitle">Plain English</strong><small id="trainerTagline">Loading…</small></span></div>
-      <ol class="chapter-list" id="chapters" aria-label="Trainer chapters"></ol>
-      <p class="rail-note">No prior knowledge assumed. Click every option; the plain-English explanations live in the results. When you're done, the <a href="architecture.html">Architecture</a> trainer is the same trip with the real names.</p>
-    </aside>
-    <main class="trainer-main">
-      <header class="trainer-head"><div><p class="chapter-kicker" id="chapterKicker"></p><h1 id="chapterTitle"></h1><p class="chapter-lede" id="chapterLede"></p></div><div class="head-stats" id="headStats" aria-live="polite"></div></header>
-      <section class="trainer-stage" id="stage" aria-live="polite"></section>
-      <section class="trainer-deck"><div class="deck-controls" id="lessonControls"></div><aside class="explainer" id="explainer"></aside></section>
-      <footer class="trainer-foot"><button class="nav-button" id="prevChapter">← Previous</button><div class="progress-dots" id="progressDots"></div><button class="nav-button primary" id="nextChapter">Next idea →</button></footer>
-    </main>
-  </div>
+<div class="wrap wide">
 
-  <script id="trainerData" type="application/json">
-  {
-    "id":"plain-english",
-    "title":"Plain English",
-    "tagline":"the jargon, decoded, start here",
-    "chapters":[
-      {
-        "id":"walls",
-        "label":"The big idea",
-        "kind":"scenario",
-        "title":"It all comes down to how many walls",
-        "lede":"Untrusted code has to run somewhere. The only question that really matters: if it turns out to be malicious, how much can it reach? Every choice below is secretly a choice of how many walls stand between that code and your stuff.",
-        "stats":[{"label":"the real question","value":"blast radius","tone":"good"},{"label":"walls to pick from","value":"0 to 3"}],
-        "promptLabel":"Choose where a stranger's code runs",
-        "prompt":"You have a snippet of JavaScript from someone you don't trust. Pick where to run it, then read the last line of each result to see how exposed you'd be.",
-        "options":[
-          {"label":"Inside my own app (wasm)","note":"Fastest. No separate machine: a sealed mini-interpreter runs it right inside your program.","tone":"warn","result":"one thin wall","detail":"A tiny sealed JavaScript engine runs the code inside your own running program. Great for speed and basically-trusted code. But it shares your app's memory and permissions, so if that engine ever has a bug, the escaped code is standing <em>inside your app</em>.","facts":["fastest","weakest wall","JS only"]},
-          {"label":"Hand it to a helper (rpc → Docker)","note":"Send it to a separate program that boxes the code in a container.","tone":"neutral","result":"a real wall you host","detail":"The code goes to a separate helper program (the plimsoll daemon), which runs it in a locked-down <em>container</em>, a boxed-off slice of your machine with its own files. An escape is trapped in that box, not in your app. Switch on gVisor and there's an extra wall on top.","facts":["container wall","optional gVisor","your machine"]},
-          {"label":"Ship it to a throwaway cloud VM (e2b)","note":"Send it off your machine entirely, into a disposable virtual computer.","tone":"good","result":"the strongest wall, off your machine","detail":"The code runs in a whole separate fake computer in the cloud, walled off by the hardware itself, then thrown away. Even a full escape is trapped in a disposable machine that isn't even yours. Slowest to start, safest by far.","facts":["hardware wall","disposable","off-machine"]}
-        ],
-        "explainer":{"try":"Click all three and compare the last line of each result. Notice the wall gets stronger as the code moves further from your own program.","idea":"There is no single 'safest' choice. It is a trade between speed and how far a bad snippet could reach. Pick the weakest wall you can live with, not the strongest one that exists.","points":["<code>wasm</code> = in your app. <code>rpc</code> = in a container on your machine. <code>e2b</code> = in a throwaway cloud VM.","More walls means safer, but slower and more setup.","The rest of this trainer just explains the words hiding in that sentence."]}
-      },
-      {
-        "id":"decoder",
-        "label":"Decoder ring",
-        "kind":"matrix",
-        "title":"Every scary word, in one plain sentence",
-        "lede":"The other trainers are full of words that sound like you need a degree to read them. You don't. Here is each one in plain English, plus the only reason you'd care about it.",
-        "stats":[{"label":"words decoded","value":"7"},{"label":"jargon required","value":"none","tone":"good"}],
-        "promptLabel":"The jargon, decoded",
-        "prompt":"Read down the list. Each row is one word the grown-up trainers throw at you, translated into English.",
-        "rowLabel":"The word",
-        "columns":["In plain English","Why you'd care"],
-        "rows":[
-          {"label":"Process","cells":[{"text":"one running program and everything inside it","tone":"neutral","note":"it all shares one pile of memory and one set of permissions"},{"text":"'process-tier' means the code runs right next to yours","tone":"warn"}]},
-          {"label":"Syscall","cells":[{"text":"how a program asks the operating system to do anything real","tone":"neutral","note":"open a file, use the network, and so on"},{"text":"not a wall; sandboxes get safer by limiting which ones are allowed","tone":"neutral"}]},
-          {"label":"RPC","cells":[{"text":"just 'send the request to another program and get the answer back'","tone":"neutral","note":"the mailman, not a wall"},{"text":"not a wall either; a door named 'rpc' is really protected by the container it hands the code to","tone":"neutral"}]},
-          {"label":"WASM / WebAssembly","cells":[{"text":"a sealed mini-computer that runs inside a normal program","tone":"neutral","note":"here it runs JavaScript and nothing else"},{"text":"the thinnest wall: no operating-system wall, so it shares your app","tone":"warn"}]},
-          {"label":"Container (Docker)","cells":[{"text":"a boxed-off slice of your computer with its own files","tone":"neutral","note":"but it still borrows the real operating-system core underneath"},{"text":"the middle wall: solid, but sharing one foundation","tone":"neutral"}]},
-          {"label":"gVisor / runsc","cells":[{"text":"a stand-in operating-system core that answers those requests itself","tone":"neutral","note":"so the container never touches the real one"},{"text":"an extra wall bolted on top of the container","tone":"good"}]},
-          {"label":"Virtual machine (VM)","cells":[{"text":"a whole fake computer with its own core, walled off by hardware","tone":"neutral","note":"E2B spins one up, uses it, and throws it away"},{"text":"the strongest wall, and the slowest to start","tone":"good"}]}
-        ],
-        "explainer":{"try":"Cover the right column and try to say each word's meaning out loud before you read it. That is the entire vocabulary the other trainers quietly assume.","idea":"Most of these are just walls of different thickness: WASM is thin, then a container, then gVisor, then a whole VM at the top. Syscall and RPC are not walls at all; they're how code asks to do things and how it travels. Get that split and the rest is easy.","points":["'Tier' just means how thick the wall is: process, then container, then a stand-in core, then a whole VM. RPC is not on that ladder.","<code>RPC</code> is delivery, not defense: when a door is named 'rpc', its wall is the container on the other end, not RPC itself.","Everything else is 'the code runs here, and here's what stops it from reaching you'."]}
-      },
-      {
-        "id":"follow",
-        "label":"Follow the code",
-        "kind":"pipeline",
-        "title":"Watch one snippet go out and come back",
-        "lede":"Forget the internals for a moment. Here's the whole trip your code takes, in plain steps. The Architecture trainer shows this same trip with the real gate names; this is the friendly version.",
-        "stats":[{"label":"steps","value":"5","tone":"good"},{"label":"jargon","value":"optional"}],
-        "prompt":"Step through what happens after you hand plimsoll a piece of code to run. Hit Play to watch the walls go up.",
-        "steps":[
-          {"layer":"you","name":"You hand over some code","short":"'run this, and here's the time limit'","detail":"You send the code plus a few rules, like a timeout. You never bundle passwords or secret keys with it; those travel a separate path on purpose."},
-          {"layer":"door check","name":"The bouncer checks you first","short":"who are you, and are you allowed?","detail":"Before anything runs, plimsoll confirms you're allowed and that your request isn't oversized. A bad request is turned away here, before a single line of your code runs."},
-          {"layer":"the runner","name":"It picks where to run the code","short":"in-app, in a container, or in a cloud VM","detail":"Based on how you set it up, the code goes to one of the three doors from chapter 1. This is the exact moment the walls go up around it.","tone":"warn"},
-          {"layer":"run","name":"Your code runs behind the wall","short":"it does its thing, fenced in","detail":"The code executes inside whatever walls you chose. If it tries something nasty, those walls are what stop it from reaching the rest of your machine."},
-          {"layer":"back to you","name":"You get the result, plus a receipt","short":"output plus proof of which wall ran it","detail":"You get back what the code printed, whether it succeeded, and a note stating exactly which wall actually ran it. Your original code is never written to any log.","tone":"good"}
-        ],
-        "explainer":{"try":"Play the path and watch the walls go up at step 3. Notice the bouncer at step 2 rejects bad requests before your code ever runs.","idea":"The place your code runs is the last step, not the first line of defense. A lot of the safety is simply 'check before you run, and prove what you ran.'","points":["Secrets travel a separate path from code, never bundled together.","Nothing runs until the request clears the door check.","You're always told which wall really ran your code, not asked to take it on faith.","Want the real gate names? That's the <strong>Architecture</strong> trainer, next door."]}
-      },
-      {
-        "id":"three-doors",
-        "label":"Three doors",
-        "kind":"matrix",
-        "title":"wasm, rpc, e2b, side by side, no jargon",
-        "lede":"The three places your code can run, compared on the only things you actually feel: where it runs, how strong the wall is, how fast it starts, and what happens if that wall cracks.",
-        "stats":[{"label":"doors","value":"3"},{"label":"wrong answer","value":"none, it depends","tone":"neutral"}],
-        "promptLabel":"The three doors, side by side",
-        "prompt":"Read the last column top to bottom: that's your worst case for each door, from 'inside your app' down to 'a disposable box in the cloud'.",
-        "rowLabel":"Door",
-        "columns":["Where the code runs","Wall strength","Speed to start","If the sandbox breaks"],
-        "rows":[
-          {"label":"wasm","cells":[{"text":"inside your own app","tone":"neutral"},{"text":"thin: a sealed interpreter, no OS wall","tone":"warn"},{"text":"instant","tone":"good"},{"text":"the escaped code is inside your app","tone":"bad"}]},
-          {"label":"rpc (Docker)","cells":[{"text":"a container on your machine","tone":"neutral"},{"text":"solid: a real OS box, add gVisor for more","tone":"good"},{"text":"quick","tone":"neutral"},{"text":"stuck in the box, not in your app","tone":"neutral","note":"still your machine"}]},
-          {"label":"e2b","cells":[{"text":"a throwaway VM in the cloud","tone":"neutral"},{"text":"strongest: a separate hardware-walled computer","tone":"good"},{"text":"slowest, a VM has to boot","tone":"warn"},{"text":"trapped in a disposable box that isn't yours","tone":"good"}]}
-        ],
-        "explainer":{"try":"Scan down the middle two columns: as the wall gets stronger, the speed drops. That trade is the whole story, and you can't cheat it.","idea":"Moving down the list buys you a stronger wall and costs you startup speed. Pick the row that matches how much you trust the code.","points":["Basically-trusted code that must be fast → <code>wasm</code>.","Real isolation you run yourself → <code>rpc</code> (Docker), ideally with gVisor.","Genuinely hostile code, or 'not on my hardware' → <code>e2b</code>."]}
-      },
-      {
-        "id":"blast-radius",
-        "label":"Worst case",
-        "kind":"quiz",
-        "title":"Pretend the sandbox has a bug, who's in trouble?",
-        "lede":"No sandbox is perfect. The smart question isn't 'is it unbreakable?' It's 'when it breaks, how bad is it?' The answer is different for each door.",
-        "stats":[{"label":"perfect sandbox","value":"doesn't exist","tone":"warn"},{"label":"what to compare","value":"blast radius","tone":"good"}],
-        "promptLabel":"Make the call",
-        "prompt":"You're running code you genuinely don't trust, and you want the damage contained even if the sandbox itself has a flaw. Which door gives you the smallest blast radius?",
-        "options":[
-          {"label":"wasm, inside my app","note":"Trust the in-app engine to be bug-free.","correct":false,"result":"biggest blast radius","detail":"If the in-app engine has a flaw, the escaped code is already inside your app with your app's permissions. Smallest wall, worst worst-case. Fine for trusted code, risky for hostile code."},
-          {"label":"rpc, a container on my machine","note":"Let an escape land in a box instead of the app.","correct":false,"result":"contained, but still your machine","detail":"Better: an escape is stuck in the container, away from your app. But it's still your hardware, and a plain container shares the real OS core, which is exactly why gVisor (an extra wall) exists. A strong middle ground, not the strongest."},
-          {"label":"e2b, a throwaway cloud VM","note":"Put a whole separate computer between you and the code.","correct":true,"result":"smallest blast radius","detail":"Even a full escape is trapped inside a disposable VM walled off by hardware, and it isn't even your machine. When the code is truly hostile, this is the door that limits the damage most.","facts":["hardware wall","disposable","off your machine"]}
-        ],
-        "explainer":{"try":"Now imagine the code is fully trusted. The best answer flips to wasm, its speed wins and the blast radius barely matters. The real question is always 'how hostile is this code?'","idea":"Choose your door by picturing the sandbox failing. The stronger the wall, the less it matters that it might.","points":["Trusted code → a weak wall is fine; go fast.","Unknown or hostile code → assume the sandbox will crack, and pick accordingly.","gVisor and VMs exist precisely because a plain container shares the host's OS core."]}
-      },
-      {
-        "id":"pick",
-        "label":"Pick a door",
-        "kind":"quiz",
-        "title":"So which one do I actually use?",
-        "lede":"You now know every word. Last question: match the door to the job. Then you're ready to read the grown-up trainers without a dictionary.",
-        "stats":[{"label":"words left to learn","value":"0","tone":"good"},{"label":"next stop","value":"Architecture"}],
-        "promptLabel":"Match the door to the job",
-        "prompt":"A teammate says: 'I want to let users run their own little JavaScript formulas in our app, and it has to feel instant.' Which door do you reach for first?",
-        "options":[
-          {"label":"wasm, in-app, instant","note":"Fast, in-process, JavaScript only.","correct":true,"result":"right call for fast, low-risk snippets","detail":"Little formulas that must feel instant, where the worst case is small, are exactly what the in-app engine is for. If they need one allowlisted API, a WASM grant can call it without putting the key in JavaScript. Graduate to rpc or e2b when the code is hostile or needs projects and OS tools.","facts":["instant","JS only","weakest wall"]},
-          {"label":"e2b, cloud VM","note":"Strongest wall, off your machine.","correct":false,"result":"safe, but overkill here","detail":"Not wrong on safety, since it's the strongest wall. But booting a cloud VM for every little formula kills the 'instant' requirement and costs more. Save it for genuinely hostile or heavy code."},
-          {"label":"rpc, container on your machine","note":"Solid wall, some startup cost.","correct":false,"result":"reasonable, but heavier than needed","detail":"A perfectly safe choice, but spinning up a container for every keystroke-fast formula is heavier than a trusted little snippet needs. Great once the code gets riskier or needs real OS isolation."}
-        ],
-        "explainer":{"try":"Re-read the question, but swap 'little formulas' for 'code my users write that could be malicious'. Notice your answer should slide toward rpc or e2b.","idea":"Match the wall to the risk and the speed you need, nothing more. You've got the whole vocabulary now.","points":["Next: the <strong>Architecture</strong> trainer follows one real request through every gate, the same trip as chapter 3, with the real names.","Then <strong>Providers</strong> and <strong>Concepts</strong> go deep on each door.","Come back here any time a word stops making sense."]}
-      }
-    ]
+  <nav class="top"><a href="index.html">← All trainers</a></nav>
+
+  <p class="eyebrow">plimsoll trainer · 00 / start here</p>
+  <h1>Plain English</h1>
+  <p class="promise">Every word the other pages use, on one page that assumes nothing.
+  Underneath all of them is one question: <b>if a stranger's code turns out to be
+  malicious, how many walls stand between it and your stuff?</b> Start with the picture.</p>
+
+  <!-- 01 ─────────────────────────────────────────────────────────────────── -->
+  <section id="walls" aria-labelledby="h-walls">
+    <p class="draft" aria-hidden="true">01</p>
+    <h2 id="h-walls">How many walls</h2>
+    <p>Untrusted code has to run somewhere. Move it, and watch what stands between it and
+    the things you care about. The captions say what happens if the wall has a bug,
+    because no wall is perfect and that is the only honest way to compare them.</p>
+
+    <div class="control">
+      <p class="control-label">Where does the stranger's code run?</p>
+      <div class="seg" role="group" aria-label="Where the code runs" id="whereSeg">
+        <button type="button" data-value="wasm">Inside your own program<small>a sealed engine, instant</small></button>
+        <button type="button" data-value="docker">In a box on your machine<small>a container, quick</small></button>
+        <button type="button" data-value="gvisor">In a box with a stand-in core<small>the same container plus gVisor</small></button>
+        <button type="button" data-value="e2b">In a throwaway computer in the cloud<small>a virtual machine, slowest, off your hardware</small></button>
+      </div>
+    </div>
+
+    <div class="scene">
+      <svg id="sceneSvg" viewBox="0 0 640 250" role="img" aria-label="A cross-section showing where the stranger's code sits relative to your program, your machine and the cloud." style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+        <defs>
+          <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="#dcd7cb" stroke-width="2"/></pattern>
+        </defs>
+        <!-- scene: wasm -->
+        <g data-scene="wasm">
+          <rect x="20" y="24" width="600" height="206" rx="14" fill="#fbfaf6" stroke="#dcd7cb" stroke-width="2"/>
+          <text x="36" y="48" font-size="12" font-weight="700" fill="#586770">YOUR MACHINE</text>
+          <rect x="60" y="62" width="520" height="150" rx="12" fill="#ffffff" stroke="#0b2a3a" stroke-width="2.5"/>
+          <text x="76" y="86" font-size="12" font-weight="700" fill="#0b2a3a">YOUR PROGRAM · plimsoll runs inside it</text>
+          <rect x="76" y="100" width="200" height="94" rx="10" fill="#e0f1f5" stroke="#177f99" stroke-width="3"/>
+          <text x="90" y="122" font-size="11" font-weight="700" fill="#0b4c61">SEALED ENGINE</text>
+          <rect x="92" y="134" width="168" height="44" rx="8" fill="#fbe6e7" stroke="#b83f43" stroke-width="2"/>
+          <text x="176" y="161" font-size="12" font-weight="700" fill="#b83f43" text-anchor="middle">stranger's code</text>
+          <text x="300" y="130" font-size="12" fill="#172129">your memory, your files, your permissions</text>
+          <text x="300" y="150" font-size="12" fill="#172129">are one thin seal away</text>
+          <text x="300" y="184" font-size="11" fill="#586770">no operating-system wall at all</text>
+        </g>
+        <!-- scene: docker -->
+        <g data-scene="docker" style="display:none">
+          <rect x="20" y="24" width="600" height="206" rx="14" fill="#fbfaf6" stroke="#dcd7cb" stroke-width="2"/>
+          <text x="36" y="48" font-size="12" font-weight="700" fill="#586770">YOUR MACHINE</text>
+          <rect x="60" y="62" width="230" height="110" rx="12" fill="#ffffff" stroke="#0b2a3a" stroke-width="2.5"/>
+          <text x="76" y="86" font-size="12" font-weight="700" fill="#0b2a3a">YOUR PROGRAM</text>
+          <text x="76" y="108" font-size="11" fill="#586770">plimsoll, your files,</text>
+          <text x="76" y="124" font-size="11" fill="#586770">your permissions</text>
+          <rect x="330" y="62" width="250" height="110" rx="12" fill="#ffffff" stroke="#0b2a3a" stroke-width="6"/>
+          <text x="346" y="86" font-size="12" font-weight="700" fill="#0b2a3a">THE BOX (a container)</text>
+          <rect x="346" y="100" width="218" height="56" rx="8" fill="#fbe6e7" stroke="#b83f43" stroke-width="2"/>
+          <text x="455" y="133" font-size="12" font-weight="700" fill="#b83f43" text-anchor="middle">stranger's code</text>
+          <rect x="60" y="184" width="520" height="30" rx="8" fill="url(#hatch)" stroke="#dcd7cb"/>
+          <text x="320" y="204" font-size="11" font-weight="700" fill="#586770" text-anchor="middle">THE MACHINE'S CORE (operating system), shared by both</text>
+        </g>
+        <!-- scene: gvisor -->
+        <g data-scene="gvisor" style="display:none">
+          <rect x="20" y="24" width="600" height="206" rx="14" fill="#fbfaf6" stroke="#dcd7cb" stroke-width="2"/>
+          <text x="36" y="48" font-size="12" font-weight="700" fill="#586770">YOUR MACHINE</text>
+          <rect x="60" y="62" width="230" height="110" rx="12" fill="#ffffff" stroke="#0b2a3a" stroke-width="2.5"/>
+          <text x="76" y="86" font-size="12" font-weight="700" fill="#0b2a3a">YOUR PROGRAM</text>
+          <text x="76" y="108" font-size="11" fill="#586770">plimsoll, your files,</text>
+          <text x="76" y="124" font-size="11" fill="#586770">your permissions</text>
+          <rect x="330" y="62" width="250" height="110" rx="12" fill="#ffffff" stroke="#0b2a3a" stroke-width="6"/>
+          <text x="346" y="86" font-size="12" font-weight="700" fill="#0b2a3a">THE BOX (a container)</text>
+          <rect x="346" y="96" width="218" height="64" rx="8" fill="#e0f1f5" stroke="#177f99" stroke-width="3"/>
+          <text x="356" y="112" font-size="10.5" font-weight="700" fill="#0b4c61">STAND-IN CORE (gVisor)</text>
+          <rect x="356" y="118" width="198" height="34" rx="6" fill="#fbe6e7" stroke="#b83f43" stroke-width="2"/>
+          <text x="455" y="140" font-size="12" font-weight="700" fill="#b83f43" text-anchor="middle">stranger's code</text>
+          <rect x="60" y="184" width="520" height="30" rx="8" fill="url(#hatch)" stroke="#dcd7cb"/>
+          <text x="320" y="204" font-size="11" font-weight="700" fill="#586770" text-anchor="middle">THE MACHINE'S CORE: the box never touches it directly</text>
+        </g>
+        <!-- scene: e2b -->
+        <g data-scene="e2b" style="display:none">
+          <rect x="20" y="24" width="270" height="206" rx="14" fill="#fbfaf6" stroke="#dcd7cb" stroke-width="2"/>
+          <text x="36" y="48" font-size="12" font-weight="700" fill="#586770">YOUR MACHINE</text>
+          <rect x="40" y="62" width="230" height="110" rx="12" fill="#ffffff" stroke="#0b2a3a" stroke-width="2.5"/>
+          <text x="56" y="86" font-size="12" font-weight="700" fill="#0b2a3a">YOUR PROGRAM</text>
+          <text x="56" y="108" font-size="11" fill="#586770">plimsoll sends the code away</text>
+          <text x="56" y="124" font-size="11" fill="#586770">and waits for the answer</text>
+          <text x="155" y="204" font-size="11" fill="#586770" text-anchor="middle">nothing of yours is in the same building</text>
+          <line x1="292" y1="118" x2="338" y2="118" stroke="#177f99" stroke-width="3"/>
+          <path d="M332,110 L346,118 L332,126 Z" fill="#177f99"/>
+          <rect x="350" y="24" width="270" height="206" rx="14" fill="#f2f6f8" stroke="#dcd7cb" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="366" y="48" font-size="12" font-weight="700" fill="#586770">SOMEBODY ELSE'S CLOUD</text>
+          <rect x="370" y="62" width="230" height="130" rx="12" fill="#ffffff" stroke="#0b2a3a" stroke-width="8"/>
+          <text x="386" y="88" font-size="12" font-weight="700" fill="#0b2a3a">A THROWAWAY COMPUTER</text>
+          <text x="386" y="104" font-size="10.5" fill="#586770">walled off by the hardware itself</text>
+          <rect x="386" y="116" width="198" height="56" rx="8" fill="#fbe6e7" stroke="#b83f43" stroke-width="2"/>
+          <text x="485" y="149" font-size="12" font-weight="700" fill="#b83f43" text-anchor="middle">stranger's code</text>
+          <text x="485" y="214" font-size="11" fill="#586770" text-anchor="middle">used once, then destroyed</text>
+        </g>
+      </svg>
+      <p class="walls" id="wallsRow" aria-live="polite"></p>
+      <p class="scene-caption" id="sceneCaption"></p>
+    </div>
+
+    <div class="card">
+      <p>There is no single safest choice. Each step to the right buys a thicker wall and
+      costs you speed, setup, and (for the cloud computer) money per run. The right door is
+      the weakest wall you can live with for the code in front of you, not the strongest
+      one that exists. The rest of this page only explains the words hiding in that
+      sentence.</p>
+    </div>
+  </section>
+
+  <!-- 02 ─────────────────────────────────────────────────────────────────── -->
+  <section id="decoder" aria-labelledby="h-decoder">
+    <p class="draft" aria-hidden="true">02</p>
+    <h2 id="h-decoder">One sentence, two ways</h2>
+    <p>Here is what plimsoll is, written the way the other pages write it. Flip it to plain
+    words, or tap any underlined term for what it means and why you would care.</p>
+
+    <div class="control">
+      <div class="seg" role="group" aria-label="Wording" id="modeSeg">
+        <button type="button" data-value="jargon" aria-pressed="true">The jargon<small>how the other pages say it</small></button>
+        <button type="button" data-value="plain" aria-pressed="false">Plain words<small>the same sentence, decoded</small></button>
+      </div>
+    </div>
+
+    <p class="sentence" id="sentence"></p>
+    <div class="card term-card" id="termCard" hidden></div>
+    <div class="glossary" id="glossary" aria-label="All the terms"></div>
+  </section>
+
+  <!-- 03 ─────────────────────────────────────────────────────────────────── -->
+  <section id="trip" aria-labelledby="h-trip">
+    <p class="draft" aria-hidden="true">03</p>
+    <h2 id="h-trip">What happens to one piece of code</h2>
+    <p>The whole trip, in five steps and no internals. The Concepts and Architecture pages
+    walk the same trip with the real names for each gate.</p>
+    <ol class="trip">
+      <li><b>You hand over some code, and a time limit.</b><small>You never bundle a password or an API key with it. If the code needs to reach one of your services, that permission travels a separate path and the code never sees the key.</small></li>
+      <li><b>A bouncer checks you before anything runs.</b><small>Are you allowed in, and is the request a sensible size? A bad request is turned away here, before a single line of your code is looked at.</small></li>
+      <li class="wall"><b>It picks the door you configured.</b><small>Inside your program, a box on your machine, or a throwaway computer in the cloud. This is the moment the walls go up. If you asked for a thicker wall than the door has, the code is turned away instead.</small></li>
+      <li><b>The code runs behind the wall.</b><small>It does its thing, fenced in. If it tries something nasty, the wall is what stops it reaching the rest of your machine.</small></li>
+      <li class="receipt"><b>You get the result, plus a receipt.</b><small>What the code printed, whether it succeeded, and a note saying exactly which wall ran it, so you are never asked to take that on faith. Your code itself is never written to any log.</small></li>
+    </ol>
+  </section>
+
+  <!-- 04 ─────────────────────────────────────────────────────────────────── -->
+  <section id="doors" aria-labelledby="h-doors">
+    <p class="draft" aria-hidden="true">04</p>
+    <h2 id="h-doors">Which door for which job</h2>
+    <p>Pick the job. The right door lights up, with the reason.</p>
+
+    <div class="control">
+      <div class="seg" role="group" aria-label="The job" id="jobSeg">
+        <button type="button" data-value="formulas">Users' little formulas, must feel instant</button>
+        <button type="button" data-value="hostile">Code from strangers that could be malicious</button>
+        <button type="button" data-value="project">A whole project: files, a build step, tests</button>
+        <button type="button" data-value="offbox">It must never touch my hardware</button>
+        <button type="button" data-value="api">It has to read one thing from my API</button>
+      </div>
+    </div>
+
+    <div class="doors">
+      <div class="door" data-door="wasm">
+        <h3>Inside your program<small>the real name: wasm</small></h3>
+        <dl>
+          <dt>Wall</dt><dd>Thin: a sealed engine, no operating-system wall.</dd>
+          <dt>Speed</dt><dd>Instant. Nothing to start.</dd>
+          <dt>Can run</dt><dd>One JavaScript snippet. No files, no build tools.</dd>
+          <dt>If the wall cracks</dt><dd>The code is inside your program.</dd>
+        </dl>
+      </div>
+      <div class="door" data-door="docker">
+        <h3>A box on your machine<small>the real name: docker</small></h3>
+        <dl>
+          <dt>Wall</dt><dd>Solid. Add the stand-in core (gVisor) for a second wall.</dd>
+          <dt>Speed</dt><dd>Quick. A box starts in well under a second.</dd>
+          <dt>Can run</dt><dd>Snippets, whole projects, and compiled models.</dd>
+          <dt>If the wall cracks</dt><dd>Stuck in the box. Still your machine.</dd>
+        </dl>
+      </div>
+      <div class="door" data-door="e2b">
+        <h3>A throwaway computer<small>the real name: e2b</small></h3>
+        <dl>
+          <dt>Wall</dt><dd>Strongest: a separate computer, walled by hardware.</dd>
+          <dt>Speed</dt><dd>Slowest. A computer has to boot, and each run costs money.</dd>
+          <dt>Can run</dt><dd>Snippets and whole projects.</dd>
+          <dt>If the wall cracks</dt><dd>Trapped in a disposable machine that is not yours.</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="card job-answer" id="jobAnswer"></div>
+  </section>
+
+  <h2 style="margin-top:44px">Keep reading</h2>
+  <ul class="links">
+    <li><a href="concepts.html"><b>Internal · trainer site →</b><strong>Concepts</strong><small>The same walls with their real names, as a load line on a hull you can move the water against.</small></a></li>
+    <li><a href="architecture.html"><b>Internal · trainer site →</b><strong>Architecture</strong><small>The trip from section 03 with every real gate on an interactive map.</small></a></li>
+    <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>How code behind a wall reads from your API without ever holding the key.</small></a></li>
+  </ul>
+
+  <footer>
+    <p>Nothing on this page runs code or calls a network. The pictures are drawings of the
+    four ways plimsoll can be set up, and the claims in them are checked against the
+    daemon's source by the tests in this directory.</p>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+  function el(id) { return document.getElementById(id); }
+  function press(seg, value) {
+    seg.querySelectorAll('button[data-value]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-value') === value ? 'true' : 'false');
+    });
   }
-  </script>
+
+  // 01: the cross-section.
+  var SCENES = {
+    wasm: { walls: 1, caption: '<b>One wall: the engine’s own seal.</b> If the engine has a bug, the escaped code is already inside your program, with your program’s permissions. Fastest of all, and fine for code you basically trust.' },
+    docker: { walls: 2, caption: '<b>A real wall you host.</b> An escape is stuck in the box, not in your program. But the box borrows your machine’s core, so a bug in that shared core is a way out. Solid, not the strongest.' },
+    gvisor: { walls: 3, caption: '<b>The box, plus a stand-in core.</b> Every request the code makes to the operating system is answered by a look-alike core inside the box, so the real one is never touched directly. This is the weakest wall plimsoll will call good enough for hostile code.' },
+    e2b: { walls: 4, caption: '<b>A whole separate computer, in somebody else’s building.</b> Even a full escape is trapped in a machine that is destroyed after the run and was never yours. Slowest to start, and the only door that costs money per run.' }
+  };
+  function renderScene(which) {
+    press(el('whereSeg'), which);
+    el('sceneSvg').querySelectorAll('[data-scene]').forEach(function (g) {
+      g.style.display = g.getAttribute('data-scene') === which ? '' : 'none';
+    });
+    var row = el('wallsRow');
+    row.innerHTML = '';
+    var label = document.createElement('span');
+    label.textContent = 'walls between the code and your stuff: ';
+    row.appendChild(label);
+    for (var i = 0; i < 4; i++) {
+      var w = document.createElement('i');
+      if (i >= SCENES[which].walls) w.className = 'off';
+      row.appendChild(w);
+    }
+    var n = document.createElement('span');
+    n.textContent = ' ' + SCENES[which].walls;
+    row.appendChild(n);
+    el('sceneCaption').innerHTML = SCENES[which].caption;
+  }
+  el('whereSeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-value]');
+    if (b) renderScene(b.getAttribute('data-value'));
+  });
+  renderScene('wasm');
+
+  // 02: one sentence, two ways. Each term carries both wordings and its own card.
+  var TERMS = {
+    rpc: { j: 'an RPC service', p: 'a separate helper program you send requests to', word: 'RPC', means: 'Send a request to another program and get the answer back. The mailman, not a wall.', care: 'Because plimsoll is one: your program talks to it instead of running strangers’ code itself.', wall: false },
+    sandbox: { j: 'a sandbox', p: 'a walled-off place', word: 'sandbox', means: 'Anywhere code runs with something stopping it from reaching the rest of the machine.', care: 'The whole product is one. The interesting question is always how thick its wall is.', wall: false },
+    tier: { j: 'a chosen isolation tier', p: 'a wall of a thickness you choose', word: 'isolation tier', means: 'How thick the wall is: process, then container, then a stand-in core, then a whole computer.', care: 'Every answer plimsoll gives names the tier that ran the code, and you can refuse anything thinner.', wall: false },
+    process: { j: 'process', p: 'running program', word: 'process', means: 'One running program and everything inside it: one pile of memory, one set of permissions.', care: '“Process-tier” means the code runs right next to yours, inside the same program.', wall: true },
+    wasm: { j: 'a WASM engine', p: 'a sealed mini-engine', word: 'WASM', means: 'WebAssembly: a sealed mini-computer that runs inside a normal program. Here it runs JavaScript and nothing else.', care: 'It is the thinnest wall. No operating-system wall, so it shares your program.', wall: true },
+    container: { j: 'a Docker container', p: 'a boxed-off slice of your machine', word: 'container', means: 'A boxed-off slice of your computer with its own files, that still borrows the real operating-system core underneath.', care: 'The middle wall: solid, but standing on a shared foundation.', wall: true },
+    gvisor: { j: 'gVisor', p: 'a stand-in operating-system core', word: 'gVisor', means: 'A look-alike operating-system core that answers the code’s requests itself, so the container never touches the real one.', care: 'An extra wall bolted onto the container. plimsoll calls the result the kernel tier.', wall: true },
+    vm: { j: 'a disposable microVM', p: 'a whole throwaway computer, walled off by the hardware', word: 'virtual machine', means: 'A complete fake computer with its own core, kept apart by the hardware itself. E2B starts one, uses it, and destroys it.', care: 'The strongest wall, the slowest to start, and the one that costs money per run.', wall: true },
+    syscall: { j: 'syscall', p: 'request to the operating system, such as opening a file or using the network', word: 'syscall', means: 'How a program asks the operating system to do anything real.', care: 'Not a wall. Walls get thicker by limiting which of these requests are allowed to go through.', wall: false }
+  };
+  var TEMPLATE = 'plimsoll is {rpc}. You send it JavaScript from someone you do not trust; it runs that code in {sandbox} at {tier}: {wasm} inside its own {process}, {container}, that container under {gvisor}, or {vm}. Every {syscall} the code makes is something the wall either allows or stops, and every result says which wall ran it.';
+  var mode = 'jargon';
+  var open = null;
+  function renderSentence() {
+    var s = el('sentence');
+    s.innerHTML = '';
+    TEMPLATE.split(/(\{[a-z]+\})/).forEach(function (piece) {
+      var m = piece.match(/^\{([a-z]+)\}$/);
+      if (!m) { s.appendChild(document.createTextNode(piece)); return; }
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'term';
+      b.setAttribute('data-term', m[1]);
+      b.setAttribute('aria-pressed', open === m[1] ? 'true' : 'false');
+      b.textContent = mode === 'jargon' ? TERMS[m[1]].j : TERMS[m[1]].p;
+      s.appendChild(b);
+    });
+    var g = el('glossary');
+    g.innerHTML = '';
+    Object.keys(TERMS).forEach(function (k) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('data-term', k);
+      b.setAttribute('aria-pressed', open === k ? 'true' : 'false');
+      b.textContent = TERMS[k].word;
+      g.appendChild(b);
+    });
+    var card = el('termCard');
+    if (!open) { card.hidden = true; return; }
+    var t = TERMS[open];
+    card.hidden = false;
+    card.innerHTML = '';
+    var w = document.createElement('p');
+    w.innerHTML = '<span class="word"></span> <span class="tone ' + (t.wall ? 'good' : 'neutral') + '">' + (t.wall ? 'a wall' : 'not a wall') + '</span>';
+    w.querySelector('.word').textContent = t.word;
+    card.appendChild(w);
+    var dl = document.createElement('dl');
+    [['In plain words', t.means], ['Why you would care', t.care]].forEach(function (pair) {
+      var dt = document.createElement('dt'); dt.textContent = pair[0];
+      var dd = document.createElement('dd'); dd.textContent = pair[1];
+      dl.appendChild(dt); dl.appendChild(dd);
+    });
+    card.appendChild(dl);
+  }
+  el('modeSeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-value]');
+    if (!b) return;
+    mode = b.getAttribute('data-value');
+    press(el('modeSeg'), mode);
+    renderSentence();
+  });
+  function onTerm(e) {
+    var b = e.target.closest('button[data-term]');
+    if (!b) return;
+    var k = b.getAttribute('data-term');
+    open = open === k ? null : k;
+    renderSentence();
+  }
+  el('sentence').addEventListener('click', onTerm);
+  el('glossary').addEventListener('click', onTerm);
+  renderSentence();
+
+  // 04: which door for which job.
+  var JOBS = {
+    formulas: { lit: ['wasm'], text: '<b>Inside your program.</b> Little formulas that must feel instant, where the worst case is small, are exactly what the sealed engine is for. If a formula needs one thing from your API, it can still get it without the key ever entering the code (see The API broker). Graduate to a box or a cloud computer when the code gets hostile or needs files and tools.' },
+    hostile: { lit: ['docker', 'e2b'], text: '<b>A box with the stand-in core, or a throwaway computer.</b> Assume the wall will crack one day and ask where the code lands. A plain box lands it on your machine’s shared core; the stand-in core or a separate computer keeps it further away. plimsoll refuses to call anything thinner than those two good enough for hostile code.' },
+    project: { lit: ['docker', 'e2b'], text: '<b>A box or a throwaway computer.</b> A project needs files on disk and build tools, and the sealed engine has neither: it runs one snippet and nothing else. Both other doors carry the tools baked in, because the box has no internet to fetch them with.' },
+    offbox: { lit: ['e2b'], text: '<b>A throwaway computer.</b> It is the only door where the code never runs on your hardware at all. You pay for that in start-up time and per-run cost, and the wall is the strongest there is.' },
+    api: { lit: ['wasm', 'docker', 'e2b'], text: '<b>Any of them.</b> This is not about the wall. Behind every door, code can be handed a narrow permission to read from a named route, and the key stays outside with plimsoll; the code only ever asks. Pick the door by the other questions, then read The API broker for how the key never crosses the line.' }
+  };
+  function renderJob(which) {
+    press(el('jobSeg'), which);
+    document.querySelectorAll('.door').forEach(function (d) {
+      var lit = JOBS[which].lit.indexOf(d.getAttribute('data-door')) >= 0;
+      d.classList.toggle('lit', lit);
+      d.classList.toggle('dim', !lit);
+    });
+    el('jobAnswer').innerHTML = '<p>' + JOBS[which].text + '</p>';
+  }
+  el('jobSeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-value]');
+    if (b) renderJob(b.getAttribute('data-value'));
+  });
+  renderJob('formulas');
+})();
+</script>
 </body>
 </html>

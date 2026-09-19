@@ -259,10 +259,19 @@ function renderChecklist(chapter) {
   els.stats.innerHTML = `<div class="stat ${ready ? "good" : "warn"}"><span>required checks</span><strong>${requiredChecked}/${requiredIndexes.length}</strong></div>`;
 }
 
+// Both side panels are optional. They used to be mandatory because this function
+// dereferenced them, which turned a rendering detail into an editorial rule: every
+// chapter had to carry a "try this" and a "what to keep" whether the chapter wanted
+// them or not. A chapter that says its point once now can.
 function renderLesson(chapter) {
-  els.controls.innerHTML = `<h2>Try this</h2><p>${chapter.explainer.try}</p>`;
-  els.explainer.innerHTML = `<h2>What to keep</h2><p class="idea">${chapter.explainer.idea}</p>
-    ${chapter.explainer.points?.length ? `<ul>${chapter.explainer.points.map((point) => `<li>${point}</li>`).join("")}</ul>` : ""}`;
+  const explainer = chapter.explainer || {};
+  els.controls.innerHTML = explainer.try ? `<h2>Try this</h2><p>${explainer.try}</p>` : "";
+  els.controls.hidden = !explainer.try;
+  els.explainer.innerHTML = explainer.idea
+    ? `<h2>What to keep</h2><p class="idea">${explainer.idea}</p>
+    ${explainer.points?.length ? `<ul>${explainer.points.map((point) => `<li>${point}</li>`).join("")}</ul>` : ""}`
+    : "";
+  els.explainer.hidden = !explainer.idea;
 }
 
 function renderFooter() {

@@ -47,7 +47,7 @@ const (
 	simLorenzSHA256       = "70f1e8e657d804e176f18bf7afb01811a4b0b5f41d4609b74184ab2a6ab6a67e"
 )
 
-// TestDockerProjectSimWorker proves step 1 of docs/architecture/run-module-plan.md
+// TestDockerProjectSimWorker proves step 1 of private/architecture/run-module-plan.md
 // through the unchanged project API: the image built from docker/sim.Dockerfile
 // carries a WasmEdge AOT worker and three models compiled to WebAssembly, a
 // step names the worker and a model, and the sweep's artifact is byte-identical

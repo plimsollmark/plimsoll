@@ -12,9 +12,6 @@ var trainerPages = []string{
 	"plain-english.html",
 	"concepts.html",
 	"architecture.html",
-	"providers.html",
-	"capabilities.html",
-	"operations.html",
 	"dependencies.html",
 	"integrations.html",
 	"agent-products.html",
@@ -24,40 +21,49 @@ var trainerPages = []string{
 	"private-api.html",
 	"advisor.html",
 	"capacity-endpoint.html",
-	"two-entry-points.html",
+}
+
+// The shape a catalog page is built in. Shape decides which structural checks apply,
+// so a page that is deliberately different is one row of data here rather than an
+// `if page == "..."` inside every test that walks the catalog.
+//
+//	plain       the default: one scrolling document on plain.css, with its own markup,
+//	            its own <style> for what makes it itself, and its own script if it
+//	            needs one
+//	explorer    trainerData in "path-explorer" mode plus a page-local map, driven by
+//	            architecture.mjs
+//
+// The chapter renderer (trainer.js) was the default until 2026-09-19; no catalog
+// page uses it now. It still drives the private positioning page outside this
+// directory, which is why it is not deleted.
+var pageShape = map[string]string{
+	"architecture.html": "explorer",
+}
+
+func shapeOf(page string) string {
+	if shape, ok := pageShape[page]; ok {
+		return shape
+	}
+	return "plain"
 }
 
 var trainerDataPattern = regexp.MustCompile(`(?s)<script id="trainerData" type="application/json">\s*(.*?)\s*</script>`)
 
 type trainerDocument struct {
-	ID       string           `json:"id"`
-	Title    string           `json:"title"`
-	Tagline  string           `json:"tagline"`
-	Mode     string           `json:"mode"`
-	Chapters []trainerChapter `json:"chapters"`
-}
-
-type trainerChapter struct {
-	ID        string `json:"id"`
-	Label     string `json:"label"`
-	Kind      string `json:"kind"`
-	Title     string `json:"title"`
-	Lede      string `json:"lede"`
-	Explainer struct {
-		Try  string `json:"try"`
-		Idea string `json:"idea"`
-	} `json:"explainer"`
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Tagline string `json:"tagline"`
+	Mode    string `json:"mode"`
 }
 
 func TestTrainerDocuments(t *testing.T) {
-	supported := map[string]bool{
-		"scenario": true, "quiz": true, "pipeline": true, "matrix": true,
-		"budget": true, "checklist": true, "sim": true,
-	}
-	seenTrainerIDs := map[string]bool{}
 	for _, name := range trainerPages {
 		t.Run(name, func(t *testing.T) {
 			raw := readFile(t, name)
+			if shapeOf(name) == "plain" {
+				checkPlainPage(t, name, raw)
+				return
+			}
 			matches := trainerDataPattern.FindStringSubmatch(raw)
 			if len(matches) != 2 {
 				t.Fatal("missing exactly one embedded trainerData document")
@@ -66,126 +72,68 @@ func TestTrainerDocuments(t *testing.T) {
 			if err := json.Unmarshal([]byte(matches[1]), &doc); err != nil {
 				t.Fatalf("parse trainerData: %v", err)
 			}
+			if doc.Mode != "path-explorer" {
+				t.Fatalf("page is declared explorer in pageShape but its document mode is %q", doc.Mode)
+			}
 			if doc.ID == "" || doc.Title == "" || doc.Tagline == "" {
 				t.Fatalf("incomplete trainer identity: %+v", doc)
 			}
-			if seenTrainerIDs[doc.ID] {
-				t.Fatalf("duplicate trainer id %q", doc.ID)
-			}
-			seenTrainerIDs[doc.ID] = true
-			if doc.Mode == "path-explorer" {
-				for _, id := range []string{"architectureExplorer", "architectureMap", "pathCategories", "pathSelect", "providerSelect", "stepInspector", "nodeInspector", "stepTimeline"} {
-					if !strings.Contains(raw, `id="`+id+`"`) {
-						t.Fatalf("path explorer is missing shell element %q", id)
-					}
-				}
-				return
-			}
-			if doc.Mode == "experience" {
-				if !strings.Contains(raw, `id="experienceApp"`) || !strings.Contains(raw, `id="processGraph"`) || !strings.Contains(raw, `id="traceTimeline"`) {
-					t.Fatal("experience trainer is missing its process graph shell")
-				}
-				return
-			}
-			for _, id := range []string{"trainerTitle", "trainerTagline", "chapters", "stage", "lessonControls", "explainer", "prevChapter", "nextChapter", "progressDots"} {
+			for _, id := range []string{"architectureExplorer", "architectureMap", "pathCategories", "pathSelect", "providerSelect", "stepInspector", "nodeInspector", "stepTimeline"} {
 				if !strings.Contains(raw, `id="`+id+`"`) {
-					t.Fatalf("missing shell element %q", id)
+					t.Fatalf("path explorer is missing shell element %q", id)
 				}
-			}
-			// A floor, not an exact count. This asserted `== 6` until 2026-09-10, which
-			// caught a stub trainer (the thing worth catching) but also made the course
-			// unable to learn anything new: a lesson could only gain a chapter by losing
-			// one, so the test was deciding editorial questions it has no view on.
-			// Every trainer still holds at least six, so nothing has been weakened.
-			if len(doc.Chapters) < 6 {
-				t.Fatalf("chapter count = %d, want at least 6 (a trainer this short is a stub)", len(doc.Chapters))
-			}
-			seenChapters := map[string]bool{}
-			for i, chapter := range doc.Chapters {
-				if chapter.ID == "" || chapter.Label == "" || chapter.Title == "" || chapter.Lede == "" || chapter.Explainer.Try == "" || chapter.Explainer.Idea == "" {
-					t.Fatalf("chapter %d is missing required teaching copy: %+v", i, chapter)
-				}
-				if !supported[chapter.Kind] {
-					t.Fatalf("chapter %q has unsupported kind %q", chapter.ID, chapter.Kind)
-				}
-				if seenChapters[chapter.ID] {
-					t.Fatalf("duplicate chapter id %q", chapter.ID)
-				}
-				seenChapters[chapter.ID] = true
 			}
 		})
 	}
 }
 
-func TestPrivateAPIFlightRecorderNamesTheRealBoundary(t *testing.T) {
-	raw := readFile(t, "private-api.html") + readFile(t, "private-api.js")
-	for _, fact := range []string{
-		"LLM model", "MCP client / host", "Stockroom gateway", "Stockroom dataplane",
-		"plimsoll / plimsolld", "Guest JavaScript", "Gateway REST route", "WMS / ERP",
-		"POST /mcp", "tools/list", "tools/call", "run_javascript", "inventory.warehouses.list()",
-		"stockroom://sandbox-api.d.ts", "GET /v1/warehouses", "Connect/gRPC", "vendor HTTP(S)", "CodegenService", "StockService",
-		"SandboxService/Run",
-		// The lesson teaches a real boundary through an invented company, so the
-		// sentence that says so is load-bearing: without it the page reads as a
-		// walkthrough of somebody's actual production system.
-		"Stockroom is a worked example, not a product.",
-		"the isolated process that runs the model-authored JavaScript", "themeToggle", "Light mode",
-		"process-workbench", "ownership-legend", "Protocol decoder", "MCP over HTTP", "MCP over stdio",
-		"StdioServerTransport", "application/grpc+proto", "host-api.sock", "Learn more:", "Further reading",
-		"EXTERNAL · official docs ↗", "INTERNAL · trainer site →", "Hono",
-		"https://modelcontextprotocol.io/specification", "https://www.jsonrpc.org/specification",
-		"https://ts.sdk.modelcontextprotocol.io/server", "https://connectrpc.com/",
-		"https://grpc.io/docs/what-is-grpc", "https://protobuf.dev/overview/",
-	} {
-		if !strings.Contains(raw, fact) {
-			t.Errorf("private API flight recorder lost process-graph fact %q", fact)
-		}
+// checkPlainPage holds a "plain" page to what that shape promises: it stands on the
+// shared plain base rather than the lesson renderer, and it does not quietly grow back
+// into a chapter lesson. The two shapes that break a phone (a fixed rail, a
+// viewport-width box that overflows once a scrollbar exists) are refused in the page's
+// own markup and styles; the base's mobile-first promise is checked once, in
+// TestPlainBaseIsMobileFirst.
+func checkPlainPage(t *testing.T, name, raw string) {
+	t.Helper()
+	if strings.Contains(raw, "trainerData") || strings.Contains(raw, `src="trainer.js"`) {
+		t.Error("a plain page carries no trainerData and loads no renderer; " +
+			"if this page is a lesson again, move it out of pageShape")
 	}
-	for _, forbidden := range []string{
-		// "../../../" is any link that escapes docs/ entirely, which is how the
-		// earlier version of this page sent readers into a sibling repository's
-		// source tree. Matching the shape rather than one path also keeps a private
-		// directory name out of a test that ships publicly (2026-09-10 review).
-		"Open the defining source file", "../../../", "../../sandbox/", "source-section", "source-grid",
-	} {
-		if strings.Contains(raw, forbidden) {
-			t.Errorf("private API flight recorder still exposes repository source navigation %q", forbidden)
+	if !strings.Contains(raw, `content="width=device-width, initial-scale=1"`) {
+		t.Error("missing the responsive viewport declaration")
+	}
+	if !strings.Contains(raw, `href="index.html"`) {
+		t.Error("no way back to the catalog")
+	}
+	if got := strings.Count(raw, "<h1"); got != 1 {
+		t.Errorf("found %d <h1> elements, want exactly 1", got)
+	}
+	for _, phoneHostile := range []string{"position: fixed", "position:fixed", "100vw"} {
+		if strings.Contains(raw, phoneHostile) {
+			t.Errorf("uses %q, which is what makes a page awkward on a phone", phoneHostile)
 		}
 	}
 }
 
-func TestPrivateAPIFlightRecorderKeepsTheLessonEvidenceBounded(t *testing.T) {
-	html := readFile(t, "private-api.html")
-	css := readFile(t, "private-api.css")
-	js := readFile(t, "private-api.js")
-	raw := html + css + js
-
-	for _, fact := range []string{
-		"static lesson · no live telemetry",
-		"contract-check", "Which of these is the MCP tool?", "data-contract-answer=\"correct\"",
-		"data-runtime-choice", "data-provider-choice", "probe-controls",
-		"prefers-reduced-motion", "event.target.closest",
-	} {
-		if !strings.Contains(raw, fact) {
-			t.Errorf("private API trainer lost bounded lesson contract %q", fact)
+// TestPlainBaseIsMobileFirst checks the one stylesheet every plain page shares. The
+// narrow layout has to be the base and the wide one the enhancement, so a min-width
+// media query is required and a max-width one is refused; nothing in it may pin an
+// element to the viewport.
+func TestPlainBaseIsMobileFirst(t *testing.T) {
+	css := readFile(t, "plain.css")
+	if !strings.Contains(css, "@media (min-width:") {
+		t.Error("plain.css has no min-width media query, so the wide layout is not an enhancement")
+	}
+	if strings.Contains(css, "@media (max-width:") {
+		t.Error("plain.css has a max-width media query, which makes the wide layout the base")
+	}
+	if strings.Contains(css, "prefers-color-scheme") {
+		t.Error("plain.css reacts to the system colour scheme; the pages are light only")
+	}
+	for _, phoneHostile := range []string{"position: fixed", "position:fixed", "100vw"} {
+		if strings.Contains(css, phoneHostile) {
+			t.Errorf("plain.css uses %q, which is what makes a page awkward on a phone", phoneHostile)
 		}
-	}
-	if got := strings.Count(html, `data-contract-answer="correct"`); got != 1 {
-		t.Errorf("contract check has %d correct answers, want exactly 1", got)
-	}
-	for _, forbidden := range []string{
-		"flight recorder · last run", "t+000ms", "t+004ms", "tapeReadout", "rollTape",
-		"hopTally", "20 round trips", "orbit-caption", "recorderBadge",
-	} {
-		if strings.Contains(raw, forbidden) {
-			t.Errorf("private API trainer still contains unsupported or duplicate interaction %q", forbidden)
-		}
-	}
-	if !strings.Contains(css, ".flight-recorder { width: min(1440px, 100%); margin: 0 auto; padding: 0 38px 46px; overflow: visible; }") {
-		t.Error("flight recorder still clips content at its outer container")
-	}
-	if strings.Contains(css, ".tape-readout") {
-		t.Error("flight recorder still has a competing fixed tape panel")
 	}
 }
 
@@ -198,38 +146,68 @@ func TestCatalogLinksEveryTrainer(t *testing.T) {
 	}
 }
 
-func TestTrainerSecurityClaimsStayFailClosed(t *testing.T) {
-	providers := readFile(t, "providers.html")
-	for _, claim := range []string{
-		"runc shares the host kernel and reports container tier",
-		"Docker supports both operations, WASM supports snippets, and E2B requires its configured guard for both.",
-	} {
-		if !strings.Contains(providers, claim) {
-			t.Errorf("providers trainer lost security claim %q", claim)
-		}
+// countWords carries only the numbers a plausible catalog can hold; an unlisted
+// count fails the test rather than letting the prose and the cards drift apart.
+var countWords = map[int]string{
+	12: "Twelve", 13: "Thirteen", 14: "Fourteen", 15: "Fifteen", 16: "Sixteen",
+	17: "Seventeen", 18: "Eighteen", 19: "Nineteen", 20: "Twenty",
+}
+
+// The catalog and the site home both state the trainer count in words. A trainer
+// added without touching that sentence leaves a number a reader can count and
+// find wrong, which is what this test is for.
+func TestStatedTrainerCountMatchesTheCards(t *testing.T) {
+	catalog := readFile(t, "index.html")
+	if cards := strings.Count(catalog, `class="catalog-card"`); cards != len(trainerPages) {
+		t.Errorf("catalog shows %d cards for %d trainers", cards, len(trainerPages))
 	}
-	operations := readFile(t, "operations.html")
-	if !strings.Contains(operations, "Docker or WASM JavaScript grant profile") {
-		t.Error("operations trainer lost provider-neutral grant smoke-test guidance")
+	word, ok := countWords[len(trainerPages)]
+	if !ok {
+		t.Fatalf("no English word listed for %d trainers", len(trainerPages))
 	}
-	advisor := readFile(t, "advisor.html")
-	for _, claim := range []string{`"status","value":"shipped"`, "128 tiny calls", "route template + timing"} {
-		if !strings.Contains(advisor, claim) {
-			t.Errorf("advisor trainer lost shipped/bounded claim %q", claim)
-		}
+	if !strings.Contains(catalog, word+" compact trainers") {
+		t.Errorf("the catalog does not state the trainer count as %q", word+" compact trainers")
 	}
-	capacity := readFile(t, "capacity-endpoint.html")
-	for _, claim := range []string{`"status","value":"shipped"`, "one elected caller per second", "x-plimsoll-health-check"} {
-		if !strings.Contains(capacity, claim) {
-			t.Errorf("capacity trainer lost backpressure/specgen claim %q", claim)
-		}
+	// The site home states the count too, but only the private one: the public landing
+	// page is written by scripts/export-public.sh and states no count at all, so this
+	// checks the sentence where it exists rather than demanding it exist.
+	if home := readFile(t, "../index.html"); strings.Contains(home, "compact trainers") &&
+		!strings.Contains(home, word+" compact trainers") {
+		t.Errorf("the site home states a trainer count other than %q", word+" compact trainers")
+	}
+	// The README counts them too, in the words it uses on the front page. It said
+	// "eighteen" over sixteen pages until 2026-09-18, which is the drift this catches.
+	if readme := readFile(t, "../../README.md"); strings.Contains(readme, "interactive lessons") &&
+		!strings.Contains(readme, word+" interactive lessons") {
+		t.Errorf("the README states a lesson count other than %q", word+" interactive lessons")
+	}
+}
+
+// The catalog promotes the physics-oracle run report above the lessons: it is
+// evidence from a real run, not a trainer, so it is linked rather than listed as
+// a card. The target is checked on disk, so a moved page fails here.
+func TestCatalogPromotesTheOracleRunReport(t *testing.T) {
+	const href = "../examples/oracle/index.html"
+	catalog := readFile(t, "index.html")
+	if !strings.Contains(catalog, `href="`+href+`"`) {
+		t.Fatalf("catalog does not link the oracle run report at %s", href)
+	}
+	if strings.Index(catalog, href) > strings.Index(catalog, `href="plain-english.html"`) {
+		t.Error("the oracle run report is linked below the first trainer card, not near the top")
+	}
+	if _, err := os.Stat(href); err != nil {
+		t.Errorf("the linked oracle run report is missing: %v", err)
+	}
+	if !strings.Contains(readFile(t, "../index.html"), `href="examples/oracle/index.html"`) {
+		t.Error("the site home does not link the oracle run report")
 	}
 }
 
 func TestSharedAssetsAreLocal(t *testing.T) {
 	for _, page := range trainerPages {
 		raw := readFile(t, page)
-		if page == "architecture.html" {
+		switch shapeOf(page) {
+		case "explorer":
 			for _, asset := range []string{"architecture.css", "architecture.mjs", "architecture-model.mjs"} {
 				if info, err := os.Stat(asset); err != nil || info.Size() == 0 {
 					t.Errorf("path explorer asset %s is missing or empty: %v", asset, err)
@@ -238,19 +216,21 @@ func TestSharedAssetsAreLocal(t *testing.T) {
 			if !strings.Contains(raw, `href="architecture.css"`) || !strings.Contains(raw, `src="architecture.mjs"`) {
 				t.Error("architecture explorer does not load its local assets")
 			}
-			continue
-		}
-		if page == "private-api.html" {
-			if !strings.Contains(raw, `href="trainer.css"`) || !strings.Contains(raw, `href="private-api.css"`) || !strings.Contains(raw, `src="private-api.js"`) {
-				t.Errorf("%s does not use its local experience assets", page)
+		case "plain":
+			// A plain page stands on plain.css, the base the plain pages share, and
+			// must not reach for the lesson stylesheet: inheriting the lesson shell is
+			// exactly what the shape exists not to do.
+			if strings.Contains(raw, `href="trainer.css"`) {
+				t.Errorf("%s is declared plain but loads the shared lesson stylesheet", page)
 			}
-			continue
-		}
-		if !strings.Contains(raw, `href="trainer.css"`) || !strings.Contains(raw, `src="trainer.js"`) {
-			t.Errorf("%s does not use local shared assets", page)
+			if !strings.Contains(raw, `href="plain.css"`) {
+				t.Errorf("%s is declared plain but does not load plain.css", page)
+			}
 		}
 	}
-	for _, asset := range []string{"trainer.css", "trainer.js"} {
+	// trainer.css and trainer.js still serve the catalog, the quick start, the demo
+	// page and the private positioning page.
+	for _, asset := range []string{"trainer.css", "trainer.js", "plain.css"} {
 		if info, err := os.Stat(asset); err != nil || info.Size() == 0 {
 			t.Errorf("asset %s is missing or empty: %v", asset, err)
 		}
@@ -270,7 +250,7 @@ func TestReferenceLinksLabelTheirDestination(t *testing.T) {
 	}
 	for _, page := range []string{"demo.html", "quick-start.html"} {
 		// demo.html drives the commercial hosted demo and is excluded from the public
-		// export (see docs/public-export-plan.md), so it is checked wherever it exists
+		// export (see private/public-export-plan.md), so it is checked wherever it exists
 		// and skipped where it does not. quick-start.html ships everywhere, so a
 		// missing one is a real failure rather than a different repository.
 		raw, err := os.ReadFile(page)
@@ -286,8 +266,10 @@ func TestReferenceLinksLabelTheirDestination(t *testing.T) {
 			}
 		}
 	}
-	private := readFile(t, "private-api.html") + readFile(t, "private-api.js")
-	for _, marker := range []string{"external-reference", "Hono", "https://hono.dev/docs"} {
+	// The Flight Recorder names Hono, the example gateway's HTTP framework, and a
+	// reader who has never heard of it needs the link to say where it goes.
+	private := readFile(t, "private-api.html")
+	for _, marker := range []string{"Hono", "https://hono.dev/docs", "External · official docs ↗"} {
 		if !strings.Contains(private, marker) {
 			t.Errorf("private API trainer lost Hono reference %q", marker)
 		}

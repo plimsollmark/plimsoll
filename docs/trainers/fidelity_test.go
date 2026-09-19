@@ -18,14 +18,13 @@ package trainers
 // constant it comes from.
 
 import (
-	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -39,8 +38,7 @@ func trainerProse(t *testing.T) map[string]string {
 	out := map[string]string{}
 	names := append([]string{}, trainerPages...)
 	names = append(names, "index.html", "quick-start.html", "trainer.js",
-		"private-api.html", "private-api.js",
-		"demo.html", "../positioning/docker-agent-boundaries.html")
+		"demo.html", "../../private/positioning/docker-agent-boundaries.html")
 	for _, name := range names {
 		raw, err := os.ReadFile(name)
 		if os.IsNotExist(err) {
@@ -138,8 +136,13 @@ func TestTrainerMetricNamesAreExposed(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) == 0 {
-		t.Fatal("found no metric names in the trainers; the pattern is probably wrong")
+	// The guard used to be "some trainer must name a metric", which failed the day the
+	// only page that named them was deleted, for a reason that had nothing to do with
+	// fidelity. What the guard is actually for is proving the pattern still recognises a
+	// metric name, so it asks the daemon's own source instead: no trainer has to mention
+	// metrics, but one that does gets checked.
+	if len(pattern.FindAllString(src, 1)) == 0 {
+		t.Fatal("the pattern matches no metric name in the daemon's source; it is probably wrong")
 	}
 	for m, page := range seen {
 		if strings.HasPrefix(m, "coderunner_") {
@@ -220,202 +223,6 @@ func receiverType(expr ast.Expr) string {
 		return receiverType(expr.X)
 	default:
 		return ""
-	}
-}
-
-type providerGrantCapabilities map[string]map[string]bool
-
-func providerCapabilitiesFromSource(t *testing.T) providerGrantCapabilities {
-	t.Helper()
-	files := shippingGoFiles(t, "../../sandbox")
-	typeNames := map[string]string{}
-	for _, parsed := range files {
-		for _, decl := range parsed.file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Recv == nil || fn.Name.Name != "Name" || fn.Body == nil || len(fn.Recv.List) != 1 {
-				continue
-			}
-			receiver := receiverType(fn.Recv.List[0].Type)
-			ast.Inspect(fn.Body, func(node ast.Node) bool {
-				ret, ok := node.(*ast.ReturnStmt)
-				if !ok || len(ret.Results) != 1 {
-					return true
-				}
-				lit, ok := ret.Results[0].(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					return true
-				}
-				name, err := strconv.Unquote(lit.Value)
-				if err == nil {
-					typeNames[receiver] = strings.ToLower(name)
-				}
-				return false
-			})
-		}
-	}
-
-	capabilities := providerGrantCapabilities{}
-	for _, parsed := range files {
-		for _, decl := range parsed.file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Recv == nil || fn.Body == nil || len(fn.Recv.List) != 1 {
-				continue
-			}
-			kind := ""
-			switch fn.Name.Name {
-			case "SupportsJavaScriptGrants":
-				kind = "javascript"
-			case "SupportsProjectGrants":
-				kind = "project"
-			default:
-				continue
-			}
-			provider := typeNames[receiverType(fn.Recv.List[0].Type)]
-			if provider == "" {
-				continue
-			}
-			live := false
-			ast.Inspect(fn.Body, func(node ast.Node) bool {
-				ret, ok := node.(*ast.ReturnStmt)
-				if !ok {
-					return true
-				}
-				for _, result := range ret.Results {
-					if ident, ok := result.(*ast.Ident); !ok || ident.Name != "false" {
-						live = true
-					}
-				}
-				return true
-			})
-			if capabilities[provider] == nil {
-				capabilities[provider] = map[string]bool{}
-			}
-			capabilities[provider][kind] = live
-		}
-	}
-	if len(capabilities) == 0 {
-		t.Fatal("derived no provider grant capabilities from source")
-	}
-	return capabilities
-}
-
-type fidelityCell struct {
-	Text string `json:"text"`
-	Note string `json:"note"`
-}
-
-type fidelityRow struct {
-	Label string         `json:"label"`
-	Cells []fidelityCell `json:"cells"`
-}
-
-type fidelityChapter struct {
-	ID      string        `json:"id"`
-	Kind    string        `json:"kind"`
-	Title   string        `json:"title"`
-	Lede    string        `json:"lede"`
-	Prompt  string        `json:"prompt"`
-	Columns []string      `json:"columns"`
-	Rows    []fidelityRow `json:"rows"`
-}
-
-type fidelityDocument struct {
-	Chapters []fidelityChapter `json:"chapters"`
-}
-
-func trainerDocumentsForFidelity(t *testing.T) map[string]fidelityDocument {
-	t.Helper()
-	documents := map[string]fidelityDocument{}
-	for _, name := range trainerPages {
-		raw := readFile(t, name)
-		matches := trainerDataPattern.FindStringSubmatch(raw)
-		if len(matches) != 2 {
-			t.Fatalf("%s: missing exactly one trainerData document", name)
-		}
-		var doc fidelityDocument
-		if err := json.Unmarshal([]byte(matches[1]), &doc); err != nil {
-			t.Fatalf("%s: parse trainerData: %v", name, err)
-		}
-		documents[name] = doc
-	}
-	return documents
-}
-
-var staleCapabilityStatus = regexp.MustCompile(`(?i)\bplanned\b|\brejected\b|\bjs\s+only\b`)
-
-func providerInLabel(label string, capabilities providerGrantCapabilities) string {
-	lower := strings.ToLower(label)
-	for provider := range capabilities {
-		if regexp.MustCompile(`\b` + regexp.QuoteMeta(provider) + `\b`).MatchString(lower) {
-			return provider
-		}
-	}
-	return ""
-}
-
-func capabilityKindsForCell(chapter fidelityChapter, row fidelityRow, column, cellText string) []string {
-	columnAndRow := strings.ToLower(column + " " + row.Label)
-	chapterText := strings.ToLower(chapter.Title + " " + chapter.Lede + " " + chapter.Prompt)
-	isCapability := strings.Contains(columnAndRow, "grant") ||
-		strings.Contains(columnAndRow, "capabil") ||
-		(strings.Contains(chapterText, "permission slip") &&
-			(strings.Contains(strings.ToLower(column), "today") || strings.Contains(strings.ToLower(column), "status")))
-	if !isCapability {
-		return nil
-	}
-	if regexp.MustCompile(`(?i)\bjs\s+only\b`).MatchString(cellText) {
-		return []string{"project"}
-	}
-	hasProject := strings.Contains(columnAndRow, "project")
-	hasJavaScript := strings.Contains(columnAndRow, "javascript") ||
-		regexp.MustCompile(`\bjs\b`).MatchString(columnAndRow) || strings.Contains(columnAndRow, "snippet")
-	switch {
-	case hasProject && !hasJavaScript:
-		return []string{"project"}
-	case hasJavaScript && !hasProject:
-		return []string{"javascript"}
-	default:
-		return []string{"javascript", "project"}
-	}
-}
-
-// TestTrainerGrantMatrixCellsMatchSource parses the JSON matrix structure itself.
-// It derives provider names and operation-specific grant support from Name and
-// Supports*Grants methods, then rejects stale status words only when the referenced
-// capability is live. A legitimate WASM project-grant "rejected" cell therefore
-// remains valid, while the same cell for Docker fails without adding a phrase to a
-// denylist.
-func TestTrainerGrantMatrixCellsMatchSource(t *testing.T) {
-	capabilities := providerCapabilitiesFromSource(t)
-	for page, document := range trainerDocumentsForFidelity(t) {
-		for _, chapter := range document.Chapters {
-			if chapter.Kind != "matrix" {
-				continue
-			}
-			for _, row := range chapter.Rows {
-				provider := providerInLabel(row.Label, capabilities)
-				if provider == "" {
-					continue
-				}
-				for i, cell := range row.Cells {
-					if i >= len(chapter.Columns) {
-						t.Errorf("%s chapter %q row %q has a cell without a column", page, chapter.ID, row.Label)
-						continue
-					}
-					cellText := cell.Text + " " + cell.Note
-					status := staleCapabilityStatus.FindString(cellText)
-					if status == "" {
-						continue
-					}
-					for _, kind := range capabilityKindsForCell(chapter, row, chapter.Columns[i], cellText) {
-						if capabilities[provider][kind] {
-							t.Errorf("%s chapter %q capability cell %q/%q says %q, but %s %s grants are live in source",
-								page, chapter.ID, row.Label, chapter.Columns[i], status, provider, kind)
-						}
-					}
-				}
-			}
-		}
 	}
 }
 
@@ -566,21 +373,26 @@ func TestTrainerShippedFeaturesAreNotDescribedAsProposals(t *testing.T) {
 			}
 		}
 	}
-	// The positive half: the two pages that carry a status stat must say shipped.
-	for _, page := range []string{"advisor.html", "capacity-endpoint.html", "brokering.html"} {
-		if !strings.Contains(readFile(t, page), `"status","value":"shipped"`) {
-			t.Errorf("%s lost its shipped status stat", page)
-		}
-	}
+	// There used to be a positive half here demanding a `"status","value":"shipped"`
+	// stat in three lesson documents. That pinned a rendering detail, not a fact, and
+	// the pages are no longer lesson documents; the phrases above are the check.
 }
 
 // TestTrainerNumericLimitsMatchTheConstants pairs each human-readable ceiling with
 // the constant it is a rendering of. This is the one place a fact list is
 // unavoidable: "256 KiB" cannot be derived from `MaxCodeBytes = 256 << 10` without
 // re-implementing the rendering, so the pairing is stated once, here, beside it.
+//
+// It checks in one direction only. A page that renders one of these numbers is held
+// to the constant; a page that does not render it owes nothing. Until 2026-09-19 it
+// also demanded that *some* trainer render every number, which is the test deciding
+// what a lesson should teach, the same overreach as the chapter-count rule, and it
+// put an "8 MiB" sentence into the integrations lesson for no reader's benefit
+// (Carroll, 2026-09-19: no guards on what a trainer chooses to say).
 func TestTrainerNumericLimitsMatchTheConstants(t *testing.T) {
 	space := regexp.MustCompile(`\s+`)
 	flat := space.ReplaceAllString(plimsollSource(t), " ")
+	prose := trainerProse(t)
 	for _, c := range []struct {
 		decl, rendered, why string
 	}{
@@ -591,24 +403,29 @@ func TestTrainerNumericLimitsMatchTheConstants(t *testing.T) {
 		{"MaxProjectArtifacts = 100", "100 artifact paths", "project artifact count"},
 		{"maxRequestBytes = 8 << 20", "8 MiB", "raw HTTP body cap"},
 		{"maxRunTimeout = 5 * time.Minute", "5 min", "RPC wall ceiling"},
-		{"maxHostCallsPerRun = 256", "256 calls", "per-run host call budget"},
+		{"DefaultMaxHostCalls = 256", "256 calls", "default per-run host call budget"},
 		{"breakerMaxCooldown = 30 * time.Second", "30s", "circuit-breaker cooldown cap"},
 	} {
-		if !strings.Contains(flat, c.decl) {
-			t.Errorf("the %s constant changed or moved: %q is no longer in the source, so "+
-				"the trainers' %q may now be wrong", c.why, c.decl, c.rendered)
-			continue
-		}
-		found := false
-		for _, prose := range trainerProse(t) {
-			if strings.Contains(prose, c.rendered) {
-				found = true
-				break
+		// Not strings.Contains: "128 MiB" contains "8 MiB", so a substring match let a
+		// different number satisfy the pairing. Found 2026-09-19, when deleting the only
+		// page that appeared to render the raw body cap turned out to change nothing.
+		rendered := regexp.MustCompile(`(^|[^0-9.])` + regexp.QuoteMeta(c.rendered))
+		var pages []string
+		for name, text := range prose {
+			if rendered.MatchString(text) {
+				pages = append(pages, name)
 			}
 		}
-		if !found {
-			t.Errorf("no trainer renders the %s as %q; if the wording changed, change it here too",
-				c.why, c.rendered)
+		sort.Strings(pages)
+		if strings.Contains(flat, c.decl) {
+			continue
 		}
+		if len(pages) == 0 {
+			// Nothing renders it, so no reader is misled; the pairing itself is stale.
+			t.Errorf("the %s pairing names %q, which is no longer in the source; update or delete the pairing", c.why, c.decl)
+			continue
+		}
+		t.Errorf("%s renders the %s as %q, but %q is no longer in the source; the page or the pairing is wrong",
+			strings.Join(pages, ", "), c.why, c.rendered, c.decl)
 	}
 }

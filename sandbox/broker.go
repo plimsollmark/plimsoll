@@ -21,7 +21,6 @@ import (
 const (
 	maxHostRequestBytes  = 1 << 20 // one JSON request body
 	maxHostResponseBytes = 4 << 20 // one response body
-	maxHostCallsPerRun   = 256     // allowed and denied attempts combined
 	maxHostConcurrent    = 16
 )
 
@@ -267,8 +266,9 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	}
 
 	// Count before any validation so denied probes spend the same finite budget as
-	// allowed calls.
-	if b.callsMade.Add(1) > maxHostCallsPerRun {
+	// allowed calls. The budget is the grant's (DefaultMaxHostCalls unless the
+	// profile raised it, never past MaxHostCallsCeiling).
+	if b.callsMade.Add(1) > int64(b.grant.CallBudget()) {
 		b.trace.recordDenied()
 		return brokerError(http.StatusTooManyRequests, "host api call budget for this run is exhausted")
 	}

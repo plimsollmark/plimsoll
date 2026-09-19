@@ -70,7 +70,7 @@ msg="plimsolld listening" addr=127.0.0.1:8746 provider=wasm isolation=process au
 ```
 
 `wasm` is the in-process, process-tier provider: right for trying the auth path on a
-laptop, wrong for hostile code (see the README's [isolation tiers](../README.md#isolation-tiers)).
+laptop, wrong for hostile code (see [docs/isolation-tiers.md](isolation-tiers.md)).
 Nothing about the caller setup changes when you switch to `docker` or `e2b`.
 
 ## Call it as that caller

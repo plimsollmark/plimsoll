@@ -70,7 +70,7 @@ gets merged more than style preferences do.
   from it carry route templates, counts, timings, and trusted labels. A change that
   makes it possible for a raw path, query, body, or credential to enter that stream
   will be rejected regardless of how useful the data would be. See
-  [docs/advisory-privacy.md](docs/advisory-privacy.md).
+  [docs/efficiency-advisor.md](docs/efficiency-advisor.md).
 - **Advice never changes a run.** Advisory analysis is post-dispatch over an
   already-final result. It must not gate admission, alter exit codes, output, or
   isolation, or slow a run down.

@@ -55,7 +55,7 @@
 <body>
 <main>
 <h1>The physics oracle: an AI-written controller, judged by a compiled plant</h1>
-<p class="sub">Every number on this page came from a real run through plimsoll's docker tier ({{.Isolation}}) on {{.Date}}. The controller is the only thing the caller sent. The plant, a cart-pole compiled to WebAssembly, and the judge that closes the loop are baked into the sandbox image. The judge ran the controller as a separate process, recorded every 10 ms tick, and the SHA-256 of that record is the fingerprint.</p>
+<p class="sub">Every number on this page came from a real run through plimsoll's docker tier ({{.Isolation}}) on {{.Date}}. The controller is the only thing the caller sent. The <b>plant</b> (control engineering's word for the thing being controlled, here a cart on a rail with a pole hinged on top of it that the controller keeps upright by pushing the cart) is compiled to WebAssembly, and it and the judge that closes the loop are baked into the sandbox image. The judge ran the controller as a separate process, recorded every 10 ms tick, and the SHA-256 of that record is the fingerprint.</p>
 
 <div class="row">
   <section class="panel">
@@ -121,6 +121,8 @@
   <li>The controller cannot alter the plant or the record, but it can read them: the judge and the plant sit on the container's read-only root, visible to any process in the run. Nothing here is secret. A hidden plant or a hidden judge needs the controller in its own namespace with only the state-and-force channel crossing, which is a different build of the same idea.</li>
   <li>The judge protects the record from the controller; it does not make the controller's arithmetic portable. A controller that calls <code>Math.sin</code> ties its fingerprint to the JavaScript engine's implementation.</li>
   <li>Forward Euler at 1 ms, the Reference FMUs' solver: adequate for a balancing demo, not a claim about accuracy.</li>
+  <li><b>A fingerprint is identity within one build of the plant, and it is not a score.</b> The bytes come from the compiled module's own arithmetic, so recompiling <code>cartpole.wasm</code> with another toolchain, or changing the model, can move every fingerprint on this page while each controller still balances exactly as well as it did. Two controllers whose gains differ in the last digit balance the same and hash differently. That is what makes the number a reproducibility check and not a ranking.</li>
+  <li><b>Nothing here ranks two controllers that both balance.</b> The judge records whether and when the pole fell and where the cart ended; it does not report settling time, peak angle, or control effort, so this page cannot say which of two balancing controllers is better. Those are fuzzy measures over the same trajectory the judge already holds, which is an addition to the judge rather than a change to the run.</li>
   <li>One plant. A second plant is another model file and another image build.</li>
 </ul>
 <p class="note">Reproduce: <code>make docker-images &amp;&amp; go run ./examples/oracle</code> in the plimsoll repository, with docker. The page is written from the run.</p>
