@@ -35,13 +35,19 @@ build:
 vet:
 	go vet ./...
 
-## test: unit tests (includes fuzz corpora as regressions)
-test:
-	go test ./... -count=1
+# The live E2B tests skip only when E2B_API_KEY is absent, and `./...` selects them,
+# so a key left in the shell (a secrets-manager wrapper, an earlier E2B=1 session) would make
+# the ordinary gate create billable microVMs. These targets strip the key; only
+# e2b-suite and e2b-guard-live, the deliberate paid runs, see it.
+NO_E2B := env -u E2B_API_KEY
 
-## race: unit tests under the race detector
+## test: unit tests (includes fuzz corpora as regressions); never sees E2B_API_KEY
+test:
+	$(NO_E2B) go test ./... -count=1
+
+## race: unit tests under the race detector; never sees E2B_API_KEY
 race:
-	go test -race ./... -count=1
+	$(NO_E2B) go test -race ./... -count=1
 
 ## lint: golangci-lint (must be on PATH)
 lint:
@@ -76,7 +82,7 @@ docker-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "docker-suite: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     go test ./sandbox -run 'Docker|RunProject|Broker|Smoke' -skip 'Live' -count=1 -v; \
+	     $(NO_E2B) go test ./sandbox -run 'Docker|RunProject|Broker|Smoke' -skip 'Live' -count=1 -v; \
 	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/docker-suite.log; then \
 	   echo "docker-suite: required coverage was skipped:" >&2; \

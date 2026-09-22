@@ -624,6 +624,7 @@ func (s *SandboxService) runModule(ctx context.Context, env envelope, p *plimsol
 			slog.Int("tread_column", f.Column),
 			slog.Int("tread_distinct", f.Distinct),
 			slog.Int("tread_repeated", f.Repeated),
+			slog.Int("tread_flat", f.Flat),
 			slog.Bool("tread_covers_whole_sweep", f.WholeSweepInOneTread()),
 		)
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -23,12 +24,14 @@ import (
 // /oracle/run.mjs is trusted image content; controller.js is the only thing the
 // attacker supplies, exactly as in the honest test.
 //
-// The security property these tests establish, and WHY it holds: acceptance is
-// content-addressed to an 80000-byte trajectory the attacker cannot produce
-// without actually solving the task, because the judge (not the controller)
-// writes it from the plant's own state. Every forgery below therefore fails, and
-// the tests assert the strong form: any trajectory.bin the host returns is the
-// judge's real 80000-byte output and never carries the accepted fingerprint.
+// What these tests establish, and what they do not. Each forgery below fails to
+// return the accepted fingerprint, and any trajectory.bin the host returns has the
+// judge's size. They do NOT establish provenance: the judge and the controller
+// share one container and one writable directory, a returned file's size says
+// nothing about who wrote it, and substituting a known accepted trajectory (as
+// opposed to forging one) is not attempted here. Proving that a returned
+// trajectory came from the judge needs an output channel the controller cannot
+// reach, which does not exist yet.
 
 const (
 	oracleAcceptedFingerprint = oracleAcceptedSHA256
@@ -49,9 +52,15 @@ func judgeAttack(t *testing.T, d *DockerSandbox, controller string, extra ...Fil
 		Timeout:   20 * time.Second,
 	})
 	if err != nil {
-		// A typed pre-dispatch error is a fine outcome for an attack: nothing ran.
-		t.Logf("RunProject returned %v (nothing executed, no acceptance)", err)
-		return ProjectResult{}, ""
+		// A typed pre-dispatch refusal is a fine outcome for an attack: nothing
+		// ran. Any other error is infrastructure failing, which says nothing about
+		// the attack, and counting it as a defence would let a broken daemon pass
+		// every test in this file.
+		if errors.Is(err, ErrInvalidRequest) || errors.Is(err, ErrUnsupported) {
+			t.Logf("RunProject refused before dispatch: %v (nothing executed, no acceptance)", err)
+			return ProjectResult{}, ""
+		}
+		t.Fatalf("RunProject failed without reaching the attack: %v", err)
 	}
 	var sum string
 	for _, a := range res.Artifacts {

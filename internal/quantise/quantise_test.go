@@ -170,3 +170,58 @@ func TestDegenerateInputsReportNothing(t *testing.T) {
 		}
 	}
 }
+
+func TestAResultThatComesBackIsCountedOnce(t *testing.T) {
+	// A, A, B, A: the fourth row returns the first answer. Counting changes
+	// between neighbours would call that three distinct results; there are two.
+	rows := [][]float64{{0.0}, {0.001}, {0.002}, {0.003}}
+	runs := []sandbox.ModuleRun{
+		{Status: 1, Outputs: []float64{1}}, {Status: 1, Outputs: []float64{1}},
+		{Status: 1, Outputs: []float64{2}}, {Status: 1, Outputs: []float64{1}},
+	}
+	found := quantise.Analyze(rows, runs)
+	if len(found) != 1 {
+		t.Fatalf("want one finding, got %d", len(found))
+	}
+	f := found[0]
+	if f.Distinct != 2 || f.Repeated != 2 || f.Flat != 1 {
+		t.Errorf("want distinct=2 repeated=2 flat=1, got distinct=%d repeated=%d flat=%d", f.Distinct, f.Repeated, f.Flat)
+	}
+}
+
+func TestARepeatWithoutAFlatNeighbourIsNotATread(t *testing.T) {
+	// A, B, A: the parameter changed the result and then changed it back. That
+	// is a repeat, not coarse resolution, and reporting it as a tread would be
+	// a claim about the model the data does not support.
+	rows := [][]float64{{0.0}, {0.001}, {0.002}}
+	runs := []sandbox.ModuleRun{
+		{Status: 1, Outputs: []float64{1}}, {Status: 1, Outputs: []float64{2}}, {Status: 1, Outputs: []float64{1}},
+	}
+	if found := quantise.Analyze(rows, runs); len(found) != 0 {
+		t.Fatalf("no neighbours agree, so no tread: got %+v", found)
+	}
+}
+
+func TestARepeatedParameterValueIsDeterminismNotATread(t *testing.T) {
+	// The caller submitted 0.001 twice. Getting the same answer twice is the
+	// model being deterministic, and every other neighbour differs.
+	rows := [][]float64{{0.0}, {0.001}, {0.001}, {0.002}}
+	runs := []sandbox.ModuleRun{
+		{Status: 1, Outputs: []float64{1}}, {Status: 1, Outputs: []float64{2}},
+		{Status: 1, Outputs: []float64{2}}, {Status: 1, Outputs: []float64{3}},
+	}
+	if found := quantise.Analyze(rows, runs); len(found) != 0 {
+		t.Fatalf("a duplicated input is not a tread: got %+v", found)
+	}
+}
+
+func TestOneInputTwoAnswersReportsNothing(t *testing.T) {
+	rows := [][]float64{{0.0}, {0.0}, {0.001}, {0.002}}
+	runs := []sandbox.ModuleRun{
+		{Status: 1, Outputs: []float64{1}}, {Status: 1, Outputs: []float64{9}},
+		{Status: 1, Outputs: []float64{1}}, {Status: 1, Outputs: []float64{1}},
+	}
+	if found := quantise.Analyze(rows, runs); len(found) != 0 {
+		t.Fatalf("a non-deterministic run supports no tread claim: got %+v", found)
+	}
+}

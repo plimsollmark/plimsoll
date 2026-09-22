@@ -500,6 +500,13 @@ infrastructure suites are opt-in: `make audit DOCKER=1` adds the
 docker/seccomp/broker/smoke tests, `make audit E2B=1` (with `E2B_API_KEY`) adds
 the live E2B suite. `make help` lists individual targets.
 
+**The ordinary gate cannot spend.** A bare `go test ./...` with `E2B_API_KEY` in the
+environment runs the live suite, which creates billable microVMs. So the `test`,
+`race` and `docker-suite` targets run under `env -u E2B_API_KEY`; only `e2b-suite`
+and `e2b-guard-live` see the key. Prefer the make targets to a bare `go test ./...`
+in any shell that may hold a key. Docker is deliberately *not* hidden from the
+ordinary gate: those tests are free and local, and they are the isolation proof.
+
 One claim the gate does **not** make: `make audit E2B=1` runs `-run Live`, and
 `TestE2BGuardLive` skips unless `E2B_GUARD_URL` and `E2B_LIVE_GRANT_BASE_URL` are
 also set, so a green E2B suite does not mean the guarded-egress path was exercised.

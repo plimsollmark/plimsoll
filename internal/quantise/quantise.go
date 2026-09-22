@@ -18,6 +18,7 @@
 package quantise
 
 import (
+	"encoding/binary"
 	"math"
 	"sort"
 
@@ -30,12 +31,21 @@ import (
 type Finding struct {
 	// Column is the index into each parameter row that varied.
 	Column int
-	// Rows is how many successful rows took part, and Distinct how many
-	// different output vectors they produced. Repeated is Rows-Distinct: the
-	// simulations that returned a result an earlier row already had.
+	// Rows is how many distinct parameter values completed (a value submitted
+	// twice counts once), and Distinct how many different output vectors they
+	// produced, counted over the whole sweep. Repeated is Rows-Distinct: the
+	// simulations that returned a result some other row already had, wherever
+	// in the sweep that row sat.
 	Rows     int
 	Distinct int
 	Repeated int
+	// Flat counts neighbouring samples, in swept order, that returned the same
+	// result. It is the tread evidence: a repeat between non-neighbours (A, B,
+	// A) is a repeat but not a tread, since the parameter did change the result
+	// in between. A repeat is evidence of coarse resolution, never proof of its
+	// cause: a model that is genuinely insensitive to the parameter over the
+	// swept range produces the same pattern.
+	Flat int
 	// Sampled is the finest gap the caller swept at, Span the full swept range.
 	Sampled float64
 	Span    float64
@@ -46,9 +56,9 @@ type Finding struct {
 }
 
 // Quantised reports whether the column resolved more coarsely than it was
-// swept, which is the condition worth telling a caller about. A column whose
-// every row differs is not quantised at this sampling and produces no finding.
-func (f Finding) Quantised() bool { return f.Repeated > 0 }
+// swept: at least one pair of neighbouring samples returned the same result.
+// A column with no such pair produces no finding.
+func (f Finding) Quantised() bool { return f.Flat > 0 }
 
 // WholeSweepInOneTread reports the worst case: every row returned the same
 // result, so the sweep never left one tread and its results carry no
@@ -62,7 +72,10 @@ func (f Finding) WholeSweepInOneTread() bool { return f.Distinct == 1 && f.Rows 
 //
 // runs must be positionally aligned with rows, which is the contract
 // sandbox.ModuleResult.Runs already carries. Rows that did not complete are
-// skipped rather than treated as a repeat.
+// skipped rather than treated as a repeat. Rows that repeat a parameter value
+// collapse to one sample, since the same input returning the same output is
+// determinism, not a tread; if they disagree the run is not deterministic and
+// nothing is reported.
 func Analyze(rows [][]float64, runs []sandbox.ModuleRun) []Finding {
 	if len(rows) < 2 || len(runs) != len(rows) {
 		return nil
@@ -84,37 +97,53 @@ func Analyze(rows [][]float64, runs []sandbox.ModuleRun) []Finding {
 		}
 		samples = append(samples, sample{value: rows[i][column], bits: outputBits(run.Outputs)})
 	}
+	sort.SliceStable(samples, func(a, b int) bool { return samples[a].value < samples[b].value })
+	// Collapse repeated parameter values. Sorting put them next to each other.
+	unique := samples[:0]
+	for _, s := range samples {
+		if n := len(unique); n > 0 && math.Float64bits(unique[n-1].value) == math.Float64bits(s.value) {
+			if !sameBits(unique[n-1].bits, s.bits) {
+				return nil // one input, two answers: not deterministic, so no tread claim
+			}
+			continue
+		}
+		unique = append(unique, s)
+	}
+	samples = unique
 	if len(samples) < 2 {
 		return nil
 	}
-	sort.SliceStable(samples, func(a, b int) bool { return samples[a].value < samples[b].value })
 
 	// Walk in swept order. A change between adjacent samples ends a tread; the
-	// distance between consecutive changes is one tread's width.
-	distinct, repeated := 1, 0
+	// distance between consecutive changes is one tread's width. Distinct is
+	// counted over the whole sweep, not from the changes, so a result that
+	// comes back after a different one (A, B, A) is one result, not two.
+	seen := map[string]struct{}{key(samples[0].bits): {}}
+	flat := 0
 	var changes []float64
 	finest := math.Inf(1)
 	for i := 1; i < len(samples); i++ {
 		if gap := samples[i].value - samples[i-1].value; gap > 0 && gap < finest {
 			finest = gap
 		}
+		seen[key(samples[i].bits)] = struct{}{}
 		if sameBits(samples[i].bits, samples[i-1].bits) {
-			repeated++
+			flat++
 			continue
 		}
-		distinct++
 		// The edge sits between the two samples that straddle it; the midpoint
 		// is the least wrong single number for it at this sampling.
 		changes = append(changes, (samples[i].value+samples[i-1].value)/2)
 	}
-	if repeated == 0 {
-		return nil // resolved at every sampled point: nothing to report
+	if flat == 0 {
+		return nil // no two neighbours agree: resolved at this sampling
 	}
 	f := Finding{
 		Column:   column,
 		Rows:     len(samples),
-		Distinct: distinct,
-		Repeated: repeated,
+		Distinct: len(seen),
+		Repeated: len(samples) - len(seen),
+		Flat:     flat,
 		Span:     samples[len(samples)-1].value - samples[0].value,
 	}
 	if !math.IsInf(finest, 1) {
@@ -168,6 +197,15 @@ func outputBits(out []float64) []uint64 {
 		bits[i] = math.Float64bits(v)
 	}
 	return bits
+}
+
+// key is a map key for one output vector, exact to the bit.
+func key(bits []uint64) string {
+	b := make([]byte, 8*len(bits))
+	for i, v := range bits {
+		binary.LittleEndian.PutUint64(b[8*i:], v)
+	}
+	return string(b)
 }
 
 func sameBits(a, b []uint64) bool {
