@@ -115,6 +115,7 @@ type DockerSandbox struct {
 	verifiedImageIDs map[string]string
 	lastVerified     time.Time
 	preflightNow     func() time.Time // test clock; nil uses time.Now
+	preflightWait    time.Duration    // bounded wait on preflight contention; 0 uses the default
 }
 
 const (
@@ -125,6 +126,13 @@ const (
 	dockerDefaultOutputBytes = 64 << 10
 	dockerPreflightTimeout   = 10 * time.Second
 	dockerPreflightCacheTTL  = 5 * time.Second
+
+	// dockerPreflightWaitDefault bounds how long a caller that loses the preflight
+	// race waits for the in-flight probe to publish its result. A probe is a few
+	// docker CLI calls, so this covers the normal case comfortably while keeping
+	// the worst case bounded for latency-sensitive callers like readiness polls.
+	dockerPreflightWaitDefault = 2 * time.Second
+	dockerPreflightPoll        = 20 * time.Millisecond
 )
 
 func (d *DockerSandbox) snippetTimeout(requested time.Duration) time.Duration {
@@ -456,22 +464,75 @@ func (d *DockerSandbox) preflightTime() time.Time {
 // or runtime label while the daemon is unavailable/misconfigured. This verifies
 // daemon registration and executable basename; it is configuration evidence, not
 // cryptographic runtime attestation.
-func (d *DockerSandbox) Preflight(ctx context.Context) (retErr error) {
-	// Readiness is public and runs can also trigger lazy Preflight. Never let a
-	// request flood build an unbounded goroutine queue behind a mutex while one
-	// daemon probe is in flight. A concurrent caller may use the last recently
-	// verified ready state; an unready provider fails quickly and may retry.
-	if !d.preflightMu.TryLock() {
-		now := d.preflightTime()
-		d.stateMu.RLock()
-		cacheAge := now.Sub(d.lastVerified)
-		stillReady := d.ready && d.daemonHost != "" && d.verifiedRuntime == d.Runtime &&
-			!d.lastVerified.IsZero() && cacheAge >= 0 && cacheAge < dockerPreflightCacheTTL
-		d.stateMu.RUnlock()
-		if stillReady {
-			return nil
+// cachedReady reports whether a recent successful probe still vouches for the
+// provider, so a caller need not run one itself.
+func (d *DockerSandbox) cachedReady() bool {
+	now := d.preflightTime()
+	d.stateMu.RLock()
+	defer d.stateMu.RUnlock()
+	cacheAge := now.Sub(d.lastVerified)
+	return d.ready && d.daemonHost != "" && d.verifiedRuntime == d.Runtime &&
+		!d.lastVerified.IsZero() && cacheAge >= 0 && cacheAge < dockerPreflightCacheTTL
+}
+
+func (d *DockerSandbox) preflightWaitBudget() time.Duration {
+	if d.preflightWait > 0 {
+		return d.preflightWait
+	}
+	return dockerPreflightWaitDefault
+}
+
+// waitForPreflight is the bounded wait a caller performs when another goroutine
+// already holds the preflight lock.
+//
+// Failing immediately here was measured to be severe for concurrent consumers:
+// with a 5 s cache TTL, every expiry turned a burst of legitimate runs into
+// errors (47 of 48 judged runs lost at 24 workers, while neighbouring levels lost
+// none, purely depending on where the expiry fell). Waiting is still safe for the
+// reason the fail-fast existed: callers never block on the mutex, they poll, they
+// honour their own context deadline, and they give up after a bound, so no
+// unbounded queue can form behind one daemon probe.
+//
+// ready=true means the in-flight probe published a fresh ready state and NO lock
+// is held. ready=false with a nil error means this caller now HOLDS the lock and
+// must run the probe itself.
+func (d *DockerSandbox) waitForPreflight(ctx context.Context) (ready bool, err error) {
+	if d.cachedReady() {
+		return true, nil
+	}
+	giveUp := time.NewTimer(d.preflightWaitBudget())
+	defer giveUp.Stop()
+	tick := time.NewTicker(dockerPreflightPoll)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-giveUp.C:
+			return false, errors.New("docker preflight is already in progress")
+		case <-tick.C:
+			// Cache first: the holder publishes its result before releasing, so a
+			// successful refresh is visible without taking the lock at all.
+			if d.cachedReady() {
+				return true, nil
+			}
+			if d.preflightMu.TryLock() {
+				return false, nil
+			}
 		}
-		return errors.New("docker preflight is already in progress")
+	}
+}
+
+func (d *DockerSandbox) Preflight(ctx context.Context) (retErr error) {
+	// Readiness is public and runs can also trigger lazy Preflight. A caller that
+	// loses the race waits a bounded time for the in-flight probe rather than
+	// failing outright; see waitForPreflight for why that is still queue-safe.
+	if !d.preflightMu.TryLock() {
+		ready, err := d.waitForPreflight(ctx)
+		if err != nil || ready {
+			return err
+		}
+		// waitForPreflight returned holding the lock.
 	}
 	defer d.preflightMu.Unlock()
 
@@ -1480,6 +1541,21 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		// file path, unwritable file, over-budget result): request-attributable.
 		res.Outcome, res.Detail = ProjectOutcomeSetupFailed, report.Err
 	}
+	// A step killed by its own time budget is a timed-out run, not a completed
+	// one. Steps stop on first failure, so a timed-out step is where the plan
+	// stopped. Without this the truth lived only on StepResult.TimedOut and a
+	// caller keying on Outcome would read a hung step as a clean run; RunModule
+	// already classified the same event as timed_out, and the two operations
+	// must not disagree about what happened.
+	if res.Outcome == ProjectOutcomeCompleted {
+		for i, st := range res.Steps {
+			if st.TimedOut {
+				res.Outcome = ProjectOutcomeTimedOut
+				res.Detail = fmt.Sprintf("step %d exceeded its time budget", i+1)
+				break
+			}
+		}
+	}
 	return res, nil
 }
 
@@ -1558,6 +1634,15 @@ func (d *DockerSandbox) RunModule(ctx context.Context, req ModuleRequest) (Modul
 // else, including a signal, is a protocol error.
 func interpretModuleRun(res ModuleResult, pr ProjectResult, req ModuleRequest) (ModuleResult, error) {
 	res.Outcome, res.Detail = pr.Outcome, pr.Detail
+	// runPlan classifies a timed-out step, so that case arrives here already
+	// typed. Carry the worker's output through the early return anyway, and say
+	// it in the module operation's own vocabulary.
+	if len(pr.Steps) == 1 {
+		res.Stdout, res.Stderr = pr.Steps[0].Stdout, pr.Steps[0].Stderr
+		if pr.Steps[0].TimedOut {
+			res.Detail = "the worker exceeded the time budget"
+		}
+	}
 	if pr.Outcome != ProjectOutcomeCompleted {
 		return res, nil
 	}
@@ -1566,12 +1651,7 @@ func interpretModuleRun(res ModuleResult, pr ProjectResult, req ModuleRequest) (
 		return res, nil
 	}
 	st := pr.Steps[0]
-	res.Stdout, res.Stderr = st.Stdout, st.Stderr
 	diag := strings.TrimSpace(st.Stderr)
-	if st.TimedOut {
-		res.Outcome, res.Detail = ProjectOutcomeTimedOut, "the worker exceeded the time budget"
-		return res, nil
-	}
 	switch st.ExitCode {
 	case 0:
 	case 4:

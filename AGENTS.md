@@ -101,7 +101,11 @@ cancellation/deadline, and unmatched infrastructure failures. For projects,
 per-step failures live in `Steps` and the top-level conclusion is the typed
 `ProjectResult.Outcome` (`completed` / `setup_failed` / `timed_out` /
 `protocol_error`, with human context in `Detail`) — a stable retry/status
-classification. Output truncation is machine-readable everywhere: results carry
+classification. `timed_out` covers both a run that exceeded its whole budget and
+a step killed by its own step budget: a timed-out step sets `StepResult.TimedOut`
+**and** makes the run's `Outcome` `timed_out`, on every provider and for both
+`RunProject` and `RunModule`, so a caller keying on `Outcome` alone cannot read a
+hung step as a clean run. Output truncation is machine-readable everywhere: results carry
 `StdoutTruncated`/`StderrTruncated` (and `ArtifactsTruncated`) flags and the
 retained output is never annotated with in-band markers. On the wire,
 stdout/stderr are protobuf `bytes`, so arbitrary guest bytes survive verbatim

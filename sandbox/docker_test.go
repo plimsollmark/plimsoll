@@ -382,8 +382,14 @@ func TestDockerPreflightKeepsPinnedEndpointAndFailsClosed(t *testing.T) {
 	}
 }
 
-func TestDockerPreflightDoesNotQueueConcurrentCallers(t *testing.T) {
+// TestDockerPreflightBoundsConcurrentCallers: a caller that loses the preflight
+// race waits for the in-flight probe, but only for a bound. The property the old
+// fail-fast protected is unbounded queueing behind one daemon probe, and a
+// bounded wait keeps it: callers poll rather than block on the mutex and give up
+// on a deadline.
+func TestDockerPreflightBoundsConcurrentCallers(t *testing.T) {
 	d := DefaultDocker("")
+	d.preflightWait = 150 * time.Millisecond
 	d.preflightMu.Lock()
 	defer d.preflightMu.Unlock()
 
@@ -392,8 +398,64 @@ func TestDockerPreflightDoesNotQueueConcurrentCallers(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already in progress") {
 		t.Fatalf("err = %v, want an in-progress readiness error", err)
 	}
-	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
-		t.Fatalf("concurrent Preflight queued for %v instead of failing quickly", elapsed)
+	elapsed := time.Since(started)
+	if elapsed < 100*time.Millisecond {
+		t.Fatalf("gave up after %v without waiting for the in-flight probe", elapsed)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("concurrent Preflight queued for %v instead of bounding its wait", elapsed)
+	}
+}
+
+// TestDockerPreflightWaitsForInFlightProbe is the behaviour the bounded wait
+// exists for: the holder publishes a fresh ready state, and the waiting caller
+// succeeds instead of being told to retry. Measured without it, a concurrent
+// consumer lost 47 of 48 runs at every cache-TTL expiry.
+func TestDockerPreflightWaitsForInFlightProbe(t *testing.T) {
+	d := DefaultDocker("")
+	now := time.Unix(1_700_000_000, 0)
+	d.preflightNow = func() time.Time { return now }
+	d.preflightWait = 3 * time.Second
+
+	d.preflightMu.Lock()
+	go func() {
+		time.Sleep(80 * time.Millisecond)
+		// Publish BEFORE releasing, exactly as a real probe does, so the waiter
+		// sees a ready provider without ever taking the lock.
+		d.stateMu.Lock()
+		d.ready = true
+		d.daemonHost = "unix:///run/docker.sock"
+		d.verifiedRuntime = d.Runtime
+		d.lastVerified = now
+		d.stateMu.Unlock()
+		d.preflightMu.Unlock()
+	}()
+
+	started := time.Now()
+	if err := d.Preflight(context.Background()); err != nil {
+		t.Fatalf("Preflight = %v, want nil once the in-flight probe published a ready state", err)
+	}
+	if elapsed := time.Since(started); elapsed < 50*time.Millisecond {
+		t.Fatalf("returned in %v, so it cannot have waited for the probe", elapsed)
+	}
+}
+
+// TestDockerPreflightWaitRespectsCallerDeadline: the wait never outlives the
+// caller's own budget, which is what keeps it safe for a short-timeout run.
+func TestDockerPreflightWaitRespectsCallerDeadline(t *testing.T) {
+	d := DefaultDocker("")
+	d.preflightWait = 30 * time.Second
+	d.preflightMu.Lock()
+	defer d.preflightMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if err := d.Preflight(ctx); err == nil {
+		t.Fatal("want an error when the caller's deadline expires during the wait")
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("waited %v past the caller's 120ms deadline", elapsed)
 	}
 }
 
@@ -407,6 +469,7 @@ func TestDockerConcurrentPreflightRejectsExpiredEvidence(t *testing.T) {
 	d.verifiedRuntime = d.Runtime
 	d.lastVerified = now.Add(-dockerPreflightCacheTTL)
 	d.stateMu.Unlock()
+	d.preflightWait = 100 * time.Millisecond // bound the wait; this test is about expiry, not latency
 
 	d.preflightMu.Lock()
 	defer d.preflightMu.Unlock()

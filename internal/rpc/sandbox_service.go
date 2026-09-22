@@ -14,6 +14,7 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/grants"
+	"github.com/plimsollmark/plimsoll/internal/quantise"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -613,6 +614,19 @@ func (s *SandboxService) runModule(ctx context.Context, env envelope, p *plimsol
 		slog.Int("width", res.Width),
 		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 	)
+	// Post-dispatch, over results already computed: no model is run, nothing
+	// about the result changes, and a caller paying for rows that return an
+	// answer it already has is worth an operator seeing. Counts only. The
+	// tread widths this derives are differences between the caller's parameter
+	// values, and the audit line carries no parameter value.
+	for _, f := range quantise.Analyze(sbReq.Rows, res.Runs) {
+		attrs = append(attrs,
+			slog.Int("tread_column", f.Column),
+			slog.Int("tread_distinct", f.Distinct),
+			slog.Int("tread_repeated", f.Repeated),
+			slog.Bool("tread_covers_whole_sweep", f.WholeSweepInOneTread()),
+		)
+	}
 	attrs = append(attrs, traceAttrs(env.traceID)...)
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "module run", attrs...)
 
