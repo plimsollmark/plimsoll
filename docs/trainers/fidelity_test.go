@@ -388,7 +388,7 @@ func TestTrainerShippedFeaturesAreNotDescribedAsProposals(t *testing.T) {
 // also demanded that *some* trainer render every number, which is the test deciding
 // what a lesson should teach, the same overreach as the chapter-count rule, and it
 // put an "8 MiB" sentence into the integrations lesson for no reader's benefit
-// (Carroll, 2026-09-19: no guards on what a trainer chooses to say).
+// (ruled 2026-09-19: no guards on what a trainer chooses to say).
 func TestTrainerNumericLimitsMatchTheConstants(t *testing.T) {
 	space := regexp.MustCompile(`\s+`)
 	flat := space.ReplaceAllString(plimsollSource(t), " ")

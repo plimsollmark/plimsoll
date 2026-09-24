@@ -1,0 +1,35 @@
+{
+  "image": "plimsoll/sandbox-wasm-cc:latest (docker/wasm-cc.Dockerfile: wasi-sdk 27 by digest, on plimsoll/sandbox-sim)",
+  "build": "clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -o controller.wasm controller.c",
+  "controller_wasm_sha256": "fdb450ee5274f93bf54959785afadd91368ad87bce7751279756b118ebb8c344",
+  "math_cos_build": "clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -Dcos=host_cos -Wl,--allow-undefined -o controller.wasm controller.c",
+  "tick_s": 0.01,
+  "t_end_s": 20,
+  "min_score": 0.85,
+  "scenarios": [
+    {
+      "id": "s1",
+      "params": [3.14159, 0.5, 1.0],
+      "fingerprint": "e28dbdb6a07695854ce632d17bcc6aac8354012e1376a5bd1931f2549a6c588e",
+      "math_cos_fingerprint": "d536a067c8cb2ec987d031fab4561d06c8453aa39a1cda2f60b91bcb0d198829"
+    },
+    {
+      "id": "s2",
+      "params": [3.0, 0.5, 1.0],
+      "fingerprint": "da4e1845a2bcdba0d5c8903a3eb656abf841d81a6678afa7b5f730a0411121f1",
+      "math_cos_fingerprint": "fb4c7a7c3eaa162af2b053909f1588207ec84ec74037914b5473f937b73f8603"
+    },
+    {
+      "id": "s3",
+      "params": [3.3, 0.5, 1.2],
+      "fingerprint": "32e98c0545f135dbdce8cc665936bb3a63a6a98f83745550fc41a018a4aaf3df",
+      "math_cos_fingerprint": "eba220d58e3bd1a1f7499994d8d5e7e374728b1e8aaabc52105d87121934b6c9"
+    },
+    {
+      "id": "s4",
+      "params": [3.14159, 0.5, 0.8],
+      "fingerprint": "a9a628764119836404c9ad4024d1ab35f638ebb427497e613dda7c0813f158c1",
+      "math_cos_fingerprint": "a9a628764119836404c9ad4024d1ab35f638ebb427497e613dda7c0813f158c1"
+    }
+  ]
+}

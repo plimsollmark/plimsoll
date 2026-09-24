@@ -70,7 +70,7 @@ const (
 	// IsolationKernel: a user-space kernel between guest and host (docker under
 	// gVisor/runsc). A real boundary against hostile code.
 	IsolationKernel
-	// IsolationVM: a hardware-virtualized microVM (E2B/Firecracker). The strongest
+	// IsolationVM: a hardware-virtualized microVM (E2B/Firecracker, Docker Cloud). The strongest
 	// boundary offered here.
 	IsolationVM
 )
@@ -367,10 +367,14 @@ type EgressGuardResponse struct {
 	Body        []byte
 }
 
-// E2BGuardHeader is the header E2B injects outside the guest when its beta
-// per-host transform is configured. The value is a per-run guard credential,
-// not the customer API credential.
-const E2BGuardHeader = "X-Plimsoll-E2B-Guard"
+// EgressGuardHeader carries the per-run guard credential on every call to a VM
+// provider's egress guard. E2B's beta per-host transform injects it outside the
+// guest, so E2B guest code never sees it; on dockercloud the guest's host client
+// sends it itself (Docker's proxy injects credentials only for its own fixed list
+// of services), so there the guest can read its own run's credential. Either way
+// the credential is per run, valid only at the guard, only for that run's frozen
+// grant, and dead when the run ends.
+const EgressGuardHeader = "X-Plimsoll-Guard"
 
 // EgressGuardCapable is the transport-neutral seam used by a daemon or another
 // embedder to expose an E2B provider's per-run guard over its chosen HTTP server.

@@ -53,7 +53,7 @@
     not a particular run touches it.</p>
     <h3>Needed at run time</h3>
     <p>Whatever the selected provider reaches outside the binary: a container daemon and
-    its images, or a cloud API and a template. Nothing here is linked into plimsoll. A
+    its images, or a cloud API and a template or image. Nothing here is linked into plimsoll. A
     missing one stops runs from starting; it does not weaken the boundary of a run that
     did start.</p>
   </div>
@@ -176,8 +176,40 @@
       configuration check cannot tell you any of that, which is why the behavioural smoke
       test creates one real sandbox before the service will serve.</dd>
       <dt>Worth knowing</dt>
-      <dd>This is the only provider whose dependency is somebody else's service, and the
-      only one that bills. That is also why no automated run in this project touches it.</dd>
+      <dd>This is one of two providers whose dependency is somebody else's service, and
+      one of the two that bill. That is also why no automated run in this project touches
+      it.</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h3>Docker Cloud Sandboxes <span class="tier">virtual machine</span></h3>
+    <dl>
+      <dt>Needs outside the binary</dt>
+      <dd>The Docker Cloud Sandboxes service; a Docker personal access token with the
+      "Cloud Sandboxes" scope in <code>DOCKER_SBX_TOKEN</code> and the account it belongs
+      to in <code>DOCKER_SBX_USERNAME</code>; the management endpoint in
+      <code>SANDBOX_DOCKERCLOUD_API_URL</code>, which is required because Docker documents
+      no default; and the image each sandbox boots, <code>SANDBOX_DOCKERCLOUD_IMAGE</code>,
+      which must already carry the toolchain. The account's cloud network policy must
+      default to deny-all (<code>sbx --cloud policy init deny-all</code>), because a create
+      that carries its own policy fails.</dd>
+      <dt>Fails when</dt>
+      <dd>The network is down, the token is wrong or lacks a permission a run needs, or the
+      account's policy is not deny-all. As with E2B, the startup configuration check cannot
+      tell you the first two, so the smoke test creates one real sandbox first. The policy is
+      read back on every run, and a sandbox that is not sealed is refused.</dd>
+      <dt>Worth knowing</dt>
+      <dd>The sandbox API refuses the personal access token itself, so the daemon exchanges
+      it at Docker Hub for a short-lived bearer. A pinned image must name its linux/amd64
+      manifest digest: the hash of that one platform's image, not of the multi-platform
+      index that lists several, because the cloud reports the manifest it booted. With
+      <code>SANDBOX_CPUS</code> and <code>SANDBOX_MEMORY_MB</code> unset, each sandbox is
+      the Micro size (1 CPU, 2 GiB). Host-API grants need <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>: the
+      grant run's one network rule, the guard's host on 443, is applied through a Docker call
+      outside its published API and read back through the published one, and the guest holds its
+      own run's short-lived guard credential. There are no module runs.
+      Docker bills each sandbox per second, so, like E2B, no automated run touches it.</dd>
     </dl>
   </div>
 
@@ -236,8 +268,9 @@
     <pre><code>make audit DOCKER=1</code></pre></li>
     <li><strong>The kernel-tier run.</strong> The same suite again under
     <code>runsc</code>, as its own run so a gVisor failure is attributable on its own.</li>
-    <li><strong>The live VM suite, by hand.</strong> It drives a paid service, so it is
-    never part of an automated run and never has a key in CI. A green automated gate
+    <li><strong>The live VM suites, by hand.</strong> They drive paid services (E2B and
+    Docker Cloud Sandboxes), so they are never part of an automated run and never have a
+    key or token in CI. A green automated gate
     therefore proves strictly less than a full local one, and the repository says so
     rather than implying coverage it does not have.</li>
   </ol>

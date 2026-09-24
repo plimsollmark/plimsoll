@@ -222,6 +222,35 @@ truncated. Nothing about the image changes between the two paths: the model id
 `vanderpol` is `/models/vanderpol.so`, and adding a model is adding a line to this
 recipe's `wasm` and `build` stages.
 
+### A compiler is image content too
+
+A compiler is one more program in the image root, named by a step.
+[docker/wasm-cc.Dockerfile](../docker/wasm-cc.Dockerfile) derives
+`plimsoll/sandbox-wasm-cc:latest` from the sim image, built by `make docker-images`,
+and adds the C half of wasi-sdk 27 at `/opt/wasi-sdk` (on `PATH`): clang, the
+WebAssembly linker, and a wasm32-wasip1 C library with its libm. It is taken from the
+same digest-pinned wasi-sdk image the sim build compiles the plants with, and adds
+about 150 MB. A project whose first step is
+
+```sh
+clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -o controller.wasm controller.c
+```
+
+gets a WebAssembly module in `/work` with no network, and a later step loads it with
+Node. Two things make that work under the run's lockdown:
+
+- **The compiler runs from the image root; its output is data.** clang and the linker
+  are native programs, so they live in the read-only root like every other
+  executable. What they write into the `noexec` `/work` is a `.wasm` file that Node
+  reads and compiles in memory, never a native program the kernel would be asked to
+  execute.
+- **libm is compiled into the module.** A controller that calls `cos` links
+  wasi-libc's implementation, so the module needs no host function for it and its
+  arithmetic does not depend on the Node that runs it.
+  [examples/wasm-controller](../examples/wasm-controller/) runs such a module with an
+  empty import object, and its README explains why the result still differs, in the
+  last bit, from a JavaScript program calling `Math.cos`.
+
 ## Limits, stated plainly
 
 - No package installation during a run, ever, on any provider. An agent that must

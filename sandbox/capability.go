@@ -515,11 +515,14 @@ func hostNetPreamble(global string, allow []HostRoute) string {
 	return strings.ReplaceAll(s, "__ALLOW_JSON__", allowJSON(allow))
 }
 
-// withE2BHostSDK prepends the remote E2B guard client. The guard URL is an
-// operator-controlled endpoint, never a caller-supplied origin. E2B's network
-// policy allows only its host and injects the per-run authentication header
-// outside the guest; the guest therefore has no bearer or guard secret to steal.
-func withE2BHostSDK(code string, grant *HostAPIGrant, guardURL string) string {
+// withGuardHostSDK prepends the remote guard client used by the VM providers. The
+// guard URL is an operator-controlled endpoint, never a caller-supplied origin.
+// guardToken is empty on E2B, whose network policy injects the per-run credential
+// outside the guest, so an E2B guest has no guard secret to steal. On dockercloud
+// the client sends it as EgressGuardHeader: Docker's proxy cannot inject a
+// credential for plimsoll's guard, so the guest holds its own run's credential (per
+// run, valid only at the guard, only for this run's grant, dead when the run ends).
+func withGuardHostSDK(code string, grant *HostAPIGrant, guardURL, guardToken string) string {
 	if grant == nil {
 		return code
 	}
@@ -531,8 +534,17 @@ func withE2BHostSDK(code string, grant *HostAPIGrant, guardURL string) string {
 	if err != nil {
 		guardJSON = []byte(`""`)
 	}
+	headers := map[string]string{}
+	if guardToken != "" {
+		headers[EgressGuardHeader] = guardToken
+	}
+	headersJSON, err := json.Marshal(headers)
+	if err != nil {
+		headersJSON = []byte(`{}`)
+	}
 	preamble := strings.ReplaceAll(hostE2BClientTmpl, "__HOST_JSON__", string(globalJSON))
 	preamble = strings.ReplaceAll(preamble, "__GUARD_URL_JSON__", string(guardJSON))
+	preamble = strings.ReplaceAll(preamble, "__GUARD_HEADERS_JSON__", string(headersJSON))
 	preamble = strings.ReplaceAll(preamble, "__ALLOW_JSON__", allowJSON(grant.Allow))
 	if grant.Preamble != "" {
 		preamble += "\n" + grant.Preamble
@@ -540,14 +552,15 @@ func withE2BHostSDK(code string, grant *HostAPIGrant, guardURL string) string {
 	return preamble + "\n" + code
 }
 
-// hostE2BSDKModule is the project equivalent of withE2BHostSDK: it carries only
-// the preinjected global, not user code or a credential. E2B preloads it into every
-// Node step through NODE_OPTIONS so snippets and projects share one host.* surface.
-func hostE2BSDKModule(grant *HostAPIGrant, guardURL string) string {
+// hostGuardSDKModule is the project equivalent of withGuardHostSDK: it carries only
+// the preinjected global (and, on dockercloud, the run's guard credential), never
+// user code. The VM providers preload it into every Node step through NODE_OPTIONS
+// so snippets and projects share one host.* surface.
+func hostGuardSDKModule(grant *HostAPIGrant, guardURL, guardToken string) string {
 	if grant == nil {
 		return ""
 	}
-	return withE2BHostSDK("", grant, guardURL)
+	return withGuardHostSDK("", grant, guardURL, guardToken)
 }
 
 // hostWasmPreamble exposes the same domain-agnostic Promise API as Docker, but
@@ -662,7 +675,7 @@ globalThis[__HOST_JSON__] = (function () {
     const response = await fetch(__guardURL, {
       method: "POST",
       redirect: "error",
-      headers: { "content-type": "application/json" },
+      headers: Object.assign({ "content-type": "application/json" }, __GUARD_HEADERS_JSON__),
       body: JSON.stringify(payload),
     });
     const text = await response.text();

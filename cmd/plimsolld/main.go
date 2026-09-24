@@ -60,14 +60,15 @@ The daemon takes no arguments. Configuration is by environment variable:
                              TLS (HTTP/1.1 + HTTP/2 via ALPN) instead of cleartext
   PLIMSOLL_HARDENED          =1 enforces the production policy at startup: vm or
                              verified kernel isolation, multi-client auth, TLS off
-                             loopback, pinned images or an explicit E2B template,
-                             no unconfined seccomp, an explicit resource envelope
+                             loopback, pinned images (docker, dockercloud) or an
+                             explicit E2B template, no unconfined seccomp, an
+                             explicit resource envelope
                              plus aggregate budget, and per-caller rate limiting.
                              Any violation refuses to serve.
   PLIMSOLL_GRANTS_FILE       JSON file of named host-API capability profiles a
                              caller may select via grant_profile
 
-  SANDBOX_PROVIDER           wasm | docker | e2b | (unset = disabled)
+  SANDBOX_PROVIDER           wasm | docker | e2b | dockercloud | (unset = disabled)
   SANDBOX_MIN_ISOLATION      refuse to start unless the provider meets this tier
                              (vm | kernel | container | process); unset = no floor
   SANDBOX_DOCKER_IMAGE       snippet image (default node:22-alpine)
@@ -87,6 +88,38 @@ The daemon takes no arguments. Configuration is by environment variable:
   E2B_API_KEY / E2B_TEMPLATE E2B credentials and toolchain template
   E2B_GUARD_URL              absolute HTTPS egress-guard endpoint; enables E2B
                              grants (allowlist plus beta header transform)
+  DOCKER_SBX_TOKEN           Docker Cloud Sandboxes personal access token for
+                             dockercloud (read from the environment only); it is
+                             exchanged for a short-lived bearer, never sent to
+                             the sandbox API itself
+  DOCKER_SBX_USERNAME        the Docker account the token belongs to
+  SANDBOX_DOCKERCLOUD_AUTH_URL
+                             token exchange endpoint; default
+                             https://hub.docker.com/v2/auth/token
+  SANDBOX_DOCKERCLOUD_GUARD_URL
+                             absolute HTTPS egress-guard endpoint on 443; enables
+                             dockercloud grants. A grant run's sandbox may reach
+                             only this host; the guest holds a per-run, guard-only
+                             credential (Docker's proxy cannot inject one)
+  SANDBOX_DOCKERCLOUD_POLICY_URL
+                             per-sandbox network-policy REST base; default
+                             https://api.sandboxes-cloud.docker.com/v1. Not in
+                             Docker's published contract (the sbx CLI's call);
+                             every grant run verifies the result through it
+  SANDBOX_DOCKERCLOUD_API_URL
+                             Docker Cloud Sandboxes management endpoint; required,
+                             no default (https://sandboxes.connect.docker.com/sbx
+                             answered on 2026-09-24)
+  SANDBOX_DOCKERCLOUD_IMAGE  raw OCI image each dockercloud sandbox boots (the
+                             toolchain image; must be @sha256: when
+                             SANDBOX_REQUIRE_PINNED_IMAGES=1, and then the
+                             linux/amd64 manifest digest). dockercloud honors
+                             SANDBOX_MEMORY_MB and whole SANDBOX_CPUS, and requests
+                             the Micro size (1 CPU, 2 GiB) when they are unset;
+                             SANDBOX_PIDS and SANDBOX_DISK_MB fail startup. The
+                             account's cloud network policy must default to
+                             deny-all (sbx --cloud policy init deny-all); every run
+                             verifies it. Verified live on 2026-09-24.
 
   SANDBOX_MAX_CONCURRENT     global max in-flight runs (default 8)
   SANDBOX_PER_KEY_CONCURRENT max in-flight runs per caller (default max/2)
@@ -94,8 +127,8 @@ The daemon takes no arguments. Configuration is by environment variable:
   SANDBOX_RATE_BURST         per-caller token-bucket burst (default = rate)
   SANDBOX_TOTAL_MEMORY_MB    aggregate host memory budget for runners; clamps
                              max-concurrent to total/per-run so concurrent runs
-                             cannot oversubscribe the host (ignored for e2b, whose
-                             runners live off-host)
+                             cannot oversubscribe the host (ignored for e2b and
+                             dockercloud, whose runners live off-host)
   SANDBOX_MEMORY_MB / SANDBOX_CPUS / SANDBOX_PIDS / SANDBOX_DISK_MB
                              per-run resource envelope applied to the provider
 
@@ -368,7 +401,8 @@ func main() {
 			"rate_per_min", ratePerMin,
 			"rate_burst", burst,
 		}
-		if sb.Name() == "e2b" {
+		switch sb.Name() {
+		case "e2b":
 			args = append(args,
 				"resources", "template-managed; configured values are post-create maxima",
 				"max_mem_mb", res.MemoryMB,
@@ -376,7 +410,14 @@ func main() {
 				"max_disk_mb", res.DiskMB,
 				"pids", "unsupported (non-zero fails startup)",
 			)
-		} else {
+		case "dockercloud":
+			args = append(args,
+				"resources", "requested at create and verified after it; 0 = backend default",
+				"max_mem_mb", res.MemoryMB,
+				"max_cpus", res.CPUs,
+				"disk_and_pids", "unsupported (non-zero fails startup)",
+			)
+		default:
 			args = append(args, "mem_mb", res.MemoryMB, "cpus", res.CPUs, "pids", res.PidsLimit, "disk_mb", res.DiskMB)
 		}
 		args = append(args, "tls", tlsConf != nil)

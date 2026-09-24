@@ -198,6 +198,7 @@
             <button type="button" data-value="wasm">wasm<small>in-process QuickJS</small></button>
             <button type="button" data-value="docker">docker<small>a locked-down container</small></button>
             <button type="button" data-value="e2b">e2b<small>a Firecracker microVM</small></button>
+            <button type="button" data-value="dockercloud">dockercloud<small>a Docker Cloud Sandboxes microVM</small></button>
           </div>
         </div>
         <div class="control" id="runtimeControl">
@@ -208,8 +209,8 @@
           </div>
         </div>
         <div class="control" id="guardControl">
-          <p class="control-label">Egress guard <code>E2B_GUARD_URL</code></p>
-          <div class="seg" role="group" aria-label="E2B guard" data-key="guard">
+          <p class="control-label">Egress guard <code>E2B_GUARD_URL</code> or <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code></p>
+          <div class="seg" role="group" aria-label="Egress guard" data-key="guard">
             <button type="button" data-value="unset">unset<small>no route out of the VM</small></button>
             <button type="button" data-value="set">set<small>one exit, to the host-side guard</small></button>
           </div>
@@ -309,9 +310,12 @@
       </li>
       <li>
         <div class="letter">V<small>vm</small></div>
-        <div><b>E2B, a Firecracker microVM <span class="tone good">strongest</span></b>
-        <p>A hardware-virtualised boundary, one disposable VM per run, on somebody else's
-        servers. The strongest wall, and the only provider that bills.</p></div>
+        <div><b>E2B or Docker Cloud Sandboxes, a microVM <span class="tone good">strongest</span></b>
+        <p>A microVM is a small virtual machine with its own kernel, created for one run and
+        destroyed after it. The boundary is hardware virtualisation, on somebody else's
+        servers: E2B runs Firecracker microVMs, and Docker Cloud Sandboxes runs them on
+        Docker-managed compute. The strongest wall, and the only tier that bills: both
+        providers charge for the VMs they start.</p></div>
       </li>
     </ol>
     <div class="card warn">
@@ -325,9 +329,9 @@
   <section id="proof" aria-labelledby="h-proof">
     <p class="draft" aria-hidden="true">03</p>
     <h2 id="h-proof">What a provider must prove before it serves</h2>
-    <p>Both real providers run a startup smoke test that exercises behaviour, not just
-    configuration, and neither serves if it fails. The two proofs are different because the
-    two rooms are different.</p>
+    <p>Every real provider runs a startup smoke test that exercises behaviour, not just
+    configuration, and none serves if it fails. The proofs are different because the rooms
+    are different.</p>
     <div class="two">
       <div class="card">
         <h3>Docker earns its mark in the mount table</h3>
@@ -376,6 +380,25 @@
           never downgrades its access contract to make a run succeed.</p>
         </div>
       </div>
+    </div>
+    <div class="card">
+      <h3>Docker Cloud Sandboxes earns its mark the same way, and checks the seal on every run</h3>
+      <ol class="proof">
+        <li><b>Preflight is configuration only</b>, as for E2B, so <code>/readyz</code> never
+        creates a sandbox.</li>
+        <li><b>The token can do the job.</b> The capability call must list the read, create,
+        delete and network-policy-read permissions a run needs.</li>
+        <li><b>One throwaway sandbox at startup.</b> It must come up with its effective
+        network policy at deny-all, accept a directory and file upload, and run the probe
+        through the exact project-step path, proving the tools are present, the working
+        directory is honoured, and egress is denied from inside the guest.</li>
+        <li><b>The seal is read back on every run.</b> The account's cloud network policy must
+        default to deny-all (<code>sbx --cloud policy init deny-all</code>), because a create
+        that carries its own policy fails. Each run reads the sandbox's effective policy back
+        and refuses to run unless it is deny-all with nothing allowed.</li>
+        <li><b>Every sandbox is named.</b> A per-instance name prefix is recorded before the
+        create is sent, so the daemon can delete untracked sandboxes it finds later.</li>
+      </ol>
     </div>
   </section>
 
@@ -470,8 +493,8 @@
     <div class="card">
       <p>The memory budget and the per-run envelope are set together or not at all, and a
       single run that needs more than the whole budget is a startup error, not a run that
-      waits forever. E2B ignores the memory budget because its VMs live off this host; the
-      count still applies. On top of the global gate, every caller has its own in-flight cap
+      waits forever. E2B and Docker Cloud Sandboxes ignore the memory budget because their VMs
+      live off this host; the count still applies. On top of the global gate, every caller has its own in-flight cap
       (<code>SANDBOX_PER_KEY_CONCURRENT</code>, half the global by default) and a token-bucket
       rate (<code>SANDBOX_RATE_PER_MIN</code>), so one busy tenant cannot take every
       berth.</p>
@@ -487,10 +510,10 @@
     <ul class="gate" id="gateList">
       <li><label><input type="checkbox" data-required="1"><span><b>The operation is supported.</b><small>Snippet, project and module support are separate answers, and <code>Describe</code> reports each one so a gateway never hard-codes the matrix.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>The floor is set and enforced.</b><small><code>SANDBOX_MIN_ISOLATION</code> at startup, and <code>minimum_isolation</code> on every request, because the caller is the one who knows what the work is worth.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>The startup proof passed here, not on a docs page.</b><small>Docker's mount-table and socket checks, or E2B's real throwaway VM, in the deployment environment.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>The startup proof passed here, not on a docs page.</b><small>Docker's mount-table and socket checks, or the real throwaway VM that E2B or Docker Cloud Sandboxes creates, in the deployment environment.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>Every run is bounded.</b><small>Memory, CPUs, PIDs, disk, time and output per run; count, rate and aggregate memory across runs.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>The toolchain is baked in.</b><small>A project image or an E2B template already carries every build, lint and run tool, because the run has no egress to fetch one.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Grant support matches the provider.</b><small>Docker brokers snippet and project grants; WASM brokers snippets only; E2B needs <code>E2B_GUARD_URL</code> for either.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>The toolchain is baked in.</b><small>A project image, an E2B template or the image Docker Cloud Sandboxes boots already carries every build, lint and run tool, because the run has no egress to fetch one.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Grant support matches the provider.</b><small>Docker brokers snippet and project grants; WASM brokers snippets only; E2B needs <code>E2B_GUARD_URL</code> for either; Docker Cloud Sandboxes needs <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>, and there the guest holds its own run’s short-lived guard credential.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>Describe and readiness are recorded.</b> <span class="opt">recommended</span><small>Active provider, tier, structural support and readiness state, kept where an operator will look for them later.</small></span></label></li>
     </ul>
     <div class="card gate-readout" id="gateReadout"></div>
@@ -502,7 +525,8 @@
     <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>How a granted run reaches a route without holding the key, and why each provider frames that differently.</small></a></li>
     <li><a href="dependencies.html"><b>Internal · trainer site →</b><strong>Dependencies</strong><small>What is compiled in, what each provider needs at run time, and what is pinned by digest.</small></a></li>
     <li><a href="https://gvisor.dev/docs/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>gVisor</strong><small>The user-space kernel behind <code>runsc</code> and the K mark.</small></a></li>
-    <li><a href="https://firecracker-microvm.github.io/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Firecracker</strong><small>The microVM monitor behind the V mark.</small></a></li>
+    <li><a href="https://firecracker-microvm.github.io/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Firecracker</strong><small>The microVM monitor behind E2B's V mark.</small></a></li>
+    <li><a href="https://docs.docker.com/ai/sandboxes/cloud/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Docker Cloud Sandboxes</strong><small>The Docker-managed service behind the <code>dockercloud</code> provider's V mark.</small></a></li>
     <li><a href="https://wazero.io/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>wazero</strong><small>The WebAssembly runtime that runs the embedded engine and applies its memory cap.</small></a></li>
   </ul>
 
@@ -562,14 +586,14 @@
       return { rows: rows, ran: false, ev: ev, note: 'The Go daemon never links the WebAssembly runtime the models need; it supervises a worker inside the container. Neither the in-process engine nor a remote VM template carries that worker today.' };
     }
     if (s.grant === 'profile' && s.payload !== 'module') {
-      if (s.provider === 'e2b' && s.guard === 'unset') {
+      if ((s.provider === 'e2b' || s.provider === 'dockercloud') && s.guard === 'unset') {
         rows.push({ k: 'dispatch', ok: false, v: 'a grant needs the forced, authenticated exit to the host-side guard, and none is configured · <b>ErrUnsupported → Unimplemented</b>' });
         return { rows: rows, ran: false, ev: ev, note: 'Refused outright rather than quietly downgraded. The credential and the route check must stay outside the hostile VM, and without a guard there is nowhere outside to put them.' };
       }
     }
     var transport = '';
     if (s.grant === 'profile' && s.payload !== 'module') {
-      transport = { wasm: 'host.* calls cross into Go through a direct, quota-bounded host function; the credential never enters the engine', docker: 'host.* calls travel a per-run Unix socket to the broker while the container keeps --network none' + (s.payload === 'project' ? '; every step process is preloaded with the same client' : ''), e2b: 'host.* calls leave by the VM’s one allowed exit to the host-side guard, which delegates to the same broker' }[s.provider];
+      transport = { wasm: 'host.* calls cross into Go through a direct, quota-bounded host function; the credential never enters the engine', docker: 'host.* calls travel a per-run Unix socket to the broker while the container keeps --network none' + (s.payload === 'project' ? '; every step process is preloaded with the same client' : ''), e2b: 'host.* calls leave by the VM’s one allowed exit to the host-side guard, which delegates to the same broker', dockercloud: 'host.* calls leave by the one network rule the provider sets and reads back, the guard’s host:443, carrying this run’s short-lived guard credential; the guard delegates to the same broker, and the API key never enters the VM' }[s.provider];
       rows.push({ k: 'grant', ok: true, v: transport + ' · <b>brokered</b>' });
     }
     var sandboxName = s.provider;
@@ -621,7 +645,7 @@
     el('wave').setAttribute('fill', flooded ? '#b83f43' : '#177f99');
     el('hull').setAttribute('aria-label', 'Hull with load-line marks. Provider proved ' + ev + '; caller floor ' + s.floor + '; ' + (d.ran ? 'the run was admitted.' : 'the request was refused.'));
     var cap = el('hullCaption');
-    var who = { none: 'The Disabled provider paints no line at all.', process: 'WASM paints the P mark.', container: 'Docker on runc paints the C mark.', kernel: 'Verified runsc paints the K mark.', vm: 'E2B paints the V mark.' }[ev];
+    var who = { none: 'The Disabled provider paints no line at all.', process: 'WASM paints the P mark.', container: 'Docker on runc paints the C mark.', kernel: 'Verified runsc paints the K mark.', vm: s.provider === 'dockercloud' ? 'Docker Cloud Sandboxes paints the V mark.' : 'E2B paints the V mark.' }[ev];
     var water;
     if (s.floor === 'none') water = 'No floor is stated, so the water sits below every mark' + (d.ran ? ' and the run is admitted.' : ', and the refusal comes from the provider itself.');
     else if (flooded) water = 'The caller demands ' + s.floor + ', so the water stands above the mark: refused before dispatch.';
@@ -637,7 +661,7 @@
       });
     });
     el('runtimeControl').hidden = s.provider !== 'docker';
-    el('guardControl').hidden = s.provider !== 'e2b';
+    el('guardControl').hidden = s.provider !== 'e2b' && s.provider !== 'dockercloud';
     var g = el('grantControl');
     var note = el('grantNote');
     if (s.payload === 'module') {

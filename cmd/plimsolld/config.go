@@ -41,7 +41,7 @@ func minimumIsolationWith(getenv func(string) string) (sandbox.IsolationClass, b
 // loadLimiterConfig resolves the limiter envelope from getenv (injectable for tests).
 // providerName and perRunMemMB drive the SANDBOX_TOTAL_MEMORY_MB clamp: a count is not
 // a resource budget, so when a total is set the max-concurrent is clamped so
-// concurrent × per-run memory cannot oversubscribe the host (skipped for e2b, whose
+// concurrent × per-run memory cannot oversubscribe the host (skipped for e2b and dockercloud, whose
 // runners live off-host). It returns a typed error instead of exiting, so callers
 // decide how to fail.
 func loadLimiterConfig(getenv func(string) string, providerName string, perRunMemMB int) (limiterConfig, error) {
@@ -60,7 +60,7 @@ func loadLimiterConfig(getenv func(string) string, providerName string, perRunMe
 	if totalMB < 0 {
 		return limiterConfig{}, fmt.Errorf("SANDBOX_TOTAL_MEMORY_MB=%d must be non-negative", totalMB)
 	}
-	if totalMB > 0 && providerName != "e2b" {
+	if totalMB > 0 && providerName != "e2b" && providerName != "dockercloud" {
 		perRun := perRunMemMB
 		if perRun <= 0 {
 			perRun = 256 // wasm and docker both default to 256 MiB per run
@@ -170,7 +170,7 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	// hostile-code boundary. f.Isolation is post-EnsureReady evidence, so for
 	// docker this is true only after the pinned daemon proved a runsc runtime.
 	if f.Isolation != sandbox.IsolationVM && f.Isolation != sandbox.IsolationKernel {
-		fail("provider %q reports isolation %q; hardened mode requires vm (e2b) or verified kernel (docker with SANDBOX_DOCKER_RUNTIME=runsc)",
+		fail("provider %q reports isolation %q; hardened mode requires vm (e2b, dockercloud) or verified kernel (docker with SANDBOX_DOCKER_RUNTIME=runsc)",
 			f.Provider, f.Isolation.String())
 	}
 
@@ -205,6 +205,15 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 		if strings.TrimSpace(getenv("SANDBOX_DOCKER_SECCOMP")) == "unconfined" {
 			fail("hardened mode forbids SANDBOX_DOCKER_SECCOMP=unconfined")
 		}
+	case "dockercloud":
+		// The sandbox boots a raw OCI reference, so the same pinning rule as docker
+		// applies: a mutable tag could be repushed under a running deployment.
+		pinned, err := strictBoolEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		if err != nil {
+			violations = append(violations, err)
+		} else if !pinned {
+			fail("hardened mode requires SANDBOX_REQUIRE_PINNED_IMAGES=1 so SANDBOX_DOCKERCLOUD_IMAGE is an immutable @sha256 digest")
+		}
 	case "e2b":
 		// E2B offers no digest pinning; an explicit template (never the implicit
 		// "base" default) is the strongest surface selection available. The startup
@@ -217,19 +226,35 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	// Explicit budgets: provider defaults are development conveniences. A hardened
 	// deployment states its per-run envelope and (for on-host runners) the
 	// aggregate memory budget so capacity is a decision, not an accident.
-	required := []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB"}
+	required := []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS"}
+	if f.Provider != "dockercloud" {
+		// Docker Cloud Sandboxes expose no disk control, so Build rejects
+		// SANDBOX_DISK_MB for dockercloud; requiring it would make hardened mode
+		// unsatisfiable there.
+		required = append(required, "SANDBOX_DISK_MB")
+	}
 	if f.Provider == "docker" {
 		// E2B cannot enforce pids (Build rejects it there); docker can and must.
 		required = append(required, "SANDBOX_PIDS", "SANDBOX_TOTAL_MEMORY_MB")
 	}
-	var missing []string
+	var missing, nonPositive []string
 	for _, key := range required {
-		if strings.TrimSpace(getenv(key)) == "" {
+		v := strings.TrimSpace(getenv(key))
+		if v == "" {
 			missing = append(missing, key)
+			continue
+		}
+		// Zero means "provider default" or "no cap" to the factory, which is not an
+		// operator's chosen envelope.
+		if n, err := strconv.ParseFloat(v, 64); err != nil || !(n > 0) {
+			nonPositive = append(nonPositive, key)
 		}
 	}
 	if len(missing) > 0 {
 		fail("hardened mode requires an explicit resource envelope: set %s", strings.Join(missing, ", "))
+	}
+	if len(nonPositive) > 0 {
+		fail("hardened mode requires a positive resource envelope: %s must be greater than zero", strings.Join(nonPositive, ", "))
 	}
 	if f.RatePerMin <= 0 {
 		fail("hardened mode requires per-caller rate limiting: SANDBOX_RATE_PER_MIN must be positive")

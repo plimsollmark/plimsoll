@@ -180,7 +180,7 @@
     <h2 id="h-words">The eight words</h2>
     <p>Everything on this page is these eight ideas moving around.</p>
     <div class="words">
-      <div class="word"><b>sandbox</b>a room where code we do not trust runs.<small>The provider decides how thick its walls are: in-process, a container, a container with gVisor, a microVM.</small></div>
+      <div class="word"><b>sandbox</b>a room where code we do not trust runs.<small>The provider decides how thick its walls are: in-process, a container, a container with gVisor, a microVM (a small virtual machine created for one run, on E2B or Docker Cloud Sandboxes).</small></div>
       <div class="word"><b>grant</b>a per-run permission slip: this one run may call these routes on this one API.<small>Off by default, twice: no grant means no network, and an empty route list reaches nothing.</small></div>
       <div class="word"><b>profile</b>a named grant held by the daemon.<small>Origin, routes, allowed callers, scopes, how the credential is minted. A caller selects one by name and can change nothing in it.</small></div>
       <div class="word"><b>broker</b>the guard on the host side of the line.<small>Checks the route, counts the budget, attaches the key, forwards, records the template.</small></div>
@@ -219,6 +219,17 @@
       <li><b>No guard, no grant.</b> With <code>E2B_GUARD_URL</code> unset, an E2B grant is refused outright rather than downgraded to something weaker.</li>
       <li><b>The exception is proved separately.</b> The smoke test proves deny-all, not "denied except for the guard". <code>make e2b-guard-live</code> proves the guarded path, and it fails rather than skips when unconfigured, so a pass can only come from having exercised it.</li>
     </ol>
+    <div class="card warn">
+      <p><b>Docker Cloud Sandboxes has no line yet.</b> The other VM provider,
+      <code>dockercloud</code>, runs each sandbox on Docker-managed compute with its network
+      policy at deny-all, read back and checked on every run. With <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code> set, a grant
+      run gets exactly one network rule, the guard’s <code>host:443</code>, and the provider reads
+      it back before any code runs. Two things differ from E2B. The rule is applied through a
+      Docker call outside its published API (the one its own <code>sbx</code> CLI makes). And
+      Docker’s proxy only injects credentials for its own fixed list of services, so the guest
+      holds its own run’s guard credential: short-lived, good only at the guard, only for this
+      run’s routes and budget, dead when the run ends. The API key still never enters the VM.</p>
+    </div>
   </section>
 
   <!-- 06 ─────────────────────────────────────────────────────────────────── -->

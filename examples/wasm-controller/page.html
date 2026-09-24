@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A controller in C, compiled to WebAssembly in the sandbox and judged by its trajectory</title>
+<meta name="description" content="{{.Description}}">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="A controller in C, compiled to WebAssembly in the sandbox and judged by its trajectory">
+<meta property="og:description" content="{{.Description}}">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html">
+<meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/wasm-controller-example.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --grid: #e6e6e6; --axis: #bdbdbd; --blue: #2a78d6; --orange: #eb6834; --aqua: #1baf7a; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  p { margin: 6px 0; }
+  .sub { color: var(--ink2); margin-bottom: 18px; }
+  .row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: stretch; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .row > *, .row2 > * { min-width: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .panel h3 { margin: 0 0 8px; font-size: 14px; letter-spacing: .02em; text-transform: uppercase; color: var(--ink2); }
+  pre { margin: 0; padding: 10px 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; white-space: pre; color: var(--ink); max-height: 560px; }
+  code { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .badge.same { background: #e6f4ea; color: #1e6b2f; }
+  .badge.diff { background: #fdecea; color: #8a1c1c; }
+  .fp { display: block; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; color: var(--ink); }
+  .verdict dt { color: var(--ink2); font-size: 13px; margin-top: 10px; }
+  .verdict dd { margin: 2px 0 0; }
+  .verdict dd.plain { font-size: 14px; }
+  .controls { display: flex; gap: 10px; align-items: center; margin-top: 8px; color: var(--ink2); font-size: 13px; }
+  .controls button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; color: var(--ink); }
+  .controls input[type=range] { flex: 1; }
+  .note { color: var(--ink2); font-size: 13px; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .legend { display: flex; gap: 18px; font-size: 13px; color: #333; margin: 4px 0 2px; }
+  .legend span::before { content: ""; display: inline-block; width: 26px; height: 0; border-top: 2px solid; margin-right: 8px; vertical-align: middle; }
+  .legend .a::before { border-color: var(--blue); }
+  .legend .d::before { border-color: var(--orange); border-top-style: dashed; }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--ink2); font-weight: 600; font-size: 13px; background: var(--panel); }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .facts { margin: 8px 0 4px; padding-left: 20px; }
+  ol li, ul li { margin: 4px 0; }
+  a { color: var(--blue); }
+  @media (max-width: 900px) { .row, .row2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<h1>A controller in C, compiled to WebAssembly in the sandbox and judged by its trajectory</h1>
+<p class="sub">The results on this page were measured in real runs through plimsoll's docker tier ({{.Isolation}}) on {{.Date}}; the inputs the runs were given are named as inputs where they appear. The caller sent two files: <code>controller.c</code>, a controller that swings a hanging pole up and balances it, and <code>controller.js</code>, a Node shim with no arithmetic of its own. The run's first step compiled the C to WebAssembly inside the sandbox, with no network. The later steps handed the result to the judge baked into the image, which pushed a simulated cart with a pole hinged on it (the <b>plant</b>, control engineering's word for the thing being controlled, itself compiled to WebAssembly) through the controller one {{.TickMs}} ms tick at a time and recorded every tick. The SHA-256 of that record is the <b>fingerprint</b>.</p>
+
+<div class="row">
+  <section class="panel">
+    <h3>What the plant did under the C controller, scenario <span id="stage-id"></span></h3>
+    <svg id="stage" viewBox="0 0 760 380" width="100%" role="img" aria-label="A cart on a rail with a pole hinged on it, replaying the recorded swing-up"></svg>
+    <div class="controls">
+      <button id="play">Pause</button>
+      <input id="scrub" type="range" min="0" max="1999" value="0" aria-label="time">
+      <span id="clock">t = 0.00 s</span>
+    </div>
+    <p class="note" id="stage-note"></p>
+    <p class="note">The browser only replays the judge's record; no physics runs here. Loops every {{.TEnd}} s.</p>
+  </section>
+
+  <section class="panel">
+    <h3>The verdict</h3>
+    <dl class="verdict">
+      <dt>controller.wasm, compiled in the sandbox</dt>
+      <dd class="fp" id="wasm-1"></dd>
+      <dt>The same source compiled again, in a second run</dt>
+      <dd><span class="badge same">IDENTICAL</span> <span class="fp" id="wasm-2"></span></dd>
+      <dt id="fp-1-label"></dt>
+      <dd class="fp" id="fp-1"></dd>
+      <dt>The same scenario, second run</dt>
+      <dd><span class="badge same">IDENTICAL</span> <span class="fp" id="fp-2"></span></dd>
+      <dt>The JavaScript controller it was ported from</dt>
+      <dd><span class="badge diff">DIFFERS</span> <span class="fp" id="fp-js"></span></dd>
+      <dt>The same C, built against Node's <code>Math.cos</code></dt>
+      <dd><span class="badge same">SAME AS JAVASCRIPT</span> <span class="fp" id="fp-hc"></span></dd>
+      <dt>Where the C record differs from the JavaScript one</dt>
+      <dd class="plain" id="parts"></dd>
+    </dl>
+  </section>
+</div>
+
+<div class="row2">
+  <section class="panel">
+    <h3>controller.c, compiled inside the run</h3>
+    <pre id="code-c">{{.ControllerC}}</pre>
+  </section>
+  <section class="panel">
+    <h3>reference.js, the JavaScript law it is a port of</h3>
+    <pre id="code-js">{{.ReferenceJS}}</pre>
+  </section>
+</div>
+<p class="note">The build step, as the run executed it: <code>{{.Build}}</code>. <code>-ffp-contract=off</code> keeps the compiler from fusing a multiply and an add into one rounding, so every expression rounds exactly where its JavaScript twin does.</p>
+
+<h2>Four scenarios, one fingerprint each</h2>
+<p>The pole starts hanging (the start angle is measured from upright, so pi rad is straight down) and the cart mass varies. <b>Upright from</b> is when the final unbroken stretch with the pole within <span id="upright-deg"></span>° of vertical began; the score is 1 minus that time over the run's length, and zero if the cart ever leaves the track. Each C fingerprint was the same in both runs.</p>
+<div class="tablewrap"><table>
+  <thead><tr><th>Scenario</th><th>Start angle</th><th>Cart mass</th><th>Upright from</th><th>Score</th><th>Fingerprint of the C build</th><th>Against the JavaScript law</th><th>C built against <code>Math.cos</code></th></tr></thead>
+  <tbody id="scenarios"></tbody>
+</table></div>
+<p class="note" id="table-note"></p>
+
+<h2>Where the C and JavaScript records differ, and where they do not</h2>
+<p>This controller's arithmetic is <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>fmod</code> and one <code>cos</code> per tick. The first four and <code>fmod</code> are exactly rounded by IEEE 754 in both languages, and the build keeps every operation in the JavaScript order, so the C and the JavaScript controllers can differ only where their <code>cos</code> differs. The C module's <code>cos</code> is wasi-libc's, compiled into the module; the JavaScript controller's is V8's <code>Math.cos</code>. The two agree to the last bit on nearly every input, and not on all of them. The run tests that this is the whole difference by building the same <code>controller.c</code> a second way, <code>{{.MathCosBuild}}</code>, with the shim binding <code>host_cos</code> to <code>Math.cos</code>: that build and the JavaScript controller give the same fingerprint on every scenario in the table.</p>
+<ul class="facts" id="facts"></ul>
+<div class="legend"><span class="a">C controller, wasi-libc cos</span><span class="d">JavaScript controller, Node's Math.cos</span></div>
+<svg id="chart" viewBox="0 0 1140 300" width="100%" role="img" aria-label="Pole angle of both controllers over time, and the ticks at which their recorded forces differ"></svg>
+<p class="note" id="chart-note"></p>
+
+<h2>What the fingerprint proves, and what it does not</h2>
+<ul>
+  <li><b>It proves identical replay.</b> The fingerprint is the SHA-256 of every recorded tick's state and force as raw doubles, so the same fingerprint twice means the two runs produced the same record to the last bit, and a different one means some bit somewhere differs. It is sensitive to one bit anywhere in the record, the controller's forces included, as the comparison above shows.</li>
+  <li><b>It does not prove physical accuracy.</b> The plant is a simple fixed-step model of a cart and a pole. A fingerprint says the plant and the controller computed the same thing again; it says nothing about how close that thing is to a real cart on a real rail. Nor does a different fingerprint by itself mean different physics: the record holds the controller's forces, so a last-bit change there changes the hash even when the plant rounds it away.</li>
+  <li><b>It does not say which <code>cos</code> is right.</b> Both builds are deterministic and both swing the pole up; they are two slightly different programs, and the fingerprint tells them apart. Which to trust is a question about the math library, not about the run.</li>
+  <li><b>It does not rank controllers.</b> Two controllers whose gains differ in the last digit balance the same and hash differently. Whether the pole came up, and when, is the judge's separate score in the table.</li>
+  <li><b>It does not survive a toolchain change.</b> The module's bytes depend on the compiler image and the flags; change either and the recorded hashes change, deliberately.</li>
+  <li><b>It is not isolation.</b> The compiler, the judge and the controller all run inside one project run, behind the tier the daemon reports. The shim gives the module an empty import object, so it cannot call the host, but that is a property of the shim; the sandbox boundary is the tier.</li>
+</ul>
+<p class="note">The same judge and plant, with a JavaScript controller written by an agent: <a href="https://plimsollmark.github.io/plimsoll/examples/oracle/index.html">the physics oracle run report (INTERNAL · run report →)</a>. Reproduce this page: <code>make docker-images &amp;&amp; go run ./examples/wasm-controller</code> in the plimsoll repository, with docker. The page is written from the run.</p>
+
+<script type="application/json" id="data">{{.Data}}</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById('data').textContent);
+  const h = D.h, S = D.scenario, R = D.replay, V = S.vs_javascript, N = R.x.length;
+  const short = (fp) => fp.slice(0, 16) + '…';
+  const deg = (rad) => { let w = ((rad + Math.PI) % (2 * Math.PI)); if (w < 0) w += 2 * Math.PI; return (w - Math.PI) * 180 / Math.PI; };
+  const txt = (id, s) => { document.getElementById(id).textContent = s; };
+
+  txt('stage-id', S.id);
+  txt('upright-deg', (Math.acos(D.upright_cos) * 180 / Math.PI).toFixed(1));
+  txt('wasm-1', `${D.wasm.bytes} bytes, sha256 ${D.wasm.sha256}`);
+  txt('wasm-2', D.wasm.second_sha256);
+  txt('fp-1-label', `Scenario ${S.id}, the C controller's trajectory`);
+  txt('fp-1', S.fingerprint);
+  txt('fp-2', S.second_run);
+  txt('fp-js', S.javascript);
+  txt('fp-hc', S.math_cos);
+  const ticksList = (rows) => rows.map((r) => r.tick).join(rows.length === 2 ? ' and ' : ', ');
+  const stateLine = (c) => c.state_tick == null ? 'the cart and pole are bit-identical at every tick' : `the state differs from tick ${c.state_tick}`;
+  txt('parts', `${V.rows.length} recorded value${V.rows.length === 1 ? '' : 's'} of ${N * 5}, at tick ${ticksList(V.rows)} (${[...new Set(V.rows.flatMap((r) => r.columns))].join(', ')}); ${stateLine(V)}`);
+  txt('stage-note', `Start angle ${S.theta0} rad from upright (hanging), pole half-length ${S.half_length} m, cart mass ${S.cart_mass} kg. The controller pumps energy into the swing, catches the pole near the top, and holds it: upright from ${S.upright_from.toFixed(2)} s to the end, score ${S.score.toFixed(3)}. The ticks on the rail are metres; the track ends at ±${D.track} m.`);
+
+  // ---- the table ----
+  const tbody = document.getElementById('scenarios');
+  for (const r of D.scenarios) {
+    const tr = document.createElement('tr');
+    const cell = (html, cls) => { const td = document.createElement('td'); if (cls) td.className = cls; td.innerHTML = html; tr.append(td); };
+    cell(`<b>${r.id}</b>`);
+    cell(`${r.theta0} rad`, 'num');
+    cell(`${r.cart_mass} kg`, 'num');
+    cell(`${r.upright_from.toFixed(2)} s`, 'num');
+    cell(r.score.toFixed(3), 'num');
+    cell(`<span class="fp">${r.fingerprint}</span>`);
+    const c = r.vs_javascript;
+    cell(c.rows.length === 0
+      ? `<span class="badge same">IDENTICAL</span> <span class="fp" title="${r.javascript}">${short(r.javascript)}</span>`
+      : `<span class="badge diff">DIFFERS</span> in ${[...new Set(c.rows.flatMap((x) => x.columns))].join(', ')} at tick ${ticksList(c.rows)}; ${c.state_tick == null ? 'state identical' : 'state differs from tick ' + c.state_tick}<span class="fp" title="${r.javascript}">${short(r.javascript)}</span>`);
+    cell(`<span class="badge same">${r.math_cos === r.javascript ? 'SAME AS JAVASCRIPT' : 'NOT JAVASCRIPT'}</span> <span class="fp" title="${r.math_cos}">${short(r.math_cos)}</span>`);
+    tbody.append(tr);
+  }
+  const same = D.scenarios.filter((r) => r.vs_javascript.rows.length === 0).map((r) => r.id);
+  const diff = D.scenarios.filter((r) => r.vs_javascript.rows.length > 0).map((r) => r.id);
+  txt('table-note', `Every score is above the ${D.min_score} floor. ${diff.length} of ${D.scenarios.length} scenarios (${diff.join(', ')}) differ from the JavaScript law` +
+    (same.length ? `; the record of ${same.join(', ')} is identical to it, because at no tick there did the two cos implementations give a different force.` : '.') +
+    ' Hover a shortened fingerprint for all 64 digits.');
+
+  // ---- the facts of the parting ----
+  const facts = document.getElementById('facts');
+  const li = (s) => { const e = document.createElement('li'); e.innerHTML = s; facts.append(e); };
+  li(`The two records of ${S.id} are ${N} rows of five doubles each: cart position, cart velocity, pole angle, pole angular velocity, and the force the controller returned. ${V.rows.length} of those ${N * 5} values differ.`);
+  for (const r of V.rows) {
+    li(`Tick ${r.tick} (t = ${(r.tick * h).toFixed(2)} s), differing in ${r.columns.join(', ')}: pole angle <code>${r.theta}</code> rad; the C build returned <code>${r.force_c}</code> N and JavaScript <code>${r.force_js}</code> N, ${r.ulps} representable double${r.ulps === 1 ? '' : 's'} apart.`);
+  }
+  li(V.state_tick == null
+    ? `Every other value is bit-identical, the state in the rows after each differing force included. The judge hands the plant each force exactly as the controller wrote it, so at those ticks the plant did receive different forces; its next state came out bit-identical anyway, because a difference that small was rounded away in its arithmetic. The two swings are the same swing.`
+    : `The state first differs at tick ${V.state_tick}; the largest pole-angle difference over the run is ${V.max_theta_delta.toExponential(2)} rad.`);
+  li(V.state_tick == null
+    ? `So the fingerprints differ while the cart and pole never moved differently: the record holds the forces too, and ${V.rows.length} value${V.rows.length === 1 ? '' : 's'} out of ${N * 5}, off by a few representable doubles, are enough to change its hash.`
+    : `So the fingerprints differ, and here the trajectories do too.`);
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const [a, v] of Object.entries(attrs)) e.setAttribute(a, v); return e; };
+
+  // ---- the stage: rail, cart, pole, replayed from the record ----
+  const stage = document.getElementById('stage');
+  const W = 760, H = 380, railY = 230, mPerPx = 5 / W; // 5 m across the panel
+  const L = 2 * S.half_length; // drawn pole length (m)
+  stage.append(el('rect', { x: 0, y: 0, width: W, height: H, fill: '#ffffff' }));
+  for (let m = -2; m <= 2; m++) { const px = W / 2 + m / mPerPx; stage.append(el('line', { x1: px, y1: railY - 6, x2: px, y2: railY + 6, stroke: '#bdbdbd', 'stroke-width': 1 })); stage.append(Object.assign(el('text', { x: px, y: railY + 22, 'text-anchor': 'middle', 'font-size': 11, fill: '#5a5a5a' }), { textContent: m + ' m' })); }
+  stage.append(el('line', { x1: 0, y1: railY, x2: W, y2: railY, stroke: '#bdbdbd', 'stroke-width': 2 }));
+  for (const s of [-1, 1]) { const px = W / 2 + s * D.track / mPerPx; stage.append(el('line', { x1: px, y1: railY - 14, x2: px, y2: railY + 6, stroke: '#8a1c1c', 'stroke-width': 2 })); }
+  const cart = el('rect', { width: 84, height: 36, rx: 6, fill: '#2a78d6' });
+  const wheelA = el('circle', { r: 8, fill: '#1a1a1a' }), wheelB = el('circle', { r: 8, fill: '#1a1a1a' });
+  const pole = el('line', { stroke: '#eb6834', 'stroke-width': 8, 'stroke-linecap': 'round' });
+  const bob = el('circle', { r: 11, fill: '#eb6834' });
+  const hinge = el('circle', { r: 4, fill: '#ffffff' });
+  const label = Object.assign(el('text', { x: 12, y: 24, 'font-size': 13, fill: '#1a1a1a', 'font-weight': 600 }), { textContent: `C controller, scenario ${S.id}` });
+  const status = Object.assign(el('text', { x: 12, y: 44, 'font-size': 12, fill: '#5a5a5a' }), { textContent: '' });
+  const force = Object.assign(el('text', { x: W - 12, y: 24, 'font-size': 12, fill: '#5a5a5a', 'text-anchor': 'end' }), { textContent: '' });
+  stage.append(cart, wheelA, wheelB, pole, bob, hinge, label, status, force);
+
+  const upTick = Math.round(S.upright_from / h);
+  let k = 0, playing = true, last = null;
+  const scrub = document.getElementById('scrub'), clock = document.getElementById('clock'), play = document.getElementById('play');
+  scrub.max = N - 1;
+  function draw() {
+    const x = R.x[k], th = R.theta[k];
+    const cx = W / 2 + x / mPerPx, cy = railY - 18;
+    cart.setAttribute('x', cx - 42); cart.setAttribute('y', railY - 36);
+    wheelA.setAttribute('cx', cx - 26); wheelA.setAttribute('cy', railY); wheelB.setAttribute('cx', cx + 26); wheelB.setAttribute('cy', railY);
+    const px = L / mPerPx;
+    const ex = cx + px * Math.sin(th), ey = cy - px * Math.cos(th);
+    pole.setAttribute('x1', cx); pole.setAttribute('y1', cy); pole.setAttribute('x2', ex); pole.setAttribute('y2', ey);
+    bob.setAttribute('cx', ex); bob.setAttribute('cy', ey);
+    hinge.setAttribute('cx', cx); hinge.setAttribute('cy', cy);
+    status.textContent = `${k >= upTick ? 'upright and held' : 'swinging up'}: angle from upright ${deg(th).toFixed(1)}°, x ${x.toFixed(2)} m`;
+    force.textContent = `force ${R.force[k].toFixed(1)} N`;
+    scrub.value = k; clock.textContent = `t = ${(k * h).toFixed(2)} s`;
+  }
+  function tick(ts) {
+    if (playing) {
+      if (last == null) last = ts;
+      const dt = (ts - last) / 1000; last = ts;
+      k += Math.round(dt / h);
+      if (k > N - 1) k = 0;
+    } else last = null;
+    draw();
+    requestAnimationFrame(tick);
+  }
+  play.onclick = () => { playing = !playing; play.textContent = playing ? 'Pause' : 'Play'; };
+  scrub.oninput = () => { playing = false; play.textContent = 'Play'; k = Number(scrub.value); draw(); };
+  requestAnimationFrame(tick);
+
+  // ---- the chart: both pole angles, and the size of their difference ----
+  const chart = document.getElementById('chart');
+  const CW = 1140, T = N * h;
+  chart.append(el('rect', { x: 0, y: 0, width: CW, height: 300, fill: '#ffffff' }));
+  function frame(px, py, pw, ph, ymin, ymax, ylab, yticks, title, fmt) {
+    const sx = t => px + t / T * pw, sy = v => py + ph - (Math.min(ymax, Math.max(ymin, v)) - ymin) / (ymax - ymin) * ph;
+    chart.append(Object.assign(el('text', { x: px, y: py - 10, 'font-size': 13, fill: '#1a1a1a', 'font-weight': 600 }), { textContent: title }));
+    for (const v of yticks) { chart.append(el('line', { x1: px, y1: sy(v), x2: px + pw, y2: sy(v), stroke: '#e6e6e6' })); chart.append(Object.assign(el('text', { x: px - 6, y: sy(v) + 4, 'font-size': 11, fill: '#5a5a5a', 'text-anchor': 'end' }), { textContent: fmt ? fmt(v) : v })); }
+    for (let t = 0; t <= T; t += 5) { chart.append(el('line', { x1: sx(t), y1: py, x2: sx(t), y2: py + ph, stroke: '#e6e6e6' })); chart.append(Object.assign(el('text', { x: sx(t), y: py + ph + 16, 'font-size': 11, fill: '#5a5a5a', 'text-anchor': 'middle' }), { textContent: t + ' s' })); }
+    chart.append(el('line', { x1: px, y1: py + ph, x2: px + pw, y2: py + ph, stroke: '#bdbdbd' }));
+    chart.append(Object.assign(el('text', { x: px - 6, y: py - 10, 'font-size': 11, fill: '#5a5a5a', 'text-anchor': 'end' }), { textContent: ylab }));
+    return { sx, sy, px, py, pw, ph };
+  }
+  function series(f, arr, color, dash, from) {
+    const pts = [];
+    arr.forEach((v, i) => { if (v != null && i >= (from || 0)) pts.push(`${f.sx(i * h).toFixed(1)},${f.sy(v).toFixed(1)}`); });
+    chart.append(el('polyline', { points: pts.join(' '), fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-dasharray': dash, 'stroke-linejoin': 'round' }));
+  }
+  const lo = Math.floor(Math.min(...R.theta, ...R.theta_js)), hi = Math.ceil(Math.max(...R.theta, ...R.theta_js));
+  const yt = []; for (let v = lo; v <= hi; v++) yt.push(v);
+  const fa = frame(60, 40, 480, 200, lo, hi, 'rad', yt, 'Pole angle from upright, both controllers');
+  series(fa, R.theta, '#2a78d6', ''); series(fa, R.theta_js, '#eb6834', '8 4');
+
+  // The force difference, in representable doubles, at each tick where it is not zero.
+  const maxU = Math.max(1, ...V.rows.map((r) => r.ulps));
+  const top = Math.max(4, Math.ceil(maxU / 4) * 4);
+  const ut = []; for (let v = 0; v <= top; v += top / 4) ut.push(v);
+  const fb = frame(640, 40, 480, 200, 0, top, 'doubles', ut, 'Force difference, C against JavaScript, per tick');
+  chart.append(el('line', { x1: fb.px, y1: fb.sy(0), x2: fb.px + fb.pw, y2: fb.sy(0), stroke: '#1e6b2f', 'stroke-width': 3 }));
+  for (const r of V.rows) {
+    const x = fb.sx(r.tick * h);
+    chart.append(el('line', { x1: x, y1: fb.sy(0), x2: x, y2: fb.sy(r.ulps), stroke: '#8a1c1c', 'stroke-width': 3 }));
+    chart.append(el('circle', { cx: x, cy: fb.sy(r.ulps), r: 4, fill: '#8a1c1c' }));
+    chart.append(Object.assign(el('text', { x: x + 7, y: fb.sy(r.ulps) + 4, 'font-size': 12, fill: '#8a1c1c' }), { textContent: `tick ${r.tick}: ${r.ulps}` }));
+  }
+  for (const r of V.rows) {
+    const tx = fa.sx(r.tick * h);
+    chart.append(el('line', { x1: tx, y1: 40, x2: tx, y2: 240, stroke: '#8a1c1c', 'stroke-dasharray': '3 3' }));
+  }
+  txt('chart-note', `Left: the two pole angles over the whole run of ${S.id}, drawn over each other, unwrapped as the judge records them (0 and 2 pi are both upright, pi is hanging); ` +
+    (V.state_tick == null ? `they are bit-identical at every tick, so the dashed line sits exactly on the solid one. ` : `they first differ at tick ${V.state_tick}. `) +
+    `Right: how many representable doubles apart the two forces are at each tick; the green line is exactly zero, and the red stems are the only ticks where it is not. The dotted red lines on the left mark those ticks.`);
+})();
+</script>
+</main>
+</body>
+</html>

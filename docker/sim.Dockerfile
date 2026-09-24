@@ -19,9 +19,26 @@
 # row that asks for more than 16 MiB fails alone with -7 while its neighbours
 # complete.
 #
+# The control-design environments (private/control-envs-plan-2026-09-23.md) add
+# plants of our own behind the generic stepping shim sim/shim_env.c, which takes
+# its value references from a plant.h in the model directory, and the generic
+# judge /oracle/judge.mjs, which takes plant and scenario on its command line.
+# /models/shower.wasm (sim/models/Shower), /models/ship.wasm (sim/models/Ship, a
+# Nomoto heading model) and /models/buck.wasm (sim/models/Buck, an averaged buck
+# converter) are the plants of our own so far, plus /models/slits.wasm
+# (sim/models/Slits), a standalone double-slit wave plant with sixteen inputs and
+# an exact output Jacobian, which is why the judge asks a plant how many inputs it
+# takes and which Jacobian it offers. /models/blackhole.wasm (sim/models/BlackHole,
+# Schwarzschild geodesics with two thrusters, the first FMI-style plant with two
+# inputs), /models/rocket.wasm (sim/models/Rocket, the relativistic rocket) and
+# /models/satclock.wasm (sim/models/SatClock, a navigation satellite's clock) are
+# the relativity plants.
+#
 # The physics oracle (docs/architecture/oracle-demo-plan.md) is two more files.
 # /models/cartpole.wasm is the cart-pole plant (sim/models/CartPole) behind the
-# stepping shim sim/shim_step.c, kept as WebAssembly rather than AOT-compiled
+# generic shim sim/shim_env.c (its plant.h names the value references; the vendored
+# shim_step.c it replaced stepped byte-identically, which the oracle test's pinned
+# fingerprints prove), kept as WebAssembly rather than AOT-compiled
 # because Node, not the worker, loads it. /oracle/run.mjs is the judge: a project
 # step runs it with the caller's controller file, it loads the plant through
 # Node's WASI support, runs the controller as a separate process, exchanges one
@@ -31,9 +48,9 @@
 #   fetch  the WasmEdge release tarball (SHA-256 checked) and the Reference FMUs
 #          source at a tag (commit checked), both from GitHub;
 #   wasm   the wasi-sdk image, pinned by digest, compiles two Reference FMUs and
-#          sim/models/Lorenz, each behind sim/shim.c, plus sim/models/CartPole
-#          behind sim/shim_step.c and the Greedy fixture, into wasm32-wasi reactor
-#          modules;
+#          sim/models/Lorenz, each behind sim/shim.c, plus sim/models/CartPole,
+#          Shower, Ship and Buck behind sim/shim_env.c and the Greedy fixture, into
+#          wasm32-wasi reactor modules;
 #   build  gcc links sim/worker.c against libwasmedge and `wasmedge compile`
 #          AOT-compiles the modules to shared objects;
 #   runtime node:22-bookworm-slim (the runner needs node; the WasmEdge binaries are
@@ -77,7 +94,7 @@ RUN git clone --quiet --depth 1 --branch "${REF_FMUS_TAG}" \
 # wasi-sdk 27, pinned by digest: the tag is mutable, the digest is not.
 FROM ghcr.io/webassembly/wasi-sdk@sha256:a4924a72705af8d5c95b84439a212200795600eb4db8dd79f3d147f4cf2f407f AS wasm
 COPY --from=fetch /src /src
-COPY sim/shim.c sim/shim_step.c /build/
+COPY sim/shim.c sim/shim_env.c /build/
 COPY sim/models /build/models
 WORKDIR /build
 # Same flags as the sister repository's Makefile: the shim exports alloc, sim_width
@@ -97,8 +114,27 @@ RUN /opt/wasi-sdk/bin/clang --target=wasm32-wasi -mexec-model=reactor -O2 \
       -o lorenz.wasm \
  && /opt/wasi-sdk/bin/clang --target=wasm32-wasi -mexec-model=reactor -O2 \
       -DFMI_VERSION=3 -DDISABLE_PREFIX -I /src/include -I /build/models/CartPole \
-      /src/src/fmi3Functions.c /src/src/cosimulation.c /build/models/CartPole/model.c shim_step.c \
+      /src/src/fmi3Functions.c /src/src/cosimulation.c /build/models/CartPole/model.c shim_env.c \
       -o cartpole.wasm \
+ && /opt/wasi-sdk/bin/clang --target=wasm32-wasi -mexec-model=reactor -O2 \
+      -DFMI_VERSION=3 -DDISABLE_PREFIX -I /src/include -I /build/models/Shower \
+      /src/src/fmi3Functions.c /src/src/cosimulation.c /build/models/Shower/model.c shim_env.c \
+      -o shower.wasm \
+ && /opt/wasi-sdk/bin/clang --target=wasm32-wasi -mexec-model=reactor -O2 \
+      -DFMI_VERSION=3 -DDISABLE_PREFIX -I /src/include -I /build/models/Ship \
+      /src/src/fmi3Functions.c /src/src/cosimulation.c /build/models/Ship/model.c shim_env.c \
+      -o ship.wasm \
+ && /opt/wasi-sdk/bin/clang --target=wasm32-wasi -mexec-model=reactor -O2 \
+      -DFMI_VERSION=3 -DDISABLE_PREFIX -I /src/include -I /build/models/Buck \
+      /src/src/fmi3Functions.c /src/src/cosimulation.c /build/models/Buck/model.c shim_env.c \
+      -o buck.wasm \
+ && for m in BlackHole Rocket SatClock; do lc=$(echo $m | tr A-Z a-z); \
+      /opt/wasi-sdk/bin/clang --target=wasm32-wasi -mexec-model=reactor -O2 \
+      -DFMI_VERSION=3 -DDISABLE_PREFIX -I /src/include -I /build/models/$m \
+      /src/src/fmi3Functions.c /src/src/cosimulation.c /build/models/$m/model.c shim_env.c \
+      -o $lc.wasm || exit 1; done \
+ && /opt/wasi-sdk/bin/clang --target=wasm32-wasi -mexec-model=reactor -O2 \
+      /build/models/Slits/slits.c -o slits.wasm \
  && /opt/wasi-sdk/bin/clang --target=wasm32-wasi -mexec-model=reactor -O2 \
       /build/models/Greedy/greedy.c -o greedy.wasm
 
@@ -125,7 +161,8 @@ COPY --from=build /opt/wasmedge/lib64/libwasmedge.so.0.1.1 /usr/local/lib/
 COPY --from=build /build/sim-worker /usr/local/bin/sim-worker
 COPY --from=build /build/vanderpol.so /build/bouncingball.so /build/lorenz.so /build/greedy.so /models/
 COPY --from=wasm /build/cartpole.wasm /models/cartpole.wasm
-COPY sim/oracle/run.mjs /oracle/run.mjs
+COPY --from=wasm /build/shower.wasm /build/ship.wasm /build/buck.wasm /build/slits.wasm /build/blackhole.wasm /build/rocket.wasm /build/satclock.wasm /models/
+COPY sim/oracle/run.mjs sim/oracle/judge.mjs /oracle/
 COPY runner.mjs /runner.mjs
 # Fail the build, not the first run, if the worker's shared libraries are missing.
 RUN ldconfig && ! ldd /usr/local/bin/sim-worker | grep 'not found'

@@ -125,7 +125,7 @@
               <text x="458" y="84" font-size="11" fill="#0b4c61" text-anchor="middle">sandbox.Build selects the provider</text>
               <text x="458" y="102" font-size="11" fill="#0b4c61" text-anchor="middle">EnsureReady proves it · admission counts here</text>
               <text x="458" y="120" font-size="11" fill="#0b4c61" text-anchor="middle">a grant is a Go value you assemble</text>
-              <text x="458" y="150" font-size="10.5" fill="#586770" text-anchor="middle">docker daemon or E2B key: yours to configure</text>
+              <text x="458" y="150" font-size="10.5" fill="#586770" text-anchor="middle">docker daemon or cloud VM key: yours to configure</text>
             </g>
             <g id="plugRemote" style="display:none">
               <rect x="204" y="86" width="26" height="28" rx="4" fill="#0b2a3a"/>
@@ -343,7 +343,7 @@
   // 03: the quadrant map. Group = what a product may do next; the text says why.
   var ERRS = [
     { id: 'ErrInvalidRequest', group: 'fix', code: 'InvalidArgument', text: 'The request itself is wrong: empty or oversized code, a bad path in a project, a malformed floor, an unknown profile name. Checked before any provider is touched. Fix the request; resending the same one fails the same way.' },
-    { id: 'ErrUnsupported', group: 'fix', code: 'Unimplemented', text: 'This provider cannot do this operation: a project on WASM, a module anywhere but docker, a grant on E2B with no guard. Describe would have told you. Change the operation or the deployment, not the retry policy.' },
+    { id: 'ErrUnsupported', group: 'fix', code: 'Unimplemented', text: 'This provider cannot do this operation: a project on WASM, a module anywhere but docker, a grant on E2B or Docker Cloud Sandboxes with no guard configured. Describe would have told you. Change the operation or the deployment, not the retry policy.' },
     { id: 'ErrDisabled', group: 'fix', code: 'FailedPrecondition', text: 'No provider is configured, which is the safe default. Nothing evaluates the code until an operator sets one. A valid state, not an outage.' },
     { id: 'ErrInsufficientIsolation', group: 'fix', code: 'FailedPrecondition', text: 'The floor you stated is above what the provider proves. Refused before dispatch, so nothing ran. Send it to a daemon that paints a higher mark, or lower the floor only if the work really needs less.' },
     { id: 'ErrProtocolMismatch', group: 'fix', code: 'Unimplemented', text: 'The daemon serves a different protocol number than this client. Refused before the payload is read, so a daemon that predates a security field never executes a request without it. Upgrade one side.' },

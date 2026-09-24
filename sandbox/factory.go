@@ -46,6 +46,8 @@ func (p Provider) EnsureReady(ctx context.Context) error {
 //
 //	SANDBOX_PROVIDER=docker   # locked-down `docker run` (self-host / dev)
 //	SANDBOX_PROVIDER=e2b      # Firecracker microVM (production; see e2b.go)
+//	SANDBOX_PROVIDER=dockercloud # Docker Cloud Sandboxes microVM (see dockercloud.go;
+//	                             # verified against the live service 2026-09-24)
 //	SANDBOX_PROVIDER=wasm     # in-process QuickJS/WASM (snippet-only)
 //	unset / anything else     # Disabled: refuses to execute
 //
@@ -98,6 +100,31 @@ func Build(getenv func(string) string) (Provider, error) {
 			return Provider{}, err
 		}
 		return Provider{Sandbox: e, Resources: res}, nil
+	case "dockercloud":
+		d := &DockerCloud{
+			Token:     getenv("DOCKER_SBX_TOKEN"),
+			Username:  getenv("DOCKER_SBX_USERNAME"),
+			AuthURL:   getenv("SANDBOX_DOCKERCLOUD_AUTH_URL"),
+			APIURL:    getenv("SANDBOX_DOCKERCLOUD_API_URL"),
+			Image:     getenv("SANDBOX_DOCKERCLOUD_IMAGE"),
+			GuardURL:  getenv("SANDBOX_DOCKERCLOUD_GUARD_URL"),
+			PolicyURL: getenv("SANDBOX_DOCKERCLOUD_POLICY_URL"),
+		}
+		requirePinned, err := optionalBoolEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		if err != nil {
+			return Provider{}, err
+		}
+		d.RequirePinnedImage = requirePinned
+		// CPU and memory are requested at create and verified after it; the API has
+		// no disk or process-count control, so those dimensions fail here.
+		d.MaxMemoryMB = res.MemoryMB
+		d.MaxVCPU = res.CPUs
+		d.MaxDiskMB = res.DiskMB
+		d.PidsLimit = res.PidsLimit
+		if err := d.validateConfig(); err != nil {
+			return Provider{}, err
+		}
+		return Provider{Sandbox: d, Resources: res}, nil
 	case "wasm":
 		w := DefaultWasm()
 		res.applyWasm(w)
@@ -110,7 +137,7 @@ func Build(getenv func(string) string) (Provider, error) {
 	default:
 		// Set-but-unrecognized: almost certainly a misconfiguration — an operator
 		// who meant to enable a provider must not silently get the inert one.
-		return Provider{}, fmt.Errorf("SANDBOX_PROVIDER=%q is not recognized (known: docker, e2b, wasm; unset = disabled)", raw)
+		return Provider{}, fmt.Errorf("SANDBOX_PROVIDER=%q is not recognized (known: docker, dockercloud, e2b, wasm; unset = disabled)", raw)
 	}
 }
 

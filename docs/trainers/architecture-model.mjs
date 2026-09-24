@@ -268,11 +268,11 @@ add('configure', 'operator', 'provider', 'authority', 'Select one provider at st
   'Build(getenv) → Provider { Sandbox, Resources }\nselected: {{provider}}\nThis selection is not repeated per RPC', 'sandbox/factory.go', [[115, 392], [875, 392]]);
 add('smoke', 'provider', 'guest', 'observe', 'Prove startup behavior before serving',
   'A bounded throwaway execution for real providers, after Preflight.',
-  'Docker proves the promised mount/write restrictions and broker socket reachability. E2B proves secured creation, project toolchain, cwd, and denied egress. E2B startup creates a billable VM in an actual deployment; this page does not.',
-  'EnsureReady = Preflight + SmokeTest\nWASM: process-tier configuration checks\nDocker/E2B: bounded behavioral execution\nStartup refuses if required checks fail', 'sandbox/factory.go');
+  'Docker proves the promised mount/write restrictions and broker socket reachability. E2B proves secured creation, project toolchain, cwd, and denied egress. Docker Cloud Sandboxes proves the token’s permissions, a deny-all effective network policy, file upload, project toolchain, cwd, and denied egress. Both create a billable VM at startup in an actual deployment; this page does not.',
+  'EnsureReady = Preflight + SmokeTest\nWASM: process-tier configuration checks\nDocker/E2B/Docker Cloud: bounded behavioral execution\nStartup refuses if required checks fail', 'sandbox/factory.go');
 add('smoke-result', 'guest', 'provider', 'observe', 'Collect startup evidence and tear down the probe',
   'The bounded smoke result and provider/configuration evidence.',
-  'Docker must have verified runsc for the kernel tier. E2B’s no-grant smoke does not prove guarded egress. WASM has no real-provider throwaway container or VM; this step summarizes its in-process checks.',
+  'Docker must have verified runsc for the kernel tier. E2B’s no-grant smoke does not prove guarded egress. Docker Cloud Sandboxes also reads each run’s effective network policy back and refuses one that is not deny-all. WASM has no real-provider throwaway container or VM; this step summarizes its in-process checks.',
   'Behavioral checks + provider configuration\nNo runtime attestation\nProbe resources released', 'sandbox/factory.go', [[980, 532], [980, 330]]);
 add('wasm-ready', 'provider', 'operator', 'observe', 'Check WASM configuration without a smoke guest',
   'The result of WASM’s Preflight configuration check.',
@@ -304,11 +304,11 @@ add('describe-caller', 'ingress', 'caller', 'response', 'Use discovery to prepar
   'Discovery complete\nGuest launched: no\nAdmission slot taken: no', 'client/client.go');
 add('ready', 'operator', 'provider', 'observe', 'Poll /readyz without starting a guest',
   'An unauthenticated HTTP readiness probe, routed by the daemon to Preflight.',
-  'Docker probes the pinned daemon/runtime and image configuration. E2B validates configuration only, not API reachability, key validity, or guard routing. /healthz only reports liveness; /metrics exports measurements.',
+  'Docker probes the pinned daemon/runtime and image configuration. E2B and Docker Cloud Sandboxes validate configuration only, not API reachability, key or token validity, or guard routing. /healthz only reports liveness; /metrics exports measurements.',
   'GET /readyz → bounded Preflight\nGET /healthz → liveness\nGET /metrics → bounded operational counters', 'cmd/plimsolld/main.go', [[115, 392], [875, 392]]);
 add('ready-result', 'provider', 'operator', 'observe', 'Return the limited readiness claim',
   'HTTP 200 for a successful Preflight, or 503 for failure.',
-  'No startup smoke test runs on this unauthenticated poll path. A green E2B readiness response cannot prove that creating or using a VM will work.',
+  'No startup smoke test runs on this unauthenticated poll path. A green E2B or Docker Cloud Sandboxes readiness response cannot prove that creating or using a VM will work.',
   '/readyz: ready / not ready\nSmokeTest invoked: no\nGuest launched: no', 'cmd/plimsolld/main.go', [[875, 414], [115, 414]]);
 add('cancel', 'caller', 'ingress', 'deny', 'The caller cancels an active request',
   'Cancellation of the request context after execution has started.',
@@ -320,7 +320,7 @@ add('cancel-handler', 'ingress', 'service', 'deny', 'Propagate cancellation into
   'request canceled or daemon shutting down\nrunCtx.Done() closes', 'internal/rpc/sandbox_service.go');
 add('cancel-provider', 'service', 'provider', 'deny', 'Stop the active run and release its resources',
   'The canceled context reaches provider execution and cleanup.',
-  'Containers, VM teardown, adapters, and temporary resources are provider-managed. E2B also periodically reconciles stamped, untracked orphan VMs left after failed cleanup. Cancellation does not roll back completed API writes.',
+  'Containers, VM teardown, adapters, and temporary resources are provider-managed. E2B and Docker Cloud Sandboxes also periodically reconcile untracked orphan VMs left after failed cleanup, E2B by a metadata stamp and Docker Cloud by a name prefix. Cancellation does not roll back completed API writes.',
   'Stop guest work\nClose per-run broker / adapter resources\nRelease admission when handler returns\nAlready completed API writes remain', 'sandbox/e2b.go', [[625, 208], [875, 208]]);
 add('cancel-result', 'provider', 'service', 'deny', 'Report cancellation or a bounded timeout outcome',
   'A context error, or the provider’s typed timeout result where applicable.',

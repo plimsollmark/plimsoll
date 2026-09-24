@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Same run, different sandboxes: one fingerprint on every provider</title>
+<meta name="description" content="The physics oracle's run, on every plimsoll provider this machine could reach: a local locked-down container, E2B Firecracker microVMs and Docker Cloud Sandboxes. Different isolation, different Node versions, one trajectory fingerprint.">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/providers/index.html">
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --grid: #e6e6e6; --axis: #bdbdbd; --blue: #2a78d6; --orange: #eb6834; --aqua: #1baf7a; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  p { margin: 6px 0; }
+  .sub { color: var(--ink2); margin-bottom: 18px; }
+  .row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: stretch; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .panel h3 { margin: 0 0 8px; font-size: 14px; letter-spacing: .02em; text-transform: uppercase; color: var(--ink2); }
+  .tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+  .tabs button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; color: var(--ink); }
+  .tabs button[aria-pressed="true"] { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+  pre { margin: 0; padding: 10px 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; white-space: pre; color: var(--ink); }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .badge.same { background: #e6f4ea; color: #1e6b2f; }
+  .badge.diff { background: #fdecea; color: #8a1c1c; }
+  .fp { display: block; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; color: var(--ink); }
+  .verdict dt { color: var(--ink2); font-size: 13px; margin-top: 10px; }
+  .verdict dd { margin: 2px 0 0; }
+  .controls { display: flex; gap: 10px; align-items: center; margin-top: 8px; color: var(--ink2); font-size: 13px; }
+  .controls button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; color: var(--ink); }
+  .controls input[type=range] { flex: 1; }
+  .note { color: var(--ink2); font-size: 13px; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .legend { display: flex; gap: 18px; font-size: 13px; color: #333; margin: 4px 0 2px; }
+  .legend span::before { content: ""; display: inline-block; width: 26px; height: 0; border-top: 2px solid; margin-right: 8px; vertical-align: middle; }
+  .legend .a::before { border-color: var(--blue); }
+  .legend .d::before { border-color: var(--orange); border-top-style: dashed; }
+  ol li, ul li { margin: 4px 0; }
+  a { color: var(--blue); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink2); font-weight: 600; font-size: 13px; }
+  td.fpc { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+  .badge.skip { background: #f1f1ef; color: #5a5a5a; }
+  .wide { overflow-x: auto; }
+  @media (max-width: 900px) { .row, .row2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Same run, different sandboxes: one fingerprint on every provider</h1>
+<p class="sub">The results on this page were measured in real runs on {{.Date}}; the inputs the runs were given are named as inputs where they appear. The run is the one the <a href="https://plimsollmark.github.io/plimsoll/examples/oracle/index.html">physics oracle page</a> publishes: the same accepted controller, the same judge, the same cart-pole plant, started 0.2 rad from upright for 20 seconds. Here it was sent to each plimsoll provider in turn, with nothing changed but the provider. Switching is one setting, <code>SANDBOX_PROVIDER</code>, and the code that calls plimsoll does not change.</p>
+
+<section class="panel wide">
+<h3>The verdict, provider by provider</h3>
+<table>
+<thead><tr><th>Provider</th><th>Where it ran</th><th>Isolation reported</th><th>Node</th><th>Steps took</th><th>Trajectory fingerprint</th></tr></thead>
+<tbody>
+{{range .Rows}}<tr><td><b>{{.Name}}</b></td><td>{{.Where}}</td>{{if .Skip}}<td colspan="4"><span class="badge skip">NOT RUN</span> {{.Skip}}</td>{{else if .Error}}<td colspan="4"><span class="badge diff">FAILED</span> {{.Error}}</td>{{else}}<td>{{.Tier}}</td><td>{{.Node}}</td><td>{{.DurationMs}} ms</td><td class="fpc">{{if .Matches}}<span class="badge same">IDENTICAL</span>{{else}}<span class="badge diff">DIFFERS</span>{{end}} {{.Fingerprint}}</td>{{end}}</tr>
+{{end}}</tbody>
+</table>
+<p class="note">IDENTICAL means the fingerprint equals the one published on the oracle page, <code>{{.Published}}</code>, to the last bit. The plant sent with every run hashes to {{.PlantSum}}.</p>
+</section>
+
+<div class="row2">
+<section class="panel">
+<h3>The run every provider recorded</h3>
+<svg id="stage" viewBox="0 0 760 330" width="100%" role="img" aria-label="A cart on a rail with a pole hinged on it, replaying the recorded run"></svg>
+<div class="controls">
+<button id="play">Pause</button>
+<input id="scrub" type="range" min="0" max="1999" value="0" aria-label="time">
+<span id="clock">t = 0.00 s</span>
+</div>
+<p class="note">One record replayed: every provider that ran produced the same bytes, so there is only one trajectory to show. The browser only replays it; no physics runs here.</p>
+</section>
+<section class="panel">
+<h3>Why the numbers agree</h3>
+<p>The plant is WebAssembly: it rounds once per operation, has no fused multiply-add, and carries its own <code>sin</code> and <code>cos</code>. The controller uses only <code>+</code> and <code>*</code> on doubles. So the bytes depend on the inputs and on nothing about the machine, the kernel, the hypervisor or the Node version, which is why a Firecracker microVM in one company's cloud and a container on a laptop agree to the last bit.</p>
+<p>The isolation column is the other half: each provider reports the boundary it ran behind, and a caller can require one on every run, so the same code can run fast in a container while you develop and in a microVM when the code is untrusted.</p>
+</section>
+</div>
+
+<h2>How it works</h2>
+<ol>
+<li><b>The same files everywhere.</b> The controller, the judge (<code>run.mjs</code>) and the plant (<code>cartpole.wasm</code>, sent base64 encoded and decoded by the first step) are ordinary project files, so no provider needs a special image. Any image with Node 20 or later can judge the run. One more file, a one-line <code>package.json</code> declaring ES modules, is what made that true: Node 22 recognizes the controller's <code>import</code> syntax on its own, Node 20 does not, and the first E2B attempt failed on exactly that.</li>
+<li><b>The same factory the daemon uses.</b> Each provider is built by plimsoll's provider factory from its own settings, must pass its readiness checks and startup smoke test before its run counts, and then runs three steps: print the Node version, decode the plant, run the judge.</li>
+<li><b>The same check.</b> The judge prints the SHA-256 of the record it wrote; the program hashes the returned artifact itself, refuses a mismatch, and compares the result with the fingerprint the oracle page published.</li>
+</ol>
+
+<h2>What this does not show</h2>
+<ul>
+<li>A reported isolation tier is configuration plus behavioral tests, never hardware attestation.</li>
+<li>A controller that calls <code>Math.sin</code> would tie its fingerprint to the JavaScript engine, and providers with different Node versions could then disagree. This controller is chosen not to.</li>
+<li>Providers marked NOT RUN were not reachable from the machine that wrote this page; the reason is in the row.</li>
+<li>Identity, not accuracy: a matching fingerprint proves the same computation, not that the model is physically right.</li>
+</ul>
+<p class="note">Reproduce: <code>make docker-images &amp;&amp; go run ./examples/providers</code> in the plimsoll repository, with docker, and with the E2B and Docker Cloud settings in the environment for those rows. The page is written from the run.</p>
+
+<script type="application/json" id="data">{{.Data}}</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById('data').textContent);
+  const h = D.h, N = D.ticks;
+  const acc = { x: D.x, theta: D.theta, force: D.force, fell_at: null };
+  // ---- the stage: rail, cart, pole, replayed from the record ----
+  const stage = document.getElementById('stage');
+  const W = 760, H = 330, railY = 250, mPerPx = 5 / W; // 5 m across the panel
+  const L = 1.0; // drawn pole length, 2 * half-length (m)
+  const ns = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const [a, v] of Object.entries(attrs)) e.setAttribute(a, v); return e; };
+  stage.append(el('rect', { x: 0, y: 0, width: W, height: H, fill: '#ffffff' }));
+  for (let m = -2; m <= 2; m++) { const px = W / 2 + m / mPerPx; stage.append(el('line', { x1: px, y1: railY - 6, x2: px, y2: railY + 6, stroke: '#bdbdbd', 'stroke-width': 1 })); stage.append(Object.assign(el('text', { x: px, y: railY + 22, 'text-anchor': 'middle', 'font-size': 11, fill: '#5a5a5a' }), { textContent: m + ' m' })); }
+  stage.append(el('line', { x1: 0, y1: railY, x2: W, y2: railY, stroke: '#bdbdbd', 'stroke-width': 2 }));
+  const cart = el('rect', { width: 84, height: 36, rx: 6, fill: '#2a78d6' });
+  const wheelA = el('circle', { r: 8, fill: '#1a1a1a' }), wheelB = el('circle', { r: 8, fill: '#1a1a1a' });
+  const pole = el('line', { stroke: '#eb6834', 'stroke-width': 8, 'stroke-linecap': 'round' });
+  const bob = el('circle', { r: 11, fill: '#eb6834' });
+  const label = Object.assign(el('text', { x: 12, y: 24, 'font-size': 13, fill: '#1a1a1a', 'font-weight': 600 }), { textContent: '' });
+  const status = Object.assign(el('text', { x: 12, y: 44, 'font-size': 12, fill: '#5a5a5a' }), { textContent: '' });
+  const force = Object.assign(el('text', { x: W - 12, y: 24, 'font-size': 12, fill: '#5a5a5a', 'text-anchor': 'end' }), { textContent: '' });
+  stage.append(cart, wheelA, wheelB, pole, bob, label, status, force);
+
+  let k = 0, playing = true, last = null;
+  const scrub = document.getElementById('scrub'), clock = document.getElementById('clock'), play = document.getElementById('play');
+  function draw() {
+    const r = acc;
+    let x = r.x[k], th = r.theta[k];
+    const fellTick = r.fell_at == null ? null : Math.round(r.fell_at / h);
+    const gone = Math.abs(x) > 2.6;
+    const cx = gone ? (x > 0 ? W - 44 : 44) : W / 2 + x / mPerPx;
+    cart.setAttribute('x', cx - 42); cart.setAttribute('y', railY - 36);
+    wheelA.setAttribute('cx', cx - 26); wheelA.setAttribute('cy', railY); wheelB.setAttribute('cx', cx + 26); wheelB.setAttribute('cy', railY);
+    const px = L / mPerPx * 1.0; // drawn length in px: 1 m, the pole's full length
+    const ex = cx + px * Math.sin(th), ey = railY - 36 - px * Math.cos(th);
+    pole.setAttribute('x1', cx); pole.setAttribute('y1', railY - 36); pole.setAttribute('x2', ex); pole.setAttribute('y2', ey);
+    bob.setAttribute('cx', ex); bob.setAttribute('cy', ey);
+    label.textContent = 'The oracle\'s accepted controller, the same record from every provider';
+    status.textContent = fellTick != null && k >= fellTick ? `fell at ${r.fell_at.toFixed(2)} s` + (gone ? ', cart off the rail' : '') : `angle ${(th * 180 / Math.PI).toFixed(1)}°, x ${x.toFixed(2)} m`;
+    force.textContent = `force ${r.force[k].toFixed(1)} N`;
+    scrub.value = k; clock.textContent = `t = ${(k * h).toFixed(2)} s`;
+  }
+  function tick(ts) {
+    if (playing) {
+      if (last == null) last = ts;
+      const dt = (ts - last) / 1000; last = ts;
+      const r = acc;
+      const stopAt = r.fell_at == null ? N - 1 : Math.min(N - 1, Math.round((r.fell_at + 2) / h)); // hold two seconds after a fall, then loop
+      k += Math.round(dt / h);
+      if (k > stopAt) k = 0;
+    } else last = null;
+    draw();
+    requestAnimationFrame(tick);
+  }
+  play.onclick = () => { playing = !playing; play.textContent = playing ? 'Pause' : 'Play'; };
+  scrub.oninput = () => { playing = false; play.textContent = 'Play'; k = Number(scrub.value); draw(); };
+  requestAnimationFrame(tick);
+
+})();
+</script>
+</main>
+</body>
+</html>

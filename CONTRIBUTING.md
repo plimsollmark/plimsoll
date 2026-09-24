@@ -46,7 +46,12 @@ The infrastructure suites are opt-in because they need real infrastructure:
 make docker-images                   # pull node:22-alpine, build plimsoll/sandbox:latest
 make audit DOCKER=1                  # adds docker/seccomp/broker/smoke tests; skips are failures
 E2B_API_KEY=... make audit E2B=1     # adds the live E2B microVM suite
+DOCKER_SBX_TOKEN=... DOCKER_SBX_USERNAME=... SANDBOX_DOCKERCLOUD_API_URL=... \
+  SANDBOX_DOCKERCLOUD_IMAGE=... make audit DOCKERCLOUD=1  # adds the live Docker Cloud Sandboxes suite
 ```
+
+The E2B and Docker Cloud suites create billable microVMs, so the ordinary targets
+strip both credentials from the environment and no CI job runs either suite.
 
 `make help` lists individual targets. Some Docker tests need the project image:
 `docker build -t plimsoll/sandbox:latest docker/`.

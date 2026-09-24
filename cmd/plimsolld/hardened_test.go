@@ -88,6 +88,9 @@ func TestHardenedPolicyFailsClosedPerViolation(t *testing.T) {
 		{"malformed pin flag", func(e map[string]string) { e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "yes" }, nil, "SANDBOX_REQUIRE_PINNED_IMAGES"},
 		{"seccomp unconfined", func(e map[string]string) { e["SANDBOX_DOCKER_SECCOMP"] = "unconfined" }, nil, "unconfined"},
 		{"missing memory budget", func(e map[string]string) { delete(e, "SANDBOX_MEMORY_MB") }, nil, "SANDBOX_MEMORY_MB"},
+		{"zero memory budget", func(e map[string]string) { e["SANDBOX_MEMORY_MB"] = "0" }, nil, "SANDBOX_MEMORY_MB must be greater than zero"},
+		{"zero cpus", func(e map[string]string) { e["SANDBOX_CPUS"] = "0" }, nil, "SANDBOX_CPUS must be greater than zero"},
+		{"non-numeric cpus", func(e map[string]string) { e["SANDBOX_CPUS"] = "lots" }, nil, "SANDBOX_CPUS must be greater than zero"},
 		{"missing pids budget", func(e map[string]string) { delete(e, "SANDBOX_PIDS") }, nil, "SANDBOX_PIDS"},
 		{"missing aggregate budget", func(e map[string]string) { delete(e, "SANDBOX_TOTAL_MEMORY_MB") }, nil, "SANDBOX_TOTAL_MEMORY_MB"},
 		{"rate limiting disabled", nil, func(f *hardenedFacts) { f.RatePerMin = 0 }, "SANDBOX_RATE_PER_MIN"},
@@ -117,6 +120,23 @@ func TestHardenedPolicyRequiresExplicitE2BTemplate(t *testing.T) {
 	err := enforceHardenedPolicy(getenvFrom(env), f)
 	if err == nil || !strings.Contains(err.Error(), "E2B_TEMPLATE") {
 		t.Fatalf("err = %v, want an explicit-template violation", err)
+	}
+}
+
+// TestHardenedPolicyDockerCloud: a pinned image is required, and the envelope is
+// memory and CPU only, because Build rejects SANDBOX_DISK_MB for dockercloud and a
+// policy demanding it could never be satisfied.
+func TestHardenedPolicyDockerCloud(t *testing.T) {
+	f := hardenedDockerFacts()
+	f.Provider, f.Isolation = "dockercloud", sandbox.IsolationVM
+	env := map[string]string{"SANDBOX_MEMORY_MB": "1024", "SANDBOX_CPUS": "2", "SANDBOX_REQUIRE_PINNED_IMAGES": "1"}
+	if err := enforceHardenedPolicy(getenvFrom(env), f); err != nil {
+		t.Fatalf("compliant dockercloud deployment rejected: %v", err)
+	}
+	delete(env, "SANDBOX_REQUIRE_PINNED_IMAGES")
+	err := enforceHardenedPolicy(getenvFrom(env), f)
+	if err == nil || !strings.Contains(err.Error(), "SANDBOX_REQUIRE_PINNED_IMAGES") {
+		t.Fatalf("err = %v, want a pinned-image violation", err)
 	}
 }
 

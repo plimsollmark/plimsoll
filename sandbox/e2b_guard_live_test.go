@@ -147,7 +147,7 @@ func TestE2BGuardLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build expired-guard request: %v", err)
 	}
-	req.Header.Set(E2BGuardHeader, tokenForExpiry)
+	req.Header.Set(EgressGuardHeader, tokenForExpiry)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

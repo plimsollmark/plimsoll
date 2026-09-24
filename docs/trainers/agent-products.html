@@ -175,7 +175,7 @@
     <div class="trust">
       <div class="card"><p><span class="floor">floor: none · process is fine</span></p><p><b>Code you basically trust.</b> Your own team's formulas, a demo, the inner loop while building the product. The in-process engine is instant and free; its escape lands in the daemon, which you have decided you can live with.</p></div>
       <div class="card warn"><p><span class="floor">floor: kernel</span></p><p><b>Model-authored code over your API.</b> Treat it as hostile unless a policy says otherwise. Verified <code>runsc</code> paints this mark and brokers both snippet and project grants. A plain container is not a hostile boundary, whatever its image is called.</p></div>
-      <div class="card good"><p><span class="floor">floor: vm</span></p><p><b>Hostile code, or not on your hardware.</b> One disposable microVM per run. Grants need the egress guard, and the template must already carry every tool, because the VM has no way to fetch one.</p></div>
+      <div class="card good"><p><span class="floor">floor: vm</span></p><p><b>Hostile code, or not on your hardware.</b> One disposable microVM (a small virtual machine created for one run) per run, on E2B or Docker Cloud Sandboxes. Grants need the provider's egress guard (<code>E2B_GUARD_URL</code> or <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>); on Docker Cloud Sandboxes the guest holds its own run's short-lived guard credential. The template or image must already carry every tool, because the VM has no way to fetch one.</p></div>
     </div>
   </section>
 

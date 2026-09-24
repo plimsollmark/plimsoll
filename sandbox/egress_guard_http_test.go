@@ -52,7 +52,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 func TestEgressGuardHTTPHandlerFramesBrokerCall(t *testing.T) {
 	h := EgressGuardHTTPHandler(&fakeE2BGuard{token: "run-token"}, "/v1/e2b/guard", 0)
 	req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", strings.NewReader(`{"method":"GET","path":"/v1/items","body":{"x":1}}`))
-	req.Header.Set(E2BGuardHeader, "run-token")
+	req.Header.Set(EgressGuardHeader, "run-token")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
@@ -74,7 +74,7 @@ func TestEgressGuardHTTPHandlerRejectsUnknownTokenBeforeReadingBody(t *testing.T
 		body := &countingReader{r: strings.NewReader(`{"method":"GET","path":"/v1/items","body":{"x":1}}`)}
 		req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", body)
 		if token != "" {
-			req.Header.Set(E2BGuardHeader, token)
+			req.Header.Set(EgressGuardHeader, token)
 		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -97,7 +97,7 @@ func TestEgressGuardHTTPHandlerShedsPastInFlightCap(t *testing.T) {
 	h := EgressGuardHTTPHandler(guard, "/v1/e2b/guard", 1)
 	newReq := func() *http.Request {
 		req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", strings.NewReader(`{"method":"GET","path":"/v1/items","body":{"x":1}}`))
-		req.Header.Set(E2BGuardHeader, "run-token")
+		req.Header.Set(EgressGuardHeader, "run-token")
 		return req
 	}
 

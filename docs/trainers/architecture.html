@@ -33,7 +33,7 @@
       <div id="pathCategories" class="path-categories" role="group" aria-label="Path families"></div>
       <div class="path-configuration">
         <label class="select-field"><span>PATH TO FOLLOW</span><select id="pathSelect"></select></label>
-        <label class="select-field provider-field"><span>ILLUSTRATED PROVIDER</span><select id="providerSelect"><option value="runsc">Docker + gVisor</option><option value="docker">Docker + runc</option><option value="wasm">WASM / QuickJS</option><option value="e2b">E2B / Firecracker</option><option value="disabled" disabled>Disabled</option></select></label>
+        <label class="select-field provider-field"><span>ILLUSTRATED PROVIDER</span><select id="providerSelect"><option value="runsc">Docker + gVisor</option><option value="docker">Docker + runc</option><option value="wasm">WASM / QuickJS</option><option value="e2b">E2B / Firecracker</option><option value="dockercloud" disabled>Docker Cloud Sandboxes (not drawn: E2B’s guard path, guest holds the guard credential)</option><option value="disabled" disabled>Disabled</option></select></label>
         <button class="text-button" id="copyLink" type="button">Copy this view ↗</button>
       </div>
       <p id="pathIntro" class="path-intro"></p>

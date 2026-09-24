@@ -10,21 +10,24 @@
 # Without that check, a lint clean run means "clean under whichever golangci-lint
 # happened to be on PATH", which is not a gate.
 
-# The docker/e2b suites need real infrastructure, so they are opt-in even inside
-# `make audit`: set DOCKER=1 (local daemon, images from `make docker-images`) and/or
-# E2B=1 (E2B_API_KEY in the environment) to include them. DOCKER=1 is a request for
-# proof: docker-suite runs in required mode, where a missing daemon, a missing image
-# or any skipped test fails the target instead of passing quietly.
+# The docker/e2b/dockercloud suites need real infrastructure, so they are opt-in even
+# inside `make audit`: set DOCKER=1 (local daemon, images from `make docker-images`),
+# E2B=1 (E2B_API_KEY in the environment) and/or DOCKERCLOUD=1 (DOCKER_SBX_TOKEN,
+# DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL and SANDBOX_DOCKERCLOUD_IMAGE) to
+# include them. DOCKER=1 and DOCKERCLOUD=1 are requests for proof: those suites run
+# in required mode, where missing infrastructure or configuration fails the target
+# instead of passing quietly. E2B and dockercloud spend money; no CI job runs them.
 SECCOMP := $(CURDIR)/docker/seccomp.json
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race lint buf vuln docker-images docker-suite e2b-suite e2b-guard-live modproxy tools tools-check help
+.PHONY: audit build vet test race lint buf vuln docker-images docker-suite e2b-suite e2b-guard-live dockercloud-suite modproxy tools tools-check help
 
-## audit: the full local gate — pinned-tool check, build, vet, race tests, lint, buf, govulncheck (+ opt-in docker/e2b)
+## audit: the full local gate — pinned-tool check, build, vet, race tests, lint, buf, govulncheck (+ opt-in docker/e2b/dockercloud)
 audit: tools-check build vet race lint buf vuln
 	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
+	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL, SANDBOX_DOCKERCLOUD_IMAGE)"; fi
 	@echo "audit: OK"
 
 ## build: compile every package
@@ -35,19 +38,20 @@ build:
 vet:
 	go vet ./...
 
-# The live E2B tests skip only when E2B_API_KEY is absent, and `./...` selects them,
-# so a key left in the shell (a secrets-manager wrapper, an earlier E2B=1 session) would make
-# the ordinary gate create billable microVMs. These targets strip the key; only
-# e2b-suite and e2b-guard-live, the deliberate paid runs, see it.
-NO_E2B := env -u E2B_API_KEY
+# The live E2B and dockercloud tests skip only when their credentials are absent, and
+# `./...` selects them, so a key left in the shell (a secrets-manager wrapper, an
+# earlier E2B=1 or DOCKERCLOUD=1 session) would make the ordinary gate create billable
+# microVMs. These targets strip both credentials; only e2b-suite, e2b-guard-live and
+# dockercloud-suite, the deliberate paid runs, see one, and each sees only its own.
+NO_PAID_KEYS := env -u E2B_API_KEY -u DOCKER_SBX_TOKEN
 
-## test: unit tests (includes fuzz corpora as regressions); never sees E2B_API_KEY
+## test: unit tests (includes fuzz corpora as regressions); never sees E2B_API_KEY or DOCKER_SBX_TOKEN
 test:
-	$(NO_E2B) go test ./... -count=1
+	$(NO_PAID_KEYS) go test ./... -count=1
 
-## race: unit tests under the race detector; never sees E2B_API_KEY
+## race: unit tests under the race detector; never sees E2B_API_KEY or DOCKER_SBX_TOKEN
 race:
-	$(NO_E2B) go test -race ./... -count=1
+	$(NO_PAID_KEYS) go test -race ./... -count=1
 
 ## lint: golangci-lint (must be on PATH)
 lint:
@@ -69,20 +73,23 @@ docker-images:
 	docker build -t plimsoll/sandbox:latest docker/
 	docker build -t plimsoll/sandbox-python:latest -f docker/python.Dockerfile docker/
 	docker build -t plimsoll/sandbox-sim:latest -f docker/sim.Dockerfile docker/
+	docker build -t plimsoll/sandbox-wasm-cc:latest -f docker/wasm-cc.Dockerfile docker/
 
 # Required mode, twice over. SANDBOX_TEST_REQUIRE_DOCKER=1 makes the test helpers
 # fail instead of skip when the daemon or an image is missing; the scan afterwards
 # fails the target on ANY skipped test in the selection, so a future bare t.Skip
 # cannot turn requested coverage into a quiet pass either. -skip Live excludes the
-# live E2B tests, which match the selection by name and skip without a key; they
-# belong to e2b-suite, and here a skip must mean docker. The status file, rather
+# live E2B and dockercloud tests, which can match the selection by name and skip
+# without a key; they belong to their own suites, and here a skip must mean docker.
+# The dockercloud unit tests (a fake Connect server, and the exec wrapper under the
+# toolchain image's busybox) match 'Docker' and run here. The status file, rather
 # than a pipe, keeps the go test exit code under POSIX sh.
 ## docker-suite: the real docker/seccomp/broker/smoke tests; a missing daemon, image or skipped test FAILS
 docker-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "docker-suite: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     $(NO_E2B) go test ./sandbox -run 'Docker|RunProject|Broker|Smoke' -skip 'Live' -count=1 -v; \
+	     $(NO_PAID_KEYS) go test ./sandbox -run 'Docker|RunProject|Broker|Smoke' -skip 'Live' -count=1 -v; \
 	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/docker-suite.log; then \
 	   echo "docker-suite: required coverage was skipped:" >&2; \
@@ -91,7 +98,20 @@ docker-suite:
 
 ## e2b-suite: the live E2B tests (needs E2B_API_KEY)
 e2b-suite:
-	go test ./sandbox -run 'Live' -count=1 -v
+	env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'E2B.*Live' -count=1 -v
+
+# The live Docker Cloud Sandboxes suite. DOCKERCLOUD_LIVE_REQUIRED=1 makes missing
+# configuration fail instead of skip, so a green run means the live service was
+# exercised. The provider is written against Docker's published contract; this
+# target is how it gets verified against the real service.
+#
+#   DOCKER_SBX_TOKEN              a Docker personal access token for automation
+#   SANDBOX_DOCKERCLOUD_API_URL   the management endpoint (no default)
+#   SANDBOX_DOCKERCLOUD_IMAGE     the toolchain image, pullable by the service
+#
+## dockercloud-suite: the live Docker Cloud Sandboxes tests (FAILS if not configured; spends)
+dockercloud-suite:
+	DOCKERCLOUD_LIVE_REQUIRED=1 env -u E2B_API_KEY go test ./sandbox -run 'DockerCloud.*Live' -count=1 -v
 
 # The guarded-egress path is the one claim `make audit E2B=1` cannot make: its live
 # test skips unless three deployment-specific variables are set, and a skip inside a
@@ -105,7 +125,7 @@ e2b-suite:
 #
 ## e2b-guard-live: prove the guarded E2B egress path (FAILS if it is not configured)
 e2b-guard-live:
-	E2B_GUARD_LIVE_REQUIRED=1 go test ./sandbox -run 'TestE2BGuardLive' -count=1 -v
+	E2B_GUARD_LIVE_REQUIRED=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'TestE2BGuardLive' -count=1 -v
 
 # The website targets that used to sit here drove the commercial site's local stack
 # through scripts/ , which is private and does not ship. In a public clone they were

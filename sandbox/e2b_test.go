@@ -73,7 +73,7 @@ func TestE2BCreateGrantUsesAllowlistAndBetaHeaderTransform(t *testing.T) {
 	defer srv.Close()
 	e := &E2B{APIKey: "k", APIBase: srv.URL}
 	cfg := &e2bGuardConfig{
-		Endpoint: &e2bGuardEndpoint{URL: "https://guard.example/v1/e2b/guard", Host: "guard.example", Path: "/v1/e2b/guard"},
+		Endpoint: &guardEndpoint{URL: "https://guard.example/v1/e2b/guard", Host: "guard.example", Path: "/v1/e2b/guard"},
 		Token:    "crg_test-token",
 	}
 	if _, err := e.create(context.Background(), 30*time.Second, cfg); err != nil {
@@ -100,7 +100,7 @@ func TestE2BCreateGrantUsesAllowlistAndBetaHeaderTransform(t *testing.T) {
 		t.Fatalf("allowOut = %v, want only guard.example", body.Network.AllowOut)
 	}
 	rules := body.Network.Rules["guard.example"]
-	if len(rules) != 1 || rules[0].Transform.Headers[E2BGuardHeader] != "crg_test-token" {
+	if len(rules) != 1 || rules[0].Transform.Headers[EgressGuardHeader] != "crg_test-token" {
 		t.Fatalf("rules = %+v, want one injected guard header", body.Network.Rules)
 	}
 }
@@ -119,7 +119,7 @@ func TestE2BGuardKeepsCustomerCredentialInBroker(t *testing.T) {
 		t.Fatalf("open guard: %v", err)
 	}
 	defer cleanup()
-	if strings.Contains(hostE2BSDKModule(grant, cfg.Endpoint.URL), "customer-secret") || strings.Contains(hostE2BSDKModule(grant, cfg.Endpoint.URL), cfg.Token) {
+	if strings.Contains(hostGuardSDKModule(grant, cfg.Endpoint.URL, ""), "customer-secret") || strings.Contains(hostGuardSDKModule(grant, cfg.Endpoint.URL, ""), cfg.Token) {
 		t.Fatal("E2B guest module contains a customer or guard credential")
 	}
 	resp := e.EgressGuardCall(context.Background(), cfg.Token, http.MethodGet, "/v1/items", nil)

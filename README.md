@@ -39,6 +39,8 @@ reproduce with `make docker-images && go run ./examples/oracle`.
 
 | More to look at | What it is |
 |---|---|
+| [A controller in C, compiled in the sandbox ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html) | The same judge and cart-pole, with a swing-up controller written in C and compiled to WebAssembly by the run's own first step, so plant and controller are both WebAssembly. The run report replays the swing-up and compares it with the JavaScript version tick by tick: the two differ in two forces, by a few representable doubles, and the fingerprint catches it while the motion stays bit-identical. Source and caveats in [its README](examples/wasm-controller/README.md); reproduce with `make docker-images && go run ./examples/wasm-controller`. |
+| [Same run, different sandboxes ↗](https://plimsollmark.github.io/plimsoll/examples/providers/index.html) | The oracle's run on a local container, E2B Firecracker and Docker Cloud Sandboxes: two isolation tiers, two Node versions, one fingerprint, the one the oracle page published. Reproduce with `go run ./examples/providers`. |
 | [The efficiency advisor's report ↗](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html) | One measured run, rendered: the same question asked as 13 calls and then as 1, and the finding that names the route to batch on. |
 | [Twelve interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | The execution model, the providers, the API broker, and integrating with an agent. Static pages: no network calls, no analytics, no third-party scripts. |
 | [System topology diagram](docs/architecture/topology.svg) | Request admission, provider boundaries, and brokered API calls, on one page. |
@@ -139,6 +141,7 @@ with no grant reaches nothing at all.
 | `docker` with `runc` | container, sharing the host kernel | `container` | Self-hosting where the kernel boundary is not the threat model. |
 | `docker` with `runsc` | gVisor, after a verified preflight | `kernel` | Hostile code, self-hosted. |
 | `e2b` | Firecracker microVM | `vm` | Hostile code, on runners off your host. |
+| `dockercloud` | Docker Cloud Sandboxes microVM | `vm` | Hostile code, on Docker-managed runners. Implemented against Docker's published API contract; the live suite passed against the real service on 2026-09-24. Requires the account's cloud network policy to default to deny-all, which every run verifies. Host-API grants through the same guard as E2B when `SANDBOX_DOCKERCLOUD_GUARD_URL` is set; unlike E2B, the guest holds its own run's short-lived, guard-only credential, and the one network rule is applied through a Docker call outside its published contract. |
 | unset | nothing runs | n/a | The default. |
 
 Every tier is configuration plus provider evidence plus a behavioural startup smoke
@@ -162,8 +165,8 @@ floor per request, are in [docs/isolation-tiers.md](docs/isolation-tiers.md).
   and proved a read-only root, sized `noexec` writable mounts, and the broker's
   refusals. The [gvisor workflow](.github/workflows/gvisor.yml) runs the same suite
   under runsc, the kernel tier, from the pinned installer. What no check exercises
-  is E2B: that suite drives a live paid service and is deliberately never wired to a
-  runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
+  is E2B or Docker Cloud Sandboxes: those suites drive live paid services and are
+  deliberately never wired to a runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Learn how it works
 
@@ -183,7 +186,7 @@ Each of these answers one question, end to end.
 | Document | Answers |
 |---|---|
 | [docs/getting-started.md](docs/getting-started.md) | How do I build it, embed it, start it as an authenticated service, and watch a floor be refused? |
-| [docs/example-programs.md](docs/example-programs.md) | What do the five runnable examples prove, and which should I read first? |
+| [docs/example-programs.md](docs/example-programs.md) | What do the six runnable examples prove, and which should I read first? |
 | [docs/isolation-tiers.md](docs/isolation-tiers.md) | What does each tier rest on, and how do I demand one per request? |
 | [docs/capability-grants.md](docs/capability-grants.md) | How does agent code call my API without ever holding my credential? |
 | [docs/run-results.md](docs/run-results.md) | What comes back, and when is a failure an error rather than a result? |

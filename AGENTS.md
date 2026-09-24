@@ -3,6 +3,8 @@
 > **This file is the source of truth for *what this is*:** architecture, providers,
 > invariants. It is vendor-neutral, and it is published with the repository, so it
 > describes the component and nothing about any particular deployment of it.
+> A working copy may carry an `AGENTS.local.md` beside this file for what is true of
+> that copy only; it never ships. If it exists, read it before starting.
 
 Standalone code-execution sandbox service: the **one** place that runs untrusted,
 agent-authored code with an explicitly reported isolation tier, callable over RPC.
@@ -33,6 +35,9 @@ option is intentionally only process-tier.
   - [sandbox/wasm.go](sandbox/wasm.go) — in-process QuickJS/WASM provider.
   - [sandbox/docker.go](sandbox/docker.go) — locked-down `docker run` provider.
   - [sandbox/e2b.go](sandbox/e2b.go) — E2B Firecracker microVM provider.
+  - [sandbox/dockercloud.go](sandbox/dockercloud.go): Docker Cloud Sandboxes
+    microVM provider, written against Docker's published API contract and verified
+    against the live service (2026-09-24).
   - [sandbox/disabled.go](sandbox/disabled.go) — refuses to execute (the default).
   - [sandbox/broker.go](sandbox/broker.go) — provider-neutral per-run host-API
     enforcement core (allowlist, credential injection, budgets, upstream HTTP,
@@ -66,17 +71,33 @@ option is intentionally only process-tier.
   kept as WebAssembly at `/models/cartpole.wasm` behind a stepping shim, and the
   judge `/oracle/run.mjs` that runs a caller's controller as a separate process and
   fingerprints the trajectory (`sandbox/docker_oracle_test.go`).
-- [examples/](examples/) — five runnable programs: `minimal` (one snippet and the
+  [docker/wasm-cc.Dockerfile](docker/wasm-cc.Dockerfile) derives
+  `plimsoll/sandbox-wasm-cc` from the sim image: the C half of wasi-sdk 27 (clang and
+  a wasm32-wasip1 libc with libm), pinned by the same image digest the sim build
+  uses, so a project step can compile C to a WebAssembly module with no network.
+- [examples/](examples/) — seven runnable programs: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
   the injected client and being refused by the broker anyway, then the identical
   request succeeding under a separate per-run grant that lists it), `daemon` (the
   full service path with auth, `Describe`, and an isolation floor being refused),
   `advisor` (the efficiency advisor over a loopback daemon: a per-item loop,
   the finding that names the granted collection route, the rewrite, and the API's
-  own request count as the witness), and `oracle` (needs docker: an agent-written
+  own request count as the witness), `oracle` (needs docker: an agent-written
   controller judged against the module image's cart-pole plant by trajectory
   fingerprint, through the ordinary project API; the page it writes replays the
-  runs, and `sandbox/docker_oracle_test.go` asserts the fingerprints).
+  runs, and `sandbox/docker_oracle_test.go` asserts the fingerprints), and
+  `wasm-controller` (needs docker: a swing-up controller in C compiled to
+  WebAssembly by the run's first step in `plimsoll/sandbox-wasm-cc` and judged on
+  four scenarios by the unchanged judge through a Node shim that gives the module no
+  imports; the page it writes, `docs/examples/wasm-controller/index.html`, replays
+  the swing-up and compares the record with `controller/reference.js` tick by tick;
+  `sandbox/docker_wasm_controller_test.go` asserts a reproducible compile,
+  one fingerprint per scenario, the score floor, and that the only difference from
+  the JavaScript law is `cos`), and `providers` (the oracle's run, with its judge and
+  plant sent as project files, on every provider the machine can reach, each built by
+  `sandbox.Build` and proven by `EnsureReady`; the page it writes compares the
+  fingerprints with the one the oracle page published; E2B and dockercloud rows need
+  their credentials and are paid).
 - [docs/trainers/](docs/trainers/) — dependency-free interactive lessons covering
   the execution model, architecture, providers, dependencies, the API broker and
   its capacity signal, MCP/agent integration, customer patterns, and product
@@ -86,7 +107,7 @@ option is intentionally only process-tier.
 ## The `Sandbox` interface
 Every provider implements [sandbox/sandbox.go](sandbox/sandbox.go):
 - `RunJavaScript(ctx, Request) (Result, error)` — run a JavaScript snippet (Node
-  on Docker/E2B, QuickJS on WASM).
+  on Docker, E2B and Docker Cloud; QuickJS on WASM).
 - `RunProject(ctx, ProjectRequest) (ProjectResult, error)` — write a multi-file
   project, then run build/lint/run steps in order (stop on first failure).
 - `RunModule(ctx, ModuleRequest) (ModuleResult, error)` — run a compiled physical
@@ -123,6 +144,7 @@ unrecognized provider names are explicit errors, and the default (unset) is
 | `wasm`    | in-process QuickJS via wazero | process tier, lowest latency | JS snippets and snippet grants through a direct host function; no projects. An engine escape lands in plimsolld. |
 | `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. |
 | `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. Sandboxes are stamped with a per-instance metadata ID; `ReconcileOrphans` (run periodically by the daemon) reaps stamped, untracked microVMs that leaked past a malformed create response or failed teardown. |
+| `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | **implemented against Docker's published contract (the `github.com/docker/sandboxes-api` protobuf API, v0.36.0); the live suite passed against the real service on 2026-09-24** (smoke, snippet, project, bounds, orphan listing). Three operator requirements came out of that run: the personal access token is exchanged at Docker Hub (`DOCKER_SBX_USERNAME` plus the token) for a short-lived bearer, since the sandbox API refuses the token itself; the account's cloud network policy must default to deny-all (`sbx --cloud policy init deny-all`), because a create carrying an inline policy fails; and a pinned image must name its linux/amd64 manifest digest, not a multi-platform index, because the cloud reports the manifest it booted. Spoken by hand as Connect JSON over `net/http`, no new module. Isolated snippets/projects from one configured raw OCI image. Grants are supported when `SANDBOX_DOCKERCLOUD_GUARD_URL` is configured (`ErrUnsupported` otherwise) and use the same shared egress guard as E2B, with two differences an operator must know: the grant run's single network rule (the guard's `host:443`) is applied through `PUT /sandboxes/{id}/network-policy`, a REST call **outside Docker's published contract** (the one the `sbx` CLI makes; base `SANDBOX_DOCKERCLOUD_POLICY_URL`), and **the guest holds its own run's guard credential**, because Docker's proxy injects credentials only for its fixed service list (on E2B the proxy injects it and the guest never sees it). That credential is per run, valid only at the guard, only for that run's frozen grant, and dead when the run ends; the downstream API credential never enters the VM. Each run creates a pinned linux/amd64 sandbox, reads its effective network policy back through the published contract and refuses to run unless it is deny-all with exactly the entitled rules (none for a no-grant run, the guard's `host:443` for a grant run), and deletes the sandbox on every exit path (cloud TTL with delete-on-timeout as the backstop). The exec API has no timeout and no output bound, so every guest command runs under an in-guest wrapper (`timeout -s KILL`, each stream capped by `head -c`) and the host bounds the response; a flood is a failed user run with truncation flags. Sandboxes are named with a per-instance prefix tracked before create; `ReconcileOrphans` deletes untracked ones. |
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
 
 Relevant env: `SANDBOX_DOCKER_IMAGE`, `SANDBOX_DOCKER_PROJECT_IMAGE`,
@@ -137,7 +159,16 @@ surface like `ptrace`/`io_uring`/`keyctl` — see [docs/seccomp.md](docs/seccomp
 `E2B_API_KEY`, `E2B_TEMPLATE`, `E2B_GUARD_URL` (the guard is **process-local**: a run's
 guard credential lives only in the memory of the process that opened that run, so the
 public guard URL must resolve to that same process — an ordinary load balancer across
-replicas rejects valid guard calls as unknown credentials), `PLIMSOLL_GRANTS_FILE` (named host-API capability
+replicas rejects valid guard calls as unknown credentials), `DOCKER_SBX_TOKEN` (a Docker
+personal access token with the Cloud Sandboxes scope, read from the environment only),
+`DOCKER_SBX_USERNAME` (the account it belongs to), `SANDBOX_DOCKERCLOUD_AUTH_URL`
+(the token exchange; default Docker Hub's), `SANDBOX_DOCKERCLOUD_API_URL`
+(the management endpoint; required, since Docker documents no default;
+`https://sandboxes.connect.docker.com/sbx` answered on 2026-09-24),
+`SANDBOX_DOCKERCLOUD_IMAGE` (the raw OCI image each sandbox boots; `@sha256:` when
+pinning is required; dockercloud honors `SANDBOX_MEMORY_MB` and whole `SANDBOX_CPUS`,
+requested at create and verified after it, and rejects `SANDBOX_PIDS`/`SANDBOX_DISK_MB`),
+`PLIMSOLL_GRANTS_FILE` (named host-API capability
 profiles selectable via `grant_profile`), and dev-only `PLIMSOLL_INSECURE=1`
 (explicitly permits a real provider without auth). Operational knobs: `SANDBOX_MIN_ISOLATION`
 (refuse to start below a tier: `vm|kernel|container|process`), the per-run resource
@@ -152,7 +183,7 @@ smuggle an unverified image past that check), the
 limiter `SANDBOX_MAX_CONCURRENT`/`SANDBOX_PER_KEY_CONCURRENT`/`SANDBOX_RATE_PER_MIN`/
 `SANDBOX_RATE_BURST`, and the aggregate budget `SANDBOX_TOTAL_MEMORY_MB` (clamps
 max-concurrent to total/per-run so concurrent runners cannot oversubscribe the host;
-ignored for e2b, whose runners live off-host). Each provider reports its boundary via
+ignored for e2b and dockercloud, whose runners live off-host). Each provider reports its boundary via
 `IsolationClass()` and in the RPC response `isolation` field, and the **`Describe`
 RPC** reports the active provider, tier, project and module support, and
 operation-specific grant support (via `ProjectCapable` / `ModuleCapable` /
@@ -174,12 +205,12 @@ Unimplemented, both before the payload is read. `Describe` reports the daemon's
 number. Bump `protocol.Number` when a request field is added whose omission would
 change what a daemon may execute; an informational field does not bump it. The daemon serves `GET /healthz`, `/readyz`,
 `/metrics` outside auth. `/readyz` re-runs the provider's bounded `Preflight`: for docker
-that probes the pinned daemon and runtime, but for e2b it validates **configuration only**
-and proves nothing about API reachability, key validity, or guard routability — the
+that probes the pinned daemon and runtime, but for e2b and dockercloud it validates **configuration only**
+and proves nothing about API reachability, token or key validity, or guard routability — the
 behavioral proof is the one-shot startup `SmokeTest`, which creates a real billable
 microVM and so must never run on an unauthenticated poll path. `Describe` reports current isolation evidence but only
-structural/static operation support. Both real providers run a startup
-**`SmokeTest`** (behavior, not just configuration) via `EnsureReady`, and neither
+structural/static operation support. Every real provider runs a startup
+**`SmokeTest`** (behavior, not just configuration) via `EnsureReady`, and none
 serves if it fails. For docker: one throwaway lockdown container per configured
 image (launched by its Preflight-verified content ID), under the exact
 runtime/seccomp combination, must prove from its own mount table that the root fs
@@ -203,6 +234,14 @@ complete secured create (both access tokens), live resource verification,
 multi-file staging into the project dir, and a probe run through the exact
 project-step path (`sh` script → node) — proving the configured template bakes
 the toolchain, honors the step cwd, and (checked live) actually denies egress.
+For dockercloud: `CapabilityService.GetCapabilities` must list, when it lists
+permissions, the read, create, delete and network-policy-read permissions a run
+needs (the cloud does not list exec or file permissions for a Cloud Sandboxes token
+yet serves them, so they are not required); then one throwaway sandbox must come up
+with the effective policy deny-all, accept a directory and file upload, and run the
+same probe through the exact project-step path (the exec wrapper around `sh
+<script>`), proving node, `timeout` and `head` are present, the cwd is honored, and
+egress is denied from inside the guest.
 `plimsolld -h` prints the full env list; the text is the `usage` constant in
 [cmd/plimsolld/main.go](cmd/plimsolld/main.go), and a test fails if the package
 reads a variable that text omits. The daemon refuses any other argument.
@@ -214,8 +253,9 @@ every advertised production property is verifiably in force — `vm` or verified
 multi-client auth (`PLIMSOLL_CLIENTS_FILE`; a shared token or open dev mode is
 rejected), TLS on any non-loopback listener, an immutable execution surface
 (docker: `SANDBOX_REQUIRE_PINNED_IMAGES=1`, no `unconfined` seccomp; e2b: an
-explicit `E2B_TEMPLATE`), an explicit per-run resource envelope plus aggregate
-memory budget, and per-caller rate limiting. Every violation is reported at once
+explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1`), an explicit
+per-run resource envelope (memory and CPU only for dockercloud, which has no disk
+control) plus aggregate memory budget, and per-caller rate limiting. Every violation is reported at once
 (one fix pass, not a startup loop). TLS itself is configured with
 `PLIMSOLL_TLS_CERT`/`PLIMSOLL_TLS_KEY` (both-or-neither; loaded and validated
 at startup); with them the daemon serves HTTP/1.1 + HTTP/2 over TLS instead of
@@ -487,7 +527,7 @@ path into guest content. The pipeline:
 ```sh
 go build ./...
 go vet ./...
-go test ./...     # the e2b *live* tests skip without E2B_API_KEY
+go test ./...     # the e2b and dockercloud *live* tests skip without their credentials
 ```
 Some tests need a local docker daemon and the two images (`node:22-alpine` for
 snippets, `plimsoll/sandbox:latest` for `RunProject`); `make docker-images` pulls
@@ -498,16 +538,21 @@ and fail under `make audit DOCKER=1`.
 `buf lint` plus a generated-code drift check, and `govulncheck`. The real
 infrastructure suites are opt-in: `make audit DOCKER=1` adds the
 docker/seccomp/broker/smoke tests, `make audit E2B=1` (with `E2B_API_KEY`) adds
-the live E2B suite. `make help` lists individual targets.
+the live E2B suite, and `make audit DOCKERCLOUD=1` (with `DOCKER_SBX_TOKEN`,
+`SANDBOX_DOCKERCLOUD_API_URL` and `SANDBOX_DOCKERCLOUD_IMAGE`) adds the live Docker
+Cloud Sandboxes suite, which fails rather than skips when that configuration is
+absent. `make help` lists individual targets.
 
-**The ordinary gate cannot spend.** A bare `go test ./...` with `E2B_API_KEY` in the
-environment runs the live suite, which creates billable microVMs. So the `test`,
-`race` and `docker-suite` targets run under `env -u E2B_API_KEY`; only `e2b-suite`
-and `e2b-guard-live` see the key. Prefer the make targets to a bare `go test ./...`
+**The ordinary gate cannot spend.** A bare `go test ./...` with `E2B_API_KEY` or
+`DOCKER_SBX_TOKEN` (plus its API URL) in the environment runs a live suite, which
+creates billable microVMs. So the `test`, `race` and `docker-suite` targets run
+under `env -u E2B_API_KEY -u DOCKER_SBX_TOKEN`; only `e2b-suite` and
+`e2b-guard-live` see the E2B key, only `dockercloud-suite` sees the Docker token,
+and each paid suite strips the other's credential. Prefer the make targets to a bare `go test ./...`
 in any shell that may hold a key. Docker is deliberately *not* hidden from the
 ordinary gate: those tests are free and local, and they are the isolation proof.
 
-One claim the gate does **not** make: `make audit E2B=1` runs `-run Live`, and
+One claim the gate does **not** make: `make audit E2B=1` runs `-run 'E2B.*Live'`, and
 `TestE2BGuardLive` skips unless `E2B_GUARD_URL` and `E2B_LIVE_GRANT_BASE_URL` are
 also set, so a green E2B suite does not mean the guarded-egress path was exercised.
 `make e2b-guard-live` is that run, and it fails rather than skips when its
@@ -539,10 +584,10 @@ run: it installs the pinned gVisor bundle with `docker/install-gvisor.sh` and ru
 the same suite with `SANDBOX_DOCKER_RUNTIME=runsc`. It is a separate workflow so a
 runsc failure is attributable on its own and cannot mask the runc result.
 
-What no CI run exercises is E2B. That suite is absent deliberately rather than
-left unconfigured: it drives a live paid service and no automated run in this
-project may spend, so **do not add an E2B key to repository secrets to "complete"
-the gate.** Third-party actions are pinned by commit SHA rather than tag, for the
+What no CI run exercises is E2B or Docker Cloud Sandboxes. Those suites are absent
+deliberately rather than left unconfigured: they drive live paid services and no
+automated run in this project may spend, so **do not add an E2B key or a Docker
+token to repository secrets to "complete" the gate.** Third-party actions are pinned by commit SHA rather than tag, for the
 same reason the gate tools, the QuickJS artifact and the gVisor release are pinned:
 a tag is mutable.
 
@@ -551,8 +596,11 @@ the environment and nothing writes it anywhere:
 
 ```sh
 E2B_API_KEY="$KEY" make audit DOCKER=1 E2B=1   # full gate with the live suite
-E2B_API_KEY="$KEY" go test ./sandbox -run Live # just the live provider tests
+E2B_API_KEY="$KEY" go test ./sandbox -run 'E2B.*Live' # just the live provider tests
 ```
+
+The Docker token follows the same rule: `DOCKER_SBX_TOKEN` is read from the
+environment by the provider and the live suite, and nothing writes it anywhere.
 
 **Module identity.** The module path is `github.com/plimsollmark/plimsoll`. The
 GitHub organization `plimsollmark` was registered on 2026-09-09, so the name cannot

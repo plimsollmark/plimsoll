@@ -228,3 +228,21 @@ func TestE2BOrphanListingLive(t *testing.T) {
 	e.trackVM(vm.id) // restore so the deferred kill's untrack stays consistent
 	t.Logf("ok: sandbox %s discoverable by instance stamp and correctly spared", vm.id)
 }
+
+// TestE2BRunProjectMultiStepLive runs a project of three steps, each reading what
+// the one before wrote. Until 2026-09-24 every step was staged at one script path
+// and envd refused to reopen it, so every project of more than one step failed
+// with "could not stage step"; the one-step tests above never saw it.
+func TestE2BRunProjectMultiStepLive(t *testing.T) {
+	e := e2bClient(t)
+	res, err := e.RunProject(context.Background(), ProjectRequest{
+		Files: []File{{Path: "seed.txt", Content: "1\n"}},
+		Steps: []string{"echo 2 >> seed.txt", "echo 3 >> seed.txt", "cat seed.txt"},
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 3 || res.Steps[2].Stdout != "1\n2\n3\n" {
+		t.Fatalf("outcome=%s steps=%+v", res.Outcome, res.Steps)
+	}
+}

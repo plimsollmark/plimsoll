@@ -258,7 +258,7 @@
         </dl>
       </div>
       <div class="door" data-door="e2b">
-        <h3>A throwaway computer<small>the real name: e2b</small></h3>
+        <h3>A throwaway computer<small>the real names: e2b, dockercloud</small></h3>
         <dl>
           <dt>Wall</dt><dd>Strongest: a separate computer, walled by hardware.</dd>
           <dt>Speed</dt><dd>Slowest. A computer has to boot, and each run costs money.</dd>
@@ -300,7 +300,7 @@
     wasm: { walls: 1, caption: '<b>One wall: the engine’s own seal.</b> If the engine has a bug, the escaped code is already inside your program, with your program’s permissions. Fastest of all, and fine for code you basically trust.' },
     docker: { walls: 2, caption: '<b>A real wall you host.</b> An escape is stuck in the box, not in your program. But the box borrows your machine’s core, so a bug in that shared core is a way out. Solid, not the strongest.' },
     gvisor: { walls: 3, caption: '<b>The box, plus a stand-in core.</b> Every request the code makes to the operating system is answered by a look-alike core inside the box, so the real one is never touched directly. This is the weakest wall plimsoll will call good enough for hostile code.' },
-    e2b: { walls: 4, caption: '<b>A whole separate computer, in somebody else’s building.</b> Even a full escape is trapped in a machine that is destroyed after the run and was never yours. Slowest to start, and the only door that costs money per run.' }
+    e2b: { walls: 4, caption: '<b>A whole separate computer, in somebody else’s building.</b> Even a full escape is trapped in a machine that is destroyed after the run and was never yours. Two services rent these out: E2B and Docker Cloud Sandboxes. Slowest to start, and the only door that costs money per run.' }
   };
   function renderScene(which) {
     press(el('whereSeg'), which);
@@ -337,7 +337,7 @@
     wasm: { j: 'a WASM engine', p: 'a sealed mini-engine', word: 'WASM', means: 'WebAssembly: a sealed mini-computer that runs inside a normal program. Here it runs JavaScript and nothing else.', care: 'It is the thinnest wall. No operating-system wall, so it shares your program.', wall: true },
     container: { j: 'a Docker container', p: 'a boxed-off slice of your machine', word: 'container', means: 'A boxed-off slice of your computer with its own files, that still borrows the real operating-system core underneath.', care: 'The middle wall: solid, but standing on a shared foundation.', wall: true },
     gvisor: { j: 'gVisor', p: 'a stand-in operating-system core', word: 'gVisor', means: 'A look-alike operating-system core that answers the code’s requests itself, so the container never touches the real one.', care: 'An extra wall bolted onto the container. plimsoll calls the result the kernel tier.', wall: true },
-    vm: { j: 'a disposable microVM', p: 'a whole throwaway computer, walled off by the hardware', word: 'virtual machine', means: 'A complete fake computer with its own core, kept apart by the hardware itself. E2B starts one, uses it, and destroys it.', care: 'The strongest wall, the slowest to start, and the one that costs money per run.', wall: true },
+    vm: { j: 'a disposable microVM', p: 'a whole throwaway computer, walled off by the hardware', word: 'virtual machine', means: 'A complete fake computer with its own core, kept apart by the hardware itself. E2B or Docker Cloud Sandboxes starts one, uses it, and destroys it.', care: 'The strongest wall, the slowest to start, and the one that costs money per run.', wall: true },
     syscall: { j: 'syscall', p: 'request to the operating system, such as opening a file or using the network', word: 'syscall', means: 'How a program asks the operating system to do anything real.', care: 'Not a wall. Walls get thicker by limiting which of these requests are allowed to go through.', wall: false }
   };
   var TEMPLATE = 'plimsoll is {rpc}. You send it JavaScript from someone you do not trust; it runs that code in {sandbox} at {tier}: {wasm} inside its own {process}, {container}, that container under {gvisor}, or {vm}. Every {syscall} the code makes is something the wall either allows or stops, and every result says which wall ran it.';
@@ -408,7 +408,7 @@
     hostile: { lit: ['docker', 'e2b'], text: '<b>A box with the stand-in core, or a throwaway computer.</b> Assume the wall will crack one day and ask where the code lands. A plain box lands it on your machine’s shared core; the stand-in core or a separate computer keeps it further away. plimsoll refuses to call anything thinner than those two good enough for hostile code.' },
     project: { lit: ['docker', 'e2b'], text: '<b>A box or a throwaway computer.</b> A project needs files on disk and build tools, and the sealed engine has neither: it runs one snippet and nothing else. Both other doors carry the tools baked in, because the box has no internet to fetch them with.' },
     offbox: { lit: ['e2b'], text: '<b>A throwaway computer.</b> It is the only door where the code never runs on your hardware at all. You pay for that in start-up time and per-run cost, and the wall is the strongest there is.' },
-    api: { lit: ['wasm', 'docker', 'e2b'], text: '<b>Any of them.</b> This is not about the wall. Behind every door, code can be handed a narrow permission to read from a named route, and the key stays outside with plimsoll; the code only ever asks. Pick the door by the other questions, then read The API broker for how the key never crosses the line.' }
+    api: { lit: ['wasm', 'docker', 'e2b', 'dockercloud'], text: '<b>Any of them.</b> This is not about the wall. Behind every door, code can be handed a narrow permission to read from a named route, and the key stays outside with plimsoll; the code only ever asks. One difference: on Docker’s throwaway computers (dockercloud) the code holds a short-lived pass that only works at plimsoll’s gate, for that one run; on E2B’s, even that pass stays outside. Pick the door by the other questions, then read The API broker for how the key never crosses the line.' }
   };
   function renderJob(which) {
     press(el('jobSeg'), which);

@@ -24,7 +24,7 @@ type egressGuardEnvelope struct {
 }
 
 // EgressGuardHTTPHandler is the canonical HTTP framing over EgressGuardCall:
-// one POST per brokered call, the per-run credential in E2BGuardHeader, and a
+// one POST per brokered call, the per-run credential in EgressGuardHeader, and a
 // JSON envelope of {method, path, body}. Guard credentials only exist in the
 // process that opened the run, so whatever serves the public guard URL must
 // host the same provider instance that launches runs — the daemon does exactly
@@ -48,7 +48,7 @@ func EgressGuardHTTPHandler(guard EgressGuardCapable, guardPath string, maxInFli
 			http.NotFound(w, r)
 			return
 		}
-		token := r.Header.Get(E2BGuardHeader)
+		token := r.Header.Get(EgressGuardHeader)
 		if !guard.EgressGuardKnownToken(token) {
 			// Same status and shape EgressGuardCall would have returned, so pre-body
 			// rejection is indistinguishable from the authoritative one.

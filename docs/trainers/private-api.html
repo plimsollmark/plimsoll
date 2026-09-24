@@ -123,6 +123,7 @@
           <button type="button" data-value="wasm">wasm<small>process tier</small></button>
           <button type="button" data-value="e2b">e2b<small>vm tier, guarded</small></button>
         </div>
+        <p class="control-note">Not drawn: <code>dockercloud</code>, the other vm-tier provider. Its grant path is the E2B picture with one difference: the guest holds its own run’s short-lived guard credential, because Docker’s proxy cannot inject one for plimsoll’s guard. The API key still stays outside the VM.</p>
       </div>
     </div>
 

@@ -3,8 +3,6 @@ package sandbox
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -13,7 +11,6 @@ import (
 	"log/slog"
 	"math"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"net/url"
 	pathpkg "path"
@@ -70,8 +67,7 @@ type E2B struct {
 	mu         sync.Mutex
 	instanceID string
 	inflight   map[string]struct{}
-	guardMu    sync.Mutex
-	guards     map[[32]byte]*brokerSession
+	guards     guardRegistry // live per-run guard credentials (guard_registry.go)
 }
 
 func (*E2B) Name() string { return "e2b" }
@@ -107,65 +103,25 @@ const e2bSmokeTimeout = 90 * time.Second
 // The guard endpoint is reached from inside the VM, but the credential that
 // authenticates it is injected by E2B's beta network transform outside the VM.
 // It is therefore safe for the guest SDK to know only the endpoint URL.
-type e2bGuardEndpoint struct {
-	URL  string
-	Host string
-	Path string
-}
-
 type e2bGuardConfig struct {
-	Endpoint *e2bGuardEndpoint
+	Endpoint *guardEndpoint
 	Token    string
 	Core     *brokerSession
 }
 
-func parseE2BGuardURL(raw string) (*e2bGuardEndpoint, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
-		return nil, errors.New("E2B_GUARD_URL must be an absolute HTTPS URL without credentials, query, or fragment")
-	}
-	if port := u.Port(); port != "" && port != "443" {
-		return nil, errors.New("E2B_GUARD_URL must use HTTPS port 443; E2B domain filtering does not cover other ports")
-	}
-	host := strings.ToLower(u.Hostname())
-	if strings.EqualFold(host, "localhost") || strings.HasSuffix(host, ".localhost") {
-		return nil, errors.New("E2B_GUARD_URL must not point to a loopback hostname")
-	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return nil, errors.New("E2B_GUARD_URL must not point to a loopback address")
-	}
-	p := u.EscapedPath()
-	if p == "" || p == "/" {
-		p = "/v1/e2b/guard"
-	}
-	// Keep the guest's literal target and the daemon route byte-identical. E2B
-	// domain filtering cannot make a useful promise for encoded or non-canonical
-	// paths, and the guard endpoint itself must not be ambiguous.
-	if !strings.HasPrefix(p, "/") || pathpkg.Clean(p) != p || strings.ContainsAny(p, `\\%`) {
-		return nil, errors.New("E2B_GUARD_URL path must be an absolute, canonical, unencoded path")
-	}
-	u.Path, u.RawPath = p, ""
-	return &e2bGuardEndpoint{URL: u.String(), Host: host, Path: p}, nil
+// e2bGuardDefaultPath is the guard route when E2B_GUARD_URL names no path.
+const e2bGuardDefaultPath = "/v1/e2b/guard"
+
+func parseE2BGuardURL(raw string) (*guardEndpoint, error) {
+	return parseGuardURL(raw, "E2B_GUARD_URL", e2bGuardDefaultPath)
 }
 
-func (e *E2B) guardConfig() *e2bGuardEndpoint {
+func (e *E2B) guardConfig() *guardEndpoint {
 	cfg, err := parseE2BGuardURL(e.GuardURL)
 	if err != nil {
 		return nil
 	}
 	return cfg
-}
-
-func newE2BGuardToken() (string, error) {
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", fmt.Errorf("mint E2B guard token: %w", err)
-	}
-	return "crg_" + fmt.Sprintf("%x", raw[:]), nil
 }
 
 func (e *E2B) openGuard(ctx context.Context, grant *HostAPIGrant, timeout time.Duration) (*e2bGuardConfig, func(), error) {
@@ -179,30 +135,9 @@ func (e *E2B) openGuard(ctx context.Context, grant *HostAPIGrant, timeout time.D
 	if endpoint == nil {
 		return nil, func() {}, fmt.Errorf("%w: e2b host-API grants require E2B_GUARD_URL", ErrUnsupported)
 	}
-	core, err := brokerSessionForGrant(ctx, grant, timeout)
+	token, core, cleanup, err := e.guards.open(ctx, grant, timeout)
 	if err != nil {
 		return nil, func() {}, err
-	}
-	token, err := newE2BGuardToken()
-	if err != nil {
-		core.Close()
-		return nil, func() {}, err
-	}
-	digest := sha256.Sum256([]byte(token))
-	e.guardMu.Lock()
-	if e.guards == nil {
-		e.guards = make(map[[32]byte]*brokerSession)
-	}
-	e.guards[digest] = core
-	e.guardMu.Unlock()
-	var once sync.Once
-	cleanup := func() {
-		once.Do(func() {
-			e.guardMu.Lock()
-			delete(e.guards, digest)
-			e.guardMu.Unlock()
-			core.Close()
-		})
 	}
 	return &e2bGuardConfig{Endpoint: endpoint, Token: token, Core: core}, cleanup, nil
 }
@@ -218,32 +153,14 @@ func (e *E2B) EgressGuardPath() string {
 // It does exactly what EgressGuardCall's own lookup does and nothing more, so it
 // leaks no fact the authoritative path would not have returned anyway.
 func (e *E2B) EgressGuardKnownToken(token string) bool {
-	return e.guardSession(token) != nil
-}
-
-func (e *E2B) guardSession(token string) *brokerSession {
-	if strings.TrimSpace(token) == "" {
-		return nil
-	}
-	digest := sha256.Sum256([]byte(token))
-	e.guardMu.Lock()
-	defer e.guardMu.Unlock()
-	return e.guards[digest]
+	return e.guards.lookup(token) != nil
 }
 
 func (e *E2B) EgressGuardCall(ctx context.Context, token, method, rawTarget string, body []byte) EgressGuardResponse {
-	if strings.TrimSpace(token) == "" {
-		return EgressGuardResponse{Status: http.StatusUnauthorized, ContentType: "application/json", Body: []byte(`{"error":"missing egress guard credential"}`)}
-	}
-	core := e.guardSession(token)
-	if core == nil {
-		return EgressGuardResponse{Status: http.StatusUnauthorized, ContentType: "application/json", Body: []byte(`{"error":"unknown or expired egress guard credential"}`)}
-	}
-	resp := core.Call(ctx, brokerCall{Method: method, RawTarget: rawTarget, Body: bytes.NewReader(body)})
-	return EgressGuardResponse{Status: resp.Status, ContentType: resp.ContentType, Body: resp.Body}
+	return e.guards.call(ctx, token, method, rawTarget, body)
 }
 
-// e2bSmokeProbe runs inside the throwaway smoke microVM. It proves the pieces a
+// vmSmokeProbe runs inside the throwaway smoke microVM. It proves the pieces a
 // real run depends on and reports them as one JSON object on stdout: the node
 // runtime the template bakes (its absence would fail every snippet run), the
 // working directory envd applied (the project-step contract), and — the security
@@ -251,7 +168,7 @@ func (e *E2B) EgressGuardCall(ctx context.Context, token, method, rawTarget stri
 // on the live network, probed against both a raw IP (no DNS needed) and a DNS
 // name. Each fetch gets a short abort timeout so dropped packets fail fast
 // instead of hanging the smoke.
-const e2bSmokeProbe = `(async () => {
+const vmSmokeProbe = `(async () => {
   const egressOpen = [];
   for (const target of ["https://1.1.1.1", "https://example.com"]) {
     try {
@@ -291,7 +208,7 @@ func (e *E2B) SmokeTest(ctx context.Context) error {
 	dir := e.projectDir()
 	const stepPath = "/tmp/plimsoll-smoke-step.sh"
 	files := []File{
-		{Path: pathpkg.Join(dir, "plimsoll-smoke.cjs"), Content: e2bSmokeProbe},
+		{Path: pathpkg.Join(dir, "plimsoll-smoke.cjs"), Content: vmSmokeProbe},
 		{Path: stepPath, Content: "node plimsoll-smoke.cjs\n"},
 	}
 	if err := e.writeFiles(ctx, vm, files); err != nil {
@@ -382,19 +299,7 @@ func (e *E2B) maxOutput() int {
 }
 
 func (e *E2B) clampTimeout(req time.Duration, def, max time.Duration) time.Duration {
-	if req <= 0 {
-		req = def
-		if req <= 0 {
-			req = 30 * time.Second
-		}
-	}
-	if max <= 0 {
-		max = 120 * time.Second
-	}
-	if req > max {
-		req = max
-	}
-	return req
+	return clampRunTimeout(req, def, max)
 }
 
 // e2bGuestCABundle points Node at the guest's OS trust-store bundle. A guarded
@@ -446,7 +351,7 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (Result, error) {
 	const snippetPath = "/tmp/plimsoll-snippet.cjs"
 	code := req.Code
 	if req.Grant != nil {
-		code = withE2BHostSDK(code, req.Grant, guard.Endpoint.URL)
+		code = withGuardHostSDK(code, req.Grant, guard.Endpoint.URL, "")
 	}
 	if err := e.writeFile(runCtx, vm, snippetPath, code); err != nil {
 		return Result{Sandbox: "e2b", Isolation: IsolationVM}, fmt.Errorf("e2b write snippet: %w", err)
@@ -541,7 +446,7 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult
 		staged = append(staged, File{Path: dest, Content: f.Content})
 	}
 	if req.Grant != nil {
-		staged = append(staged, File{Path: "/tmp/plimsoll-e2b-host.mjs", Content: hostE2BSDKModule(req.Grant, guard.Endpoint.URL)})
+		staged = append(staged, File{Path: "/tmp/plimsoll-e2b-host.mjs", Content: hostGuardSDKModule(req.Grant, guard.Endpoint.URL, "")})
 	}
 	// One multipart round trip for the whole project, not one POST per file.
 	if err := e.writeFiles(runCtx, vm, staged); err != nil {
@@ -561,11 +466,13 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult
 			"NODE_EXTRA_CA_CERTS": e2bGuestCABundle,
 		}
 	}
-	for _, step := range req.Steps {
+	for i, step := range req.Steps {
 		// As with snippets, avoid `sh -c <huge command>` and its per-argument OS
-		// limit. Reuse one VM-local script; the reported Command remains the caller's
-		// original string.
-		const stepPath = "/tmp/plimsoll-step.sh"
+		// limit. One VM-local script per step; the reported Command remains the
+		// caller's original string. Never reuse a path: envd refuses to reopen a
+		// script it wrote for an earlier step (HTTP 500 "permission denied", seen
+		// live 2026-09-24), which failed every project of more than one step.
+		stepPath := fmt.Sprintf("/tmp/plimsoll-step-%d.sh", i)
 		if err := e.writeFile(runCtx, vm, stepPath, step); err != nil {
 			return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, fmt.Errorf("could not stage step: %w", err)
 		}
@@ -724,7 +631,7 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGu
 		network["rules"] = map[string]any{
 			cfg.Endpoint.Host: []any{
 				map[string]any{"transform": map[string]any{
-					"headers": map[string]string{E2BGuardHeader: cfg.Token},
+					"headers": map[string]string{EgressGuardHeader: cfg.Token},
 				}},
 			},
 		}

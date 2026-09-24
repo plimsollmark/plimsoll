@@ -27,7 +27,7 @@
     <header class="customer-page-head">
       <p class="catalog-eyebrow">self-managed evaluation · 10 minutes</p>
       <h1>Start with a smoke.<br><em>Then choose your wall.</em></h1>
-      <p>This path runs one authenticated request against a loopback daemon using the checked-in WASM provider. It proves the caller setup and the request and result shape, not hostile-production isolation. For customer-authored code in production, use verified Docker/runsc kernel evidence or the E2B VM provider.</p>
+      <p>This path runs one authenticated request against a loopback daemon using the checked-in WASM provider. It proves the caller setup and the request and result shape, not hostile-production isolation. For customer-authored code in production, use verified Docker/runsc kernel evidence or a VM provider: E2B, or Docker Cloud Sandboxes (grants through the guard; there the guest holds a short-lived guard credential).</p>
     </header>
     <div class="customer-layout">
       <section class="customer-panel">
