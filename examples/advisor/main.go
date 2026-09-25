@@ -61,6 +61,7 @@ const (
 	readmeURL  = repoURL + "#efficiency-advisor"
 	lessonURL  = "https://plimsollmark.github.io/plimsoll/trainers/advisor.html"
 	lessonsURL = "https://plimsollmark.github.io/plimsoll/trainers/"
+	homeURL    = "https://plimsollmark.github.io/plimsoll/"
 )
 
 // perItemLoop is the agent's first attempt. It is not wrong, and that is the point:
@@ -648,7 +649,8 @@ func writeReport(path string, runs []outcome, rows []compareRow) error {
 		ReadmeURL  string
 		LessonURL  string
 		LessonsURL string
-	}{time.Now().Format("2006-01-02"), views, rows, sameSize, perItem, pageURL, cardURL, repoURL, sourceURL, readmeURL, lessonURL, lessonsURL}
+		HomeURL    string
+	}{time.Now().Format("2006-01-02"), views, rows, sameSize, perItem, pageURL, cardURL, repoURL, sourceURL, readmeURL, lessonURL, lessonsURL, homeURL}
 	var buf bytes.Buffer
 	if err := reportTemplate.Execute(&buf, data); err != nil {
 		return err
@@ -707,7 +709,7 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px} dt{color:#59
 ul{max-width:80ch;padding-left:1.2em} li{margin:4px 0}
 footer{margin-top:40px;padding-top:12px;border-top:1px solid #d1d9e0;color:#59636e;font-size:.92em}
 </style></head><body><main>
-<nav><span class="brand">plimsoll</span>
+<nav><a class="brand" href="{{.HomeURL}}">plimsoll home</a>
 <a href="{{.RepoURL}}">EXTERNAL · source repo ↗</a>
 <a href="{{.LessonURL}}">INTERNAL · trainer site → the advisor lesson</a>
 <a href="{{.LessonsURL}}">INTERNAL · trainer site → all lessons</a></nav>

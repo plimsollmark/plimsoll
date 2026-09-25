@@ -60,6 +60,7 @@
 </head>
 <body>
 <main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>A controller in C, compiled to WebAssembly in the sandbox and judged by its trajectory</h1>
 <p class="sub">The results on this page were measured in real runs through plimsoll's docker tier ({{.Isolation}}) on {{.Date}}; the inputs the runs were given are named as inputs where they appear. The caller sent two files: <code>controller.c</code>, a controller that swings a hanging pole up and balances it, and <code>controller.js</code>, a Node shim with no arithmetic of its own. The run's first step compiled the C to WebAssembly inside the sandbox, with no network. The later steps handed the result to the judge baked into the image, which pushed a simulated cart with a pole hinged on it (the <b>plant</b>, control engineering's word for the thing being controlled, itself compiled to WebAssembly) through the controller one {{.TickMs}} ms tick at a time and recorded every tick. The SHA-256 of that record is the <b>fingerprint</b>.</p>
 

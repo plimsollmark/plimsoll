@@ -54,6 +54,7 @@
 </head>
 <body>
 <main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>The physics oracle: an AI-written controller, judged by a compiled plant</h1>
 <p class="sub">Every number on this page came from a real run through plimsoll's docker tier ({{.Isolation}}) on {{.Date}}. The controller is the only thing the caller sent. The <b>plant</b> (control engineering's word for the thing being controlled, here a cart on a rail with a pole hinged on top of it that the controller keeps upright by pushing the cart) is compiled to WebAssembly, and it and the judge that closes the loop are baked into the sandbox image. The judge ran the controller as a separate process, recorded every 10 ms tick, and the SHA-256 of that record is the fingerprint.</p>
 

@@ -60,6 +60,7 @@
 </head>
 <body>
 <main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>Same run, different sandboxes: one fingerprint on every provider</h1>
 <p class="sub">The results on this page were measured in real runs on {{.Date}}; the inputs the runs were given are named as inputs where they appear. The run is the one the <a href="https://plimsollmark.github.io/plimsoll/examples/oracle/index.html">physics oracle page</a> publishes: the same accepted controller, the same judge, the same cart-pole plant, started 0.2 rad from upright for 20 seconds. Here it was sent to each plimsoll provider in turn, with nothing changed but the provider. Switching is one setting, <code>SANDBOX_PROVIDER</code>, and the code that calls plimsoll does not change.</p>
 
