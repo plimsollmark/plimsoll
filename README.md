@@ -44,7 +44,6 @@ reproduce with `make docker-images && go run ./examples/oracle`.
 | [Same run, different sandboxes ↗](https://plimsollmark.github.io/plimsoll/examples/providers/index.html) | The oracle's run on a local container, E2B Firecracker and Docker Cloud Sandboxes: two isolation tiers, two Node versions, one fingerprint, the one the oracle page published. Reproduce with `go run ./examples/providers`. |
 | [The efficiency advisor's report ↗](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html) | One measured run, rendered: the same question asked as 13 calls and then as 1, and the finding that names the route to batch on. |
 | [Twelve interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | The execution model, the providers, the API broker, and integrating with an agent. Static pages: no network calls, no analytics, no third-party scripts. |
-| [System topology diagram](docs/architecture/topology.svg) | Request admission, provider boundaries, and brokered API calls, on one page. |
 
 ## The two things it does
 

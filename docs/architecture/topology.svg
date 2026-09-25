@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1456" viewBox="0 0 1200 1456" role="img" aria-labelledby="title description">
   <title id="title">plimsoll: request, execution, and granted API calls</title>
-  <desc id="description">Three views replace a dense topology. First, an MCP server or Go client calls plimsolld, which authenticates the caller, validates the request and grant profile, checks the requested isolation floor, and admits the run through a limiter. The Sandbox interface dispatches to one configured provider. Second, provider cards distinguish WASM in the server process, Docker with container or verified kernel isolation, an E2B microVM, and Disabled, the default. Third, granted guest calls use a provider adapter to reach the shared host-side broker. It checks routes and budgets and attaches a credential before forwarding to the host API. Credentials remain outside guest code, but WASM shares the server process and is not a hard isolation boundary.</desc>
+  <desc id="description">Three views replace a dense topology. First, an MCP server or Go client calls plimsolld, which authenticates the caller, validates the request and grant profile, checks the requested isolation floor, and admits the run through a limiter. The Sandbox interface dispatches to one configured provider. Second, provider cards distinguish WASM in the server process, Docker with container or verified kernel isolation, a microVM per run on E2B or Docker Cloud Sandboxes, and Disabled, the default. Third, granted guest calls use a provider adapter to reach the shared host-side broker. It checks routes and budgets and attaches a credential before forwarding to the host API. The API credential remains outside guest code (on Docker Cloud the guest holds only a per-run guard token), but WASM shares the server process and is not a hard isolation boundary.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#50728b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <style>
@@ -60,7 +60,7 @@
       <rect x="860" y="278" width="280" height="178" rx="12" class="host"/>
       <text x="882" y="313" class="heading blue">Sandbox interface</text>
       <text x="882" y="348" class="body">RunJavaScript</text>
-      <text x="882" y="377" class="body">or RunProject</text>
+      <text x="882" y="377" class="body">RunProject or RunModule</text>
       <text x="882" y="422" class="small muted">Dispatch to one provider ↓</text>
     </g>
     <path d="M988 477 V492 H178 V467" class="line"/>
@@ -94,10 +94,10 @@
     <g id="e2b">
       <rect x="612" y="680" width="252" height="204" rx="12" class="guest"/>
       <text x="632" y="712" class="eyebrow orange">VM</text>
-      <text x="632" y="748" class="heading">E2B / Firecracker</text>
-      <text x="632" y="783" class="body">Runs in a microVM</text>
+      <text x="632" y="748" class="heading">E2B, Docker Cloud</text>
+      <text x="632" y="783" class="body">A fresh microVM per run</text>
       <text x="632" y="812" class="body">Snippets + projects</text>
-      <text x="632" y="855" class="small muted">Template supplies toolchain</text>
+      <text x="632" y="855" class="small muted">Toolchain baked in</text>
     </g>
     <g id="disabled">
       <rect x="888" y="680" width="252" height="204" rx="12" fill="#f0f4f6" stroke="#c4d1da"/>
@@ -121,7 +121,7 @@
       <text x="82" y="1112" class="heading">Guest calls host.*</text>
       <text x="82" y="1147" class="body">WASM → direct host function</text>
       <text x="82" y="1176" class="body">Docker → Unix socket</text>
-      <text x="82" y="1205" class="body">E2B → configured egress guard</text>
+      <text x="82" y="1205" class="body">E2B, Docker Cloud → guard</text>
       <text x="82" y="1237" class="small muted">Injected SDKs run as guest code too</text>
     </g>
     <path d="M396 1167 H442" class="line"/>
@@ -154,8 +154,10 @@
     </g>
     <text x="60" y="1319" class="body green">The credential stays</text>
     <text x="60" y="1347" class="body green">outside guest code.</text>
-    <text x="856" y="1319" class="small muted">E2B grants require the guard.</text>
-    <text x="856" y="1346" class="small muted">WASM supports snippets only.</text>
+    <text x="856" y="1319" class="small muted">VM grants require the egress guard.</text>
+    <text x="856" y="1343" class="small muted">Docker Cloud guests hold only a</text>
+    <text x="856" y="1367" class="small muted">per-run guard token.</text>
+    <text x="856" y="1391" class="small muted">WASM supports snippets only.</text>
   </g>
   <text x="48" y="1437" class="small muted">Logical flows, not a deployment map. WASM still shares the trusted server's process.</text>
 </svg>
