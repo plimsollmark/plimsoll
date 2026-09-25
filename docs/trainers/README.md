@@ -52,8 +52,8 @@ exception inside each test.
 The chapter renderer (`trainer.js`, `trainer.css`) was the default until 2026-09-19.
 No catalog page uses it now: eleven pages were rebuilt as plain pages with their own
 instruments, because a chapter-at-a-time renderer could not draw the picture each
-subject needed. `trainer.css` still styles the catalog, the quick start and the demo
-page, and `trainer.js` still drives the private positioning page (see **Pages that are
+subject needed. `trainer.css` still styles the catalog and the quick start,
+and `trainer.js` still drives the private positioning page (see **Pages that are
 not in this directory**), which is why both are kept.
 
 A `plain` page is checked for what that shape promises: it loads `plain.css` and not
@@ -92,7 +92,7 @@ take grants, WASM projects reject them.
 
 ## Pages that are not in this directory
 
-Two related pages deliberately live elsewhere, because neither is a lesson about
+One related page deliberately lives elsewhere, because it is not a lesson about
 plimsoll:
 
 - `../positioning/docker-agent-boundaries.html` is a competitive comparison of Docker
@@ -101,4 +101,3 @@ plimsoll:
   chrome here, borrowing `trainer.css` and `trainer.js` across the directory boundary
   and setting `data-trainer-base="../trainers/"` so the reference shelf's internal
   links resolve. `TestPositioningTrainerResolvesSharedAssets` guards that wiring.
-- `../dev-mode-trainer.html` documents the commercial site's dev mode.

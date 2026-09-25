@@ -248,22 +248,10 @@ func TestReferenceLinksLabelTheirDestination(t *testing.T) {
 			t.Errorf("shared trainer reference shelf lost %q", marker)
 		}
 	}
-	for _, page := range []string{"demo.html", "quick-start.html"} {
-		// demo.html drives the commercial hosted demo and is excluded from the public
-		// export, so it is checked wherever it exists
-		// and skipped where it does not. quick-start.html ships everywhere, so a
-		// missing one is a real failure rather than a different repository.
-		raw, err := os.ReadFile(page)
-		if os.IsNotExist(err) && page == "demo.html" {
-			continue
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, marker := range []string{"customer-reference-shelf", "INTERNAL · trainer site →", "EXTERNAL · official docs ↗", "https://hono.dev/docs"} {
-			if !strings.Contains(string(raw), marker) {
-				t.Errorf("%s lost labeled reference link %q", page, marker)
-			}
+	quickStart := readFile(t, "quick-start.html")
+	for _, marker := range []string{"customer-reference-shelf", "INTERNAL · trainer site →", "EXTERNAL · official docs ↗", "https://hono.dev/docs"} {
+		if !strings.Contains(quickStart, marker) {
+			t.Errorf("quick-start.html lost labeled reference link %q", marker)
 		}
 	}
 	// The Flight Recorder names Hono, the example gateway's HTTP framework, and a

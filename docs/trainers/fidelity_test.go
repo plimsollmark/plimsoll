@@ -38,7 +38,7 @@ func trainerProse(t *testing.T) map[string]string {
 	out := map[string]string{}
 	names := append([]string{}, trainerPages...)
 	names = append(names, "index.html", "quick-start.html", "trainer.js",
-		"demo.html", "../../private/positioning/docker-agent-boundaries.html")
+		"../../private/positioning/docker-agent-boundaries.html")
 	for _, name := range names {
 		raw, err := os.ReadFile(name)
 		if os.IsNotExist(err) {
