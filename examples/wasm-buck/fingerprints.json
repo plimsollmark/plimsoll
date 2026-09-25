@@ -1,0 +1,56 @@
+{
+  "image": "plimsoll/sandbox-wasm-cc:latest (docker/wasm-cc.Dockerfile: wasi-sdk 27 by digest, on plimsoll/sandbox-sim)",
+  "build": "clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -o controller.wasm controller.c",
+  "controller_wasm_sha256": "16109c964dd1925bfeded590cb9854b07f26e8287f5f9d28e2aaefc56094f61d",
+  "plant": "/models/buck.wasm",
+  "observation": [
+    "output_voltage_V",
+    "inductor_current_A"
+  ],
+  "parameters": [
+    "input_voltage_V",
+    "load_resistance_before_step_ohm",
+    "load_step_time_s"
+  ],
+  "tick_s": 1e-05,
+  "t_end_s": 0.02,
+  "min_score": 0.6,
+  "scenarios": [
+    {
+      "id": "s1",
+      "params": [
+        12,
+        4,
+        0.01
+      ],
+      "fingerprint": "9bcc0a3a963d11853ba0bd1a7bc3850a00d55115b6a2ee3de2cdd51ad69006f7"
+    },
+    {
+      "id": "s2",
+      "params": [
+        10,
+        8,
+        0.006
+      ],
+      "fingerprint": "ef91a39f0afe20aab5b6cc32aa41414f44afa9f0a60ba1c9e7f910ccca92db75"
+    },
+    {
+      "id": "s3",
+      "params": [
+        16,
+        2,
+        0.012
+      ],
+      "fingerprint": "b39ccc8ac760e1d8fe5a2b738eefac644854b2e7ca87c15bb6c23acf919a1a39"
+    },
+    {
+      "id": "s4",
+      "params": [
+        14,
+        4,
+        0.015
+      ],
+      "fingerprint": "e040e81c7729ede8daf4348e8768db0ff5179c58975a664f695a968d86e66a56"
+    }
+  ]
+}

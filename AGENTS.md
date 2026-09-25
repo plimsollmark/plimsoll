@@ -75,7 +75,7 @@ option is intentionally only process-tier.
   `plimsoll/sandbox-wasm-cc` from the sim image: the C half of wasi-sdk 27 (clang and
   a wasm32-wasip1 libc with libm), pinned by the same image digest the sim build
   uses, so a project step can compile C to a WebAssembly module with no network.
-- [examples/](examples/) — seven runnable programs: `minimal` (one snippet and the
+- [examples/](examples/) — eight runnable programs: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
   the injected client and being refused by the broker anyway, then the identical
   request succeeding under a separate per-run grant that lists it), `daemon` (the
@@ -88,12 +88,19 @@ option is intentionally only process-tier.
   runs, and `sandbox/docker_oracle_test.go` asserts the fingerprints), and
   `wasm-controller` (needs docker: a swing-up controller in C compiled to
   WebAssembly by the run's first step in `plimsoll/sandbox-wasm-cc` and judged on
-  four scenarios by the unchanged judge through a Node shim that gives the module no
-  imports; the page it writes, `docs/examples/wasm-controller/index.html`, replays
+  four scenarios by the unchanged judge through the shared Node shim
+  ([examples/internal/wasmshim](examples/internal/wasmshim/), which passes the module
+  every observation and the tick index, so it serves any single-output plant, and gives
+  the module no imports); the page it writes, `docs/examples/wasm-controller/index.html`, replays
   the swing-up and compares the record with `controller/reference.js` tick by tick;
   `sandbox/docker_wasm_controller_test.go` asserts a reproducible compile,
   one fingerprint per scenario, the score floor, and that the only difference from
-  the JavaScript law is `cos`), and `providers` (the oracle's run, with its judge and
+  the JavaScript law is `cos`), `wasm-buck` (needs docker: the buck converter's
+  average current-mode law in C under the same shim and judge; the law calls no
+  library function, so `sandbox/docker_wasm_buck_test.go` requires the C trajectory
+  to equal `controller/reference.js`'s byte for byte in all four scenarios, plus a
+  reproducible compile and the regulation floor; the page it writes is
+  `docs/examples/wasm-buck/index.html`), and `providers` (the oracle's run, with its judge and
   plant sent as project files, on every provider the machine can reach, each built by
   `sandbox.Build` and proven by `EnsureReady`; the page it writes compares the
   fingerprints with the one the oracle page published; E2B and dockercloud rows need

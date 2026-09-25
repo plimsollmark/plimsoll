@@ -6,7 +6,8 @@
 // It builds plimsolld from this checkout, starts it on loopback with the docker
 // provider and plimsoll/sandbox-wasm-cc as the project image, and sends ordinary
 // project runs through the official client. The C run's files are controller.c and
-// controller.js (the Node shim the judge spawns as the controller process); its
+// controller.js (the Node shim the judge spawns as the controller process, shared
+// with the other C example from examples/internal/wasmshim); its
 // first step compiles controller.c with the image's wasi-sdk, and one step per
 // swing-up scenario runs /oracle/judge.mjs against /models/cartpole.wasm. Each
 // trajectory comes back as an artifact and is hashed here, scored, and compared.
@@ -47,14 +48,12 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/client"
+	"github.com/plimsollmark/plimsoll/examples/internal/wasmshim"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 //go:embed controller/controller.c
 var controllerC string
-
-//go:embed controller/controller.js
-var controllerShim string
 
 //go:embed controller/reference.js
 var referenceJS string
@@ -129,7 +128,11 @@ func realMain(out, image string) error {
 	if len(fx.Scenarios) == 0 {
 		return errors.New("fingerprints.json has no scenarios")
 	}
-	mathCos, err := mathCosShim()
+	// The shim with one change: the module may import env.host_cos, bound to V8's
+	// Math.cos. The fixture's math_cos_build compiles controller.c with
+	// -Dcos=host_cos, so that module's cos is the JavaScript one.
+	// sandbox/docker_wasm_controller_test.go derives the same shim the same way.
+	mathCos, err := wasmshim.WithImports("{ env: { host_cos: Math.cos } }")
 	if err != nil {
 		return err
 	}
@@ -175,7 +178,7 @@ func realMain(out, image string) error {
 	fmt.Printf("daemon    | provider=%s isolation=%s protocol=%d\n", info.Sandbox, info.Isolation, info.Protocol)
 	fmt.Printf("build     | %s\n", fx.Build)
 
-	cFiles := []sandbox.File{{Path: "controller.c", Content: controllerC}, {Path: "controller.js", Content: controllerShim}}
+	cFiles := []sandbox.File{{Path: "controller.c", Content: controllerC}, {Path: "controller.js", Content: wasmshim.Source}}
 	var runs []result
 	for i := 1; i <= 2; i++ {
 		r, err := judge(ctx, remote, fx, cFiles, fx.Build, "controller.js")
@@ -259,18 +262,6 @@ func realMain(out, image string) error {
 	}
 	fmt.Printf("page      | %s (%d bytes)\n", out, len(page))
 	return nil
-}
-
-// mathCosShim is the example's shim with one change: the module may import
-// env.host_cos, bound to V8's Math.cos. The fixture's math_cos_build compiles
-// controller.c with -Dcos=host_cos, so that module's cos is the JavaScript one.
-// sandbox/docker_wasm_controller_test.go derives the same shim the same way.
-func mathCosShim() (string, error) {
-	const empty = "const provided = {};"
-	if strings.Count(controllerShim, empty) != 1 {
-		return "", fmt.Errorf("controller.js no longer declares %q exactly once", empty)
-	}
-	return strings.Replace(controllerShim, empty, "const provided = { env: { host_cos: Math.cos } };", 1), nil
 }
 
 func num(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }

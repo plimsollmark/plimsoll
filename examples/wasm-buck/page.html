@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A buck converter controller in C, identical to its JavaScript law to the bit</title>
+<meta name="description" content="{{.Description}}">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="A buck converter controller in C, identical to its JavaScript law to the bit">
+<meta property="og:description" content="{{.Description}}">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html">
+<meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/wasm-buck-example.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --muted: #8a8a8a; --grid: #ececec; --axis: #bdbdbd; --blue: #2a78d6; --limit: #b3261e; --band: #e3eefb; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  p { margin: 6px 0; }
+  .sub { color: var(--ink2); margin-bottom: 18px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  .tile .big { font-size: 24px; font-weight: 650; line-height: 1.2; }
+  .tile .what { color: var(--ink2); font-size: 13px; margin-top: 4px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; position: relative; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .row2 > * { min-width: 0; }
+  .panel h3 { margin: 0 0 8px; font-size: 14px; letter-spacing: .02em; text-transform: uppercase; color: var(--ink2); }
+  pre { margin: 0; padding: 10px 12px; background: #fff; border: 1px solid var(--line); border-radius: 6px; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; white-space: pre; color: var(--ink); max-height: 620px; }
+  code { font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .fp { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+  .note { color: var(--ink2); font-size: 13px; }
+  svg { display: block; width: 100%; touch-action: none; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 12px; fill: var(--ink2); }
+  svg .title { fill: var(--ink); font-weight: 600; font-size: 13px; }
+  svg .limitlabel { fill: var(--limit); }
+  #tip { position: absolute; pointer-events: none; background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,.08); display: none; white-space: nowrap; }
+  #tip b { font-variant-numeric: tabular-nums; }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; background: #fff; border: 1px solid var(--line); }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--ink2); font-weight: 600; font-size: 13px; background: var(--panel); }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .yes { color: #1e6b2f; font-weight: 600; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--blue); }
+  a { color: var(--blue); }
+  ul li { margin: 4px 0; }
+  @media (max-width: 900px) { .tiles { grid-template-columns: 1fr 1fr; } .row2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
+<h1>A buck converter controller in C, identical to its JavaScript law to the bit</h1>
+<p class="sub">Measured on {{.Date}} in real runs through plimsoll's docker tier ({{.Isolation}}). A <b>buck converter</b> is the power supply that turns a battery or bus voltage into the lower voltage a chip runs on, by switching the input on for a fraction of each cycle (the <b>duty cycle</b>); the controller that picks that fraction is firmware, usually written in C. The caller sent two files: <code>controller.c</code>, such a controller, and <code>controller.js</code>, a Node shim with no arithmetic of its own, the same one the <a href="https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html">cart-pole C controller</a> runs under. The run's first step compiled the C to WebAssembly inside the sandbox, with no network. The later steps handed the module to the judge baked into the image, which drove a simulated converter (the <b>plant</b>, itself compiled to WebAssembly) through the controller one 10 microsecond tick at a time for 20 ms and recorded every tick. The SHA-256 of that record is the <b>fingerprint</b>.</p>
+
+<div class="tiles">
+  <div class="tile"><div class="big">{{.Count}} of {{.Count}}</div><div class="what">scenarios where the C port's record is byte-identical to the JavaScript law's</div></div>
+  <div class="tile"><div class="big">{{.WasmBytes}} bytes</div><div class="what">controller.wasm, the same SHA-256 from two separate compiles</div></div>
+  <div class="tile"><div class="big">{{.MinScore}} to {{.MaxScore}}</div><div class="what">regulation score (fraction of ticks from 2 ms on within 0.1 V of 5 V); the floor is {{.Floor}}</div></div>
+  <div class="tile"><div class="big">{{.PeakV}} V, {{.PeakI}} A</div><div class="what">highest output voltage and inductor current in any scenario; the limits are 6 V and 10 A</div></div>
+</div>
+
+<h2>Scenario {{.Replay.ID}}: {{.Replay.InputV}} V in, a {{.Replay.LoadOhm}} ohm load that halves at {{.Replay.StepMs}} ms</h2>
+<p class="note">The C port's record, every tick. The JavaScript law's record of the same scenario is the same bytes, so drawing it too would cover this line exactly. Move the pointer across the chart to read the values at any tick.</p>
+<div class="panel" id="chartpanel">
+<svg id="chart" role="img" aria-label="Output voltage, inductor current and duty cycle over 20 ms for scenario {{.Replay.ID}}"></svg>
+<div id="tip"></div>
+</div>
+<details><summary>The same trace as a table, every millisecond</summary>
+<div class="tablewrap"><table>
+<tr><th>time (ms)</th><th>output voltage (V)</th><th>inductor current (A)</th><th>duty cycle</th></tr>
+{{range .Samples}}<tr><td class="num">{{.Ms}}</td><td class="num">{{.V}}</td><td class="num">{{.I}}</td><td class="num">{{.Duty}}</td></tr>
+{{end}}</table></div>
+</details>
+
+<h2>Every scenario</h2>
+<p class="note">The controller is not told the input voltage, the load, or when the load steps; it sees only the output voltage and the inductor current. Three runs judged each scenario: the C build twice and the JavaScript law once.</p>
+<div class="tablewrap"><table>
+<tr><th>scenario</th><th>input</th><th>load, then half at</th><th>score</th><th>peak V</th><th>peak |A|</th><th>fingerprint (C run 1)</th><th>C run 2 and JavaScript (the run writes no page unless both match)</th></tr>
+{{range .Rows}}<tr><td>{{.ID}}</td><td class="num">{{.InputV}} V</td><td class="num">{{.LoadOhm}} ohm, {{.StepMs}} ms</td><td class="num">{{printf "%.3f" .Score}}</td><td class="num">{{printf "%.3f" .MaxV}}</td><td class="num">{{printf "%.3f" .MaxI}}</td><td><span class="fp">{{.Fingerprint}}</span></td><td><span class="yes">both identical</span></td></tr>
+{{end}}</table></div>
+
+<h2>Why the two languages agree to the bit here, and did not for the cart-pole</h2>
+<p>The C is a line-for-line port of the JavaScript law: every expression keeps its operand order, and the build passes <code>-ffp-contract=off</code>, so the compiler never fuses a multiply and an add into one step with a different rounding. What is left is a sequence of IEEE 754 double additions, multiplications, divisions and comparisons, which both languages must compute identically. The cart-pole controller also calls <code>cos</code>, and there the C module's cosine (wasi-libc's, compiled into it) and V8's <code>Math.cos</code> differ in the last bit on about one input in a hundred, which is enough to change its fingerprint. This law calls no library function, so there is nothing left that could differ, and the runs confirm it.</p>
+<p>Build step, run inside the sandbox: <code>{{.Build}}</code> (compile {{.BuildMs}} ms). <code>controller.wasm</code> SHA-256: <span class="fp">{{.WasmSHA256}}</span>. It imports nothing: the shim gives it an empty import object and refuses any module that asks for more.</p>
+
+<div class="row2">
+<div class="panel"><h3>controller.c (what ran)</h3><pre>{{.Source}}</pre></div>
+<div class="panel"><h3>reference.js (the JavaScript law)</h3><pre>{{.Reference}}</pre></div>
+</div>
+
+<h2>What this does not show</h2>
+<ul>
+<li>Not firmware on a chip. The C uses <code>double</code> and runs as WebAssembly; a microcontroller build would use its own number format, timer and ADC, and would be a different program with its own fingerprint.</li>
+<li>Not a hardware converter. The plant is an averaged model (the switching ripple is averaged out), so the run judges the control law, not the switching stage.</li>
+<li>Not isolation beyond the run's tier. The compiler, the judge and the controller run inside one project run, behind the tier the provider reports ({{.Isolation}} here).</li>
+</ul>
+<p class="note">Source and how to rerun: <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/wasm-buck">examples/wasm-buck on GitHub ↗</a>. The draft-versus-accepted replay of the same plant: <a href="https://plimsollmark.github.io/plimsoll/examples/envs/buck-converter/index.html">buck converter replay</a>.</p>
+</main>
+<script type="application/json" id="data">{{.Data}}</script>
+<script>
+(() => {
+  const data = JSON.parse(document.getElementById('data').textContent);
+  const tr = data.trace, n = tr.v.length, step = data.scenarios[0].step_ms;
+  const svg = document.getElementById('chart'), ns = 'http://www.w3.org/2000/svg';
+  const tip = document.getElementById('tip'), panel = document.getElementById('chartpanel');
+  const tEnd = n * tr.tick_s * 1000;
+  // Drawn at the panel's own pixel width, so the text stays 12 px on a phone
+  // instead of shrinking with a scaled viewBox; redrawn when the width changes.
+  const draw = () => {
+  svg.replaceChildren();
+  const cw = Math.max(320, Math.round(svg.getBoundingClientRect().width));
+  svg.setAttribute('viewBox', '0 0 ' + cw + ' 560');
+  svg.setAttribute('height', 560);
+  const L = cw < 600 ? 40 : 70, R = cw - (cw < 600 ? 14 : 20), W = R - L;
+  const x = (ms) => L + (ms / tEnd) * W;
+  const panels = [
+    { key: 'v', title: 'Output voltage (V)', top: 24, h: 140, lo: 0, hi: 7, ticks: [0, 5, 6], band: [4.9, 5.1], limit: 6, limitLabel: 'overvoltage limit, 6 V' },
+    { key: 'i', title: 'Inductor current (A)', top: 204, h: 140, lo: -1, hi: 11, ticks: [0, 5, 10], limit: 10, limitLabel: 'overcurrent limit, 10 A' },
+    { key: 'duty', title: 'Duty cycle (the controller\'s output)', top: 384, h: 120, lo: 0, hi: 1, ticks: [0, 0.5, 1] },
+  ];
+  const el = (tag, attrs, text) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text !== undefined) e.textContent = text; svg.appendChild(e); return e; };
+  for (const p of panels) {
+    const y = (v) => p.top + p.h - ((v - p.lo) / (p.hi - p.lo)) * p.h;
+    p.y = y;
+    el('text', { x: L, y: p.top - 8, class: 'title' }, p.title);
+    for (const t of p.ticks) {
+      el('line', { x1: L, x2: R, y1: y(t), y2: y(t), stroke: 'var(--grid)', 'stroke-width': 1 });
+      el('text', { x: L - 8, y: y(t) + 4, 'text-anchor': 'end' }, String(t));
+    }
+    if (p.band) el('rect', { x: L, y: y(p.band[1]), width: W, height: y(p.band[0]) - y(p.band[1]), fill: 'var(--band)' });
+    if (p.limit !== undefined) {
+      el('line', { x1: L, x2: R, y1: y(p.limit), y2: y(p.limit), stroke: 'var(--limit)', 'stroke-width': 1.5 });
+      el('text', { x: L + 4, y: y(p.limit) - 5, class: 'limitlabel' }, p.limitLabel);
+    }
+    el('line', { x1: x(step), x2: x(step), y1: p.top, y2: p.top + p.h, stroke: 'var(--axis)', 'stroke-width': 1 });
+    el('line', { x1: L, x2: R, y1: p.top + p.h, y2: p.top + p.h, stroke: 'var(--axis)', 'stroke-width': 1 });
+    let d = '';
+    for (let k = 0; k < n; k++) d += (k ? 'L' : 'M') + x(k * tr.tick_s * 1000).toFixed(1) + ' ' + y(tr[p.key][k]).toFixed(1);
+    el('path', { d, fill: 'none', stroke: 'var(--blue)', 'stroke-width': 2, 'stroke-linejoin': 'round' });
+  }
+  el('text', { x: x(step) + 5, y: panels[0].top + 14 }, 'load halves');
+  el('text', { x: R, y: panels[0].y(4.9) + 16, 'text-anchor': 'end' }, 'shaded band: 4.9 to 5.1 V');
+  const axisY = panels[2].top + panels[2].h;
+  for (let ms = 0; ms <= tEnd + 1e-9; ms += cw < 600 ? 10 : 5) el('text', { x: x(ms), y: axisY + 18, 'text-anchor': 'middle' }, String(ms));
+  el('text', { x: L + W / 2, y: axisY + 40, 'text-anchor': 'middle' }, 'time (ms)');
+  const hair = el('line', { x1: 0, x2: 0, y1: panels[0].top, y2: axisY, stroke: 'var(--ink2)', 'stroke-width': 1, visibility: 'hidden' });
+  const dots = panels.map(() => el('circle', { r: 4, fill: 'var(--blue)', stroke: '#fff', 'stroke-width': 2, visibility: 'hidden' }));
+  const hit = el('rect', { x: L, y: panels[0].top, width: W, height: axisY - panels[0].top, fill: 'transparent' });
+  const row = (value, label) => { const d = document.createElement('div'); const b = document.createElement('b'); b.textContent = value; d.appendChild(b); d.appendChild(document.createTextNode(' ' + label)); return d; };
+  const show = (ev) => {
+    const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const loc = pt.matrixTransform(svg.getScreenCTM().inverse());
+    const k = Math.max(0, Math.min(n - 1, Math.round(((loc.x - L) / W) * tEnd / (tr.tick_s * 1000))));
+    const xs = x(k * tr.tick_s * 1000);
+    hair.setAttribute('x1', xs); hair.setAttribute('x2', xs); hair.setAttribute('visibility', 'visible');
+    panels.forEach((p, j) => { dots[j].setAttribute('cx', xs); dots[j].setAttribute('cy', p.y(tr[p.key][k])); dots[j].setAttribute('visibility', 'visible'); });
+    tip.replaceChildren(row((k * tr.tick_s * 1000).toFixed(2) + ' ms', 'tick ' + k), row(tr.v[k].toFixed(4) + ' V', 'output'), row(tr.i[k].toFixed(4) + ' A', 'inductor'), row(tr.duty[k].toFixed(4), 'duty cycle'));
+    const box = panel.getBoundingClientRect();
+    tip.style.display = 'block';
+    const left = ev.clientX - box.left + 14;
+    tip.style.left = Math.min(left, box.width - tip.offsetWidth - 8) + 'px';
+    tip.style.top = (ev.clientY - box.top + 14) + 'px';
+  };
+  hit.addEventListener('pointermove', show);
+  hit.addEventListener('pointerleave', () => { tip.style.display = 'none'; hair.setAttribute('visibility', 'hidden'); dots.forEach((d) => d.setAttribute('visibility', 'hidden')); });
+  };
+  draw();
+  let last = svg.getBoundingClientRect().width;
+  new ResizeObserver(() => { const w = svg.getBoundingClientRect().width; if (Math.abs(w - last) > 1) { last = w; tip.style.display = 'none'; draw(); } }).observe(svg);
+})();
+</script>
+</body>
+</html>

@@ -94,12 +94,45 @@ func wasmControllerFixtureFile(t *testing.T) wasmControllerFixture {
 	return f
 }
 
-// judgeStep is the step that judges controller.js on one scenario and writes its
-// trajectory to <id>.bin.
-func judgeStep(f wasmControllerFixture, id string, p [3]float64) string {
+// wasmShimPath is the one Node shim every C controller runs under
+// (examples/internal/wasmshim). It passes the module whatever observations the judge
+// sends, so it serves every single-output plant.
+const wasmShimPath = "../examples/internal/wasmshim/controller.js"
+
+func readWasmShim(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(wasmShimPath)
+	if err != nil {
+		t.Fatalf("the shared shim: %v", err)
+	}
+	return string(raw)
+}
+
+// wasmJudged says what one project run judges: the plant, the tick and horizon,
+// the observation width the judge must report, and the scenarios, each run by its
+// own judge step.
+type wasmJudged struct {
+	Plant     string
+	TickS     float64
+	TEndS     float64
+	Width     int
+	Scenarios []wasmScenario
+}
+
+type wasmScenario struct {
+	ID     string
+	Params []float64
+}
+
+// step is the judge step that runs controller (a file of the run) on scenario s
+// and writes its trajectory to <id>.bin.
+func (j wasmJudged) step(controller string, s wasmScenario) string {
 	num := func(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
-	return "node --no-warnings /oracle/judge.mjs controller.js /models/cartpole.wasm " +
-		num(p[0]) + " " + num(p[1]) + " " + num(p[2]) + " " + num(f.TickS) + " " + num(f.TEndS) + " " + id + ".bin"
+	args := []string{"node --no-warnings /oracle/judge.mjs", controller, j.Plant}
+	for _, p := range s.Params {
+		args = append(args, num(p))
+	}
+	return strings.Join(append(args, num(j.TickS), num(j.TEndS), s.ID+".bin"), " ")
 }
 
 type judgedScenario struct {
@@ -107,22 +140,23 @@ type judgedScenario struct {
 	trajectory  []byte
 }
 
-// runWasmController sends one project run: the C source, the shim, a build step,
-// then one judge step per scenario. It returns the compiled module and each
+// runWasmJudged sends one project run: files, then build (when not empty, a compile
+// whose output is controller.wasm), then one judge step per scenario running
+// controller. It returns the compiled module (nil without a build) and each
 // scenario's trajectory, after checking every judge verdict against its artifact.
-func runWasmController(t *testing.T, d *DockerSandbox, f wasmControllerFixture, build, shim string) ([]byte, map[string]judgedScenario) {
+func runWasmJudged(t *testing.T, d *DockerSandbox, j wasmJudged, files []File, build, controller string) ([]byte, map[string]judgedScenario) {
 	t.Helper()
-	steps := []string{build}
-	artifacts := []string{"controller.wasm"}
-	for _, s := range f.Scenarios {
-		steps = append(steps, judgeStep(f, s.ID, s.Params))
+	var steps, artifacts []string
+	if build != "" {
+		steps, artifacts = []string{build}, []string{"controller.wasm"}
+	}
+	judgeFrom := len(steps)
+	for _, s := range j.Scenarios {
+		steps = append(steps, j.step(controller, s))
 		artifacts = append(artifacts, s.ID+".bin")
 	}
 	res, err := d.RunProject(context.Background(), ProjectRequest{
-		Files: []File{
-			{Path: "controller.c", Content: readWasmControllerFile(t, "controller/controller.c")},
-			{Path: "controller.js", Content: shim},
-		},
+		Files:     files,
 		Steps:     steps,
 		Artifacts: artifacts,
 		Timeout:   90 * time.Second,
@@ -143,29 +177,49 @@ func runWasmController(t *testing.T, d *DockerSandbox, f wasmControllerFixture, 
 		byPath[a.Path] = a.Content
 	}
 	wasm := byPath["controller.wasm"]
-	if len(wasm) == 0 {
+	if build != "" && len(wasm) == 0 {
 		t.Fatalf("no controller.wasm among the artifacts %v", artifacts)
 	}
 	out := map[string]judgedScenario{}
-	for i, s := range f.Scenarios {
+	for i, s := range j.Scenarios {
 		traj := byPath[s.ID+".bin"]
 		var v struct {
 			Fingerprint string `json:"fingerprint"`
 			Ticks       int    `json:"ticks"`
 			Width       int    `json:"width"`
 		}
-		if err := json.Unmarshal([]byte(strings.TrimSpace(res.Steps[i+1].Stdout)), &v); err != nil {
-			t.Fatalf("%s: judge stdout is not its verdict line: %q (%v)", s.ID, res.Steps[i+1].Stdout, err)
+		stdout := res.Steps[judgeFrom+i].Stdout
+		if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &v); err != nil {
+			t.Fatalf("%s: judge stdout is not its verdict line: %q (%v)", s.ID, stdout, err)
 		}
 		sum := sha256.Sum256(traj)
 		fp := hex.EncodeToString(sum[:])
-		wantTicks := int(math.Round(f.TEndS / f.TickS))
-		if fp != v.Fingerprint || v.Ticks != wantTicks || v.Width != cartPoleWidth || len(traj) != wantTicks*(cartPoleWidth+1)*8 {
-			t.Fatalf("%s: judge said %+v, the %d-byte artifact hashes to %s; want %d ticks of width %d", s.ID, v, len(traj), fp, wantTicks, cartPoleWidth)
+		wantTicks := int(math.Round(j.TEndS / j.TickS))
+		if fp != v.Fingerprint || v.Ticks != wantTicks || v.Width != j.Width || len(traj) != wantTicks*(j.Width+1)*8 {
+			t.Fatalf("%s: judge said %+v, the %d-byte artifact hashes to %s; want %d ticks of width %d", s.ID, v, len(traj), fp, wantTicks, j.Width)
 		}
 		out[s.ID] = judgedScenario{fingerprint: fp, trajectory: traj}
 	}
 	return wasm, out
+}
+
+// judged is the cart-pole fixture as a judged run.
+func (f wasmControllerFixture) judged() wasmJudged {
+	j := wasmJudged{Plant: "/models/cartpole.wasm", TickS: f.TickS, TEndS: f.TEndS, Width: cartPoleWidth}
+	for _, s := range f.Scenarios {
+		j.Scenarios = append(j.Scenarios, wasmScenario{ID: s.ID, Params: s.Params[:]})
+	}
+	return j
+}
+
+// runWasmController runs the cart-pole C controller, built by build, under shim.
+func runWasmController(t *testing.T, d *DockerSandbox, f wasmControllerFixture, build, shim string) ([]byte, map[string]judgedScenario) {
+	t.Helper()
+	files := []File{
+		{Path: "controller.c", Content: readWasmControllerFile(t, "controller/controller.c")},
+		{Path: "controller.js", Content: shim},
+	}
+	return runWasmJudged(t, d, f.judged(), files, build, "controller.js")
 }
 
 // cartPoleSwingScore is the swing-up score: 1 minus the start of the final
@@ -203,7 +257,7 @@ func TestDockerWasmControllerCompiledInTheSandbox(t *testing.T) {
 	d.ProjectImage = wasmCCProjectImage
 	requireProjectImage(t, d)
 	f := wasmControllerFixtureFile(t)
-	shim := readWasmControllerFile(t, "controller/controller.js")
+	shim := readWasmShim(t)
 
 	wasm1, first := runWasmController(t, d, f, f.Build, shim)
 	wasm2, second := runWasmController(t, d, f, f.Build, shim)
@@ -239,12 +293,12 @@ func TestDockerWasmControllerCompiledInTheSandbox(t *testing.T) {
 	}
 }
 
-// mathCosShim is the example's shim with one change: the module may import
+// mathCosShim is the shared shim with one change: the module may import
 // env.host_cos, bound to V8's Math.cos. It exists for the proof below and for
-// nothing else; the example's own shim provides no imports at all.
+// nothing else; the shim itself provides no imports at all.
 func mathCosShim(t *testing.T) string {
 	t.Helper()
-	shim := readWasmControllerFile(t, "controller/controller.js")
+	shim := readWasmShim(t)
 	const empty = "const provided = {};"
 	if strings.Count(shim, empty) != 1 {
 		t.Fatalf("controller.js no longer declares %q exactly once; update this test with it", empty)
@@ -277,9 +331,9 @@ func TestDockerWasmControllerShimRefusesImports(t *testing.T) {
 	res, err := d.RunProject(context.Background(), ProjectRequest{
 		Files: []File{
 			{Path: "controller.c", Content: readWasmControllerFile(t, "controller/controller.c")},
-			{Path: "controller.js", Content: readWasmControllerFile(t, "controller/controller.js")},
+			{Path: "controller.js", Content: readWasmShim(t)},
 		},
-		Steps: []string{f.MathCosBuild, judgeStep(f, s.ID, s.Params)},
+		Steps: []string{f.MathCosBuild, f.judged().step("controller.js", wasmScenario{ID: s.ID, Params: s.Params[:]})},
 	})
 	if err != nil {
 		t.Fatalf("RunProject: %v", err)

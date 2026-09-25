@@ -25,13 +25,15 @@ One project run, two files, five steps:
 | `clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -o controller.wasm controller.c` | compiles the controller inside the sandbox, with `--network none` like every step |
 | `node /oracle/judge.mjs controller.js /models/cartpole.wasm 3.14159 0.5 1 0.01 20 s1.bin` and three more | one per scenario: the pole starts hanging (about pi rad), the cart mass varies from 0.8 to 1.2 kg |
 
-The judge spawns [controller/controller.js](controller/controller.js) as the
-controller process, exactly as it would a controller written in JavaScript, so the
-judge did not change. That file is a shim with no control arithmetic: it instantiates
-`controller.wasm` once per episode and, for each line of state the judge sends, calls
-the module's exported `double control(double x, double v, double theta, double omega,
-int k)` and writes the result back. State between ticks lives in the module's
-globals.
+The judge spawns `controller.js`, the shared shim in
+[examples/internal/wasmshim](../internal/wasmshim/controller.js), as the controller
+process, exactly as it would a controller written in JavaScript, so the judge did not
+change. That file is a shim with no control arithmetic and no knowledge of the plant:
+it instantiates `controller.wasm` once per episode and, for each line of state the
+judge sends, calls the module's exported `control` with every value on the line and
+then the tick index, here `double control(double x, double v, double theta, double
+omega, int k)`, and writes the result back. State between ticks lives in the module's
+globals. The [buck converter example](../wasm-buck/) runs under the same shim.
 
 The module gets an empty import object. It cannot call the host for anything, not
 WASI, not a clock, not `Math.cos`; a module that imports something is refused before
