@@ -1,5 +1,5 @@
 # Simulation worker image: compiled physical models as supervised WasmEdge workers,
-# step 1 of docs/architecture/run-module-plan.md. Nothing here changes the project
+# the module-run path (AGENTS.md, "Module runs"). Nothing here changes the project
 # API: a step names the worker, the worker names a model baked into the image root,
 # and the run keeps every lockdown a Node project gets (read-only root, noexec
 # writable mounts, --network none, the seccomp profile). Built by `make docker-images`
@@ -19,7 +19,7 @@
 # row that asks for more than 16 MiB fails alone with -7 while its neighbours
 # complete.
 #
-# The control-design environments (private/control-envs-plan-2026-09-23.md) add
+# The control-design environments (docs/examples/envs) add
 # plants of our own behind the generic stepping shim sim/shim_env.c, which takes
 # its value references from a plant.h in the model directory, and the generic
 # judge /oracle/judge.mjs, which takes plant and scenario on its command line.
@@ -34,7 +34,7 @@
 # /models/satclock.wasm (sim/models/SatClock, a navigation satellite's clock) are
 # the relativity plants.
 #
-# The physics oracle (docs/architecture/oracle-demo-plan.md) is two more files.
+# The physics oracle (examples/oracle) is two more files.
 # /models/cartpole.wasm is the cart-pole plant (sim/models/CartPole) behind the
 # generic shim sim/shim_env.c (its plant.h names the value references; the vendored
 # shim_step.c it replaced stepped byte-identically, which the oracle test's pinned

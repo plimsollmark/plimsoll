@@ -196,6 +196,8 @@ Each of these answers one question, end to end.
 | [docs/hardened-mode.md](docs/hardened-mode.md) | How do I turn the production posture into an enforced startup policy? |
 | [docs/dependencies.md](docs/dependencies.md) | What is in the trusted surface, and who checks the checkers? |
 | [docs/limitations.md](docs/limitations.md) | What does this deliberately not do? |
+| [docs/dockercloud.md](docs/dockercloud.md) | What does the Docker Cloud Sandboxes provider need from the operator, and what does each run check? |
+| [docs/releasing.md](docs/releasing.md) | Why is the module path public, why do releases start at v0.2.0, and why is there no checksum exemption? |
 | [docs/callers.md](docs/callers.md) | How do I create, rotate and revoke caller credentials? |
 | [docs/seccomp.md](docs/seccomp.md) and [docs/gvisor.md](docs/gvisor.md) | What do the syscall filter and the kernel-tier boundary enforce? |
 | [docs/guest-dependencies.md](docs/guest-dependencies.md) | How do guest packages get in when a run has no network? |

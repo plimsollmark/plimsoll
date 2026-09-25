@@ -151,7 +151,7 @@ unrecognized provider names are explicit errors, and the default (unset) is
 | `wasm`    | in-process QuickJS via wazero | process tier, lowest latency | JS snippets and snippet grants through a direct host function; no projects. An engine escape lands in plimsolld. |
 | `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. |
 | `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. Sandboxes are stamped with a per-instance metadata ID; `ReconcileOrphans` (run periodically by the daemon) reaps stamped, untracked microVMs that leaked past a malformed create response or failed teardown. |
-| `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | **implemented against Docker's published contract (the `github.com/docker/sandboxes-api` protobuf API, v0.36.0); the live suite passed against the real service on 2026-09-24** (smoke, snippet, project, bounds, orphan listing). Three operator requirements came out of that run: the personal access token is exchanged at Docker Hub (`DOCKER_SBX_USERNAME` plus the token) for a short-lived bearer, since the sandbox API refuses the token itself; the account's cloud network policy must default to deny-all (`sbx --cloud policy init deny-all`), because a create carrying an inline policy fails; and a pinned image must name its linux/amd64 manifest digest, not a multi-platform index, because the cloud reports the manifest it booted. Spoken by hand as Connect JSON over `net/http`, no new module. Isolated snippets/projects from one configured raw OCI image. Grants are supported when `SANDBOX_DOCKERCLOUD_GUARD_URL` is configured (`ErrUnsupported` otherwise) and use the same shared egress guard as E2B, with two differences an operator must know: the grant run's single network rule (the guard's `host:443`) is applied through `PUT /sandboxes/{id}/network-policy`, a REST call **outside Docker's published contract** (the one the `sbx` CLI makes; base `SANDBOX_DOCKERCLOUD_POLICY_URL`), and **the guest holds its own run's guard credential**, because Docker's proxy injects credentials only for its fixed service list (on E2B the proxy injects it and the guest never sees it). That credential is per run, valid only at the guard, only for that run's frozen grant, and dead when the run ends; the downstream API credential never enters the VM. Each run creates a pinned linux/amd64 sandbox, reads its effective network policy back through the published contract and refuses to run unless it is deny-all with exactly the entitled rules (none for a no-grant run, the guard's `host:443` for a grant run), and deletes the sandbox on every exit path (cloud TTL with delete-on-timeout as the backstop). The exec API has no timeout and no output bound, so every guest command runs under an in-guest wrapper (`timeout -s KILL`, each stream capped by `head -c`) and the host bounds the response; a flood is a failed user run with truncation flags. Sandboxes are named with a per-instance prefix tracked before create; `ReconcileOrphans` deletes untracked ones. |
+| `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | written against Docker's published API contract; live suite passed 2026-09-24. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
 
 Relevant env: `SANDBOX_DOCKER_IMAGE`, `SANDBOX_DOCKER_PROJECT_IMAGE`,
@@ -241,14 +241,9 @@ complete secured create (both access tokens), live resource verification,
 multi-file staging into the project dir, and a probe run through the exact
 project-step path (`sh` script → node) — proving the configured template bakes
 the toolchain, honors the step cwd, and (checked live) actually denies egress.
-For dockercloud: `CapabilityService.GetCapabilities` must list, when it lists
-permissions, the read, create, delete and network-policy-read permissions a run
-needs (the cloud does not list exec or file permissions for a Cloud Sandboxes token
-yet serves them, so they are not required); then one throwaway sandbox must come up
-with the effective policy deny-all, accept a directory and file upload, and run the
-same probe through the exact project-step path (the exec wrapper around `sh
-<script>`), proving node, `timeout` and `head` are present, the cwd is honored, and
-egress is denied from inside the guest.
+For dockercloud: a capability check, then one throwaway sandbox proving deny-all
+policy, file upload, the exec wrapper, the step cwd and in-guest egress denial
+([docs/dockercloud.md](docs/dockercloud.md#startup-smoke-test)).
 `plimsolld -h` prints the full env list; the text is the `usage` constant in
 [cmd/plimsolld/main.go](cmd/plimsolld/main.go), and a test fails if the package
 reads a variable that text omits. The daemon refuses any other argument.
@@ -335,7 +330,9 @@ an empty `Allow` list reaches nothing — the embedder injects the exact routes 
 permits (`[]HostRoute`, with `*` wildcard segments). The shared broker accepts only
 decoded, canonical paths whose Go HTTP request target is byte-identical to the
 approved string; queries, traversal, percent encodings, and characters that would
-be wire-encoded are rejected before upstream dispatch. An optional `Preamble` lets
+be wire-encoded are rejected before upstream dispatch, and so are `;` and all-dot
+segments, which some upstream servers reinterpret after the match (`/a/..;/b`
+reads as `/b` on Tomcat and Spring). An optional `Preamble` lets
 an embedder layer a domain SDK on top of the generic client.
 
 The `allow` list, the `Preamble`, and the model-facing tool description a gateway
@@ -485,10 +482,9 @@ path into guest content. The pipeline:
    `ExtraCalls` is the successful count minus one (rigorous when a granted collection
    route is named and returns the same items), `AddedLatency` is summed round trips
    beyond one call (a model, not wall time lost), `BytesMoved` is the gross bytes the
-   pattern moved (not a saving). The former aggregate-in-code and sequential-calls
-   detectors were deleted on 2026-09-16: the trace holds no call start times, so it
-   cannot tell serial calls from concurrent ones, and no guest content, so it cannot
-   tell a client-side reduce from any other loop. A small router asks one question
+   pattern moved (not a saving). Do not reintroduce the removed aggregate-in-code or
+   sequential-calls detectors: the trace holds no call start times and no guest content,
+   so it cannot support them (docs/efficiency-advisor.md). A small router asks one question
    from the profile's `Allow` list, for a **GET** fan-out only: does the collection
    route already exist? If so the finding is **agent-fixable** (`Finding.Suggested`
    set) and states its condition, that the collection route must return the same
@@ -574,88 +570,27 @@ means only that it passed under whatever happened to be on `PATH`, which is not 
 claim this gate makes. `make tools` installs the pinned set; the codegen plugins are
 pinned separately by go.mod `tool` directives.
 
-**CI runs the gate as three Makefile targets, and each green check means exactly
-what its target exercised.** [.github/workflows/audit.yml](.github/workflows/audit.yml)
-has two jobs: `audit` runs plain `make audit` (build, vet, race tests, lint, buf
-lint plus generated-code drift, govulncheck; no containers), and `audit-docker`
-runs `make docker-images` then `make audit DOCKER=1`, the docker suite under runc
-with the shipped seccomp profile. `DOCKER=1` is a request for proof: `docker-suite`
-sets `SANDBOX_TEST_REQUIRE_DOCKER=1`, under which a missing daemon or image fails a
-test instead of skipping it, and the target then fails on any `--- SKIP` line in
-its own output. So a green `audit-docker` means the isolation suite ran: a container
-came up read-only, every writable mount was a sized `noexec` tmpfs, the seccomp
-profile loaded, and the broker refused what it was built to refuse. An ordinary
-`go test ./...` on a machine without docker keeps its skips.
-[.github/workflows/gvisor.yml](.github/workflows/gvisor.yml) is the kernel-tier
-run: it installs the pinned gVisor bundle with `docker/install-gvisor.sh` and runs
-the same suite with `SANDBOX_DOCKER_RUNTIME=runsc`. It is a separate workflow so a
-runsc failure is attributable on its own and cannot mask the runc result.
+**CI** ([.github/workflows/](.github/workflows/)) runs plain `make audit`, `make audit
+DOCKER=1` under runc, and the same docker suite under runsc (a separate workflow, so a
+runsc failure cannot mask the runc result); what each green check proves is in
+[CONTRIBUTING.md](CONTRIBUTING.md). `DOCKER=1` is a request for proof: a missing daemon
+or image, or any `--- SKIP` line, fails it. No CI run exercises E2B or Docker Cloud
+Sandboxes, deliberately, because they spend: **never add an E2B key or a Docker token
+to repository secrets.** Third-party actions are pinned by commit SHA, since a tag is
+mutable.
 
-What no CI run exercises is E2B or Docker Cloud Sandboxes. Those suites are absent
-deliberately rather than left unconfigured: they drive live paid services and no
-automated run in this project may spend, so **do not add an E2B key or a Docker
-token to repository secrets to "complete" the gate.** Third-party actions are pinned by commit SHA rather than tag, for the
-same reason the gate tools, the QuickJS artifact and the gVisor release are pinned:
-a tag is mutable.
+**Credentials never land on disk.** `E2B_API_KEY` and `DOCKER_SBX_TOKEN` are read
+from the environment by the provider and its live suite, and nothing writes them
+anywhere (`E2B_API_KEY="$KEY" make audit DOCKER=1 E2B=1`).
 
-**The E2B key never lands on disk.** The live E2B suite reads `E2B_API_KEY` from
-the environment and nothing writes it anywhere:
-
-```sh
-E2B_API_KEY="$KEY" make audit DOCKER=1 E2B=1   # full gate with the live suite
-E2B_API_KEY="$KEY" go test ./sandbox -run 'E2B.*Live' # just the live provider tests
-```
-
-The Docker token follows the same rule: `DOCKER_SBX_TOKEN` is read from the
-environment by the provider and the live suite, and nothing writes it anywhere.
-
-**Module identity.** The module path is `github.com/plimsollmark/plimsoll`. The
-GitHub organization `plimsollmark` was registered on 2026-09-09, so the name cannot
-be taken by someone else and used to serve a substitute module.
-
-**Read that as a change of protection model, not a restatement.** The path used to
-be a private module path under the RFC-reserved `.localhost` TLD,
-which could never resolve publicly *by construction*: no registration, no
-ownership, and nothing to keep renewed. The rename to a public path swapped that
-structural guarantee for one that rests on holding an account. It is the right
-trade for a module people are meant to `go get`, but it is a weaker kind of
-guarantee, and it is only as good as the organization staying registered and its
-owning account staying secure.
-
-Consumers `require` tagged versions with no `replace`; day-to-day sibling
-development uses an uncommitted workspace (`go work init . ../plimsoll`,
-gitignored). A workspace build resolves the sibling working tree, not the pinned
-version, so it proves nothing about the pin: verify with `GOWORK=off`.
-
-Version resolution outside a workspace (`go mod tidy`/`go mod vendor`, Docker
-builds) comes from `proxy.golang.org` and is checked against `sum.golang.org`,
-like any other public module. There is nothing to configure. The `make modproxy`
-target that publishes a local file-based GOPROXY still exists and is still how a
-pre-publication tag would be served, but no released version needs it.
-
-**Public releases start at v0.2.0, and the gap below it is deliberate.** Versions
-v0.1.0 through v0.1.7 were tagged on this module before publication and resolve only
-from a local file proxy; their trees are not this tree. A module version is global and
-immutable, so those numbers are spent: reusing one publicly would mean a single
-version string naming two different artifacts, and any consumer holding the older
-hash would hit a checksum mismatch. The first public tag is therefore numbered above
-the whole retired line rather than starting from v0.1.0.
-
-**The `github.com/plimsollmark/*` checksum exemption is gone, and it is not coming
-back.** While consumers still required a pre-publication v0.1.x, this module had to
-be exempted from `sum.golang.org`: a checksum lookup for a version with no public tag
-behind it returns `not found`, so enforcing verification then would have turned every
-`go mod tidy` into a failure that described nothing real. That is why the exemption
-existed and why it was always framed as temporary.
-
-It was removed on 2026-09-10, once every consumer required v0.2.0. `sum.golang.org`
-now holds v0.2.0 (transparency-log index 62818162) and verifies every later fetch
-against the hash it recorded, which is the real replacement for what the old
-`.localhost` module path used to give for free. **Do not re-add the exemption.**
-Doing so would leave this TCB's own module as the one dependency in a consumer's
-graph that nothing cross-checks, which is precisely backwards for a component whose
-job is running hostile code. If a future pre-publication tag ever needs the file
-proxy again, scope the exemption to that work and take it out with the tag.
+**Module identity.** The module path is `github.com/plimsollmark/plimsoll`, resolved
+from `proxy.golang.org` and verified by `sum.golang.org` like any public module.
+Consumers `require` tagged versions with no `replace`; sibling development uses an
+uncommitted workspace (`go work init . ../plimsoll`, gitignored), which resolves the
+working tree and proves nothing about the pin, so verify with `GOWORK=off`. Public
+releases start at v0.2.0 because v0.1.0 to v0.1.7 are spent pre-publication tags:
+never reuse one. **Do not re-add a `GONOSUMDB` exemption for this module.** Why the
+path, the gap and the exemption are what they are: [docs/releasing.md](docs/releasing.md).
 
 **Supply chain.** Codegen plugins are pinned by go.mod `tool` directives
 (`protoc-gen-go`, `protoc-gen-connect-go`) and run via `go tool`, so `buf generate`

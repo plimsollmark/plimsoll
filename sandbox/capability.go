@@ -295,8 +295,8 @@ func validateRoutePattern(pattern string) error {
 	if err != nil || decoded != pattern {
 		return errors.New("path must be decoded and canonical")
 	}
-	if path.Clean(pattern) != pattern {
-		return errors.New("path must not contain empty, dot, or traversal segments")
+	if path.Clean(pattern) != pattern || !upstreamNeutralSegments(strings.Split(pattern, "/")) {
+		return errors.New("path must not contain empty, dot, traversal, or \";\" segments")
 	}
 	// Profiles must not load routes that an HTTP client would percent-encode on
 	// the wire. Replace wildcards with a representative safe segment before the
@@ -311,16 +311,6 @@ func validateRoutePattern(pattern string) error {
 		}
 	}
 	return nil
-}
-
-// baseHost returns the host (no port) of BaseURL, or "" if it cannot be parsed.
-// Providers that can restrict egress (e2b) allow exactly this host.
-func (g *HostAPIGrant) baseHost() string {
-	u, err := url.Parse(g.BaseURL)
-	if err != nil {
-		return ""
-	}
-	return u.Hostname()
 }
 
 // credential mints the per-run token for a run with the given wall-clock budget.
@@ -397,10 +387,8 @@ func (g *HostAPIGrant) matchRoute(method, requestPath string) (HostRoute, bool) 
 		return HostRoute{}, false
 	}
 	segs := strings.Split(requestPath, "/")
-	for _, s := range segs {
-		if s == "." || s == ".." {
-			return HostRoute{}, false
-		}
+	if !upstreamNeutralSegments(segs) {
+		return HostRoute{}, false
 	}
 	for _, r := range g.Allow {
 		if strings.EqualFold(r.Method, method) && pathMatches(r.Path, segs) {
@@ -408,6 +396,23 @@ func (g *HostAPIGrant) matchRoute(method, requestPath string) (HostRoute, bool) 
 		}
 	}
 	return HostRoute{}, false
+}
+
+// upstreamNeutralSegments reports whether no segment carries syntax an upstream
+// server may interpret after the broker has matched it. approve==wire guarantees
+// the bytes sent are the bytes approved; this guarantees the upstream reads them
+// as the same route. A ";" starts a path parameter on Tomcat, Jetty and Spring, so
+// "/orgs/..;/repos/x" passes a "/orgs/*/repos/*" grant byte for byte and then
+// normalizes to "/repos/x" upstream. A segment made only of dots is traversal or,
+// on servers that trim trailing dots, an empty segment. Neither appears in a real
+// route template, so both are refused everywhere rather than per framework.
+func upstreamNeutralSegments(segs []string) bool {
+	for _, s := range segs {
+		if strings.Contains(s, ";") || (s != "" && strings.Trim(s, ".") == "") {
+			return false
+		}
+	}
+	return true
 }
 
 // pathMatches matches a route pattern (with "*" wildcard segments) against the

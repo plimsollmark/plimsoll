@@ -102,6 +102,8 @@ func TestHostAPIGrantValidateRejectsUnsafeRoutes(t *testing.T) {
 		{Method: "GET", Path: "/v1\\admin"},
 		{Method: "GET", Path: "/v1/has space"},
 		{Method: "GET", Path: "/v1/café"},
+		{Method: "GET", Path: "/v1/x;jsessionid=1"},
+		{Method: "GET", Path: "/v1/.../x"},
 	} {
 		grant := &HostAPIGrant{BaseURL: "https://host.internal", Allow: []HostRoute{route}}
 		if err := grant.Validate(); err == nil {
@@ -168,6 +170,9 @@ func TestHostAPIRouteAllowlist(t *testing.T) {
 		{http.MethodPut, "/v1/lights/a/b/on"},      // too many segments
 		{http.MethodPut, "/v1/lights/a\\b/on"},     // target-dependent path separator
 		{http.MethodPut, "/v1/lights/a\nb/on"},     // control character in wildcard
+		{http.MethodPut, "/v1/lights/..;/on"},      // Tomcat/Spring read "..;" as ".."
+		{http.MethodPut, "/v1/lights/abc;x=1/on"},  // path parameter an upstream strips
+		{http.MethodPut, "/v1/lights/.../on"},      // all-dot segment
 	}
 	for _, c := range allow {
 		if !g.routeAllowed(c.m, c.p) {

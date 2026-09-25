@@ -250,7 +250,7 @@ func TestReferenceLinksLabelTheirDestination(t *testing.T) {
 	}
 	for _, page := range []string{"demo.html", "quick-start.html"} {
 		// demo.html drives the commercial hosted demo and is excluded from the public
-		// export (see private/public-export-plan.md), so it is checked wherever it exists
+		// export, so it is checked wherever it exists
 		// and skipped where it does not. quick-start.html ships everywhere, so a
 		// missing one is a real failure rather than a different repository.
 		raw, err := os.ReadFile(page)

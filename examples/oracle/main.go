@@ -1,4 +1,4 @@
-// Command oracle is the physics oracle demo (private/architecture/oracle-demo-plan.md):
+// Command oracle is the physics oracle demo:
 // an agent writes a controller, plimsoll runs it against a compiled cart-pole
 // plant, and the trajectory's fingerprint is the acceptance test.
 //
@@ -253,7 +253,7 @@ func render(accepted1, accepted2, draft run, divergeAt int, isolation string) ([
 		"h": 0.01, "ticks": ticks,
 		"accepted": accepted1, "draft": draft,
 		"accepted_second_fingerprint": accepted2.Fingerprint,
-		"diverge_tick": divergeAt,
+		"diverge_tick":                divergeAt,
 	})
 	if err != nil {
 		return nil, err

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// The physics oracle (private/architecture/oracle-demo-plan.md) through the
+// The physics oracle (examples/oracle) through the
 // unchanged project API: the module image carries the cart-pole plant as
 // WebAssembly and the judge, /oracle/run.mjs; the caller sends one file, its
 // controller, and one step names the judge. The judge loads the plant through

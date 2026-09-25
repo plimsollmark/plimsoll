@@ -23,7 +23,9 @@ token stays in Go.
 
 The broker accepts only decoded, canonical paths that are byte-identical to an
 approved route. Queries, traversal, and percent-encoding tricks are rejected before
-anything is dispatched upstream.
+anything is dispatched upstream, and so are path parameters (`;`) and segments made
+only of dots, because some upstream servers reinterpret them after the match: Tomcat
+and Spring read `/orgs/..;/repos/x` as `/repos/x`.
 
 Over RPC, a caller selects a **named server-side profile** by id. Raw caller-supplied
 grants are intentionally not accepted over the wire, so base URL, routes, and
