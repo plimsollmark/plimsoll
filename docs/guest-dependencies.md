@@ -179,6 +179,33 @@ a package: a file in the image root, named by a step.
   worker, loads it, and the judge that runs a caller's controller as a separate
   process against it and fingerprints the trajectory. `examples/oracle` is the
   demonstration; the page it writes replays the recorded runs.
+- Seven more plants in the same form, each a `.wasm` file under `/models` that
+  the judge (`/oracle/judge.mjs`) steps one tick at a time, with the controller in
+  its own process. The sources are under [docker/sim/models](../docker/sim/models):
+  - `shower.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/shower/index.html)): a mixing valve, a pipe modelled as a transport delay, and a
+    shower head; a toilet flush drops the cold pressure mid-run. The controller
+    sets the hot fraction and must not scald.
+  - `buck.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/buck-converter/index.html)): an averaged synchronous buck converter; the controller sets the
+    duty cycle and must hold the output voltage through a load step.
+  - `ship.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/ship-heading/index.html)): a first-order Nomoto ship with a lagging, rate-limited rudder and
+    wave forcing; the controller holds an ordered heading.
+  - `blackhole.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/black-hole-orbit/index.html)): a probe on a Schwarzschild geodesic with two small
+    thrusters, asked to hold a circular orbit inside the innermost stable one.
+  - `rocket.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/twin-paradox-rocket/index.html)): the relativistic rocket equations in the ship's proper time;
+    the controller has to arrive home when Earth's clock reads an ordered date.
+  - `satclock.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/satellite-clock/index.html)): a navigation satellite's clock, which runs about 38.6
+    microseconds a day fast from relativity, steered through a delayed
+    measurement.
+  - `slits.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/double-slit/index.html)): an aperture of sixteen phase-plate cells and a
+    64-point screen; the controller sets all sixteen phases to produce a target
+    pattern, and the plant also exports the exact output Jacobian.
+
+  Each replay page runs two hand-written controllers against the plant on one
+  scenario through the project API, a draft that fails and an accepted one that
+  passes, and shows both trajectories and their fingerprints. Those controllers
+  and their scoring programs are not published; a controller is the caller's.
+  Cart-pole has the same page for its swing-up task
+  ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/cartpole-swingup/index.html)).
 - `libwasmedge`, the runner and `USER node`, on `node:22-bookworm-slim` rather than
   the Alpine base the other images share: WasmEdge's release binaries are glibc.
 
