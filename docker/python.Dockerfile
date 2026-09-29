@@ -1,5 +1,5 @@
 # Python project-run image, derived from the Node toolchain image. The runner and
-# its contract (ENTRYPOINT node /runner.mjs, USER node, no VOLUME, --network none at
+# its contract (guarded node /runner.mjs entrypoint, USER node, no VOLUME, --network none at
 # run time) come from the base; this layer only adds an interpreter and two
 # packages, which is the whole recipe for any other runtime
 # (docs/guest-dependencies.md, "Other runtimes: the same recipe").

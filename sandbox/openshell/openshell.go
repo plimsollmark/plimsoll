@@ -499,11 +499,12 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	return fail, err
 }
 
-// runnerCommand starts the in-image runner with its work directory created first:
+// runnerCommand creates the work directory, then preloads the guard into Node
+// before the runner can read its plan. The runner clears LD_PRELOAD before steps.
 // the runner writes files under it but only creates the directories files need, and
 // a project with no files would otherwise start its steps in a directory that does
 // not exist. The gateway runs the command through a shell with each argument quoted.
-var runnerCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && exec node ` + runnerPath}
+var runnerCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && export LD_PRELOAD=` + runnerGuardPath + ` && exec node ` + runnerPath}
 
 // RunProject writes the files and runs the steps through /runner.mjs in a fresh
 // sandbox, with the plan on stdin as the docker provider sends it.

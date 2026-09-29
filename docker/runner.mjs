@@ -3,12 +3,12 @@
 // failure), and emits the per-step results as one authenticated JSON frame so the
 // host can separate them from any incidental output.
 //
-// Every step runs as this process's uid, so any process in the sandbox can reopen
-// this process's stdout through /proc and write a report of its own. The host
-// therefore trusts only a frame signed with the plan's reportKey (HMAC-SHA256). The
-// key arrives on stdin before any step exists, is removed from the plan at once,
-// and is never put in the environment, argv, a file or the output; the host's smoke
-// test proves a sandboxed process cannot read this process's memory, where it lives.
+// Every step runs as this process's uid. The launcher makes this process
+// non-dumpable before Node starts, and the check below proves a child cannot open
+// its plan descriptor, report descriptor, or memory before the plan is read. The
+// host trusts only a frame signed with the plan's reportKey (HMAC-SHA256). The key
+// arrives on stdin, is removed from the plan at once, and is never put in the
+// environment, argv, a file or the output.
 //
 // Runs INSIDE the locked-down container (no network, read-only root, non-root).
 // It still validates file paths defensively so a plan cannot write outside the
@@ -25,6 +25,32 @@ const MAX_STEP_OUTPUT = 1 << 20; // 1 MiB per step stream
 const MAX_ARTIFACT_BYTES = 8 << 20; // 8 MiB total across all captured artifacts
 const MAX_STEPS_JSON = 3 << 20; // encoded step metadata/output across the run
 const MAX_RESULT_JSON = 15 << 20; // host cap is 16 MiB; reserve framing headroom
+
+// A loader may silently ignore a missing LD_PRELOAD library. Verify the effect on
+// this exact process, not just that the launcher named the library. The probe is a
+// child with our uid, just like a project step. Clear LD_PRELOAD before spawning it
+// and all later steps so the guard is confined to the runner.
+function verifyRunnerIsolation() {
+  delete process.env.LD_PRELOAD;
+  const probe = `const fs=require("node:fs");
+const p="/proc/"+process.ppid;
+const checks=[[p+"/fd/0",fs.constants.O_RDONLY],[p+"/fd/1",fs.constants.O_RDONLY],
+  [p+"/fd/1",fs.constants.O_WRONLY],[p+"/mem",fs.constants.O_RDONLY]];
+const results=[];
+for(const [path,flags] of checks){
+  try{const fd=fs.openSync(path,flags);fs.closeSync(fd);results.push("open");}
+  catch(e){results.push(e.code||"unknown");}
+}
+process.stdout.write(results.join(","));`;
+  const r = spawnSync(process.execPath, ["-e", probe], {
+    encoding: "utf8", timeout: 5000, maxBuffer: 4096,
+  });
+  const codes = (r.stdout ?? "").split(",");
+  if (r.error || r.status !== 0 || codes.length !== 4 ||
+      codes.some(code => code !== "EACCES" && code !== "EPERM")) {
+    throw new Error("runner descriptor and memory isolation could not be proven");
+  }
+}
 
 function emit(payload) {
   let encoded = JSON.stringify(payload);
@@ -115,6 +141,7 @@ function captureArtifacts(paths) {
 }
 
 try {
+  verifyRunnerIsolation();
   const plan = JSON.parse(readFileSync(0, "utf8"));
   // Take the key and drop it from the plan before anything else runs.
   const key = Buffer.from(typeof plan.reportKey === "string" ? plan.reportKey : "", "hex");
@@ -137,12 +164,11 @@ try {
   // WORK so it is never linted/compiled as project source nor captured as an artifact.
   // The module only defines the global; the unix socket (HOST_API_SOCKET, inherited
   // from the container env) and the host-side bearer stay outside the guest.
-  let stepEnv; // undefined → spawnSync inherits the container env unchanged
+  const stepEnv = { ...process.env, PLIMSOLL_RUNNER_PID: String(process.pid) };
   if (typeof plan.hostSDK === "string" && plan.hostSDK.length > 0) {
     const sdkPath = "/tmp/plimsoll-host.mjs";
     writeFileSync(sdkPath, plan.hostSDK);
     const preload = "--import=file://" + sdkPath;
-    stepEnv = { ...process.env };
     stepEnv.NODE_OPTIONS = stepEnv.NODE_OPTIONS ? stepEnv.NODE_OPTIONS + " " + preload : preload;
   }
 

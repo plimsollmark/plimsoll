@@ -57,6 +57,11 @@ to regex:
 | `timed_out` | the run exceeded its deadline | with care; side effects may exist |
 | `protocol_error` | the runner and the host disagreed | no, this is a bug to report |
 
+For a grader (code that scores a run), treat `protocol_error` as a failed attempt.
+No authenticated step result is available, and the guest may already have run.
+Do not accept the attempt, retry it automatically, or turn it into a passing score.
+Report the protocol error to the operator separately.
+
 Read the isolation errors the same way. `ErrInsufficientIsolation` is marked
 `isolation`: **no code ran**. `ErrIsolationEvidenceMismatch` is raised by the client
 after a run returned weaker evidence than the floor required, so execution **may
@@ -103,4 +108,3 @@ and the reason is visible in what each one can answer.
 
 Merging them would not remove that asymmetry. It would move it into a mode flag and
 make every caller rediscover it at runtime.
-

@@ -262,6 +262,19 @@ func TestDockerSmokeTestVerifiesStorageBounds(t *testing.T) {
 	}
 }
 
+func TestDockerSmokeTestChecksModuleRunner(t *testing.T) {
+	d := testDocker()
+	d.ModuleImage = simProjectImage
+	requireSnippetImage(t, d)
+	requireProjectImage(t, d)
+	requireModuleImage(t, d)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	if err := d.SmokeTest(ctx); err != nil {
+		t.Fatalf("module image runner smoke: %v", err)
+	}
+}
+
 // TestDockerRunUsesPreflightVerifiedImageID proves runs launch the content ID
 // Preflight inspected, not the mutable tag: after Preflight, the tag is
 // re-pointed at a VOLUME-declaring scratch image (which cannot run node and
@@ -300,24 +313,5 @@ func TestDockerRunUsesPreflightVerifiedImageID(t *testing.T) {
 	}
 	if res.ExitCode != 0 || !strings.Contains(res.Stdout, "42") {
 		t.Fatalf("run after tag swap = %+v, want the verified image's output", res)
-	}
-}
-
-// TestCheckMemoryIsolation: only a clear refusal proves the runner's memory, and so
-// its report key, is out of a step's reach; an open, a missing result or anything
-// unexpected fails closed.
-func TestCheckMemoryIsolation(t *testing.T) {
-	for _, ok := range []string{"EACCES", "EPERM"} {
-		if err := checkMemoryIsolation(ok); err != nil {
-			t.Errorf("%s refused: %v", ok, err)
-		}
-	}
-	for _, bad := range []string{"open", "", "ENOENT", "spawn EAGAIN"} {
-		if err := checkMemoryIsolation(bad); err == nil {
-			t.Errorf("%q accepted", bad)
-		}
-	}
-	if !strings.Contains(smokeProbeScript(false, false), `"/proc/" + process.ppid + "/mem"`) {
-		t.Fatal("the smoke probe does not check memory isolation")
 	}
 }

@@ -53,9 +53,6 @@ type smokeEvidence struct {
 	// cancelled, and how long after the cancellation none were left.
 	HungProcesses int
 	KillConfirmed time.Duration
-	// Memory is what a child got opening its parent's /proc/<pid>/mem: a refusal
-	// (EACCES or EPERM) proves the runner's report key is out of a step's reach.
-	Memory string
 }
 
 // lastSmoke returns the last passing SmokeTest's measurements, or nil.
@@ -74,7 +71,8 @@ func (p *Provider) lastSmoke() *smokeEvidence {
 //     the sandbox, and the sandbox's own cgroup carries the requested memory and CPU
 //     limits;
 //   - the runner round-trips a project at the 4 MiB ceiling through the project exec
-//     path, stdin plan and sentinel report included;
+//     path, stdin plan and sentinel report included, and the step cannot open the
+//     runner's plan descriptor, report descriptor or memory;
 //   - a hung command and the process it started are killed when their exec stream is
 //     cancelled, confirmed gone by a second exec: the mechanism behind every timeout.
 //
@@ -176,17 +174,6 @@ const read = f => { try { return fs.readFileSync(f, "utf8").trim(); } catch (e) 
   report.cpuMax = read("/sys/fs/cgroup/cpu.max");
   report.pidsMax = read("/sys/fs/cgroup/pids.max");
   report.interfaces = read("/proc/net/dev").split("\n").slice(2).map(l => l.split(":")[0].trim()).filter(Boolean);
-  // A child tries to open this process's memory. The runner's report key lives only
-  // in the runner's memory, so a step that could read it could sign a forged report.
-  try {
-    const r = require("child_process").spawnSync(process.execPath, ["-e",
-      'try { require("fs").closeSync(require("fs").openSync("/proc/" + process.ppid + "/mem", "r")); process.stdout.write("open"); }' +
-      ' catch (e) { process.stdout.write(String((e && e.code) || e).slice(0, 32)); }'],
-      { encoding: "latin1", timeout: 5000, maxBuffer: 4096 });
-    report.memory = String(r.stdout || "").slice(0, 32);
-  } catch (e) {
-    report.memory = "spawn " + String((e && e.code) || e).slice(0, 32);
-  }
   process.stdout.write(JSON.stringify(report));
 })();
 `
@@ -213,7 +200,6 @@ func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) err
 		CPUMax        string            `json:"cpuMax"`
 		PidsMax       string            `json:"pidsMax"`
 		Interfaces    []string          `json:"interfaces"`
-		Memory        string            `json:"memory"`
 	}
 	if err := json.Unmarshal(out.stdout, &report); err != nil {
 		return fmt.Errorf("unparseable probe report %q: %w", truncate(out.stdout, 200), err)
@@ -221,10 +207,6 @@ func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) err
 	ev.Node, ev.Swept, ev.Writable, ev.WritableFiles = report.Node, report.Swept, report.Writable, report.WritableFiles
 	ev.Egress, ev.DNS, ev.Interfaces = report.Egress, report.DNS, report.Interfaces
 	ev.MemoryMax, ev.CPUMax, ev.PidsMax = report.MemoryMax, report.CPUMax, report.PidsMax
-	ev.Memory = report.Memory
-	if err := checkMemoryIsolation(report.Memory); err != nil {
-		return err
-	}
 	if err := checkWritable(report.Swept, report.Writable, report.WritableFiles); err != nil {
 		return err
 	}
@@ -232,22 +214,6 @@ func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) err
 		return err
 	}
 	return checkLimits(report.MemoryMax, report.CPUMax, p.cfg.memoryMB(), p.cfg.cpus())
-}
-
-// checkMemoryIsolation asserts that a process in the sandbox could not open another
-// process's memory. The runner's report key lives only in the runner's memory
-// (internal/runnerwire), so a step that could read it could sign a forged report.
-// The host kernel and OpenShell's container settings decide this, not plimsoll, so it
-// is proven rather than assumed; anything but a clear refusal fails closed.
-func checkMemoryIsolation(child string) error {
-	switch child {
-	case "EACCES", "EPERM":
-		return nil
-	case "open":
-		return errors.New("a process in the sandbox opened another process's memory (/proc/<pid>/mem), so the runner's report key is not secret and a run's report could be forged; on the host, set kernel.yama.ptrace_scope to 1 or higher")
-	default:
-		return fmt.Errorf("the memory-isolation check gave %q, not a clear refusal, so the report key's secrecy cannot be proven", truncate([]byte(child), 40))
-	}
 }
 
 // underTmp reports whether path is /tmp or beneath it: the only writable directory
@@ -313,7 +279,16 @@ func checkLimits(memoryMax, cpuMax string, memoryMB int, cpus float64) error {
 // about 6 MiB, since encoding/json escapes each '<' as six bytes. Its step writes the
 // file's length and SHA-256, which the host compares with its own.
 func smokeProject() (sandbox.ProjectRequest, string) {
-	const mainJS = `const fs=require("fs"),c=require("crypto");const b=fs.readFileSync("data/blob.txt");` +
+	const mainJS = `const fs=require("fs"),c=require("crypto");
+const pid=process.env.PLIMSOLL_RUNNER_PID;
+if(!/^[0-9]+$/.test(pid||"")) throw new Error("runner pid missing");
+for(const [path,flags] of [["/fd/0",fs.constants.O_RDONLY],
+ ["/fd/1",fs.constants.O_RDONLY],["/fd/1",fs.constants.O_WRONLY],
+ ["/mem",fs.constants.O_RDONLY]]){
+  try{const fd=fs.openSync("/proc/"+pid+path,flags);fs.closeSync(fd);throw new Error("runner descriptor opened");}
+  catch(e){if(e.code!=="EACCES" && e.code!=="EPERM") throw e;}
+}
+const b=fs.readFileSync("data/blob.txt");` +
 		`fs.writeFileSync("out.txt",b.length+" "+c.createHash("sha256").update(b).digest("hex"));`
 	const line = "abcdefghi<abcdefghi<abcdefghi<abcdefghi<abcdefghi<abcdefghi<abcdefghi<abcdefghi<abcdefghi<abcdefgh\n"
 	size := sandbox.MaxProjectBytes - len(mainJS) - 1024

@@ -776,8 +776,9 @@ func parseImageIDAndVolumes(out []byte) (string, []string, error) {
 // refuses writes and that every writable mount is a tmpfs carrying the exact
 // size and noexec/nosuid options this provider promised, and that its cgroup
 // carries exactly the configured process limit (under runsc, the sandbox's host
-// cgroup, where gVisor enforces it). Preflight verifies
-// configuration; this verifies behavior. It starts real containers, so it is
+// cgroup, where gVisor enforces it). For every project or module image it also
+// runs the real entrypoint and checks the runner's descriptors from a step.
+// Preflight verifies configuration; this verifies behavior. It starts real containers, so it is
 // for startup/deploy readiness — not per-request or unauthenticated poll paths.
 func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 	if err := d.ensurePreflight(ctx); err != nil {
@@ -830,6 +831,11 @@ func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 		}
 		if err := d.smokeProbe(ctx, state, p.id, p.workTmpfs, readBanner, socketPath); err != nil {
 			return fmt.Errorf("smoke failed for image %q under runtime %q: %w", p.ref, state.runtime, err)
+		}
+		if p.workTmpfs {
+			if err := d.smokeRunner(ctx, state, p.id); err != nil {
+				return fmt.Errorf("runner smoke failed for image %q under runtime %q: %w", p.ref, state.runtime, err)
+			}
 		}
 	}
 	// The process limit is a property of the runtime, not of an image, so under runsc
@@ -928,18 +934,6 @@ let pids = null;
 for (const p of ["/sys/fs/cgroup/pids.max", "/sys/fs/cgroup/pids/pids.max"]) {
   try { pids = { max: fs.readFileSync(p, "utf8").trim().slice(0, 32) }; break; } catch (e) {}
 }
-// A child tries to open this process's memory. The runner's report key lives only in
-// the runner's memory, so a step that could read it could sign a forged report.
-let memory = null;
-try {
-  const r = require("child_process").spawnSync(process.execPath, ["-e",
-    'try { require("fs").closeSync(require("fs").openSync("/proc/" + process.ppid + "/mem", "r")); process.stdout.write("open"); }' +
-    ' catch (e) { process.stdout.write(String((e && e.code) || e).slice(0, 32)); }'],
-    { encoding: "latin1", timeout: 5000, maxBuffer: 4096 });
-  memory = { child: String(r.stdout || "").slice(0, 32) };
-} catch (e) {
-  memory = { child: "spawn " + String((e && e.code) || e).slice(0, 32) };
-}
 let banner = null;
 `
 	// Bounded three ways: head -c caps the bytes, the timeout caps the wait, and a
@@ -953,7 +947,7 @@ let banner = null;
   banner = { error: String((e && e.message) || e).slice(0, 200) };
 }
 `
-	const finish = `function finish(socket) { process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, pids, memory, banner, socket })); }
+	const finish = `function finish(socket) { process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, pids, banner, socket })); }
 `
 	// The connect is bounded by its own timeout and every outcome, including a
 	// refusal, is reported as data rather than thrown, so the storage evidence above
@@ -1040,9 +1034,6 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 		Pids         *struct {
 			Max string `json:"max"`
 		} `json:"pids"`
-		Memory *struct {
-			Child string `json:"child"`
-		} `json:"memory"`
 		Banner *struct {
 			Head  string `json:"head"`
 			Error string `json:"error"`
@@ -1092,13 +1083,6 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	if report.RootWritable {
 		return errors.New("root filesystem accepted a write; --read-only is not in force")
 	}
-	memoryChild := ""
-	if report.Memory != nil {
-		memoryChild = report.Memory.Child
-	}
-	if err := checkMemoryIsolation(memoryChild); err != nil {
-		return err
-	}
 	// Under runsc the guest's cgroup files are gVisor's own emulation, where pids.max
 	// reads "max" whatever docker was asked for; runsc enforces the limit on the
 	// sandbox's host cgroup instead, and SmokeTest proves it there
@@ -1138,6 +1122,33 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	return checkWritableSet(report.Writable, paths)
 }
 
+// smokeRunner uses the image's real entrypoint, then tries the same-uid access a
+// project step could make. The standalone storage probe above overrides the
+// entrypoint and cannot establish the runner's report-channel protection.
+func (d *DockerSandbox) smokeRunner(ctx context.Context, state dockerExecutionState, imageID string) error {
+	const probe = `const fs=require("node:fs");
+const checks=[["/proc/1/fd/0",fs.constants.O_RDONLY],
+ ["/proc/1/fd/1",fs.constants.O_RDONLY],["/proc/1/fd/1",fs.constants.O_WRONLY],
+ ["/proc/1/mem",fs.constants.O_RDONLY]];
+for(const [path,flags] of checks){
+  try{const fd=fs.openSync(path,flags);fs.closeSync(fd);process.exit(8);}
+  catch(e){if(e.code!=="EACCES" && e.code!=="EPERM") throw e;}
+}
+`
+	res, err := d.runPlan(ctx, state, imageID, ProjectRequest{
+		Files:   []File{{Path: "runner-probe.js", Content: probe}},
+		Steps:   []string{"node runner-probe.js"},
+		Timeout: 20 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 0 {
+		return fmt.Errorf("the runner or its descriptor probe failed: outcome %s (%s), steps %+v", res.Outcome, res.Detail, res.Steps)
+	}
+	return nil
+}
+
 // checkPidsLimit asserts the cgroup that enforces a run's processes carries exactly
 // the process limit this provider passed as --pids-limit; where names that cgroup in
 // the error. Docker accepts the flag under any runtime, and a runtime can accept it
@@ -1157,25 +1168,6 @@ func checkPidsLimit(got, want, where string) error {
 		return fmt.Errorf("pids.max %s is %q, want %d: the runtime accepted --pids-limit without applying it", where, bannerFirstLine(got), n)
 	}
 	return nil
-}
-
-// checkMemoryIsolation asserts that a process in the sandbox could not open another
-// process's memory. The runner's report key lives only in the runner's memory
-// (internal/runnerwire), so a step that could read it could sign a forged report.
-// What refuses the open is the host (Yama's ptrace_scope under runc, the runtime's
-// own checks under runsc), not plimsoll, so it is proven here rather than assumed.
-// Anything but a clear refusal fails closed.
-func checkMemoryIsolation(child string) error {
-	switch child {
-	case "EACCES", "EPERM":
-		return nil
-	case "open":
-		return errors.New("a process in the sandbox opened another process's memory (/proc/<pid>/mem), so the runner's report key is not secret and a run's report could be forged; on the host, set kernel.yama.ptrace_scope to 1 or higher")
-	case "":
-		return errors.New("the probe reported no memory-isolation result, so the report key's secrecy cannot be proven")
-	default:
-		return fmt.Errorf("the memory-isolation check gave %q, not a clear refusal, so the report key's secrecy cannot be proven", bannerFirstLine(child))
-	}
 }
 
 // proveSandboxPidsLimit proves the process limit where runsc enforces it. gVisor

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,50 @@ func frame(key []byte, body string) string {
 
 // runnerScript is the real in-sandbox runner the protocol is defined against.
 var runnerScript = filepath.Join("..", "..", "..", "docker", "runner.mjs")
+var runnerGuardSource = filepath.Join("..", "..", "..", "docker", "guard", "runner.c")
+
+func guardedRunnerCommand(t *testing.T, node, work string) *exec.Cmd {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("the project runner guard uses Linux prctl")
+	}
+	cc, err := exec.LookPath("cc")
+	if err != nil {
+		t.Fatal("cc is required to verify the project runner guard")
+	}
+	guard := filepath.Join(t.TempDir(), "runner-guard.so")
+	if out, err := exec.Command(cc, "-O2", "-fPIC", "-shared", "-o", guard, runnerGuardSource).CombinedOutput(); err != nil {
+		t.Fatalf("build runner guard: %v: %s", err, out)
+	}
+	cmd := exec.Command(node, runnerScript)
+	cmd.Env = append(cmd.Environ(), "LD_PRELOAD="+guard, "PLIMSOLL_WORK="+work)
+	return cmd
+}
+
+func TestProjectRunnerRefusesPlanWithoutIsolation(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the project runner isolation check uses Linux procfs")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	plan, err := (Plan{Steps: []string{"exit 0"}, ReportKey: testKey}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, runnerScript)
+	cmd.Env = append(cmd.Environ(), "PLIMSOLL_WORK="+t.TempDir())
+	cmd.Stdin = bytes.NewReader(plan)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	_, found, err := Parse(string(out), testKey)
+	if !found || !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("unguarded runner accepted a plan: found=%v err=%v", found, err)
+	}
+}
 
 func TestProjectRunnerAlwaysEmitsCompleteBoundedJSON(t *testing.T) {
 	node, err := exec.LookPath("node")
@@ -43,8 +88,7 @@ func TestProjectRunnerAlwaysEmitsCompleteBoundedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(node, runnerScript)
-	cmd.Env = append(cmd.Environ(), "PLIMSOLL_WORK="+work)
+	cmd := guardedRunnerCommand(t, node, work)
 	cmd.Stdin = bytes.NewReader(input)
 	out, err := cmd.Output()
 	if err != nil {
@@ -87,8 +131,7 @@ func TestProjectRunnerReportsTruncationFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(node, runnerScript)
-	cmd.Env = append(cmd.Environ(), "PLIMSOLL_WORK="+work)
+	cmd := guardedRunnerCommand(t, node, work)
 	cmd.Stdin = bytes.NewReader(input)
 	out, err := cmd.Output()
 	if err != nil {

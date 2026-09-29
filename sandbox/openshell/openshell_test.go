@@ -1004,7 +1004,6 @@ func goodProbeReport() map[string]any {
 		"egress":    map[string]string{"tcp 1.1.1.1:443": "EACCES", "https://example.com": "EACCES"},
 		"dns":       "198.18.0.2",
 		"memoryMax": "268435456", "cpuMax": "100000 100000", "pidsMax": "2048", "interfaces": []string{"lo"},
-		"memory": "EACCES",
 	}
 }
 
@@ -1019,9 +1018,6 @@ func TestSmokeTestAgainstFake(t *testing.T) {
 		{"egress open", func(s *smokeFake) { s.report["egress"] = map[string]string{"tcp 1.1.1.1:443": "open"} }, "OPEN"},
 		{"no memory limit", func(s *smokeFake) { s.report["memoryMax"] = "max" }, "memory.max"},
 		{"survives the cancel", func(s *smokeFake) { s.surviveKill = true }, "left 2 of its processes"},
-		// The runner's report key is only secret if a step cannot read its memory.
-		{"memory readable", func(s *smokeFake) { s.report["memory"] = "open" }, "report key is not secret"},
-		{"memory check missing", func(s *smokeFake) { delete(s.report, "memory") }, "not a clear refusal"},
 	} {
 		f, p := newFake(t)
 		p.killWait = 500 * time.Millisecond
@@ -1035,7 +1031,7 @@ func TestSmokeTestAgainstFake(t *testing.T) {
 				continue
 			}
 			ev := p.lastSmoke()
-			if ev.PolicyHash != p.policyHash || ev.PlanBytes < 5<<20 || ev.HungProcesses != 2 || ev.GatewayVersion != "0.1.2-fake" || ev.Memory != "EACCES" {
+			if ev.PolicyHash != p.policyHash || ev.PlanBytes < 5<<20 || ev.HungProcesses != 2 || ev.GatewayVersion != "0.1.2-fake" {
 				t.Errorf("%s: evidence %+v", tc.name, ev)
 			}
 			continue

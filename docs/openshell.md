@@ -35,8 +35,10 @@ over RPC, then requires every sandbox deleted after SIGTERM. The suite passed on
 - **An identity that may read the compute driver.** The tier comes from
   `GetGatewayInfo`. If the gateway refuses that call (under OIDC it needs the
   `platform_admin` role), the provider refuses to serve.
-- **An image with the runner.** `SANDBOX_OPENSHELL_IMAGE` must carry `node`, `sh` and
-  `/runner.mjs`, as `plimsoll/sandbox` does. With `SANDBOX_REQUIRE_PINNED_IMAGES=1` it
+- **An image with the runner.** `SANDBOX_OPENSHELL_IMAGE` must carry `node`, `sh`,
+  `/runner.mjs` and `/usr/local/lib/plimsoll-runner-guard.so`, as `plimsoll/sandbox`
+  does. The runner refuses a plan unless a same-uid child is denied access to its
+  plan descriptor, report descriptor and memory. With `SANDBOX_REQUIRE_PINNED_IMAGES=1` it
   must be an `@sha256:` reference.
 - **Agent policy proposals off.** A sandbox whose effective settings let code inside it
   propose policy changes is refused: a gateway in automatic approval mode could apply
@@ -98,8 +100,8 @@ One throwaway sandbox must prove, from inside:
 - a runner round trip with a plan near the 4 MiB project ceiling works;
 - a hung command's processes are gone after its exec is cancelled, confirmed by a
   second exec;
-- a child process cannot read its parent's memory, where the runner keeps the key that
-  authenticates its report.
+- the actual project runner starts with its guard active, and a project step cannot
+  open the runner's plan descriptor, report descriptor or memory.
 
 ## Grants
 

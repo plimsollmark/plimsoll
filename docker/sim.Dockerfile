@@ -153,6 +153,8 @@ RUN gcc -O2 worker.c -I /opt/wasmedge/include -L /opt/wasmedge/lib64 -lwasmedge 
  && LD_LIBRARY_PATH=/opt/wasmedge/lib64 /opt/wasmedge/bin/wasmedge compile bouncingball.wasm bouncingball.so \
  && LD_LIBRARY_PATH=/opt/wasmedge/lib64 /opt/wasmedge/bin/wasmedge compile lorenz.wasm lorenz.so \
  && LD_LIBRARY_PATH=/opt/wasmedge/lib64 /opt/wasmedge/bin/wasmedge compile greedy.wasm greedy.so
+COPY guard/runner.c /build/runner-guard.c
+RUN gcc -O2 -fPIC -shared -o /build/runner-guard.so /build/runner-guard.c
 
 # ---- runtime: the project image contract, plus the worker and the models --------
 FROM node:22-bookworm-slim
@@ -164,7 +166,8 @@ COPY --from=wasm /build/cartpole.wasm /models/cartpole.wasm
 COPY --from=wasm /build/shower.wasm /build/ship.wasm /build/buck.wasm /build/slits.wasm /build/blackhole.wasm /build/rocket.wasm /build/satclock.wasm /models/
 COPY sim/oracle/run.mjs sim/oracle/judge.mjs /oracle/
 COPY runner.mjs /runner.mjs
+COPY --from=build /build/runner-guard.so /usr/local/lib/plimsoll-runner-guard.so
 # Fail the build, not the first run, if the worker's shared libraries are missing.
 RUN ldconfig && ! ldd /usr/local/bin/sim-worker | grep 'not found'
 USER node
-ENTRYPOINT ["node", "/runner.mjs"]
+ENTRYPOINT ["sh", "-c", "export LD_PRELOAD=/usr/local/lib/plimsoll-runner-guard.so; exec node /runner.mjs"]

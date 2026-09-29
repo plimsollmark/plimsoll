@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,6 +55,65 @@ setTimeout(() => process.exit(9), 250);
 		if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 9 {
 			t.Fatalf("run %d: outcome %s (%s), steps %+v: want the honest report (exit 9)", i, res.Outcome, res.Detail, res.Steps)
 		}
+	}
+}
+
+// A guest file can otherwise fill the host's prefix-keeping stdout buffer by
+// reopening the runner's report descriptor. The honest frame must still report
+// the failed step, and the step must see a clear refusal opening that descriptor.
+func TestDockerProjectRunnerReportSurvivesGuestStdoutFlood(t *testing.T) {
+	d := testDocker()
+	requireSnippetImage(t, d)
+	requireProjectImage(t, d)
+	flood := `const {openSync,writeSync}=require("node:fs");
+try {
+  const fd=openSync("/proc/1/fd/1","a");
+  const chunk=Buffer.alloc(1<<20,0x41);
+  for(let i=0;i<20;i++) writeSync(fd,chunk);
+} catch(e) {
+  if(e.code!=="EACCES" && e.code!=="EPERM") throw e;
+  process.stdout.write("runner descriptor denied");
+}
+process.exit(7);
+`
+	res, err := d.RunProject(context.Background(), ProjectRequest{
+		Files:   []File{{Path: "flood.js", Content: flood}},
+		Steps:   []string{"node flood.js"},
+		Timeout: 60 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("RunProject: %v", err)
+	}
+	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 7 ||
+		!strings.Contains(res.Steps[0].Stdout, "runner descriptor denied") {
+		t.Fatalf("report lost or descriptor opened: outcome %s (%s), steps %+v", res.Outcome, res.Detail, res.Steps)
+	}
+}
+
+func TestDockerProjectRunnerDescriptorsAndMemoryArePrivate(t *testing.T) {
+	d := testDocker()
+	requireSnippetImage(t, d)
+	requireProjectImage(t, d)
+	probe := `const fs=require("node:fs");
+const checks=[["/proc/1/fd/0",fs.constants.O_RDONLY],
+ ["/proc/1/fd/1",fs.constants.O_RDONLY],["/proc/1/fd/1",fs.constants.O_WRONLY],
+ ["/proc/1/mem",fs.constants.O_RDONLY]];
+for(const [path,flags] of checks){
+  try{const fd=fs.openSync(path,flags);fs.closeSync(fd);process.exit(8);}
+  catch(e){if(e.code!=="EACCES" && e.code!=="EPERM") throw e;}
+}
+process.exit(7);
+`
+	res, err := d.RunProject(context.Background(), ProjectRequest{
+		Files:   []File{{Path: "probe.js", Content: probe}},
+		Steps:   []string{"node probe.js"},
+		Timeout: 20 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("RunProject: %v", err)
+	}
+	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 7 {
+		t.Fatalf("runner remained accessible: outcome %s (%s), steps %+v", res.Outcome, res.Detail, res.Steps)
 	}
 }
 

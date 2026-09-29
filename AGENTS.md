@@ -70,8 +70,10 @@ option is intentionally only process-tier.
   [docs/callers.md](docs/callers.md).
 - [docker/](docker/) — build recipe for the project-run toolchain image:
   [docker/Dockerfile](docker/Dockerfile) (node + tsc/tsx/eslint, baked in so
-  runtime needs no egress) and [docker/runner.mjs](docker/runner.mjs) (the
-  in-sandbox multi-file project runner). Third-party packages for projects are baked
+  runtime needs no egress), [docker/runner.mjs](docker/runner.mjs) (the
+  in-sandbox multi-file project runner), and [docker/guard/runner.c](docker/guard/runner.c)
+  (loaded into that runner before it reads the plan, making its descriptors and
+  memory inaccessible to same-uid steps). Third-party packages for projects are baked
   into a derived image at `/node_modules` at build time, where Node's parent-directory
   walk from `/work` finds them; a run never installs anything
   ([docs/guest-dependencies.md](docs/guest-dependencies.md)). Other runtimes are
@@ -228,7 +230,8 @@ pinning is required; dockercloud honors `SANDBOX_MEMORY_MB` and whole `SANDBOX_C
 requested at create and verified after it, and rejects `SANDBOX_PIDS`/`SANDBOX_DISK_MB`),
 `SANDBOX_OPENSHELL_GATEWAY_URL`, `SANDBOX_OPENSHELL_CA_FILE`, `SANDBOX_OPENSHELL_CERT_FILE`
 and `SANDBOX_OPENSHELL_KEY_FILE` (the gateway and its mutual TLS files),
-`SANDBOX_OPENSHELL_IMAGE` (must carry `node`, `sh` and `/runner.mjs`; openshell honors
+`SANDBOX_OPENSHELL_IMAGE` (must carry `node`, `sh`, `/runner.mjs` and
+`/usr/local/lib/plimsoll-runner-guard.so`; openshell honors
 `SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` and rejects `SANDBOX_PIDS`/`SANDBOX_DISK_MB`),
 `SANDBOX_MAX_SESSIONS` (open sessions at once; default 0, sessions off; startup fails when
 set for a provider without sessions), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
@@ -311,6 +314,10 @@ throwaway host Unix socket exactly as a run mounts the per-run broker socket and
 must reach it: whether a guest may connect to a host socket is a runtime property
 (runsc needs `--host-uds=open`, which `docker/install-gvisor.sh` sets), and a runtime
 that cannot broker grants must refuse to serve rather than fail every grant run.
+For every project and module image, a second throwaway container runs its real
+entrypoint; a project step must be unable to open the runner's plan descriptor,
+report descriptor or memory, and the runner itself checks that before reading a
+plan. A failure refuses startup.
 Under runsc the first probe container also
 reads one bounded line of `dmesg` and logs it (`DockerSandbox.RuntimeBanner`).
 That line is diagnostic identity information for an operator's log and nothing

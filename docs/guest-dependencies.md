@@ -120,8 +120,9 @@ ENV OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 USER node
 ```
 
-The base keeps the contract every project image inherits: the runner at
-`/runner.mjs` as entrypoint, `USER node`, no `VOLUME`, a read-only root at run time.
+The base keeps the contract every project image inherits: its entrypoint loads
+`/usr/local/lib/plimsoll-runner-guard.so` into `node /runner.mjs` before the runner
+reads a plan; `USER node`, no `VOLUME`, and a read-only root at run time also apply.
 Point a daemon at the image with `SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest`
 and a project whose step is `python3 main.py` runs through `RunProject` unchanged.
 

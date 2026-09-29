@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	// runnerPath is the in-image project runner (docker/runner.mjs); the image must
-	// carry it.
-	runnerPath = "/runner.mjs"
+	// The image must carry both the project runner and its preloaded guard.
+	runnerPath      = "/runner.mjs"
+	runnerGuardPath = "/usr/local/lib/plimsoll-runner-guard.so"
 	// workDir is where a project run's files are written and its steps run. It lives
 	// under /tmp because /tmp is the only writable directory the policy grants.
 	// OpenShell v0.1.2 does not create a read_write path the image lacks (its
