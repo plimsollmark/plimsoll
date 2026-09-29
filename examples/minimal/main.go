@@ -1,9 +1,9 @@
 // Command minimal runs one JavaScript snippet in a sandbox and prints what ran,
 // where, and behind which isolation boundary.
 //
-// It needs no daemon, no docker, no credentials and no network. With
-// SANDBOX_PROVIDER unset it selects the in-process WASM provider so the example
-// works on a stock machine:
+// The run needs no daemon, docker, credentials or outbound network access.
+// Cloning and fetching Go dependencies may need network access. With
+// SANDBOX_PROVIDER unset it selects the in-process WASM provider:
 //
 //	go run ./examples/minimal
 //

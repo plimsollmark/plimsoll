@@ -34,15 +34,16 @@ pole at 5.96 seconds and fingerprints differently.
 
 **[Open the live run report ↗](https://plimsollmark.github.io/plimsoll/examples/oracle/index.html)**
 to replay both runs in the browser, read the controller the agent wrote, and see what
-the page deliberately does not claim. Every number on it came from one run you can
-reproduce with `make docker-images && go run ./examples/oracle`.
+the page deliberately does not claim. One execution of the example makes three
+sandbox runs: the accepted controller twice and the draft once. Reproduce them with
+`make docker-images && go run ./examples/oracle`.
 
 | More to look at | What it is |
 |---|---|
 | [Simulation replay pages, all eight simulators ↗](https://plimsollmark.github.io/plimsoll/examples/envs/index.html) | Every simulator in the sim image (shower, buck converter, ship heading, black hole orbit, relativistic rocket, satellite clock, double slit, cart-pole swing-up), each with a page that runs a failing and a passing hand-written controller through the sandbox and replays both trajectories with their fingerprints. |
 | [A controller in C, compiled in the sandbox ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html) | The same judge and cart-pole, with a swing-up controller written in C and compiled to WebAssembly by the run's own first step, so simulator and controller are both WebAssembly. The run report replays the swing-up and compares it with the JavaScript version tick by tick: the two differ in two forces, by a few representable doubles, and the fingerprint catches it while the motion stays bit-identical. Source and caveats in [its README](examples/wasm-controller/README.md); reproduce with `make docker-images && go run ./examples/wasm-controller`. |
 | [A buck converter controller in C ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html) | A power supply's control law written in C, the language converter firmware ships in, compiled to WebAssembly in the sandbox and judged holding 5 V through a load step. It calls no library function, so its trajectory is its JavaScript version's byte for byte in all four scenarios, and the page charts one of them tick by tick. Source and caveats in [its README](examples/wasm-buck/README.md); reproduce with `make docker-images && go run ./examples/wasm-buck`. |
-| [Same run, different sandboxes ↗](https://plimsollmark.github.io/plimsoll/examples/providers/index.html) | The oracle's run on a local container, E2B Firecracker and Docker Cloud Sandboxes: two isolation tiers, two Node versions, one fingerprint, the one the oracle page published. Reproduce with `go run ./examples/providers`. |
+| [Same run, different sandboxes ↗](https://plimsollmark.github.io/plimsoll/examples/providers/index.html) | The oracle's run under local `runc` and gVisor, an OpenShell gateway, E2B Firecracker and Docker Cloud Sandboxes: three isolation tiers, two Node versions, one fingerprint, the one the oracle page published. Reproduce the configured rows with `go run ./examples/providers`; the cloud rows are billed. |
 | [One sandbox, five calls ↗](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html) | A session on an NVIDIA OpenShell sandbox: a failing test, a patch, the test passing without the files being sent again, and a leftover process that is gone by the next call. Every call's record is signed and chained; the verifier accepts the bundle and refuses it with a call dropped or a byte changed. Reproduce with `go run ./examples/sessions` and a gateway. |
 | [The efficiency advisor's report ↗](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html) | One measured run, rendered: the same question asked as 13 calls and then as 1, and the finding that names the route to batch on. |
 | [Twelve interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | The execution model, the providers, the API broker, and integrating with an agent. Static pages: no network calls, no analytics, no third-party scripts. |
@@ -81,8 +82,9 @@ See [docs/capability-grants.md](docs/capability-grants.md).
 
 ## Run something in one minute
 
-No daemon, no docker, no credentials, no network: this selects the in-process WASM
-provider.
+Cloning and fetching Go dependencies may use the network. The example itself needs
+no daemon, docker, credentials or outbound network access: it selects the in-process
+WASM provider.
 
 ```sh
 git clone https://github.com/plimsollmark/plimsoll && cd plimsoll

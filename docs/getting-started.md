@@ -4,8 +4,9 @@ By the end of this page you will have a `plimsolld` that authenticates you, a Go
 program of your own that runs a snippet through it and states the isolation floor
 it requires, and you will have watched that program be refused before anything ran
 when the daemon could not meet the floor, then satisfied when you switched to a
-stronger tier. Everything up to the last step runs on one machine with no docker,
-no account and no network. Nothing here spends money; the E2B provider is not part
+stronger tier. Steps 2 through 4 use only your machine and loopback, with no docker
+or service account. Cloning and building may download code; the last step installs
+gVisor and needs docker. Nothing here spends money; the E2B provider is not part
 of this page.
 
 You need Go 1.26.6 or newer and git. The module's own floor is lower, so a project
@@ -37,6 +38,9 @@ reminder that a running daemon does not notice file edits. There is no daemon ye
 so move on. [docs/callers.md](callers.md) covers rotation, revocation and import.
 
 ## 3. Start the daemon
+
+Open a second terminal in the clone directory. Keep the first terminal open so it
+still holds `TOKEN` from step 2.
 
 ```sh
 SANDBOX_PROVIDER=wasm \
@@ -108,7 +112,7 @@ func main() {
 }
 ```
 
-Run it in a second terminal, in the same shell that holds `TOKEN`:
+Run it in the first terminal, which still holds `TOKEN`:
 
 ```sh
 PLIMSOLL_CALLER_TOKEN="$TOKEN" go run ./hello
@@ -148,8 +152,9 @@ level=INFO msg="code run" op=javascript caller=tutorial code_bytes=18 grant_prof
 Stop the daemon (Ctrl-C). The program and the caller stay as they are; only the
 daemon's configuration changes.
 
-**Container tier.** With docker installed, pull and build the two images the
-provider verifies at startup, then restart under the docker provider:
+**Container tier.** With docker installed, prepare the images with `make
+docker-images`. The provider checks its snippet and project images at startup, then
+you can restart under the docker provider:
 
 ```sh
 make docker-images

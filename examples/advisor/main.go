@@ -54,14 +54,14 @@ const (
 // page is served from the repository's docs/ tree on GitHub Pages, so the links are
 // absolute: the same file must read correctly from a local path.
 const (
-	pageURL    = "https://plimsollmark.github.io/plimsoll/examples/advisor/report.html"
-	cardURL    = "https://plimsollmark.github.io/plimsoll/social/cards/advisor-example.png"
-	repoURL    = "https://github.com/plimsollmark/plimsoll"
-	sourceURL  = repoURL + "/blob/main/examples/advisor/main.go"
-	readmeURL  = repoURL + "#efficiency-advisor"
-	lessonURL  = "https://plimsollmark.github.io/plimsoll/trainers/advisor.html"
-	lessonsURL = "https://plimsollmark.github.io/plimsoll/trainers/"
-	homeURL    = "https://plimsollmark.github.io/plimsoll/"
+	pageURL        = "https://plimsollmark.github.io/plimsoll/examples/advisor/report.html"
+	cardURL        = "https://plimsollmark.github.io/plimsoll/social/cards/advisor-example.png"
+	repoURL        = "https://github.com/plimsollmark/plimsoll"
+	sourceURL      = repoURL + "/blob/main/examples/advisor/main.go"
+	advisorDocsURL = repoURL + "/blob/main/docs/efficiency-advisor.md"
+	lessonURL      = "https://plimsollmark.github.io/plimsoll/trainers/advisor.html"
+	lessonsURL     = "https://plimsollmark.github.io/plimsoll/trainers/"
+	homeURL        = "https://plimsollmark.github.io/plimsoll/"
 )
 
 // perItemLoop is the agent's first attempt. It is not wrong, and that is the point:
@@ -640,20 +640,20 @@ func writeReport(path string, runs []outcome, rows []compareRow) error {
 	}
 	sameSize, perItem := runs[0].largestSameSizeGroup("/items/*")
 	data := struct {
-		Generated  string
-		Runs       []runView
-		Rows       []compareRow
-		SameSize   int
-		PerItem    int
-		PageURL    string
-		CardURL    string
-		RepoURL    string
-		SourceURL  string
-		ReadmeURL  string
-		LessonURL  string
-		LessonsURL string
-		HomeURL    string
-	}{time.Now().Format("2006-01-02"), views, rows, sameSize, perItem, pageURL, cardURL, repoURL, sourceURL, readmeURL, lessonURL, lessonsURL, homeURL}
+		Generated      string
+		Runs           []runView
+		Rows           []compareRow
+		SameSize       int
+		PerItem        int
+		PageURL        string
+		CardURL        string
+		RepoURL        string
+		SourceURL      string
+		AdvisorDocsURL string
+		LessonURL      string
+		LessonsURL     string
+		HomeURL        string
+	}{time.Now().Format("2006-01-02"), views, rows, sameSize, perItem, pageURL, cardURL, repoURL, sourceURL, advisorDocsURL, lessonURL, lessonsURL, homeURL}
 	var buf bytes.Buffer
 	if err := reportTemplate.Execute(&buf, data); err != nil {
 		return err
@@ -772,11 +772,11 @@ about {{ms .AddedLatency}} ms beyond one call <span class="muted">(modelled, not
 <p class="muted">Bytes matched here only because the collection call was already being made in run 1; in general the replacement call moves bytes of its own, which is why the number is a gross total and not a saving.</p>
 
 <h2>Run it yourself</h2>
-<p>From a checkout of the repository, with Go installed. No docker, no credentials, no model, and nothing leaves your machine:</p>
+<p>With Go installed, clone the repository and fetch its dependencies. The example run then needs no docker, credentials, model or outbound network access:</p>
 <pre>git clone {{.RepoURL}}.git && cd plimsoll
 go run ./examples/advisor                    # the run, in the terminal
 go run ./examples/advisor -report out.html   # the same run as a page like this one</pre>
-<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="{{.SourceURL}}">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="{{.ReadmeURL}}">EXTERNAL · source repo ↗ README, efficiency advisor</a>.</p>
+<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="{{.SourceURL}}">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="{{.AdvisorDocsURL}}">EXTERNAL · source repo ↗ efficiency advisor docs</a>.</p>
 
 <h2>What this page claims, and what it does not</h2>
 <ul>

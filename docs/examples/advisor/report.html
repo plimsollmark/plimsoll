@@ -134,11 +134,11 @@ about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> 
 <p class="muted">Bytes matched here only because the collection call was already being made in run 1; in general the replacement call moves bytes of its own, which is why the number is a gross total and not a saving.</p>
 
 <h2>Run it yourself</h2>
-<p>From a checkout of the repository, with Go installed. No docker, no credentials, no model, and nothing leaves your machine:</p>
+<p>With Go installed, clone the repository and fetch its dependencies. The example run then needs no docker, credentials, model or outbound network access:</p>
 <pre>git clone https://github.com/plimsollmark/plimsoll.git && cd plimsoll
 go run ./examples/advisor                    # the run, in the terminal
 go run ./examples/advisor -report out.html   # the same run as a page like this one</pre>
-<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/advisor/main.go">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="https://github.com/plimsollmark/plimsoll#efficiency-advisor">EXTERNAL · source repo ↗ README, efficiency advisor</a>.</p>
+<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/advisor/main.go">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/efficiency-advisor.md">EXTERNAL · source repo ↗ efficiency advisor docs</a>.</p>
 
 <h2>What this page claims, and what it does not</h2>
 <ul>
