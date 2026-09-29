@@ -13,7 +13,9 @@ gate is the project's full check, `make audit`. In CI:
   matches its source, and <dfn>*govulncheck*</dfn>, Go's vulnerability scanner.
 - It then runs `make docker-suite` with the images prepared, so the docker,
   <dfn>*seccomp*</dfn>, <dfn>*broker*</dfn> and smoke tests, which need a real docker
-  daemon, run on every push under <dfn>*runc*</dfn>, docker's default runtime. Seccomp
+  daemon, run on every push to `main` and every pull request under
+  <dfn>*runc*</dfn>, docker's default runtime. A push to another branch runs nothing
+  until it has a pull request. Seccomp
   is the kernel feature that limits which requests a process may make to the kernel;
   the broker is the part of plimsoll that makes API calls for sandboxed code. That
   second job is in required mode: a missing image or a skipped test fails it rather
@@ -24,6 +26,13 @@ gate is the project's full check, `make audit`. In CI:
 
 Race tests run in the plain audit job; the two docker-suite jobs run their isolation
 tests without the race detector.
+
+Both docker-suite jobs run on the hosted runners' classic image store, where docker
+states no software identity, so there the identity tests check only that a required
+software rule is refused. The half that compares the identity with the one docker
+itself reports for the image needs the containerd image store and Docker Engine 28.1 or later
+([docs/placement.md](docs/placement.md)). The runners have neither, so that half runs
+only in a local `make audit DOCKER=1` on a machine that has both.
 
 What CI does not run is <dfn>*E2B*</dfn>, a hosted service that runs each sandbox in a
 <dfn>*microVM*</dfn> (a small virtual machine made for one run). That suite needs a
@@ -51,16 +60,18 @@ pull request and paste the result into the description.
 It refuses to start unless buf, golangci-lint and govulncheck are the exact versions
 in [gate-tools.versions](gate-tools.versions), because those three are not Go
 dependencies and nothing else fixes their versions. `make tools` installs exactly
-those versions; `make tools-check` runs the comparison on its own. If your run
-reports a mismatch, that is the gate working: a lint result from a different linter
-is not the same result.
+those versions into Go's bin directory (`GOBIN`, or `bin` under `go env GOPATH`) and
+then runs the comparison, which `make tools-check` also runs on its own. That
+directory has to come first on your PATH: a different copy found earlier wins, and
+the check says so and names the directory. If your run reports a mismatch, that is
+the gate working: a lint result from a different linter is not the same result.
 
 The suites that need real infrastructure (a docker daemon, a paid cloud account) are
 opt-in:
 
 ```sh
-make docker-images                   # pull node:22-alpine, build plimsoll/sandbox:latest
-make audit DOCKER=1                  # adds docker/seccomp/broker/smoke tests; skips are failures
+make docker-images                   # pull node:22-alpine, build the four plimsoll/sandbox images
+make audit DOCKER=1                  # adds the docker suite; skips are failures
 E2B_API_KEY=... make audit E2B=1     # adds the live E2B microVM suite
 DOCKER_SBX_TOKEN=... DOCKER_SBX_USERNAME=... SANDBOX_DOCKERCLOUD_API_URL=... \
   SANDBOX_DOCKERCLOUD_IMAGE=... make audit DOCKERCLOUD=1  # adds the live Docker Cloud Sandboxes suite
@@ -73,8 +84,13 @@ the environment and no CI job runs either suite. The <dfn>*OpenShell*</dfn> suit
 (NVIDIA's agent sandbox runtime) is free but needs a running OpenShell gateway, so no CI
 job runs it either; its settings are in [docs/openshell.md](docs/openshell.md).
 
-`make help` lists individual targets. Some Docker tests need the project image, the
-one multi-file project runs use: `docker build -t plimsoll/sandbox:latest docker/`.
+`make help` lists individual targets. The docker suite needs all five images `make
+docker-images` produces: `node:22-alpine` for snippets, `plimsoll/sandbox` for
+projects, and the `-python`, `-sim` and `-wasm-cc` images derived from it. Without them
+those tests skip in an ordinary `make audit` and fail under `make audit DOCKER=1`.
+Run the gate as a non-root user: two runner tests skip as root, because they check
+that a project step cannot open the runner's descriptors and memory, and root can open
+any process's.
 
 Generated code in `gen/` is committed, and the gate checks that it still matches its
 source. If you touch `proto/`, run `make generate` and commit the result, or the gate

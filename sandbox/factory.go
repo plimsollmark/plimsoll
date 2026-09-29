@@ -49,7 +49,8 @@ func (p Provider) EnsureReady(ctx context.Context) error {
 //	SANDBOX_PROVIDER=dockercloud # Docker Cloud Sandboxes microVM (see dockercloud.go;
 //	                             # verified against the live service 2026-09-24)
 //	SANDBOX_PROVIDER=wasm     # in-process QuickJS/WASM (snippet-only)
-//	unset / anything else     # Disabled: refuses to execute
+//	unset                     # Disabled: refuses to execute
+//	anything else             # an error: an unknown name never falls back to Disabled
 //
 // The per-run resource envelope (SANDBOX_MEMORY_MB / SANDBOX_CPUS /
 // SANDBOX_PIDS / SANDBOX_DISK_MB) is translated into the selected provider's

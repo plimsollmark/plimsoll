@@ -28,10 +28,14 @@ type SessionConfig struct {
 
 // tombstoneTTL is how long a session that ended by itself stays collectable: its
 // owner's CloseSession still gets the final call count and last record, which a
-// harness needs to prove the chain was not cut.
+// harness needs to prove the chain was not cut. It only has to outlast the gap
+// between the end and a running client's close; ten minutes is a judgment, not a
+// measurement, and the rate limit on OpenSession bounds how many can pile up.
 const tombstoneTTL = 10 * time.Minute
 
-// sessionSuspendBudget bounds an idle suspend.
+// sessionSuspendBudget bounds an idle suspend. It sits above the provider's own
+// bound, so a slow stop is the provider's to report (openshell allows 60 s for a stop
+// and its wait, stopBudget); the margin beyond that is a judgment, not a measurement.
 const sessionSuspendBudget = 90 * time.Second
 
 // sessionEntry is one session in the registry. calls, last and the slot change only

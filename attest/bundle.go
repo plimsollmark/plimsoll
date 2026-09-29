@@ -163,10 +163,11 @@ func VerifyBundle(entries []Entry, v *Verifier) (Report, error) {
 // what was signed rather than from the stored response.
 func verifyEntries(entries []Entry, v *Verifier) (Report, []sandbox.RunRecord, error) {
 	type chain struct {
-		calls  uint64
-		last   string
-		closed bool
-		index  int
+		calls   uint64
+		last    string
+		closed  bool
+		index   int
+		version int // one daemon serves one record version, so a session has one
 	}
 	var rep Report
 	recs := make([]sandbox.RunRecord, len(entries))
@@ -220,13 +221,18 @@ func verifyEntries(entries []Entry, v *Verifier) (Report, []sandbox.RunRecord, e
 		}
 		ch := chains[rec.Session]
 		if ch == nil {
-			ch = &chain{index: len(rep.Sessions)}
+			ch = &chain{index: len(rep.Sessions), version: rec.Version}
 			chains[rec.Session] = ch
 			rep.Sessions = append(rep.Sessions, SessionReport{Session: rec.Session})
 		}
 		switch {
 		case ch.closed:
 			return fail(fmt.Errorf("%w: a call after session %s was closed", ErrChain, rec.Session))
+		case rec.Version != ch.version:
+			// A version-1 link states no software, so a mixed chain could hold a call
+			// that says nothing about what ran while the chain still verifies.
+			return fail(fmt.Errorf("%w: session %s call %d is record version %d, the session's first is %d",
+				ErrChain, rec.Session, rec.Sequence, rec.Version, ch.version))
 		case rec.Sequence != ch.calls+1:
 			return fail(fmt.Errorf("%w: session %s call %d follows call %d", ErrChain, rec.Session, rec.Sequence, ch.calls))
 		case rec.PreviousSHA256 != ch.last:
@@ -254,13 +260,12 @@ func matchStored(e Entry, rec sandbox.RunRecord) error {
 	if err != nil {
 		return err
 	}
-	switch {
-	case record.RunRequestDigest(req) != rec.RequestSHA256:
-		return fmt.Errorf("%w: the request", ErrStored)
-	case record.ResultDigest(resp) != rec.ResultSHA256:
-		return fmt.Errorf("%w: the result", ErrStored)
-	case resp.GetSandbox() != rec.Provider || resp.GetIsolation() != rec.Isolation:
-		return fmt.Errorf("%w: the evidence", ErrStored)
+	// The same check the signer ran and the live client runs: the digests, the
+	// evidence, the environment and selected software the response states, and the
+	// request's software rule. Anything less accepts a stored exchange the client
+	// would have refused.
+	if _, err := record.CheckExchange(req, resp); err != nil {
+		return fmt.Errorf("%w: %w", ErrStored, err)
 	}
 	// The stored response carries its own copy of the record. Every field of it must
 	// be the signed record's, not only its digest field: a reader of the bundle, and

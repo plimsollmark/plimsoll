@@ -26,8 +26,9 @@ GATE_TOOLS := gate-tools.versions
 .PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
-## audit prerequisite: node on PATH; runnerwire's TestProjectRunnerAlwaysEmitsCompleteBoundedJSON
-##   and TestProjectRunnerReportsTruncationFlags skip without it
+## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
+##   TestProjectRunnerAlwaysEmitsCompleteBoundedJSON and TestProjectRunnerReportsTruncationFlags
+##   skip without node or as root (root defeats the runner guard they test)
 audit: tools-check build vet race lint buf vuln
 	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
@@ -99,13 +100,16 @@ docker-images:
 # without a key; they belong to their own suites, and here a skip must mean docker.
 # The dockercloud unit tests (a fake Connect server, and the exec wrapper under the
 # toolchain image's busybox) match 'Docker' and run here. The status file, rather
-# than a pipe, keeps the go test exit code under POSIX sh.
-## docker-suite: the real docker/seccomp/broker/smoke tests; a missing daemon, image or skipped test FAILS
+# than a pipe, keeps the go test exit code under POSIX sh. OracleAttack is the oracle's
+# anti-forgery set, which needs the sim image and matches none of the other names; the
+# ./docker package holds the gVisor installer's offline-bundle check, which skips
+# without zstd and so ran in no required suite before.
+## docker-suite: the real docker/seccomp/broker/smoke tests, the oracle anti-forgery tests and the gVisor installer check; a missing daemon, image, tool or skipped test FAILS
 docker-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "docker-suite: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     $(NO_PAID_KEYS) go test ./sandbox -run 'Docker|RunProject|Broker|Smoke' -skip 'Live' -count=1 -v; \
+	     $(NO_PAID_KEYS) go test ./sandbox ./docker -run 'Docker|RunProject|Broker|Smoke|OracleAttack|Installer' -skip 'Live' -count=1 -v; \
 	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/docker-suite.log; then \
 	   echo "docker-suite: required coverage was skipped:" >&2; \
@@ -199,6 +203,7 @@ tools:
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$$(sed -n 's/^golangci-lint=//p' $(GATE_TOOLS))
 	go install golang.org/x/vuln/cmd/govulncheck@$$(sed -n 's/^govulncheck=//p' $(GATE_TOOLS))
 	@echo "codegen plugins are pinned separately, by go.mod tool directives"
+	@$(MAKE) --no-print-directory tools-check
 
 ## tools-check: fail unless the installed gate tools are the pinned versions
 tools-check:
@@ -212,7 +217,9 @@ tools-check:
 	want="$$(sed -n 's/^govulncheck=//p' $(GATE_TOOLS))"; \
 	got="$$(govulncheck -version 2>/dev/null | sed -n 's/^Scanner: govulncheck@//p')"; \
 	[ "$$got" = "$$want" ] || { echo "govulncheck: have '$$got', pinned $$want" >&2; fail=1; }; \
-	[ $$fail -eq 0 ] || { echo "gate tools do not match $(GATE_TOOLS); run 'make tools'" >&2; exit 1; }; \
+	bin="$$(go env GOBIN 2>/dev/null)"; gopath="$$(go env GOPATH 2>/dev/null)"; \
+	[ -n "$$bin" ] || bin="$${gopath:+$$gopath/bin}"; [ -n "$$bin" ] || bin='$$(go env GOPATH)/bin'; \
+	[ $$fail -eq 0 ] || { echo "gate tools do not match $(GATE_TOOLS). 'make tools' installs the pinned versions into $$bin, which must come first on PATH (export PATH=\"$$bin:\$$PATH\"); a copy found earlier on PATH wins" >&2; exit 1; }; \
 	echo "gate tools match $(GATE_TOOLS)"
 
 ## help: list targets

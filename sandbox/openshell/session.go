@@ -14,6 +14,7 @@ import (
 
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
@@ -515,7 +516,7 @@ func (s *session) callError(runCtx context.Context, err error) error {
 	if end := s.Err(); end != nil {
 		return end
 	}
-	if ctxErr := runCtx.Err(); ctxErr != nil {
+	if ctxErr := deadline.Expired(runCtx); ctxErr != nil {
 		return ctxErr
 	}
 	return err
@@ -576,7 +577,7 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 	if out.exited {
 		return res, nil
 	}
-	if runCtx.Err() == context.DeadlineExceeded && s.Err() == nil {
+	if deadline.Expired(runCtx) == context.DeadlineExceeded && s.Err() == nil {
 		// The call's own deadline: its process group is killed, and the sweep that
 		// follows kills anything that detached.
 		res.TimedOut, res.ExitCode = true, 124

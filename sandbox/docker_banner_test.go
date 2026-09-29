@@ -20,7 +20,7 @@ func TestSmokeProbeScriptReadsBannerOnlyWhenAsked(t *testing.T) {
 		t.Fatal("a probe built without the banner still contains the dmesg read")
 	}
 	for _, s := range []string{with, without} {
-		for _, want := range []string{`/proc/mounts`, `/plimsoll-smoke`, `JSON.stringify({ rootWritable, mounts, writable, pids, banner, socket })`} {
+		for _, want := range []string{`/proc/mounts`, `/plimsoll-smoke`, `/proc/net/dev`, `JSON.stringify({ rootWritable, mounts, writable, pids, interfaces, banner, socket })`} {
 			if !strings.Contains(s, want) {
 				t.Fatalf("probe lost %q", want)
 			}

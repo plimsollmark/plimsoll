@@ -17,7 +17,9 @@ import (
 
 // Per-run host-API budgets. A grant bounds WHICH routes a run may call; these
 // bound HOW MUCH, so a hostile run cannot turn its capability into an API flood
-// or bulk-exfiltration channel.
+// or bulk-exfiltration channel. The two body sizes are judgments, not measurements:
+// each holds an ordinary JSON API body, and a larger one is refused, never cut short
+// (an over-cap response is a 502 to the guest).
 const (
 	maxHostRequestBytes  = 1 << 20 // one JSON request body
 	maxHostResponseBytes = 4 << 20 // one response body

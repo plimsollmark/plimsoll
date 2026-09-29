@@ -161,3 +161,37 @@ func TestCheckTmpMount(t *testing.T) {
 		}
 	}
 }
+
+// TestSmokeTestChecksTheTmpMount feeds the startup smoke test, with the disk cap on,
+// the /tmp mount line a gateway would give if its driver kept the config and dropped
+// the mount, or mounted it wrong. The read-back cannot see any of these; only the
+// probe's own reading of /proc/mounts can, so each must refuse startup.
+func TestSmokeTestChecksTheTmpMount(t *testing.T) {
+	const good = "tmpfs /tmp tmpfs rw,nosuid,nodev,noexec,relatime,size=65536k 0 0" // measured on v0.1.2, 2026-09-29
+	for _, tc := range []struct {
+		name, mount, expect string
+	}{
+		{"measured mount", good, ""},
+		{"no mount", "", "/tmp is not a tmpfs"},
+		{"overlay, the driver dropped the mount", "overlay /tmp overlay rw,relatime 0 0", "/tmp is not a tmpfs"},
+		{"executable", strings.Replace(good, "noexec,", "", 1), "without noexec"},
+		{"another size", strings.Replace(good, "size=65536k", "size=131072k", 1), "without size=65536k"},
+	} {
+		f, p := newFake(t)
+		withDiskCap(t, f, p, 64)
+		p.killWait = 500 * time.Millisecond
+		s := &smokeFake{report: goodProbeReport()}
+		s.report["tmpMount"] = tc.mount
+		f.run = s.run(t)
+		err := p.SmokeTest(context.Background())
+		if tc.expect == "" {
+			if err != nil {
+				t.Errorf("%s: %v", tc.name, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.expect) {
+			t.Errorf("%s: SmokeTest = %v, want an error mentioning %q", tc.name, err, tc.expect)
+		}
+	}
+}

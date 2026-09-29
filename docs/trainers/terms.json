@@ -294,7 +294,7 @@
       "anchor": "isolation-tier",
       "variants": ["isolation tiers", "tier", "tiers"],
       "chapter": "what-runs-your-container",
-      "definition": "How strong the wall around a run is, reported as one of four levels, weakest first: process, container, kernel, vm."
+      "definition": "How strong the wall around a run is, reported as one of four levels, weakest first: process, container, kernel, vm; the disabled provider reports none, and a provider that has not yet checked its runtime reports unknown."
     },
     {
       "term": "Kata Containers",
@@ -401,13 +401,13 @@
       "term": "preflight",
       "anchor": "preflight",
       "variants": ["preflights"],
-      "definition": "The configuration check a provider runs at startup and on each readiness poll: for docker it confirms the images and the runtime exist; for the cloud providers it checks settings only."
+      "definition": "The configuration check a provider runs at startup and on each readiness poll: for docker it confirms the images and the runtime exist; for openshell it asks the gateway which driver it runs; for e2b and dockercloud it checks settings only."
     },
     {
       "term": "principal",
       "anchor": "principal",
       "variants": ["principals"],
-      "definition": "The authenticated identity a request comes from; in plimsolld, the caller id listed in the clients file."
+      "definition": "The authenticated identity a request comes from; in plimsolld, the caller id listed in the clients file, or static for the one caller of a shared PLIMSOLL_TOKEN."
     },
     {
       "term": "process",
@@ -438,7 +438,7 @@
       "term": "provider",
       "anchor": "provider",
       "variants": ["providers"],
-      "definition": "The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud or openshell."
+      "definition": "The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud, openshell, or disabled, which runs nothing and is what an unset SANDBOX_PROVIDER selects."
     },
     {
       "term": "QuickJS",

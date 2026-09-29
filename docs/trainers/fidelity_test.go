@@ -27,7 +27,65 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
+
+// TestArchitectureProviderTiers anchors the explorer's data to the Go providers,
+// independently of the browser check that imports the same model as the page.
+func TestArchitectureProviderTiers(t *testing.T) {
+	raw, err := os.ReadFile("architecture-model.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := regexp.MustCompile(`(?ms)^export const providers = \{\s*(.*?)^\};`).FindSubmatch(raw)
+	if registry == nil {
+		t.Fatal("architecture model has no providers object")
+	}
+	want := map[string]sandbox.IsolationClass{
+		"docker":      (&sandbox.DockerSandbox{}).IsolationClass(),
+		"wasm":        (&sandbox.WasmSandbox{}).IsolationClass(),
+		"e2b":         (&sandbox.E2B{}).IsolationClass(),
+		"dockercloud": (&sandbox.DockerCloud{}).IsolationClass(),
+		"disabled":    (sandbox.Disabled{}).IsolationClass(),
+		// These describe verified configurations. Their zero values have not
+		// passed Preflight: runsc needs a verified runtime, OpenShell a driver check.
+		"runsc":     sandbox.IsolationKernel,
+		"openshell": sandbox.IsolationContainer,
+	}
+	// The registry uses flat object literals. Consume the entire object so a new
+	// entry or a syntax change cannot silently disappear from this check.
+	entry := regexp.MustCompile(`(?s)^\s*([A-Za-z][A-Za-z0-9_]*):\s*\{([^{}]*)\}\s*,?`)
+	tier := regexp.MustCompile(`\btier:\s*'([^']+)'`)
+	rest := string(registry[1])
+	seen := map[string]bool{}
+	for strings.TrimSpace(rest) != "" {
+		match := entry.FindStringSubmatch(rest)
+		if match == nil {
+			t.Fatalf("unparsed provider entry: %s", rest)
+		}
+		rest = rest[len(match[0]):]
+		name := match[1]
+		if seen[name] {
+			t.Fatalf("duplicate provider %q", name)
+		}
+		seen[name] = true
+		expected, ok := want[name]
+		if !ok {
+			t.Fatalf("provider %q has no Go isolation anchor", name)
+		}
+		tiers := tier.FindAllStringSubmatch(match[2], -1)
+		if len(tiers) != 1 {
+			t.Fatalf("provider %q must declare exactly one tier, got %d", name, len(tiers))
+		}
+		if got := tiers[0][1]; got != expected.String() {
+			t.Errorf("providers.%s.tier = %q, Go provider reports %q", name, got, expected)
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("architecture model has no provider entries")
+	}
+}
 
 // trainerProse is every page a reader can reach, including the two that live
 // outside this directory. Missing files are skipped: the public export does not

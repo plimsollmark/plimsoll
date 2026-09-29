@@ -39,7 +39,8 @@ project's full local check), and the isolation evidence each run reports.
     hands each container to, which builds the walls around it), and that `runsc`
     resolves there to an executable named `runsc`, then launching runs under it.
   - On top of that, a startup smoke test proves from inside a container its own mount
-    and write behavior, and the process limit where the runtime enforces it: the
+    and write behavior, that loopback is its only network interface, and the process
+    limit where the runtime enforces it: the
     container's <dfn>*cgroup*</dfn> (the kernel feature that caps how many processes, and
     how much memory and CPU, a group of processes may use) under <dfn>*runc*</dfn>,
     docker's default runtime, and the sandbox's host cgroup under <dfn>*runsc*</dfn>, the

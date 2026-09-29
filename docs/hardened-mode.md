@@ -14,12 +14,17 @@ unless all of the following are verifiably in force:
 - TLS on any non-loopback listener (the metrics listener included), that is, any
   listener not bound to a loopback address such as `127.0.0.1`, `::1` or `localhost`,
   which only this machine can reach;
-- <dfn>*pinned*</dfn> images, each fixed to one exact version (usually by a hash of its
-  content), with no `unconfined` <dfn>*seccomp*</dfn>: seccomp is the kernel feature
-  that limits which requests a container may make to the kernel, and `unconfined`
-  switches it off;
+- an execution surface that cannot change under the daemon. For docker and Docker Cloud
+  that means <dfn>*pinned*</dfn> images (`SANDBOX_REQUIRE_PINNED_IMAGES=1`), each fixed
+  to one exact version by a hash of its content, and for docker also no `unconfined`
+  <dfn>*seccomp*</dfn>: seccomp is the kernel feature that limits which requests a
+  container may make to the kernel, and `unconfined` switches it off.
+  <dfn>*E2B*</dfn>, a hosted service that runs each sandbox in a small virtual machine,
+  offers no such pinning, so there it means an explicit `E2B_TEMPLATE` rather than the
+  implicit default: a named template, not a fixed version;
 - an explicit per-run resource envelope (the memory, CPU and other limits each run
-  gets) with an aggregate memory budget, the total memory all runs at once may use;
+  gets), and for docker, whose runs share the daemon's machine, an aggregate memory
+  budget, the total memory all runs at once may use;
 - per-caller rate limiting;
 - a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive). A rate limit
   bounds what a caller starts, not the slots its long runs or open

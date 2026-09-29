@@ -2,8 +2,8 @@ package trainers
 
 // Every trainer page carries Open Graph tags so that a link to it renders with a
 // picture wherever it is shared. The tags and the card image are generated from the
-// page's own <title> and description by docs/social/gen-cards.mjs, which is the whole
-// point: there is no second copy of the text to maintain, and this test fails if
+// page's own <title> and description by the maintainers' card generator, which is the
+// whole point: there is no second copy of the text to maintain, and this test fails if
 // somebody edits a title without regenerating.
 //
 // The card image referenced by each page must also exist in the tree, so a rename
@@ -38,7 +38,7 @@ func ogTags(t *testing.T, page, doc string) map[string]string {
 		tags[m[1]] = html.UnescapeString(m[2])
 	}
 	if len(tags) == 0 {
-		t.Fatalf("%s: no og: tags; regenerate with docs/social/gen-cards.mjs", page)
+		t.Fatalf("%s: no og: tags; the page's social card needs regenerating (docs/trainers/README.md, Editing a trainer)", page)
 	}
 	return tags
 }

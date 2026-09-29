@@ -42,8 +42,10 @@ response it got (`record.Check`); a mismatch is `DataLoss` wrapping
 `record.ErrMismatch`, with the result still returned, because the run may have
 executed. A response with no record is refused the same way (`DataLoss` wrapping
 `record.ErrNoRecord`): every daemon answer carries one. `Result.Record`,
-`ProjectResult.Record` and `ModuleResult.Record` hold the checked record; they are nil
-only from an in-process provider, which has no daemon to state one. Nothing a daemon
+`ProjectResult.Record` and `ModuleResult.Record` hold the checked record. They are nil
+from an in-process provider, which has no daemon to state one, and when the check
+failed: the result then comes back with the `DataLoss` error, and no record, since
+the one the daemon sent did not check. Nothing a daemon
 executes depends on the record, so adding it did not change the <dfn>*protocol
 number*</dfn>: the version every request states, which goes up only when a new request
 field changes what a daemon may execute.
@@ -200,11 +202,14 @@ uses the standard library only (Ed25519, SHA-256, JSON).
   and reads it back as one particular NaN, so a module output holding any other NaN
   would no longer match its signed digest. Verification:
   - checks every signature;
-  - recomputes both content digests from the stored messages;
+  - checks each stored exchange exactly as the client checked it live: both content
+    digests recomputed from the stored messages, the provider, tier, environment and
+    selected software the stored response states, and the request's software rule;
   - requires the record the stored response carries to equal the signed one in every
     field;
-  - checks each session's chain: calls numbered from 1 with no gap, each naming the
-    record before it, and a close whose count and last record match.
+  - checks each session's chain: one record version throughout (one daemon served it),
+    calls numbered from 1 with no gap, each naming the record before it, and a close
+    whose count and last record match.
 
   A chain without a close fails, because a chain whose last calls were cut off looks
   exactly like an ended session. A session closed before any call is its close alone,

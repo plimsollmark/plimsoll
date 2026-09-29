@@ -1023,6 +1023,8 @@ func TestSmokeTestAgainstFake(t *testing.T) {
 		{"home writable", func(s *smokeFake) { s.report["writable"] = []string{"/tmp", "/sandbox"} }, "outside /tmp"},
 		{"egress open", func(s *smokeFake) { s.report["egress"] = map[string]string{"tcp 1.1.1.1:443": "open"} }, "OPEN"},
 		{"no memory limit", func(s *smokeFake) { s.report["memoryMax"] = "max" }, "memory.max"},
+		{"external interface", func(s *smokeFake) { s.report["interfaces"] = []string{"lo", "eth0"} }, "not loopback alone"},
+		{"no interfaces reported", func(s *smokeFake) { delete(s.report, "interfaces") }, "not loopback alone"},
 		{"survives the cancel", func(s *smokeFake) { s.surviveKill = true }, "left 2 of its processes"},
 	} {
 		f, p := newFake(t)
@@ -1234,5 +1236,23 @@ func TestClockSkew(t *testing.T) {
 	}
 	if _, ok := clockSkew(issued, ready, nil); ok {
 		t.Error("a missing creation time measured a skew")
+	}
+}
+
+// lateTimer is a context whose deadline has passed but whose timer has not fired.
+type lateTimer struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c lateTimer) Deadline() (time.Time, bool) { return c.deadline, true }
+func (c lateTimer) Err() error                  { return nil }
+
+// TestDeadlineAwareDoesNotWaitForTheTimer: a create that ends on the deadline before
+// the context's timer runs is still reported as the deadline, not as a transport
+// error (the rule is deadline.Expired, tested there).
+func TestDeadlineAwareDoesNotWaitForTheTimer(t *testing.T) {
+	if err := deadlineAware(lateTimer{context.Background(), time.Now().Add(-time.Millisecond)}, errors.New("stream reset")); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deadlineAware in the late-timer window: %v, want it to wrap DeadlineExceeded", err)
 	}
 }

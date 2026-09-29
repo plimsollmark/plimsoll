@@ -16,6 +16,8 @@ import (
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 	"github.com/tetratelabs/wazero/sys"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 )
 
 // REFERENCE SANDBOX (2026-06-19): this package is the canonical sandbox, and
@@ -227,7 +229,7 @@ func (w *WasmSandbox) RunJavaScript(ctx context.Context, req Request) (Result, e
 		CallTrace:       broker.traceSnapshot(),
 	}
 
-	if runCtx.Err() == context.DeadlineExceeded {
+	if deadline.Expired(runCtx) == context.DeadlineExceeded {
 		res.TimedOut = true
 		res.ExitCode = 124
 		return res, nil

@@ -32,18 +32,19 @@ as its processes, can still reach them.
 
 | Syscall(s) | Why denied |
 |---|---|
-| `ptrace`, `process_vm_readv`/`writev` | Read or inject into the memory of other processes running as the same user; no capability required. |
-| `io_uring_setup`/`enter`/`register` | A large kernel interface with a history of exploits; node does not need it (and disables it by default). |
+| `ptrace`, `process_vm_readv`, `process_vm_writev` | Read or inject into the memory of other processes running as the same user; no capability required. |
+| `io_uring_setup`, `io_uring_enter`, `io_uring_register` | A large kernel interface with a history of exploits; node does not need it (and disables it by default). |
 | `userfaultfd` | A standard building block for exploiting use-after-free bugs; available without privileges by default. |
 | `perf_event_open` | A broad kernel interface, restricted by a kernel setting (a sysctl) rather than a capability. |
+| `bpf` | Loads programs into the kernel; whether an unprivileged process may is a kernel setting (`kernel.unprivileged_bpf_disabled`), not a capability. |
 | `keyctl`, `add_key`, `request_key` | Access to the kernel keyring (its key store), reachable without privileges. |
-| `unshare`, `setns`, `CLONE_NEW*` clone flags | Create or enter <dfn>*namespaces*</dfn>, the kernel's separate views of files, processes and network that containers are built from: a lever for an <dfn>*escape*</dfn> from the sandbox or for gaining privileges. |
+| `unshare`, `setns`, `CLONE_NEW*` clone flags, `clone3` | Create or enter <dfn>*namespaces*</dfn>, the kernel's separate views of files, processes and network that containers are built from: a lever for an <dfn>*escape*</dfn> from the sandbox or for gaining privileges. `clone` is allowed only when its flags carry none of them; `clone3` passes its flags in memory the filter cannot read, so it fails with `ENOSYS` and the C library falls back to `clone`. |
 | `mount`, `umount2`, `pivot_root`, `chroot` | Change what the filesystem looks like to the process. |
 | `name_to_handle_at`, `open_by_handle_at` | Open files by handle, bypassing path checks. |
 | `modify_ldt` | Change the x86 local descriptor table (LDT), an exploitation aid the workload never uses. |
 | `kexec_load`, `init_module`, `finit_module`, `reboot`, `swapon` | Host-level operations with no place in a sandbox. |
-| `clock_settime`, `settimeofday`, `adjtimex` | Change the host's clock. |
-| SysV IPC (`shmget`/`semget`/`msgget`) | Old-style shared memory, semaphores and message queues between processes, unused by the workload. |
+| `clock_settime`, `clock_adjtime`, `settimeofday`, `adjtimex` | Change the host's clock. |
+| SysV IPC: `shmget`, `shmat`, `shmdt`, `shmctl`, `semget`, `semop`, `semtimedop`, `semctl`, `msgget`, `msgsnd`, `msgrcv`, `msgctl` | Old-style shared memory, semaphores and message queues between processes, unused by the workload. |
 | `socket(AF_ALG, ...)` | Sockets into the Linux kernel's cryptography code; unnecessary for the workload and implicated in container privilege escalation. |
 
 Every syscall not on the allowlist fails with `EPERM` (`defaultAction:
@@ -105,8 +106,11 @@ Empirically, against the real workload on a live daemon:
   I/O), a project stopping at its first failing step, and the unix-socket broker all
   pass under it.
 - `TestShippedSeccompProfileIsSaneAndTight` (no daemon needed) asserts the policy is
-  deny-by-default, keeps the essential syscalls, and withholds every syscall in the
-  denial table above, so an edit cannot silently loosen it.
+  deny-by-default and keeps the essential syscalls, and reads the denial table above
+  from this file: every syscall named there must be withheld, `clone` must be allowed
+  only under a mask covering every `CLONE_NEW*` flag it can carry, and sockets only for
+  `AF_UNIX`. A row the test cannot interpret fails it, so the table and the test cannot
+  drift apart.
 
 To re-audit after changing node or toolchain versions, re-run:
 

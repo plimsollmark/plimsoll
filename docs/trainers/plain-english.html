@@ -352,7 +352,7 @@
   var DEFINED = {
     "rpc": "Remote procedure call: one program sending a request to another over the network and getting an answer back.",
     "sandbox": "A place where code runs with something stopping it from reaching the rest of the machine.",
-    "isolation-tier": "How strong the wall around a run is, reported as one of four levels, weakest first: process, container, kernel, vm.",
+    "isolation-tier": "How strong the wall around a run is, reported as one of four levels, weakest first: process, container, kernel, vm; the disabled provider reports none, and a provider that has not yet checked its runtime reports unknown.",
     "process": "One running program, with its own memory and its own permissions.",
     "webassembly": "A portable bytecode format that runs inside a host program, which decides everything the code can reach: no files, network or system calls unless the host provides them.",
     "container": "A process started with its own view of files, network and other processes, while still sharing the host's operating-system kernel.",

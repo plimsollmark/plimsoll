@@ -642,7 +642,10 @@ func TestGrantPoolBacksOffForgedDemandPoolWide(t *testing.T) {
 	fw.mu.Lock()
 	refused := fw.refused
 	fw.mu.Unlock()
-	if refused > 2*maxForwardConns {
+	// At least a few refusals, as in the refusing-gateway test above, so the gateway was
+	// dialed at all and the upper bound is not met by a pool that never tries (measured:
+	// 18, the burst of maxForwardConns, in 5 of 5 runs on 2026-09-29).
+	if refused < 3 || refused > 2*maxForwardConns {
 		t.Fatalf("%d streams refused in a 3 s run with 2000 forged lines", refused)
 	}
 }

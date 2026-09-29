@@ -390,7 +390,7 @@
       </div>
       <div class="entry" id="isolation-tier">
         <dt>isolation tier</dt>
-        <dd>How strong the wall around a run is, reported as one of four levels, weakest first: process, container, kernel, vm. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+        <dd>How strong the wall around a run is, reported as one of four levels, weakest first: process, container, kernel, vm; the disabled provider reports none, and a provider that has not yet checked its runtime reports unknown. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
       </div>
       <div class="entry" id="kata-containers">
         <dt>Kata Containers</dt>
@@ -458,11 +458,11 @@
       </div>
       <div class="entry" id="preflight">
         <dt>preflight</dt>
-        <dd>The configuration check a provider runs at startup and on each readiness poll: for docker it confirms the images and the runtime exist; for the cloud providers it checks settings only.</dd>
+        <dd>The configuration check a provider runs at startup and on each readiness poll: for docker it confirms the images and the runtime exist; for openshell it asks the gateway which driver it runs; for e2b and dockercloud it checks settings only.</dd>
       </div>
       <div class="entry" id="principal">
         <dt>principal</dt>
-        <dd>The authenticated identity a request comes from; in plimsolld, the caller id listed in the clients file.</dd>
+        <dd>The authenticated identity a request comes from; in plimsolld, the caller id listed in the clients file, or static for the one caller of a shared PLIMSOLL_TOKEN.</dd>
       </div>
       <div class="entry" id="process">
         <dt>process</dt>
@@ -482,7 +482,7 @@
       </div>
       <div class="entry" id="provider">
         <dt>provider</dt>
-        <dd>The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud or openshell.</dd>
+        <dd>The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud, openshell, or disabled, which runs nothing and is what an unset SANDBOX_PROVIDER selects.</dd>
       </div>
       <div class="entry" id="quickjs">
         <dt>QuickJS</dt>

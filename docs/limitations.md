@@ -49,9 +49,12 @@ Part of the [plimsoll README](../README.md).
   you must hold out against) needs attestation, no tier here supplies it.
 - **There is no single control point across several daemons.** Each daemon is configured
   and controlled on its own.
-- **Nothing updates itself.** The images, the QuickJS build, gVisor, the code generators,
-  and the three tools the test gate runs are <dfn>*pinned*</dfn> instead: each is fixed to
-  one exact version, usually by its <dfn>*digest*</dfn> (a SHA-256 hash of its content), so
-  builds are repeatable but updates are manual. gVisor is checked the same way, by a
-  SHA-512 of its release recorded in this repository for each architecture the installer
-  supports (x86_64 and aarch64); it refuses any other architecture.
+- **Nothing updates itself.** Updates are manual. The QuickJS build is
+  <dfn>*pinned*</dfn>, fixed to one exact version, by its SHA-256, and gVisor by a SHA-512 of its release recorded for
+  each architecture the installer supports (x86_64 and aarch64); the installer refuses
+  any other architecture. Code generators are pinned by `go.mod` tool directives and
+  the gate tools by `gate-tools.versions`. The sandbox image recipes use mutable base
+  tags and apk version ranges; only the wasi-sdk stage is pinned by its
+  <dfn>*digest*</dfn> (a hash of its content). Rebuilding an image can therefore change
+  its installed software. Launch-time image digest pinning is opt-in through
+  `SANDBOX_REQUIRE_PINNED_IMAGES=1`.

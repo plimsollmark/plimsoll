@@ -218,6 +218,9 @@ func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) err
 	if err := checkEgress(report.Egress); err != nil {
 		return err
 	}
+	if err := checkInterfaces(report.Interfaces); err != nil {
+		return err
+	}
 	if err := checkTmpMount(report.TmpMount, p.cfg.DiskMB); err != nil {
 		return err
 	}
@@ -287,6 +290,17 @@ func checkEgress(egress map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// checkInterfaces holds the sandbox to loopback alone, as measured on a v0.1.2
+// gateway's docker driver (2026-09-28). The egress attempts above prove only that
+// nothing answered at that moment; an interface other than loopback means the
+// sandbox has a network path that a policy, not its structure, is holding shut.
+func checkInterfaces(ifaces []string) error {
+	if len(ifaces) == 1 && ifaces[0] == "lo" {
+		return nil
+	}
+	return fmt.Errorf("the sandbox's network interfaces are %q, not loopback alone", ifaces)
 }
 
 // checkLimits compares the sandbox's own cgroup files with the requested limits:

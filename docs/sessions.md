@@ -30,8 +30,9 @@ which every implementation runs. The suite checks that:
 - no process outlives its call: not a detached child, not a `setsid` grandchild, not a
   background child;
 - a call's deadline ends the call and not the session;
-- output held open by a leftover process ends at the deadline, and the process holding it
-  dies;
+- a call whose output a leftover process holds open still returns (whether at its
+  deadline or earlier is the provider's choice, and is logged rather than checked), and
+  the process holding the output dies;
 - a suspend keeps the files;
 - a floor above the session's <dfn>*isolation tier*</dfn> (how strong its sandbox's walls
   are: `process`, `container`, `kernel` or `vm`) is refused before dispatch;
@@ -85,8 +86,13 @@ Three procedures beside `Run`, which is unchanged:
 
 Each request carries the <dfn>*protocol number*</dfn>, the protocol version the client
 speaks, and gets the same check as `Run`: a daemon serving a different version refuses it
-before reading the payload. A daemon that predates sessions answers the new procedures
-`Unimplemented`, marked not dispatched (nothing ran). Session calls use a request message
+before reading the payload. A daemon that knows sessions but has none to offer
+(its provider keeps none, or `SANDBOX_MAX_SESSIONS` is unset) answers them
+`Unimplemented`, marked not dispatched. A daemon that predates sessions also answers
+`Unimplemented`, since it has no such procedure, and nothing ran, but it cannot attach
+the mark, so the client sees an unmarked error. Placement never reaches that case: it
+opens a session only on a daemon whose `Describe` states session support, which an
+older daemon never does. Session calls use a request message
 of their own, so an older daemon can never drop the session ID and run the payload as a
 fresh run.
 

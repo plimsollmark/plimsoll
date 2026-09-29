@@ -23,6 +23,7 @@ import (
 
 	"golang.org/x/net/netutil"
 
+	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
@@ -866,11 +867,12 @@ func containerdStoreFromDriverStatus(out []byte) (bool, error) {
 }
 
 // normalizePlatform writes os/arch[/variant] the way Docker's own platform
-// matching compares it (containerd's platforms.Normalize), so the daemon's
-// linux/arm64 and an image's linux/arm64/v8 are one platform: aarch64 is arm64
-// and x86_64 is amd64, arm64's default variant v8 and amd64's v1 are dropped, and
-// arm without a variant is arm/v7. An identity is written with this form, so it is
-// the same on every host.
+// matching compares it, modeled on containerd's platforms.Normalize, so the daemon's
+// linux/arm64 and an image's linux/arm64/v8 are one platform: aarch64 is arm64,
+// x86_64 is amd64 and i386 is 386, arm64's default variant v8 and amd64's v1 are
+// dropped, and arm without a variant is arm/v7. It goes beyond containerd in one
+// place: the arm64 spellings v8.0 and v9.0 fold to their short forms. An identity is
+// written with this form, so it is the same on every host.
 func normalizePlatform(p string) string {
 	parts := strings.Split(strings.ToLower(p), "/")
 	if len(parts) < 2 || len(parts) > 3 {
@@ -894,6 +896,8 @@ func normalizePlatform(p string) string {
 		if variant == "v1" {
 			variant = ""
 		}
+	case "i386":
+		arch = "386"
 	case "armhf":
 		arch, variant = "arm", "v7"
 	case "armel":
@@ -1132,6 +1136,13 @@ let pids = null;
 for (const p of ["/sys/fs/cgroup/pids.max", "/sys/fs/cgroup/pids/pids.max"]) {
   try { pids = { max: fs.readFileSync(p, "utf8").trim().slice(0, 32) }; break; } catch (e) {}
 }
+// The network interfaces the guest sees. Under --network none that is loopback
+// alone; a container that can reach any network has another interface here.
+let interfaces = null;
+try {
+  interfaces = fs.readFileSync("/proc/net/dev", "utf8").split("\n").slice(2)
+    .map(l => l.split(":")[0].trim()).filter(Boolean).slice(0, 16).map(n => n.slice(0, 32));
+} catch (e) {}
 let banner = null;
 `
 	// Bounded three ways: head -c caps the bytes, the timeout caps the wait, and a
@@ -1145,7 +1156,7 @@ let banner = null;
   banner = { error: String((e && e.message) || e).slice(0, 200) };
 }
 `
-	const finish = `function finish(socket) { process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, pids, banner, socket })); }
+	const finish = `function finish(socket) { process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, pids, interfaces, banner, socket })); }
 `
 	// The connect is bounded by its own timeout and every outcome, including a
 	// refusal, is reported as data rather than thrown, so the storage evidence above
@@ -1235,7 +1246,8 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 		Pids         *struct {
 			Max string `json:"max"`
 		} `json:"pids"`
-		Banner *struct {
+		Interfaces []string `json:"interfaces"`
+		Banner     *struct {
 			Head  string `json:"head"`
 			Error string `json:"error"`
 		} `json:"banner"`
@@ -1284,6 +1296,9 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	if report.RootWritable {
 		return errors.New("root filesystem accepted a write; --read-only is not in force")
 	}
+	if err := checkLoopbackOnly(report.Interfaces); err != nil {
+		return err
+	}
 	// Under runsc the guest's cgroup files are gVisor's own emulation, where pids.max
 	// reads "max" whatever docker was asked for; runsc enforces the limit on the
 	// sandbox's host cgroup instead, and SmokeTest proves it there
@@ -1321,6 +1336,18 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	// the promised mounts are the ONLY ones that accept writes, so the aggregate
 	// budget really is the full writable sum.
 	return checkWritableSet(report.Writable, paths)
+}
+
+// checkLoopbackOnly holds the guest's network interfaces to loopback alone, which
+// is what --network none gives under runc and runsc alike (measured 2026-09-29;
+// docker's default network adds eth0). It is structural: a probe that only tried to
+// connect somewhere would pass on a host that happens to be offline. An unreadable
+// list fails too.
+func checkLoopbackOnly(ifaces []string) error {
+	if len(ifaces) == 1 && ifaces[0] == "lo" {
+		return nil
+	}
+	return fmt.Errorf("the container's network interfaces are %q, not loopback alone; --network none is not in force", ifaces)
 }
 
 // smokeRunner uses the image's real entrypoint, then tries the same-uid access a
@@ -1709,7 +1736,7 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 		CallTrace: broker.traceSnapshot(),
 	}
 
-	if runCtx.Err() == context.DeadlineExceeded {
+	if deadline.Expired(runCtx) == context.DeadlineExceeded {
 		res.TimedOut = true
 		res.ExitCode = 124
 		return res, nil
@@ -1855,7 +1882,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		d.forceRemove(execState.host, name)
 	}
 
-	if runCtx.Err() == context.DeadlineExceeded {
+	if deadline.Expired(runCtx) == context.DeadlineExceeded {
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeTimedOut, Detail: "run exceeded the time budget"}, nil
 	}
 	if runCtx.Err() != nil {

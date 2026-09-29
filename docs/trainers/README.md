@@ -1,16 +1,21 @@
 # plimsoll trainers
 
-This directory is a set of interactive lessons about plimsoll that needs no dependencies.
-Open [`index.html`](index.html) directly in a browser, or serve the directory with any
-static file server. No build step is required.
+This directory is a set of interactive lessons about plimsoll that needs no dependencies
+and no build step. Serve it with any static file server, as below. Opened straight from
+disk, most pages work, but the architecture explorer stays blank: browsers refuse to load
+its module script from a `file://` address.
 
 ## Serving them locally
 
 The pages are static and make no API calls while you read them, so any static file server
 works:
 
-    python3 -m http.server 48173 --bind 127.0.0.1 --directory docs/trainers
-    # open http://127.0.0.1:48173/
+    python3 -m http.server 48173 --bind 127.0.0.1 --directory docs
+    # open http://127.0.0.1:48173/trainers/
+
+Serve `docs`, not `docs/trainers`: some pages link up a level, to the architecture
+drawings and the examples, and those links break when the server's root is this
+directory.
 
 Start with **Plain English** (`plain-english.html`) if the vocabulary is new. It explains,
 without jargon, the words the other lessons lean on: <dfn>*WebAssembly*</dfn> (a portable
@@ -130,8 +135,10 @@ Adding a plain page means adding its row to `pageShape`; nothing else.
   is never placed with `innerHTML`.
 - Label invented values as examples. A simulated call log or latency must not be
   presented as a recording of an actual run.
-- Update the catalog when adding or renaming a page, and regenerate the social cards
-  when a title or description changes (`docs/social/gen-cards.mjs`).
+- Update the catalog when adding or renaming a page. A page's social card (its Open
+  Graph tags and picture) is generated from its title and description by a tool the
+  maintainers keep outside this repository, so if you change either, say so in the
+  pull request and a maintainer regenerates the card.
 - Define every registered term where the page first uses it (see **Terms and the
   glossary** below).
 - Run `go test ./docs/trainers`. To see a page at phone and desktop width, with a check
@@ -179,7 +186,7 @@ come from the header of [`terms_test.go`](terms_test.go), which is the reference
   `<dfn>` tag and keeps the italics inside it (checked against GitHub's renderer on
   2026-09-29), so a GitHub reader sees the term in italics and the tag stays in the
   source for the test. A link counts when its href ends in `glossary.html#<anchor>` for
-  that term; markdown pages link the published copy,
+  that term; a markdown page that links a term uses the published copy,
   `https://plimsollmark.github.io/plimsoll/trainers/glossary.html#<anchor>`, because
   GitHub shows an `.html` file in the repository as source.
 - **What the test reads as prose:** the page body without code (`<code>`, `<pre>`,
@@ -195,14 +202,3 @@ come from the header of [`terms_test.go`](terms_test.go), which is the reference
 - **Adding a term.** Keep the list in alphabetical order, one entry per anchor, no form
   claimed by two terms, and each definition one plain sentence ending in a full stop,
   with no dash punctuation; `TestTermRegistryIsWellFormed` checks all of it.
-
-## Pages that are not in this directory
-
-One related page deliberately lives elsewhere, because it is not a lesson about plimsoll:
-
-- `../positioning/docker-agent-boundaries.html` is a competitive comparison of Docker
-  Offload, Docker Sandboxes and the MCP Toolkit against plimsoll. It is commercial
-  positioning, it dates fast, and it is private. It still renders with this directory's
-  shared page frame, borrowing `trainer.css` and `trainer.js` across the directory
-  boundary and setting `data-trainer-base="../trainers/"` so the internal links on its
-  reading list resolve. `TestPositioningTrainerResolvesSharedAssets` guards that wiring.

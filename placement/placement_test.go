@@ -49,27 +49,22 @@ func (s *stub) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest
 	if err != nil {
 		return nil, err
 	}
-	env := s.ranIn
-	software := s.ranSoftware
+	// A daemon states the identities its Describe states for the payload's kind, unless
+	// the test scripts another: ranIn for the environment, ranSoftware for the software,
+	// each on its own.
+	described := s.describe.GetJavascriptEnvironment()
+	switch req.Msg.GetPayload().(type) {
+	case *plimsollv1.RunRequest_Project:
+		described = s.describe.GetProjectEnvironment()
+	case *plimsollv1.RunRequest_Module:
+		described = s.describe.GetModuleEnvironment()
+	}
+	env, software := s.ranIn, s.ranSoftware
 	if env == "" {
-		// A daemon states the identity its Describe states for the payload's kind.
-		switch req.Msg.GetPayload().(type) {
-		case *plimsollv1.RunRequest_Project:
-			env = s.describe.GetProjectEnvironment().GetIdentity()
-			if software == "" {
-				software = s.describe.GetProjectEnvironment().GetSoftwareIdentity()
-			}
-		case *plimsollv1.RunRequest_Module:
-			env = s.describe.GetModuleEnvironment().GetIdentity()
-			if software == "" {
-				software = s.describe.GetModuleEnvironment().GetSoftwareIdentity()
-			}
-		default:
-			env = s.describe.GetJavascriptEnvironment().GetIdentity()
-			if software == "" {
-				software = s.describe.GetJavascriptEnvironment().GetSoftwareIdentity()
-			}
-		}
+		env = described.GetIdentity()
+	}
+	if software == "" {
+		software = described.GetSoftwareIdentity()
 	}
 	resp.Environment, resp.SoftwareIdentity = env, software
 	rule := sandbox.SoftwareRule{Mode: sandbox.SoftwareMode(req.Msg.GetSoftwareRule().GetMode()), Identities: req.Msg.GetSoftwareRule().GetIdentities()}
@@ -491,5 +486,45 @@ func TestEnvironmentRequirementIsCheckedAgainstTheRun(t *testing.T) {
 	}
 	if _, _, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{Environment: "docker-image:1", Backend: "spare"}); err != nil {
 		t.Fatalf("a run whose record states the required environment: %v", err)
+	}
+}
+
+func withSoftware(id string) func(*plimsollv1.DescribeResponse) {
+	return func(d *plimsollv1.DescribeResponse) {
+		d.JavascriptEnvironment.SoftwareIdentity = id
+		d.ProjectEnvironment.SoftwareIdentity = id
+	}
+}
+
+// TestSoftwareRequirementIsCheckedAgainstTheRun is the software analogue of
+// TestEnvironmentRequirementIsCheckedAgainstTheRun: a backend whose Describe named an
+// approved identity but whose run reports another is not a success, and is not retried
+// elsewhere, because the run happened.
+func TestSoftwareRequirementIsCheckedAgainstTheRun(t *testing.T) {
+	const idA = "oci-manifest:linux/amd64@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	const idB = "oci-manifest:linux/amd64@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	moved := &stub{name: "moved", describe: describeAs("docker", "kernel", withSoftware(idA)),
+		answer: ok("x"), ranSoftware: idB}
+	spare := &stub{name: "spare", describe: describeAs("docker", "kernel", withSoftware(idA)), answer: ok("x")}
+	p := pool(t, moved, spare)
+	ctx := context.Background()
+	rule := sandbox.SoftwareRule{Mode: sandbox.SoftwareExact, Identities: []string{idA}}
+
+	_, choice, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{Software: rule})
+	if err == nil {
+		t.Fatal("a run reporting an identity outside the rule was reported as a success")
+	}
+	if _, marked := sandbox.NotDispatchedReason(err); marked {
+		t.Fatalf("the mismatch was marked not dispatched, though the run happened: %v", err)
+	}
+	if spare.runs != 0 {
+		t.Fatalf("the request was retried elsewhere after it had already run (spare ran %d)", spare.runs)
+	}
+	if choice.Backend != "moved" {
+		t.Fatalf("choice = %+v, want the backend that ran it", choice)
+	}
+	if _, _, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"},
+		Requirement{Software: rule, Backend: "spare"}); err != nil {
+		t.Fatalf("a run reporting the required identity: %v", err)
 	}
 }

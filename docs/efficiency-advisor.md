@@ -109,7 +109,7 @@ side (metrics and logs) whatever the mode. `advice_retention: none | aggregate |
 detailed` chooses what reaches the audit log the operator keeps, from nothing to one
 metadata-only record per finding; those records are what
 [prospector-report](../cmd/prospector-report) renders as HTML. `/metrics` carries counts
-labelled only by profile, pattern, severity and remedy, on the daemon's separate metrics
+labelled only by profile, pattern, severity, remedy and whether the finding is agent-fixable, on the daemon's separate metrics
 port (`PLIMSOLL_METRICS_ADDR`, reachable only from this machine by default).
 
 Two rules hold everywhere advice appears. Advice is **evidence, never authority**: it
@@ -148,7 +148,7 @@ There are three places it can go, each controlled on its own:
 | Where | Contents | Controlled by | How long it lasts |
 | --- | --- | --- | --- |
 | Hint to the caller (`advice` field on the run result) | Agent-fixable findings only: route template, verb, one sentence filled in from a template, estimated saving | `advice: caller` | Not kept: returned to the caller that made the calls, then gone. Discloses nothing the caller did not already see in its own traffic. |
-| `/metrics` totals | Counters labelled only by profile, pattern, severity, remedy (no route templates, no record per run) | `advice: operator` or `caller` | The operator's metrics store (e.g. Prometheus) keeps them per its own policy. Aggregate and non-identifying. |
+| `/metrics` totals | Counters labelled only by profile, pattern, severity, remedy and agent-fixable (no route templates, no record per run) | `advice: operator` or `caller` | The operator's metrics store (e.g. Prometheus) keeps them per its own policy. Aggregate and non-identifying. |
 | Audit log (kept) | The per-run advisory record on the `code run` line | **`advice_retention`** | Wherever the operator's logs are stored keeps it per its own policy. |
 
 Only the third can carry a per-route record, and it is the one `advice_retention`

@@ -56,7 +56,13 @@ list, including any attached build metadata. A <dfn>*manifest*</dfn> is the file
 lists one image's configuration and layers; its digest identifies that one selected
 image. Docker reports `Environment.Identity` as its outer image ID and
 `Environment.SoftwareIdentity` as `oci-manifest:<OS>/<processor>@sha256:<digest>`
-when docker's image store exposes a selected manifest it can verify. For example:
+when docker's image store exposes a selected manifest it can verify. That takes the
+containerd image store (docker's newer way of storing images, which keeps each
+platform's manifest) and Docker Engine 28.1 or later, the first release whose
+`docker image inspect` can select one platform. On the older, classic image store the
+identity is empty and a required rule is refused. On the containerd store with an
+engine older than 28.1 the docker provider refuses to start, rather than run without an
+identity that store should give it. For example:
 
 ```go
 tested := "oci-manifest:linux/amd64@sha256:<the manifest digest from Describe>"

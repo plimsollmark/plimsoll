@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 )
 
 // DockerCloud runs agent code in a Docker Cloud Sandbox: a Docker-managed microVM
@@ -360,7 +362,7 @@ func (d *DockerCloud) RunJavaScript(ctx context.Context, req Request) (Result, e
 	// about 128 KiB and an accepted snippet may be larger.
 	const snippetPath = "/tmp/plimsoll-snippet.cjs"
 	if err := d.upload(runCtx, vm, []File{{Path: snippetPath, Content: code}}); err != nil {
-		if runCtx.Err() == context.DeadlineExceeded {
+		if deadline.Expired(runCtx) == context.DeadlineExceeded {
 			return Result{Sandbox: d.Name(), Isolation: IsolationVM, ExitCode: 124, TimedOut: true}, nil
 		}
 		return fail, fmt.Errorf("dockercloud write snippet: %w", err)
@@ -382,7 +384,7 @@ func (d *DockerCloud) RunJavaScript(ctx context.Context, req Request) (Result, e
 		res.CallTrace = guard.core.traceSnapshot()
 	}
 	if err != nil {
-		if runCtx.Err() == context.DeadlineExceeded {
+		if deadline.Expired(runCtx) == context.DeadlineExceeded {
 			res.TimedOut, res.ExitCode = true, 124
 			return res, nil
 		}
@@ -470,13 +472,13 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (Proje
 		return ProjectResult{Sandbox: d.Name(), Isolation: IsolationVM, Outcome: ProjectOutcomeTimedOut, Detail: "run exceeded the time budget before its steps ran"}
 	}
 	if err := d.mkdirs(runCtx, vm, dirs); err != nil {
-		if runCtx.Err() == context.DeadlineExceeded {
+		if deadline.Expired(runCtx) == context.DeadlineExceeded {
 			return timedOut(), nil
 		}
 		return fail, fmt.Errorf("could not create project directories: %w", err)
 	}
 	if err := d.upload(runCtx, vm, staged); err != nil {
-		if runCtx.Err() == context.DeadlineExceeded {
+		if deadline.Expired(runCtx) == context.DeadlineExceeded {
 			return timedOut(), nil
 		}
 		return fail, fmt.Errorf("could not write project files: %w", err)
@@ -487,7 +489,7 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (Proje
 		start := time.Now()
 		out, err := d.execGuarded(runCtx, vm, append(append([]string(nil), stepPrefix...), "sh", stepPaths[i]), dir)
 		if err != nil {
-			if runCtx.Err() == context.DeadlineExceeded {
+			if deadline.Expired(runCtx) == context.DeadlineExceeded {
 				res.Steps = append(res.Steps, StepResult{Command: step, ExitCode: 124, TimedOut: true, Duration: time.Since(start)})
 				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
 				return res, nil
@@ -527,7 +529,7 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (Proje
 	if len(wanted) > 0 {
 		arts, truncated, err := d.download(runCtx, vm, wanted)
 		if err != nil {
-			if runCtx.Err() == context.DeadlineExceeded {
+			if deadline.Expired(runCtx) == context.DeadlineExceeded {
 				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget while reading artifacts"
 				return res, nil
 			}

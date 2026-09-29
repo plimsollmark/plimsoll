@@ -52,6 +52,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1/openshellv1connect"
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
@@ -429,7 +430,7 @@ func clampTimeout(req, def, max time.Duration) time.Duration {
 // time is reported as context.DeadlineExceeded rather than as whatever transport
 // error the cancelled call produced.
 func deadlineAware(ctx context.Context, err error) error {
-	if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+	if ctxErr := deadline.Expired(ctx); ctxErr != nil && !errors.Is(err, ctxErr) {
 		return fmt.Errorf("%w: %v", ctxErr, err)
 	}
 	return err
@@ -505,7 +506,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	if out.exited {
 		return res, nil // the exit status is authoritative, whatever the send side saw
 	}
-	if runCtx.Err() == context.DeadlineExceeded {
+	if deadline.Expired(runCtx) == context.DeadlineExceeded {
 		// Cancelling the stream at the deadline killed the command's process group; the
 		// delete that follows the run ends anything that detached.
 		res.TimedOut, res.ExitCode = true, 124
@@ -513,7 +514,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	}
 	// The brokered calls happened whatever became of the exec stream.
 	fail.CallTrace = res.CallTrace
-	if ctxErr := runCtx.Err(); ctxErr != nil {
+	if ctxErr := deadline.Expired(runCtx); ctxErr != nil {
 		return fail, ctxErr
 	}
 	return fail, err
@@ -591,11 +592,11 @@ func (p *Provider) runPlan(ctx context.Context, b box, tier sandbox.IsolationCla
 	}
 	out, err := p.exec(ctx, b, runnerCommand, env, planJSON, runnerwire.StdoutCap, maxOutputBytes)
 	if !out.exited {
-		if ctx.Err() == context.DeadlineExceeded {
+		if deadline.Expired(ctx) == context.DeadlineExceeded {
 			res.Outcome, res.Detail = sandbox.ProjectOutcomeTimedOut, "run exceeded the time budget"
 			return res, nil
 		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := deadline.Expired(ctx); ctxErr != nil {
 			return res, ctxErr
 		}
 		return res, err

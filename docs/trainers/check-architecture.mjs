@@ -42,6 +42,7 @@ await page.route('**/*',route => {
   return route.continue();
 });
 let rendered = 0, jumps = 0, variants = 0;
+const failures = [];
 try {
   await page.goto(base);
   await page.locator('#stepInspector h2').waitFor();
@@ -99,9 +100,13 @@ try {
   await page.goto(`${base}#path=granted&provider=runsc&step=13`);
   await page.locator('[data-node="broker"]').click();
   await page.locator('[data-filter="in"]').click();
-  for (const text of await page.locator('.port-direction').allInnerTexts()) assert.match(text,/^IN FROM/);
+  const incoming = await page.locator('.port-direction').allInnerTexts();
+  assert.ok(incoming.length,'incoming connection direction labels are missing');
+  for (const text of incoming) assert.match(text,/^IN FROM/);
   await page.locator('[data-filter="out"]').click();
-  for (const text of await page.locator('.port-direction').allInnerTexts()) assert.match(text,/^OUT TO/);
+  const outgoing = await page.locator('.port-direction').allInnerTexts();
+  assert.ok(outgoing.length,'outgoing connection direction labels are missing');
+  for (const text of outgoing) assert.match(text,/^OUT TO/);
   const saved = page.url();
   await page.locator('.skip-link').focus();
   await page.keyboard.press('Enter');
@@ -211,12 +216,20 @@ try {
   await page.waitForTimeout(600); // Outlast Chromium's smooth pan before checking its final position.
   assert.match(await page.locator('#stepCounter').innerText(),/Connection 1 of/);
   await assertConnectionVisible();
-  assert.deepEqual(errors,[],'browser errors');
-  assert.deepEqual(external,[],'external requests');
-  assert.deepEqual(missing,[],'missing assets');
-  const result = {variants,renderedConnections:rendered,componentJumps:jumps,viewports:[390,768,1280,1512],browserErrors:errors,externalRequests:external,missingAssets:missing};
-  writeFileSync('tmp/architecture-browser-results.json',JSON.stringify(result,null,2)+'\n');
-  console.log(JSON.stringify(result,null,2));
+  // These floors are the existing traversal counts; a lower count means paths were lost.
+  assert.ok(variants >= 74,`lost path variants: ${variants} < 74`);
+  assert.ok(rendered >= 792,`lost rendered connections: ${rendered} < 792`);
+  assert.ok(jumps >= 148,`lost component jumps: ${jumps} < 148`);
+} catch (error) {
+  failures.push(error);
 } finally {
   await browser.close();
+  // Check diagnostics even after an earlier assertion fails, preserving both failures.
+  for (const [name, events] of [['browser errors',errors],['external requests',external],['missing assets',missing]]) {
+    try { assert.deepEqual(events,[],name); } catch (error) { failures.push(error); }
+  }
 }
+if (failures.length) throw new AggregateError(failures,'architecture browser check failed');
+const result = {variants,renderedConnections:rendered,componentJumps:jumps,viewports:[390,768,1280,1512],browserErrors:errors,externalRequests:external,missingAssets:missing};
+writeFileSync('tmp/architecture-browser-results.json',JSON.stringify(result,null,2)+'\n');
+console.log(JSON.stringify(result,null,2));

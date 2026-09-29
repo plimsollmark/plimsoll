@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 )
 
 // E2B runs agent code in an E2B sandbox (Firecracker microVM) — the right
@@ -381,7 +383,7 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (Result, error) {
 		res.CallTrace = guard.Core.traceSnapshot()
 	}
 	if err != nil {
-		if runCtx.Err() == context.DeadlineExceeded {
+		if deadline.Expired(runCtx) == context.DeadlineExceeded {
 			res.TimedOut = true
 			res.ExitCode = 124
 			return res, nil
@@ -485,7 +487,7 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult
 		start := time.Now()
 		out, err := e.runProcessWithEnv(runCtx, vm, "sh", []string{stepPath}, dir, envs)
 		if err != nil {
-			if runCtx.Err() == context.DeadlineExceeded {
+			if deadline.Expired(runCtx) == context.DeadlineExceeded {
 				res.Steps = append(res.Steps, StepResult{Command: step, ExitCode: 124, TimedOut: true, Duration: time.Since(start)})
 				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
 				return res, nil

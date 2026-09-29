@@ -132,9 +132,8 @@ option is intentionally only process-tier.
   through [examples/internal/daemonproc](examples/internal/daemonproc/).
 - [docs/trainers/](docs/trainers/) — dependency-free interactive lessons covering
   the execution model, architecture, providers, dependencies, the API broker and
-  its capacity signal, MCP/agent integration, customer patterns, and product
-  planning.
-  The pricing lesson is a planning hypothesis, not a current commercial offer.
+  its capacity signal, MCP/agent integration, customer patterns, and the efficiency
+  advisor.
 
 ## The `Sandbox` interface
 Every provider implements [sandbox/sandbox.go](sandbox/sandbox.go):
@@ -267,11 +266,18 @@ operation-specific grant support (via `ProjectCapable` / `ModuleCapable` /
 hard-code claims. It also states each payload kind's environment
 (`sandbox.Describer`): an exact outer artifact identity such as Docker's verified
 image index ID, a separate `SoftwareIdentity` for the selected platform manifest
-when Docker can establish it, and the provider's timeout ceiling. A tag or template
+when Docker can establish it (the containerd image store and Docker Engine >= 28.1,
+whose `docker image inspect --platform` it uses; the classic store gives none, and the
+containerd store on an older engine fails Preflight rather than run without one), and the provider's timeout ceiling. A tag or template
 name is never an identity. The per-run resource envelope is also reported. A caller
 can require one exact software identity or an explicit approved set through
-`sandbox.SoftwareRule`; the daemon checks it before dispatch and the client checks
-the returned run record. A missing software identity fails a required rule. Other
+`sandbox.SoftwareRule`. The daemon checks it before dispatch against the `Describe`
+evidence it holds, which can be stale; each shipped provider checks it again against
+the artifact it is about to launch (docker against the manifest it verified, the others
+against the empty identity, so a required rule fails closed); and the client checks the
+run record, which states the identity the run reported. The record check is the binding
+one: a client that reads `software_identity` off the response and skips it has only the
+daemon's word. A missing software identity fails a required rule. Other
 providers leave it empty until they can establish their selected artifact.
 **A reported tier is configuration and provider evidence plus the
 behavioral smoke tests below — never runtime attestation**, and any surface that
@@ -304,16 +310,22 @@ that probes the pinned daemon and runtime, but for e2b and dockercloud it valida
 and proves nothing about API reachability, token or key validity, or guard routability — the
 behavioral proof is the one-shot startup `SmokeTest`, which creates a real billable
 microVM and so must never run on an unauthenticated poll path. `Describe` reports current isolation evidence but only
-structural/static operation support. Every real provider runs a startup
+structural/static operation support. Every provider whose boundary depends on the
+host or a remote service (docker, e2b, dockercloud, openshell) runs a startup
 **`SmokeTest`** (behavior, not just configuration) via `EnsureReady`, and none
-serves if it fails. For docker: one throwaway lockdown container per configured
+serves if it fails. wasm has none, and its startup check is configuration only: its
+boundary is wazero library code compiled into plimsolld (the per-run memory cap, no
+network API), the same on every host, so the gate's tests (`TestWasmMemoryLimitEnforced`,
+`TestWasmHasNoNetworkOrFS`) are its proof. For docker: one throwaway lockdown container per configured
 image (launched by its Preflight-verified content ID), under the exact
 runtime/seccomp combination, must prove from its own mount table that the root fs
 is read-only and every writable mount is a tmpfs with the exact promised size +
 `noexec`/`nosuid` — and, by attempting a real write at every mount point, that
 the promised mounts are the **only** ones that accept writes at all (device-node
 mounts like docker's `/dev/null`-masked proc paths are excluded: their writes
-discard rather than persist), and that its cgroup's `pids.max` is exactly the
+discard rather than persist), that loopback is its only network interface (what
+`--network none` gives under runc and runsc alike; a structural check, so an offline
+host cannot pass it by accident), and that its cgroup's `pids.max` is exactly the
 configured process limit (a runtime can accept `--pids-limit` without applying it;
 an unreadable value or a non-positive `PidsLimit` fails closed). Under runsc the guest
 reads gVisor's emulated cgroup files, which say `max` whatever was set, while runsc
@@ -357,7 +369,7 @@ rejected), TLS on any non-loopback listener (the metrics listener included), an 
 (docker: `SANDBOX_REQUIRE_PINNED_IMAGES=1`, no `unconfined` seccomp; e2b: an
 explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1`), an explicit
 per-run resource envelope (memory and CPU only for dockercloud, which has no disk
-control) plus aggregate memory budget, per-caller rate limiting, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive: a rate limit bounds what a caller starts, not the slots its long runs or open sessions hold). Every violation is reported at once
+control) plus, for docker, whose runners share the daemon's host, the aggregate memory budget, per-caller rate limiting, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive: a rate limit bounds what a caller starts, not the slots its long runs or open sessions hold). Every violation is reported at once
 (one fix pass, not a startup loop). TLS itself is configured with
 `PLIMSOLL_TLS_CERT`/`PLIMSOLL_TLS_KEY` (both-or-neither; loaded and validated
 at startup); with them the daemon serves HTTP/1.1 + HTTP/2 over TLS instead of
@@ -634,10 +646,15 @@ go build ./...
 go vet ./...
 go test ./...     # the e2b and dockercloud *live* tests skip without their credentials
 ```
-Some tests need a local docker daemon and the two images (`node:22-alpine` for
-snippets, `plimsoll/sandbox:latest` for `RunProject`); `make docker-images` pulls
-the first and builds the second. Without them those tests skip in an ordinary run
-and fail under `make audit DOCKER=1`.
+Some tests need a local docker daemon and the five images `make docker-images`
+provides: `node:22-alpine` for snippets (pulled), and `plimsoll/sandbox:latest` for
+`RunProject` plus the `-python`, `-sim` and `-wasm-cc` images derived from it (built).
+Every docker test needs the images its sandbox is configured with, because Preflight
+requires them all. Without them those tests skip in an ordinary run and fail under
+`make audit DOCKER=1`, whose docker suite also covers the oracle's anti-forgery tests
+and the gVisor installer's offline-bundle check (which needs `zstd`). Run the gate
+as a non-root user: root defeats the runner guard two runnerwire tests exercise, so
+they skip.
 
 `make audit` is the single local gate: build, vet, race tests, golangci-lint,
 `buf lint` plus a generated-code drift check, and `govulncheck`. The real
@@ -667,6 +684,10 @@ also set, so a green E2B suite does not mean the guarded-egress path was exercis
 configuration is absent, so a pass can only come from actually proving the path.
 Startup `SmokeTest` proves deny-all egress on a no-grant microVM; it does not create
 a guarded VM, and it never proved "denied except for the guard".
+The same holds for the OpenShell disk cap: `TestDiskCapLive` asserts whichever outcome
+the gateway gives, the cap enforced or startup refused for want of
+`allow_driver_config`, and logs which. A green `make audit OPENSHELL=1` proves the cap
+itself only against a gateway that allows driver configs.
 
 The three tools the gate shells out to (buf, golangci-lint, govulncheck) are outside
 the module, so they are pinned in [gate-tools.versions](gate-tools.versions) and the

@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -98,9 +100,10 @@ func TestShippedSeccompProfileIsSaneAndTight(t *testing.T) {
 			Names  []string `json:"names"`
 			Action string   `json:"action"`
 			Args   []struct {
-				Index int    `json:"index"`
-				Value uint64 `json:"value"`
-				Op    string `json:"op"`
+				Index    int    `json:"index"`
+				Value    uint64 `json:"value"`
+				ValueTwo uint64 `json:"valueTwo"`
+				Op       string `json:"op"`
 			} `json:"args"`
 		} `json:"syscalls"`
 	}
@@ -147,24 +150,85 @@ func TestShippedSeccompProfileIsSaneAndTight(t *testing.T) {
 			t.Errorf("essential syscall %q is not allowed — the profile would break the workload", n)
 		}
 	}
-	// Tightening: these are NOT cap-gated (cap-drop ALL does not stop them) and the
-	// workload never uses them, so a hardened profile must withhold them. ptrace and
-	// process_vm_* read other same-uid processes; io_uring/userfaultfd are prime
-	// exploit primitives; keyctl/add_key touch the kernel keyring; the rest are
-	// namespace/module/kexec/mount escape surface.
-	for _, n := range []string{
-		"ptrace", "process_vm_readv", "process_vm_writev",
-		"io_uring_setup", "io_uring_enter", "io_uring_register",
-		"userfaultfd", "perf_event_open", "bpf",
-		"keyctl", "add_key", "request_key",
-		"unshare", "setns", "mount", "umount2", "pivot_root", "chroot",
-		"kexec_load", "init_module", "finit_module", "reboot", "swapon",
-		"modify_ldt", "name_to_handle_at", "open_by_handle_at", "clone3",
-	} {
+	// Tightening: the denial table in docs/seccomp.md is the list, so the document and
+	// this test cannot drift apart. Every syscall its first column names must be
+	// withheld; its two rows that are not plain names are checked for what they claim;
+	// a row this loop cannot read fails.
+	names, cloneRow, socketRow := seccompDenialTable(t)
+	// 43 names on 2026-09-29. A shorter table means a row was dropped: loosen the
+	// profile on purpose, then lower this.
+	if len(names) < 43 {
+		t.Fatalf("the denial table names %d syscalls, fewer than the 43 it had; was a row dropped?", len(names))
+	}
+	for _, n := range names {
 		if allowed[n] {
-			t.Errorf("syscall %q is allowed but should be denied by the hardened profile", n)
+			t.Errorf("syscall %q is in the denial table of docs/seccomp.md but the profile allows it", n)
 		}
 	}
+	if !socketRow {
+		t.Error("the denial table lost its socket(AF_ALG, ...) row, which the AF_UNIX-only check above stands behind")
+	}
+	if !cloneRow {
+		t.Fatal("the denial table lost its CLONE_NEW* row")
+	}
+	// clone may create no namespace: every allow rule for it must carry the one
+	// argument filter (flags & mask) == 0, with the mask covering each CLONE_NEW* flag
+	// clone can take. CLONE_NEWTIME is clone3-only, and clone3 is withheld above.
+	const cloneNewFlags = 0x00020000 | 0x02000000 | 0x04000000 | 0x08000000 | 0x10000000 | 0x20000000 | 0x40000000 // NS CGROUP UTS IPC USER PID NET
+	cloneRules := 0
+	for _, s := range prof.Syscalls {
+		if s.Action != "SCMP_ACT_ALLOW" || !slices.Contains(s.Names, "clone") {
+			continue
+		}
+		cloneRules++
+		if len(s.Args) != 1 || s.Args[0].Index != 0 || s.Args[0].Op != "SCMP_CMP_MASKED_EQ" ||
+			s.Args[0].ValueTwo != 0 || s.Args[0].Value&cloneNewFlags != cloneNewFlags {
+			t.Errorf("an allow rule for clone does not refuse every CLONE_NEW* flag: %+v", s.Args)
+		}
+	}
+	if cloneRules == 0 {
+		t.Error("no allow rule for clone; the workload cannot start a thread")
+	}
+}
+
+// seccompDenialTable reads the first column of the denial table in docs/seccomp.md:
+// the syscall names, and whether its CLONE_NEW* and socket(AF_ALG) rows are present.
+func seccompDenialTable(t *testing.T) (names []string, cloneRow, socketRow bool) {
+	t.Helper()
+	raw, err := os.ReadFile("../docs/seccomp.md")
+	if err != nil {
+		t.Fatalf("read docs/seccomp.md: %v", err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	start := slices.Index(lines, "| Syscall(s) | Why denied |")
+	if start < 0 || start+2 >= len(lines) {
+		t.Fatal("docs/seccomp.md has no denial table (header \"| Syscall(s) | Why denied |\")")
+	}
+	token := regexp.MustCompile("`([^`]+)`")
+	name := regexp.MustCompile(`^[a-z0-9_]+$`)
+	for _, line := range lines[start+2:] {
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		cell := strings.SplitN(line, "|", 3)[1]
+		found := token.FindAllStringSubmatch(cell, -1)
+		if len(found) == 0 {
+			t.Fatalf("a denial table row names nothing this test can check: %q", line)
+		}
+		for _, m := range found {
+			switch tok := m[1]; {
+			case name.MatchString(tok):
+				names = append(names, tok)
+			case tok == "CLONE_NEW*":
+				cloneRow = true
+			case strings.HasPrefix(tok, "socket(AF_ALG"):
+				socketRow = true
+			default:
+				t.Fatalf("denial table entry %q is neither a syscall name nor a row this test knows", tok)
+			}
+		}
+	}
+	return names, cloneRow, socketRow
 }
 
 func TestIsDigestPinned(t *testing.T) {
@@ -673,7 +737,10 @@ func requireProjectImage(t *testing.T, d *DockerSandbox) {
 }
 
 // requireSnippetImage is requireProjectImage's missing counterpart for the snippet
-// image. requireDocker proves only that the docker binary is on PATH; a machine can
+// image. It checks every image the sandbox is configured with, not only the snippet
+// image, because Preflight requires all of them before any run: with node:22-alpine
+// present and the project image absent, a snippet test would otherwise fail on the
+// missing project image. requireDocker proves only that the docker binary is on PATH; a machine can
 // have docker installed and a daemon running without ever having pulled
 // node:22-alpine, and then every snippet test fails reporting "image is not
 // inspectable on the pinned daemon" — an infrastructure condition dressed up as a
@@ -686,8 +753,10 @@ func requireProjectImage(t *testing.T, d *DockerSandbox) {
 func requireSnippetImage(t *testing.T, d *DockerSandbox) {
 	t.Helper()
 	requireDocker(t)
-	if err := exec.Command("docker", "image", "inspect", d.Image).Run(); err != nil {
-		infraSkip(t, "snippet image %s not present (run `make docker-images`)", d.Image)
+	for _, img := range d.configuredImages() {
+		if err := exec.Command("docker", "image", "inspect", img).Run(); err != nil {
+			infraSkip(t, "image %s, which Preflight requires, is not present (run `make docker-images`)", img)
+		}
 	}
 }
 

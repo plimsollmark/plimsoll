@@ -63,14 +63,19 @@ Pick the <dfn>*provider*</dfn>, the backend that runs the code, with `SANDBOX_PR
 The container tier, with docker's default runtime `runc`, shares the host's kernel. For
 hostile code in production, use `e2b`, or `docker` with `SANDBOX_DOCKER_RUNTIME=runsc`.
 
-Every real provider runs a startup **`SmokeTest`** that checks behaviour, not just
-configuration, and the daemon serves nothing if it fails.
+Every provider whose walls depend on the host or on a remote service runs a startup
+**`SmokeTest`** that checks behaviour, not just configuration, and the daemon serves
+nothing if it fails. The `wasm` provider has none: its walls are library code built into
+plimsolld, the same on every host, so the project's own tests prove its memory cap and its
+lack of any network API, and its startup check reads only its settings.
 
 - The docker test starts a throwaway container. From the container's own list of mounted
   filesystems, and by trying a real write at every mount point, it proves that the root
   filesystem is read-only and that the only writable places are the promised
   <dfn>*tmpfs*</dfn> mounts (filesystems held in memory) marked `noexec` (nothing on them
-  can run). It also reads the container's process limit, `pids.max`, and refuses to serve
+  can run). It lists the container's network interfaces and refuses to serve unless
+  loopback is the only one, which is what having no network means inside a container.
+  It also reads the container's process limit, `pids.max`, and refuses to serve
   unless it equals the configured limit, because a runtime can accept `--pids-limit`
   without applying it. Under gVisor the container sees an emulated copy of that file that
   always reads `max`, while gVisor applies the limit to the sandbox's <dfn>*cgroup*</dfn>
