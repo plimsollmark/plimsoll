@@ -49,6 +49,17 @@ exception inside each test.
 | `plain` (default) | One scrolling document on the shared base `plain.css` (palette, type, section rhythm with the draft numerals, cards, native disclosures, segmented controls, sliders, tone chips, reading list, footer), with its own markup, its own `<style>` for whatever makes it itself, and its own script if it has an instrument to drive. Everything the page computes, it computes in the page from the daemon's published rules; nothing calls a network. | every page but one |
 | `explorer` | `trainerData` in `path-explorer` mode plus a page-local interactive map (`architecture.css`, `architecture.mjs`, `architecture-model.mjs`). | `architecture.html` |
 
+The architecture explorer derives its component cards, directed connections,
+provider descriptions and worked request paths from the same registry in
+`architecture-model.mjs`. Keep that registry as the source when changing a path:
+separate handwritten arrows or explanations can disagree with the step navigator.
+Its caller-token path explains operator setup and possession-based identity lookup:
+the operator supplies the caller token, plimsolld hashes the presented token and
+looks up the configured caller, and the downstream API credential stays separate.
+The page illustrates this flow; it does not issue tokens. Run
+`node docs/trainers/architecture-model.test.mjs` and the browser check in
+`scripts/check-architecture.mjs` when changing the map or its navigation.
+
 The chapter renderer (`trainer.js`, `trainer.css`) was the default until 2026-09-19.
 No catalog page uses it now: eleven pages were rebuilt as plain pages with their own
 instruments, because a chapter-at-a-time renderer could not draw the picture each
@@ -74,6 +85,8 @@ nothing else.
 - Keep learner-controlled text as `textContent`. Page copy is trusted and may use
   small amounts of HTML for code and links; anything a reader types (the route
   checker's path) is never placed with `innerHTML`.
+- Label invented values as examples. A simulated tape or latency must not be
+  presented as a recording of an actual run.
 - Update the catalog when adding or renaming a page, and regenerate the social cards
   when a title or description changes (`docs/social/gen-cards.mjs`).
 - Run `go test ./docs/trainers`. To see a page at phone and desktop width with a

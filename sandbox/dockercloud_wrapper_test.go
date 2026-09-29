@@ -88,7 +88,7 @@ func TestDockerCloudExecWrapperUnderBusyboxDocker(t *testing.T) {
 	const script = `sh wrapper.sh 5 11 sh -c 'printf out; printf err >&2; exit 3' >o1 2>e1; echo "case1 rc=$? out=$(cat o1) err=$(cat e1)"
 sh wrapper.sh 5 11 yes >o2 2>e2; echo "case2 rc=$? outlen=$(wc -c <o2 | tr -d ' ')"
 sh wrapper.sh 5 11 sh -c 'yes >&2' >o3 2>e3; echo "case3 rc=$? errlen=$(wc -c <e3 | tr -d ' ')"
-start=$(date +%s); sh wrapper.sh 1 11 sleep 30 >o4 2>e4; echo "case4 rc=$? secs=$(( $(date +%s) - start ))"
+sh wrapper.sh 1 11 sleep 30 >o4 2>e4; echo "case4 rc=$?"
 `
 	res, err := d.RunProject(context.Background(), ProjectRequest{
 		Files:   []File{{Path: "wrapper.sh", Content: dcExecWrapper}, {Path: "cases.sh", Content: script}},
@@ -106,13 +106,17 @@ start=$(date +%s); sh wrapper.sh 1 11 sleep 30 >o4 2>e4; echo "case4 rc=$? secs=
 		regexp.MustCompile(`(?m)^case1 rc=3 out=out err=err$`),
 		regexp.MustCompile(`(?m)^case2 rc=[1-9][0-9]* outlen=11$`),
 		regexp.MustCompile(`(?m)^case3 rc=[1-9][0-9]* errlen=11$`),
-		// The wrapper's limit is 1 s; the bound is what proves it killed rather than
-		// let sleep 30 finish. A tight upper bound fails on a busy machine (the
-		// export runs the whole suite at once), so it is generous on purpose.
-		regexp.MustCompile(`(?m)^case4 rc=137 secs=(?:[1-9]|1[0-9])$`),
+		regexp.MustCompile(`(?m)^case4 rc=137$`),
 	} {
 		if !want.MatchString(out) {
 			t.Errorf("busybox wrapper output does not match %s:\n%s\nstderr: %s", want, out, res.Steps[0].Stderr)
 		}
+	}
+	// The wrapper's limit is 1 s. Bound the whole step with Go's monotonic
+	// duration, since busybox date +%s rounds to whole seconds and can report
+	// zero for a real timeout near a clock boundary. The other cases are quick;
+	// 20 s is generous on a busy host and still rejects an unbounded sleep 30.
+	if res.Steps[0].Duration >= 20*time.Second {
+		t.Errorf("busybox wrapper step took %v, want under 20s", res.Steps[0].Duration)
 	}
 }
