@@ -1,7 +1,7 @@
 // A buck converter controller in C, compiled to WebAssembly inside the sandbox and
 // judged against the plant /models/buck.wasm: an averaged synchronous buck
 // converter (100 uH, 100 uF) that must hold 5 V from an input of 10 to 16 V while
-// the load halves partway through the run.
+// the load resistance halves partway through the run, doubling the current it draws.
 //
 // The law is average current-mode control, the usual structure of converter
 // firmware. An inner loop makes the inductor current follow a reference (fast: the

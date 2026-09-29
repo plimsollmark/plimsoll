@@ -20,15 +20,15 @@ func (Disabled) SupportsProjectGrants() bool    { return false }
 func (Disabled) IsolationClass() IsolationClass { return IsolationNone }
 
 func (Disabled) RunJavaScript(context.Context, Request) (Result, error) {
-	return Result{Sandbox: "disabled", Isolation: IsolationNone}, ErrDisabled
+	return Result{Sandbox: "disabled", Isolation: IsolationNone}, refused(ErrDisabled)
 }
 
 func (Disabled) RunProject(context.Context, ProjectRequest) (ProjectResult, error) {
-	return ProjectResult{Sandbox: "disabled", Isolation: IsolationNone}, ErrDisabled
+	return ProjectResult{Sandbox: "disabled", Isolation: IsolationNone}, refused(ErrDisabled)
 }
 
 func (Disabled) SupportsModules() bool { return false }
 
 func (Disabled) RunModule(context.Context, ModuleRequest) (ModuleResult, error) {
-	return ModuleResult{Sandbox: "disabled", Isolation: IsolationNone}, ErrDisabled
+	return ModuleResult{Sandbox: "disabled", Isolation: IsolationNone}, refused(ErrDisabled)
 }

@@ -27,7 +27,7 @@ One project run, two files, five steps:
 | Step | What it is |
 |---|---|
 | `clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -o controller.wasm controller.c` | compiles the controller inside the sandbox, with `--network none` like every step |
-| `node /oracle/judge.mjs controller.js /models/buck.wasm 12 4 0.01 1e-05 0.02 s1.bin` and three more | one per scenario: 10 to 16 V in, a 2 to 8 ohm load that halves at an unknown moment, 2,000 ticks of 10 microseconds |
+| `node /oracle/judge.mjs controller.js /models/buck.wasm 12 4 0.01 1e-05 0.02 s1.bin` and three more | one per scenario: 10 to 16 V in, a 2 to 8 ohm load whose resistance halves (so its current doubles) at an unknown moment, 2,000 ticks of 10 microseconds |
 
 `controller.js` is the shared shim in
 [examples/internal/wasmshim](../internal/wasmshim/controller.js). It has no control
@@ -40,10 +40,10 @@ The program sends that run twice, then runs [controller/reference.js](controller
 the same law in JavaScript, through the same judge, and prints per scenario:
 
 ```
-s1  12 V in, 4 ohm halving at 10 ms   9bcc0a3a963d1185  C = C = JavaScript: true  score 0.908, peak 5.062 V, 2.505 A
-s2  10 V in, 8 ohm halving at 6 ms    ef91a39f0afe20aa  C = C = JavaScript: true  score 0.914, peak 5.104 V, 1.340 A
-s3  16 V in, 2 ohm halving at 12 ms   b39ccc8ac760e1d8  C = C = JavaScript: true  score 0.888, peak 5.014 V, 5.000 A
-s4  14 V in, 4 ohm halving at 15 ms   e040e81c7729ede8  C = C = JavaScript: true  score 0.908, peak 5.058 V, 2.504 A
+s1  12 V in, 4 ohm, current doubles at 10 ms  9bcc0a3a963d1185  C = C = JavaScript: true  score 0.908, peak 5.062 V, 2.505 A
+s2  10 V in, 8 ohm, current doubles at 6 ms  ef91a39f0afe20aa  C = C = JavaScript: true  score 0.914, peak 5.104 V, 1.340 A
+s3  16 V in, 2 ohm, current doubles at 12 ms  b39ccc8ac760e1d8  C = C = JavaScript: true  score 0.888, peak 5.014 V, 5.000 A
+s4  14 V in, 4 ohm, current doubles at 15 ms  e040e81c7729ede8  C = C = JavaScript: true  score 0.908, peak 5.058 V, 2.504 A
 ```
 
 The score is the fraction of ticks from 2 ms on with the output within 0.1 V of
@@ -79,7 +79,7 @@ all of that under the shipped seccomp profile.
 - **Not firmware on a chip.** The C uses `double` and runs as WebAssembly. A
   microcontroller build would use its own number format, timer and analog-to-digital
   converter, and would be a different program with its own fingerprint.
-- **Not a hardware converter.** The plant is an averaged model: the switching ripple
+- **Not a hardware converter.** The simulator averages the switching behavior: the switching ripple
   is averaged out, so the run judges the control law, not the switching stage.
 - **Not isolation beyond the run's tier.** The compiler, the judge and the controller
   run inside one project run, behind the tier the provider reports (`container` under

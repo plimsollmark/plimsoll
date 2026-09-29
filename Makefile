@@ -10,24 +10,27 @@
 # Without that check, a lint clean run means "clean under whichever golangci-lint
 # happened to be on PATH", which is not a gate.
 
-# The docker/e2b/dockercloud suites need real infrastructure, so they are opt-in even
-# inside `make audit`: set DOCKER=1 (local daemon, images from `make docker-images`),
-# E2B=1 (E2B_API_KEY in the environment) and/or DOCKERCLOUD=1 (DOCKER_SBX_TOKEN,
-# DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL and SANDBOX_DOCKERCLOUD_IMAGE) to
-# include them. DOCKER=1 and DOCKERCLOUD=1 are requests for proof: those suites run
-# in required mode, where missing infrastructure or configuration fails the target
-# instead of passing quietly. E2B and dockercloud spend money; no CI job runs them.
+# The docker/e2b/dockercloud/openshell suites need real infrastructure, so they are
+# opt-in even inside `make audit`: set DOCKER=1 (local daemon, images from `make
+# docker-images`), E2B=1 (E2B_API_KEY in the environment), DOCKERCLOUD=1
+# (DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL and
+# SANDBOX_DOCKERCLOUD_IMAGE) and/or OPENSHELL=1 (an OpenShell gateway and the
+# SANDBOX_OPENSHELL_* files) to include them. DOCKER=1, DOCKERCLOUD=1 and OPENSHELL=1
+# are requests for proof: those suites run in required mode, where missing
+# infrastructure or configuration fails the target instead of passing quietly. E2B and
+# dockercloud spend money; no CI job runs them, nor openshell, which needs a gateway.
 SECCOMP := $(CURDIR)/docker/seccomp.json
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race lint buf vuln docker-images docker-suite e2b-suite e2b-guard-live dockercloud-suite modproxy tools tools-check help
+.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
 
-## audit: the full local gate — pinned-tool check, build, vet, race tests, lint, buf, govulncheck (+ opt-in docker/e2b/dockercloud)
+## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 audit: tools-check build vet race lint buf vuln
 	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
 	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL, SANDBOX_DOCKERCLOUD_IMAGE)"; fi
+	@if [ "$(OPENSHELL)" = "1" ]; then $(MAKE) openshell-suite; else echo "skip openshell-suite (set OPENSHELL=1 with a gateway and SANDBOX_OPENSHELL_GATEWAY_URL, _CA_FILE, _CERT_FILE, _KEY_FILE, _IMAGE)"; fi
 	@echo "audit: OK"
 
 ## build: compile every package
@@ -57,11 +60,22 @@ race:
 lint:
 	golangci-lint run ./...
 
-## buf: proto lint + verify generated code is in sync (fails if `buf generate` would change anything)
-buf:
-	buf lint
+## generate: regenerate gen/ from proto/ and from every vendored third_party/*/buf.gen.yaml
+# The root template runs first: its `clean: true` empties gen/go, and each vendored
+# template then writes its own subdirectory. Vendored protos are a separate buf
+# workspace, so the root `buf lint` never lints upstream files we do not own.
+generate:
 	buf generate
-	git diff --exit-code -- gen/ || (echo "generated code is stale: run 'buf generate' and commit" >&2; exit 1)
+	@for t in third_party/*/buf.gen.yaml; do \
+		[ -f "$$t" ] || continue; \
+		echo "buf generate $$(dirname "$$t")"; \
+		buf generate "$$(dirname "$$t")" --template "$$t" || exit 1; \
+	done
+
+## buf: proto lint + verify generated code is in sync (fails if `make generate` would change or add anything)
+buf: generate
+	buf lint
+	@git diff --exit-code --stat -- gen/ && [ -z "$$(git ls-files --others --exclude-standard -- gen/)" ] || { git ls-files --others --exclude-standard -- gen/ >&2; echo "generated code is stale or untracked: run 'make generate' and commit (or stage) gen/" >&2; exit 1; }
 
 ## vuln: govulncheck against the pinned toolchain
 vuln:
@@ -112,6 +126,30 @@ e2b-suite:
 ## dockercloud-suite: the live Docker Cloud Sandboxes tests (FAILS if not configured; spends)
 dockercloud-suite:
 	DOCKERCLOUD_LIVE_REQUIRED=1 env -u E2B_API_KEY go test ./sandbox -run 'DockerCloud.*Live' -count=1 -v
+
+# The live OpenShell suite: the provider's tests and a daemon test against a real
+# gateway (sandbox/openshell/live_test.go, cmd/plimsolld/openshell_live_test.go). It
+# is free, a local gateway on local docker, but needs a gateway, so it is opt-in and
+# a request for proof: OPENSHELL_LIVE=1 makes missing configuration fail, and a
+# skipped test fails the target. -p 1 runs the packages one after the other, because
+# the daemon test requires the gateway to hold no new plimsoll sandbox after the
+# daemon exits, and the provider tests would add some if they ran at the same time.
+#
+#   SANDBOX_OPENSHELL_GATEWAY_URL   e.g. https://127.0.0.1:17670
+#   SANDBOX_OPENSHELL_CA_FILE       the gateway CA (PEM)
+#   SANDBOX_OPENSHELL_CERT_FILE     the client certificate (PEM)
+#   SANDBOX_OPENSHELL_KEY_FILE      the client key (PEM)
+#   SANDBOX_OPENSHELL_IMAGE         e.g. plimsoll/sandbox:latest
+#
+## openshell-suite: the live OpenShell provider and daemon tests; a missing gateway or a skipped test FAILS
+openshell-suite:
+	@mkdir -p tmp
+	@{ OPENSHELL_LIVE=1 $(NO_PAID_KEYS) go test -p 1 ./sandbox/openshell ./cmd/plimsolld -run 'Live' -count=1 -v; \
+	   echo $$? > tmp/openshell-suite.status; } 2>&1 | tee tmp/openshell-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/openshell-suite.log; then \
+	   echo "openshell-suite: required coverage was skipped:" >&2; \
+	   grep -E '^ *--- SKIP' tmp/openshell-suite.log >&2; exit 1; fi
+	@exit "$$(cat tmp/openshell-suite.status)"
 
 # The guarded-egress path is the one claim `make audit E2B=1` cannot make: its live
 # test skips unless three deployment-specific variables are set, and a skip inside a

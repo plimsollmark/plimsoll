@@ -59,6 +59,20 @@ SCMP_ACT_ERRNO`, `defaultErrnoRet: 1`).
   none` alone does not remove non-routable kernel socket families.
 - **`memfd_create`, `inotify_*`, `timerfd_*`, `signalfd*`** are allowed: node/libuv
   use them for normal operation.
+- **`kill` is allowed.** Each run has its own PID namespace, so `kill(2)` reaches
+  only the run's own processes. Without it a process cannot stop a child it started:
+  the physics judges (`docker/sim/oracle`) SIGKILL a controller that misses its
+  per-tick answer budget or lingers after the last tick. Before 2026-09-25 the
+  profile withheld it by omission, not decision, and those paths crashed under it
+  with an unhandled `EPERM`; `TestDockerJudgesRefuseNonAnswers` exercises them.
+
+- **`utime`, `utimes` and `futimesat` are allowed.** They are older forms of `utimensat`,
+  which was already allowed: the kernel implements all four through the same code in
+  `fs/utimes.c`, with the same ownership and write-permission checks, so they add no
+  capability. Older C libraries still issue them. Before 2026-09-28 the profile withheld
+  them by omission, and a program built on Ubuntu 20.04's C library failed with `EPERM`
+  while setting the modification time of files it had just written to `/work`.
+  `TestDockerLegacyTimestampSyscalls` makes each call from inside a run.
 
 ## Architectures
 

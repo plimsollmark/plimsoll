@@ -55,8 +55,13 @@
   .trip li.wall { border-left: 5px solid var(--warn); }
   .trip li.receipt { border-left: 5px solid var(--good); }
 
-  /* 04: three doors, and a job to match to one. */
+  /* 04: three execution doors plus the broker path shared by them. */
   .doors { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
+  .doors[hidden] { display: none; }
+  .broker-path { display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin-top: 12px; }
+  .broker-path[hidden] { display: none; }
+  .broker-path b { padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--accent-soft); font-size: 0.86rem; text-align: center; }
+  .broker-path span { align-self: center; color: var(--accent-deep); font-weight: 800; transform: rotate(90deg); }
   .door { padding: 14px; border-radius: 14px; background: var(--panel); border: 2px solid var(--line); transition: border-color 0.15s, box-shadow 0.15s; }
   .door.lit { border-color: var(--hull); box-shadow: 0 0 0 4px var(--accent-soft); }
   .door.dim { opacity: 0.55; }
@@ -67,6 +72,10 @@
   .door dd { margin: 1px 0 0; }
   .job-answer { margin-top: 12px; }
 
+  @media (min-width: 640px) {
+    .broker-path { flex-direction: row; align-items: center; gap: 8px; }
+    .broker-path span { transform: none; }
+  }
   @media (min-width: 860px) {
     .trip { grid-template-columns: 1fr 1fr; }
     .trip li:last-child { grid-column: 1 / -1; }
@@ -226,7 +235,7 @@
   <section id="doors" aria-labelledby="h-doors">
     <p class="draft" aria-hidden="true">04</p>
     <h2 id="h-doors">Which door for which job</h2>
-    <p>Pick the job. The right door lights up, with the reason.</p>
+    <p>Pick the job. A door lights up when the job calls for one. API access uses the broker with a door you choose separately.</p>
 
     <div class="control">
       <div class="seg" role="group" aria-label="The job" id="jobSeg">
@@ -238,7 +247,7 @@
       </div>
     </div>
 
-    <div class="doors">
+    <div class="doors" id="doorsList">
       <div class="door" data-door="wasm">
         <h3>Inside your program<small>the real name: wasm</small></h3>
         <dl>
@@ -253,7 +262,7 @@
         <dl>
           <dt>Wall</dt><dd>Solid. Add the stand-in core (gVisor) for a second wall.</dd>
           <dt>Speed</dt><dd>Quick. A box starts in well under a second.</dd>
-          <dt>Can run</dt><dd>Snippets, whole projects, and compiled models.</dd>
+          <dt>Can run</dt><dd>Snippets, whole projects, and compiled simulators.</dd>
           <dt>If the wall cracks</dt><dd>Stuck in the box. Still your machine.</dd>
         </dl>
       </div>
@@ -266,6 +275,9 @@
           <dt>If the wall cracks</dt><dd>Trapped in a disposable machine that is not yours.</dd>
         </dl>
       </div>
+    </div>
+    <div class="broker-path" id="brokerPath" hidden>
+      <b>One chosen wall</b><span aria-hidden="true">→</span><b>plimsoll API broker</b><span aria-hidden="true">→</span><b>Approved API route</b>
     </div>
     <div class="card job-answer" id="jobAnswer"></div>
   </section>
@@ -408,15 +420,17 @@
     hostile: { lit: ['docker', 'e2b'], text: '<b>A box with the stand-in core, or a throwaway computer.</b> Assume the wall will crack one day and ask where the code lands. A plain box lands it on your machine’s shared core; the stand-in core or a separate computer keeps it further away. plimsoll refuses to call anything thinner than those two good enough for hostile code.' },
     project: { lit: ['docker', 'e2b'], text: '<b>A box or a throwaway computer.</b> A project needs files on disk and build tools, and the sealed engine has neither: it runs one snippet and nothing else. Both other doors carry the tools baked in, because the box has no internet to fetch them with.' },
     offbox: { lit: ['e2b'], text: '<b>A throwaway computer.</b> It is the only door where the code never runs on your hardware at all. You pay for that in start-up time and per-run cost, and the wall is the strongest there is.' },
-    api: { lit: ['wasm', 'docker', 'e2b', 'dockercloud'], text: '<b>Any of them.</b> This is not about the wall. Behind every door, code can be handed a narrow permission to read from a named route, and the key stays outside with plimsoll; the code only ever asks. One difference: on Docker’s throwaway computers (dockercloud) the code holds a short-lived pass that only works at plimsoll’s gate, for that one run; on E2B’s, even that pass stays outside. Pick the door by the other questions, then read The API broker for how the key never crosses the line.' }
+    api: { lit: [], path: 'broker', text: '<b>Use the API broker with one chosen wall.</b> Reading your API does not decide where the code runs. Choose a wall by the other jobs, then give the run permission to call an approved route. Once that provider’s broker path is configured, guest code asks plimsoll’s broker; the downstream API key stays outside the guest. <a href="brokering.html">INTERNAL · trainer site → The API broker</a> shows the request and the provider-specific connection.' }
   };
   function renderJob(which) {
     press(el('jobSeg'), which);
     document.querySelectorAll('.door').forEach(function (d) {
       var lit = JOBS[which].lit.indexOf(d.getAttribute('data-door')) >= 0;
       d.classList.toggle('lit', lit);
-      d.classList.toggle('dim', !lit);
+      d.classList.toggle('dim', JOBS[which].lit.length > 0 && !lit);
     });
+    el('doorsList').hidden = JOBS[which].path === 'broker';
+    el('brokerPath').hidden = JOBS[which].path !== 'broker';
     el('jobAnswer').innerHTML = '<p>' + JOBS[which].text + '</p>';
   }
   el('jobSeg').addEventListener('click', function (e) {

@@ -21,7 +21,11 @@ const (
 	MaxProjectStepBytes = 16 << 10
 )
 
-func ValidateRequest(req Request) error {
+// ValidateRequest refuses a snippet request that must not run. Its error is marked
+// NotDispatched: validation runs before any code.
+func ValidateRequest(req Request) error { return refused(validateRequest(req)) }
+
+func validateRequest(req Request) error {
 	if err := validateMinimumIsolation(req.MinimumIsolation); err != nil {
 		return err
 	}
@@ -37,7 +41,13 @@ func ValidateRequest(req Request) error {
 	return nil
 }
 
+// ValidateProjectRequest refuses a project request that must not run. Its error is
+// marked NotDispatched: validation runs before any code.
 func ValidateProjectRequest(req ProjectRequest) error {
+	return refused(validateProjectRequest(req))
+}
+
+func validateProjectRequest(req ProjectRequest) error {
 	if err := validateMinimumIsolation(req.MinimumIsolation); err != nil {
 		return err
 	}
@@ -105,15 +115,16 @@ func validateMinimumIsolation(minimum IsolationClass) error {
 // CheckMinimumIsolation verifies a validated request-specific isolation floor
 // against the provider's current evidence. Call it immediately before admission
 // and dispatch so a stale discovery/readiness result can never authorize a run.
+// Its error is marked NotDispatched.
 func CheckMinimumIsolation(actual, minimum IsolationClass) error {
 	if err := validateMinimumIsolation(minimum); err != nil {
-		return err
+		return refused(err)
 	}
 	if minimum == IsolationUnknown {
 		return nil
 	}
 	if !actual.Meets(minimum) {
-		return fmt.Errorf("%w: provider isolation %s is below requested minimum %s", ErrInsufficientIsolation, actual, minimum)
+		return refused(fmt.Errorf("%w: provider isolation %s is below requested minimum %s", ErrInsufficientIsolation, actual, minimum))
 	}
 	return nil
 }

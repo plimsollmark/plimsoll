@@ -46,6 +46,8 @@ executes unless you opt in explicitly.
 | `wasm` | in-process QuickJS via wazero | **process** | dev and low-latency snippets, **not hostile code** |
 | `docker` | locked-down `docker run` | container, or **kernel** under verified gVisor `runsc` | self-hosted production |
 | `e2b` | E2B Firecracker microVM | **VM** | hardware-virtualized isolation |
+| `dockercloud` | Docker Cloud Sandboxes microVM | **VM** | hardware-virtualized isolation on Docker-managed runners |
+| `openshell` | NVIDIA OpenShell sandbox on the gateway's docker driver | container | platforms that already run an OpenShell gateway; the same caveat as docker under `runc` |
 
 > **The WASM tier is in-process.** It is not an OS boundary and not a VM boundary. A
 > QuickJS engine escape lands in the daemon process. It exists for latency and for
@@ -54,11 +56,15 @@ executes unless you opt in explicitly.
 Container tier under stock `runc` shares the host kernel. For hostile production
 input, use `e2b`, or `docker` with `SANDBOX_DOCKER_RUNTIME=runsc`.
 
-Both real providers run a startup **`SmokeTest`** that checks behavior rather than
-configuration, and neither serves if it fails. The Docker smoke test launches a
+Every real provider runs a startup **`SmokeTest`** that checks behavior rather than
+configuration, and none serves if it fails. The Docker smoke test launches a
 throwaway container and proves, from its own mount table and by attempting a real
 write at every mount point, that the root filesystem is read-only and that the
-promised `noexec` tmpfs mounts are the only writable ones. The E2B smoke test
+promised `noexec` tmpfs mounts are the only writable ones, and it reads the
+container's own `pids.max` and refuses to serve unless it equals the configured
+process limit (a runtime can accept `--pids-limit` without applying it). Under gVisor the
+container's copy is emulated and always reads `max`, and gVisor enforces the limit on the
+sandbox's cgroup on the host, so there the smoke test reads that host cgroup instead. The E2B smoke test
 completes a real secured microVM create, stages files, runs a probe through the
 actual project-step path, and checks live that egress is denied.
 
@@ -75,11 +81,20 @@ including denied egress, not that a hypervisor is present. Both are stronger tha
 datasheet sentence and weaker than attestation; if your threat model needs the
 latter, neither tier here supplies it.
 
+For `openshell`, container tier follows from the gateway's own report: `GetGatewayInfo`
+must name the docker compute driver, and any other driver is refused. The gateway does
+not say which OCI runtime its docker uses, so plimsoll reports container even where that
+runtime is gVisor. Its smoke test proves from inside a sandbox that only `/tmp` accepts
+writes, that egress is refused, that the requested limits are in the sandbox's cgroup,
+and that cancelling a command kills it ([openshell.md](openshell.md)).
+
 ## Asserting a floor
 
 `MinimumIsolation` on a request is a per-dispatch security floor, compared against
 current provider evidence immediately before admission. `ErrInsufficientIsolation`
-means **no code ran**.
+means **no code ran**, and the error is marked as refused before dispatch with reason
+`isolation`, so a caller can send the request to a stronger provider
+([run results](run-results.md#did-anything-run-the-error-says-so)).
 
 The client also checks the evidence that comes back. A mismatch is
 `ErrIsolationEvidenceMismatch`, and it is deliberately not a safe retry signal:

@@ -397,7 +397,7 @@ func (d *DockerCloud) RunModule(_ context.Context, req ModuleRequest) (ModuleRes
 	if err := CheckMinimumIsolation(IsolationVM, req.MinimumIsolation); err != nil {
 		return fail, err
 	}
-	return fail, ErrUnsupported
+	return fail, refused(ErrUnsupported)
 }
 
 // RunProject writes the files, then runs each step in order, stopping on the first
@@ -545,6 +545,15 @@ func (d *DockerCloud) deadlineAware(ctx context.Context, err error) error {
 	return err
 }
 
+// runCeiling is the longest one E2B or Docker Cloud run may take: the configured
+// maximum, or 120 seconds when none is set.
+func runCeiling(max time.Duration) time.Duration {
+	if max <= 0 {
+		return 120 * time.Second
+	}
+	return max
+}
+
 // clampRunTimeout applies a provider's default and ceiling to a requested budget.
 func clampRunTimeout(req, def, max time.Duration) time.Duration {
 	if req <= 0 {
@@ -553,10 +562,7 @@ func clampRunTimeout(req, def, max time.Duration) time.Duration {
 			req = 30 * time.Second
 		}
 	}
-	if max <= 0 {
-		max = 120 * time.Second
-	}
-	if req > max {
+	if max = runCeiling(max); req > max {
 		req = max
 	}
 	return req
@@ -983,7 +989,7 @@ func (d *DockerCloud) openGuard(ctx context.Context, grant *HostAPIGrant, timeou
 	}
 	endpoint := d.guardConfig()
 	if endpoint == nil {
-		return nil, func() {}, fmt.Errorf("%w: dockercloud host-API grants require SANDBOX_DOCKERCLOUD_GUARD_URL", ErrUnsupported)
+		return nil, func() {}, refused(fmt.Errorf("%w: dockercloud host-API grants require SANDBOX_DOCKERCLOUD_GUARD_URL", ErrUnsupported))
 	}
 	token, core, cleanup, err := d.guards.open(ctx, grant, timeout)
 	if err != nil {

@@ -37,6 +37,7 @@ func hardenedDockerFacts() hardenedFacts {
 		MultiClientAuth: true,
 		TLS:             true,
 		Addr:            ":8746",
+		MetricsAddr:     defaultMetricsAddr,
 		RatePerMin:      30,
 	}
 }
@@ -68,6 +69,18 @@ func TestHardenedPolicyAcceptsCompliantDeployments(t *testing.T) {
 	if err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f2); err != nil {
 		t.Fatalf("loopback cleartext deployment rejected: %v", err)
 	}
+	// Metrics off needs no listener policy at all, and a metrics listener other
+	// hosts can reach is acceptable when it serves TLS.
+	f3 := f2
+	f3.MetricsAddr = ""
+	if err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f3); err != nil {
+		t.Fatalf("loopback deployment with metrics off rejected: %v", err)
+	}
+	f4 := hardenedDockerFacts()
+	f4.MetricsAddr = ":9464"
+	if err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f4); err != nil {
+		t.Fatalf("TLS deployment with metrics on every interface rejected: %v", err)
+	}
 }
 
 func TestHardenedPolicyFailsClosedPerViolation(t *testing.T) {
@@ -84,6 +97,7 @@ func TestHardenedPolicyFailsClosedPerViolation(t *testing.T) {
 		{"insecure override", func(e map[string]string) { e["PLIMSOLL_INSECURE"] = "1" }, nil, "PLIMSOLL_INSECURE"},
 		{"cleartext off loopback", nil, func(f *hardenedFacts) { f.TLS = false }, "requires TLS"},
 		{"cleartext on all interfaces", nil, func(f *hardenedFacts) { f.TLS, f.Addr = false, ":8746" }, "requires TLS"},
+		{"cleartext metrics off loopback", nil, func(f *hardenedFacts) { f.TLS, f.Addr, f.MetricsAddr = false, "127.0.0.1:8746", ":9464" }, "metrics listener"},
 		{"unpinned images", func(e map[string]string) { e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "" }, nil, "SANDBOX_REQUIRE_PINNED_IMAGES"},
 		{"malformed pin flag", func(e map[string]string) { e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "yes" }, nil, "SANDBOX_REQUIRE_PINNED_IMAGES"},
 		{"seccomp unconfined", func(e map[string]string) { e["SANDBOX_DOCKER_SECCOMP"] = "unconfined" }, nil, "unconfined"},
@@ -168,6 +182,34 @@ func TestLoopbackAddr(t *testing.T) {
 	} {
 		if got := loopbackAddr(addr); got != want {
 			t.Errorf("loopbackAddr(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
+
+// TestMetricsAddrWith: unset means this host only, off means no listener, and an
+// address without a port fails naming the variable.
+func TestMetricsAddrWith(t *testing.T) {
+	for raw, want := range map[string]string{
+		"":               "127.0.0.1:9464",
+		"  ":             "127.0.0.1:9464",
+		"off":            "",
+		" OFF ":          "",
+		":9464":          ":9464",
+		"10.0.0.5:9100":  "10.0.0.5:9100",
+		"[::1]:9464":     "[::1]:9464",
+		"localhost:9464": "localhost:9464",
+	} {
+		got, err := metricsAddrWith(getenvFrom(map[string]string{"PLIMSOLL_METRICS_ADDR": raw}))
+		if err != nil || got != want {
+			t.Errorf("metricsAddrWith(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	if !loopbackAddr(defaultMetricsAddr) {
+		t.Errorf("default metrics address %q is reachable from other hosts", defaultMetricsAddr)
+	}
+	for _, raw := range []string{"9464", "127.0.0.1", "no", "disabled"} {
+		if _, err := metricsAddrWith(getenvFrom(map[string]string{"PLIMSOLL_METRICS_ADDR": raw})); err == nil || !strings.Contains(err.Error(), "PLIMSOLL_METRICS_ADDR") {
+			t.Errorf("metricsAddrWith(%q) err = %v, want one naming PLIMSOLL_METRICS_ADDR", raw, err)
 		}
 	}
 }

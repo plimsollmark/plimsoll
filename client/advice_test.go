@@ -32,7 +32,7 @@ func (s adviceResponseServer) Run(_ context.Context, req *connect.Request[plimso
 			Steps:   []*plimsollv1.StepResult{{Command: "node main.js", Stdout: []byte{0xff, 'o', 'k'}, Stderr: []byte("guest failed"), ExitCode: 7}},
 		}}
 	}
-	return connect.NewResponse(resp), nil
+	return stamped(req, resp), nil
 }
 
 // The wire already contained these fields before the official client exposed

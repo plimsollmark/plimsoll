@@ -399,7 +399,7 @@
     },
     refused: {
       json: '{\n  <span class="k">"error"</span>: <span class="s">"at_capacity"</span>,\n  <span class="k">"message"</span>: <span class="s">"the execution service is busy; retry after a short wait"</span>,\n  <span class="k">"retry_after_ms"</span>: 800\n}',
-      note: '<p><b>A different shape, on purpose.</b> Nothing ran. The class maps from the daemon’s typed error (<code>ErrAtCapacity</code> here; <code>ErrInvalidRequest</code> would say what to fix; <code>ErrInsufficientIsolation</code> is the gateway’s bug, not the model’s), the message carries no code and no infrastructure detail, and only this class comes with a retry hint.</p>'
+      note: '<p><b>A different shape, on purpose.</b> Nothing ran, and the daemon said so: the error carries the not-dispatched mark with reason <code>capacity</code>. The class maps from that reason and the typed error (<code>ErrAtCapacity</code> here; <code>ErrInvalidRequest</code> would say what to fix; <code>ErrInsufficientIsolation</code> is the gateway’s bug, not the model’s), the message carries no code and no infrastructure detail, and only this class comes with a retry hint.</p>'
     }
   };
   function renderResp(which) {

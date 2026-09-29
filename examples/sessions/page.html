@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One sandbox, five calls: an OpenShell session with a signed chain of records</title>
+<meta name="description" content="A real plimsoll session on an NVIDIA OpenShell sandbox: files persist between calls, no process outlives its call, and every call's record is signed and chained, so a dropped call or a changed byte is caught.">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/sessions/index.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="One sandbox, five calls: an OpenShell session with a signed chain of records">
+<meta property="og:description" content="A real plimsoll session on an NVIDIA OpenShell sandbox: files persist between calls, no process outlives its call, and every call's record is signed and chained, so a dropped call or a changed byte is caught.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/sessions/index.html">
+<meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/sessions-example.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --blue: #2a78d6; --aqua: #1baf7a; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  p { margin: 6px 0; }
+  .sub { color: var(--ink2); margin-bottom: 18px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0 6px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .tile .k { color: var(--ink2); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  .tile .v { font-size: 20px; font-weight: 650; margin-top: 2px; }
+  .tile .n { color: var(--ink2); font-size: 12.5px; margin-top: 2px; }
+  pre { margin: 0; padding: 8px 10px; background: #fff; border: 1px solid var(--line); border-radius: 6px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--ink); max-width: 460px; }
+  code, .mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .mono { word-break: break-all; }
+  .rec { font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink2); font-weight: 600; font-size: 13px; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-weight: 600; font-size: 13px; }
+  .badge.ok { background: #e6f4ea; color: #1e6b2f; }
+  .badge.no { background: #fdecea; color: #8a1c1c; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-top: 10px; }
+  .note { color: var(--ink2); font-size: 13px; }
+  .intent { color: var(--ink2); font-size: 13px; margin-bottom: 6px; }
+  .wide { overflow-x: auto; }
+  ol li, ul li { margin: 4px 0; }
+  a { color: var(--blue); }
+  @media (max-width: 900px) { .tiles { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
+<h1>One sandbox, five calls: an OpenShell session with a signed chain of records</h1>
+<p class="sub">A session keeps one sandbox for many calls: the files a call writes are there for the next call, and no process a call starts outlives it. This page is one real session on an NVIDIA OpenShell sandbox, run through plimsolld with the official Go client on {{.Date}}. A harness outside the daemon checked and signed every call's record, and the records form a chain: each names the digest of the one before it.</p>
+
+<div class="tiles">
+  <div class="tile"><div class="k">Sandbox</div><div class="v">{{.Provider}} · {{.Tier}}</div><div class="n">the tier measured when the session opened</div></div>
+  <div class="tile"><div class="k">Calls</div><div class="v">{{len .Calls}}</div><div class="n">two projects and three snippets, one sandbox</div></div>
+  <div class="tile"><div class="k">Median call</div><div class="v">{{.Median}} ms</div><div class="n">the client's round trip, including the read-back before the call and the sweep after it</div></div>
+  <div class="tile"><div class="k">Signed bundle</div><div class="v">verified</div><div class="n">and refused with one call dropped or one byte changed</div></div>
+</div>
+
+<h2>The calls</h2>
+<div class="wide"><table>
+<tr><th>#</th><th>What the call sent</th><th>What came back</th><th>ms</th><th>Record</th></tr>
+{{range .Calls}}<tr>
+<td>{{.N}}</td>
+<td><div class="intent">{{.Kind}}: {{.Intent}}</div><pre>{{.Sent}}</pre></td>
+<td><div class="intent">{{.Result}}</div><pre>{{.Output}}</pre></td>
+<td>{{.Millis}}</td>
+<td class="rec">record {{printf "%.12s" .Record}}…<br>previous {{if .Previous}}{{printf "%.12s" .Previous}}…{{else}}(none){{end}}<br>request {{printf "%.12s" .Request}}…<br>result {{printf "%.12s" .Resp}}…</td>
+</tr>
+{{end}}</table></div>
+<p class="note">Call 3 sent no files: the test and the patched library were still in the sandbox. Call 5 finds call 4's <code>sleep 600</code> gone: after every call the sandbox's processes are swept.</p>
+
+<h2>The chain</h2>
+<div class="panel">
+{{.Chain}}
+<p class="note">Session <span class="mono">{{.Session}}</span> is the SHA-256 of the session ID; the ID itself is a capability, sent only to the daemon, and never recorded or logged. The daemon's close: {{.Close}}.</p>
+</div>
+
+<h2>The verifier</h2>
+<div class="wide"><table>
+<tr><th>Bundle</th><th>Verdict</th><th>What the verifier said</th></tr>
+{{range .Checks}}<tr><td>{{.What}}</td><td>{{if .Pass}}<span class="badge ok">{{.Verdict}}</span>{{else}}<span class="badge no">{{.Verdict}}</span>{{end}}</td><td class="mono">{{.Detail}}</td></tr>
+{{end}}</table></div>
+<p class="note">Every record is a DSSE envelope around an in-toto statement, signed with an Ed25519 key the harness held for this run (key ID <span class="mono">{{.KeyID}}</span>). The daemon holds no key: it only hashes. The bundle and the public key sit beside this page as <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/bundle.jsonl">bundle.jsonl</a> and <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/harness.pub">harness.pub</a>.</p>
+
+<h2>What happens around each call</h2>
+<ol>
+<li><b>Before:</b> the provider reads the sandbox and its effective policy back from the OpenShell gateway and ends the session on any difference, because any client of the gateway could change them between calls.</li>
+<li><b>After:</b> a sweep kills every process except the sandbox's own two (OpenShell's supervisor and an idle main process), by process ID, and measures what the session left under <code>/tmp</code> against its disk budget. The sweep's verdict is its exit status, which leftover code cannot forge on a host that restricts ptrace; the provider refuses a session on any other host. When the sweep cannot prove the sandbox clean, the sandbox is stopped and started, which ends every process; when that fails too, the session ends.</li>
+<li><b>Idle:</b> a session with no call for five minutes (the default) is stopped, not deleted: it holds no memory or CPU, keeps its files, and the next call starts it again, which took about 0.8 s when measured.</li>
+<li><b>End:</b> at its lifetime (30 minutes by default), past its disk budget, or when code in the sandbox kills its main process. The owner's close collects how many calls ran and which record was last.</li>
+</ol>
+
+<h2>What this does not show</h2>
+<ul>
+<li>A record is the daemon's statement. Its digests prove that the stored requests and results are the ones the daemon stated; the evidence fields (provider, tier, image <span class="mono">{{.Environment}}</span>, policy <span class="mono">{{.Policy}}</span>) are configuration and provider evidence, never runtime attestation.</li>
+<li>A session is only as private as its gateway: any other client of the same gateway can reach the sandbox between calls. Give plimsoll a gateway, or an OpenShell workspace, of its own.</li>
+<li>Processes never persist, by design, so a long-running service inside a session (a development server) is not supported.</li>
+<li>The key here was made for this run and discarded. In use, the harness's key is the caller's, kept outside the daemon.</li>
+</ul>
+<p class="note">Reproduce: with an OpenShell gateway and its five <code>SANDBOX_OPENSHELL_*</code> settings in the environment, run <code>go run ./examples/sessions</code> in the plimsoll repository; the page, the bundle and the key are written from the run. Check the bundle: <code>go run ./cmd/plimsoll-attest verify -pub docs/examples/sessions/harness.pub docs/examples/sessions/bundle.jsonl</code>. plimsoll is an independent project, not affiliated with or endorsed by NVIDIA.</p>
+</main>
+</body>
+</html>

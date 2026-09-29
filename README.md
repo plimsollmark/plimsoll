@@ -39,10 +39,11 @@ reproduce with `make docker-images && go run ./examples/oracle`.
 
 | More to look at | What it is |
 |---|---|
-| [Simulation replay pages, all eight plants ↗](https://plimsollmark.github.io/plimsoll/examples/envs/index.html) | Every plant in the sim image (shower, buck converter, ship heading, black hole orbit, relativistic rocket, satellite clock, double slit, cart-pole swing-up), each with a page that runs a failing and a passing hand-written controller through the sandbox and replays both trajectories with their fingerprints. |
-| [A controller in C, compiled in the sandbox ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html) | The same judge and cart-pole, with a swing-up controller written in C and compiled to WebAssembly by the run's own first step, so plant and controller are both WebAssembly. The run report replays the swing-up and compares it with the JavaScript version tick by tick: the two differ in two forces, by a few representable doubles, and the fingerprint catches it while the motion stays bit-identical. Source and caveats in [its README](examples/wasm-controller/README.md); reproduce with `make docker-images && go run ./examples/wasm-controller`. |
+| [Simulation replay pages, all eight simulators ↗](https://plimsollmark.github.io/plimsoll/examples/envs/index.html) | Every simulator in the sim image (shower, buck converter, ship heading, black hole orbit, relativistic rocket, satellite clock, double slit, cart-pole swing-up), each with a page that runs a failing and a passing hand-written controller through the sandbox and replays both trajectories with their fingerprints. |
+| [A controller in C, compiled in the sandbox ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html) | The same judge and cart-pole, with a swing-up controller written in C and compiled to WebAssembly by the run's own first step, so simulator and controller are both WebAssembly. The run report replays the swing-up and compares it with the JavaScript version tick by tick: the two differ in two forces, by a few representable doubles, and the fingerprint catches it while the motion stays bit-identical. Source and caveats in [its README](examples/wasm-controller/README.md); reproduce with `make docker-images && go run ./examples/wasm-controller`. |
 | [A buck converter controller in C ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html) | A power supply's control law written in C, the language converter firmware ships in, compiled to WebAssembly in the sandbox and judged holding 5 V through a load step. It calls no library function, so its trajectory is its JavaScript version's byte for byte in all four scenarios, and the page charts one of them tick by tick. Source and caveats in [its README](examples/wasm-buck/README.md); reproduce with `make docker-images && go run ./examples/wasm-buck`. |
 | [Same run, different sandboxes ↗](https://plimsollmark.github.io/plimsoll/examples/providers/index.html) | The oracle's run on a local container, E2B Firecracker and Docker Cloud Sandboxes: two isolation tiers, two Node versions, one fingerprint, the one the oracle page published. Reproduce with `go run ./examples/providers`. |
+| [One sandbox, five calls ↗](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html) | A session on an NVIDIA OpenShell sandbox: a failing test, a patch, the test passing without the files being sent again, and a leftover process that is gone by the next call. Every call's record is signed and chained; the verifier accepts the bundle and refuses it with a call dropped or a byte changed. Reproduce with `go run ./examples/sessions` and a gateway. |
 | [The efficiency advisor's report ↗](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html) | One measured run, rendered: the same question asked as 13 calls and then as 1, and the finding that names the route to batch on. |
 | [Twelve interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | The execution model, the providers, the API broker, and integrating with an agent. Static pages: no network calls, no analytics, no third-party scripts. |
 
@@ -59,6 +60,12 @@ res, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
 })
 // res.Isolation reports the boundary that actually ran.
 ```
+
+Every refusal that ran nothing says so, with a reason (`request`, `permission`,
+`protocol`, `unsupported`, `isolation`, `capacity`): `sandbox.NotDispatchedReason(err)`
+works the same on a local provider and through the client. An error without it may
+have followed execution and is never a safe automatic retry
+([what comes back, and what it means](docs/run-results.md#did-anything-run-the-error-says-so)).
 
 Read the tier as evidence this daemon collected, not as a remote attestation: no
 provider here cryptographically attests the runtime implementation underneath it.
@@ -143,6 +150,7 @@ with no grant reaches nothing at all.
 | `docker` with `runsc` | gVisor, after a verified preflight | `kernel` | Hostile code, self-hosted. |
 | `e2b` | Firecracker microVM | `vm` | Hostile code, on runners off your host. |
 | `dockercloud` | Docker Cloud Sandboxes microVM | `vm` | Hostile code, on Docker-managed runners. Implemented against Docker's published API contract; the live suite passed against the real service on 2026-09-24. Requires the account's cloud network policy to default to deny-all, which every run verifies. Host-API grants through the same guard as E2B when `SANDBOX_DOCKERCLOUD_GUARD_URL` is set; unlike E2B, the guest holds its own run's short-lived, guard-only credential, and the one network rule is applied through a Docker call outside its published contract. |
+| `openshell` | an NVIDIA OpenShell sandbox on the gateway's docker driver | `container` | Agent platforms that already run an OpenShell gateway. Each run gets its own sandbox with no network, read back and refused on any difference, and deleted afterwards. Verified against a v0.1.2 gateway on 2026-09-28. Grants reach the broker through a relay plimsoll dials into, so the sandbox keeps no network rules; sessions keep one sandbox for many calls. |
 | unset | nothing runs | n/a | The default. |
 
 Every tier is configuration plus provider evidence plus a behavioural startup smoke
@@ -187,16 +195,20 @@ Each of these answers one question, end to end.
 | Document | Answers |
 |---|---|
 | [docs/getting-started.md](docs/getting-started.md) | How do I build it, embed it, start it as an authenticated service, and watch a floor be refused? |
-| [docs/example-programs.md](docs/example-programs.md) | What do the six runnable examples prove, and which should I read first? |
+| [docs/example-programs.md](docs/example-programs.md) | What do the nine runnable examples prove, and which should I read first? |
 | [docs/isolation-tiers.md](docs/isolation-tiers.md) | What does each tier rest on, and how do I demand one per request? |
 | [docs/capability-grants.md](docs/capability-grants.md) | How does agent code call my API without ever holding my credential? |
 | [docs/run-results.md](docs/run-results.md) | What comes back, and when is a failure an error rather than a result? |
+| [docs/run-records.md](docs/run-records.md) | What does each run's record state, how do I recompute it in another language, and how does a harness sign, verify and replay records? |
+| [docs/sessions.md](docs/sessions.md) | How do I keep one sandbox for many calls, and what holds between the calls? |
+| [docs/placement.md](docs/placement.md) | I run several daemons: how do I pick one per request, and when is a refusal safe to retry elsewhere? |
 | [docs/inner-loop-workflow.md](docs/inner-loop-workflow.md) | How do I iterate fast locally without shipping a weak sandbox to production? |
 | [docs/efficiency-advisor.md](docs/efficiency-advisor.md) | What does the advisor see, why can its telemetry not carry guest content, and how do I configure what it emits? |
 | [docs/hardened-mode.md](docs/hardened-mode.md) | How do I turn the production posture into an enforced startup policy? |
 | [docs/dependencies.md](docs/dependencies.md) | What is in the trusted surface, and who checks the checkers? |
 | [docs/limitations.md](docs/limitations.md) | What does this deliberately not do? |
 | [docs/dockercloud.md](docs/dockercloud.md) | What does the Docker Cloud Sandboxes provider need from the operator, and what does each run check? |
+| [docs/openshell.md](docs/openshell.md) | What does the OpenShell provider need from the operator, and what does each run check? |
 | [docs/releasing.md](docs/releasing.md) | Why is the module path public, why do releases start at v0.2.0, and why is there no checksum exemption? |
 | [docs/callers.md](docs/callers.md) | How do I create, rotate and revoke caller credentials? |
 | [docs/seccomp.md](docs/seccomp.md) and [docs/gvisor.md](docs/gvisor.md) | What do the syscall filter and the kernel-tier boundary enforce? |

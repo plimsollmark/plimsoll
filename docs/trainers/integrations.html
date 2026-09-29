@@ -192,6 +192,13 @@
     <p>Every returned error answers two questions, and the two answers are independent.
     Tap an error to see its Connect code and what a product should do with it. The
     sentinels survive the wire: <code>errors.Is</code> works on the remote plug too.</p>
+    <p><b>Read "nothing ran" from the mark, not from the error kind.</b> Every refusal
+    raised before dispatch is marked, with a reason, and
+    <code>sandbox.NotDispatchedReason(err)</code> reads it the same on either plug (on
+    the wire it is the <code>NotDispatched</code> error detail). An error without the
+    mark may have run, whatever its kind: the one <code>ErrInvalidRequest</code> a
+    simulation worker returns after its container started is unmarked, and so is every
+    error in the third box.</p>
     <div class="quad">
       <div class="cell ran-no"><h3>Nothing ran · fix and resend</h3><div class="errs" data-group="fix"></div></div>
       <div class="cell ran-no"><h3>Nothing ran · retry with backoff</h3><div class="errs" data-group="backoff"></div></div>
@@ -234,7 +241,7 @@
     <ul class="gate" id="gateList">
       <li><label><input type="checkbox"><span><b>Every request states its floor.</b><small><code>MinimumIsolation</code> on the request, so a weak or reconfigured backend is refused before code runs. The daemon's own <code>SANDBOX_MIN_ISOLATION</code> is the operator's floor, not yours.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>Every result's tier is read.</b><small><code>Isolation</code> must meet the floor you sent. On the remote plug the client already checks it and returns <code>ErrIsolationEvidenceMismatch</code>; treat that as possible prior execution: discard output, stop dispatching, alert.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>Startup gates on evidence, not on the provider's name.</b><small>Embedded: <code>EnsureReady</code>. Remote: <code>Describe</code>, including its protocol number against <code>client.Protocol</code>. Docker may report container or kernel; only the report counts.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>Startup gates on evidence, not on the provider's name.</b><small>Embedded: <code>EnsureReady</code>. Remote: <code>Describe</code>, including its protocol number against <code>client.Protocol</code>. Docker may report container or kernel; only the report counts. <code>Describe</code> also names each payload kind's environment by content (a verified image ID, a pinned digest, the interpreter's hash; never a tag) with its timeout ceiling, so two daemons on the same tier are compared on what they actually run.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>Profiles are chosen per operation, in trusted configuration.</b><small>A snippet profile never bleeds into a project run. Never accept a profile name from agent-generated code.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>Errors are classified before any retry.</b><small>The quadrant in 03, written down in the integration, with a bounded, jittered backoff for capacity only.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>The deployed toolchain was exercised once.</b><small>Structural support says the protocol exists, not that the image carries your compiler. One bounded run of the real project shape before the feature is on.</small></span></label></li>
@@ -304,6 +311,8 @@
         '',
         'info, err := remote.Describe(ctx)      <span class="c">// what it is, today</span>',
         '<span class="k">if</span> err != nil || info.Protocol != client.Protocol { <span class="k">return</span> err }',
+        '<span class="c">// info.Environments.JavaScript.Identity names the software a snippet starts in,</span>',
+        '<span class="c">// content-addressed or empty; MaxTimeout is the longest one may run here</span>',
         '',
         'result, err := remote.RunJavaScript(ctx, sandbox.Request{',
         '    Code:             code,',
@@ -342,13 +351,14 @@
 
   // 03: the quadrant map. Group = what a product may do next; the text says why.
   var ERRS = [
-    { id: 'ErrInvalidRequest', group: 'fix', code: 'InvalidArgument', text: 'The request itself is wrong: empty or oversized code, a bad path in a project, a malformed floor, an unknown profile name. Checked before any provider is touched. Fix the request; resending the same one fails the same way.' },
-    { id: 'ErrUnsupported', group: 'fix', code: 'Unimplemented', text: 'This provider cannot do this operation: a project on WASM, a module anywhere but docker, a grant on E2B or Docker Cloud Sandboxes with no guard configured. Describe would have told you. Change the operation or the deployment, not the retry policy.' },
-    { id: 'ErrDisabled', group: 'fix', code: 'FailedPrecondition', text: 'No provider is configured, which is the safe default. Nothing evaluates the code until an operator sets one. A valid state, not an outage.' },
-    { id: 'ErrInsufficientIsolation', group: 'fix', code: 'FailedPrecondition', text: 'The floor you stated is above what the provider proves. Refused before dispatch, so nothing ran. Send it to a daemon that paints a higher mark, or lower the floor only if the work really needs less.' },
-    { id: 'ErrProtocolMismatch', group: 'fix', code: 'Unimplemented', text: 'The daemon serves a different protocol number than this client. Refused before the payload is read, so a daemon that predates a security field never executes a request without it. Upgrade one side.' },
+    { id: 'ErrInvalidRequest', group: 'fix', code: 'InvalidArgument', text: 'The request itself is wrong: empty or oversized code, a bad path in a project, a malformed floor, an unknown profile name. Marked, reason <code>request</code>. Fix the request; resending the same one fails the same way. One exception: a simulation worker that refuses a table after its container started returns this sentinel unmarked, and belongs in the third box.' },
+    { id: 'ErrUnsupported', group: 'fix', code: 'Unimplemented', text: 'This provider cannot do this operation: a project on WASM, a module anywhere but docker, a grant on E2B or Docker Cloud Sandboxes with no guard configured. Describe would have told you. Marked, reason <code>unsupported</code>: another daemon may take it. Change the operation or the deployment, not the retry policy.' },
+    { id: 'ErrDisabled', group: 'fix', code: 'FailedPrecondition', text: 'No provider is configured, which is the safe default. Nothing evaluates the code until an operator sets one. A valid state, not an outage. Marked, reason <code>unsupported</code>.' },
+    { id: 'ErrInsufficientIsolation', group: 'fix', code: 'FailedPrecondition', text: 'The floor you stated is above what the provider proves. Refused before dispatch and marked, reason <code>isolation</code>, so nothing ran. Send it to a daemon that paints a higher mark, or lower the floor only if the work really needs less.' },
+    { id: 'ErrProtocolMismatch', group: 'fix', code: 'Unimplemented', text: 'The daemon serves a different protocol number than this client. Refused before the payload is read, so a daemon that predates a security field never executes a request without it. Marked, reason <code>protocol</code>. Upgrade one side.' },
     { id: 'ErrRawGrantUnsupported', group: 'fix', code: 'client-side, no request sent', text: 'A HostAPIGrant value was put on a request to the remote plug. Authority cannot travel over the wire, so the client refuses before dialling rather than silently dropping it. Use a named profile.' },
-    { id: 'ErrAtCapacity', group: 'backoff', code: 'ResourceExhausted', text: 'Every admission slot is taken, or the memory budget or your rate is spent. Shed at once, never queued, and nothing ran. A bounded, jittered backoff is correct here and only here.' },
+    { id: 'Unauthenticated / PermissionDenied', group: 'fix', code: 'Unauthenticated / PermissionDenied', text: 'No token, an unknown token, a token without the code:run scope, or a caller the grant profile does not list. Marked, reason <code>permission</code>: nothing ran, and another daemon would not help, because the caller is the problem.' },
+    { id: 'ErrAtCapacity', group: 'backoff', code: 'ResourceExhausted', text: 'Every admission slot is taken, or the memory budget or your rate is spent. Shed at once, never queued, and marked, reason <code>capacity</code>: nothing ran. A bounded, jittered backoff is correct here and only here.' },
     { id: 'context deadline', group: 'maybe', code: 'DeadlineExceeded / Canceled', text: 'Your context expired or was cancelled around the call. The run may have started, so a retry is a business decision about the work, not a transport reflex.' },
     { id: 'ErrIsolationEvidenceMismatch', group: 'maybe', code: 'DataLoss', text: 'The daemon answered with a tier below the floor you sent. The client refuses the result, but execution may already have happened behind a weaker wall. Discard the output, stop dispatching, alert. Never retry automatically.' },
     { id: 'ErrResultKindMismatch', group: 'maybe', code: 'DataLoss', text: 'The daemon returned a result of another kind than the request. Something ran, or something is very wrong on the path; treat it like the evidence mismatch.' },

@@ -65,7 +65,7 @@ func (f wasmBuckFixture) judged() wasmJudged {
 	return j
 }
 
-// buckRegulationScore is envs/buck-converter's verifier, restated: the fraction of
+// buckRegulationScore is envs/buck-converter's grader, restated: the fraction of
 // ticks from 2 ms on with the output within 0.1 V of 5 V, and zero with a reason if
 // the output ever exceeds 6 V or the inductor current 10 A in magnitude. The
 // trajectory is the judge's record: per tick v, i, then the duty cycle, as

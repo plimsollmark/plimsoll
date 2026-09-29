@@ -312,6 +312,9 @@ func startDaemon(ctx context.Context, binary, addr, clientsPath, image string, s
 		"SANDBOX_PROVIDER=docker",
 		"SANDBOX_DOCKER_PROJECT_IMAGE="+image,
 		"PLIMSOLL_ADDR="+addr,
+		// This run reads no metrics, and the default port would collide with any
+		// other daemon on this machine.
+		"PLIMSOLL_METRICS_ADDR=off",
 		"PLIMSOLL_CLIENTS_FILE="+clientsPath,
 	)
 	// The shipped syscall allowlist, when this runs from the checkout: the judge

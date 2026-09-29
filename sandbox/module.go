@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Module runs: a compiled physical model (an AOT-compiled WebAssembly module
+// Module runs: a compiled physical simulator (an AOT-compiled WebAssembly module
 // baked into the provider's module image) executed once per parameter row by a
 // supervised worker. The types here are transport-agnostic, like the rest of the
 // package; the docker provider implements the operation and every other provider
@@ -71,6 +71,7 @@ type ModuleResult struct {
 	Stdout    string
 	Stderr    string
 	Duration  time.Duration
+	Record    *RunRecord // mirrors ProjectResult.Record
 }
 
 // MaxSteps is the worker's bound on steps per row for this envelope:
@@ -92,7 +93,9 @@ func (r ModuleRequest) RowWidth() int {
 // could not fit the result budget even at one output per step: the necessary
 // condition the daemon can evaluate without the module. The worker applies the
 // exact condition with the module's real width before running any row.
-func ValidateModuleRequest(req ModuleRequest) error {
+func ValidateModuleRequest(req ModuleRequest) error { return refused(validateModuleRequest(req)) }
+
+func validateModuleRequest(req ModuleRequest) error {
 	if err := validateMinimumIsolation(req.MinimumIsolation); err != nil {
 		return err
 	}

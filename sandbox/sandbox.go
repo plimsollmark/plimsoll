@@ -253,6 +253,9 @@ type ProjectResult struct {
 	// Advice contains caller-visible findings returned by an RPC service. Direct
 	// providers leave it nil; advice never changes execution or authorization.
 	Advice []AdviceFinding
+	// Record is the daemon's statement of this run (see RunRecord), set by an RPC
+	// client that checked it. Direct providers leave it nil.
+	Record *RunRecord
 }
 
 // AdviceFinding is post-dispatch efficiency evidence supplied by an RPC service.
@@ -308,6 +311,31 @@ type Result struct {
 	// Advice mirrors ProjectResult.Advice for an RPC snippet response. Direct
 	// providers leave it nil; callers may use it as a hint for a subsequent run.
 	Advice []AdviceFinding
+	// Record mirrors ProjectResult.Record.
+	Record *RunRecord
+}
+
+// RunRecord is a daemon's statement of one run: SHA-256 digests of what the
+// caller sent and what came back, the evidence the run executed under, and when.
+// The daemon computes it and holds no key; a harness outside the daemon
+// recomputes both digests from its own copy of the request and result, and signs
+// the record (package record). Every digest is lowercase hex over the
+// length-prefixed encoding in docs/run-records.md. In a session the last three
+// fields chain the calls; for a single run they are empty or zero.
+type RunRecord struct {
+	Version        int    // encoding version, 1
+	RequestSHA256  string // protocol number, floor, timeout and payload; never the trace id
+	ResultSHA256   string // the result as sent, without durations or advice
+	Provider       string // the provider that ran it, as the daemon reported
+	Isolation      string // the tier as the daemon reported it, verbatim
+	Environment    string // the payload kind's content-addressed identity, or ""
+	Policy         string // the verified sandbox policy's digest, or ""
+	Started        time.Time
+	Ended          time.Time
+	Session        string // SHA-256 of the session ID; "" for a single run
+	Sequence       uint64 // the call's number in its session, from 1; 0 for a single run
+	PreviousSHA256 string // the previous call's SHA256; "" for a single run or a first call
+	SHA256         string // over every field above
 }
 
 // Sandbox is an isolated code runner.
@@ -319,7 +347,7 @@ type Sandbox interface {
 	// RunProject writes a multi-file project and runs build/lint/run steps, with the
 	// same per-dispatch MinimumIsolation enforcement as RunJavaScript.
 	RunProject(ctx context.Context, req ProjectRequest) (ProjectResult, error)
-	// RunModule runs a compiled physical model baked into the provider's module
+	// RunModule runs a compiled physical simulator baked into the provider's module
 	// image once per parameter row, with the same per-dispatch MinimumIsolation
 	// enforcement. Providers without a supervised worker return ErrUnsupported.
 	RunModule(ctx context.Context, req ModuleRequest) (ModuleResult, error)
@@ -412,9 +440,21 @@ type Preflighter interface {
 // or a teardown whose retries all failed. ReconcileOrphans finds resources this
 // provider instance created but no longer tracks and destroys them, returning
 // how many were destroyed. The daemon runs it periodically in the background;
-// it must never destroy resources belonging to other instances.
+// it must never destroy a resource another instance may still be using. A
+// provider whose resources declare their own lifetime at creation may also
+// destroy another instance's resource once it has outlived that declaration, so
+// what a crashed process leaves behind does not live forever.
 type OrphanReconciler interface {
 	ReconcileOrphans(ctx context.Context) (int, error)
+}
+
+// Drainer is an optional interface a provider implements when a run can leave
+// work behind after it returns, such as a sandbox deleted off the result path.
+// Drain waits until that work is finished or ctx ends. The daemon calls it on
+// shutdown, after it has stopped accepting runs, so the process exiting does not
+// cut the work off.
+type Drainer interface {
+	Drain(ctx context.Context) error
 }
 
 // SmokeTester is an optional interface a provider implements to prove, by

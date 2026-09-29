@@ -15,6 +15,8 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/plimsollmark/plimsoll/sandbox"
+
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 )
 
@@ -30,6 +32,10 @@ var requiredScopes = map[string]string{
 	// Describe runs no code, but it describes the code-running boundary; its only
 	// audience is code-running callers, so it shares their scope.
 	plimsollv1connect.SandboxServiceDescribeProcedure: ScopeCodeRun,
+	// A session is code execution spread over calls; all three share the scope.
+	plimsollv1connect.SandboxServiceOpenSessionProcedure:  ScopeCodeRun,
+	plimsollv1connect.SandboxServiceSessionRunProcedure:   ScopeCodeRun,
+	plimsollv1connect.SandboxServiceCloseSessionProcedure: ScopeCodeRun,
 }
 
 // Principal is an authenticated caller.
@@ -65,7 +71,7 @@ type TokenVerifier interface {
 func authenticatePrincipal(ctx context.Context, header string, verifier TokenVerifier) (Principal, error) {
 	token := bearerToken(header)
 	if token == "" {
-		return Principal{}, connect.NewError(connect.CodeUnauthenticated, errors.New("missing bearer token"))
+		return Principal{}, refuse(connect.CodeUnauthenticated, sandbox.RefusalPermission, errors.New("missing bearer token"))
 	}
 	p, ok, err := verifier.VerifyToken(ctx, token)
 	if err != nil {
@@ -80,11 +86,11 @@ func authenticatePrincipal(ctx context.Context, header string, verifier TokenVer
 		}
 	}
 	if !ok {
-		return Principal{}, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or expired token"))
+		return Principal{}, refuse(connect.CodeUnauthenticated, sandbox.RefusalPermission, errors.New("invalid or expired token"))
 	}
 	if !utf8.ValidString(p.UserID) || p.UserID == "*" || p.UserID == "" ||
 		p.UserID != strings.TrimSpace(p.UserID) || strings.IndexFunc(p.UserID, unicode.IsControl) >= 0 {
-		return Principal{}, connect.NewError(connect.CodeUnauthenticated,
+		return Principal{}, refuse(connect.CodeUnauthenticated, sandbox.RefusalPermission,
 			errors.New("authenticated principal has no stable identity"))
 	}
 	return p, nil
@@ -110,7 +116,7 @@ func AuthenticateHTTP(verifier TokenVerifier, next http.Handler) http.Handler {
 		scope, mapped := requiredScopes[r.URL.Path]
 		if !mapped || !p.HasScope(scope) {
 			_ = r.Body.Close()
-			_ = errorWriter.Write(w, r, connect.NewError(connect.CodePermissionDenied,
+			_ = errorWriter.Write(w, r, refuse(connect.CodePermissionDenied, sandbox.RefusalPermission,
 				fmt.Errorf("token lacks required scope %q", scope)))
 			return
 		}
@@ -134,7 +140,7 @@ func LimitHTTPConcurrency(max int, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		default:
 			_ = r.Body.Close()
-			_ = errorWriter.Write(w, r, connect.NewError(connect.CodeResourceExhausted,
+			_ = errorWriter.Write(w, r, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
 				errors.New("RPC decode capacity exhausted, retry shortly")))
 		}
 	})
@@ -175,7 +181,7 @@ func AuthInterceptor(verifier TokenVerifier) connect.UnaryInterceptorFunc {
 			}
 			scope, mapped := requiredScopes[procedure]
 			if !mapped || !p.HasScope(scope) {
-				return nil, connect.NewError(connect.CodePermissionDenied, fmt.Errorf("token lacks required scope %q", scope))
+				return nil, refuse(connect.CodePermissionDenied, sandbox.RefusalPermission, fmt.Errorf("token lacks required scope %q", scope))
 			}
 			ctx = context.WithValue(ctx, principalKey{}, p)
 			return next(ctx, req)

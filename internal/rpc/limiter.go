@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 // bucket is a per-principal token bucket: tokens refill continuously at
@@ -72,16 +74,43 @@ func NewCodeLimiter(maxConcurrent, perKeyConcurrent, perMinute, burst int) *Code
 	}
 }
 
-// Acquire reserves a slot for key. The returned release func must be called when
-// the run finishes. On any limit it returns a connect ResourceExhausted error and
-// reserves nothing (all partial reservations are rolled back).
+// Acquire reserves a slot for key and charges one run to its rate. The returned
+// release func must be called when the run finishes. On any limit it returns a
+// connect ResourceExhausted error and reserves nothing (all partial reservations
+// are rolled back).
 func (l *CodeLimiter) Acquire(_ context.Context, key string) (func(), error) {
+	return l.acquire(key, true)
+}
+
+// Hold reserves a slot for key without charging its rate: a session holds one
+// while its sandbox is running, between calls as well as during them, and each
+// call is charged separately (Charge).
+func (l *CodeLimiter) Hold(key string) (func(), error) {
+	return l.acquire(key, false)
+}
+
+// Charge charges one run to key's rate without a slot: a call in a session whose
+// slot is already held.
+func (l *CodeLimiter) Charge(key string) error {
+	if l.perMin <= 0 {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.takeTokenLocked(key, time.Now()) {
+		l.rateLimited.Add(1)
+		return refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, fmt.Errorf("rate limit: %d runs/min per caller", l.perMin))
+	}
+	return nil
+}
+
+func (l *CodeLimiter) acquire(key string, charge bool) (func(), error) {
 	// 1) Global concurrency: shed immediately if the pool is full.
 	select {
 	case l.sem <- struct{}{}:
 	default:
 		l.atCapacity.Add(1)
-		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("sandbox is at capacity, retry shortly"))
+		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, errors.New("sandbox is at capacity, retry shortly"))
 	}
 
 	// 2+3) Per-principal concurrency and rate, under one lock so the decision is
@@ -91,13 +120,13 @@ func (l *CodeLimiter) Acquire(_ context.Context, key string) (func(), error) {
 		l.mu.Unlock()
 		<-l.sem
 		l.perKeyFull.Add(1)
-		return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("per-caller concurrency limit reached (%d in flight)", l.perKey))
+		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, fmt.Errorf("per-caller concurrency limit reached (%d in flight)", l.perKey))
 	}
-	if l.perMin > 0 && !l.takeTokenLocked(key, time.Now()) {
+	if charge && l.perMin > 0 && !l.takeTokenLocked(key, time.Now()) {
 		l.mu.Unlock()
 		<-l.sem
 		l.rateLimited.Add(1)
-		return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("rate limit: %d runs/min per caller", l.perMin))
+		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, fmt.Errorf("rate limit: %d runs/min per caller", l.perMin))
 	}
 	l.inflight[key]++
 	l.mu.Unlock()

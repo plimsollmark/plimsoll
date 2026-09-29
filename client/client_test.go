@@ -17,6 +17,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/protocol"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandboxtest"
 )
@@ -136,6 +137,22 @@ func TestNewValidatesBaseURLAndFailsClosedOnRemoteHTTP(t *testing.T) {
 	}
 }
 
+// stamped answers req with resp and the record a daemon states for it.
+func stamped(req *connect.Request[plimsollv1.RunRequest], resp *plimsollv1.RunResponse) *connect.Response[plimsollv1.RunResponse] {
+	resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req.Msg)}, resp)
+	return connect.NewResponse(resp)
+}
+
+// unrecordedServer answers every run without a record.
+type unrecordedServer struct {
+	plimsollv1connect.UnimplementedSandboxServiceHandler
+}
+
+func (unrecordedServer) Run(context.Context, *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	return connect.NewResponse(&plimsollv1.RunResponse{Sandbox: "unrecorded", Isolation: "vm",
+		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("already executed")}}}), nil
+}
+
 type weakEvidenceServer struct {
 	plimsollv1connect.UnimplementedSandboxServiceHandler
 }
@@ -145,10 +162,10 @@ type weakEvidenceServer struct {
 func (weakEvidenceServer) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
 	switch req.Msg.GetPayload().(type) {
 	case *plimsollv1.RunRequest_Javascript:
-		return connect.NewResponse(&plimsollv1.RunResponse{Sandbox: "forged", Isolation: "container",
+		return stamped(req, &plimsollv1.RunResponse{Sandbox: "forged", Isolation: "container",
 			Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("already executed")}}}), nil
 	case *plimsollv1.RunRequest_Project:
-		return connect.NewResponse(&plimsollv1.RunResponse{Sandbox: "forged", Isolation: "unknown",
+		return stamped(req, &plimsollv1.RunResponse{Sandbox: "forged", Isolation: "unknown",
 			Result: &plimsollv1.RunResponse_Project{Project: &plimsollv1.ProjectResult{}}}), nil
 	}
 	return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("no payload"))
@@ -166,7 +183,8 @@ type otherProtocolServer struct {
 func (s *otherProtocolServer) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
 	s.stated = append(s.stated, req.Msg.GetProtocol())
 	if req.Msg.GetProtocol() != s.serves {
-		return nil, connect.NewError(connect.CodeUnimplemented, errors.New(protocol.Mismatch(s.serves, req.Msg.GetProtocol())))
+		return nil, notDispatchedWireErr(connect.CodeUnimplemented,
+			plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PROTOCOL, protocol.Mismatch(s.serves, req.Msg.GetProtocol()))
 	}
 	s.dispatched++
 	return connect.NewResponse(&plimsollv1.RunResponse{Sandbox: "other", Isolation: "vm",
@@ -175,6 +193,29 @@ func (s *otherProtocolServer) Run(_ context.Context, req *connect.Request[plimso
 
 func (s *otherProtocolServer) Describe(context.Context, *connect.Request[plimsollv1.DescribeRequest]) (*connect.Response[plimsollv1.DescribeResponse], error) {
 	return connect.NewResponse(&plimsollv1.DescribeResponse{Sandbox: "other", Isolation: "vm", Protocol: s.serves}), nil
+}
+
+// Describe's informational statements survive the wire into Info.
+func TestDescribeReportsEnvironmentsAndResources(t *testing.T) {
+	svc := rpc.NewSandboxService(sandboxtest.Wasm())
+	svc.Resources = sandbox.Resources{MemoryMB: 128}
+	mux := http.NewServeMux()
+	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	info, err := newRemote(t, srv.URL).Describe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sandboxtest.Wasm().Environments()
+	if info.Environments != want || !strings.HasPrefix(want.JavaScript.Identity, "quickjs-wasm:sha256:") {
+		t.Fatalf("Environments = %+v, want %+v", info.Environments, want)
+	}
+	if info.Resources != (sandbox.Resources{MemoryMB: 128}) {
+		t.Fatalf("Resources = %+v", info.Resources)
+	}
 }
 
 // Describe reports the daemon's protocol number and the client exposes it, so a
@@ -370,8 +411,10 @@ func TestRemoteSendsNamedGrantProfile(t *testing.T) {
 	url := startServer(t, nil)
 	r := newRemote(t, url, WithJavaScriptGrantProfile("missing-profile"))
 	_, err := r.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
-	if connect.CodeOf(err) != connect.CodeInvalidArgument {
-		t.Fatalf("code = %v, want InvalidArgument proving grant_profile reached server", connect.CodeOf(err))
+	// An unknown profile is refused exactly like one the caller is not on; the name
+	// in the refusal proves grant_profile reached the server.
+	if connect.CodeOf(err) != connect.CodePermissionDenied || !strings.Contains(err.Error(), "missing-profile") {
+		t.Fatalf("err = %v, want PermissionDenied naming the profile, proving grant_profile reached server", err)
 	}
 }
 
@@ -379,7 +422,7 @@ func TestRemoteGrantProfilesAreOperationSpecific(t *testing.T) {
 	url := startServer(t, nil)
 	r := newRemote(t, url, WithJavaScriptGrantProfile("missing-profile"))
 	// The JavaScript profile must not bleed into an isolated project call. WASM
-	// rejects projects as Unsupported; an unknown profile would be InvalidArgument.
+	// rejects projects as Unsupported; an unknown profile would be PermissionDenied.
 	_, err := r.RunProject(context.Background(), sandbox.ProjectRequest{Steps: []string{"true"}})
 	if !errors.Is(err, sandbox.ErrUnsupported) {
 		t.Fatalf("project error = %v, want provider ErrUnsupported rather than leaked JS profile", err)
@@ -407,10 +450,74 @@ func TestRestoreSandboxErrorPreservesSentinelAndConnectCode(t *testing.T) {
 			t.Errorf("code %v became %v", tc.code, connect.CodeOf(got))
 		}
 	}
-	isolationWireErr := connect.NewError(connect.CodeFailedPrecondition,
-		errors.New(sandbox.ErrInsufficientIsolation.Error()+": provider isolation container is below requested minimum kernel"))
-	if got := restoreSandboxError(isolationWireErr); !errors.Is(got, sandbox.ErrInsufficientIsolation) || errors.Is(got, sandbox.ErrDisabled) {
+	// The reason separates the two meanings of FailedPrecondition, not the text:
+	// a message that merely names the isolation sentinel, with no detail, is the
+	// disabled-provider condition and is not marked as refused before dispatch.
+	isolationWireErr := notDispatchedWireErr(connect.CodeFailedPrecondition,
+		plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ISOLATION, "provider isolation container is below requested minimum kernel")
+	got := restoreSandboxError(isolationWireErr)
+	if !errors.Is(got, sandbox.ErrInsufficientIsolation) || errors.Is(got, sandbox.ErrDisabled) {
 		t.Fatalf("isolation FailedPrecondition restored as %v", got)
+	}
+	if r, ok := sandbox.NotDispatchedReason(got); !ok || r != sandbox.RefusalIsolation {
+		t.Fatalf("isolation refusal reason = %v, %v; want isolation, true", r, ok)
+	}
+	textOnly := restoreSandboxError(connect.NewError(connect.CodeFailedPrecondition,
+		errors.New(sandbox.ErrInsufficientIsolation.Error())))
+	if errors.Is(textOnly, sandbox.ErrInsufficientIsolation) {
+		t.Fatalf("message text alone restored the isolation sentinel: %v", textOnly)
+	}
+	if _, ok := sandbox.NotDispatchedReason(textOnly); ok {
+		t.Fatalf("an error without the detail must read as possibly executed: %v", textOnly)
+	}
+}
+
+func notDispatchedWireErr(code connect.Code, reason plimsollv1.NotDispatchedReason, msg string) *connect.Error {
+	ce := connect.NewError(code, errors.New(msg))
+	d, err := connect.NewErrorDetail(&plimsollv1.NotDispatched{Reason: reason})
+	if err != nil {
+		panic(err)
+	}
+	ce.AddDetail(d)
+	return ce
+}
+
+// The real daemon marks each refusal that ran nothing, the client restores the
+// mark, and sandbox.NotDispatchedReason reads it exactly as it would from a local
+// provider. A completed run carries no error at all.
+func TestRemoteRefusalsCarryNotDispatchedReason(t *testing.T) {
+	r := newRemote(t, startServer(t, nil)) // wasm: process tier, no projects
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		run  func() error
+		want sandbox.Refusal
+	}{
+		"empty snippet": {func() error { _, err := r.RunJavaScript(ctx, sandbox.Request{}); return err }, sandbox.RefusalRequest},
+		"floor": {func() error {
+			_, err := r.RunJavaScript(ctx, sandbox.Request{Code: "1", MinimumIsolation: sandbox.IsolationVM})
+			return err
+		}, sandbox.RefusalIsolation},
+		"wasm project": {func() error { _, err := r.RunProject(ctx, sandbox.ProjectRequest{Steps: []string{"true"}}); return err }, sandbox.RefusalUnsupported},
+		"wasm module": {func() error {
+			_, err := r.RunModule(ctx, sandbox.ModuleRequest{Model: "m", Rows: [][]float64{{1}}, EndTime: 1, Step: 1})
+			return err
+		}, sandbox.RefusalUnsupported},
+	} {
+		err := tc.run()
+		if got, ok := sandbox.NotDispatchedReason(err); !ok || got != tc.want {
+			t.Errorf("%s: reason = %v, %v (err %v); want %v, true", name, got, ok, err, tc.want)
+		}
+	}
+	if _, err := r.RunJavaScript(ctx, sandbox.Request{Code: "console.log(1)"}); err != nil {
+		t.Fatalf("a completed run returned %v", err)
+	}
+}
+
+// A failure after dispatch carries no detail, so it never reads as safe to retry.
+func TestRemoteInternalErrorIsNotMarked(t *testing.T) {
+	err := restoreSandboxError(connect.NewError(connect.CodeInternal, errors.New("provider crashed mid-run")))
+	if _, ok := sandbox.NotDispatchedReason(err); ok {
+		t.Fatalf("internal error read as not dispatched: %v", err)
 	}
 }
 
@@ -453,5 +560,92 @@ func TestTraceContextIgnoresEmpty(t *testing.T) {
 func TestTraceIDFromBareContext(t *testing.T) {
 	if got := TraceIDFrom(context.Background()); got != "" {
 		t.Fatalf("TraceIDFrom = %q, want empty", got)
+	}
+}
+
+// The client returns the daemon's run record once it has checked it against the
+// request it sent and the response it received.
+func TestRemoteReturnsACheckedRunRecord(t *testing.T) {
+	r := newRemote(t, startServer(t, nil))
+	res, err := r.RunJavaScript(context.Background(), sandbox.Request{Code: `console.log(6*7)`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := res.Record
+	if rec == nil {
+		t.Fatal("no run record")
+	}
+	if rec.Provider != "wasm" || rec.Isolation != "process" || !strings.HasPrefix(rec.Environment, "quickjs-wasm:sha256:") {
+		t.Fatalf("evidence: %+v", rec)
+	}
+	if rec.SHA256 != record.Digest(*rec) || rec.Ended.Before(rec.Started) {
+		t.Fatalf("record: %+v", rec)
+	}
+}
+
+// tamperingServer is a daemon, or anything between it and the client, that
+// changes a result after the record was computed.
+type tamperingServer struct {
+	plimsollv1connect.UnimplementedSandboxServiceHandler
+	inner *rpc.SandboxService
+}
+
+func (s tamperingServer) Run(ctx context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	resp, err := s.inner.Run(ctx, req)
+	if err == nil {
+		resp.Msg.GetJavascript().Stdout = []byte("43\n")
+	}
+	return resp, err
+}
+
+func TestRemoteClassifiesAMismatchedRecordAsDataLoss(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(tamperingServer{inner: rpc.NewSandboxService(sandboxtest.Wasm())}))
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	res, err := newRemote(t, server.URL).RunJavaScript(context.Background(), sandbox.Request{Code: `console.log(6*7)`})
+	if connect.CodeOf(err) != connect.CodeDataLoss || !errors.Is(err, record.ErrMismatch) {
+		t.Fatalf("err = %v, want DataLoss wrapping record.ErrMismatch", err)
+	}
+	if res.Stdout != "43\n" || res.Record != nil {
+		t.Fatalf("the result must come back as received, without a record: %+v", res)
+	}
+}
+
+type recorderFunc func(*plimsollv1.RunRequest, *plimsollv1.RunResponse) error
+
+func (f recorderFunc) Record(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) error {
+	return f(req, resp)
+}
+
+// The recorder sees each checked exchange, and its failure returns the executed
+// result with ErrNotRecorded. An answer with no record is DataLoss before any
+// recorder sees it, with the result still returned: the run may have executed.
+func TestRemoteRecorder(t *testing.T) {
+	var seen []string
+	ok := recorderFunc(func(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) error {
+		seen = append(seen, req.GetJavascript().GetCode()+" -> "+resp.GetRecord().GetRecordSha256())
+		return nil
+	})
+	url := startServer(t, nil)
+	res, err := newRemote(t, url, WithRecorder(ok)).RunJavaScript(context.Background(), sandbox.Request{Code: `console.log(1)`})
+	if err != nil || len(seen) != 1 || !strings.HasSuffix(seen[0], res.Record.SHA256) {
+		t.Fatalf("seen %v, err %v", seen, err)
+	}
+
+	failing := recorderFunc(func(*plimsollv1.RunRequest, *plimsollv1.RunResponse) error { return errors.New("disk full") })
+	res, err = newRemote(t, url, WithRecorder(failing)).RunJavaScript(context.Background(), sandbox.Request{Code: `console.log(1)`})
+	if !errors.Is(err, ErrNotRecorded) || res.Stdout != "1\n" || res.Record == nil {
+		t.Fatalf("a failing recorder: result %+v, err %v", res, err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(unrecordedServer{}))
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	seen = nil
+	res, err = newRemote(t, server.URL, WithRecorder(ok)).RunJavaScript(context.Background(), sandbox.Request{Code: "x"})
+	if connect.CodeOf(err) != connect.CodeDataLoss || !errors.Is(err, record.ErrNoRecord) || res.Stdout != "already executed" || len(seen) != 0 {
+		t.Fatalf("no record: result %+v, err %v, recorded %v", res, err, seen)
 	}
 }

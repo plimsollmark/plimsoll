@@ -168,3 +168,54 @@ func decodeNpyFloat64(b []byte) ([]float64, error) {
 	}
 	return out, nil
 }
+
+// TestDockerLegacyTimestampSyscalls: utime, utimes and futimesat are the older forms of
+// utimensat, and the shipped profile allows all four (docs/seccomp.md). Older C
+// libraries still issue them, and a program built on one failed with EPERM while
+// setting file times before they were allowed. Node and Python's os.utime go through
+// utimensat, so the test makes each raw syscall through ctypes on a file the run owns.
+// The numbers are x86_64's; arm64 has only utimensat, so there is nothing to prove there.
+func TestDockerLegacyTimestampSyscalls(t *testing.T) {
+	d := testDocker()
+	d.ProjectImage = pythonProjectImage
+	requireProjectImage(t, d)
+
+	const mainPy = `import ctypes, json, os, platform
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall.restype = ctypes.c_long
+open("stamp.txt", "w").close()
+path = ctypes.c_char_p(os.path.abspath("stamp.txt").encode())
+out = {"machine": platform.machine()}
+if out["machine"] == "x86_64":
+    for name, args in (("utime", (132, path, None)),
+                       ("utimes", (235, path, None)),
+                       ("futimesat", (261, ctypes.c_int(-100), path, None))):
+        ctypes.set_errno(0)
+        rc = libc.syscall(*args)
+        out[name] = 0 if rc == 0 else ctypes.get_errno()
+print(json.dumps(out))
+`
+	res, err := d.RunProject(context.Background(), ProjectRequest{
+		Files: []File{{Path: "main.py", Content: mainPy}},
+		Steps: []string{"python3 main.py"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 0 {
+		t.Fatalf("outcome = %s (%s), steps = %+v", res.Outcome, res.Detail, res.Steps)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(res.Steps[0].Stdout), &got); err != nil {
+		t.Fatalf("unparseable output %q: %v", res.Steps[0].Stdout, err)
+	}
+	if got["machine"] != "x86_64" {
+		t.Logf("guest is %v, which has no legacy timestamp syscalls; nothing to prove", got["machine"])
+		return
+	}
+	for _, name := range []string{"utime", "utimes", "futimesat"} {
+		if errno, _ := got[name].(float64); errno != 0 {
+			t.Errorf("%s failed with errno %v inside the run (1 is EPERM: the profile refuses it)", name, got[name])
+		}
+	}
+}

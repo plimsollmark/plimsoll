@@ -192,24 +192,25 @@
 
       <div class="controls" id="controls">
         <div class="control">
-          <p class="control-label">Provider <code>SANDBOX_PROVIDER</code></p>
+          <p class="control-label">Provider <code>SANDBOX_PROVIDER</code> <span style="font-weight:500;color:var(--muted)">daemon setting: one provider per daemon, fixed at startup</span></p>
           <div class="seg" role="group" aria-label="Provider" data-key="provider">
             <button type="button" data-value="disabled">disabled<small>unset: the default</small></button>
             <button type="button" data-value="wasm">wasm<small>in-process QuickJS</small></button>
             <button type="button" data-value="docker">docker<small>a locked-down container</small></button>
             <button type="button" data-value="e2b">e2b<small>a Firecracker microVM</small></button>
             <button type="button" data-value="dockercloud">dockercloud<small>a Docker Cloud Sandboxes microVM</small></button>
+            <button type="button" data-value="openshell">openshell<small>an NVIDIA OpenShell sandbox</small></button>
           </div>
         </div>
         <div class="control" id="runtimeControl">
-          <p class="control-label">Runtime <code>SANDBOX_DOCKER_RUNTIME</code></p>
+          <p class="control-label">Runtime <code>SANDBOX_DOCKER_RUNTIME</code> <span style="font-weight:500;color:var(--muted)">daemon setting</span></p>
           <div class="seg" role="group" aria-label="Docker runtime" data-key="runtime">
             <button type="button" data-value="runc">runc<small>docker's default</small></button>
             <button type="button" data-value="runsc">runsc, verified<small>gVisor, proven at Preflight</small></button>
           </div>
         </div>
         <div class="control" id="guardControl">
-          <p class="control-label">Egress guard <code>E2B_GUARD_URL</code> or <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code></p>
+          <p class="control-label">Egress guard <code>E2B_GUARD_URL</code> or <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code> <span style="font-weight:500;color:var(--muted)">daemon setting</span></p>
           <div class="seg" role="group" aria-label="Egress guard" data-key="guard">
             <button type="button" data-value="unset">unset<small>no route out of the VM</small></button>
             <button type="button" data-value="set">set<small>one exit, to the host-side guard</small></button>
@@ -220,11 +221,11 @@
           <div class="seg" role="group" aria-label="Payload" data-key="payload">
             <button type="button" data-value="javascript">javascript<small>one snippet</small></button>
             <button type="button" data-value="project">project<small>files, then build/lint/run steps</small></button>
-            <button type="button" data-value="module">module<small>a compiled model, one row each</small></button>
+            <button type="button" data-value="module">module<small>a compiled simulator, one row each</small></button>
           </div>
         </div>
         <div class="control" id="grantControl">
-          <p class="control-label">Grant <code>grant_profile</code></p>
+          <p class="control-label">Grant <code>grant_profile</code> <span style="font-weight:500;color:var(--muted)">on each request</span></p>
           <div class="seg" role="group" aria-label="Grant" data-key="grant">
             <button type="button" data-value="none">none<small>no network at all</small></button>
             <button type="button" data-value="profile">a named profile<small>routes and key held server-side</small></button>
@@ -232,7 +233,7 @@
           <p class="control-note" id="grantNote"></p>
         </div>
         <div class="control">
-          <p class="control-label">Caller's floor <code>minimum_isolation</code></p>
+          <p class="control-label">Caller's floor <code>minimum_isolation</code> <span style="font-weight:500;color:var(--muted)">on each request</span></p>
           <div class="seg" role="group" aria-label="Minimum isolation" data-key="floor">
             <button type="button" data-value="none">none</button>
             <button type="button" data-value="process">process</button>
@@ -294,11 +295,13 @@
       </li>
       <li>
         <div class="letter">C<small>container</small></div>
-        <div><b>Docker on runc <span class="tone bad">too weak alone</span></b>
+        <div><b>Docker on runc, or an OpenShell sandbox <span class="tone bad">too weak alone</span></b>
         <p>A read-only root, sized <code>noexec</code> writable mounts, the network off,
         dropped capabilities, and optionally the shipped seccomp allowlist
         (<code>SANDBOX_DOCKER_SECCOMP</code>). An escape still reaches the shared host
-        kernel.</p></div>
+        kernel. A sandbox on an NVIDIA OpenShell gateway's docker driver gets the same mark:
+        OpenShell adds its own network and filesystem policy, but no OpenShell API reports
+        which runtime that docker uses, so plimsoll claims nothing higher.</p></div>
       </li>
       <li>
         <div class="letter">K<small>kernel</small></div>
@@ -400,6 +403,28 @@
         create is sent, so the daemon can delete untracked sandboxes it finds later.</li>
       </ol>
     </div>
+    <div class="card">
+      <h3>OpenShell earns its mark from the gateway, and reads every sandbox back</h3>
+      <ol class="proof">
+        <li><b>The driver is the evidence.</b> The gateway must report the docker compute
+        driver, the only one plimsoll has tested; any other is refused. That report is what
+        paints C.</li>
+        <li><b>Readiness asks the gateway at most once every 5 seconds.</b>
+        <code>/readyz</code> needs no login, so its answer is reused for 5 seconds; otherwise
+        anyone who can reach the port could make the daemon call the gateway on every poll.</li>
+        <li><b>One throwaway sandbox at startup.</b> From inside, it must show that writes land
+        only under <code>/tmp</code>, that outbound connections are refused and loopback is
+        the only interface, that its own cgroup holds the requested memory and CPU limits, that
+        a cancelled command's processes are gone, and that a child process cannot read its
+        parent's memory.</li>
+        <li><b>Every run reads its sandbox back.</b> Labels, image, limits, the policy and its
+        hash, and no credential providers attached. Any difference, and nothing runs.</li>
+        <li><b>Every sandbox declares its lifetime.</b> OpenShell sandboxes never expire on
+        their own, so each one carries the seconds until its run's deadline. A daemon deletes
+        its own untracked sandboxes at once, and another instance's once that lifetime plus 5
+        minutes has passed.</li>
+      </ol>
+    </div>
   </section>
 
   <!-- 04 ─────────────────────────────────────────────────────────────────── -->
@@ -437,7 +462,7 @@
     three different facts, and each decides differently whether a retry is worth it.</p>
     <div class="channels">
       <div class="channel"><b><span class="chip result">result</span></b>The code ran. A non-zero exit is a normal answer with stdout, stderr and the tier it ran behind.</div>
-      <div class="channel"><b><span class="chip refusal">typed refusal</span></b>Nothing ran. A named error before dispatch, with a Connect code a client can branch on.</div>
+      <div class="channel"><b><span class="chip refusal">typed refusal</span></b>Nothing ran. A named error before dispatch, marked as not dispatched with a reason a client can branch on.</div>
       <div class="channel"><b><span class="chip infra">infrastructure</span></b>Something around the run broke. Never disguised as the guest's stderr.</div>
     </div>
     <details>
@@ -502,19 +527,46 @@
   </section>
 
   <!-- 07 ─────────────────────────────────────────────────────────────────── -->
-  <section id="gate" aria-labelledby="h-gate">
+  <section id="sessions" aria-labelledby="h-sessions">
     <p class="draft" aria-hidden="true">07</p>
+    <h2 id="h-sessions">One sandbox, many calls</h2>
+    <p>A run gets a fresh sandbox and loses it at the end. A session keeps one sandbox for
+    many calls: the files a call writes are there for the next call, and no process a call
+    starts outlives it. An agent that edits, builds and tests in a loop pays for one sandbox,
+    and its later steps see what its earlier steps wrote. Sessions are off until the operator
+    sets <code>SANDBOX_MAX_SESSIONS</code>; OpenShell is the provider that keeps them today.</p>
+    <details>
+      <summary>What persists, and what does not <span class="what">the contract</span></summary>
+      <div><p>Files under the sandbox's writable directory persist, up to the session's disk budget (<code>SANDBOX_SESSION_DISK_MB</code>). Processes never do: after every call the provider kills every process but the sandbox's own, by process ID, and a call that cannot be followed by a clean sandbox ends the session instead of running the next call beside a leftover.</p></div>
+    </details>
+    <details>
+      <summary>Who can use a session <span class="what">one owner</span></summary>
+      <div><p>The principal that opened it, and nobody else. The session ID is a capability: an unknown ID and another caller's ID get the same refusal, and the ID is never logged. Calls run one at a time, in order.</p></div>
+    </details>
+    <details>
+      <summary>When it ends <span class="what">typed, like a refusal</span></summary>
+      <div><p>At its lifetime (<code>SANDBOX_SESSION_LIFETIME</code>), past its disk budget, when code kills the sandbox's main process, when the sandbox changed under it, or when its owner closes it. A call on an ended session is refused before dispatch with <code>ErrSessionEnded</code>, and <code>SessionEndedError</code> says why. An idle session (<code>SANDBOX_SESSION_IDLE</code>) is stopped, not deleted: it gives back its admission slot and keeps its files.</p></div>
+    </details>
+    <details>
+      <summary>How you know no call was dropped <span class="what">run records</span></summary>
+      <div><p>Every answered run carries a record: digests of what was sent and what came back, the evidence, and the times. In a session each record also names the previous one, so the calls form a chain. The daemon only hashes; the caller's harness checks each record and signs it. A missing, reordered or foreign call breaks the chain, and the Go client reports it as <code>record.ErrChain</code>.</p></div>
+    </details>
+  </section>
+
+  <!-- 08 ─────────────────────────────────────────────────────────────────── -->
+  <section id="gate" aria-labelledby="h-gate">
+    <p class="draft" aria-hidden="true">08</p>
     <h2 id="h-gate">Before you switch it on</h2>
     <p>A provider is ready when every line below is true for the job in front of you, not
     when its name sounds strong enough. Tick what you have.</p>
     <ul class="gate" id="gateList">
       <li><label><input type="checkbox" data-required="1"><span><b>The operation is supported.</b><small>Snippet, project and module support are separate answers, and <code>Describe</code> reports each one so a gateway never hard-codes the matrix.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>The floor is set and enforced.</b><small><code>SANDBOX_MIN_ISOLATION</code> at startup, and <code>minimum_isolation</code> on every request, because the caller is the one who knows what the work is worth.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>The startup proof passed here, not on a docs page.</b><small>Docker's mount-table and socket checks, or the real throwaway VM that E2B or Docker Cloud Sandboxes creates, in the deployment environment.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>The startup proof passed here, not on a docs page.</b><small>Docker's mount-table and socket checks, the real throwaway VM that E2B or Docker Cloud Sandboxes creates, or the throwaway sandbox an OpenShell gateway creates, in the deployment environment.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>Every run is bounded.</b><small>Memory, CPUs, PIDs, disk, time and output per run; count, rate and aggregate memory across runs.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>The toolchain is baked in.</b><small>A project image, an E2B template or the image Docker Cloud Sandboxes boots already carries every build, lint and run tool, because the run has no egress to fetch one.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Grant support matches the provider.</b><small>Docker brokers snippet and project grants; WASM brokers snippets only; E2B needs <code>E2B_GUARD_URL</code> for either; Docker Cloud Sandboxes needs <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>, and there the guest holds its own run’s short-lived guard credential.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>Describe and readiness are recorded.</b> <span class="opt">recommended</span><small>Active provider, tier, structural support and readiness state, kept where an operator will look for them later.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>The toolchain is baked in.</b><small>A project image, an E2B template, or the image Docker Cloud Sandboxes or OpenShell boots already carries every build, lint and run tool, because the run has no egress to fetch one.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Grant support matches the provider.</b><small>Docker brokers snippet and project grants; WASM brokers snippets only; E2B needs <code>E2B_GUARD_URL</code> for either; Docker Cloud Sandboxes needs <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>, and there the guest holds its own run’s short-lived guard credential; OpenShell reaches the same broker through a relay in the sandbox that plimsoll dials into, so its sandboxes keep no network rules at all.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>Describe and readiness are recorded.</b> <span class="opt">recommended</span><small>Active provider, tier, structural support, each payload kind's environment identity and timeout ceiling, the resource envelope and readiness state, kept where an operator will look for them later. The identities and ceilings are configuration, like the tier, not proof.</small></span></label></li>
     </ul>
     <div class="card gate-readout" id="gateReadout"></div>
   </section>
@@ -523,10 +575,12 @@
   <ul class="links">
     <li><a href="architecture.html"><b>Internal · trainer site →</b><strong>Architecture</strong><small>The same round trips on an interactive map: code, credentials, calls and replies, component by component.</small></a></li>
     <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>How a granted run reaches a route without holding the key, and why each provider frames that differently.</small></a></li>
+    <li><a href="../examples/sessions/index.html"><b>Internal · trainer site →</b><strong>One sandbox, five calls</strong><small>A real session on OpenShell, its chain of signed records, and the verifier refusing a dropped call and a changed byte.</small></a></li>
     <li><a href="dependencies.html"><b>Internal · trainer site →</b><strong>Dependencies</strong><small>What is compiled in, what each provider needs at run time, and what is pinned by digest.</small></a></li>
     <li><a href="https://gvisor.dev/docs/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>gVisor</strong><small>The user-space kernel behind <code>runsc</code> and the K mark.</small></a></li>
     <li><a href="https://firecracker-microvm.github.io/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Firecracker</strong><small>The microVM monitor behind E2B's V mark.</small></a></li>
     <li><a href="https://docs.docker.com/ai/sandboxes/cloud/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Docker Cloud Sandboxes</strong><small>The Docker-managed service behind the <code>dockercloud</code> provider's V mark.</small></a></li>
+    <li><a href="https://docs.nvidia.com/openshell/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>NVIDIA OpenShell</strong><small>The agent sandbox runtime behind the <code>openshell</code> provider's C mark.</small></a></li>
     <li><a href="https://wazero.io/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>wazero</strong><small>The WebAssembly runtime that runs the embedded engine and applies its memory cap.</small></a></li>
   </ul>
 
@@ -551,6 +605,7 @@
     if (s.provider === 'disabled') return 'none';
     if (s.provider === 'wasm') return 'process';
     if (s.provider === 'docker') return s.runtime === 'runsc' ? 'kernel' : 'container';
+    if (s.provider === 'openshell') return 'container';
     return 'vm';
   }
   function meets(actual, min) { return TIERS.indexOf(actual) >= TIERS.indexOf(min); }
@@ -562,7 +617,7 @@
   function decide(s) {
     var ev = evidence(s);
     var rows = [];
-    var payloadText = { javascript: 'one snippet, checked against the 256 KiB source ceiling', project: 'files plus ordered steps, checked against the project ceilings', module: 'a model id and a table of rows, checked against the width and step bounds' }[s.payload];
+    var payloadText = { javascript: 'one snippet, checked against the 256 KiB source ceiling', project: 'files plus ordered steps, checked against the project ceilings', module: 'a simulator ID and a table of rows, checked against the width and step bounds' }[s.payload];
     rows.push({ k: 'validate', ok: true, v: payloadText + ' · <b>valid</b>' });
     if (s.grant === 'profile' && s.payload !== 'module') {
       rows.push({ k: 'profile', ok: true, v: 'named profile found, caller is on its <code>allowed_callers</code> list · <b>selected</b>' });
@@ -583,7 +638,7 @@
     }
     if (s.payload === 'module' && s.provider !== 'docker') {
       rows.push({ k: 'dispatch', ok: false, v: 'module runs are docker only: the worker is a process supervised inside the container tier · <b>ErrUnsupported → Unimplemented</b>' });
-      return { rows: rows, ran: false, ev: ev, note: 'The Go daemon never links the WebAssembly runtime the models need; it supervises a worker inside the container. Neither the in-process engine nor a remote VM template carries that worker today.' };
+      return { rows: rows, ran: false, ev: ev, note: 'The Go daemon never links the WebAssembly runtime the models need; it supervises a worker inside the container. Neither the in-process engine nor any other provider’s image carries that worker today.' };
     }
     if (s.grant === 'profile' && s.payload !== 'module') {
       if ((s.provider === 'e2b' || s.provider === 'dockercloud') && s.guard === 'unset') {
@@ -593,7 +648,7 @@
     }
     var transport = '';
     if (s.grant === 'profile' && s.payload !== 'module') {
-      transport = { wasm: 'host.* calls cross into Go through a direct, quota-bounded host function; the credential never enters the engine', docker: 'host.* calls travel a per-run Unix socket to the broker while the container keeps --network none' + (s.payload === 'project' ? '; every step process is preloaded with the same client' : ''), e2b: 'host.* calls leave by the VM’s one allowed exit to the host-side guard, which delegates to the same broker', dockercloud: 'host.* calls leave by the one network rule the provider sets and reads back, the guard’s host:443, carrying this run’s short-lived guard credential; the guard delegates to the same broker, and the API key never enters the VM' }[s.provider];
+      transport = { wasm: 'host.* calls cross into Go through a direct, quota-bounded host function; the credential never enters the engine', docker: 'host.* calls travel a per-run Unix socket to the broker while the container keeps --network none' + (s.payload === 'project' ? '; every step process is preloaded with the same client' : ''), e2b: 'host.* calls leave by the VM’s one allowed exit to the host-side guard, which delegates to the same broker', dockercloud: 'host.* calls leave by the one network rule the provider sets and reads back, the guard’s host:443, carrying this run’s short-lived guard credential; the guard delegates to the same broker, and the API key never enters the VM', openshell: 'host.* calls go to a relay in the sandbox, and plimsoll dials into it through the gateway’s ForwardTcp; the sandbox keeps no network rules at all and the credential stays in plimsoll’s process' + (s.payload === 'project' ? '; every step process is preloaded with the same client' : '') }[s.provider];
       rows.push({ k: 'grant', ok: true, v: transport + ' · <b>brokered</b>' });
     }
     var sandboxName = s.provider;
@@ -645,7 +700,7 @@
     el('wave').setAttribute('fill', flooded ? '#b83f43' : '#177f99');
     el('hull').setAttribute('aria-label', 'Hull with load-line marks. Provider proved ' + ev + '; caller floor ' + s.floor + '; ' + (d.ran ? 'the run was admitted.' : 'the request was refused.'));
     var cap = el('hullCaption');
-    var who = { none: 'The Disabled provider paints no line at all.', process: 'WASM paints the P mark.', container: 'Docker on runc paints the C mark.', kernel: 'Verified runsc paints the K mark.', vm: s.provider === 'dockercloud' ? 'Docker Cloud Sandboxes paints the V mark.' : 'E2B paints the V mark.' }[ev];
+    var who = { none: 'The Disabled provider paints no line at all.', process: 'WASM paints the P mark.', container: s.provider === 'openshell' ? 'OpenShell’s docker driver paints the C mark.' : 'Docker on runc paints the C mark.', kernel: 'Verified runsc paints the K mark.', vm: s.provider === 'dockercloud' ? 'Docker Cloud Sandboxes paints the V mark.' : 'E2B paints the V mark.' }[ev];
     var water;
     if (s.floor === 'none') water = 'No floor is stated, so the water sits below every mark' + (d.ran ? ' and the run is admitted.' : ', and the refusal comes from the provider itself.');
     else if (flooded) water = 'The caller demands ' + s.floor + ', so the water stands above the mark: refused before dispatch.';
@@ -666,7 +721,7 @@
     var note = el('grantNote');
     if (s.payload === 'module') {
       g.classList.add('na');
-      note.textContent = 'A module payload has no grant field: a compiled model gets parameters in and outputs back, never a network.';
+      note.textContent = 'A module payload has no grant field: a compiled simulator gets parameters in and outputs back, never a network.';
     } else {
       g.classList.remove('na');
       note.textContent = s.provider === 'wasm' && s.payload === 'project' ? 'WASM has no project runtime, so a project grant is moot here.' : '';

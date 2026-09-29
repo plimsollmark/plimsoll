@@ -1,0 +1,136 @@
+package sandbox
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+)
+
+// SessionProvider is the optional interface of a provider that can keep one
+// sandbox alive across calls: files a call writes persist for the next call, and
+// no process a call starts outlives it. Like Drainer, it is optional; a provider
+// that does not implement it has no sessions.
+type SessionProvider interface {
+	// SupportsSessions reports whether OpenSession can work as configured.
+	SupportsSessions() bool
+	// OpenSession creates the session's sandbox and returns once it is ready and
+	// verified. The session belongs to whoever holds the returned value; an RPC
+	// layer binds it to one principal.
+	OpenSession(ctx context.Context, opts SessionOptions) (Session, error)
+}
+
+// SessionOptions is what a session is opened with.
+type SessionOptions struct {
+	// MinimumIsolation is checked at open, against the evidence the provider
+	// measures then; each call's own floor is checked again against it.
+	MinimumIsolation IsolationClass
+	// Lifetime is the session's absolute lifetime from open. The provider ends the
+	// session when it passes, whatever the session is doing, and declares it on the
+	// sandbox so a crashed daemon's session is reaped too. Required.
+	Lifetime time.Duration
+	// DiskBytes bounds what the session's calls may leave behind: after a call that
+	// leaves more, the session ends. 0 means no bound beyond the provider's own.
+	DiskBytes int64
+}
+
+// Session is one open session. Calls are serialized: a call waits (bounded by
+// its context) until the previous one has finished and the boundary between
+// them has been established.
+type Session interface {
+	// Isolation is the tier the provider measured when the session opened.
+	Isolation() IsolationClass
+	// ExpiresAt is when the session's lifetime ends.
+	ExpiresAt() time.Time
+	RunJavaScript(ctx context.Context, req Request) (Result, error)
+	RunProject(ctx context.Context, req ProjectRequest) (ProjectResult, error)
+	// Suspend releases the session's compute (memory and CPU) and keeps its files;
+	// the next call resumes it first. A session layer calls it when the session has
+	// been idle. It waits for a call in progress to finish.
+	Suspend(ctx context.Context) error
+	// Close ends the session and deletes its sandbox (off the caller's path). It is
+	// idempotent, and a no-op on a session that already ended.
+	Close(ctx context.Context) error
+	// Done is closed when the session has ended, by Close or by itself.
+	Done() <-chan struct{}
+	// Err is nil while the session is open and a *SessionEndedError afterwards.
+	Err() error
+}
+
+// SessionEnd says why a session ended.
+type SessionEnd int
+
+const (
+	SessionOpen SessionEnd = iota
+	// SessionClosed: its holder closed it.
+	SessionClosed
+	// SessionExpired: its lifetime passed.
+	SessionExpired
+	// SessionDiskExceeded: a call left more on disk than the session's budget.
+	SessionDiskExceeded
+	// SessionMainProcessEnded: the sandbox's main process ended (code in the
+	// sandbox can kill it), so the sandbox can run nothing more.
+	SessionMainProcessEnded
+	// SessionBoundaryFailed: the provider could not give the next call a clean
+	// sandbox: it could not prove that no process of a call outlived it and a
+	// restart failed too, or the sandbox could not be stopped or started. It ended
+	// the session rather than run the next call beside a leftover process.
+	SessionBoundaryFailed
+	// SessionSandboxChanged: the sandbox no longer reads back as it was verified
+	// (its policy, settings or spec changed, or it disappeared).
+	SessionSandboxChanged
+	// SessionShutdown: the provider was drained.
+	SessionShutdown
+)
+
+var sessionEndNames = map[SessionEnd]string{
+	SessionOpen:             "open",
+	SessionClosed:           "closed",
+	SessionExpired:          "expired",
+	SessionDiskExceeded:     "disk_exceeded",
+	SessionMainProcessEnded: "main_process_ended",
+	SessionBoundaryFailed:   "boundary_failed",
+	SessionSandboxChanged:   "sandbox_changed",
+	SessionShutdown:         "shutdown",
+}
+
+func (e SessionEnd) String() string {
+	if s, ok := sessionEndNames[e]; ok {
+		return s
+	}
+	return fmt.Sprintf("session_end(%d)", int(e))
+}
+
+// ErrSessionEnded matches every *SessionEndedError.
+var ErrSessionEnded = errors.New("sandbox: the session has ended")
+
+// SessionEndedError is a session's end, with its reason and any detail.
+type SessionEndedError struct {
+	Reason SessionEnd
+	Detail string
+}
+
+func (e *SessionEndedError) Error() string {
+	if e.Detail == "" {
+		return fmt.Sprintf("sandbox: the session has ended (%s)", e.Reason)
+	}
+	return fmt.Sprintf("sandbox: the session has ended (%s): %s", e.Reason, e.Detail)
+}
+
+func (e *SessionEndedError) Is(target error) bool { return target == ErrSessionEnded }
+
+// SessionEndReason reads the reason from an error, SessionOpen when err is not a
+// session's end.
+func SessionEndReason(err error) SessionEnd {
+	var se *SessionEndedError
+	if errors.As(err, &se) {
+		return se.Reason
+	}
+	return SessionOpen
+}
+
+// RefuseEndedSession is the error a call on an ended session returns: the end,
+// marked as refused before dispatch, since nothing ran.
+func RefuseEndedSession(end error) error {
+	return NotDispatched(RefusalRequest, end)
+}

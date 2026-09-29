@@ -229,6 +229,13 @@
       Docker’s proxy only injects credentials for its own fixed list of services, so the guest
       holds its own run’s guard credential: short-lived, good only at the guard, only for this
       run’s routes and budget, dead when the run ends. The API key still never enters the VM.</p>
+      <p><b>OpenShell keeps its sandbox at no network rules at all, grant or not.</b> The
+      <code>openshell</code> provider reaches in instead of letting the guest reach out: a
+      small relay in the sandbox listens on a loopback port and on the Unix socket the
+      docker client uses, and plimsoll dials into that port through the gateway’s
+      <code>ForwardTcp</code> for each connection the guest opens. The broker, the minted
+      credential and the route check stay in plimsoll’s process; the policy read back
+      before the run is the no-grant policy, unchanged.</p>
     </div>
   </section>
 

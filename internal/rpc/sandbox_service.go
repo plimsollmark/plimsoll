@@ -16,6 +16,7 @@ import (
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/internal/quantise"
 	"github.com/plimsollmark/plimsoll/protocol"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -73,6 +74,12 @@ type SandboxService struct {
 	Limiter *CodeLimiter     // optional; nil = unlimited
 	Grants  *grants.Registry // optional; nil/empty = no host-API profiles
 	Logger  *slog.Logger     // optional; nil = slog.Default()
+	// Resources is the per-run envelope the provider was built with, reported by
+	// Describe (sandbox.Build returns it as Provider.Resources). Zero = not stated.
+	Resources sandbox.Resources
+	// Sessions is the operator's session settings; the zero value keeps sessions off.
+	Sessions SessionConfig
+	sessions sessionRegistry
 
 	// run counters for /metrics (design-review #9). A non-zero user exit is a normal
 	// result, not a failure; runsFailed counts only infrastructure errors.
@@ -131,7 +138,7 @@ func mintingSubject(ctx context.Context) (string, bool) {
 func applyGrantSubject(ctx context.Context, grant *sandbox.HostAPIGrant) (context.Context, error) {
 	subj, ok := mintingSubject(ctx)
 	if grant.RequiresSubject() && !ok {
-		return ctx, connect.NewError(connect.CodePermissionDenied,
+		return ctx, refuse(connect.CodePermissionDenied, sandbox.RefusalPermission,
 			errors.New("grant_profile mints a per-caller credential and requires an authenticated caller; refusing to run it without one (e.g. open dev mode)"))
 	}
 	return sandbox.WithSubject(ctx, subj), nil
@@ -145,17 +152,17 @@ func (s *SandboxService) grantFor(ctx context.Context, profile string) (*sandbox
 		return nil, nil
 	}
 	if len(profile) > grants.MaxProfileNameBytes {
-		return nil, connect.NewError(connect.CodeInvalidArgument,
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
 			fmt.Errorf("grant_profile exceeds %d bytes", grants.MaxProfileNameBytes))
 	}
+	// An unknown profile and one the caller is not on get the same code and the same
+	// words: two different answers would let any caller holding code:run enumerate the
+	// operator's profile names, which name the host APIs behind them.
 	p, ok := s.Grants.Get(profile)
-	if !ok {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unknown grant_profile %q", profile))
-	}
 	caller, authenticated := mintingSubject(ctx)
-	if !authenticated || !p.Allows(caller) {
-		return nil, connect.NewError(connect.CodePermissionDenied,
-			errors.New("authenticated caller is not allowed to select the requested grant_profile"))
+	if !ok || !authenticated || !p.Allows(caller) {
+		return nil, refuse(connect.CodePermissionDenied, sandbox.RefusalPermission,
+			fmt.Errorf("grant_profile %q is not available to this caller", profile))
 	}
 	// Grant() deep-copies, so the dispatched run can never mutate the registry.
 	return p.Grant(), nil
@@ -199,10 +206,20 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 	if mc, ok := s.Sandbox.(sandbox.ModuleCapable); ok {
 		supportsModule = mc.SupportsModules()
 	}
+	var env sandbox.Environments
+	if d, ok := s.Sandbox.(sandbox.Describer); ok {
+		env = d.Environments()
+	}
 	supportsJavaScriptGrants, supportsProjectGrants := false, false
 	if gc, ok := s.Sandbox.(sandbox.GrantCapable); ok {
 		supportsJavaScriptGrants = gc.SupportsJavaScriptGrants()
 		supportsProjectGrants = gc.SupportsProjectGrants()
+	}
+	_, supportsSessions := s.sessionProvider()
+	var sessionLifetime, sessionIdle uint32
+	if supportsSessions {
+		sessionLifetime = uint32(s.Sessions.Lifetime / time.Millisecond)
+		sessionIdle = uint32(s.Sessions.IdleTimeout / time.Millisecond)
 	}
 	return connect.NewResponse(&plimsollv1.DescribeResponse{
 		Sandbox:                  s.Sandbox.Name(),
@@ -212,7 +229,38 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 		SupportsJavascriptGrants: supportsJavaScriptGrants,
 		SupportsProjectGrants:    supportsProjectGrants,
 		Protocol:                 protocol.Number,
+		JavascriptEnvironment:    payloadEnvironment(env.JavaScript),
+		ProjectEnvironment:       payloadEnvironment(env.Project),
+		ModuleEnvironment:        payloadEnvironment(env.Module),
+		Resources: &plimsollv1.RunResources{
+			MemoryMb: nonNegative(s.Resources.MemoryMB),
+			Cpus:     s.Resources.CPUs,
+			Pids:     nonNegative(s.Resources.PidsLimit),
+			DiskMb:   nonNegative(s.Resources.DiskMB),
+		},
+		Policy:               env.Policy,
+		SupportsSessions:     supportsSessions,
+		SessionLifetimeMs:    sessionLifetime,
+		SessionIdleTimeoutMs: sessionIdle,
 	}), nil
+}
+
+// payloadEnvironment puts a provider's statement on the wire. The stated ceiling
+// is capped by maxRunTimeout, the daemon's own, because that is the longest a run
+// can actually take here.
+func payloadEnvironment(e sandbox.PayloadEnvironment) *plimsollv1.PayloadEnvironment {
+	ceiling := e.MaxTimeout
+	if ceiling > maxRunTimeout {
+		ceiling = maxRunTimeout
+	}
+	return &plimsollv1.PayloadEnvironment{Identity: e.Identity, MaxTimeoutMs: uint32(ceiling / time.Millisecond)}
+}
+
+func nonNegative(n int) uint32 {
+	if n < 0 {
+		return 0
+	}
+	return uint32(n)
 }
 
 // envelope is the part of a RunRequest every payload kind shares, parsed once
@@ -223,6 +271,29 @@ type envelope struct {
 	traceID string
 }
 
+// target is where a checked snippet or project runs: the provider itself for a
+// run, or a session for a session call. Validation, grants, the floor, audit,
+// advice and the response are the same code for both.
+type target struct {
+	provider string                 // for a failed run's audit line
+	tier     sandbox.IsolationClass // the evidence the request's floor is checked against
+	admit    func(context.Context) (func(), error)
+	js       func(context.Context, sandbox.Request) (sandbox.Result, error)
+	project  func(context.Context, sandbox.ProjectRequest) (sandbox.ProjectResult, error)
+	attrs    []slog.Attr // added to the audit line (a session's fingerprint and call number)
+}
+
+// runTarget is the provider, admitted through the limiter.
+func (s *SandboxService) runTarget() target {
+	return target{
+		provider: s.Sandbox.Name(),
+		tier:     s.Sandbox.IsolationClass(),
+		admit:    s.limit,
+		js:       s.Sandbox.RunJavaScript,
+		project:  s.Sandbox.RunProject,
+	}
+}
+
 // checkEnvelope is the first thing Run does. The protocol number comes before
 // everything else: a request that omits it is a client bug (InvalidArgument) and
 // a request on any other number comes from a client this daemon must not serve
@@ -230,24 +301,40 @@ type envelope struct {
 // Then the floor is parsed (an unparseable floor is InvalidArgument, never "no
 // floor") and the timeout clamped.
 func checkEnvelope(req *plimsollv1.RunRequest) (envelope, error) {
-	switch p := req.GetProtocol(); {
+	return parseEnvelope(req.GetProtocol(), req.GetMinimumIsolation(), req.GetTimeoutMs(), req.GetTraceId())
+}
+
+// parseEnvelope is checkEnvelope over the fields themselves, which a session
+// call's request shares.
+func parseEnvelope(proto uint32, floor string, timeoutMs int32, traceID string) (envelope, error) {
+	if err := checkProtocol(proto); err != nil {
+		return envelope{}, err
+	}
+	minimum, err := parseMinimumIsolation(floor)
+	if err != nil {
+		return envelope{}, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
+	}
+	return envelope{minimum: minimum, timeout: clampTimeoutMs(timeoutMs), traceID: traceID}, nil
+}
+
+// checkProtocol refuses a request that omits the protocol number or states
+// another, before anything else in it is read.
+func checkProtocol(p uint32) error {
+	switch {
 	case p == 0:
-		return envelope{}, connect.NewError(connect.CodeInvalidArgument,
+		return refuse(connect.CodeInvalidArgument, sandbox.RefusalProtocol,
 			fmt.Errorf("protocol must be stated; this daemon serves protocol %d", protocol.Number))
 	case p != protocol.Number:
-		return envelope{}, connect.NewError(connect.CodeUnimplemented, errors.New(protocol.Mismatch(protocol.Number, p)))
+		return refuse(connect.CodeUnimplemented, sandbox.RefusalProtocol, errors.New(protocol.Mismatch(protocol.Number, p)))
 	}
-	minimum, err := parseMinimumIsolation(req.GetMinimumIsolation())
-	if err != nil {
-		return envelope{}, connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	return envelope{minimum: minimum, timeout: clampTimeoutMs(req.GetTimeoutMs()), traceID: req.GetTraceId()}, nil
+	return nil
 }
 
 // Run is the one execution procedure: envelope checked, then exactly one payload
 // kind dispatched. Every kind goes through the same floor check, the same
 // limiter, the same audit line shape, and returns the same evidence fields.
 func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	received := time.Now()
 	env, err := checkEnvelope(req.Msg)
 	if err != nil {
 		return nil, err
@@ -255,28 +342,60 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 	var resp *plimsollv1.RunResponse
 	switch p := req.Msg.GetPayload().(type) {
 	case *plimsollv1.RunRequest_Javascript:
-		resp, err = s.runJavaScript(ctx, env, p.Javascript)
+		resp, err = s.runJavaScript(ctx, env, p.Javascript, s.runTarget())
 	case *plimsollv1.RunRequest_Project:
-		resp, err = s.runProject(ctx, env, p.Project)
+		resp, err = s.runProject(ctx, env, p.Project, s.runTarget())
 	case *plimsollv1.RunRequest_Module:
 		resp, err = s.runModule(ctx, env, p.Module)
 	default:
-		return nil, connect.NewError(connect.CodeInvalidArgument,
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
 			errors.New("payload must be exactly one of javascript, project, or module"))
 	}
 	if err != nil {
 		return nil, err
 	}
+	resp.Record = s.runRecord(record.RunRequestDigest(req.Msg), resp, received, time.Now(), sandbox.RunRecord{})
 	return connect.NewResponse(resp), nil
+}
+
+// runRecord states a finished run for the caller's harness to check and sign: the
+// request digest over what the caller sent, the result digest over the response
+// as it will be sent, the evidence, and the times. link carries a session call's
+// chain fields and is zero for a single run. The daemon holds no key, so this is
+// hashing only.
+func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunResponse, started, ended time.Time, link sandbox.RunRecord) *plimsollv1.RunRecord {
+	var env sandbox.Environments
+	if d, ok := s.Sandbox.(sandbox.Describer); ok {
+		env = d.Environments()
+	}
+	var environment string
+	switch resp.GetResult().(type) {
+	case *plimsollv1.RunResponse_Javascript:
+		environment = env.JavaScript.Identity
+	case *plimsollv1.RunResponse_Project:
+		environment = env.Project.Identity
+	case *plimsollv1.RunResponse_Module:
+		environment = env.Module.Identity
+	}
+	return record.Stamp(sandbox.RunRecord{
+		RequestSHA256:  requestDigest,
+		Environment:    environment,
+		Policy:         env.Policy,
+		Started:        started,
+		Ended:          ended,
+		Session:        link.Session,
+		Sequence:       link.Sequence,
+		PreviousSHA256: link.PreviousSHA256,
+	}, resp)
 }
 
 // runJavaScript is the snippet kind. The envelope has been checked; the grant
 // profile is the payload's, because a module payload has no such field.
-func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *plimsollv1.JavaScriptRun) (*plimsollv1.RunResponse, error) {
+func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *plimsollv1.JavaScriptRun, t target) (*plimsollv1.RunResponse, error) {
 	code := p.GetCode()
 	sbReq := sandbox.Request{Code: code, Timeout: env.timeout, MinimumIsolation: env.minimum}
 	if err := sandbox.ValidateRequest(sbReq); err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
 	}
 	grant, err := s.grantFor(ctx, p.GetGrantProfile())
 	if err != nil {
@@ -289,11 +408,11 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 		}
 	}
 	sbReq.Grant = grant
-	if err := sandbox.CheckMinimumIsolation(s.Sandbox.IsolationClass(), sbReq.MinimumIsolation); err != nil {
+	if err := sandbox.CheckMinimumIsolation(t.tier, sbReq.MinimumIsolation); err != nil {
 		return nil, mapSandboxErr(err)
 	}
 
-	release, err := s.limit(ctx)
+	release, err := t.admit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +422,7 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 	runCtx, cancel := runContext(ctx)
 	defer cancel()
 	started := time.Now()
-	res, err := s.Sandbox.RunJavaScript(runCtx, sbReq)
+	res, err := t.js(runCtx, sbReq)
 	if err != nil {
 		if isInfraErr(err) {
 			s.runsFailed.Add(1)
@@ -313,14 +432,14 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 			slog.String("caller", auditCaller(ctx)),
 			slog.Int("code_bytes", len(code)),
 			slog.String("grant_profile", p.GetGrantProfile()),
-			slog.String("sandbox", s.Sandbox.Name()),
-			slog.String("isolation", s.Sandbox.IsolationClass().String()),
+			slog.String("sandbox", t.provider),
+			slog.String("isolation", t.tier.String()),
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 			slog.String("error", err.Error()),
 		}
 		// A failed run is exactly the one an operator will go looking for, so it
 		// carries the join key too.
-		failed = append(failed, traceAttrs(env.traceID)...)
+		failed = append(append(failed, traceAttrs(env.traceID)...), t.attrs...)
 		s.logger().LogAttrs(ctx, slog.LevelError, "code run failed", failed...)
 		return nil, mapSandboxErr(err)
 	}
@@ -337,7 +456,7 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 	}
 	// The caller's opaque join key, so this metadata-only line can be matched to
 	// the caller's own record of the same request. Recorded, never interpreted.
-	attrs = append(attrs, traceAttrs(env.traceID)...)
+	attrs = append(append(attrs, traceAttrs(env.traceID)...), t.attrs...)
 	// Fold the run's brokered calls into the labeled /metrics series (metadata only:
 	// profile, method, route template). No-op when the run brokered nothing.
 	s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
@@ -396,7 +515,7 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 
 // runProject is the project kind: files written, steps run in order, artifacts
 // captured. Same envelope, same grant path as a snippet.
-func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimsollv1.ProjectRun) (*plimsollv1.RunResponse, error) {
+func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimsollv1.ProjectRun, t target) (*plimsollv1.RunResponse, error) {
 	steps := p.GetSteps()
 	files := p.GetFiles()
 	total := 0
@@ -414,7 +533,7 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 		MinimumIsolation: env.minimum,
 	}
 	if err := sandbox.ValidateProjectRequest(sbReq); err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
 	}
 	grant, err := s.grantFor(ctx, p.GetGrantProfile())
 	if err != nil {
@@ -427,11 +546,11 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 		}
 	}
 	sbReq.Grant = grant
-	if err := sandbox.CheckMinimumIsolation(s.Sandbox.IsolationClass(), sbReq.MinimumIsolation); err != nil {
+	if err := sandbox.CheckMinimumIsolation(t.tier, sbReq.MinimumIsolation); err != nil {
 		return nil, mapSandboxErr(err)
 	}
 
-	release, err := s.limit(ctx)
+	release, err := t.admit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +560,7 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 	runCtx, cancel := runContext(ctx)
 	defer cancel()
 	started := time.Now()
-	res, err := s.Sandbox.RunProject(runCtx, sbReq)
+	res, err := t.project(runCtx, sbReq)
 	if err != nil {
 		if isInfraErr(err) {
 			s.runsFailed.Add(1)
@@ -453,12 +572,12 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 			slog.Int("steps", len(steps)),
 			slog.Int("total_bytes", total),
 			slog.String("grant_profile", p.GetGrantProfile()),
-			slog.String("sandbox", s.Sandbox.Name()),
-			slog.String("isolation", s.Sandbox.IsolationClass().String()),
+			slog.String("sandbox", t.provider),
+			slog.String("isolation", t.tier.String()),
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 			slog.String("error", err.Error()),
 		}
-		failed = append(failed, traceAttrs(env.traceID)...)
+		failed = append(append(failed, traceAttrs(env.traceID)...), t.attrs...)
 		s.logger().LogAttrs(ctx, slog.LevelError, "project run failed", failed...)
 		return nil, mapSandboxErr(err)
 	}
@@ -483,7 +602,7 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 		slog.Bool("timed_out", timedOut),
 		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 	}
-	attrs = append(attrs, traceAttrs(env.traceID)...)
+	attrs = append(append(attrs, traceAttrs(env.traceID)...), t.attrs...)
 	// Prospector: a project run brokers host.* calls through the same core as a snippet,
 	// so it feeds the identical metadata-only surfaces. Fold the run's calls into the
 	// labeled /metrics series and summarize them on the audit line (never paths, bodies,
@@ -547,8 +666,8 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 	}, nil
 }
 
-// runModule is the model kind: a compiled model once per parameter row. No
-// grant: a model has no host API and the payload cannot name one. The audit
+// runModule is the module kind: a compiled simulator once per parameter row. No
+// grant: a simulator has no host API and the payload cannot name one. The audit
 // line names the model (validated to a filename stem), counts rows, values per
 // row and the step bound, and records the outcome; a parameter value never
 // reaches a log.
@@ -566,7 +685,7 @@ func (s *SandboxService) runModule(ctx context.Context, env envelope, p *plimsol
 		MinimumIsolation: env.minimum,
 	}
 	if err := sandbox.ValidateModuleRequest(sbReq); err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
 	}
 	if err := sandbox.CheckMinimumIsolation(s.Sandbox.IsolationClass(), sbReq.MinimumIsolation); err != nil {
 		return nil, mapSandboxErr(err)
@@ -614,7 +733,7 @@ func (s *SandboxService) runModule(ctx context.Context, env envelope, p *plimsol
 		slog.Int("width", res.Width),
 		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 	)
-	// Post-dispatch, over results already computed: no model is run, nothing
+	// Post-dispatch, over results already computed: no simulator is run, nothing
 	// about the result changes, and a caller paying for rows that return an
 	// answer it already has is worth an operator seeing. Counts only. The
 	// tread widths this derives are differences between the caller's parameter
@@ -680,28 +799,44 @@ func isInfraErr(err error) bool {
 		!errors.Is(err, context.DeadlineExceeded)
 }
 
-// mapSandboxErr translates a sandbox infrastructure error to a Connect code. A
-// disabled provider is a precondition failure (the caller should configure one);
-// an operation the configured provider structurally cannot do is Unimplemented;
-// admission shedding is ResourceExhausted; anything else is an internal fault.
+// mapSandboxErr translates a sandbox error to a Connect code. A disabled provider
+// is a precondition failure (the caller should configure one); an operation the
+// configured provider structurally cannot do is Unimplemented; admission shedding
+// is ResourceExhausted; anything else is an internal fault. When the provider
+// marked the error as refused before dispatch, the NotDispatched detail is
+// attached; an unmarked error carries none, whatever its code.
 func mapSandboxErr(err error) error {
+	ce := connect.NewError(sandboxErrCode(err), err)
+	// A session's end travels as a typed detail, so a caller learns why without
+	// parsing the message.
+	var se *sandbox.SessionEndedError
+	if errors.As(err, &se) {
+		if d, derr := connect.NewErrorDetail(&plimsollv1.SessionEnded{Reason: sessionEndWire(se.Reason), Detail: wireString(se.Detail)}); derr == nil {
+			ce.AddDetail(d)
+		}
+	}
+	if reason, ok := sandbox.NotDispatchedReason(err); ok {
+		return withNotDispatched(ce, reason)
+	}
+	return ce
+}
+
+func sandboxErrCode(err error) connect.Code {
 	switch {
 	case errors.Is(err, context.Canceled):
-		return connect.NewError(connect.CodeCanceled, err)
+		return connect.CodeCanceled
 	case errors.Is(err, context.DeadlineExceeded):
-		return connect.NewError(connect.CodeDeadlineExceeded, err)
-	case errors.Is(err, sandbox.ErrDisabled):
-		return connect.NewError(connect.CodeFailedPrecondition, err)
-	case errors.Is(err, sandbox.ErrInsufficientIsolation):
-		return connect.NewError(connect.CodeFailedPrecondition, err)
+		return connect.CodeDeadlineExceeded
+	case errors.Is(err, sandbox.ErrDisabled), errors.Is(err, sandbox.ErrInsufficientIsolation), errors.Is(err, sandbox.ErrSessionEnded):
+		return connect.CodeFailedPrecondition
 	case errors.Is(err, sandbox.ErrUnsupported):
-		return connect.NewError(connect.CodeUnimplemented, err)
+		return connect.CodeUnimplemented
 	case errors.Is(err, sandbox.ErrAtCapacity):
-		return connect.NewError(connect.CodeResourceExhausted, err)
+		return connect.CodeResourceExhausted
 	case errors.Is(err, sandbox.ErrInvalidRequest):
-		return connect.NewError(connect.CodeInvalidArgument, err)
+		return connect.CodeInvalidArgument
 	default:
-		return connect.NewError(connect.CodeInternal, err)
+		return connect.CodeInternal
 	}
 }
 

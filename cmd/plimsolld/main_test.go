@@ -1,12 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,6 +26,129 @@ import (
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
+
+// TestMain lets a test run the daemon's real main() in a child process: the test
+// binary, started with PLIMSOLLD_RUN_MAIN=1 and no arguments, is the daemon.
+func TestMain(m *testing.M) {
+	if os.Getenv("PLIMSOLLD_RUN_MAIN") == "1" {
+		main()
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// daemon is a plimsolld child process: the test binary running main() (TestMain).
+type daemon struct {
+	cmd         *exec.Cmd
+	addr        string        // the RPC listener's bound address
+	metricsAddr string        // the metrics listener's, or "off"
+	done        chan struct{} // closed when the child's stderr closes
+
+	mu  sync.Mutex
+	log []string
+}
+
+// startDaemon runs the real main() in a child process with exactly env (nothing from
+// the caller's shell, so no provider or key leaks in) and waits up to wait for its
+// listening line. The log is kept in memory, so a chatty daemon never blocks on a
+// full pipe.
+func startDaemon(t *testing.T, env []string, wait time.Duration) *daemon {
+	t.Helper()
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append([]string{"PLIMSOLLD_RUN_MAIN=1"}, env...)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	d := &daemon{cmd: cmd, done: make(chan struct{})}
+	type addrs struct{ rpc, metrics string }
+	listening := make(chan addrs, 1)
+	go func() {
+		defer close(d.done)
+		sc := bufio.NewScanner(stderr)
+		sc.Buffer(make([]byte, 64<<10), 1<<20)
+		for sc.Scan() {
+			d.mu.Lock()
+			d.log = append(d.log, sc.Text())
+			d.mu.Unlock()
+			var rec struct {
+				Msg         string `json:"msg"`
+				Addr        string `json:"addr"`
+				MetricsAddr string `json:"metrics_addr"`
+			}
+			if json.Unmarshal(sc.Bytes(), &rec) == nil && rec.Msg == "plimsolld listening" {
+				listening <- addrs{rec.Addr, rec.MetricsAddr}
+			}
+		}
+	}()
+	select {
+	case a := <-listening:
+		d.addr, d.metricsAddr = a.rpc, a.metrics
+	case <-d.done:
+		t.Fatalf("daemon exited before it listened:\n%s", d.logText())
+	case <-time.After(wait):
+		t.Fatalf("daemon did not report listening within %v:\n%s", wait, d.logText())
+	}
+	return d
+}
+
+func (d *daemon) logText() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return strings.Join(d.log, "\n")
+}
+
+// stop sends SIGTERM and requires a clean exit within wait.
+func (d *daemon) stop(t *testing.T, wait time.Duration) {
+	t.Helper()
+	if err := d.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-d.done:
+	case <-time.After(wait):
+		t.Fatalf("daemon did not exit within %v of SIGTERM:\n%s", wait, d.logText())
+	}
+	if err := d.cmd.Wait(); err != nil {
+		t.Fatalf("daemon did not exit cleanly on SIGTERM: %v\n%s", err, d.logText())
+	}
+}
+
+// TestDaemonServesMetricsOnlyOnItsOwnListener runs the real main() (disabled
+// provider, ephemeral loopback ports) and proves the wiring, not just the handlers:
+// /metrics answers on PLIMSOLL_METRICS_ADDR and not on the RPC listener, the probes
+// answer on the RPC listener and not on the metrics one, and SIGTERM stops both.
+func TestDaemonServesMetricsOnlyOnItsOwnListener(t *testing.T) {
+	d := startDaemon(t, []string{"PLIMSOLL_ADDR=127.0.0.1:0", "PLIMSOLL_METRICS_ADDR=127.0.0.1:0"}, 30*time.Second)
+	client := &http.Client{Timeout: 10 * time.Second}
+	get := func(url string) (int, string) {
+		t.Helper()
+		resp, err := client.Get(url)
+		if err != nil {
+			t.Fatalf("GET %s: %v", url, err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+	if code, _ := get("http://" + d.addr + "/healthz"); code != http.StatusOK {
+		t.Errorf("RPC listener /healthz = %d, want 200", code)
+	}
+	if code, _ := get("http://" + d.addr + "/metrics"); code != http.StatusNotFound {
+		t.Errorf("RPC listener /metrics = %d, want 404: metrics must not be served where callers connect", code)
+	}
+	if code, body := get("http://" + d.metricsAddr + "/metrics"); code != http.StatusOK || !strings.Contains(body, "plimsoll_runs_total 0") {
+		t.Errorf("metrics listener /metrics = %d %q, want 200 with the run counter", code, body)
+	}
+	if code, _ := get("http://" + d.metricsAddr + "/healthz"); code != http.StatusNotFound {
+		t.Errorf("metrics listener /healthz = %d, want 404", code)
+	}
+	d.stop(t, 30*time.Second)
+}
 
 func TestHTTPServerUsesNativeBoundedH2C(t *testing.T) {
 	srv := newHTTPServer(":0", http.NotFoundHandler(), nil)

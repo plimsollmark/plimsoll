@@ -164,7 +164,7 @@ func realMain(out, image string) error {
 			Fingerprint: a.fingerprint, SecondRun: b.fingerprint, JavaScript: j.fingerprint,
 			Identical: bytes.Equal(a.trajectory, j.trajectory),
 		}
-		fmt.Printf("%-10s| %2s V in, %s ohm halving at %s ms  %s  C = C = JavaScript: %t  score %.3f, peak %.3f V, %.3f A\n",
+		fmt.Printf("%-10s| %2s V in, %s ohm, current doubles at %s ms  %s  C = C = JavaScript: %t  score %.3f, peak %.3f V, %.3f A\n",
 			s.ID, num(s.Params[0]), num(s.Params[1]), num(row.StepMs), a.fingerprint[:16], row.Identical && a.fingerprint == b.fingerprint, sc.Score, sc.MaxV, sc.MaxI)
 		rows = append(rows, row)
 	}
@@ -375,6 +375,22 @@ func render(fx fixture, runs []result, rows []scenarioRow, replay []byte) ([]byt
 		minScore, maxScore = math.Min(minScore, r.Score), math.Max(maxScore, r.Score)
 		peakV, peakI = math.Max(peakV, r.MaxV), math.Max(peakI, r.MaxI)
 	}
+	// The load step in the replayed scenario, read off the record: the duty cycle
+	// and current just before it, the largest duty cycle after it, and both at the
+	// end. The page explains why the duty cycle comes back to Vout/Vin.
+	kStep := int(math.Round(rows[0].StepMs / 1000 / fx.TickS))
+	dutyPeak := tr.Duty[kStep]
+	for _, d := range tr.Duty[kStep:] {
+		dutyPeak = math.Max(dutyPeak, d)
+	}
+	f4 := func(x float64) string { return strconv.FormatFloat(x, 'f', 4, 64) }
+	f2 := func(x float64) string { return strconv.FormatFloat(x, 'f', 2, 64) }
+	step := map[string]string{
+		"DutyBefore": f4(tr.Duty[kStep-1]), "IBefore": f2(tr.I[kStep-1]),
+		"DutyPeak":  f4(dutyPeak),
+		"DutyAfter": f4(tr.Duty[n-1]), "IAfter": f2(tr.I[n-1]),
+		"DutyIdeal": f4(5 / rows[0].InputV), "LoadAfter": num(rows[0].LoadOhm / 2),
+	}
 	t, err := template.New("page").Parse(pageTemplate)
 	if err != nil {
 		return nil, err
@@ -396,6 +412,7 @@ func render(fx fixture, runs []result, rows []scenarioRow, replay []byte) ([]byt
 		"Rows":        rows,
 		"Replay":      rows[0],
 		"Samples":     samples,
+		"Step":        step,
 		"Source":      html.EscapeString(controllerC),
 		"Reference":   html.EscapeString(referenceJS),
 		"Data":        string(raw),

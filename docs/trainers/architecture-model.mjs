@@ -68,6 +68,10 @@ export const providers = {
     channel: 'The VM is deny-all except for the configured E2B_GUARD_URL. E2B’s network layer injects the per-run guard header outside the VM. The guard delegates to the shared broker in the originating plimsolld process.',
     boundary: 'The guest runs in a hardware-virtualized microVM. Granted paths here assume a configured and reachable E2B guard.',
     credential: 'The VM holds neither the API bearer nor the guard credential. The guard URL must reach the process that opened this run.', projects: true},
+  openshell: {provider: 'NVIDIA OpenShell', engine: 'Node in an OpenShell sandbox', tier: 'container', channelShort: 'HTTP over a relayed Unix socket',
+    channel: 'A relay in the sandbox listens on the Unix socket named by HOST_API_SOCKET and on a loopback port; plimsoll dials into the port through the gateway’s ForwardTcp for each connection the guest opens. The sandbox keeps no network rules at all.',
+    boundary: 'The OpenShell gateway’s docker driver runs the sandbox as a container; the provider refuses any other driver.',
+    credential: 'The downstream credential stays in Go outside the sandbox.', projects: true},
   disabled: {provider: 'Disabled · default', engine: 'No guest starts', tier: 'none', channelShort: 'No adapter opened',
     channel: 'The disabled provider refuses execution.', boundary: 'An unset SANDBOX_PROVIDER selects Disabled. An unknown value is a configuration error, not a fallback.',
     credential: 'No credential is minted.', projects: false}
@@ -268,11 +272,11 @@ add('configure', 'operator', 'provider', 'authority', 'Select one provider at st
   'Build(getenv) → Provider { Sandbox, Resources }\nselected: {{provider}}\nThis selection is not repeated per RPC', 'sandbox/factory.go', [[115, 392], [875, 392]]);
 add('smoke', 'provider', 'guest', 'observe', 'Prove startup behavior before serving',
   'A bounded throwaway execution for real providers, after Preflight.',
-  'Docker proves the promised mount/write restrictions and broker socket reachability. E2B proves secured creation, project toolchain, cwd, and denied egress. Docker Cloud Sandboxes proves the token’s permissions, a deny-all effective network policy, file upload, project toolchain, cwd, and denied egress. Both create a billable VM at startup in an actual deployment; this page does not.',
-  'EnsureReady = Preflight + SmokeTest\nWASM: process-tier configuration checks\nDocker/E2B/Docker Cloud: bounded behavioral execution\nStartup refuses if required checks fail', 'sandbox/factory.go');
+  'Docker proves the promised mount/write restrictions and broker socket reachability. E2B proves secured creation, project toolchain, cwd, and denied egress. Docker Cloud Sandboxes proves the token’s permissions, a deny-all effective network policy, file upload, project toolchain, cwd, and denied egress. Both create a billable VM at startup in an actual deployment; this page does not. OpenShell proves, from inside one throwaway sandbox, that writes land only under /tmp, egress is refused, its cgroup holds the requested limits, and a cancelled command’s processes are gone.',
+  'EnsureReady = Preflight + SmokeTest\nWASM: process-tier configuration checks\nDocker/E2B/Docker Cloud/OpenShell: bounded behavioral execution\nStartup refuses if required checks fail', 'sandbox/factory.go');
 add('smoke-result', 'guest', 'provider', 'observe', 'Collect startup evidence and tear down the probe',
   'The bounded smoke result and provider/configuration evidence.',
-  'Docker must have verified runsc for the kernel tier. E2B’s no-grant smoke does not prove guarded egress. Docker Cloud Sandboxes also reads each run’s effective network policy back and refuses one that is not deny-all. WASM has no real-provider throwaway container or VM; this step summarizes its in-process checks.',
+  'Docker must have verified runsc for the kernel tier. E2B’s no-grant smoke does not prove guarded egress. Docker Cloud Sandboxes also reads each run’s effective network policy back and refuses one that is not deny-all. OpenShell reads each run’s sandbox back (labels, image, limits, policy) and refuses any difference; its tier comes from the gateway’s reported docker driver. WASM has no real-provider throwaway container or VM; this step summarizes its in-process checks.',
   'Behavioral checks + provider configuration\nNo runtime attestation\nProbe resources released', 'sandbox/factory.go', [[980, 532], [980, 330]]);
 add('wasm-ready', 'provider', 'operator', 'observe', 'Check WASM configuration without a smoke guest',
   'The result of WASM’s Preflight configuration check.',
@@ -304,8 +308,8 @@ add('describe-caller', 'ingress', 'caller', 'response', 'Use discovery to prepar
   'Discovery complete\nGuest launched: no\nAdmission slot taken: no', 'client/client.go');
 add('ready', 'operator', 'provider', 'observe', 'Poll /readyz without starting a guest',
   'An unauthenticated HTTP readiness probe, routed by the daemon to Preflight.',
-  'Docker probes the pinned daemon/runtime and image configuration. E2B and Docker Cloud Sandboxes validate configuration only, not API reachability, key or token validity, or guard routing. /healthz only reports liveness; /metrics exports measurements.',
-  'GET /readyz → bounded Preflight\nGET /healthz → liveness\nGET /metrics → bounded operational counters', 'cmd/plimsolld/main.go', [[115, 392], [875, 392]]);
+  'Docker probes the pinned daemon/runtime and image configuration. E2B and Docker Cloud Sandboxes validate configuration only, not API reachability, key or token validity, or guard routing. OpenShell asks the gateway for its compute driver, at most once every 5 seconds, because this path needs no login. /healthz only reports liveness. /metrics exports measurements on a separate port, this host only by default, because its labels name grant profiles and route templates.',
+  'GET /readyz → bounded Preflight\nGET /healthz → liveness\nGET /metrics → counters, on its own port (127.0.0.1:9464)', 'cmd/plimsolld/main.go', [[115, 392], [875, 392]]);
 add('ready-result', 'provider', 'operator', 'observe', 'Return the limited readiness claim',
   'HTTP 200 for a successful Preflight, or 503 for failure.',
   'No startup smoke test runs on this unauthenticated poll path. A green E2B or Docker Cloud Sandboxes readiness response cannot prove that creating or using a VM will work.',
@@ -320,7 +324,7 @@ add('cancel-handler', 'ingress', 'service', 'deny', 'Propagate cancellation into
   'request canceled or daemon shutting down\nrunCtx.Done() closes', 'internal/rpc/sandbox_service.go');
 add('cancel-provider', 'service', 'provider', 'deny', 'Stop the active run and release its resources',
   'The canceled context reaches provider execution and cleanup.',
-  'Containers, VM teardown, adapters, and temporary resources are provider-managed. E2B and Docker Cloud Sandboxes also periodically reconcile untracked orphan VMs left after failed cleanup, E2B by a metadata stamp and Docker Cloud by a name prefix. Cancellation does not roll back completed API writes.',
+  'Containers, VM teardown, adapters, and temporary resources are provider-managed. E2B and Docker Cloud Sandboxes also periodically reconcile untracked orphan VMs left after failed cleanup, E2B by a metadata stamp and Docker Cloud by a name prefix. OpenShell does the same by label, and also deletes another instance’s sandboxes once their declared lifetime plus 5 minutes has passed. Cancellation does not roll back completed API writes.',
   'Stop guest work\nClose per-run broker / adapter resources\nRelease admission when handler returns\nAlready completed API writes remain', 'sandbox/e2b.go', [[625, 208], [875, 208]]);
 add('cancel-result', 'provider', 'service', 'deny', 'Report cancellation or a bounded timeout outcome',
   'A context error, or the provider’s typed timeout result where applicable.',
@@ -343,6 +347,39 @@ add('embed-result', 'provider', 'caller', 'response', 'Return the Go result to t
   'The sandbox package contains no Connect or HTTP transport types. Direct providers do not compute service-side advice. A nil grant still means no host-API capability.',
   'sandbox.Result, error\nNo RPC authentication or daemon limiter\nNo service-side advice', 'sandbox/sandbox.go', [[875, 412], [225, 412], [225, 135]]);
 
+add('submit-open', 'caller', 'ingress', 'request', 'Open a session',
+  'A floor and, optionally, a shorter lifetime or idle timeout than the daemon’s.',
+  'A session keeps one sandbox for many calls. It belongs to the principal that opens it, and the operator turned sessions on with SANDBOX_MAX_SESSIONS; otherwise this request is refused before anything is created.',
+  'OpenSession\nprotocol: 1\nminimum_isolation: {{tier}}\nAuthorization: Bearer [caller credential]', 'client/session.go');
+add('session-create', 'service', 'provider', 'request', 'Create the session’s sandbox',
+  'The floor, the session’s absolute lifetime and its disk budget.',
+  'The provider creates a sandbox with the run policy and an idle main process, reads it back, and records the sandbox’s own processes, which every later sweep spares. The session holds its admission slot while its sandbox runs.',
+  'SessionProvider.OpenSession(ctx, {floor, lifetime: 30m, disk: 1 GiB})\nmain process: sleep (idle)\nread back: policy, spec, labels', 'sandbox/openshell/session.go');
+add('session-handle', 'ingress', 'caller', 'response', 'The caller gets a session ID',
+  'A 128-bit random ID, its SHA-256 fingerprint, the tier and the expiry.',
+  'The ID is a capability: only the principal that opened the session can use it, and an unknown ID and another caller’s ID get the same NotFound. It is never logged or recorded; records carry the fingerprint.',
+  'OpenSessionResponse\nsession_id: [capability, 32 hex digits]\nsession: [its SHA-256]\nisolation: {{tier}}', 'internal/rpc/sessions.go', [[375, 48], [115, 48]]);
+add('submit-call', 'caller', 'ingress', 'request', 'Send a call into the session',
+  'The session ID and one snippet or project, in a message of its own.',
+  'A daemon that predates sessions refuses this message instead of dropping the ID and running the payload as a fresh run.',
+  'SessionRun\nprotocol: 1\nsession_id: [capability]\njavascript: { code: read a file an earlier call wrote }', 'client/session.go');
+add('call-owner', 'ingress', 'service', 'request', 'Authenticate, then match the session to its owner',
+  'The caller’s identity and the session it names.',
+  'The call waits for the session’s previous call to finish, so the chain of records numbers calls in the order they ran.',
+  'Principal { UserID: "client-a" }\nsession owner: client-a\none call at a time', 'internal/rpc/sessions.go');
+add('session-verify', 'service', 'provider', 'request', 'Read the sandbox back, then dispatch',
+  'The call, after the provider has read the sandbox and its effective policy from the gateway.',
+  'Any client of the gateway can change a sandbox between calls, so any difference ends the session and refuses the call before it runs. A suspended session is started first.',
+  'Session.RunJavaScript(ctx, request)\nbefore: GetSandbox + GetSandboxConfig\nstopped? StartSandbox, then read back again', 'sandbox/openshell/session.go');
+add('session-sweep', 'provider', 'guest', 'request', 'Sweep leftover processes after the call',
+  'One exec that kills every process except the sandbox’s own, by process ID.',
+  'A process a call starts outlives the call unless something ends it. The sweep’s verdict is its exit status, which leftover code cannot forge; when it cannot prove the sandbox clean, the sandbox is stopped and started, and when that fails the session ends. Files under /tmp stay.',
+  'kill every pid not in {PID 1, main process, the sweep}\nrepeat until a scan finds none\nthen measure /tmp against the disk budget', 'sandbox/openshell/session.go');
+add('session-record', 'service', 'ingress', 'response', 'Chain the call’s record to the one before',
+  'The result and a run record naming the session, the call’s number and the previous record’s digest.',
+  'The daemon holds no key: it hashes. The caller’s harness checks each record against the chain it has seen and signs it, so a dropped or foreign call shows as a gap.',
+  'SessionRunResponse\nrun.record: { session: [fingerprint], sequence: 2, previous_sha256: [call 1’s record] }', 'internal/rpc/sessions.go', [[625, 25], [375, 25]]);
+
 const entry = ['submit', 'authenticate', 'admit', 'dispatch'];
 const grantEntry = ['submit-grant', 'authenticate', 'profile', 'grant', 'admit', 'dispatch'];
 const setup = ['prepare-token', 'token-broker', 'open-adapter', 'launch-grant'];
@@ -359,6 +396,7 @@ export const paths = [
   {id:'run', category:'execute', title:'A run, out and back', intro:'Follow a snippet from its caller to the guest and all the way back. There is no API grant in this run.', question:'Where does my code go, and what comes back?', steps:[...entry, 'launch', ...end]},
   {id:'granted', category:'api', title:'A granted API call, round trip', intro:'Follow one host.get call. Watch the caller credential, API credential, call envelope, and response take different paths.', question:'How can isolated code reach my API without holding its credential?', steps:[...grantEntry, ...setup, ...call, ...reply, ...end]},
   {id:'project', category:'execute', title:'A project with API access', intro:'Stage files, execute ordered steps, broker an API call, then return per-step outcomes and artifacts. Select WASM to see where it stops.', question:'What changes when the request is a whole project?', steps:['submit-project', ...grantEntry.slice(1), ...setup.slice(0,-1), 'launch-project', ...call, ...reply, ...end], variants:{wasm:['submit-project','authenticate','profile','grant','admit','dispatch','unsupported','provider-error-wire','error-caller']}},
+  {id:'session', category:'execute', title:'A session: open, then one call', intro:'One sandbox kept for many calls: files persist between calls, processes do not. Follow the open and the second call of a session on OpenShell.', question:'How does a later call see what an earlier one wrote, and nothing else?', fixedProvider:'openshell', steps:['submit-open','authenticate','admit','session-create','session-handle','submit-call','call-owner','session-verify','launch','finish','session-sweep','result','session-record','caller-result']},
   {id:'embed', category:'execute', title:'Use plimsoll inside a Go program', intro:'The direct entry point calls the same provider interface. The embedding application owns the outer service policies.', question:'Does every execution have to travel over RPC?', steps:['embed','launch','finish','embed-result']},
   {id:'guest-failure', category:'execute', title:'The guest program fails', intro:'A non-zero exit is a result. Follow it back without mistaking it for a failed RPC.', question:'Can the RPC succeed while my code fails?', steps:[...entry,'launch','guest-fail','failed-result','wire-result','caller-result']},
   {id:'route-denied', category:'api', title:'The guest tries an ungranted route', intro:'This run has a read-only grant. The guest tries DELETE, and the broker refuses before the API is contacted.', question:'What if guest code bypasses the injected helper?', steps:[...grantEntry,...setup,'guest-call','bad-path','broker-denied','guest-error']},

@@ -36,6 +36,15 @@ const rc = sim_init(theta0, 0.5, 1.0, h, tEnd);
 if (rc < 0) { console.error(`plant refused to initialise: ${rc}`); process.exit(1); }
 
 const child = spawn(process.execPath, ['--no-warnings', controller], { stdio: ['pipe', 'pipe', 'inherit'] });
+const closed = new Promise((resolve) => child.on('close', resolve));
+// A controller that exits while ticks remain can close its input before the judge
+// sees its output end; the write error is the controller's failure (exit 3).
+let feeding = true, fed = 0;
+child.stdin.on('error', (err) => {
+  if (!feeding) return;
+  console.error(`controller closed its input at tick ${fed} (${err.code})`);
+  process.exit(3);
+});
 const answers = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
 const record = new Float64Array(ticks * (width + 1));
 let fellAt = -1;
@@ -45,17 +54,25 @@ for (let k = 0; k < ticks; k++) {
   child.stdin.write(s.join(' ') + '\n');
   const { value, done } = await answers.next();
   if (done) { console.error(`controller exited at tick ${k} without answering`); process.exit(3); }
-  const u = Number(value);
+  const text = value.trim();
+  const u = text === '' ? NaN : Number(text); // a blank line is no answer, though Number('') is 0
   if (!Number.isFinite(u)) { console.error(`controller answered a non-number at tick ${k}`); process.exit(3); }
   record.set(s, k * (width + 1));
   record[k * (width + 1) + width] = u;
   if (fellAt < 0 && Math.abs(s[2]) > Math.PI / 2) fellAt = k * h;
   const step = sim_step(u, ptr);
   if (step < 0) { console.error(`plant step failed at tick ${k}: ${step}`); process.exit(1); }
+  fed = k + 1;
   if (step === 0) break;
 }
+feeding = false;
 child.stdin.end();
-await new Promise((resolve) => child.on('close', resolve));
+// Every tick is answered; a controller that does not exit once its input closes is
+// killed after 2 s (the other judge's default answer budget) rather than holding the
+// run until the sandbox's whole-run budget.
+const linger = setTimeout(() => child.kill('SIGKILL'), 2000);
+await closed;
+clearTimeout(linger);
 sim_free();
 
 const bytes = Buffer.from(record.buffer);

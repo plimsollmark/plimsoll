@@ -61,109 +61,37 @@ it; otherwise Docker and WASM would produce different evidence.
   metadata-only.
 - The advisory pipeline never reads it; Prospector stays metadata-only regardless.
 
-**Rough shape if built.** `forensic: off|headers|bodies` on a grant profile; when set,
-the broker core copies the already size-capped request/response to a
-deployment-provided sink writer. Default absent. One redaction test proving the metadata
-surfaces are unchanged when it is off.
+**Rough shape if built.** Placement (choosing a backend per request) starts as a small
+routing **library** an embedder links, and becomes a separate service only when several
+callers need one endpoint or one central quota. Either way it is a consumer of the
+existing wire contract, in its own repo or binary, not a change to `sandbox` or
+`plimsolld`. An in-process multi-provider daemon is the wrong shape: it would put the
+WASM engine's escape surface in the same process as every cloud credential.
 
----
+1. **Filter, then rank.** Keep only backends whose `Describe` evidence meets the
+   request's `minimum_isolation`, that support the payload kind and `grant_profile`, and
+   whose `max_timeout_ms` for that kind covers the request's timeout (a longer timeout is
+   cut to the ceiling, not refused).
+   Rank the survivors by cost only after that; a missing or stale price fails the
+   comparison instead of counting as zero, and local compute is not free.
+2. **Keep the caller's identity.** Forward the caller's own credential. A router that
+   forwards with one shared bearer collapses every profile's `allowed_callers` and the
+   per-run minted token's `sub` into one principal.
+3. **Reselect only after a refusal that ran nothing.** A `Run` error carrying the
+   `NotDispatched` detail with reason `unsupported`, `isolation` or `capacity` may go to
+   the next backend; `request`, `permission` and `protocol` would fail the same way
+   elsewhere. An error without the detail may have executed, so it is never re-sent
+   ([run results](run-results.md#did-anything-run-the-error-says-so)).
+4. **Equal tiers are not equal environments.** Two `vm` backends can run different
+   engines, packages and numerics. `Describe` states each payload kind's environment
+   `identity` only when it is content-addressed (a verified image ID, an image digest, the
+   interpreter's hash): equal strings mean the same software, and an empty or different
+   string claims nothing. Treat backends as interchangeable for a request only when their
+   identities match, or their environments are declared compatible and tested to be.
+5. **Re-check the returned isolation evidence**, as the official client does.
 
-## Supply-chain provenance
-
-**The idea.** Platform bundles pitch an "immutable supply chain" built from
-**buildpacks** with automatic base-image patching. plimsoll's current model is
-different: **immutability by pinning**. Images are required to be pinned to an immutable
-`@sha256:` digest (`RequirePinnedImages`), and every run launches the
-content-addressed ID that Preflight actually inspected (`verifyImageForRun`,
-`verifiedImageIDs` in [sandbox/docker.go](../sandbox/docker.go)), so a mutable tag
-re-pointed after startup cannot substitute an unverified image.
-
-**What buildpacks are.** A buildpack is a build tool (Cloud Native Buildpacks is the CNCF
-standard; Paketo is a common implementation) that turns application source into a
-container image **without a hand-written Dockerfile**. Instead of `FROM someimage; RUN
-...`, a set of buildpacks detect what the app needs (a Node runtime, say), assemble the
-image from vendor-maintained, versioned layers, and record a bill of materials. The
-selling point for security is twofold: (1) no arbitrary `RUN` steps, so there is less
-room to smuggle in a malicious layer, and (2) because the base ("run image") is a known,
-vendor-maintained layer rather than a snapshot baked into a Dockerfile, the platform can
-**rebase** it, swapping in a patched base under the same app layers, so CVEs in the base
-get patched automatically instead of waiting for someone to rebuild. The tradeoff versus
-plimsoll's pin-and-verify: buildpacks buy auto-patching and a standard SBOM at the cost
-of trusting the buildpack toolchain and giving up a byte-for-byte pin. plimsoll today
-chooses determinism (you run exactly the digest you verified) over auto-patching.
-
-**Why it is a seam, not a feature.** Auto-patching is a real operational nicety we
-currently trade away. If a deployment wants buildpack-built, attested, auto-patched images
-instead of hand-pinned digests, that provenance model should slot in without weakening the
-"a run launches only content the provider verified" guarantee.
-
-**Attach point.** The Preflight image-verification step in
-[sandbox/docker.go](../sandbox/docker.go) (`Preflight` -> `verifyImageForRun`, which today
-enforces digest-pinning and resolves the content-addressed ID). An alternative provenance
-check (verify a signature/attestation, or resolve a buildpack run-image reference) attaches
-here as an additional or alternative gate selected by config, feeding the same
-`verifiedImageIDs` map.
-
-**Invariants it must preserve.**
-
-- Whatever the provenance story, a run still launches a **content-addressed ID this
-  provider inspected**, never a mutable tag. Auto-rebase changes *which* digest is current;
-  it does not remove the "verify then launch that exact ID" step.
-- No new network in the run path. Attestation/signature checks happen at Preflight
-  (startup/readiness), not per run, and pull no dependency into the hostile-code TCB
-  without cause ([AGENTS.md](../AGENTS.md) dependency rule).
-- `RequirePinnedImages` and this stay composable: a deployment can demand *both* a pinned
-  digest and a valid attestation.
-
-**Rough shape if built.** A `SANDBOX_IMAGE_PROVENANCE=pinned|attested|buildpack` selector;
-`attested` additionally verifies a cosign/in-toto attestation before recording the content
-ID; `buildpack` resolves the current run-image digest from the builder and then follows the
-same verify-and-record path. Default `pinned` (today's behavior).
-
----
-
-## Gateway
-
-**The idea.** Platform bundles ship a centralized gateway (an "MCP gateway") that fronts
-many agents, routes their tool calls, and aggregates logs fleet-wide. plimsoll today is
-a **component**, not a platform: one `plimsolld` is the enforcement point, and its
-control surface is per-instance (grant profiles, `allowed_callers`, multi-client auth, and
-the `Describe` discovery RPC). A "gateway story" is a control plane in **front of** many
-plimsolld instances.
-
-**Why it is a seam, not a feature.** A single embedder does not need it; a fleet operator
-eventually might (route a run to the instance with the required isolation tier, aggregate
-`/metrics` and advisory findings across instances, present one policy surface). We want that
-to compose over what exists rather than force a redesign, and any plimsoll-native gateway
-must inherit the metadata-only telemetry invariant instead of becoming the surveillance hub
-the platform pitch describes.
-
-**Attach point.** The `Describe` RPC in
-[internal/rpc/sandbox_service.go](../internal/rpc/sandbox_service.go), which is already the
-side-effect-free, structural capability-discovery surface, plus the per-run `isolation`
-evidence on each result and the `minimum_isolation` per-dispatch floor already in the wire
-protocol. A gateway reads these; it does not need new hooks in the service.
-
-**Invariants it must preserve.**
-
-- `Describe` stays truthful and side-effect-free (runs no code, takes no limiter slot), so a
-  gateway can trust it without a separate control channel.
-- Routing by isolation tier uses the **evidence** already on `Describe`/results and the
-  existing `minimum_isolation` floor; the gateway must not let a stale `Describe` authorize a
-  downgrade (the consumer-stamps-the-floor rule in [AGENTS.md](../AGENTS.md) already guards
-  this, and a gateway must not weaken it).
-- Fleet-level telemetry aggregation stays **metadata-only**, the same invariant as a single
-  instance. A gateway aggregates route templates, counts, and findings, never paths, bodies,
-  or credentials.
-- Per-run credential minting stays server-side and per-instance. A gateway routes and
-  observes; it does not become a place credentials or raw grants live.
-
-**Rough shape if built.** A separate small service that periodically calls `Describe` on each
-backend, keeps a capability table, and dispatches a `Run` (of whatever payload kind) to a
-backend satisfying the request's `minimum_isolation` and `grant_profile`, re-checking the
-returned isolation evidence. It scrapes each backend's `/metrics` and tails their audit
-streams into one dashboard. It is a consumer of the existing wire contract, in its own
-repo/binary, not a change to `sandbox` or `plimsolld`.
+A request field the daemon enforces would need a protocol bump; everything above uses
+fields that already exist.
 
 ---
 

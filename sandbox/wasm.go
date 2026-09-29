@@ -319,7 +319,7 @@ func (w *WasmSandbox) RunProject(_ context.Context, req ProjectRequest) (Project
 	if err := CheckMinimumIsolation(w.IsolationClass(), req.MinimumIsolation); err != nil {
 		return ProjectResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, err
 	}
-	return ProjectResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, ErrUnsupported
+	return ProjectResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, refused(ErrUnsupported)
 }
 
 // RunModule is unsupported for the same reason as RunProject: the in-process
@@ -331,5 +331,5 @@ func (w *WasmSandbox) RunModule(_ context.Context, req ModuleRequest) (ModuleRes
 	if err := CheckMinimumIsolation(w.IsolationClass(), req.MinimumIsolation); err != nil {
 		return ModuleResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, err
 	}
-	return ModuleResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, ErrUnsupported
+	return ModuleResult{Sandbox: w.Name(), Isolation: w.IsolationClass()}, refused(ErrUnsupported)
 }

@@ -7,9 +7,10 @@
 // acknowledges open development mode with PLIMSOLL_INSECURE=1.
 //
 // The daemon takes no arguments; every setting is an environment variable.
-// `plimsolld -h` prints the full reference. That text is the usage constant in
-// this file, and a test requires every variable the package reads to appear in it,
-// so the binary's own help cannot fall behind the code.
+// `plimsolld -h` prints the full reference. That text is helpText (providers.go),
+// built from the usage constants in this file, and a test requires every variable
+// the package reads to appear in it, so the binary's own help cannot fall behind
+// the code.
 package main
 
 import (
@@ -20,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,9 +37,11 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
-// usage is what -h prints. It is the daemon's configuration reference; keep every
-// variable the package reads listed here (TestUsageNamesEveryVariable enforces it).
-const usage = `plimsolld serves the plimsoll SandboxService over Connect (h2c).
+// usageHead, usageProviders and usageLimits are what -h prints, around the two parts
+// helpText generates: the SANDBOX_PROVIDER line and the daemon-built providers'
+// sections. Together they are the daemon's configuration reference; keep every
+// variable the package reads listed (TestUsageNamesEveryVariable enforces it).
+const usageHead = `plimsolld serves the plimsoll SandboxService over Connect (h2c).
 
 Usage: plimsolld [-h]
 
@@ -45,7 +49,15 @@ The daemon takes no arguments. Configuration is by environment variable:
 
   PLIMSOLL_ADDR              listen address (default :8746, every interface;
                              set 127.0.0.1:8746 for a loopback-only daemon)
-  PLIMSOLL_LOG_FORMAT        json (default) or text; the audit stream is a
+  PLIMSOLL_METRICS_ADDR      listen address for GET /metrics, a listener of its
+                             own (default 127.0.0.1:9464, this host only; the
+                             host and port are OpenTelemetry's Prometheus exporter
+                             defaults); off disables it. It has no authentication
+                             and its labels name grant profiles and route
+                             templates, so bind an address other hosts can reach
+                             only behind a firewall rule that admits just the
+                             scraper. It serves TLS when the daemon does
+  PLIMSOLL_LOG_FORMAT       json (default) or text; the audit stream is a
                              machine-read record and prospector-report consumes
                              newline-delimited JSON. Use text only for eyeballing
                              a local run.
@@ -68,8 +80,9 @@ The daemon takes no arguments. Configuration is by environment variable:
   PLIMSOLL_GRANTS_FILE       JSON file of named host-API capability profiles a
                              caller may select via grant_profile
 
-  SANDBOX_PROVIDER           wasm | docker | e2b | dockercloud | (unset = disabled)
-  SANDBOX_MIN_ISOLATION      refuse to start unless the provider meets this tier
+`
+
+const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the provider meets this tier
                              (vm | kernel | container | process); unset = no floor
   SANDBOX_DOCKER_IMAGE       snippet image (default node:22-alpine)
   SANDBOX_DOCKER_PROJECT_IMAGE
@@ -120,7 +133,9 @@ The daemon takes no arguments. Configuration is by environment variable:
                              account's cloud network policy must default to
                              deny-all (sbx --cloud policy init deny-all); every run
                              verifies it. Verified live on 2026-09-24.
+`
 
+const usageLimits = `
   SANDBOX_MAX_CONCURRENT     global max in-flight runs (default 8)
   SANDBOX_PER_KEY_CONCURRENT max in-flight runs per caller (default max/2)
   SANDBOX_RATE_PER_MIN       per-caller runs per minute (default 30; 0 = disabled)
@@ -131,9 +146,22 @@ The daemon takes no arguments. Configuration is by environment variable:
                              dockercloud, whose runners live off-host)
   SANDBOX_MEMORY_MB / SANDBOX_CPUS / SANDBOX_PIDS / SANDBOX_DISK_MB
                              per-run resource envelope applied to the provider
+  SANDBOX_MAX_SESSIONS       open sessions at once (default 0: sessions off). A
+                             session keeps one sandbox for many calls: files
+                             persist, processes do not. Needs a provider with
+                             sessions (openshell); startup fails otherwise. A
+                             running session holds one concurrency slot, a
+                             suspended one none.
+  SANDBOX_SESSION_LIFETIME   a session's absolute lifetime (default 30m, at most
+                             12h); a request may ask for less
+  SANDBOX_SESSION_IDLE       suspend a session idle this long (default 5m; 0 =
+                             never); its files are kept and the next call resumes it
+  SANDBOX_SESSION_DISK_MB    end a session whose files exceed this after a call
+                             (default 1024; 0 = no bound)
 
-Endpoints outside auth: GET /healthz (liveness), GET /readyz (provider readiness),
-GET /metrics (Prometheus text: run and shed-load counters).
+Endpoints outside auth: GET /healthz (liveness) and GET /readyz (provider
+readiness) on PLIMSOLL_ADDR, and GET /metrics (Prometheus text: run, shed-load,
+host-call and advice counters) on PLIMSOLL_METRICS_ADDR only.
 `
 
 // parseArgs accepts only a help request. Any other argument is refused rather
@@ -152,17 +180,17 @@ func parseArgs(args []string) (help bool, err error) {
 
 func main() {
 	if help, err := parseArgs(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "plimsolld: %v\n\n%s", err, usage)
+		fmt.Fprintf(os.Stderr, "plimsolld: %v\n\n%s", err, helpText())
 		os.Exit(2)
 	} else if help {
-		fmt.Print(usage)
+		fmt.Print(helpText())
 		return
 	}
 	configureLogging(os.Getenv)
 
 	addr := getenv("PLIMSOLL_ADDR", ":8746")
 
-	provider, err := sandbox.Build(os.Getenv)
+	provider, err := buildProvider(os.Getenv)
 	if err != nil {
 		slog.Error("invalid sandbox configuration", "error", err)
 		os.Exit(1)
@@ -208,6 +236,7 @@ func main() {
 	}
 
 	svc := rpc.NewSandboxService(sb)
+	svc.Resources = res
 	// Resolve the effective limiter envelope (env parsing + aggregate-memory clamp +
 	// validation) in one typed, unit-tested function so main() only wires the result.
 	lc, err := loadLimiterConfig(os.Getenv, sb.Name(), res.MemoryMB)
@@ -217,6 +246,21 @@ func main() {
 	}
 	maxConcurrent, perKey, ratePerMin, burst := lc.MaxConcurrent, lc.PerKey, lc.RatePerMin, lc.Burst
 	svc.Limiter = rpc.NewCodeLimiter(maxConcurrent, perKey, ratePerMin, burst)
+
+	sc, err := loadSessionConfig(os.Getenv)
+	if err != nil {
+		slog.Error("invalid session configuration", "error", err)
+		os.Exit(1)
+	}
+	if sc.MaxSessions > 0 {
+		if sp, ok := sb.(sandbox.SessionProvider); !ok || !sp.SupportsSessions() {
+			slog.Error("SANDBOX_MAX_SESSIONS is set but the provider keeps no sessions", "provider", sb.Name())
+			os.Exit(1)
+		}
+		slog.Info("sessions enabled", "max_sessions", sc.MaxSessions, "lifetime", sc.Lifetime.String(),
+			"idle", sc.IdleTimeout.String(), "disk_mb", sc.DiskBytes>>20)
+	}
+	svc.Sessions = sc
 
 	gr, err := grants.LoadFromEnv()
 	if err != nil {
@@ -276,13 +320,18 @@ func main() {
 		slog.Error("invalid TLS configuration", "error", err)
 		os.Exit(1)
 	}
+	metricsAddr, err := metricsAddrWith(os.Getenv)
+	if err != nil {
+		slog.Error("invalid metrics listener", "error", err)
+		os.Exit(1)
+	}
 
 	// Hardened mode: the deploy-time policy for serving hostile code in
 	// production. Everything it checks is already resolved evidence — provider
 	// isolation post-EnsureReady, the loaded verifier, the effective limiter, the
 	// actual transport — so a pass means the properties are in force, not merely
 	// configured.
-	hardened, err := strictBoolEnv(os.Getenv, "PLIMSOLL_HARDENED")
+	hardened, err := sandbox.BoolFromEnv(os.Getenv, "PLIMSOLL_HARDENED")
 	if err != nil {
 		slog.Error("invalid PLIMSOLL_HARDENED", "error", err)
 		os.Exit(1)
@@ -294,6 +343,7 @@ func main() {
 			MultiClientAuth: multiClientAuth,
 			TLS:             tlsConf != nil,
 			Addr:            addr,
+			MetricsAddr:     metricsAddr,
 			RatePerMin:      ratePerMin,
 		}); err != nil {
 			slog.Error("hardened-mode policy violation; refusing to serve", "error", err)
@@ -330,10 +380,11 @@ func main() {
 		}
 	}
 
-	// Operational endpoints, registered OUTSIDE the auth interceptor so probes and
-	// scrapers need no token. Liveness is unconditional; readiness re-runs the
-	// provider's bounded Preflight. Docker probes its pinned daemon/runtime; E2B's
-	// current Preflight validates configuration only and does not prove API reachability.
+	// Operational endpoints, registered OUTSIDE the auth interceptor so probes need
+	// no token. Liveness is unconditional; readiness re-runs the provider's bounded
+	// Preflight. Docker probes its pinned daemon/runtime; E2B's current Preflight
+	// validates configuration only and does not prove API reachability. /metrics is
+	// not here: it has a listener of its own (metricsHandler).
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
@@ -348,21 +399,48 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready\n"))
 	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
-		writeMetrics(w, svc)
-	})
 
+	// Bind both listeners before serving either, so a taken port is a startup
+	// error rather than a goroutine exiting later, and so the log can name the bound
+	// address (":0", an ephemeral port, is how the tests run the daemon).
 	srv := newHTTPServer(addr, mux, tlsConf)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		slog.Error("cannot listen", "addr", addr, "error", err)
+		os.Exit(1)
+	}
+	var metricsSrv *http.Server
+	var metricsLn net.Listener
+	boundMetrics := "off"
+	if metricsAddr != "" {
+		metricsLn, err = net.Listen("tcp", metricsAddr)
+		if err != nil {
+			slog.Error("cannot listen for metrics; set PLIMSOLL_METRICS_ADDR to a free address, or off", "addr", metricsAddr, "error", err)
+			os.Exit(1)
+		}
+		metricsSrv = newMetricsServer(metricsAddr, metricsHandler(svc), tlsConf)
+		boundMetrics = metricsLn.Addr().String()
+		if !loopbackAddr(boundMetrics) {
+			slog.Warn("the metrics listener is reachable from other hosts and has no authentication; its labels name grant profiles and route templates, so admit only the scraper",
+				"metrics_addr", boundMetrics)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Reap execution resources that leaked past the per-run lifecycle (e.g. E2B
-	// microVMs whose create response was malformed or whose teardown retries all
-	// failed). The provider guarantees it only ever destroys resources this
-	// instance created and no longer tracks, so the loop is safe alongside
-	// in-flight runs.
-	if rec, ok := sb.(sandbox.OrphanReconciler); ok {
+	// Once a minute, in the background:
+	//   - Reap execution resources that leaked past the per-run lifecycle (e.g. E2B
+	//     microVMs whose create response was malformed or whose teardown retries all
+	//     failed). The provider guarantees it never destroys a resource another run
+	//     may still be using, so the loop is safe alongside in-flight runs.
+	//   - Re-check isolation evidence that has lapsed. A provider whose tier fell to
+	//     unknown (openshell after a failed gateway check) has every request that
+	//     states a minimum isolation refused before the provider is asked, so without
+	//     this only a /readyz poll or a run with no floor would ever check again.
+	rec, reconciles := sb.(sandbox.OrphanReconciler)
+	pf, preflights := sb.(sandbox.Preflighter)
+	if reconciles || preflights {
 		go func() {
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
@@ -371,6 +449,16 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
+					if preflights && sb.IsolationClass() == sandbox.IsolationUnknown {
+						pctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						if err := pf.Preflight(pctx); err != nil {
+							slog.Warn("isolation evidence is still unknown; requests that state a minimum isolation are refused", "provider", sb.Name(), "error", err)
+						}
+						cancel()
+					}
+					if !reconciles {
+						continue
+					}
 					rctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					n, err := rec.ReconcileOrphans(rctx)
 					cancel()
@@ -392,7 +480,7 @@ func main() {
 		// (docker/wasm); E2B sizes CPU/RAM/disk at the template level, so advertise
 		// that instead of caps that are not in force.
 		args := []any{
-			"addr", addr,
+			"addr", ln.Addr().String(),
 			"provider", sb.Name(),
 			"isolation", sb.IsolationClass().String(),
 			"auth", verifier != nil,
@@ -420,18 +508,21 @@ func main() {
 		default:
 			args = append(args, "mem_mb", res.MemoryMB, "cpus", res.CPUs, "pids", res.PidsLimit, "disk_mb", res.DiskMB)
 		}
-		args = append(args, "tls", tlsConf != nil)
+		args = append(args, "tls", tlsConf != nil, "metrics_addr", boundMetrics)
 		slog.Info("plimsolld listening", args...)
-		serve := srv.ListenAndServe
-		if tlsConf != nil {
-			// The keypair is already loaded into TLSConfig; empty paths are correct.
-			serve = func() error { return srv.ListenAndServeTLS("", "") }
-		}
-		if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := serve(srv, ln); err != nil {
 			slog.Error("server failed", "error", err)
 			os.Exit(1)
 		}
 	}()
+	if metricsSrv != nil {
+		go func() {
+			if err := serve(metricsSrv, metricsLn); err != nil {
+				slog.Error("metrics server failed", "error", err)
+				os.Exit(1)
+			}
+		}()
+	}
 
 	<-ctx.Done()
 	stop() // restore default handling so a second signal force-quits the drain
@@ -445,7 +536,57 @@ func main() {
 		slog.Error("graceful shutdown timed out; forcing close", "error", err)
 		_ = srv.Close()
 	}
+	// Runs are over; let the provider finish what they left behind (openshell deletes
+	// each sandbox off the result path), within the same shutdown budget.
+	if d, ok := sb.(sandbox.Drainer); ok {
+		if err := d.Drain(shutdownCtx); err != nil {
+			slog.Error("provider cleanup did not finish before shutdown; a later reconciliation reaps what is left", "provider", sb.Name(), "error", err)
+		}
+	}
+	// Metrics stay up through the drain, so a scraper can watch the in-flight
+	// gauge fall; nothing is left to count once it is over.
+	if metricsSrv != nil {
+		_ = metricsSrv.Close()
+	}
 	slog.Info("plimsolld stopped")
+}
+
+// serve runs srv on ln until the server is shut down, over TLS when it has a
+// config. The keypair is already loaded into TLSConfig, so the paths are empty.
+func serve(srv *http.Server, ln net.Listener) error {
+	var err error
+	if srv.TLSConfig != nil {
+		err = srv.ServeTLS(ln, "", "")
+	} else {
+		err = srv.Serve(ln)
+	}
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+// metricsHandler serves /metrics and nothing else. It is mounted on its own
+// listener (PLIMSOLL_METRICS_ADDR), never on the RPC one: the endpoint has no
+// authentication, and its labels name grant profiles and route templates, which a
+// caller who can reach the RPC port has no business reading.
+func metricsHandler(svc *rpc.SandboxService) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		writeMetrics(w, svc)
+	})
+	return mux
+}
+
+// newMetricsServer is newHTTPServer with a scrape's time limits. A scrape renders
+// counters already in memory and needs none of the RPC listener's six-minute
+// write window; 10 s is Prometheus's default scrape timeout, after which the
+// scraper has given up anyway.
+func newMetricsServer(addr string, handler http.Handler, tlsConf *tls.Config) *http.Server {
+	srv := newHTTPServer(addr, handler, tlsConf)
+	srv.ReadTimeout = 10 * time.Second
+	srv.WriteTimeout = 10 * time.Second
+	return srv
 }
 
 // newHTTPServer configures the daemon's HTTP server. With a TLS config it serves

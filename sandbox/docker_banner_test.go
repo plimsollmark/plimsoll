@@ -16,11 +16,13 @@ func TestSmokeProbeScriptReadsBannerOnlyWhenAsked(t *testing.T) {
 	if !strings.Contains(with, "dmesg") {
 		t.Fatal("banner script does not read dmesg")
 	}
-	if strings.Contains(without, "dmesg") || strings.Contains(without, "child_process") {
+	// Every probe spawns a child for the memory-isolation check, so child_process
+	// alone no longer marks the banner; its execFileSync of dmesg does.
+	if strings.Contains(without, "dmesg") || strings.Contains(without, "execFileSync") {
 		t.Fatal("a probe built without the banner still contains the dmesg read")
 	}
 	for _, s := range []string{with, without} {
-		for _, want := range []string{`/proc/mounts`, `/plimsoll-smoke`, `JSON.stringify({ rootWritable, mounts, writable, banner, socket })`} {
+		for _, want := range []string{`/proc/mounts`, `/plimsoll-smoke`, `JSON.stringify({ rootWritable, mounts, writable, pids, memory, banner, socket })`} {
 			if !strings.Contains(s, want) {
 				t.Fatalf("probe lost %q", want)
 			}

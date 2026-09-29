@@ -213,11 +213,40 @@
     </dl>
   </div>
 
+  <div class="card">
+    <h3>NVIDIA OpenShell <span class="tier">container</span></h3>
+    <dl>
+      <dt>Needs outside the binary</dt>
+      <dd>An OpenShell gateway running the docker compute driver, at
+      <code>SANDBOX_OPENSHELL_GATEWAY_URL</code>, over mutual TLS: the CA its certificate
+      chains to in <code>SANDBOX_OPENSHELL_CA_FILE</code>, and a client identity the gateway
+      accepts in <code>SANDBOX_OPENSHELL_CERT_FILE</code> and
+      <code>SANDBOX_OPENSHELL_KEY_FILE</code>. The image each sandbox boots,
+      <code>SANDBOX_OPENSHELL_IMAGE</code>, must carry <code>node</code>, <code>sh</code>
+      and the project runner, as the project image does.</dd>
+      <dt>Fails when</dt>
+      <dd>The gateway is unreachable, rejects the client identity or the call that reports
+      its compute driver, or runs a driver other than docker. Each is a startup failure: the
+      daemon asks the gateway for its driver, then proves the policy from inside one
+      throwaway sandbox before it serves.</dd>
+      <dt>Worth knowing</dt>
+      <dd>plimsolld builds this provider itself rather than through the shared provider
+      factory, because its generated protocol code registers the same names as OpenShell's
+      own Go SDK, and a Go program that registers a name twice refuses to start. OpenShell's
+      own default is no memory or CPU limit, so plimsoll always requests both
+      (<code>SANDBOX_MEMORY_MB</code>, <code>SANDBOX_CPUS</code>). A process or disk limit
+      fails startup instead: the gateway sets the first for all of its sandboxes, and
+      OpenShell has no control for the second. Each run gets a fresh sandbox, deleted when the
+      run ends; there are no grants or module runs yet. The gateway is free, so its live suite
+      costs nothing, but no automated run has a gateway to drive.</dd>
+    </dl>
+  </div>
+
   <h2>Guest tools are baked, never fetched</h2>
   <p>A project run compiles and lints inside a sandbox with no network. That works
   because the tools are already in the image: the project image carries Node and the
   TypeScript toolchain, a derived image carries Python with NumPy and SciPy, and a third
-  carries the simulation worker with its compiled models. Third-party packages for
+  carries the simulation worker with its compiled simulators. Third-party packages for
   projects are baked into a derived image at build time, where Node's own lookup finds
   them.</p>
   <p>The point is not convenience. A live install inside a run would mean fetching code
@@ -242,6 +271,11 @@
     <dt>The code generators</dt>
     <dd>Pinned by <code>go.mod</code> tool directives and run through the Go toolchain,
     so regeneration needs no network at all.</dd>
+    <dt>The OpenShell protocol</dt>
+    <dd>OpenShell's protocol definitions, copied byte for byte from one tagged release,
+    with each file's SHA-256 recorded in <code>third_party/openshell/README.md</code>. The
+    client is generated from them, so moving to a newer OpenShell is a deliberate copy, not
+    a drift.</dd>
     <dt>Third-party CI actions</dt>
     <dd>Pinned by commit, not by tag, for exactly the same reason as everything above.</dd>
   </dl>
@@ -273,6 +307,10 @@
     key or token in CI. A green automated gate
     therefore proves strictly less than a full local one, and the repository says so
     rather than implying coverage it does not have.</li>
+    <li><strong>The OpenShell suite, by hand.</strong> Free, but it needs a running gateway,
+    which no automated run has. Like the VM suites, it fails rather than skips when its
+    configuration is missing.
+    <pre><code>make audit OPENSHELL=1</code></pre></li>
   </ol>
   <p>Unit tests alone cannot do this job. They cannot tell you that an artifact is the one
   you pinned, or that a runtime still enforces what its flag claims. Those are questions

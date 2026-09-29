@@ -558,6 +558,9 @@ func startDaemon(ctx context.Context, binary, addr, clientsPath, grantsPath, api
 	cmd.Env = append(os.Environ(),
 		"SANDBOX_PROVIDER=wasm",
 		"PLIMSOLL_ADDR="+addr,
+		// This run reads no metrics, and the default port would collide with any
+		// other daemon on this machine.
+		"PLIMSOLL_METRICS_ADDR=off",
 		"PLIMSOLL_CLIENTS_FILE="+clientsPath,
 		"PLIMSOLL_GRANTS_FILE="+grantsPath,
 		tokenEnv+"="+apiToken,

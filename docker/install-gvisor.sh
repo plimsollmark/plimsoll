@@ -50,7 +50,10 @@ if [[ -n "$ARCHIVE" ]]; then
   cp -- "$ARCHIVE" "$BUNDLE"
 else
   URL="https://github.com/google/gvisor/releases/download/release-${RELEASE}/gvisor-${ARCH}.tar.zstd"
-  curl --fail --show-error --silent --location --proto '=https' --proto-redir '=https' \
+  # A progress bar, not --silent: the bundle is tens of MB, and a silent download
+  # looks like a hung installer.
+  echo "Downloading gVisor $RELEASE ($ARCH) from GitHub (up to 5 minutes)..."
+  curl --fail --show-error --progress-bar --location --proto '=https' --proto-redir '=https' \
     --connect-timeout 15 --max-time 300 "$URL" -o "$BUNDLE"
 fi
 # The committed digest covers runsc, the shim, and every sidecar together.
@@ -87,6 +90,7 @@ for entry in "${EXECUTABLES[@]}"; do
 done
 /usr/local/bin/runsc install --download-sidecars=NEVER --require-sidecars=ALWAYS -- "${RUNTIME_FLAGS[@]}"
 if command -v systemctl >/dev/null 2>&1; then
+  echo "Restarting Docker to load runsc (running containers stop)..."
   systemctl restart docker
 else
   echo "Restart the Docker daemon manually to load the runsc runtime."

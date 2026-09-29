@@ -4,7 +4,8 @@ clean: true
 # directives (protoc-gen-go v1.36.11, protoc-gen-connect-go v1.20.0) and
 # integrity-checked by go.sum — reproducible generation with no network, no
 # buf.build registry access, and no reliance on whatever happens to be on PATH.
-# To upgrade: `go get -tool <module>@<version>`, then `buf generate`.
+# To upgrade: `go get -tool <module>@<version>`, then `make generate`
+# (which runs this template and then every vendored third_party/*/buf.gen.yaml).
 plugins:
   - local: ["go", "tool", "protoc-gen-go"]
     out: gen/go

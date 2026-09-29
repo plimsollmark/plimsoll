@@ -133,7 +133,7 @@ func (e *E2B) openGuard(ctx context.Context, grant *HostAPIGrant, timeout time.D
 		return nil, func() {}, err
 	}
 	if endpoint == nil {
-		return nil, func() {}, fmt.Errorf("%w: e2b host-API grants require E2B_GUARD_URL", ErrUnsupported)
+		return nil, func() {}, refused(fmt.Errorf("%w: e2b host-API grants require E2B_GUARD_URL", ErrUnsupported))
 	}
 	token, core, cleanup, err := e.guards.open(ctx, grant, timeout)
 	if err != nil {
@@ -398,7 +398,7 @@ func (e *E2B) RunModule(_ context.Context, req ModuleRequest) (ModuleResult, err
 	if err := CheckMinimumIsolation(IsolationVM, req.MinimumIsolation); err != nil {
 		return ModuleResult{Sandbox: "e2b", Isolation: IsolationVM}, err
 	}
-	return ModuleResult{Sandbox: "e2b", Isolation: IsolationVM}, ErrUnsupported
+	return ModuleResult{Sandbox: "e2b", Isolation: IsolationVM}, refused(ErrUnsupported)
 }
 
 // RunProject writes the files then runs each step in order, stopping on failure.

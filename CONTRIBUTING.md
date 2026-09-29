@@ -57,7 +57,7 @@ strip both credentials from the environment and no CI job runs either suite.
 `docker build -t plimsoll/sandbox:latest docker/`.
 
 Generated code in `gen/` is committed and checked for drift. If you touch
-`proto/`, run `buf generate` and commit the result, or the gate fails.
+`proto/`, run `make generate` and commit the result, or the gate fails.
 
 ## What this project is
 

@@ -179,3 +179,20 @@ func TestBearerTokenRequiresBearerScheme(t *testing.T) {
 		}
 	}
 }
+
+// Every procedure the service declares has a scope. An unmapped one is refused to
+// every caller (fail-closed), which is safe but breaks the procedure outright; this
+// catches the omission in the gate instead of at a live daemon.
+func TestEveryProcedureHasAScope(t *testing.T) {
+	svc := plimsollv1.File_plimsoll_v1_sandbox_proto.Services().ByName("SandboxService")
+	if svc == nil {
+		t.Fatal("no SandboxService in the descriptor")
+	}
+	methods := svc.Methods()
+	for i := 0; i < methods.Len(); i++ {
+		proc := "/plimsoll.v1.SandboxService/" + string(methods.Get(i).Name())
+		if _, ok := requiredScopes[proc]; !ok {
+			t.Errorf("%s has no required scope, so every caller is refused", proc)
+		}
+	}
+}

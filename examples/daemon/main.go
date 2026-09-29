@@ -22,10 +22,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -33,6 +30,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/plimsollmark/plimsoll/client"
+	"github.com/plimsollmark/plimsoll/examples/internal/daemonproc"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -62,26 +60,19 @@ func run(ctx context.Context) error {
 	fmt.Printf("auth      | clients file at %s\n", clientsPath)
 	fmt.Printf("auth      | the file stores sha256(token), so it holds no live secret\n")
 
-	binary, err := buildDaemon(ctx, workDir)
+	binary, err := daemonproc.Build(ctx, workDir)
 	if err != nil {
 		return err
 	}
-
-	addr, err := freeAddr()
+	// The daemon's structured audit line goes to stderr: one record per run, naming
+	// the calling principal and never the code or the token. Watch for it below.
+	daemon, err := daemonproc.Start(ctx, binary, []string{"SANDBOX_PROVIDER=wasm", "PLIMSOLL_CLIENTS_FILE=" + clientsPath}, 30*time.Second)
 	if err != nil {
 		return err
 	}
+	defer daemon.Stop(10 * time.Second)
 
-	daemon, err := startDaemon(ctx, binary, addr, clientsPath)
-	if err != nil {
-		return err
-	}
-	defer stop(daemon)
-
-	baseURL := "http://" + addr
-	if err := waitForReady(ctx, baseURL); err != nil {
-		return err
-	}
+	baseURL := daemon.BaseURL
 	fmt.Printf("daemon    | ready at %s\n\n", baseURL)
 
 	if err := describe(ctx, baseURL, token); err != nil {
@@ -108,9 +99,13 @@ func describe(ctx context.Context, baseURL, token string) error {
 	if err != nil {
 		return fmt.Errorf("describe: %w", err)
 	}
-	fmt.Printf("describe  | provider=%s isolation=%s projects=%t js-grants=%t protocol=%d (client speaks %d)\n\n",
+	fmt.Printf("describe  | provider=%s isolation=%s projects=%t js-grants=%t protocol=%d (client speaks %d)\n",
 		info.Sandbox, info.Isolation, info.SupportsProject,
 		info.SupportsJavaScriptGrants, info.Protocol, client.Protocol)
+	// Informational: what software a snippet starts in (content-addressed, so equal
+	// strings on two daemons mean the same interpreter) and the longest it may run.
+	fmt.Printf("          | javascript environment=%s ceiling=%s\n\n",
+		info.Environments.JavaScript.Identity, info.Environments.JavaScript.MaxTimeout)
 	return nil
 }
 
@@ -221,75 +216,8 @@ func writeClientsFile(dir string) (token, path string, err error) {
 	return token, path, nil
 }
 
-// buildDaemon compiles plimsolld from the checkout so the example runs the code in
-// this tree rather than whatever happens to be installed.
-func buildDaemon(ctx context.Context, dir string) (string, error) {
-	binary := filepath.Join(dir, "plimsolld")
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/plimsolld")
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("build plimsolld (run this from the repository root): %w", err)
-	}
-	return binary, nil
-}
-
-func startDaemon(ctx context.Context, binary, addr, clientsPath string) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, binary)
-	cmd.Env = append(os.Environ(),
-		"SANDBOX_PROVIDER=wasm",
-		"PLIMSOLL_ADDR="+addr,
-		"PLIMSOLL_CLIENTS_FILE="+clientsPath,
-	)
-	// The daemon's structured audit line goes to stderr: one record per run, naming
-	// the calling principal and never the code or the token. Watch for it below.
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start plimsolld: %w", err)
-	}
-	return cmd, nil
-}
-
-func stop(cmd *exec.Cmd) {
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}
-}
-
-// waitForReady polls /readyz, which the daemon serves outside auth alongside
-// /healthz and /metrics.
-func waitForReady(ctx context.Context, baseURL string) error {
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/readyz", nil)
-		if err != nil {
-			return err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return errors.New("plimsolld did not become ready within 30s")
-}
-
 // oneLine flattens a server error for display. Connect errors carry the server's
 // message plus its code, separated by a newline.
 func oneLine(err error) string {
 	return strings.ReplaceAll(strings.TrimSpace(err.Error()), "\n", " | ")
-}
-
-// freeAddr reserves a loopback port by binding it and handing back the address.
-func freeAddr() (string, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", err
-	}
-	addr := listener.Addr().String()
-	return addr, listener.Close()
 }

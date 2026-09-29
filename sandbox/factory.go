@@ -63,7 +63,7 @@ func Build(getenv func(string) string) (Provider, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	res, err := resourcesFromEnv(getenv)
+	res, err := ResourcesFromEnv(getenv)
 	if err != nil {
 		return Provider{}, err
 	}
@@ -80,7 +80,7 @@ func Build(getenv func(string) string) (Provider, error) {
 		d.ModuleImage = getenv("SANDBOX_DOCKER_MODULE_IMAGE") // "" = module runs unsupported
 		d.Runtime = getenv("SANDBOX_DOCKER_RUNTIME")          // e.g. "runsc" (gVisor); "" = runc
 		d.Seccomp = getenv("SANDBOX_DOCKER_SECCOMP")          // "" = docker default (explicit); path or "unconfined"
-		requirePinned, err := optionalBoolEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		requirePinned, err := BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
 		if err != nil {
 			return Provider{}, err
 		}
@@ -110,7 +110,7 @@ func Build(getenv func(string) string) (Provider, error) {
 			GuardURL:  getenv("SANDBOX_DOCKERCLOUD_GUARD_URL"),
 			PolicyURL: getenv("SANDBOX_DOCKERCLOUD_POLICY_URL"),
 		}
-		requirePinned, err := optionalBoolEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		requirePinned, err := BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
 		if err != nil {
 			return Provider{}, err
 		}
@@ -137,11 +137,19 @@ func Build(getenv func(string) string) (Provider, error) {
 	default:
 		// Set-but-unrecognized: almost certainly a misconfiguration — an operator
 		// who meant to enable a provider must not silently get the inert one.
-		return Provider{}, fmt.Errorf("SANDBOX_PROVIDER=%q is not recognized (known: docker, dockercloud, e2b, wasm; unset = disabled)", raw)
+		return Provider{}, fmt.Errorf("SANDBOX_PROVIDER=%q is not recognized (known: %s; unset = disabled)", raw, strings.Join(ProviderNames(), ", "))
 	}
 }
 
-func resourcesFromEnv(getenv func(string) string) (Resources, error) {
+// ProviderNames lists the SANDBOX_PROVIDER values Build constructs. An embedder that
+// constructs further providers itself names its own alongside these.
+func ProviderNames() []string { return []string{"wasm", "docker", "e2b", "dockercloud"} }
+
+// ResourcesFromEnv parses the per-run resource envelope (SANDBOX_MEMORY_MB,
+// SANDBOX_CPUS, SANDBOX_PIDS, SANDBOX_DISK_MB) exactly as Build does: unset is 0,
+// and a malformed or negative value is an error. It is exported for a provider an
+// embedder constructs outside Build, which must read the envelope the same way.
+func ResourcesFromEnv(getenv func(string) string) (Resources, error) {
 	memory, err := nonNegativeIntEnv(getenv, "SANDBOX_MEMORY_MB")
 	if err != nil {
 		return Resources{}, err
@@ -221,7 +229,11 @@ func nonNegativeFloatEnv(getenv func(string) string, key string) (float64, error
 	return f, nil
 }
 
-func optionalBoolEnv(getenv func(string) string, key string) (bool, error) {
+// BoolFromEnv parses an opt-in boolean variable: unset, 0 or false is false, 1 or
+// true is true (any case), and anything else is an error, so a typo can never
+// silently disable a safety opt-in. It is exported, like ResourcesFromEnv, for a
+// provider an embedder constructs outside Build.
+func BoolFromEnv(getenv func(string) string, key string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(getenv(key))) {
 	case "", "0", "false":
 		return false, nil

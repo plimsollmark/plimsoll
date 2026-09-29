@@ -1,0 +1,7 @@
+# Vendored OpenShell protos (see README.md). A separate buf workspace from the
+# repository root's, so the root `buf lint` never sees upstream files (their flat
+# layout and unsuffixed service break STANDARD rules we do not own) while
+# `make buf` still generates and drift-checks them.
+version: v2
+modules:
+  - path: proto

@@ -134,6 +134,59 @@ func TestCheckWritableSet(t *testing.T) {
 	}
 }
 
+// TestCheckPidsLimit: the process limit counts as proven only when the guest's own
+// cgroup states exactly the configured value. "max" is what Kata's Docker runtime
+// reported for --pids-limit 64 while 204 processes started.
+func TestCheckPidsLimit(t *testing.T) {
+	if err := checkPidsLimit("256", "256", "inside the container"); err != nil {
+		t.Fatalf("matching limit rejected: %v", err)
+	}
+	for _, c := range []struct{ got, want string }{
+		{"max", "64"},   // accepted by the runtime, not applied
+		{"128", "256"},  // a different bound
+		{"", "256"},     // no cgroup file readable in the guest
+		{"256", ""},     // nothing configured: no bound to prove
+		{"max", "-1"},   // docker's "unlimited" is not a bound either
+		{"256", "25x6"}, // not a number
+	} {
+		if err := checkPidsLimit(c.got, c.want, "inside the container"); err == nil {
+			t.Errorf("checkPidsLimit(%q, %q) accepted", c.got, c.want)
+		}
+	}
+	if !strings.Contains(smokeProbeScript(false, false), `"/sys/fs/cgroup/pids.max"`) {
+		t.Fatal("the smoke probe does not read the process limit")
+	}
+}
+
+// TestHostPidsMaxPath: under runsc the process limit is read from the sandbox's
+// host cgroup, located through /proc/<pid>/cgroup of the PID docker reports. The
+// path must name the container, or the PID belonged to some other process.
+func TestHostPidsMaxPath(t *testing.T) {
+	id := strings.Repeat("ab12", 16)
+	for _, c := range []struct{ name, listing, want string }{
+		{"v2 systemd driver", "0::/system.slice/docker-" + id + ".scope\n", "/sys/fs/cgroup/system.slice/docker-" + id + ".scope/pids.max"},
+		{"v2 cgroupfs driver", "0::/docker/" + id, "/sys/fs/cgroup/docker/" + id + "/pids.max"},
+		{"hybrid prefers the v1 pids line", "12:pids:/docker/" + id + "\n5:cpu,cpuacct:/docker/" + id + "\n0::/", "/sys/fs/cgroup/pids/docker/" + id + "/pids.max"},
+		{"v1 pids shares a line", "3:pids,devices:/docker/" + id, "/sys/fs/cgroup/pids/docker/" + id + "/pids.max"},
+	} {
+		got, err := hostPidsMaxPath(c.listing, id)
+		if err != nil || got != c.want {
+			t.Errorf("%s: got %q, %v; want %q", c.name, got, err, c.want)
+		}
+	}
+	for _, c := range []struct{ name, listing, id string }{
+		{"another process's cgroup", "0::/user.slice/user-1000.slice/session-1.scope", id},
+		{"a different container", "0::/system.slice/docker-" + strings.Repeat("cd34", 16) + ".scope", id},
+		{"no usable line", "garbage\n", id},
+		{"empty listing", "", id},
+		{"short ID", "0::/docker/ab12", "ab12"},
+	} {
+		if got, err := hostPidsMaxPath(c.listing, c.id); err == nil {
+			t.Errorf("%s: accepted %q", c.name, got)
+		}
+	}
+}
+
 // TestDockerExecutionStateRequiresVerifiedImages: changing a configured image
 // reference after Preflight must fail closed instead of running a tag whose
 // volume config was never inspected.
@@ -247,5 +300,24 @@ func TestDockerRunUsesPreflightVerifiedImageID(t *testing.T) {
 	}
 	if res.ExitCode != 0 || !strings.Contains(res.Stdout, "42") {
 		t.Fatalf("run after tag swap = %+v, want the verified image's output", res)
+	}
+}
+
+// TestCheckMemoryIsolation: only a clear refusal proves the runner's memory, and so
+// its report key, is out of a step's reach; an open, a missing result or anything
+// unexpected fails closed.
+func TestCheckMemoryIsolation(t *testing.T) {
+	for _, ok := range []string{"EACCES", "EPERM"} {
+		if err := checkMemoryIsolation(ok); err != nil {
+			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"open", "", "ENOENT", "spawn EAGAIN"} {
+		if err := checkMemoryIsolation(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if !strings.Contains(smokeProbeScript(false, false), `"/proc/" + process.ppid + "/mem"`) {
+		t.Fatal("the smoke probe does not check memory isolation")
 	}
 }

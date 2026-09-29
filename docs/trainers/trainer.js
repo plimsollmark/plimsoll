@@ -34,6 +34,7 @@ const referenceLinks = [
   { kind: "external", label: "wazero documentation", note: "The Go WebAssembly runtime used here.", href: "https://wazero.io/docs/" },
   { kind: "external", label: "E2B documentation", note: "The Firecracker-backed cloud runtime option.", href: "https://e2b.dev/docs" },
   { kind: "external", label: "Docker Cloud Sandboxes", note: "The Docker-managed microVM runtime option.", href: "https://docs.docker.com/ai/sandboxes/cloud/" },
+  { kind: "external", label: "NVIDIA OpenShell", note: "The agent sandbox runtime behind the openshell provider.", href: "https://docs.nvidia.com/openshell/" },
 ];
 
 // Internal reference hrefs above are written relative to this directory, because that

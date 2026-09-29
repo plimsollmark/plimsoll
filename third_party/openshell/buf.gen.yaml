@@ -1,0 +1,26 @@
+# Generates the Go and Connect client for the vendored OpenShell protos into
+# gen/go/openshell. `make buf` runs every third_party/*/buf.gen.yaml after the
+# root template (whose `clean: true` empties gen/go first), then drift-checks gen/.
+#
+# The upstream files set no go_package, so the M options map each file to a Go
+# package, matching the package names of OpenShell's own Go SDK. Plugins are the
+# repository's go.mod-pinned ones, run through `go tool`.
+version: v2
+clean: true
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: gen/go/openshell
+    opt:
+      - module=github.com/plimsollmark/plimsoll/gen/go/openshell
+      - Mopenshell.proto=github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1
+      - Mdatamodel.proto=github.com/plimsollmark/plimsoll/gen/go/openshell/datamodelv1
+      - Msandbox.proto=github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1
+      - Moptions.proto=github.com/plimsollmark/plimsoll/gen/go/openshell/optionsv1
+  - local: ["go", "tool", "protoc-gen-connect-go"]
+    out: gen/go/openshell
+    opt:
+      - module=github.com/plimsollmark/plimsoll/gen/go/openshell
+      - Mopenshell.proto=github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1
+      - Mdatamodel.proto=github.com/plimsollmark/plimsoll/gen/go/openshell/datamodelv1
+      - Msandbox.proto=github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1
+      - Moptions.proto=github.com/plimsollmark/plimsoll/gen/go/openshell/optionsv1

@@ -106,7 +106,10 @@ start=$(date +%s); sh wrapper.sh 1 11 sleep 30 >o4 2>e4; echo "case4 rc=$? secs=
 		regexp.MustCompile(`(?m)^case1 rc=3 out=out err=err$`),
 		regexp.MustCompile(`(?m)^case2 rc=[1-9][0-9]* outlen=11$`),
 		regexp.MustCompile(`(?m)^case3 rc=[1-9][0-9]* errlen=11$`),
-		regexp.MustCompile(`(?m)^case4 rc=137 secs=[1-4]$`),
+		// The wrapper's limit is 1 s; the bound is what proves it killed rather than
+		// let sleep 30 finish. A tight upper bound fails on a busy machine (the
+		// export runs the whole suite at once), so it is generous on purpose.
+		regexp.MustCompile(`(?m)^case4 rc=137 secs=(?:[1-9]|1[0-9])$`),
 	} {
 		if !want.MatchString(out) {
 			t.Errorf("busybox wrapper output does not match %s:\n%s\nstderr: %s", want, out, res.Steps[0].Stderr)

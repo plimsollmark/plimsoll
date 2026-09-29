@@ -21,6 +21,7 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/protocol"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -30,7 +31,21 @@ type Remote struct {
 	token        string
 	jsGrant      string
 	projectGrant string
+	recorder     Recorder
 }
+
+// Recorder receives every run exchange whose record checked: the request as
+// sent and the response as received. A harness outside the daemon signs and
+// stores them (attest.Harness is one). It is called on the calling goroutine
+// before the result returns. An error it returns comes back with the result,
+// wrapped in ErrNotRecorded: the run executed, and only keeping its record failed.
+type Recorder interface {
+	Record(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) error
+}
+
+// ErrNotRecorded means a run executed and returned its result, but the
+// Recorder failed to keep it.
+var ErrNotRecorded = errors.New("client: the run executed but was not recorded")
 
 // ErrRawGrantUnsupported prevents a capability-bearing in-process request from
 // being silently downgraded to an isolated remote run. RPC grants are server-held
@@ -56,6 +71,7 @@ type config struct {
 	jsGrant      string
 	projectGrant string
 	insecureHTTP bool
+	recorder     Recorder
 	opts         []connect.ClientOption
 }
 
@@ -91,6 +107,12 @@ func WithProjectGrantProfile(profile string) Option {
 // credentials and submitted source cannot silently cross an unencrypted network.
 func WithInsecureHTTP() Option {
 	return func(cfg *config) { cfg.insecureHTTP = true }
+}
+
+// WithRecorder hands every run's checked exchange to r, so a harness can sign
+// and keep it.
+func WithRecorder(r Recorder) Option {
+	return func(cfg *config) { cfg.recorder = r }
 }
 
 // WithConnectOptions passes extra connect client options (e.g. gRPC, gzip).
@@ -156,6 +178,7 @@ func New(baseURL string, opts ...Option) (*Remote, error) {
 		token:        cfg.token,
 		jsGrant:      cfg.jsGrant,
 		projectGrant: cfg.projectGrant,
+		recorder:     cfg.recorder,
 	}, nil
 }
 
@@ -240,6 +263,16 @@ type Info struct {
 	// Protocol is the number the daemon serves. Compare it with Protocol before
 	// relying on the daemon; every Run request is checked against it again.
 	Protocol uint32
+	// SupportsSessions says OpenSession works here; the lifetime and idle timeout
+	// are the daemon's, which a session may ask to shorten.
+	SupportsSessions   bool
+	SessionLifetime    time.Duration
+	SessionIdleTimeout time.Duration
+	// Environments and Resources are the daemon's informational statements (see
+	// sandbox.PayloadEnvironment): configuration, never attestation, and enforced
+	// by nothing. Equal identities mean the same software; an empty one claims nothing.
+	Environments sandbox.Environments
+	Resources    sandbox.Resources
 }
 
 // Protocol is the wire protocol number this client speaks (protocol.Number). It
@@ -264,7 +297,29 @@ func (r *Remote) Describe(ctx context.Context) (Info, error) {
 		SupportsJavaScriptGrants: resp.Msg.GetSupportsJavascriptGrants(),
 		SupportsProjectGrants:    resp.Msg.GetSupportsProjectGrants(),
 		Protocol:                 resp.Msg.GetProtocol(),
+		SupportsSessions:         resp.Msg.GetSupportsSessions(),
+		SessionLifetime:          time.Duration(resp.Msg.GetSessionLifetimeMs()) * time.Millisecond,
+		SessionIdleTimeout:       time.Duration(resp.Msg.GetSessionIdleTimeoutMs()) * time.Millisecond,
+		Environments: sandbox.Environments{
+			JavaScript: payloadEnvironment(resp.Msg.GetJavascriptEnvironment()),
+			Project:    payloadEnvironment(resp.Msg.GetProjectEnvironment()),
+			Module:     payloadEnvironment(resp.Msg.GetModuleEnvironment()),
+			Policy:     resp.Msg.GetPolicy(),
+		},
+		Resources: sandbox.Resources{
+			MemoryMB:  int(resp.Msg.GetResources().GetMemoryMb()),
+			CPUs:      resp.Msg.GetResources().GetCpus(),
+			PidsLimit: int(resp.Msg.GetResources().GetPids()),
+			DiskMB:    int(resp.Msg.GetResources().GetDiskMb()),
+		},
 	}, nil
+}
+
+func payloadEnvironment(e *plimsollv1.PayloadEnvironment) sandbox.PayloadEnvironment {
+	return sandbox.PayloadEnvironment{
+		Identity:   e.GetIdentity(),
+		MaxTimeout: time.Duration(e.GetMaxTimeoutMs()) * time.Millisecond,
+	}
 }
 
 func (r *Remote) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbox.Result, error) {
@@ -279,25 +334,16 @@ func (r *Remote) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbox
 		Code:         in.Code,
 		GrantProfile: r.jsGrant,
 	}}
-	resp, err := r.run(ctx, req)
-	if err != nil {
+	resp, rec, err := r.run(ctx, req)
+	if resp == nil {
 		return sandbox.Result{Sandbox: r.Name()}, err
 	}
-	m, ok := resp.GetResult().(*plimsollv1.RunResponse_Javascript)
+	result, ok := javascriptResult(resp, rec)
 	if !ok {
 		return sandbox.Result{Sandbox: r.Name()}, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
-	result := sandbox.Result{
-		Stdout:          string(m.Javascript.GetStdout()),
-		Stderr:          string(m.Javascript.GetStderr()),
-		StdoutTruncated: m.Javascript.GetStdoutTruncated(),
-		StderrTruncated: m.Javascript.GetStderrTruncated(),
-		ExitCode:        int(m.Javascript.GetExitCode()),
-		TimedOut:        m.Javascript.GetTimedOut(),
-		Duration:        time.Duration(resp.GetDurationMs()) * time.Millisecond,
-		Sandbox:         resp.GetSandbox(),
-		Isolation:       sandbox.ParseIsolationClass(resp.GetIsolation()),
-		Advice:          adviceFromWire(m.Javascript.GetAdvice()),
+	if err != nil {
+		return result, err
 	}
 	if err := sandbox.CheckResultIsolation(result.Isolation, in.MinimumIsolation); err != nil {
 		return result, connect.NewError(connect.CodeDataLoss, err)
@@ -322,13 +368,49 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 	}
 	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation)
 	req.Payload = &plimsollv1.RunRequest_Project{Project: preq}
-	resp, err := r.run(ctx, req)
-	if err != nil {
+	resp, rec, err := r.run(ctx, req)
+	if resp == nil {
 		return sandbox.ProjectResult{Sandbox: r.Name()}, err
 	}
-	pm, ok := resp.GetResult().(*plimsollv1.RunResponse_Project)
+	out, ok := projectResult(resp, rec)
 	if !ok {
 		return sandbox.ProjectResult{Sandbox: r.Name()}, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
+	}
+	if err != nil {
+		return out, err
+	}
+	if err := sandbox.CheckResultIsolation(out.Isolation, in.MinimumIsolation); err != nil {
+		return out, connect.NewError(connect.CodeDataLoss, err)
+	}
+	return out, nil
+}
+
+// javascriptResult maps a snippet's response; false when it holds another kind.
+func javascriptResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbox.Result, bool) {
+	m, ok := resp.GetResult().(*plimsollv1.RunResponse_Javascript)
+	if !ok {
+		return sandbox.Result{}, false
+	}
+	return sandbox.Result{
+		Stdout:          string(m.Javascript.GetStdout()),
+		Stderr:          string(m.Javascript.GetStderr()),
+		StdoutTruncated: m.Javascript.GetStdoutTruncated(),
+		StderrTruncated: m.Javascript.GetStderrTruncated(),
+		ExitCode:        int(m.Javascript.GetExitCode()),
+		TimedOut:        m.Javascript.GetTimedOut(),
+		Duration:        time.Duration(resp.GetDurationMs()) * time.Millisecond,
+		Sandbox:         resp.GetSandbox(),
+		Isolation:       sandbox.ParseIsolationClass(resp.GetIsolation()),
+		Advice:          adviceFromWire(m.Javascript.GetAdvice()),
+		Record:          rec,
+	}, true
+}
+
+// projectResult maps a project's response; false when it holds another kind.
+func projectResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbox.ProjectResult, bool) {
+	pm, ok := resp.GetResult().(*plimsollv1.RunResponse_Project)
+	if !ok {
+		return sandbox.ProjectResult{}, false
 	}
 	m := pm.Project
 	out := sandbox.ProjectResult{
@@ -338,6 +420,7 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 		Detail:             m.GetOutcomeDetail(),
 		ArtifactsTruncated: m.GetArtifactsTruncated(),
 		Advice:             adviceFromWire(m.GetAdvice()),
+		Record:             rec,
 	}
 	for _, s := range m.GetSteps() {
 		out.Steps = append(out.Steps, sandbox.StepResult{
@@ -354,13 +437,10 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 	for _, a := range m.GetArtifacts() {
 		out.Artifacts = append(out.Artifacts, sandbox.Artifact{Path: a.GetPath(), Content: a.GetContent()})
 	}
-	if err := sandbox.CheckResultIsolation(out.Isolation, in.MinimumIsolation); err != nil {
-		return out, connect.NewError(connect.CodeDataLoss, err)
-	}
-	return out, nil
+	return out, true
 }
 
-// RunModule runs a compiled model once per row on the remote provider. The
+// RunModule runs a compiled simulator once per row on the remote provider. The
 // request is validated here first, so a malformed table never leaves the
 // process, and the returned isolation evidence is checked against the floor
 // exactly as for the other two operations.
@@ -378,8 +458,8 @@ func (r *Remote) RunModule(ctx context.Context, in sandbox.ModuleRequest) (sandb
 	}
 	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation)
 	req.Payload = &plimsollv1.RunRequest_Module{Module: mreq}
-	resp, err := r.run(ctx, req)
-	if err != nil {
+	resp, rec, err := r.run(ctx, req)
+	if resp == nil {
 		return sandbox.ModuleResult{Sandbox: r.Name()}, err
 	}
 	mm, ok := resp.GetResult().(*plimsollv1.RunResponse_Module)
@@ -396,9 +476,13 @@ func (r *Remote) RunModule(ctx context.Context, in sandbox.ModuleRequest) (sandb
 		Stdout:    string(m.GetStdout()),
 		Stderr:    string(m.GetStderr()),
 		Duration:  time.Duration(resp.GetDurationMs()) * time.Millisecond,
+		Record:    rec,
 	}
 	for _, run := range m.GetRuns() {
 		out.Runs = append(out.Runs, sandbox.ModuleRun{Status: run.GetStatus(), Outputs: run.GetOutputs()})
+	}
+	if err != nil {
+		return out, err
 	}
 	if err := sandbox.CheckResultIsolation(out.Isolation, in.MinimumIsolation); err != nil {
 		return out, connect.NewError(connect.CodeDataLoss, err)
@@ -417,16 +501,39 @@ func (r *Remote) envelope(ctx context.Context, timeout time.Duration, minimum sa
 	}
 }
 
-// run sends one envelope and returns the response envelope. A transport or
-// server error is restored to the sandbox package's sentinels where one applies.
-func (r *Remote) run(ctx context.Context, msg *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error) {
+// Exchange sends a prepared Run request exactly as given (nothing is stamped on
+// it, not even the protocol number) and returns the response with its checked
+// run record, after handing both to the Recorder if one is set. It is for a
+// harness that stores requests and sends them again; RunJavaScript, RunProject
+// and RunModule are the ordinary way to run code. Errors are those of the three
+// run methods.
+func (r *Remote) Exchange(ctx context.Context, msg *plimsollv1.RunRequest) (*plimsollv1.RunResponse, *sandbox.RunRecord, error) {
+	return r.run(ctx, msg)
+}
+
+// run sends one envelope and returns the response envelope with its run record
+// checked against what was sent and received; a response without one is DataLoss
+// wrapping record.ErrNoRecord. A transport or server error is restored to the sandbox package's
+// sentinels where one applies. A record that does not match is DataLoss, since
+// the run may have executed; the response still comes back with it, so the
+// caller keeps the result it was given, as with an isolation mismatch.
+func (r *Remote) run(ctx context.Context, msg *plimsollv1.RunRequest) (*plimsollv1.RunResponse, *sandbox.RunRecord, error) {
 	req := connect.NewRequest(msg)
 	r.auth(req)
 	resp, err := r.client.Run(ctx, req)
 	if err != nil {
-		return nil, restoreSandboxError(err)
+		return nil, nil, restoreSandboxError(err)
 	}
-	return resp.Msg, nil
+	rec, err := record.Check(msg, resp.Msg)
+	if err != nil {
+		return resp.Msg, nil, connect.NewError(connect.CodeDataLoss, err)
+	}
+	if r.recorder != nil {
+		if err := r.recorder.Record(msg, resp.Msg); err != nil {
+			return resp.Msg, rec, fmt.Errorf("%w: %w", ErrNotRecorded, err)
+		}
+	}
+	return resp.Msg, rec, nil
 }
 
 // adviceFromWire retains the caller's post-dispatch evidence for both operations.
@@ -467,34 +574,37 @@ func outcomeFromWire(o plimsollv1.ProjectOutcome) sandbox.ProjectOutcome {
 	}
 }
 
-// restoreSandboxError preserves Sandbox's local sentinel contract across RPC while
+// restoreSandboxError preserves Sandbox's local error contract across RPC while
 // retaining the underlying Connect error (and therefore its status code/details).
 // This keeps errors.Is behavior identical when a consumer swaps a local provider
-// for Remote.
+// for Remote, and so does sandbox.NotDispatchedReason: the daemon's NotDispatched
+// detail comes back as the same sandbox.NotDispatchedError a local provider
+// returns. The detail's reason, not the message text, separates the two meanings
+// FailedPrecondition and Unimplemented each carry.
 func restoreSandboxError(err error) error {
 	if err == nil {
 		return nil
 	}
+	reason, marked := notDispatchedDetail(err)
 	var sentinel error
+	if end, ok := sessionEndedDetail(err); ok {
+		sentinel = end
+	}
 	switch connect.CodeOf(err) {
 	case connect.CodeCanceled:
 		sentinel = context.Canceled
 	case connect.CodeDeadlineExceeded:
 		sentinel = context.DeadlineExceeded
 	case connect.CodeFailedPrecondition:
-		// FailedPrecondition also covers a per-run isolation floor. Preserve the
-		// more specific sandbox sentinel when plimsolld sent it; otherwise this
-		// remains the established disabled-provider condition.
-		if strings.Contains(err.Error(), sandbox.ErrInsufficientIsolation.Error()) {
+		switch {
+		case sentinel != nil: // the session ended
+		case reason == sandbox.RefusalIsolation:
 			sentinel = sandbox.ErrInsufficientIsolation
-		} else {
+		default:
 			sentinel = sandbox.ErrDisabled
 		}
 	case connect.CodeUnimplemented:
-		// Unimplemented is also how a daemon refuses a request on another protocol
-		// number; that refusal names itself so it is not mistaken for a provider
-		// that cannot do the operation.
-		if protocol.IsMismatch(err.Error()) {
+		if reason == sandbox.RefusalProtocol {
 			sentinel = ErrProtocolMismatch
 		} else {
 			sentinel = sandbox.ErrUnsupported
@@ -504,10 +614,92 @@ func restoreSandboxError(err error) error {
 	case connect.CodeInvalidArgument:
 		sentinel = sandbox.ErrInvalidRequest
 	}
-	if sentinel == nil || errors.Is(err, sentinel) {
-		return err
+	if sentinel != nil && !errors.Is(err, sentinel) {
+		err = errors.Join(sentinel, err)
 	}
-	return errors.Join(sentinel, err)
+	if marked {
+		return sandbox.NotDispatched(reason, err)
+	}
+	return err
+}
+
+// notDispatchedDetail reads the daemon's NotDispatched error detail. false means
+// the daemon did not state that nothing ran, so execution may have occurred.
+func notDispatchedDetail(err error) (sandbox.Refusal, bool) {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return sandbox.RefusalUnknown, false
+	}
+	for _, d := range ce.Details() {
+		v, derr := d.Value()
+		if derr != nil {
+			continue
+		}
+		if nd, ok := v.(*plimsollv1.NotDispatched); ok {
+			return refusalFromWire(nd.GetReason()), true
+		}
+	}
+	return sandbox.RefusalUnknown, false
+}
+
+// sessionEndedDetail reads the daemon's SessionEnded error detail as the
+// sandbox package's typed end, so errors.Is(err, sandbox.ErrSessionEnded) and
+// sandbox.SessionEndReason work across RPC as they do in process.
+func sessionEndedDetail(err error) (*sandbox.SessionEndedError, bool) {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return nil, false
+	}
+	for _, d := range ce.Details() {
+		v, derr := d.Value()
+		if derr != nil {
+			continue
+		}
+		if se, ok := v.(*plimsollv1.SessionEnded); ok {
+			return &sandbox.SessionEndedError{Reason: sessionEndFromWire(se.GetReason()), Detail: se.GetDetail()}, true
+		}
+	}
+	return nil, false
+}
+
+func sessionEndFromWire(e plimsollv1.SessionEnd) sandbox.SessionEnd {
+	switch e {
+	case plimsollv1.SessionEnd_SESSION_END_CLOSED:
+		return sandbox.SessionClosed
+	case plimsollv1.SessionEnd_SESSION_END_EXPIRED:
+		return sandbox.SessionExpired
+	case plimsollv1.SessionEnd_SESSION_END_DISK_EXCEEDED:
+		return sandbox.SessionDiskExceeded
+	case plimsollv1.SessionEnd_SESSION_END_MAIN_PROCESS_ENDED:
+		return sandbox.SessionMainProcessEnded
+	case plimsollv1.SessionEnd_SESSION_END_BOUNDARY_FAILED:
+		return sandbox.SessionBoundaryFailed
+	case plimsollv1.SessionEnd_SESSION_END_SANDBOX_CHANGED:
+		return sandbox.SessionSandboxChanged
+	case plimsollv1.SessionEnd_SESSION_END_SHUTDOWN:
+		return sandbox.SessionShutdown
+	default:
+		return sandbox.SessionOpen
+	}
+}
+
+func refusalFromWire(r plimsollv1.NotDispatchedReason) sandbox.Refusal {
+	switch r {
+	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST:
+		return sandbox.RefusalRequest
+	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PERMISSION:
+		return sandbox.RefusalPermission
+	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PROTOCOL:
+		return sandbox.RefusalProtocol
+	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_UNSUPPORTED:
+		return sandbox.RefusalUnsupported
+	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ISOLATION:
+		return sandbox.RefusalIsolation
+	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY:
+		return sandbox.RefusalCapacity
+	default:
+		return sandbox.RefusalUnknown
+	}
 }
 
 // compile-time check

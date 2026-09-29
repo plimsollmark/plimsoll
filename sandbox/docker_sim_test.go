@@ -17,7 +17,7 @@ const simProjectImage = "plimsoll/sandbox-sim:latest"
 
 // The worker's output layout is, per parameter set, an int32 step count followed
 // by the module's sim_width() float64 outputs per step (docker/sim/worker.c, same
-// as the sister repository's native_main.c): two for the Reference models, three
+// as the sister repository's native_main.c): two for the Reference FMUs, three
 // for Lorenz. Each sweep below runs simRows parameter sets with
 // a fixed communication step of 0.01, so a sweep to t_end takes t_end/0.01 steps.
 const (
@@ -59,7 +59,7 @@ const (
 //
 // The last step is the other half of "register a model = build an image": a
 // byte-identical copy of the model under /work must refuse to load, because
-// /work is a noexec tmpfs and an AOT model is machine code that has to be mapped
+// /work is a noexec tmpfs and an AOT simulator is machine code that has to be mapped
 // executable. The runner stops the chain on the first failure, so that step runs
 // last and the run's outcome stays completed. Skips without the image; fails under
 // SANDBOX_TEST_REQUIRE_DOCKER=1.
@@ -205,7 +205,7 @@ func TestDockerRunModule(t *testing.T) {
 	}
 	assertSweepArtifact(t, "RunModule vanderpol (re-encoded)", reencodeRuns(t, res, simVanDerPolTEnd*100), simRows, simVanDerPolTEnd, 2, simVanDerPolSHA256)
 
-	// Lorenz, the model of our own: three outputs, 50 rows of 60 s. Chaos is why it
+	// Lorenz, the simulator of our own: three outputs, 50 rows of 60 s. Chaos is why it
 	// is here: a one-ulp difference anywhere in the arithmetic (a fused multiply-add
 	// the AOT compiler contracted, a libm call) grows e-fold every 1.3 s and would
 	// miss the checksum by the size of the attractor, not by a rounding tolerance.

@@ -1,29 +1,33 @@
-// Command providers runs the physics oracle's run on every sandbox provider this
-// machine can reach and writes a page comparing them: the same controller, the same
-// judge, the same plant, and the fingerprint of the trajectory from each provider.
+// Command providers runs the physics oracle's run on every provider this machine can
+// reach and writes a page comparing them: the same controller, the same judge, the
+// same plant, and the fingerprint of the trajectory from each provider.
 //
 // The run is the one examples/oracle publishes: its accepted controller
 // (examples/oracle/controllers/accepted.js), its judge (docker/sim/oracle/run.mjs)
 // and the cart-pole plant, started 0.2 rad from upright for 20 s. Here the judge and
 // the plant travel as ordinary project files instead of image content, so any
 // provider whose image has Node 20 or later can run it: the plant is sent base64
-// encoded and a first step decodes it. Each provider is built by sandbox.Build, the
-// factory plimsolld uses, from an environment of its own, must pass EnsureReady (its
-// preflight and startup smoke test) before its run counts, and is then driven
-// directly.
+// encoded and a first step decodes it. Each provider is built from an environment of
+// its own by the constructor plimsolld uses (sandbox.Build, or openshell.FromEnv for
+// the provider the daemon builds itself), must pass EnsureReady (its preflight and
+// startup smoke test) before its run counts, and is then driven directly.
 //
 //	make docker-images && go run ./examples/providers
 //
 // Needs docker. E2B runs when E2B_API_KEY is set (a paid service; one run costs a
 // fraction of a cent). Docker Cloud Sandboxes runs when DOCKER_SBX_TOKEN,
 // DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL and SANDBOX_DOCKERCLOUD_IMAGE are
-// set (billed per second). gVisor runs when docker has the runsc runtime. Providers
+// set (billed per second). OpenShell runs when SANDBOX_OPENSHELL_GATEWAY_URL and the
+// gateway's mutual TLS files (SANDBOX_OPENSHELL_CA_FILE, _CERT_FILE, _KEY_FILE) are
+// set, on SANDBOX_OPENSHELL_IMAGE or plimsoll/sandbox:latest (free, but it needs a
+// gateway: docs/openshell.md). gVisor runs when docker has the runsc runtime. Providers
 // without their configuration are listed on the page as not run, with the reason.
 // Writes docs/examples/providers/index.html (override with -out).
 package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	_ "embed"
@@ -42,6 +46,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/openshell"
 )
 
 //go:embed page.html
@@ -65,6 +70,8 @@ type target struct {
 	Key, Name, Where string
 	Env              map[string]string
 	Skip             string // non-empty: not run, and why
+	// build constructs the provider from Env; nil means sandbox.Build.
+	build func(getenv func(string) string) (sandbox.Provider, error)
 }
 
 type row struct {
@@ -175,6 +182,13 @@ func targets() []target {
 	ts := []target{
 		{Key: "docker", Name: "Docker, locked down (runc)", Where: "this machine", Env: docker},
 		{Key: "gvisor", Name: "Docker with gVisor (runsc)", Where: "this machine", Env: gvisor},
+		{Key: "openshell", Name: "NVIDIA OpenShell sandbox", Where: "an OpenShell gateway (docker driver)", build: openshell.FromEnv, Env: map[string]string{
+			"SANDBOX_OPENSHELL_GATEWAY_URL": os.Getenv("SANDBOX_OPENSHELL_GATEWAY_URL"),
+			"SANDBOX_OPENSHELL_CA_FILE":     os.Getenv("SANDBOX_OPENSHELL_CA_FILE"),
+			"SANDBOX_OPENSHELL_CERT_FILE":   os.Getenv("SANDBOX_OPENSHELL_CERT_FILE"),
+			"SANDBOX_OPENSHELL_KEY_FILE":    os.Getenv("SANDBOX_OPENSHELL_KEY_FILE"),
+			"SANDBOX_OPENSHELL_IMAGE":       cmp.Or(os.Getenv("SANDBOX_OPENSHELL_IMAGE"), "plimsoll/sandbox:latest"),
+		}},
 		{Key: "e2b", Name: "E2B Firecracker microVM", Where: "E2B's cloud", Env: map[string]string{
 			"SANDBOX_PROVIDER": "e2b", "E2B_API_KEY": os.Getenv("E2B_API_KEY"), "E2B_TEMPLATE": os.Getenv("E2B_TEMPLATE")}},
 		{Key: "dockercloud", Name: "Docker Cloud Sandboxes", Where: "Docker's cloud", Env: map[string]string{
@@ -195,6 +209,10 @@ func targets() []target {
 		case "gvisor":
 			if !dockerHasRuntime("runsc") {
 				ts[i].Skip = "docker on the machine that wrote this page has no runsc runtime (docker/install-gvisor.sh installs it, as root)"
+			}
+		case "openshell":
+			if ts[i].Env["SANDBOX_OPENSHELL_GATEWAY_URL"] == "" {
+				ts[i].Skip = "no OpenShell gateway was configured (SANDBOX_OPENSHELL_GATEWAY_URL was not set)"
 			}
 		case "e2b":
 			if ts[i].Env["E2B_API_KEY"] == "" {
@@ -222,9 +240,23 @@ func dockerHasRuntime(name string) bool {
 // oracle run on it. The environment never falls back to the process environment,
 // so one provider's settings cannot leak into another's.
 func runOn(ctx context.Context, t target, files []sandbox.File, r *row) ([]byte, error) {
-	p, err := sandbox.Build(func(k string) string { return t.Env[k] })
+	build := t.build
+	if build == nil {
+		build = sandbox.Build
+	}
+	p, err := build(func(k string) string { return t.Env[k] })
 	if err != nil {
 		return nil, fmt.Errorf("build: %w", err)
+	}
+	if d, ok := p.Sandbox.(sandbox.Drainer); ok {
+		// This provider deletes its sandboxes off the result path; wait for those
+		// deletes, as plimsolld does at shutdown, so the program cannot exit first and
+		// leave a sandbox behind.
+		defer func() {
+			if err := d.Drain(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "providers: %s: drain: %v\n", t.Name, err)
+			}
+		}()
 	}
 	if err := p.EnsureReady(ctx); err != nil {
 		return nil, fmt.Errorf("not ready: %w", err)

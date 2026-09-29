@@ -2,11 +2,32 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
+
+// TestMetricsHandlerServesOnlyMetrics: the metrics listener's handler answers
+// /metrics and nothing else, so mounting it cannot expose a probe or the RPC path.
+func TestMetricsHandlerServesOnlyMetrics(t *testing.T) {
+	h := metricsHandler(rpc.NewSandboxService(sandbox.Disabled{}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "plimsoll_runs_total 0") {
+		t.Fatalf("GET /metrics = %d %q, want 200 with the run counter", rec.Code, rec.Body.String())
+	}
+	for _, path := range []string{"/", "/healthz", "/readyz", "/plimsoll.v1.SandboxService/Run"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s on the metrics handler = %d, want 404", path, rec.Code)
+		}
+	}
+}
 
 func TestWriteHostCallMetricsRender(t *testing.T) {
 	// One series: 2 calls, latencies folded so the cumulative buckets rise 0->1->2

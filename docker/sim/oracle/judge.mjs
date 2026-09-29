@@ -1,4 +1,4 @@
-// The generic judge of the control-design environments: /oracle/run.mjs with the
+// The generic trial runner of the control-design environments: /oracle/run.mjs with the
 // plant and the scenario chosen by data. Loads a stepping plant compiled to
 // WebAssembly (sim/shim_env.c, or a standalone module with the same exports),
 // runs the caller's controller as a SEPARATE process, and closes the loop one tick
@@ -6,8 +6,8 @@
 // comes back on its stdout as one line of numbers. Every tick's state and input
 // are recorded and written to OUT after the controller has exited, so the
 // controller can neither touch the plant's memory nor the record; it sees
-// numbers and answers numbers. The judge knows nothing about any plant: what a
-// good trajectory is belongs to the environment's verifier, which runs on the
+// numbers and answers numbers. The runner knows nothing about any plant: what a
+// good trajectory is belongs to the environment's grader, which runs on the
 // host and first checks that the artifact it received hashes to the fingerprint
 // printed here.
 //
@@ -20,14 +20,14 @@
 // fingerprint), the tick count, the tick, the width, the input count, the
 // parameters and the final state.
 //
-// --jac is differentiable access for the controller. Before every tick the judge
+// --jac is differentiable access for the controller. Before every tick the runner
 // asks the plant for a Jacobian and appends it to the state line after a '|'. A
 // plant with ODE states (sim_nx > 0) gives its linearization, "state n A(n*n)
 // B(n*nin)"; a plant that exports sim_jac_out gives the derivative of its
 // observations with respect to its inputs, "out width nin J(width*nin)". Either
 // is also written per tick to jacobians.bin beside OUT. The plant restores its
 // state exactly after any perturbation, so the trajectory and its fingerprint are
-// the same with and without --jac for the same controller answers; the verdict
+// the same with and without --jac for the same controller answers; the run summary
 // line names the Jacobian file, its kind and its own SHA-256.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -103,10 +103,21 @@ const rc = sim_init(params[0], params[1], params[2], h, tEnd);
 if (rc < 0) { console.error(`plant refused to initialise: ${rc}`); process.exit(1); }
 
 const child = spawn(process.execPath, ['--no-warnings', controller], { stdio: ['pipe', 'pipe', 'inherit'] });
+const closed = new Promise((resolve) => child.on('close', resolve));
 const answers = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
 const record = new Float64Array(ticks * (width + nin));
 const jacRecord = jac ? new Float64Array(ticks * jacLen) : null;
 let done_ticks = 0;
+// A controller that exits while ticks remain can close its input before the runner
+// sees its output end. The next write then fails with EPIPE, which is the
+// controller's failure (exit 3), not the runner's. Once every tick is fed, a write
+// error no longer matters.
+let feeding = true;
+child.stdin.on('error', (err) => {
+  if (!feeding) return;
+  console.error(`controller closed its input at tick ${done_ticks} (${err.code})`);
+  process.exit(3);
+});
 for (let k = 0; k < ticks; k++) {
   if (sim_get(ptr) < 0) { console.error(`plant state read failed at tick ${k}`); process.exit(1); }
   const s = state();
@@ -127,7 +138,9 @@ for (let k = 0; k < ticks; k++) {
   if (answer.late) { console.error(`controller did not answer within ${answerMs} ms at tick ${k}`); child.kill('SIGKILL'); process.exit(3); }
   const { value, done } = answer;
   if (done) { console.error(`controller exited at tick ${k} without answering`); process.exit(3); }
-  const u = value.trim().split(/\s+/).map(Number);
+  // A blank line is no answer: ''.split(/\s+/) is [''], which Number reads as 0.
+  const text = value.trim();
+  const u = text === '' ? [] : text.split(/\s+/).map(Number);
   if (u.length !== nin || !u.every(Number.isFinite)) { console.error(`controller answered ${u.length} value(s), not all numbers, at tick ${k}; the plant takes ${nin}`); process.exit(3); }
   record.set(s, k * (width + nin));
   record.set(u, k * (width + nin) + width);
@@ -136,14 +149,20 @@ for (let k = 0; k < ticks; k++) {
   if (rcs < 0) { console.error(`plant step failed at tick ${k}: ${rcs}`); process.exit(1); }
   if (rcs === 0) break;
 }
+feeding = false;
 child.stdin.end();
-await new Promise((resolve) => child.on('close', resolve));
+// Every tick is answered, so the trajectory is complete. A controller that does not
+// exit once its input closes gets one answer budget, then is killed, rather than
+// holding the run until the sandbox's whole-run budget.
+const linger = setTimeout(() => child.kill('SIGKILL'), answerMs);
+await closed;
+clearTimeout(linger);
 sim_free();
 
 const bytes = Buffer.from(record.buffer, 0, done_ticks * (width + nin) * 8);
 writeFileSync(outPath, bytes);
 const last = record.subarray((done_ticks - 1) * (width + nin), (done_ticks - 1) * (width + nin) + width);
-const verdict = {
+const summary = {
   fingerprint: createHash('sha256').update(bytes).digest('hex'),
   ticks: done_ticks, h, width, nin, params,
   final: Array.from(last),
@@ -151,6 +170,6 @@ const verdict = {
 if (jac) {
   const jb = Buffer.from(jacRecord.buffer, 0, done_ticks * jacLen * 8);
   writeFileSync(jacPath, jb);
-  verdict.jacobians = { file: jacPath, kind: jacKind, nx, sha256: createHash('sha256').update(jb).digest('hex') };
+  summary.jacobians = { file: jacPath, kind: jacKind, nx, sha256: createHash('sha256').update(jb).digest('hex') };
 }
-console.log(JSON.stringify(verdict));
+console.log(JSON.stringify(summary));

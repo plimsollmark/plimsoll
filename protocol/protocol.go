@@ -12,26 +12,17 @@
 // daemon may execute. An informational field does not bump it.
 package protocol
 
-import (
-	"fmt"
-	"strings"
-)
+import "fmt"
 
 // Number is the protocol number this module speaks: the daemon in cmd/plimsolld
 // serves exactly it and the client in package client stamps it on every request.
 const Number uint32 = 1
 
 // Mismatch is the text a daemon puts on its refusal of a request that states
-// another number. It lives here, beside the number, so the client can recognise
-// it with IsMismatch and name the cause instead of reporting an unsupported
-// operation.
+// another number. A client recognises the refusal by its NotDispatched detail
+// (reason protocol), never by this text.
 func Mismatch(served, requested uint32) string {
 	return fmt.Sprintf("%s%d and the request states %d; nothing ran", mismatchPrefix, served, requested)
-}
-
-// IsMismatch reports whether an error message is a daemon's protocol refusal.
-func IsMismatch(message string) bool {
-	return strings.Contains(message, mismatchPrefix)
 }
 
 const mismatchPrefix = "this daemon serves protocol "

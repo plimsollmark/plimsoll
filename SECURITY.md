@@ -29,7 +29,8 @@ the author: the tests, `make audit`, and the isolation evidence each run reports
   that the daemon it is connected to registers the configured OCI runtime and that
   `runsc` resolves there to an executable named `runsc`, then launching runs under
   it, plus a startup smoke test that proves the container's own mount and write
-  behavior from inside. E2B reports VM tier from provider identity, with a smoke test
+  behavior from inside, and the process limit where the runtime enforces it (the
+  container's cgroup under runc, the sandbox's host cgroup under runsc). E2B reports VM tier from provider identity, with a smoke test
   that proves a real microVM creates, stages, runs a step, and is denied egress.
   **Neither cryptographically attests the runtime implementation.** A compromised
   Docker daemon, or an E2B control plane that did not do what it says, defeats the
@@ -93,3 +94,9 @@ this against genuinely hostile input, set `PLIMSOLL_HARDENED=1`, which refuses t
 start unless VM or verified kernel isolation, multi-client auth, TLS on non-loopback
 listeners, pinned images, an explicit resource envelope, and per-caller rate limiting
 are all verifiably in force.
+
+`/metrics` has no authentication, and its labels name grant profiles and route
+templates. It is therefore served on a listener of its own, bound to this host only by
+default (`PLIMSOLL_METRICS_ADDR`, default `127.0.0.1:9464`; `off` disables it). Bind it
+to an address other hosts can reach only behind a firewall rule that admits just the
+scraper.

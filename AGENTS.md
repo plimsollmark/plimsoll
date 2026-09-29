@@ -38,6 +38,11 @@ option is intentionally only process-tier.
   - [sandbox/dockercloud.go](sandbox/dockercloud.go): Docker Cloud Sandboxes
     microVM provider, written against Docker's published API contract and verified
     against the live service (2026-09-24).
+  - [sandbox/openshell/](sandbox/openshell/openshell.go): NVIDIA OpenShell provider
+    (the gateway's docker driver, container tier), in its own package because its
+    generated gRPC client registers protobuf names OpenShell's Go SDK also registers.
+    plimsolld builds it ([cmd/plimsolld/openshell.go](cmd/plimsolld/openshell.go));
+    verified against a v0.1.2 gateway (2026-09-28).
   - [sandbox/disabled.go](sandbox/disabled.go) — refuses to execute (the default).
   - [sandbox/broker.go](sandbox/broker.go) — provider-neutral per-run host-API
     enforcement core (allowlist, credential injection, budgets, upstream HTTP,
@@ -47,6 +52,18 @@ option is intentionally only process-tier.
   - [sandbox/wasm/qjs-wasi.wasm](sandbox/wasm/) — embedded QuickJS-ng WASI build
     (`//go:embed`); MIT plus a minimal checked-in host-call shim. Rebuild from
     pinned inputs with [sandbox/wasm/build.sh](sandbox/wasm/build.sh).
+- [placement/](placement/): the routing library for a caller with several daemons
+  (Carroll's MP-B, 2026-09-28). It filters backends by what `Describe` states (payload
+  kind, floor, grant capability, environment identity), ranks them by the caller's own
+  comparison, sends with each backend's own credential, and retries on another backend
+  only after a refusal marked not-dispatched with reason unsupported, isolation or
+  capacity. No change to `sandbox` or `plimsolld`: one daemon still serves one provider.
+  [docs/placement.md](docs/placement.md).
+- [record/](record/) and [attest/](attest/): run records. `record` computes the digests
+  the daemon states on every run and the client checks; `attest` is the harness outside
+  the daemon that signs checked records (DSSE around in-toto), verifies bundles and
+  session chains, and replays; [cmd/plimsoll-attest](cmd/plimsoll-attest/) is its CLI.
+  Spec: [docs/run-records.md](docs/run-records.md).
 - [cmd/plimsoll-clients/](cmd/plimsoll-clients/) — offline operator CLI over the
   caller registry the daemon loads from `PLIMSOLL_CLIENTS_FILE`; the shared format
   and validation live in [internal/clientconfig/](internal/clientconfig/). Usage:
@@ -63,11 +80,10 @@ option is intentionally only process-tier.
   image with no runner, API, or environment-variable change.
   [docker/sim.Dockerfile](docker/sim.Dockerfile) derives `plimsoll/sandbox-sim` on a
   glibc base: a WasmEdge AOT worker ([docker/sim/](docker/sim/)) plus two Reference
-  FMUs and a Lorenz model of our own compiled to WebAssembly under `/models`, run through the unchanged project
+  FMUs and a Lorenz simulator of our own compiled to WebAssembly under `/models`, run through the unchanged project
   API and proven byte-identical to native by `sandbox/docker_sim_test.go`. The same
   image carries the Greedy fixture that proves the worker's per-instance memory cap
-  (256 pages; a greedy row fails alone), and the physics oracle: a cart-pole *plant*
-  (control engineering's term for the system being controlled)
+  (256 pages; a greedy row fails alone), and the physics oracle: a cart-pole simulator
   kept as WebAssembly at `/models/cartpole.wasm` behind a stepping shim, and the
   judge `/oracle/run.mjs` that runs a caller's controller as a separate process and
   fingerprints the trajectory (`sandbox/docker_oracle_test.go`).
@@ -75,7 +91,7 @@ option is intentionally only process-tier.
   `plimsoll/sandbox-wasm-cc` from the sim image: the C half of wasi-sdk 27 (clang and
   a wasm32-wasip1 libc with libm), pinned by the same image digest the sim build
   uses, so a project step can compile C to a WebAssembly module with no network.
-- [examples/](examples/) — eight runnable programs: `minimal` (one snippet and the
+- [examples/](examples/) — nine runnable programs: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
   the injected client and being refused by the broker anyway, then the identical
   request succeeding under a separate per-run grant that lists it), `daemon` (the
@@ -83,14 +99,14 @@ option is intentionally only process-tier.
   `advisor` (the efficiency advisor over a loopback daemon: a per-item loop,
   the finding that names the granted collection route, the rewrite, and the API's
   own request count as the witness), `oracle` (needs docker: an agent-written
-  controller judged against the module image's cart-pole plant by trajectory
+  controller judged against the module image's cart-pole simulator by trajectory
   fingerprint, through the ordinary project API; the page it writes replays the
   runs, and `sandbox/docker_oracle_test.go` asserts the fingerprints), and
   `wasm-controller` (needs docker: a swing-up controller in C compiled to
   WebAssembly by the run's first step in `plimsoll/sandbox-wasm-cc` and judged on
   four scenarios by the unchanged judge through the shared Node shim
   ([examples/internal/wasmshim](examples/internal/wasmshim/), which passes the module
-  every observation and the tick index, so it serves any single-output plant, and gives
+  every observation and the tick index, so it serves any single-output simulator, and gives
   the module no imports); the page it writes, `docs/examples/wasm-controller/index.html`, replays
   the swing-up and compares the record with `controller/reference.js` tick by tick;
   `sandbox/docker_wasm_controller_test.go` asserts a reproducible compile,
@@ -101,10 +117,16 @@ option is intentionally only process-tier.
   to equal `controller/reference.js`'s byte for byte in all four scenarios, plus a
   reproducible compile and the regulation floor; the page it writes is
   `docs/examples/wasm-buck/index.html`), and `providers` (the oracle's run, with its judge and
-  plant sent as project files, on every provider the machine can reach, each built by
-  `sandbox.Build` and proven by `EnsureReady`; the page it writes compares the
+  simulator sent as project files, on every provider the machine can reach, each built
+  by the constructor plimsolld uses (`sandbox.Build`, or `openshell.FromEnv`) and proven
+  by `EnsureReady`; the page it writes compares the
   fingerprints with the one the oracle page published; E2B and dockercloud rows need
-  their credentials and are paid).
+  their credentials and are paid, and the openshell row needs a gateway), and `sessions`
+  (needs an OpenShell gateway: one session of five calls through plimsolld with the
+  `attest` harness signing every record; the page it writes, `docs/examples/sessions/`,
+  shows the chain and the verifier refusing a dropped call and a changed byte, with the
+  bundle and public key beside it). The examples that run the daemon build it from source
+  through [examples/internal/daemonproc](examples/internal/daemonproc/).
 - [docs/trainers/](docs/trainers/) — dependency-free interactive lessons covering
   the execution model, architecture, providers, dependencies, the API broker and
   its capacity signal, MCP/agent integration, customer patterns, and product
@@ -114,18 +136,42 @@ option is intentionally only process-tier.
 ## The `Sandbox` interface
 Every provider implements [sandbox/sandbox.go](sandbox/sandbox.go):
 - `RunJavaScript(ctx, Request) (Result, error)` — run a JavaScript snippet (Node
-  on Docker, E2B and Docker Cloud; QuickJS on WASM).
+  on Docker, E2B, Docker Cloud and OpenShell; QuickJS on WASM).
 - `RunProject(ctx, ProjectRequest) (ProjectResult, error)` — write a multi-file
   project, then run build/lint/run steps in order (stop on first failure).
 - `RunModule(ctx, ModuleRequest) (ModuleResult, error)` — run a compiled physical
-  model baked into the provider's module image once per parameter row (docker only;
+  simulator baked into the provider's module image once per parameter row (docker only;
   see "Module runs" below).
 - `Name() string` — the provider id.
+
+**Sessions** (optional `sandbox.SessionProvider`, [docs/sessions.md](docs/sessions.md)):
+one sandbox kept for many calls, files persisting and processes not. `OpenSession`
+returns a `sandbox.Session` (snippet and project calls, serialized; `Suspend`, `Close`,
+`Done`, `Err`), and a session's end is a typed `SessionEndedError`; a call on an ended
+session is refused not-dispatched. Every implementation runs the conformance suite in
+[sandbox/sessiontest](sandbox/sessiontest/) and states sessions only once it passes;
+openshell is the only one today (its call boundary: [docs/openshell.md](docs/openshell.md#sessions)).
+Over RPC the procedures are `OpenSession`, `SessionRun` (its own request message, so a
+daemon that predates sessions refuses it instead of dropping the ID) and `CloseSession`;
+the daemon binds each 128-bit session ID to its principal (an unknown and a foreign ID are
+the same NotFound), never logs it, serializes calls, chains their records, suspends an idle
+session and gives back its concurrency slot, and keeps an ended session's final count
+collectable for 10 minutes. Sessions are off unless `SANDBOX_MAX_SESSIONS` is positive.
 
 Result semantics: a non-zero `ExitCode` is a **normal result** (the user's code
 failed), not a Go `error`. Returned errors cover typed pre-dispatch failures
 (`ErrInvalidRequest`, `ErrUnsupported`, `ErrDisabled`, `ErrAtCapacity`), context
-cancellation/deadline, and unmatched infrastructure failures. For projects,
+cancellation/deadline, and unmatched infrastructure failures. **Whether anything ran
+is a mark, not a code:** a refusal raised before any code was dispatched is a
+`sandbox.NotDispatchedError` carrying a `Refusal` reason (`request`, `permission`,
+`protocol`, `unsupported`, `isolation`, `capacity`; `sandbox.NotDispatchedReason(err)`
+reads it). The sandbox package marks its validators, isolation checks, admission and
+every `ErrUnsupported`/`ErrDisabled` site at the source; the RPC layer builds every
+handler-side refusal through `refuse` (a test fails on a Connect error built anywhere
+else) and sends the mark as the `plimsoll.v1.NotDispatched` error detail, which the
+client restores into the same Go error. **No mark means execution may have occurred**
+(the module worker's exit 4 is `ErrInvalidRequest` after its container ran, and stays
+unmarked), so an unmarked error is never a safe automatic retry. For projects,
 per-step failures live in `Steps` and the top-level conclusion is the typed
 `ProjectResult.Outcome` (`completed` / `setup_failed` / `timed_out` /
 `protocol_error`, with human context in `Detail`) — a stable retry/status
@@ -144,7 +190,11 @@ output stream past the transfer budget is classified as a failed user run
 ## Providers (`SANDBOX_PROVIDER`)
 `Build(getenv)` selects one and fails closed: malformed safety configuration and
 unrecognized provider names are explicit errors, and the default (unset) is
-**Disabled**, so execution is opt-in and never on by accident.
+**Disabled**, so execution is opt-in and never on by accident. plimsolld builds
+`openshell` itself, outside `Build`, so a program that imports package sandbox never
+links its generated protocol code: each such provider registers from its own file in
+[cmd/plimsolld/providers.go](cmd/plimsolld/providers.go)'s table, with its `-h` section
+and its hardened-mode envelope.
 
 | Value     | Provider | Isolation | Notes |
 |-----------|----------|-----------|-------|
@@ -152,6 +202,7 @@ unrecognized provider names are explicit errors, and the default (unset) is
 | `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. |
 | `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. Sandboxes are stamped with a per-instance metadata ID; `ReconcileOrphans` (run periodically by the daemon) reaps stamped, untracked microVMs that leaked past a malformed create response or failed teardown. |
 | `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | written against Docker's published API contract; live suite passed 2026-09-24. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
+| `openshell` | NVIDIA OpenShell sandbox through a gateway | container (the gateway's docker driver; any other driver is refused) | built by plimsolld, not `Build`. Keeps sessions (a sweep of every non-own process after each call, `sleep` as the main process, a read-back before each call). Each run creates a sandbox with no network rules (the gateway's deny-all default) and `/tmp` as the only writable directory, reads it back and refuses any difference, runs the payload over the streamed exec (the deadline cancels the stream, which kills the command's process group; a `setsid` descendant lives until the delete), and deletes the sandbox off the result path; `Drain` waits for those deletes at shutdown. Every sandbox declares its lifetime, so `ReconcileOrphans` also reaps what a crashed instance left behind, once that lifetime plus 5 minutes has passed. Grants keep the no-grant policy: a relay in the sandbox pairs the guest's socket connections with connections plimsoll dials in through `ForwardTcp` (session tokens revoked at the run's end), and plimsoll serves the shared broker on them. Module runs: `ErrUnsupported`. Operator setup, grants and the smoke test: [docs/openshell.md](docs/openshell.md). |
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
 
 Relevant env: `SANDBOX_DOCKER_IMAGE`, `SANDBOX_DOCKER_PROJECT_IMAGE`,
@@ -175,6 +226,14 @@ personal access token with the Cloud Sandboxes scope, read from the environment 
 `SANDBOX_DOCKERCLOUD_IMAGE` (the raw OCI image each sandbox boots; `@sha256:` when
 pinning is required; dockercloud honors `SANDBOX_MEMORY_MB` and whole `SANDBOX_CPUS`,
 requested at create and verified after it, and rejects `SANDBOX_PIDS`/`SANDBOX_DISK_MB`),
+`SANDBOX_OPENSHELL_GATEWAY_URL`, `SANDBOX_OPENSHELL_CA_FILE`, `SANDBOX_OPENSHELL_CERT_FILE`
+and `SANDBOX_OPENSHELL_KEY_FILE` (the gateway and its mutual TLS files),
+`SANDBOX_OPENSHELL_IMAGE` (must carry `node`, `sh` and `/runner.mjs`; openshell honors
+`SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` and rejects `SANDBOX_PIDS`/`SANDBOX_DISK_MB`),
+`SANDBOX_MAX_SESSIONS` (open sessions at once; default 0, sessions off; startup fails when
+set for a provider without sessions), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
+12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends), `SANDBOX_SESSION_DISK_MB`
+(default 1024; 0 = no bound),
 `PLIMSOLL_GRANTS_FILE` (named host-API capability
 profiles selectable via `grant_profile`), and dev-only `PLIMSOLL_INSECURE=1`
 (explicitly permits a real provider without auth). Operational knobs: `SANDBOX_MIN_ISOLATION`
@@ -195,7 +254,11 @@ ignored for e2b and dockercloud, whose runners live off-host). Each provider rep
 RPC** reports the active provider, tier, project and module support, and
 operation-specific grant support (via `ProjectCapable` / `ModuleCapable` /
 `GrantCapable`) so a gateway does not
-hard-code claims. **A reported tier is configuration and provider evidence plus the
+hard-code claims. It also states, informationally, each payload kind's environment
+(`sandbox.Describer`: a content-addressed identity such as the verified docker image ID,
+a pinned dockercloud digest or the embedded QuickJS hash, never a tag or template name,
+plus the provider's timeout ceiling capped by the daemon's five minutes) and the per-run
+resource envelope; equal identities mean the same software, and nothing enforces them. **A reported tier is configuration and provider evidence plus the
 behavioral smoke tests below — never runtime attestation**, and any surface that
 advertises a tier has to carry that qualification (README states it in full under the
 provider table). It also advertises minimum-isolation protocol support; this is
@@ -210,8 +273,17 @@ the official client stamps as `client.Protocol`) and a daemon serves exactly one
 request that omits it is InvalidArgument and a request on another number is
 Unimplemented, both before the payload is read. `Describe` reports the daemon's
 number. Bump `protocol.Number` when a request field is added whose omission would
-change what a daemon may execute; an informational field does not bump it. The daemon serves `GET /healthz`, `/readyz`,
-`/metrics` outside auth. `/readyz` re-runs the provider's bounded `Preflight`: for docker
+change what a daemon may execute; an informational field does not bump it. Every answered
+`Run` carries a **run record** (`RunResponse.record`, package [record](record/)): SHA-256
+digests of the request as sent and the result as returned, the evidence (provider, tier,
+the kind's environment identity, the verified policy) and the daemon's start and end
+times. The daemon only hashes and holds no key; the official client recomputes both
+digests and returns a mismatch as `DataLoss` (`record.ErrMismatch`), and a harness outside
+the daemon signs checked records. Encoding and field list: [docs/run-records.md](docs/run-records.md). The daemon serves `GET /healthz` and
+`/readyz` outside auth on its RPC listener. `GET /metrics`, also outside auth, has a listener of its own,
+`PLIMSOLL_METRICS_ADDR` (default `127.0.0.1:9464`: loopback and port 9464 are OpenTelemetry's Prometheus exporter
+defaults; `off` disables it), because its labels name grant profiles and route templates, which a caller who can reach the RPC
+port has no business reading. `/readyz` re-runs the provider's bounded `Preflight`: for docker
 that probes the pinned daemon and runtime, but for e2b and dockercloud it validates **configuration only**
 and proves nothing about API reachability, token or key validity, or guard routability — the
 behavioral proof is the one-shot startup `SmokeTest`, which creates a real billable
@@ -225,7 +297,14 @@ is read-only and every writable mount is a tmpfs with the exact promised size +
 `noexec`/`nosuid` — and, by attempting a real write at every mount point, that
 the promised mounts are the **only** ones that accept writes at all (device-node
 mounts like docker's `/dev/null`-masked proc paths are excluded: their writes
-discard rather than persist); Preflight also requires both images to be present
+discard rather than persist), and that its cgroup's `pids.max` is exactly the
+configured process limit (a runtime can accept `--pids-limit` without applying it;
+an unreadable value or a non-positive `PidsLimit` fails closed). Under runsc the guest
+reads gVisor's emulated cgroup files, which say `max` whatever was set, while runsc
+applies the limit to the whole sandbox's cgroup on the host, so the smoke test starts
+one more lockdown container and reads `pids.max` from that host cgroup instead, located
+through the PID docker reports and refused unless the cgroup path names the container
+(the limit there also counts gVisor's own tasks: [docs/gvisor.md](docs/gvisor.md)). Preflight also requires both images to be present
 (inspectable) on the pinned daemon. The first probe container also mounts a
 throwaway host Unix socket exactly as a run mounts the per-run broker socket and
 must reach it: whether a guest may connect to a host socket is a runtime property
@@ -244,8 +323,9 @@ the toolchain, honors the step cwd, and (checked live) actually denies egress.
 For dockercloud: a capability check, then one throwaway sandbox proving deny-all
 policy, file upload, the exec wrapper, the step cwd and in-guest egress denial
 ([docs/dockercloud.md](docs/dockercloud.md#startup-smoke-test)).
-`plimsolld -h` prints the full env list; the text is the `usage` constant in
-[cmd/plimsolld/main.go](cmd/plimsolld/main.go), and a test fails if the package
+`plimsolld -h` prints the full env list; the text is `helpText` in
+[cmd/plimsolld/providers.go](cmd/plimsolld/providers.go) (the usage constants in
+main.go plus each daemon-built provider's section), and a test fails if the package
 reads a variable that text omits. The daemon refuses any other argument.
 
 **Hardened mode (`PLIMSOLL_HARDENED=1`)** turns the soft production posture into
@@ -253,7 +333,7 @@ an enforced startup policy: a warning is not a policy. It refuses to serve unles
 every advertised production property is verifiably in force — `vm` or verified
 `kernel` isolation (post-`EnsureReady` evidence, so docker means proven runsc),
 multi-client auth (`PLIMSOLL_CLIENTS_FILE`; a shared token or open dev mode is
-rejected), TLS on any non-loopback listener, an immutable execution surface
+rejected), TLS on any non-loopback listener (the metrics listener included), an immutable execution surface
 (docker: `SANDBOX_REQUIRE_PINNED_IMAGES=1`, no `unconfined` seccomp; e2b: an
 explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1`), an explicit
 per-run resource envelope (memory and CPU only for dockercloud, which has no disk
@@ -275,12 +355,12 @@ official client also checks returned evidence; a mismatch is
 occurred, so it is never a safe automatic-retry signal.
 
 ## Module runs (the `module` payload)
-A *module run* executes a compiled physical model once per parameter row. The
-model is an AOT-compiled WebAssembly module (a source-form FMU or any C behind
+A *module run* executes a compiled physical simulator once per parameter row. The
+simulator is an AOT-compiled WebAssembly module (a source-form FMU or any C behind
 `docker/sim/shim.c`) baked into the **module image** at `/models/<id>.so`; the
 worker (`docker/sim/worker.c`, a C program on WasmEdge's C API, vendored from the
 sister repository) loads it once and runs one fresh instance per row. Register a
-model = build an image: an AOT model is machine code that must be mapped
+simulator = build an image: an AOT module is machine code that must be mapped
 executable, every writable mount is `noexec`, and the image root is the only place
 it can load from. plimsoll supervises the worker as a process inside its container
 tier and **never links the runtime**: the Go TCB stays pure Go, wazero keeps the
@@ -292,12 +372,12 @@ decimals), one step runs `sim-worker --table` with the result budget on its comm
 line, and the results come back as one artifact in a versioned record (`"PLSM"`,
 version, rows, width, params; then per row an int32 status and status × width
 float64 outputs) that `sandbox.DecodeModuleResults` bounds-checks before anything
-is trusted. The row width must equal the model's own `sim_run` parameter count and
+is trusted. The row width must equal the simulator's own `sim_run` parameter count and
 the output width is the module's exported `sim_width()`; the worker reads both from
 the module, so the daemon assumes no layout. `ModuleResult.Outcome` reuses the
 project outcome type: `completed` (every row has a status; a failed row is a
 negative status, the table continues), `setup_failed` (the worker refused: unknown
-model, a row of the wrong width), `timed_out`, `protocol_error` (an undecodable
+simulator, a row of the wrong width), `timed_out`, `protocol_error` (an undecodable
 record, a signal). **Results are never truncated.** `ValidateModuleRequest` refuses
 pre-dispatch a table whose results could not fit the 8 MiB artifact budget even at
 one output per step; the worker refuses with the true width before running any row
@@ -309,9 +389,10 @@ caller shards a big table across calls, because WasmEdge instantiation contends
 across threads in one process and not across processes.
 
 `Describe` advertises `supports_module` (a module image is configured). The audit
-line carries the model id (validated to a filename stem), row count, row width,
-step bound, outcome and duration, never a parameter value. `wasm` and `e2b` return
-`ErrUnsupported`; the E2B shape would be the same worker in a template, later.
+line carries the request's `model` ID (validated to a filename stem), row count, row width,
+step bound, outcome and duration, never a parameter value. `wasm`, `e2b`,
+`dockercloud` and `openshell` return `ErrUnsupported`; the E2B shape would be the same
+worker in a template, later.
 What the test proves (`sandbox/docker_sim_test.go`, required mode in CI): 100
 VanDerPol rows through `RunModule`, re-encoded, hash to the native C checksum, then
 50 Lorenz rows of 60 s (three outputs, 6,000 steps each: chaos would turn a one-ulp
@@ -445,7 +526,8 @@ hex, so the file holds no live secrets. The file is managed offline by
 explicitly requested stdout, and stores fingerprints only; the daemon reads the file
 once at startup, so every change needs a restart to take effect
 ([docs/callers.md](docs/callers.md)). Generated code lives in `gen/go` (regenerate
-with `buf generate`; local plugins, no network).
+with `make generate`, never a bare `buf generate`, whose `clean` step would empty
+the tree before any vendored template runs; local plugins, no network).
 
 Every run is **audit-logged** (`slog`): one structured line per RunJavaScript/
 RunProject with the caller (principal UserID, never the token), code/file sizes,
@@ -544,7 +626,10 @@ docker/seccomp/broker/smoke tests, `make audit E2B=1` (with `E2B_API_KEY`) adds
 the live E2B suite, and `make audit DOCKERCLOUD=1` (with `DOCKER_SBX_TOKEN`,
 `SANDBOX_DOCKERCLOUD_API_URL` and `SANDBOX_DOCKERCLOUD_IMAGE`) adds the live Docker
 Cloud Sandboxes suite, which fails rather than skips when that configuration is
-absent. `make help` lists individual targets.
+absent. `make audit OPENSHELL=1` (with a gateway and the `SANDBOX_OPENSHELL_*`
+settings) adds the live OpenShell suite, the provider's tests plus a daemon test
+against the gateway; it is free but needs a gateway, and it too fails rather than
+skips. `make help` lists individual targets.
 
 **The ordinary gate cannot spend.** A bare `go test ./...` with `E2B_API_KEY` or
 `DOCKER_SBX_TOKEN` (plus its API URL) in the environment runs a live suite, which
@@ -576,7 +661,8 @@ runsc failure cannot mask the runc result); what each green check proves is in
 [CONTRIBUTING.md](CONTRIBUTING.md). `DOCKER=1` is a request for proof: a missing daemon
 or image, or any `--- SKIP` line, fails it. No CI run exercises E2B or Docker Cloud
 Sandboxes, deliberately, because they spend: **never add an E2B key or a Docker token
-to repository secrets.** Third-party actions are pinned by commit SHA, since a tag is
+to repository secrets.** No CI run exercises OpenShell either, because it needs a
+gateway. Third-party actions are pinned by commit SHA, since a tag is
 mutable.
 
 **Credentials never land on disk.** `E2B_API_KEY` and `DOCKER_SBX_TOKEN` are read

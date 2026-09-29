@@ -68,7 +68,7 @@
   <div class="tile"><div class="big">{{.PeakV}} V, {{.PeakI}} A</div><div class="what">highest output voltage and inductor current in any scenario; the limits are 6 V and 10 A</div></div>
 </div>
 
-<h2>Scenario {{.Replay.ID}}: {{.Replay.InputV}} V in, a {{.Replay.LoadOhm}} ohm load that halves at {{.Replay.StepMs}} ms</h2>
+<h2>Scenario {{.Replay.ID}}: {{.Replay.InputV}} V in, a {{.Replay.LoadOhm}} ohm load whose resistance halves, doubling its current, at {{.Replay.StepMs}} ms</h2>
 <p class="note">The C port's record, every tick. The JavaScript law's record of the same scenario is the same bytes, so drawing it too would cover this line exactly. Move the pointer across the chart to read the values at any tick.</p>
 <div class="panel" id="chartpanel">
 <svg id="chart" role="img" aria-label="Output voltage, inductor current and duty cycle over 20 ms for scenario {{.Replay.ID}}"></svg>
@@ -81,10 +81,15 @@
 {{end}}</table></div>
 </details>
 
+<h2>Why the duty cycle ends where it started</h2>
+<p>Before the step the duty cycle holds at {{.Step.DutyBefore}} and the inductor carries {{.Step.IBefore}} A. The step doubles the current the load draws, so the controller raises the duty cycle for a moment (to {{.Step.DutyPeak}} at most) to speed the inductor current up. Once the current reaches {{.Step.IAfter}} A, the duty cycle settles at {{.Step.DutyAfter}}: where it started. The reason is the inductor. The voltage across it is the duty cycle times the input voltage minus the output voltage, and that voltage does one thing: it changes the inductor's current. Holding any current steady, small or large, takes zero volts across the inductor, so the duty cycle that holds 5 V is 5 V divided by the input voltage, 5 / {{.Replay.InputV}} = {{.Step.DutyIdeal}}, whatever the load draws. The load decides how much current flows; the duty cycle only has to change while that current is changing.</p>
+<p class="note">This is exact here because the simulated converter has no resistance in its inductor or switches. In real hardware those resistances drop a little voltage that grows with the current, so the duty cycle settles slightly higher under the heavier load.</p>
+<p class="note">For engineers: in the plant's own terms the load halves. Its parameter is the load resistance, which drops from {{.Replay.LoadOhm}} to {{.Step.LoadAfter}} ohm at {{.Replay.StepMs}} ms; at 5 V that is a 100 percent load step, {{.Step.IBefore}} A to {{.Step.IAfter}} A. A lower resistance is a heavier load, which is why the rest of this page says the current doubles rather than that the load halves.</p>
+
 <h2>Every scenario</h2>
 <p class="note">The controller is not told the input voltage, the load, or when the load steps; it sees only the output voltage and the inductor current. Three runs judged each scenario: the C build twice and the JavaScript law once.</p>
 <div class="tablewrap"><table>
-<tr><th>scenario</th><th>input</th><th>load, then half at</th><th>score</th><th>peak V</th><th>peak |A|</th><th>fingerprint (C run 1)</th><th>C run 2 and JavaScript (the run writes no page unless both match)</th></tr>
+<tr><th>scenario</th><th>input</th><th>load, then when its resistance halves (current doubles)</th><th>score</th><th>peak V</th><th>peak |A|</th><th>fingerprint (C run 1)</th><th>C run 2 and JavaScript (the run writes no page unless both match)</th></tr>
 {{range .Rows}}<tr><td>{{.ID}}</td><td class="num">{{.InputV}} V</td><td class="num">{{.LoadOhm}} ohm, {{.StepMs}} ms</td><td class="num">{{printf "%.3f" .Score}}</td><td class="num">{{printf "%.3f" .MaxV}}</td><td class="num">{{printf "%.3f" .MaxI}}</td><td><span class="fp">{{.Fingerprint}}</span></td><td><span class="yes">both identical</span></td></tr>
 {{end}}</table></div>
 
@@ -100,7 +105,7 @@
 <h2>What this does not show</h2>
 <ul>
 <li>Not firmware on a chip. The C uses <code>double</code> and runs as WebAssembly; a microcontroller build would use its own number format, timer and ADC, and would be a different program with its own fingerprint.</li>
-<li>Not a hardware converter. The plant is an averaged model (the switching ripple is averaged out), so the run judges the control law, not the switching stage.</li>
+<li>Not a hardware converter. The simulator averages the switching behavior (the switching ripple is averaged out), so the run judges the control law, not the switching stage.</li>
 <li>Not isolation beyond the run's tier. The compiler, the judge and the controller run inside one project run, behind the tier the provider reports ({{.Isolation}} here).</li>
 </ul>
 <p class="note">Source and how to rerun: <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/wasm-buck">examples/wasm-buck on GitHub ↗</a>. The draft-versus-accepted replay of the same plant: <a href="https://plimsollmark.github.io/plimsoll/examples/envs/buck-converter/index.html">buck converter replay</a>.</p>
@@ -147,7 +152,7 @@
     for (let k = 0; k < n; k++) d += (k ? 'L' : 'M') + x(k * tr.tick_s * 1000).toFixed(1) + ' ' + y(tr[p.key][k]).toFixed(1);
     el('path', { d, fill: 'none', stroke: 'var(--blue)', 'stroke-width': 2, 'stroke-linejoin': 'round' });
   }
-  el('text', { x: x(step) + 5, y: panels[0].top + 14 }, 'load halves');
+  el('text', { x: x(step) + 5, y: panels[0].top + 14 }, 'load current doubles');
   el('text', { x: R, y: panels[0].y(4.9) + 16, 'text-anchor': 'end' }, 'shaded band: 4.9 to 5.1 V');
   const axisY = panels[2].top + panels[2].h;
   for (let ms = 0; ms <= tEnd + 1e-9; ms += cw < 600 ? 10 : 5) el('text', { x: x(ms), y: axisY + 18, 'text-anchor': 'middle' }, String(ms));

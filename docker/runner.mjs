@@ -1,17 +1,26 @@
 // In-sandbox project runner. Reads a JSON "plan" from stdin, writes the project
 // files into the work dir, runs each step in order (stopping on the first
-// failure), and emits the per-step results as JSON after a sentinel so the host
-// can separate them from any incidental output.
+// failure), and emits the per-step results as one authenticated JSON frame so the
+// host can separate them from any incidental output.
+//
+// Every step runs as this process's uid, so any process in the sandbox can reopen
+// this process's stdout through /proc and write a report of its own. The host
+// therefore trusts only a frame signed with the plan's reportKey (HMAC-SHA256). The
+// key arrives on stdin before any step exists, is removed from the plan at once,
+// and is never put in the environment, argv, a file or the output; the host's smoke
+// test proves a sandboxed process cannot read this process's memory, where it lives.
 //
 // Runs INSIDE the locked-down container (no network, read-only root, non-root).
 // It still validates file paths defensively so a plan cannot write outside the
 // work dir even within the sandbox.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
+import { createHmac } from "node:crypto";
+import { mkdirSync, writeFileSync, readFileSync, realpathSync, openSync, fstatSync, closeSync, constants } from "node:fs";
 import { resolve, dirname } from "node:path";
 
 const WORK = resolve(process.env.PLIMSOLL_WORK || "/work");
-const SENTINEL = "<<<CRSBX_RESULT>>>";
+const MARKER = "<<<PLIMSOLL_REPORT_V2>>>"; // must match runnerwire.Marker
+let reportKey = null; // set from the plan; a frame without it cannot verify
 const MAX_STEP_OUTPUT = 1 << 20; // 1 MiB per step stream
 const MAX_ARTIFACT_BYTES = 8 << 20; // 8 MiB total across all captured artifacts
 const MAX_STEPS_JSON = 3 << 20; // encoded step metadata/output across the run
@@ -31,7 +40,11 @@ function emit(payload) {
   if (Buffer.byteLength(encoded) > MAX_RESULT_JSON) {
     encoded = JSON.stringify({ error: "sandbox result exceeds the encoded response budget" });
   }
-  process.stdout.write("\n" + SENTINEL + encoded);
+  const body = Buffer.from(encoded, "utf8");
+  // Without a key the frame is still written, so the host sees a report arrive, but
+  // its MAC cannot verify and the host classifies the run as a protocol error.
+  const mac = reportKey ? createHmac("sha256", reportKey).update(body).digest("hex") : "0".repeat(64);
+  process.stdout.write(Buffer.concat([Buffer.from("\n" + MARKER + " " + body.length + " " + mac + "\n"), body]));
 }
 
 function capEncodedSteps(steps, step) {
@@ -70,26 +83,44 @@ function capEncodedSteps(steps, step) {
 
 // captureArtifacts reads each requested (existing) file under WORK and returns
 // {artifacts: [{path, content}], truncated} with base64 content, bounded by
-// MAX_ARTIFACT_BYTES; truncated reports that an existing file was dropped.
+// MAX_ARTIFACT_BYTES; truncated reports that an existing file was dropped. A path
+// is resolved through any links first and must still lie under WORK, and the file
+// is opened without following a final link, so a link planted in WORK cannot pull
+// in a file from elsewhere in the sandbox.
 function captureArtifacts(paths) {
   const out = [];
   let total = 0;
+  let workReal;
+  try { workReal = realpathSync(WORK); } catch { return { artifacts: out, truncated: false }; }
   for (const p of paths ?? []) {
     const dest = resolve(WORK, p);
     if (dest !== WORK && !dest.startsWith(WORK + "/")) continue; // never escape WORK
-    if (!existsSync(dest)) continue;
-    const info = statSync(dest);
-    if (!info.isFile()) continue; // skip dirs
-    if (total + info.size > MAX_ARTIFACT_BYTES) return { artifacts: out, truncated: true };
-    const buf = readFileSync(dest);
-    total += buf.length;
-    out.push({ path: p, content: buf.toString("base64") });
+    let real;
+    try { real = realpathSync(dest); } catch { continue; } // missing
+    if (real !== workReal && !real.startsWith(workReal + "/")) continue; // a link out of WORK
+    let fd;
+    try { fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { continue; }
+    try {
+      const info = fstatSync(fd);
+      if (!info.isFile()) continue; // skip dirs, devices, fifos
+      if (total + info.size > MAX_ARTIFACT_BYTES) return { artifacts: out, truncated: true };
+      const buf = readFileSync(fd);
+      total += buf.length;
+      out.push({ path: p, content: buf.toString("base64") });
+    } finally {
+      closeSync(fd);
+    }
   }
   return { artifacts: out, truncated: false };
 }
 
 try {
   const plan = JSON.parse(readFileSync(0, "utf8"));
+  // Take the key and drop it from the plan before anything else runs.
+  const key = Buffer.from(typeof plan.reportKey === "string" ? plan.reportKey : "", "hex");
+  delete plan.reportKey;
+  if (key.length !== 32) throw new Error("plan carries no report key");
+  reportKey = key;
 
   for (const f of plan.files ?? []) {
     const dest = resolve(WORK, f.path ?? "");

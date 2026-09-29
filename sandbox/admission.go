@@ -82,7 +82,7 @@ func (a *admissionSandbox) acquire() (func(), error) {
 		select {
 		case a.sem <- struct{}{}:
 		default:
-			return nil, ErrAtCapacity
+			return nil, refused(ErrAtCapacity)
 		}
 	}
 	if a.memCap > 0 {
@@ -92,7 +92,7 @@ func (a *admissionSandbox) acquire() (func(), error) {
 			if a.sem != nil {
 				<-a.sem
 			}
-			return nil, ErrAtCapacity
+			return nil, refused(ErrAtCapacity)
 		}
 		a.memInUse += a.perRun
 		a.mu.Unlock()
@@ -155,7 +155,7 @@ func (a *admissionSandbox) RunModule(ctx context.Context, req ModuleRequest) (Mo
 // through because only the remote server can enforce them atomically.
 func (a *admissionSandbox) checkMinimumIsolation(ctx context.Context, minimum IsolationClass) error {
 	if err := validateMinimumIsolation(minimum); err != nil {
-		return err
+		return refused(err)
 	}
 	if minimum == IsolationUnknown {
 		return nil
@@ -186,6 +186,15 @@ func (a *admissionSandbox) SupportsProjects() bool {
 		return pc.SupportsProjects()
 	}
 	return false
+}
+
+// Environments forwards the wrapped provider's statement; a provider that makes
+// none states nothing through the decorator either.
+func (a *admissionSandbox) Environments() Environments {
+	if d, ok := a.Sandbox.(Describer); ok {
+		return d.Environments()
+	}
+	return Environments{}
 }
 
 // SupportsModules forwards the wrapped provider's static capability, like

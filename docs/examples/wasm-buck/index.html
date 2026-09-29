@@ -59,7 +59,7 @@
 <main>
 <nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>A buck converter controller in C, identical to its JavaScript law to the bit</h1>
-<p class="sub">Measured on 2026-09-24 in real runs through plimsoll's docker tier (container). A <b>buck converter</b> is the power supply that turns a battery or bus voltage into the lower voltage a chip runs on, by switching the input on for a fraction of each cycle (the <b>duty cycle</b>); the controller that picks that fraction is firmware, usually written in C. The caller sent two files: <code>controller.c</code>, such a controller, and <code>controller.js</code>, a Node shim with no arithmetic of its own, the same one the <a href="https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html">cart-pole C controller</a> runs under. The run's first step compiled the C to WebAssembly inside the sandbox, with no network. The later steps handed the module to the judge baked into the image, which drove a simulated converter (the <b>plant</b>, itself compiled to WebAssembly) through the controller one 10 microsecond tick at a time for 20 ms and recorded every tick. The SHA-256 of that record is the <b>fingerprint</b>.</p>
+<p class="sub">Measured on 2026-09-25 in real runs through plimsoll's docker tier (container). A <b>buck converter</b> is the power supply that turns a battery or bus voltage into the lower voltage a chip runs on, by switching the input on for a fraction of each cycle (the <b>duty cycle</b>); the controller that picks that fraction is firmware, usually written in C. The caller sent two files: <code>controller.c</code>, such a controller, and <code>controller.js</code>, a Node shim with no arithmetic of its own, the same one the <a href="https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html">cart-pole C controller</a> runs under. The run's first step compiled the C to WebAssembly inside the sandbox, with no network. The later steps handed the module to the judge baked into the image, which drove a simulated converter (the <b>plant</b>, itself compiled to WebAssembly) through the controller one 10 microsecond tick at a time for 20 ms and recorded every tick. The SHA-256 of that record is the <b>fingerprint</b>.</p>
 
 <div class="tiles">
   <div class="tile"><div class="big">4 of 4</div><div class="what">scenarios where the C port's record is byte-identical to the JavaScript law's</div></div>
@@ -68,7 +68,7 @@
   <div class="tile"><div class="big">5.10 V, 5.00 A</div><div class="what">highest output voltage and inductor current in any scenario; the limits are 6 V and 10 A</div></div>
 </div>
 
-<h2>Scenario s1: 12 V in, a 4 ohm load that halves at 10 ms</h2>
+<h2>Scenario s1: 12 V in, a 4 ohm load whose resistance halves, doubling its current, at 10 ms</h2>
 <p class="note">The C port's record, every tick. The JavaScript law's record of the same scenario is the same bytes, so drawing it too would cover this line exactly. Move the pointer across the chart to read the values at any tick.</p>
 <div class="panel" id="chartpanel">
 <svg id="chart" role="img" aria-label="Output voltage, inductor current and duty cycle over 20 ms for scenario s1"></svg>
@@ -100,10 +100,15 @@
 </table></div>
 </details>
 
+<h2>Why the duty cycle ends where it started</h2>
+<p>Before the step the duty cycle holds at 0.4167 and the inductor carries 1.25 A. The step doubles the current the load draws, so the controller raises the duty cycle for a moment (to 0.4749 at most) to speed the inductor current up. Once the current reaches 2.50 A, the duty cycle settles at 0.4167: where it started. The reason is the inductor. The voltage across it is the duty cycle times the input voltage minus the output voltage, and that voltage does one thing: it changes the inductor's current. Holding any current steady, small or large, takes zero volts across the inductor, so the duty cycle that holds 5 V is 5 V divided by the input voltage, 5 / 12 = 0.4167, whatever the load draws. The load decides how much current flows; the duty cycle only has to change while that current is changing.</p>
+<p class="note">This is exact here because the simulated converter has no resistance in its inductor or switches. In real hardware those resistances drop a little voltage that grows with the current, so the duty cycle settles slightly higher under the heavier load.</p>
+<p class="note">For engineers: in the plant's own terms the load halves. Its parameter is the load resistance, which drops from 4 to 2 ohm at 10 ms; at 5 V that is a 100 percent load step, 1.25 A to 2.50 A. A lower resistance is a heavier load, which is why the rest of this page says the current doubles rather than that the load halves.</p>
+
 <h2>Every scenario</h2>
 <p class="note">The controller is not told the input voltage, the load, or when the load steps; it sees only the output voltage and the inductor current. Three runs judged each scenario: the C build twice and the JavaScript law once.</p>
 <div class="tablewrap"><table>
-<tr><th>scenario</th><th>input</th><th>load, then half at</th><th>score</th><th>peak V</th><th>peak |A|</th><th>fingerprint (C run 1)</th><th>C run 2 and JavaScript (the run writes no page unless both match)</th></tr>
+<tr><th>scenario</th><th>input</th><th>load, then when its resistance halves (current doubles)</th><th>score</th><th>peak V</th><th>peak |A|</th><th>fingerprint (C run 1)</th><th>C run 2 and JavaScript (the run writes no page unless both match)</th></tr>
 <tr><td>s1</td><td class="num">12 V</td><td class="num">4 ohm, 10 ms</td><td class="num">0.908</td><td class="num">5.062</td><td class="num">2.505</td><td><span class="fp">9bcc0a3a963d11853ba0bd1a7bc3850a00d55115b6a2ee3de2cdd51ad69006f7</span></td><td><span class="yes">both identical</span></td></tr>
 <tr><td>s2</td><td class="num">10 V</td><td class="num">8 ohm, 6 ms</td><td class="num">0.914</td><td class="num">5.104</td><td class="num">1.340</td><td><span class="fp">ef91a39f0afe20aab5b6cc32aa41414f44afa9f0a60ba1c9e7f910ccca92db75</span></td><td><span class="yes">both identical</span></td></tr>
 <tr><td>s3</td><td class="num">16 V</td><td class="num">2 ohm, 12 ms</td><td class="num">0.888</td><td class="num">5.014</td><td class="num">5.000</td><td><span class="fp">b39ccc8ac760e1d8fe5a2b738eefac644854b2e7ca87c15bb6c23acf919a1a39</span></td><td><span class="yes">both identical</span></td></tr>
@@ -112,13 +117,13 @@
 
 <h2>Why the two languages agree to the bit here, and did not for the cart-pole</h2>
 <p>The C is a line-for-line port of the JavaScript law: every expression keeps its operand order, and the build passes <code>-ffp-contract=off</code>, so the compiler never fuses a multiply and an add into one step with a different rounding. What is left is a sequence of IEEE 754 double additions, multiplications, divisions and comparisons, which both languages must compute identically. The cart-pole controller also calls <code>cos</code>, and there the C module's cosine (wasi-libc's, compiled into it) and V8's <code>Math.cos</code> differ in the last bit on about one input in a hundred, which is enough to change its fingerprint. This law calls no library function, so there is nothing left that could differ, and the runs confirm it.</p>
-<p>Build step, run inside the sandbox: <code>clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -o controller.wasm controller.c</code> (compile 41 ms). <code>controller.wasm</code> SHA-256: <span class="fp">16109c964dd1925bfeded590cb9854b07f26e8287f5f9d28e2aaefc56094f61d</span>. It imports nothing: the shim gives it an empty import object and refuses any module that asks for more.</p>
+<p>Build step, run inside the sandbox: <code>clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -o controller.wasm controller.c</code> (compile 53 ms). <code>controller.wasm</code> SHA-256: <span class="fp">16109c964dd1925bfeded590cb9854b07f26e8287f5f9d28e2aaefc56094f61d</span>. It imports nothing: the shim gives it an empty import object and refuses any module that asks for more.</p>
 
 <div class="row2">
 <div class="panel"><h3>controller.c (what ran)</h3><pre>// A buck converter controller in C, compiled to WebAssembly inside the sandbox and
 // judged against the plant /models/buck.wasm: an averaged synchronous buck
 // converter (100 uH, 100 uF) that must hold 5 V from an input of 10 to 16 V while
-// the load halves partway through the run.
+// the load resistance halves partway through the run, doubling the current it draws.
 //
 // The law is average current-mode control, the usual structure of converter
 // firmware. An inner loop makes the inductor current follow a reference (fast: the
@@ -197,7 +202,7 @@ rl.on(&#39;line&#39;, (line) =&gt; {
 <h2>What this does not show</h2>
 <ul>
 <li>Not firmware on a chip. The C uses <code>double</code> and runs as WebAssembly; a microcontroller build would use its own number format, timer and ADC, and would be a different program with its own fingerprint.</li>
-<li>Not a hardware converter. The plant is an averaged model (the switching ripple is averaged out), so the run judges the control law, not the switching stage.</li>
+<li>Not a hardware converter. The simulator averages the switching behavior (the switching ripple is averaged out), so the run judges the control law, not the switching stage.</li>
 <li>Not isolation beyond the run's tier. The compiler, the judge and the controller run inside one project run, behind the tier the provider reports (container here).</li>
 </ul>
 <p class="note">Source and how to rerun: <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/wasm-buck">examples/wasm-buck on GitHub ↗</a>. The draft-versus-accepted replay of the same plant: <a href="https://plimsollmark.github.io/plimsoll/examples/envs/buck-converter/index.html">buck converter replay</a>.</p>
@@ -244,7 +249,7 @@ rl.on(&#39;line&#39;, (line) =&gt; {
     for (let k = 0; k < n; k++) d += (k ? 'L' : 'M') + x(k * tr.tick_s * 1000).toFixed(1) + ' ' + y(tr[p.key][k]).toFixed(1);
     el('path', { d, fill: 'none', stroke: 'var(--blue)', 'stroke-width': 2, 'stroke-linejoin': 'round' });
   }
-  el('text', { x: x(step) + 5, y: panels[0].top + 14 }, 'load halves');
+  el('text', { x: x(step) + 5, y: panels[0].top + 14 }, 'load current doubles');
   el('text', { x: R, y: panels[0].y(4.9) + 16, 'text-anchor': 'end' }, 'shaded band: 4.9 to 5.1 V');
   const axisY = panels[2].top + panels[2].h;
   for (let ms = 0; ms <= tEnd + 1e-9; ms += cw < 600 ? 10 : 5) el('text', { x: x(ms), y: axisY + 18, 'text-anchor': 'middle' }, String(ms));

@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"golang.org/x/net/netutil"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
 // DockerSandbox executes JavaScript in a throwaway, locked-down container. The
@@ -38,7 +40,7 @@ type DockerSandbox struct {
 	Image        string // snippet image (plain node), for RunJavaScript
 	ProjectImage string // toolchain image (node + tsc/tsx/eslint), for RunProject
 	// ModuleImage is the simulation worker image for RunModule
-	// (docker/sim.Dockerfile): the supervised worker plus the AOT-compiled models
+	// (docker/sim.Dockerfile): the supervised worker plus the AOT-compiled simulators
 	// it may load, under /models. "" = module runs unsupported.
 	ModuleImage string
 	Runtime     string // OCI runtime, e.g. "runsc" (gVisor). "" = docker default (runc)
@@ -135,13 +137,26 @@ const (
 	dockerPreflightPoll        = 20 * time.Millisecond
 )
 
+// snippetCeiling and projectCeiling are the longest a snippet or project run may
+// take; the timeout functions cut a request to them and Environments states them.
+func (d *DockerSandbox) snippetCeiling() time.Duration {
+	if d.MaxTimeout > 0 {
+		return d.MaxTimeout
+	}
+	return dockerMaxTimeout
+}
+
+func (d *DockerSandbox) projectCeiling() time.Duration {
+	if d.MaxProjectTime > 0 {
+		return d.MaxProjectTime
+	}
+	return dockerMaxProjectTime
+}
+
 func (d *DockerSandbox) snippetTimeout(requested time.Duration) time.Duration {
-	def, max := d.DefaultTimeout, d.MaxTimeout
+	def, max := d.DefaultTimeout, d.snippetCeiling()
 	if def <= 0 {
 		def = dockerDefaultTimeout
-	}
-	if max <= 0 {
-		max = dockerMaxTimeout
 	}
 	if requested <= 0 {
 		requested = def
@@ -153,12 +168,9 @@ func (d *DockerSandbox) snippetTimeout(requested time.Duration) time.Duration {
 }
 
 func (d *DockerSandbox) projectTimeout(requested time.Duration) time.Duration {
-	def, max := d.ProjectTimeout, d.MaxProjectTime
+	def, max := d.ProjectTimeout, d.projectCeiling()
 	if def <= 0 {
 		def = dockerProjectTimeout
-	}
-	if max <= 0 {
-		max = dockerMaxProjectTime
 	}
 	if requested <= 0 {
 		requested = def
@@ -251,22 +263,7 @@ func startDockerBrokerWithCore(core *brokerSession) (*dockerBroker, error) {
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// RequestURI preserves the target exactly as it appeared on the socket.
-		// r.URL.Path has already lost percent-encoding and cannot prove approve==wire.
-		resp := core.Call(r.Context(), brokerCall{Method: r.Method, RawTarget: r.RequestURI, Body: r.Body})
-		w.Header().Set("Content-Type", resp.ContentType)
-		w.WriteHeader(resp.Status)
-		_, _ = w.Write(resp.Body)
-	})
-	srv := &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       15 * time.Second,
-		MaxHeaderBytes:    16 << 10,
-	}
+	srv := newBrokerServer(core)
 	limited := netutil.LimitListener(l, 32)
 	go func() { _ = srv.Serve(limited) }()
 	return &dockerBroker{dir: dir, sock: sock, listener: limited, srv: srv, core: core}, nil
@@ -777,7 +774,9 @@ func parseImageIDAndVolumes(out []byte) (string, []string, error) {
 // enforces the writable-storage contract by running one throwaway lockdown
 // container per image and checking, from inside, that the root filesystem
 // refuses writes and that every writable mount is a tmpfs carrying the exact
-// size and noexec/nosuid options this provider promised. Preflight verifies
+// size and noexec/nosuid options this provider promised, and that its cgroup
+// carries exactly the configured process limit (under runsc, the sandbox's host
+// cgroup, where gVisor enforces it). Preflight verifies
 // configuration; this verifies behavior. It starts real containers, so it is
 // for startup/deploy readiness — not per-request or unauthenticated poll paths.
 func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
@@ -831,6 +830,14 @@ func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 		}
 		if err := d.smokeProbe(ctx, state, p.id, p.workTmpfs, readBanner, socketPath); err != nil {
 			return fmt.Errorf("smoke failed for image %q under runtime %q: %w", p.ref, state.runtime, err)
+		}
+	}
+	// The process limit is a property of the runtime, not of an image, so under runsc
+	// it is proven once, on the host, where gVisor enforces it (smokeProbe skips the
+	// guest's emulated copy).
+	if state.runtime == "runsc" {
+		if err := d.proveSandboxPidsLimit(ctx, state, state.imageID); err != nil {
+			return fmt.Errorf("smoke failed for image %q under runtime %q: %w", d.Image, state.runtime, err)
 		}
 	}
 	return nil
@@ -915,6 +922,24 @@ for (const line of mounts.trim().split("\n")) {
     }
   } catch (e) {}
 }
+// The process limit as the guest's own cgroup states it (v2, then v1). A runtime
+// that accepts --pids-limit without applying it leaves "max" here.
+let pids = null;
+for (const p of ["/sys/fs/cgroup/pids.max", "/sys/fs/cgroup/pids/pids.max"]) {
+  try { pids = { max: fs.readFileSync(p, "utf8").trim().slice(0, 32) }; break; } catch (e) {}
+}
+// A child tries to open this process's memory. The runner's report key lives only in
+// the runner's memory, so a step that could read it could sign a forged report.
+let memory = null;
+try {
+  const r = require("child_process").spawnSync(process.execPath, ["-e",
+    'try { require("fs").closeSync(require("fs").openSync("/proc/" + process.ppid + "/mem", "r")); process.stdout.write("open"); }' +
+    ' catch (e) { process.stdout.write(String((e && e.code) || e).slice(0, 32)); }'],
+    { encoding: "latin1", timeout: 5000, maxBuffer: 4096 });
+  memory = { child: String(r.stdout || "").slice(0, 32) };
+} catch (e) {
+  memory = { child: "spawn " + String((e && e.code) || e).slice(0, 32) };
+}
 let banner = null;
 `
 	// Bounded three ways: head -c caps the bytes, the timeout caps the wait, and a
@@ -928,7 +953,7 @@ let banner = null;
   banner = { error: String((e && e.message) || e).slice(0, 200) };
 }
 `
-	const finish = `function finish(socket) { process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, banner, socket })); }
+	const finish = `function finish(socket) { process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, pids, memory, banner, socket })); }
 `
 	// The connect is bounded by its own timeout and every outcome, including a
 	// refusal, is reported as data rather than thrown, so the storage evidence above
@@ -1012,7 +1037,13 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 		RootWritable bool     `json:"rootWritable"`
 		Mounts       string   `json:"mounts"`
 		Writable     []string `json:"writable"`
-		Banner       *struct {
+		Pids         *struct {
+			Max string `json:"max"`
+		} `json:"pids"`
+		Memory *struct {
+			Child string `json:"child"`
+		} `json:"memory"`
+		Banner *struct {
 			Head  string `json:"head"`
 			Error string `json:"error"`
 		} `json:"banner"`
@@ -1061,6 +1092,26 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	if report.RootWritable {
 		return errors.New("root filesystem accepted a write; --read-only is not in force")
 	}
+	memoryChild := ""
+	if report.Memory != nil {
+		memoryChild = report.Memory.Child
+	}
+	if err := checkMemoryIsolation(memoryChild); err != nil {
+		return err
+	}
+	// Under runsc the guest's cgroup files are gVisor's own emulation, where pids.max
+	// reads "max" whatever docker was asked for; runsc enforces the limit on the
+	// sandbox's host cgroup instead, and SmokeTest proves it there
+	// (proveSandboxPidsLimit). Every other runtime is held to the guest's own file.
+	if state.runtime != "runsc" {
+		pidsMax := ""
+		if report.Pids != nil {
+			pidsMax = report.Pids.Max
+		}
+		if err := checkPidsLimit(pidsMax, d.PidsLimit, "inside the container"); err != nil {
+			return err
+		}
+	}
 	expected := []struct {
 		path   string
 		sizeMB int
@@ -1085,6 +1136,147 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	// the promised mounts are the ONLY ones that accept writes, so the aggregate
 	// budget really is the full writable sum.
 	return checkWritableSet(report.Writable, paths)
+}
+
+// checkPidsLimit asserts the cgroup that enforces a run's processes carries exactly
+// the process limit this provider passed as --pids-limit; where names that cgroup in
+// the error. Docker accepts the flag under any runtime, and a runtime can accept it
+// without applying it (Kata's Docker runtime left pids.max at "max" and let 204
+// processes start against a limit of 64), so a limit that was merely requested is
+// not one this provider may promise. An unreadable limit fails closed, and so does a
+// configured limit that is not a positive integer: there is then no bound to prove.
+func checkPidsLimit(got, want, where string) error {
+	n, err := strconv.Atoi(strings.TrimSpace(want))
+	if err != nil || n <= 0 {
+		return fmt.Errorf("process limit %q is not a positive integer, so there is no bound to prove", want)
+	}
+	if got == "" {
+		return fmt.Errorf("no pids.max was readable %s, so the process limit cannot be proven", where)
+	}
+	if got != strconv.Itoa(n) {
+		return fmt.Errorf("pids.max %s is %q, want %d: the runtime accepted --pids-limit without applying it", where, bannerFirstLine(got), n)
+	}
+	return nil
+}
+
+// checkMemoryIsolation asserts that a process in the sandbox could not open another
+// process's memory. The runner's report key lives only in the runner's memory
+// (internal/runnerwire), so a step that could read it could sign a forged report.
+// What refuses the open is the host (Yama's ptrace_scope under runc, the runtime's
+// own checks under runsc), not plimsoll, so it is proven here rather than assumed.
+// Anything but a clear refusal fails closed.
+func checkMemoryIsolation(child string) error {
+	switch child {
+	case "EACCES", "EPERM":
+		return nil
+	case "open":
+		return errors.New("a process in the sandbox opened another process's memory (/proc/<pid>/mem), so the runner's report key is not secret and a run's report could be forged; on the host, set kernel.yama.ptrace_scope to 1 or higher")
+	case "":
+		return errors.New("the probe reported no memory-isolation result, so the report key's secrecy cannot be proven")
+	default:
+		return fmt.Errorf("the memory-isolation check gave %q, not a clear refusal, so the report key's secrecy cannot be proven", bannerFirstLine(child))
+	}
+}
+
+// proveSandboxPidsLimit proves the process limit where runsc enforces it. gVisor
+// applies --pids-limit to the sandbox's cgroup on the host, which holds the sentry,
+// the gofer and one host task per guest process (measured 2026-09-28 under
+// gVisor 20260907.0: about 30 at idle), while the guest reads gVisor's emulated
+// cgroup files, where pids.max is "max" whatever was configured. So one throwaway
+// container under the identical lockdown is started detached, and the limit is read
+// from the host cgroup of the process docker reports for it. The cgroup path must
+// name the container: a PID resolved in another PID namespace (plimsolld inside a
+// container of its own) would otherwise read an unrelated process's cgroup, and
+// that fails closed rather than proving anything.
+func (d *DockerSandbox) proveSandboxPidsLimit(ctx context.Context, state dockerExecutionState, image string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	docker := func(args ...string) (string, error) {
+		full, err := dockerArgs(state.host, args...)
+		if err != nil {
+			return "", err
+		}
+		var stderr bytes.Buffer
+		cmd := exec.CommandContext(ctx, "docker", full...)
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	name := "crsbx-smoke-pids-" + randID()
+	// lockdownArgs starts with "run", "--rm", "-i"; detach so the container is alive
+	// while its cgroup is read. --rm stays, and forceRemove covers every exit path.
+	runArgs := append([]string{"run", "-d"}, d.lockdownArgs(name, false, state.runtime)[1:]...)
+	runArgs = append(runArgs, "--entrypoint", "node", image, "-e", "setTimeout(() => {}, 30000)")
+	defer d.forceRemove(state.host, name)
+	id, err := docker(runArgs...)
+	if err != nil {
+		return fmt.Errorf("process-limit probe container failed: %w", err)
+	}
+	pidText, err := docker("inspect", "--format", "{{.State.Pid}}", name)
+	if err != nil {
+		return fmt.Errorf("process-limit probe container could not be inspected: %w", err)
+	}
+	pid, err := strconv.Atoi(pidText)
+	if err != nil || pid <= 0 {
+		return fmt.Errorf("docker reported no host process for the process-limit probe container (%q)", bannerFirstLine(pidText))
+	}
+	listing, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return fmt.Errorf("the sandbox's host cgroup is unreadable, so the process limit cannot be proven: %w", err)
+	}
+	path, err := hostPidsMaxPath(string(listing), id)
+	if err != nil {
+		return fmt.Errorf("the sandbox's host cgroup cannot be located, so the process limit cannot be proven: %w", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("the sandbox's host cgroup has no readable pids.max, so the process limit cannot be proven: %w", err)
+	}
+	if err := checkPidsLimit(strings.TrimSpace(string(got)), d.PidsLimit, "on the sandbox's host cgroup"); err != nil {
+		return err
+	}
+	slog.Info("docker smoke: process limit proven on the sandbox's host cgroup (it also counts the runtime's own tasks)",
+		"runtime", state.runtime, "pids_max", d.PidsLimit)
+	return nil
+}
+
+// hostPidsMaxPath resolves the pids.max file of the cgroup a /proc/<pid>/cgroup
+// listing names: the pids controller's line ("N:pids:/path", possibly sharing the
+// line with other controllers) on cgroup v1 or a hybrid host, else the unified line
+// ("0::/path") on cgroup v2. Docker names a container's cgroup after its full ID
+// under both the systemd and cgroupfs drivers, so a path without the ID belongs to
+// some other process.
+func hostPidsMaxPath(listing, containerID string) (string, error) {
+	if len(containerID) < 12 {
+		return "", fmt.Errorf("container ID %q is too short to identify its cgroup", containerID)
+	}
+	var v1, v2 string
+	for _, line := range strings.Split(strings.TrimSpace(listing), "\n") {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		switch {
+		case slices.Contains(strings.Split(parts[1], ","), "pids"):
+			v1 = parts[2]
+		case parts[0] == "0" && parts[1] == "":
+			v2 = parts[2]
+		}
+	}
+	rel, path := v2, filepath.Join("/sys/fs/cgroup", v2, "pids.max")
+	if v1 != "" {
+		rel, path = v1, filepath.Join("/sys/fs/cgroup/pids", v1, "pids.max")
+	}
+	if rel == "" {
+		return "", errors.New("the listing names neither a pids controller nor a unified cgroup")
+	}
+	if !strings.Contains(rel, containerID) {
+		return "", fmt.Errorf("cgroup %q does not name container %s (is plimsolld in another PID namespace?)", bannerFirstLine(rel), containerID[:12])
+	}
+	return path, nil
 }
 
 // checkWritableSet asserts the probe's actually-writable mount set is exactly
@@ -1335,70 +1527,22 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 	return res, nil
 }
 
-// projectStdoutCap bounds the JSON the runner writes back. The runner caps each
-// step's output at 1 MiB and stops on the first failure, so this is generous.
-const projectStdoutCap = 16 << 20
-
-// runnerSentinel must match sandbox/runner.mjs.
-const runnerSentinel = "<<<CRSBX_RESULT>>>"
-
-// runnerReport is the decoded post-sentinel report from docker/runner.mjs.
-type runnerReport struct {
-	Steps              []StepResult
-	Artifacts          []Artifact
-	ArtifactsTruncated bool
-	Err                string // runner-reported structured setup failure; "" = none
+// runnerSteps and runnerArtifacts copy the runner's decoded report into this
+// package's result types (the runner package cannot import this one).
+func runnerSteps(steps []runnerwire.Step) []StepResult {
+	var out []StepResult
+	for _, s := range steps {
+		out = append(out, StepResult(s))
+	}
+	return out
 }
 
-// parseRunnerOutput locates the runner's sentinel-framed JSON report in the
-// container's captured stdout and decodes it. found=false means no sentinel was
-// present (the runner never reported); a sentinel followed by undecodable JSON
-// is (zero report, true, error). Step output precedes the sentinel and is
-// discarded here — the runner's report is the last thing written, so the LAST
-// sentinel is authoritative even when hostile step output printed one earlier.
-func parseRunnerOutput(out string) (runnerReport, bool, error) {
-	idx := strings.LastIndex(out, runnerSentinel)
-	if idx < 0 {
-		return runnerReport{}, false, nil
+func runnerArtifacts(artifacts []runnerwire.Artifact) []Artifact {
+	var out []Artifact
+	for _, a := range artifacts {
+		out = append(out, Artifact(a))
 	}
-	var parsed struct {
-		Steps []struct {
-			Command         string `json:"command"`
-			Stdout          string `json:"stdout"`
-			Stderr          string `json:"stderr"`
-			StdoutTruncated bool   `json:"stdoutTruncated"`
-			StderrTruncated bool   `json:"stderrTruncated"`
-			ExitCode        int    `json:"exitCode"`
-			TimedOut        bool   `json:"timedOut"`
-			DurationMs      int64  `json:"durationMs"`
-		} `json:"steps"`
-		Artifacts []struct {
-			Path    string `json:"path"`
-			Content []byte `json:"content"` // base64 decoded by encoding/json
-		} `json:"artifacts"`
-		ArtifactsTruncated bool   `json:"artifactsTruncated"`
-		Error              string `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(out[idx+len(runnerSentinel):]), &parsed); err != nil {
-		return runnerReport{}, true, err
-	}
-	rep := runnerReport{ArtifactsTruncated: parsed.ArtifactsTruncated, Err: parsed.Error}
-	for _, a := range parsed.Artifacts {
-		rep.Artifacts = append(rep.Artifacts, Artifact{Path: a.Path, Content: a.Content})
-	}
-	for _, s := range parsed.Steps {
-		rep.Steps = append(rep.Steps, StepResult{
-			Command:         s.Command,
-			Stdout:          s.Stdout,
-			Stderr:          s.Stderr,
-			StdoutTruncated: s.StdoutTruncated,
-			StderrTruncated: s.StderrTruncated,
-			ExitCode:        s.ExitCode,
-			TimedOut:        s.TimedOut,
-			Duration:        time.Duration(s.DurationMs) * time.Millisecond,
-		})
-	}
-	return rep, true, nil
+	return out
 }
 
 func (d *DockerSandbox) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult, error) {
@@ -1443,23 +1587,18 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	}
 	defer broker.Close()
 
-	plan := struct {
-		Files []struct {
-			Path    string `json:"path"`
-			Content string `json:"content"`
-		} `json:"files"`
-		Steps         []string `json:"steps"`
-		StepTimeoutMs int64    `json:"stepTimeoutMs"`
-		Artifacts     []string `json:"artifacts"`
-		HostSDK       string   `json:"hostSDK,omitempty"`
-	}{Steps: req.Steps, StepTimeoutMs: timeout.Milliseconds(), Artifacts: req.Artifacts, HostSDK: hostSDKModule(req.Grant)}
-	for _, f := range req.Files {
-		plan.Files = append(plan.Files, struct {
-			Path    string `json:"path"`
-			Content string `json:"content"`
-		}{Path: f.Path, Content: f.Content})
+	// The report key authenticates the runner's report: every process in the
+	// container can write the runner's stdout, so an unsigned report could be forged
+	// (internal/runnerwire). It travels only in the plan on stdin.
+	reportKey, err := runnerwire.NewKey()
+	if err != nil {
+		return ProjectResult{Sandbox: d.Name()}, err
 	}
-	planJSON, err := json.Marshal(plan)
+	plan := runnerwire.Plan{Steps: req.Steps, StepTimeout: timeout, Artifacts: req.Artifacts, HostSDK: hostSDKModule(req.Grant), ReportKey: reportKey}
+	for _, f := range req.Files {
+		plan.Files = append(plan.Files, runnerwire.File(f))
+	}
+	planJSON, err := plan.Encode()
 	if err != nil {
 		return ProjectResult{Sandbox: d.Name()}, err
 	}
@@ -1480,7 +1619,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	cmd := exec.CommandContext(runCtx, "docker", args...)
 	cmd.Stdin = bytes.NewReader(planJSON)
 	var stdout, stderr cappedBuffer
-	stdout.limit = projectStdoutCap
+	stdout.limit = runnerwire.StdoutCap
 	stderr.limit = d.maxOutput()
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -1497,7 +1636,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, runCtx.Err()
 	}
 
-	report, found, parseErr := parseRunnerOutput(stdout.String())
+	report, found, parseErr := runnerwire.Parse(stdout.String(), reportKey)
 	if !found {
 		// The runner never reported. Distinguish two very different causes:
 		//   - docker itself could not START the container (125/126/127 with a
@@ -1512,14 +1651,17 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 			return ProjectResult{Sandbox: d.Name(), Isolation: isolation},
 				fmt.Errorf("docker failed to run the project container (exit %d): %s", exitErr.ExitCode(), strings.TrimSpace(stderr.String()))
 		}
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" && runErr != nil {
-			msg = runErr.Error()
+		// Detail is plimsoll's own words: it reaches the audit line, and the
+		// container's stderr is writable by every process in the sandbox. The exit
+		// code survives (137 is the kernel's kill, for instance an OOM).
+		detail := "the runner did not report"
+		if errors.As(runErr, &exitErr) {
+			detail = fmt.Sprintf("the runner did not report (container exit %d)", exitErr.ExitCode())
 		}
-		if msg == "" {
-			msg = "sandbox produced no result"
-		}
-		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: msg}, nil
+		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: detail}, nil
+	}
+	if errors.Is(parseErr, runnerwire.ErrUnauthenticated) {
+		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: "no authenticated runner report"}, nil
 	}
 	if parseErr != nil {
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: "could not parse sandbox result"}, nil
@@ -1528,33 +1670,25 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	res := ProjectResult{
 		Sandbox:            d.Name(),
 		Isolation:          isolation,
-		Outcome:            ProjectOutcomeCompleted,
-		Steps:              report.Steps,
-		Artifacts:          report.Artifacts,
+		Steps:              runnerSteps(report.Steps),
+		Artifacts:          runnerArtifacts(report.Artifacts),
 		ArtifactsTruncated: report.ArtifactsTruncated,
 		// Metadata-only evidence of the run's brokered host.* calls; nil unless the
-		// run carried a grant that made calls. Never affects the outcome above.
+		// run carried a grant that made calls. Never affects the outcome.
 		CallTrace: broker.traceSnapshot(),
 	}
-	if report.Err != "" {
-		// The runner reported a structured failure around step execution (illegal
-		// file path, unwritable file, over-budget result): request-attributable.
-		res.Outcome, res.Detail = ProjectOutcomeSetupFailed, report.Err
-	}
-	// A step killed by its own time budget is a timed-out run, not a completed
-	// one. Steps stop on first failure, so a timed-out step is where the plan
-	// stopped. Without this the truth lived only on StepResult.TimedOut and a
-	// caller keying on Outcome would read a hung step as a clean run; RunModule
-	// already classified the same event as timed_out, and the two operations
-	// must not disagree about what happened.
-	if res.Outcome == ProjectOutcomeCompleted {
-		for i, st := range res.Steps {
-			if st.TimedOut {
-				res.Outcome = ProjectOutcomeTimedOut
-				res.Detail = fmt.Sprintf("step %d exceeded its time budget", i+1)
-				break
-			}
-		}
+	// A runner-reported failure around step execution (illegal file path,
+	// unwritable file, over-budget result) is request-attributable: setup_failed.
+	// A step killed by its own time budget is a timed-out run, not a completed one;
+	// RunModule classifies the same event as timed_out, and the two operations must
+	// not disagree about what happened.
+	outcome, detail := report.Outcome()
+	res.Outcome, res.Detail = ProjectOutcomeCompleted, detail
+	switch outcome {
+	case runnerwire.SetupFailed:
+		res.Outcome = ProjectOutcomeSetupFailed
+	case runnerwire.TimedOut:
+		res.Outcome = ProjectOutcomeTimedOut
 	}
 	return res, nil
 }
@@ -1567,7 +1701,7 @@ func (d *DockerSandbox) SupportsModules() bool { return d.ModuleImage != "" }
 // and the run captures as its one artifact.
 const moduleResultsArtifact = "results.bin"
 
-// RunModule runs a model baked into ModuleImage once per row through the same
+// RunModule runs a simulator baked into ModuleImage once per row through the same
 // runner and lockdown as a project: the parameter table is written into /work as
 // text (shortest round-trip decimals, so every value reaches the worker exactly),
 // one step runs the worker in table mode with the result budget on its command
@@ -1583,7 +1717,7 @@ func (d *DockerSandbox) RunModule(ctx context.Context, req ModuleRequest) (Modul
 	}
 	if d.ModuleImage == "" {
 		return ModuleResult{Sandbox: d.Name(), Isolation: d.IsolationClass()},
-			fmt.Errorf("%w: no module image is configured (SANDBOX_DOCKER_MODULE_IMAGE)", ErrUnsupported)
+			refused(fmt.Errorf("%w: no module image is configured (SANDBOX_DOCKER_MODULE_IMAGE)", ErrUnsupported))
 	}
 	if err := d.ensurePreflight(ctx); err != nil {
 		return ModuleResult{Sandbox: d.Name(), Isolation: d.IsolationClass()}, err

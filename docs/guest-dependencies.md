@@ -154,9 +154,10 @@ the fix is a deliberate bump of the pins to what
 happened on the first build of the file, 2026-09-18, when the tag moved from Alpine
 3.23 to 3.24 between the trial and the build.
 
-### A compiled model is image content too
+<a id="a-compiled-model-is-image-content-too"></a>
+### A compiled simulator is image content too
 
-A physical model compiled to WebAssembly takes the same path as an interpreter or
+A physical simulator compiled to WebAssembly takes the same path as an interpreter or
 a package: a file in the image root, named by a step.
 [docker/sim.Dockerfile](../docker/sim.Dockerfile) is that recipe, built by
 `make docker-images` as `plimsoll/sandbox-sim:latest`. The image ships:
@@ -165,21 +166,21 @@ a package: a file in the image root, named by a step.
   ([docker/sim/worker.c](../docker/sim/worker.c)). It loads one AOT-compiled
   module once, runs one fresh instance per parameter set, and writes one binary
   artifact: per run an int32 step count, then the module's own `sim_width()`
-  float64 outputs per step (two for the Reference models, three for Lorenz).
+  float64 outputs per step (two for the Reference FMUs, three for Lorenz).
 - `/models/vanderpol.so` and `/models/bouncingball.so`: two Modelica Reference
   FMUs (FMI 3.0, C source, BSD-2) compiled to wasm32-wasi by wasi-sdk 27 behind a
   small shim ([docker/sim/shim.c](../docker/sim/shim.c)), then AOT-compiled by
-  WasmEdge 0.17.1 into shared objects; and `/models/lorenz.so`, a Lorenz model
+  WasmEdge 0.17.1 into shared objects; and `/models/lorenz.so`, a Lorenz simulator
   of our own in the same style ([docker/sim/models/Lorenz](../docker/sim/models/Lorenz)),
   there because chaos turns any one-ulp arithmetic difference into a checksum miss.
   `/models/greedy.so` is a test fixture proving the worker caps every instance at
   256 pages (16 MiB): a row that asks for more fails alone.
 - `/models/cartpole.wasm` and `/oracle/run.mjs`: the physics oracle. A cart-pole
-  plant with the force as an input, kept as WebAssembly because Node, not the
+  simulator with the force as an input, kept as WebAssembly because Node, not the
   worker, loads it, and the judge that runs a caller's controller as a separate
   process against it and fingerprints the trajectory. `examples/oracle` is the
   demonstration; the page it writes replays the recorded runs.
-- Seven more plants in the same form, each a `.wasm` file under `/models` that
+- Seven more simulators in the same form, each a `.wasm` file under `/models` that
   the judge (`/oracle/judge.mjs`) steps one tick at a time, with the controller in
   its own process. The sources are under [docker/sim/models](../docker/sim/models):
   - `shower.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/shower/index.html)): a mixing valve, a pipe modelled as a transport delay, and a
@@ -198,9 +199,9 @@ a package: a file in the image root, named by a step.
     measurement.
   - `slits.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/double-slit/index.html)): an aperture of sixteen phase-plate cells and a
     64-point screen; the controller sets all sixteen phases to produce a target
-    pattern, and the plant also exports the exact output Jacobian.
+    pattern, and the simulator also exports the exact output Jacobian.
 
-  Each replay page runs two hand-written controllers against the plant on one
+  Each replay page runs two hand-written controllers against the simulator on one
   scenario through the project API, a draft that fails and an accepted one that
   passes, and shows both trajectories and their fingerprints. Those controllers
   and their scoring programs are not published; a controller is the caller's.
@@ -209,25 +210,25 @@ a package: a file in the image root, named by a step.
 - `libwasmedge`, the runner and `USER node`, on `node:22-bookworm-slim` rather than
   the Alpine base the other images share: WasmEdge's release binaries are glibc.
 
-A step names the worker, a model and the sweep:
+A step names the worker, a simulator and the sweep:
 
 ```sh
 sim-worker /models/vanderpol.so 100 1 20 out.bin 0.1 5.0 2.0 0.0
-#          model               N  threads t_end out  p0min p0max p1 p2
+#          simulator           N  threads t_end out  p0min p0max p1 p2
 ```
 
 and `out.bin` comes back as an artifact. Three things in that file are load-bearing:
 
-- **The model lives in the image root, for the same reason NumPy does.** An AOT
-  model is machine code that WasmEdge loads with `dlopen`, so it must be mapped
+- **The simulator lives in the image root, for the same reason NumPy does.** An AOT
+  module is machine code that WasmEdge loads with `dlopen`, so it must be mapped
   executable, and every writable mount of a run is `noexec`.
   `sandbox/docker_sim_test.go` proves both halves under the shipped seccomp
-  profile: the sweeps run from `/models`, and a byte-identical copy of the model
-  under `/work` is refused by the loader. Register a model = build an image, by
+  profile: the sweeps run from `/models`, and a byte-identical copy of the simulator
+  under `/work` is refused by the loader. Register a simulator = build an image, by
   design rather than as a workaround.
 - **Bit-identity is the test, not a tolerance.** The test compares the SHA-256 of
   each sweep's artifact with a native C run of the same shim: 100 parameter sets
-  of each Reference model, state events included, and 50 Lorenz rows of 60 s
+  of each Reference FMU, state events included, and 50 Lorenz rows of 60 s
   match to the byte. WebAssembly's
   floating-point semantics (no fused multiply-add outside relaxed SIMD, one
   rounding per operation) are what turn a numeric comparison into a checksum.
@@ -240,13 +241,13 @@ and `out.bin` comes back as an artifact. Three things in that file are load-bear
 
 The same image also backs the typed operation. Point a daemon at it with
 `SANDBOX_DOCKER_MODULE_IMAGE=plimsoll/sandbox-sim:latest` and a `Run` with a `module` payload takes a
-model id and a parameter table (one row per instance) and returns every row's
+`model` ID and a parameter table (one row per instance) and returns every row's
 status and outputs, decoded from the worker's versioned record; `Describe` then
 reports `supports_module`. It is the project machinery with one step and one
 artifact, so the same limits apply (8 MiB of results, the project timeout), and a
 table whose results could not fit is refused before any row runs rather than
-truncated. Nothing about the image changes between the two paths: the model id
-`vanderpol` is `/models/vanderpol.so`, and adding a model is adding a line to this
+truncated. Nothing about the image changes between the two paths: the `model` ID
+`vanderpol` is `/models/vanderpol.so`, and adding a simulator is adding a line to this
 recipe's `wasm` and `build` stages.
 
 ### A compiler is image content too

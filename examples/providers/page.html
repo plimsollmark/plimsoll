@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Same run, different sandboxes: one fingerprint on every provider</title>
-<meta name="description" content="The physics oracle's run, on every plimsoll provider this machine could reach: a local locked-down container, E2B Firecracker microVMs and Docker Cloud Sandboxes. Different isolation, different Node versions, one trajectory fingerprint.">
+<meta name="description" content="The physics oracle's run on every plimsoll provider in reach: runc and gVisor containers, an NVIDIA OpenShell sandbox, E2B and Docker Cloud microVMs. One trajectory fingerprint.">
 <link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/providers/index.html">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="plimsoll">
 <meta property="og:title" content="Same run, different sandboxes: one fingerprint on every provider">
-<meta property="og:description" content="The physics oracle's run, on every plimsoll provider this machine could reach: a local locked-down container, E2B Firecracker microVMs and Docker Cloud Sandboxes. Different isolation, different Node versions, one trajectory fingerprint.">
+<meta property="og:description" content="The physics oracle's run on every plimsoll provider in reach: runc and gVisor containers, an NVIDIA OpenShell sandbox, E2B and Docker Cloud microVMs. One trajectory fingerprint.">
 <meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/providers/index.html">
 <meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/providers-example.png">
 <meta property="og:image:width" content="1280">
@@ -96,7 +96,7 @@
 <h2>How it works</h2>
 <ol>
 <li><b>The same files everywhere.</b> The controller, the judge (<code>run.mjs</code>) and the plant (<code>cartpole.wasm</code>, sent base64 encoded and decoded by the first step) are ordinary project files, so no provider needs a special image. Any image with Node 20 or later can judge the run. One more file, a one-line <code>package.json</code> declaring ES modules, is what made that true: Node 22 recognizes the controller's <code>import</code> syntax on its own, Node 20 does not, and the first E2B attempt failed on exactly that.</li>
-<li><b>The same factory the daemon uses.</b> Each provider is built by plimsoll's provider factory from its own settings, must pass its readiness checks and startup smoke test before its run counts, and then runs three steps: print the Node version, decode the plant, run the judge.</li>
+<li><b>Built the way the daemon builds them.</b> Each provider is built from its own settings by the constructor plimsolld uses (plimsoll's provider factory, or the OpenShell provider's own, since the daemon builds that one itself), must pass its readiness checks and startup smoke test before its run counts, and then runs three steps: print the Node version, decode the plant, run the judge.</li>
 <li><b>The same check.</b> The judge prints the SHA-256 of the record it wrote; the program hashes the returned artifact itself, refuses a mismatch, and compares the result with the fingerprint the oracle page published.</li>
 </ol>
 
@@ -105,9 +105,9 @@
 <li>A reported isolation tier is configuration plus behavioral tests, never hardware attestation.</li>
 <li>A controller that calls <code>Math.sin</code> would tie its fingerprint to the JavaScript engine, and providers with different Node versions could then disagree. This controller is chosen not to.</li>
 <li>Providers marked NOT RUN were not reachable from the machine that wrote this page; the reason is in the row.</li>
-<li>Identity, not accuracy: a matching fingerprint proves the same computation, not that the model is physically right.</li>
+<li>Identity, not accuracy: a matching fingerprint proves the same computation, not that the simulator is physically accurate.</li>
 </ul>
-<p class="note">Reproduce: <code>make docker-images &amp;&amp; go run ./examples/providers</code> in the plimsoll repository, with docker, and with the E2B and Docker Cloud settings in the environment for those rows. The page is written from the run.</p>
+<p class="note">Reproduce: <code>make docker-images &amp;&amp; go run ./examples/providers</code> in the plimsoll repository, with docker, and with the OpenShell, E2B and Docker Cloud settings in the environment for those rows. The page is written from the run. plimsoll is an independent project, not affiliated with or endorsed by NVIDIA, E2B or Docker.</p>
 
 <script type="application/json" id="data">{{.Data}}</script>
 <script>

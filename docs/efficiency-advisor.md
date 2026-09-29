@@ -83,7 +83,8 @@ client exposes as `Result.Advice`; findings with no granted route stay on operat
 surfaces whatever the mode. `advice_retention: none | aggregate | detailed` chooses what
 reaches the durable audit log, from nothing to one metadata-only record per finding,
 which is the stream [prospector-report](../cmd/prospector-report) renders as HTML.
-`/metrics` carries bounded counts by profile, pattern, severity and remedy.
+`/metrics` carries bounded counts by profile, pattern, severity and remedy, on the
+daemon's separate metrics listener (`PLIMSOLL_METRICS_ADDR`, this host only by default).
 
 Two constraints hold on every surface. Advice is **evidence, never authority**: it
 is computed after dispatch over the already-final result, so a run with advice is

@@ -11,7 +11,7 @@ option go_package = "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1;plimsol
 // SandboxService runs untrusted, agent-authored code in an isolated runtime.
 service SandboxService {
   // Run executes exactly one operation: a JavaScript snippet, a multi-file
-  // project, or a compiled model over a parameter table. The request is an
+  // project, or a compiled simulator over a parameter table. The request is an
   // envelope (protocol number, isolation floor, trace id, timeout) around a
   // oneof payload; the response is an envelope (provider, isolation evidence,
   // duration) around the matching result. One procedure, one scope, one place
@@ -32,6 +32,20 @@ service SandboxService {
   // structural: they do not prove that the selected image/template contains a
   // particular toolchain or model.
   rpc Describe(DescribeRequest) returns (DescribeResponse);
+  // OpenSession starts a session: one sandbox kept for many calls, in which files
+  // a call writes persist for later calls and no process a call starts outlives
+  // it. The session belongs to the principal that opened it; its ID is a
+  // capability that only that principal can use. Each request states the
+  // protocol number and gets Run's check. A daemon without sessions answers
+  // Unimplemented, marked not dispatched.
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  // SessionRun runs one call in an open session. Its record is chained to the
+  // session's previous call (RunRecord's session fields).
+  rpc SessionRun(SessionRunRequest) returns (SessionRunResponse);
+  // CloseSession ends a session, or collects the end of one that ended by
+  // itself, and states how many calls it executed and the last record's digest,
+  // which a harness signs so a cut chain is told from a complete one.
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
 }
 
 message DescribeRequest {}
@@ -57,6 +71,52 @@ message DescribeResponse {
   // The protocol number this daemon serves (see Run). A client compares it with
   // its own before relying on this daemon; Run checks it again on every request.
   uint32 protocol = 9;
+  // What this daemon states about where each payload kind runs, and the per-run
+  // resource envelope. Informational, like the tier: configuration and provider
+  // evidence, never runtime attestation, and nothing in Run reads them. A router
+  // uses them so that two backends with the same tier are not taken for the
+  // same environment.
+  PayloadEnvironment javascript_environment = 10;
+  PayloadEnvironment project_environment = 11;
+  PayloadEnvironment module_environment = 12;
+  RunResources resources = 13;
+  // policy names the sandbox policy the provider verifies before every run, by a
+  // content digest prefixed with how it was derived ("openshell-policy:sha256:",
+  // the digest OpenShell's gateway itself reports for a policy). Empty when the
+  // provider has no such object. Informational, like the environments.
+  string policy = 14;
+  // Whether OpenSession works here: the provider keeps sessions and the operator
+  // enabled them. The lifetime and idle timeout are the daemon's; a request may
+  // ask for shorter ones.
+  bool supports_sessions = 15;
+  uint32 session_lifetime_ms = 16;
+  uint32 session_idle_timeout_ms = 17;
+}
+
+// PayloadEnvironment is one payload kind's environment as the daemon states it.
+message PayloadEnvironment {
+  // identity names the software the code starts in, set only when that name is
+  // content-addressed (a verified image ID, an image digest, an interpreter
+  // hash), prefixed by how it was derived ("docker-image:", "dockercloud-image:",
+  // "quickjs-wasm:"). Equal strings mean the same software; different or empty
+  // strings claim nothing. A mutable name (a tag, a template name) is never sent.
+  string identity = 1;
+  // max_timeout_ms is the longest one run of this kind may take on this daemon
+  // (the provider's ceiling, capped by the daemon's own). 0 = the kind is
+  // unsupported or no ceiling is stated.
+  uint32 max_timeout_ms = 2;
+}
+
+// RunResources is the per-run resource envelope the operator configured. Each
+// provider refuses to start with a dimension it cannot enforce, so a non-zero
+// value is enforced; 0 means the provider's default, which is not stated here.
+message RunResources {
+  uint32 memory_mb = 1;
+  double cpus = 2;
+  uint32 pids = 3;
+  // disk_mb is the run's writable-storage budget (on docker, the aggregate of
+  // every writable mount).
+  uint32 disk_mb = 4;
 }
 
 // AdviceFinding is one metadata-only efficiency observation about a run's brokered
@@ -144,12 +204,56 @@ message RunResponse {
   // execution may already have happened and is never a safe retry signal.
   string isolation = 2;
   int64 duration_ms = 3; // wall time of the run as the daemon measured it
+  // record is the daemon's statement of this run, for a harness to check and
+  // sign (see RunRecord). Every answer carries one, and the official client
+  // refuses an answer without it. Nothing a daemon executes depends on it, so
+  // it did not move the protocol number.
+  RunRecord record = 4;
   // Exactly one result, of the payload's kind.
   oneof result {
     JavaScriptResult javascript = 10;
     ProjectResult project = 11;
     ModuleResult module = 12;
   }
+}
+
+// RunRecord states what one run was asked, what it answered, the evidence it
+// ran under, and when, as digests a harness outside the daemon can recompute
+// from what it sent and received. The daemon holds no key and signs nothing: the
+// harness checks the digests and signs the record (a DSSE envelope around an
+// in-toto statement), so a key is never one engine escape away from forging
+// records. Every digest is lowercase hex SHA-256 over the length-prefixed
+// encoding specified in docs/run-records.md, not over this message's bytes, so
+// any language can reproduce it without a protobuf or JSON canonicalization
+// library.
+message RunRecord {
+  // version is the encoding version; 1. A verifier refuses a version it does
+  // not know rather than guessing at its fields.
+  uint32 version = 1;
+  // request_sha256 covers what the caller sent: the protocol number, floor,
+  // timeout and payload, never the trace id.
+  string request_sha256 = 2;
+  // result_sha256 covers the result as sent: exit codes or outcome, output,
+  // truncation flags, steps, artifacts, module rows; never a duration or advice.
+  string result_sha256 = 3;
+  string provider = 4; // RunResponse.sandbox
+  string isolation = 5; // RunResponse.isolation
+  // environment is the payload kind's identity as Describe states it (a
+  // content-addressed image or interpreter), empty when none is stated.
+  string environment = 6;
+  string policy = 7; // DescribeResponse.policy
+  // When the daemon received the request and when it finished the result.
+  int64 started_unix_ms = 8;
+  int64 ended_unix_ms = 9;
+  // The session fields chain a session's calls; all three are empty or zero for
+  // a single run. session is the SHA-256 of the session ID (the ID itself is a
+  // capability and is never recorded), sequence counts the session's executed
+  // calls from 1, and previous_sha256 is the record_sha256 of the call before.
+  string session = 10;
+  uint64 sequence = 11;
+  string previous_sha256 = 12;
+  // record_sha256 covers every field above.
+  string record_sha256 = 13;
 }
 
 message JavaScriptResult {
@@ -254,13 +358,13 @@ message ModuleRow {
   repeated double values = 1;
 }
 
-// ModuleRun runs a compiled physical model (an AOT-compiled WebAssembly module
+// ModuleRun runs a compiled physical simulator (an AOT-compiled WebAssembly module
 // baked into the provider's module image) once per parameter row. No grant: a
-// model has no host API, and this payload cannot express one.
+// simulator has no host API, and this payload cannot express one.
 message ModuleRun {
   // model is an image-relative id ([A-Za-z0-9][A-Za-z0-9._-]{0,63}); the provider
-  // maps it to a model baked into its module image. A caller can only select a
-  // model the operator built in: no module, no code, arrives over the wire.
+  // maps it to a simulator baked into its module image. A caller can only select a
+  // simulator the operator built in: no module, no code, arrives over the wire.
   string model = 1;
   repeated ModuleRow rows = 2;
   double end_time = 3; // simulation horizon, > 0
@@ -290,4 +394,114 @@ message ModuleResult {
   // Bytes for the same reason as JavaScriptResult.stdout.
   bytes stdout = 7;
   bytes stderr = 8;
+}
+
+message OpenSessionRequest {
+  uint32 protocol = 1; // see Run
+  // The floor for the whole session, checked at open against the provider's
+  // evidence; each call may state its own, checked against the tier measured
+  // at open.
+  string minimum_isolation = 2;
+  string trace_id = 3; // see RunRequest.trace_id
+  // Shorter than the daemon's own, or 0 for the daemon's.
+  uint32 lifetime_ms = 4;
+  uint32 idle_timeout_ms = 5;
+}
+
+message OpenSessionResponse {
+  // session_id is 128 random bits in hex: a capability. Send it only to the
+  // daemon; it is never logged or recorded, and records carry its SHA-256.
+  string session_id = 1;
+  string session = 2; // the SHA-256 of session_id, as records carry it
+  string sandbox = 3; // the provider
+  string isolation = 4; // the tier measured at open
+  int64 expires_unix_ms = 5;
+  uint32 idle_timeout_ms = 6; // after this long without a call the sandbox is suspended
+}
+
+// SessionRunRequest is a RunRequest with a session ID, for a call in a session.
+// It is a separate message so that a daemon that predates sessions refuses it
+// (Unimplemented) instead of dropping the ID and running the payload alone. A
+// module payload has no session form.
+message SessionRunRequest {
+  uint32 protocol = 1;
+  string minimum_isolation = 2;
+  string trace_id = 3;
+  int32 timeout_ms = 4;
+  string session_id = 5;
+  oneof payload {
+    JavaScriptRun javascript = 10;
+    ProjectRun project = 11;
+  }
+}
+
+message SessionRunResponse {
+  RunResponse run = 1; // its record carries the session's chain fields
+  // Set when the session ended during or after this call (its lifetime passed,
+  // its disk budget was exceeded, its sandbox's main process ended, or the
+  // boundary between calls could not be established); later calls are refused.
+  SessionEnd ended = 2;
+  string end_detail = 3;
+}
+
+message CloseSessionRequest {
+  uint32 protocol = 1;
+  string session_id = 2;
+}
+
+message CloseSessionResponse {
+  string session = 1; // the fingerprint
+  // The calls the session executed and returned, with the last one's
+  // record_sha256 (empty when there were none).
+  uint64 calls = 2;
+  string last_record_sha256 = 3;
+  // Why the session ended: CLOSED for this request, or an earlier end.
+  SessionEnd ended = 4;
+}
+
+// SessionEnd says why a session ended.
+enum SessionEnd {
+  SESSION_END_UNSPECIFIED = 0; // not ended
+  SESSION_END_CLOSED = 1;
+  SESSION_END_EXPIRED = 2;
+  SESSION_END_DISK_EXCEEDED = 3;
+  SESSION_END_MAIN_PROCESS_ENDED = 4;
+  SESSION_END_BOUNDARY_FAILED = 5;
+  SESSION_END_SANDBOX_CHANGED = 6;
+  SESSION_END_SHUTDOWN = 7;
+}
+
+// SessionEnded is attached as an error detail to a SessionRun refused because
+// its session has ended; it carries NotDispatched too, since nothing ran.
+message SessionEnded {
+  SessionEnd reason = 1;
+  string detail = 2;
+}
+
+// NotDispatched is attached as an error detail to a Run (or Describe) error that
+// was raised before any code was dispatched: nothing executed, so retrying the
+// request or sending it to another daemon cannot run it twice. Only refusals that
+// provably ran nothing carry it. An error WITHOUT this detail may have followed
+// execution, whatever its status code, and is never a safe automatic-retry signal.
+message NotDispatched {
+  NotDispatchedReason reason = 1;
+}
+
+// NotDispatchedReason says why, in the terms a caller acts on: whether another
+// daemon could take the same request.
+enum NotDispatchedReason {
+  NOT_DISPATCHED_REASON_UNSPECIFIED = 0;
+  // Malformed or out of bounds. Every daemon refuses it the same way.
+  NOT_DISPATCHED_REASON_REQUEST = 1;
+  // Authentication, scope, or a grant profile's caller list. The caller's
+  // identity is the problem, not this daemon.
+  NOT_DISPATCHED_REASON_PERMISSION = 2;
+  // The daemon serves another protocol number.
+  NOT_DISPATCHED_REASON_PROTOCOL = 3;
+  // This daemon's provider cannot perform the operation, or is disabled.
+  NOT_DISPATCHED_REASON_UNSUPPORTED = 4;
+  // The provider's current isolation evidence is below the request's floor.
+  NOT_DISPATCHED_REASON_ISOLATION = 5;
+  // Shed by admission or a rate limit; retry later or elsewhere.
+  NOT_DISPATCHED_REASON_CAPACITY = 6;
 }

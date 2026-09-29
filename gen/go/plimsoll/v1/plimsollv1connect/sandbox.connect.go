@@ -41,12 +41,21 @@ const (
 	SandboxServiceRunProcedure = "/plimsoll.v1.SandboxService/Run"
 	// SandboxServiceDescribeProcedure is the fully-qualified name of the SandboxService's Describe RPC.
 	SandboxServiceDescribeProcedure = "/plimsoll.v1.SandboxService/Describe"
+	// SandboxServiceOpenSessionProcedure is the fully-qualified name of the SandboxService's
+	// OpenSession RPC.
+	SandboxServiceOpenSessionProcedure = "/plimsoll.v1.SandboxService/OpenSession"
+	// SandboxServiceSessionRunProcedure is the fully-qualified name of the SandboxService's SessionRun
+	// RPC.
+	SandboxServiceSessionRunProcedure = "/plimsoll.v1.SandboxService/SessionRun"
+	// SandboxServiceCloseSessionProcedure is the fully-qualified name of the SandboxService's
+	// CloseSession RPC.
+	SandboxServiceCloseSessionProcedure = "/plimsoll.v1.SandboxService/CloseSession"
 )
 
 // SandboxServiceClient is a client for the plimsoll.v1.SandboxService service.
 type SandboxServiceClient interface {
 	// Run executes exactly one operation: a JavaScript snippet, a multi-file
-	// project, or a compiled model over a parameter table. The request is an
+	// project, or a compiled simulator over a parameter table. The request is an
 	// envelope (protocol number, isolation floor, trace id, timeout) around a
 	// oneof payload; the response is an envelope (provider, isolation evidence,
 	// duration) around the matching result. One procedure, one scope, one place
@@ -67,6 +76,20 @@ type SandboxServiceClient interface {
 	// structural: they do not prove that the selected image/template contains a
 	// particular toolchain or model.
 	Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error)
+	// OpenSession starts a session: one sandbox kept for many calls, in which files
+	// a call writes persist for later calls and no process a call starts outlives
+	// it. The session belongs to the principal that opened it; its ID is a
+	// capability that only that principal can use. Each request states the
+	// protocol number and gets Run's check. A daemon without sessions answers
+	// Unimplemented, marked not dispatched.
+	OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error)
+	// SessionRun runs one call in an open session. Its record is chained to the
+	// session's previous call (RunRecord's session fields).
+	SessionRun(context.Context, *connect.Request[v1.SessionRunRequest]) (*connect.Response[v1.SessionRunResponse], error)
+	// CloseSession ends a session, or collects the end of one that ended by
+	// itself, and states how many calls it executed and the last record's digest,
+	// which a harness signs so a cut chain is told from a complete one.
+	CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error)
 }
 
 // NewSandboxServiceClient constructs a client for the plimsoll.v1.SandboxService service. By
@@ -92,13 +115,34 @@ func NewSandboxServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sandboxServiceMethods.ByName("Describe")),
 			connect.WithClientOptions(opts...),
 		),
+		openSession: connect.NewClient[v1.OpenSessionRequest, v1.OpenSessionResponse](
+			httpClient,
+			baseURL+SandboxServiceOpenSessionProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("OpenSession")),
+			connect.WithClientOptions(opts...),
+		),
+		sessionRun: connect.NewClient[v1.SessionRunRequest, v1.SessionRunResponse](
+			httpClient,
+			baseURL+SandboxServiceSessionRunProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("SessionRun")),
+			connect.WithClientOptions(opts...),
+		),
+		closeSession: connect.NewClient[v1.CloseSessionRequest, v1.CloseSessionResponse](
+			httpClient,
+			baseURL+SandboxServiceCloseSessionProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("CloseSession")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // sandboxServiceClient implements SandboxServiceClient.
 type sandboxServiceClient struct {
-	run      *connect.Client[v1.RunRequest, v1.RunResponse]
-	describe *connect.Client[v1.DescribeRequest, v1.DescribeResponse]
+	run          *connect.Client[v1.RunRequest, v1.RunResponse]
+	describe     *connect.Client[v1.DescribeRequest, v1.DescribeResponse]
+	openSession  *connect.Client[v1.OpenSessionRequest, v1.OpenSessionResponse]
+	sessionRun   *connect.Client[v1.SessionRunRequest, v1.SessionRunResponse]
+	closeSession *connect.Client[v1.CloseSessionRequest, v1.CloseSessionResponse]
 }
 
 // Run calls plimsoll.v1.SandboxService.Run.
@@ -111,10 +155,25 @@ func (c *sandboxServiceClient) Describe(ctx context.Context, req *connect.Reques
 	return c.describe.CallUnary(ctx, req)
 }
 
+// OpenSession calls plimsoll.v1.SandboxService.OpenSession.
+func (c *sandboxServiceClient) OpenSession(ctx context.Context, req *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error) {
+	return c.openSession.CallUnary(ctx, req)
+}
+
+// SessionRun calls plimsoll.v1.SandboxService.SessionRun.
+func (c *sandboxServiceClient) SessionRun(ctx context.Context, req *connect.Request[v1.SessionRunRequest]) (*connect.Response[v1.SessionRunResponse], error) {
+	return c.sessionRun.CallUnary(ctx, req)
+}
+
+// CloseSession calls plimsoll.v1.SandboxService.CloseSession.
+func (c *sandboxServiceClient) CloseSession(ctx context.Context, req *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error) {
+	return c.closeSession.CallUnary(ctx, req)
+}
+
 // SandboxServiceHandler is an implementation of the plimsoll.v1.SandboxService service.
 type SandboxServiceHandler interface {
 	// Run executes exactly one operation: a JavaScript snippet, a multi-file
-	// project, or a compiled model over a parameter table. The request is an
+	// project, or a compiled simulator over a parameter table. The request is an
 	// envelope (protocol number, isolation floor, trace id, timeout) around a
 	// oneof payload; the response is an envelope (provider, isolation evidence,
 	// duration) around the matching result. One procedure, one scope, one place
@@ -135,6 +194,20 @@ type SandboxServiceHandler interface {
 	// structural: they do not prove that the selected image/template contains a
 	// particular toolchain or model.
 	Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error)
+	// OpenSession starts a session: one sandbox kept for many calls, in which files
+	// a call writes persist for later calls and no process a call starts outlives
+	// it. The session belongs to the principal that opened it; its ID is a
+	// capability that only that principal can use. Each request states the
+	// protocol number and gets Run's check. A daemon without sessions answers
+	// Unimplemented, marked not dispatched.
+	OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error)
+	// SessionRun runs one call in an open session. Its record is chained to the
+	// session's previous call (RunRecord's session fields).
+	SessionRun(context.Context, *connect.Request[v1.SessionRunRequest]) (*connect.Response[v1.SessionRunResponse], error)
+	// CloseSession ends a session, or collects the end of one that ended by
+	// itself, and states how many calls it executed and the last record's digest,
+	// which a harness signs so a cut chain is told from a complete one.
+	CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error)
 }
 
 // NewSandboxServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -156,12 +229,36 @@ func NewSandboxServiceHandler(svc SandboxServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sandboxServiceMethods.ByName("Describe")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sandboxServiceOpenSessionHandler := connect.NewUnaryHandler(
+		SandboxServiceOpenSessionProcedure,
+		svc.OpenSession,
+		connect.WithSchema(sandboxServiceMethods.ByName("OpenSession")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sandboxServiceSessionRunHandler := connect.NewUnaryHandler(
+		SandboxServiceSessionRunProcedure,
+		svc.SessionRun,
+		connect.WithSchema(sandboxServiceMethods.ByName("SessionRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sandboxServiceCloseSessionHandler := connect.NewUnaryHandler(
+		SandboxServiceCloseSessionProcedure,
+		svc.CloseSession,
+		connect.WithSchema(sandboxServiceMethods.ByName("CloseSession")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/plimsoll.v1.SandboxService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SandboxServiceRunProcedure:
 			sandboxServiceRunHandler.ServeHTTP(w, r)
 		case SandboxServiceDescribeProcedure:
 			sandboxServiceDescribeHandler.ServeHTTP(w, r)
+		case SandboxServiceOpenSessionProcedure:
+			sandboxServiceOpenSessionHandler.ServeHTTP(w, r)
+		case SandboxServiceSessionRunProcedure:
+			sandboxServiceSessionRunHandler.ServeHTTP(w, r)
+		case SandboxServiceCloseSessionProcedure:
+			sandboxServiceCloseSessionHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -177,4 +274,16 @@ func (UnimplementedSandboxServiceHandler) Run(context.Context, *connect.Request[
 
 func (UnimplementedSandboxServiceHandler) Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("plimsoll.v1.SandboxService.Describe is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) OpenSession(context.Context, *connect.Request[v1.OpenSessionRequest]) (*connect.Response[v1.OpenSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("plimsoll.v1.SandboxService.OpenSession is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) SessionRun(context.Context, *connect.Request[v1.SessionRunRequest]) (*connect.Response[v1.SessionRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("plimsoll.v1.SandboxService.SessionRun is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("plimsoll.v1.SandboxService.CloseSession is not implemented"))
 }

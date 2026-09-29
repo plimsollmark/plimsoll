@@ -8,7 +8,9 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -95,20 +97,6 @@ func loadLimiterConfig(getenv func(string) string, providerName string, perRunMe
 	return limiterConfig{MaxConcurrent: maxConcurrent, PerKey: perKey, RatePerMin: ratePerMin, Burst: burst}, nil
 }
 
-// strictBoolEnv parses an opt-in boolean env var; anything but 0/1/false/true
-// (or empty = false) is a startup error, so a typo can never silently disable a
-// safety opt-in.
-func strictBoolEnv(getenv func(string) string, key string) (bool, error) {
-	switch strings.ToLower(strings.TrimSpace(getenv(key))) {
-	case "", "0", "false":
-		return false, nil
-	case "1", "true":
-		return true, nil
-	default:
-		return false, fmt.Errorf("%s must be one of 0, 1, false, or true", key)
-	}
-}
-
 // tlsConfigFromEnv resolves the optional server certificate pair
 // (PLIMSOLL_TLS_CERT / PLIMSOLL_TLS_KEY). Both-or-neither: a half-configured
 // pair is a startup error, and an unloadable pair fails now rather than on the
@@ -127,6 +115,32 @@ func tlsConfigFromEnv(getenv func(string) string) (*tls.Config, error) {
 		return nil, fmt.Errorf("load TLS keypair: %w", err)
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}, nil
+}
+
+// defaultMetricsAddr is where /metrics listens unless PLIMSOLL_METRICS_ADDR says
+// otherwise: the loopback address and port 9464, OpenTelemetry's defaults for a
+// Prometheus exporter (OTEL_EXPORTER_PROMETHEUS_HOST=localhost,
+// OTEL_EXPORTER_PROMETHEUS_PORT=9464). Nothing off this host can read it until an
+// operator binds another address.
+const defaultMetricsAddr = "127.0.0.1:9464"
+
+// metricsAddrWith resolves the metrics listener's address; "" means metrics are
+// off. The endpoint has no authentication and its labels name grant profiles and
+// route templates, so it never shares the RPC listener and defaults to loopback.
+// The address is checked for a port here, so a bare "9464" fails naming the
+// variable instead of as a listen error.
+func metricsAddrWith(getenv func(string) string) (string, error) {
+	raw := strings.TrimSpace(getenv("PLIMSOLL_METRICS_ADDR"))
+	switch {
+	case raw == "":
+		return defaultMetricsAddr, nil
+	case strings.EqualFold(raw, "off"):
+		return "", nil
+	}
+	if _, _, err := net.SplitHostPort(raw); err != nil {
+		return "", fmt.Errorf("PLIMSOLL_METRICS_ADDR=%q must be host:port or off: %w", raw, err)
+	}
+	return raw, nil
 }
 
 // loopbackAddr reports whether a listen address can only be reached from this
@@ -151,6 +165,7 @@ type hardenedFacts struct {
 	MultiClientAuth bool                   // PLIMSOLL_CLIENTS_FILE verifier loaded
 	TLS             bool                   // serving TLS
 	Addr            string                 // listen address
+	MetricsAddr     string                 // metrics listen address; "" = metrics off
 	RatePerMin      int                    // effective per-caller rate limit
 }
 
@@ -188,11 +203,19 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	if !f.TLS && !loopbackAddr(f.Addr) {
 		fail("hardened mode requires TLS on the non-loopback listener %q: set PLIMSOLL_TLS_CERT/PLIMSOLL_TLS_KEY or bind a loopback address", f.Addr)
 	}
+	// The metrics listener is the daemon's second listener and follows the same
+	// rule. It carries no bearer, but its labels name grant profiles and route
+	// templates, and TLS keeps them off the wire in the clear. TLS does not decide
+	// who may scrape: the endpoint has no authentication, so off this host that is
+	// the firewall's job.
+	if f.MetricsAddr != "" && !f.TLS && !loopbackAddr(f.MetricsAddr) {
+		fail("hardened mode requires TLS on the non-loopback metrics listener %q: set PLIMSOLL_TLS_CERT/PLIMSOLL_TLS_KEY, bind a loopback address, or set PLIMSOLL_METRICS_ADDR=off", f.MetricsAddr)
+	}
 
 	// Immutable execution surface, per provider.
 	switch f.Provider {
 	case "docker":
-		pinned, err := strictBoolEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
 		if err != nil {
 			violations = append(violations, err)
 		} else if !pinned {
@@ -208,7 +231,7 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	case "dockercloud":
 		// The sandbox boots a raw OCI reference, so the same pinning rule as docker
 		// applies: a mutable tag could be repushed under a running deployment.
-		pinned, err := strictBoolEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
 		if err != nil {
 			violations = append(violations, err)
 		} else if !pinned {
@@ -222,20 +245,25 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 			fail("hardened mode requires an explicit E2B_TEMPLATE (the implicit \"base\" default is not a pinned execution surface)")
 		}
 	}
+	dp, daemonBuilt := daemonProviders[f.Provider]
+	if daemonBuilt && dp.pinnedImages {
+		pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
+		if err != nil {
+			violations = append(violations, err)
+		} else if !pinned {
+			fail("hardened mode requires SANDBOX_REQUIRE_PINNED_IMAGES=1 so the %s image is an immutable @sha256 digest", f.Provider)
+		}
+	}
 
 	// Explicit budgets: provider defaults are development conveniences. A hardened
 	// deployment states its per-run envelope and (for on-host runners) the
 	// aggregate memory budget so capacity is a decision, not an accident.
-	required := []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS"}
-	if f.Provider != "dockercloud" {
-		// Docker Cloud Sandboxes expose no disk control, so Build rejects
-		// SANDBOX_DISK_MB for dockercloud; requiring it would make hardened mode
-		// unsatisfiable there.
-		required = append(required, "SANDBOX_DISK_MB")
-	}
-	if f.Provider == "docker" {
-		// E2B cannot enforce pids (Build rejects it there); docker can and must.
-		required = append(required, "SANDBOX_PIDS", "SANDBOX_TOTAL_MEMORY_MB")
+	required, ok := hardenedEnvelope[f.Provider]
+	switch {
+	case daemonBuilt:
+		required = dp.hardenedEnvelope
+	case !ok:
+		required = hardenedEnvelopeDefault
 	}
 	var missing, nonPositive []string
 	for _, key := range required {
@@ -264,6 +292,78 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 		return errors.Join(violations...)
 	}
 	return nil
+}
+
+// hardenedEnvelope is the resource envelope hardened mode requires of each provider
+// sandbox.Build constructs: every dimension the provider enforces and none its
+// configuration rejects, since a policy demanding a variable Build refuses could
+// never be satisfied. A daemon-built provider brings its own (daemonProvider).
+var hardenedEnvelope = map[string][]string{
+	// docker enforces the whole envelope, and its runners share this host, so the
+	// aggregate budget that clamps concurrency is required too.
+	"docker": {"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB", "SANDBOX_PIDS", "SANDBOX_TOTAL_MEMORY_MB"},
+	// E2B cannot enforce a process limit, so Build rejects SANDBOX_PIDS there.
+	"e2b": {"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB"},
+	// Docker Cloud Sandboxes expose no disk or process control.
+	"dockercloud": {"SANDBOX_MEMORY_MB", "SANDBOX_CPUS"},
+}
+
+// hardenedEnvelopeDefault applies to a provider in neither table (wasm, disabled),
+// which the isolation rule refuses anyway.
+var hardenedEnvelopeDefault = []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB"}
+
+// maxSessionLifetime bounds SANDBOX_SESSION_LIFETIME: a session's sandbox outlives a
+// crashed daemon by its lifetime (plus the reaper's margin), so the setting is also
+// how long an orphan can live. Twelve hours covers a working day of agent use.
+const maxSessionLifetime = 12 * time.Hour
+
+// loadSessionConfig reads the session settings. Sessions stay off unless
+// SANDBOX_MAX_SESSIONS is positive; the other values are validated either way, so a
+// typo fails startup instead of lying in wait. The defaults: a 30-minute lifetime,
+// a 5-minute idle timeout, 1 GiB of files (sessions plan, assumptions to revise from
+// use: room for a node_modules tree and a build's output, and an abandoned session
+// frees its slot within minutes).
+func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
+	max, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS", 0)
+	if err != nil {
+		return rpc.SessionConfig{}, err
+	}
+	diskMB, err := envIntWith(getenv, "SANDBOX_SESSION_DISK_MB", 1024)
+	if err != nil {
+		return rpc.SessionConfig{}, err
+	}
+	lifetime, err := envDurationWith(getenv, "SANDBOX_SESSION_LIFETIME", 30*time.Minute)
+	if err != nil {
+		return rpc.SessionConfig{}, err
+	}
+	idle, err := envDurationWith(getenv, "SANDBOX_SESSION_IDLE", 5*time.Minute)
+	if err != nil {
+		return rpc.SessionConfig{}, err
+	}
+	switch {
+	case max < 0:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_MAX_SESSIONS=%d must not be negative", max)
+	case diskMB < 0:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_DISK_MB=%d must not be negative", diskMB)
+	case lifetime < time.Second || lifetime > maxSessionLifetime:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_LIFETIME=%v must be between 1s and %v", lifetime, maxSessionLifetime)
+	case idle < 0:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_IDLE=%v must not be negative", idle)
+	}
+	return rpc.SessionConfig{MaxSessions: max, Lifetime: lifetime, IdleTimeout: idle, DiskBytes: int64(diskMB) << 20}, nil
+}
+
+// envDurationWith reads a Go duration ("30m", "90s") the way envIntWith reads an int.
+func envDurationWith(getenv func(string) string, key string, def time.Duration) (time.Duration, error) {
+	v := strings.TrimSpace(getenv(key))
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s=%q must be a duration such as 30m or 90s", key, v)
+	}
+	return d, nil
 }
 
 // envIntWith reads an int env var through an injected getenv. A non-empty but

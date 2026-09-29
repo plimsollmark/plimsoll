@@ -10,7 +10,7 @@ func mapEnv(values map[string]string) func(string) string {
 }
 
 func TestResourcesFromEnvStrictParsing(t *testing.T) {
-	res, err := resourcesFromEnv(mapEnv(map[string]string{
+	res, err := ResourcesFromEnv(mapEnv(map[string]string{
 		"SANDBOX_MEMORY_MB": "256",
 		"SANDBOX_CPUS":      "0.5",
 		"SANDBOX_PIDS":      "64",
@@ -28,7 +28,7 @@ func TestResourcesFromEnvStrictParsing(t *testing.T) {
 		"SANDBOX_PIDS":      "many",
 		"SANDBOX_DISK_MB":   "1.5",
 	} {
-		if _, err := resourcesFromEnv(mapEnv(map[string]string{key: value})); err == nil {
+		if _, err := ResourcesFromEnv(mapEnv(map[string]string{key: value})); err == nil {
 			t.Errorf("%s=%q silently became a default", key, value)
 		}
 	}
@@ -96,12 +96,12 @@ func TestProviderEnsureReadySurfacesPreflightFailure(t *testing.T) {
 
 func TestPinnedImageBooleanIsStrict(t *testing.T) {
 	for raw, want := range map[string]bool{"": false, "0": false, "false": false, "1": true, "TRUE": true} {
-		got, err := optionalBoolEnv(mapEnv(map[string]string{"PIN": raw}), "PIN")
+		got, err := BoolFromEnv(mapEnv(map[string]string{"PIN": raw}), "PIN")
 		if err != nil || got != want {
 			t.Errorf("PIN=%q => (%v, %v), want %v", raw, got, err, want)
 		}
 	}
-	if _, err := optionalBoolEnv(mapEnv(map[string]string{"PIN": "yes"}), "PIN"); err == nil {
+	if _, err := BoolFromEnv(mapEnv(map[string]string{"PIN": "yes"}), "PIN"); err == nil {
 		t.Fatal("ambiguous boolean PIN=yes was accepted")
 	}
 }

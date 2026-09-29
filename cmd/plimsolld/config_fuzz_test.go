@@ -26,7 +26,7 @@ func FuzzDaemonConfigEnv(f *testing.F) {
 			"SANDBOX_RATE_BURST":         burst,
 			"SANDBOX_TOTAL_MEMORY_MB":    total,
 			"SANDBOX_MIN_ISOLATION":      minIso,
-			"PLIMSOLL_HARDENED":        hardened,
+			"PLIMSOLL_HARDENED":          hardened,
 		}
 		getenv := func(k string) string { return env[k] }
 
@@ -51,7 +51,7 @@ func FuzzDaemonConfigEnv(f *testing.F) {
 			}
 		}
 
-		if on, err := strictBoolEnv(getenv, "PLIMSOLL_HARDENED"); err == nil && on {
+		if on, err := sandbox.BoolFromEnv(getenv, "PLIMSOLL_HARDENED"); err == nil && on {
 			// Hardened may only turn ON for the canonical spellings (case/space
 			// normalized) — never for a typo the parser guessed at.
 			if norm := strings.ToLower(strings.TrimSpace(hardened)); norm != "1" && norm != "true" {

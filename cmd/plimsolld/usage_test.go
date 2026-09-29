@@ -26,7 +26,8 @@ func TestParseArgsAcceptsOnlyHelp(t *testing.T) {
 
 // TestUsageNamesEveryVariable is the drift guard for -h: every PLIMSOLL_, SANDBOX_,
 // E2B_ or DOCKER_SBX_ variable a non-test file in this package reads must be documented in
-// usage, so the help text cannot fall behind the code. The provider factory in
+// helpText, so the help text cannot fall behind the code. A daemon-built provider's file
+// is in this package, so its variables are checked against the section it registers. The provider factory in
 // the sandbox package reads the provider variables on the daemon's
 // behalf, so its file is scanned too; without it a provider variable added there
 // would be undocumented and this test would not notice.
@@ -41,7 +42,9 @@ func TestUsageNamesEveryVariable(t *testing.T) {
 			files = append(files, entry.Name())
 		}
 	}
-	files = append(files, "../../sandbox/factory.go")
+	// The constructors the daemon builds providers with: sandbox.Build, and each
+	// daemon-built provider's environment reader.
+	files = append(files, "../../sandbox/factory.go", "../../sandbox/openshell/env.go")
 	name := regexp.MustCompile(`"((?:PLIMSOLL|SANDBOX|E2B|DOCKER_SBX)_[A-Z0-9_]+)"`)
 	seen := 0
 	for _, file := range files {
@@ -51,7 +54,7 @@ func TestUsageNamesEveryVariable(t *testing.T) {
 		}
 		for _, match := range name.FindAllStringSubmatch(string(src), -1) {
 			seen++
-			if !strings.Contains(usage, match[1]) {
+			if !strings.Contains(helpText(), match[1]) {
 				t.Errorf("%s reads %s but usage (-h) does not document it", file, match[1])
 			}
 		}

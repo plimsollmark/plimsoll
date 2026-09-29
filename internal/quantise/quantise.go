@@ -2,8 +2,8 @@
 // parameter was actually resolved, which is not always the resolution the
 // caller asked for.
 //
-// A compiled physical model subdivides the communication step with an internal
-// step of its own, so a parameter that only enters the model at those internal
+// A compiled physical simulator subdivides the communication step with an internal
+// step of its own, so a parameter that only enters the simulator at those internal
 // instants moves in discrete treads. Two exports of one model can tread a
 // decade apart: measured on CoupledClutches, one vendor at 1e-2 and another at
 // 1e-3. A caller sweeping finer than the tread pays for simulations that return
@@ -43,7 +43,7 @@ type Finding struct {
 	// result. It is the tread evidence: a repeat between non-neighbours (A, B,
 	// A) is a repeat but not a tread, since the parameter did change the result
 	// in between. A repeat is evidence of coarse resolution, never proof of its
-	// cause: a model that is genuinely insensitive to the parameter over the
+	// cause: a simulator that is genuinely insensitive to the parameter over the
 	// swept range produces the same pattern.
 	Flat int
 	// Sampled is the finest gap the caller swept at, Span the full swept range.

@@ -10,7 +10,7 @@ import (
 
 // staircase builds a sweep of one parameter whose results only change when the
 // value crosses a multiple of tread, which is what an internal fixed step does
-// to a parameter that only enters the model at its own instants.
+// to a parameter that only enters the simulator at its own instants.
 func staircase(t *testing.T, lo, step, tread float64, n int) ([][]float64, []sandbox.ModuleRun) {
 	t.Helper()
 	rows := make([][]float64, n)

@@ -1,0 +1,158 @@
+package sandboxtest
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox"
+)
+
+// Sessions is an in-memory sandbox.SessionProvider for tests of code that drives
+// sessions (a daemon, a client, a harness): it keeps no sandbox and runs no code.
+// Each session answers its nth snippet with n "x" characters on stdout, and
+// completes every project. It reports the container tier.
+type Sessions struct {
+	// BeforeOpen, when set, runs at the start of every OpenSession, which returns
+	// its error: a test holds an open inside the provider, or makes one fail.
+	BeforeOpen func() error
+
+	mu     sync.Mutex
+	opened []*FakeSession
+}
+
+var _ sandbox.SessionProvider = (*Sessions)(nil)
+var _ sandbox.Sandbox = (*Sessions)(nil)
+
+// Name is "fake-sessions".
+func (*Sessions) Name() string { return "fake-sessions" }
+
+// IsolationClass is container.
+func (*Sessions) IsolationClass() sandbox.IsolationClass { return sandbox.IsolationContainer }
+
+// RunJavaScript, RunProject and RunModule are unsupported: only sessions run here.
+func (*Sessions) RunJavaScript(context.Context, sandbox.Request) (sandbox.Result, error) {
+	return sandbox.Result{}, sandbox.NotDispatched(sandbox.RefusalUnsupported, sandbox.ErrUnsupported)
+}
+
+func (*Sessions) RunProject(context.Context, sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
+	return sandbox.ProjectResult{}, sandbox.NotDispatched(sandbox.RefusalUnsupported, sandbox.ErrUnsupported)
+}
+
+func (*Sessions) RunModule(context.Context, sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
+	return sandbox.ModuleResult{}, sandbox.NotDispatched(sandbox.RefusalUnsupported, sandbox.ErrUnsupported)
+}
+
+// SupportsSessions is true.
+func (*Sessions) SupportsSessions() bool { return true }
+
+// OpenSession opens a fake session with opts.
+func (p *Sessions) OpenSession(_ context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	if p.BeforeOpen != nil {
+		if err := p.BeforeOpen(); err != nil {
+			return nil, err
+		}
+	}
+	s := &FakeSession{Options: opts, expires: time.Now().Add(opts.Lifetime), done: make(chan struct{})}
+	p.mu.Lock()
+	p.opened = append(p.opened, s)
+	p.mu.Unlock()
+	return s, nil
+}
+
+// Opened returns the sessions opened so far, in order.
+func (p *Sessions) Opened() []*FakeSession {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]*FakeSession(nil), p.opened...)
+}
+
+// FakeSession is one session of Sessions.
+type FakeSession struct {
+	Options sandbox.SessionOptions
+	expires time.Time
+	done    chan struct{}
+
+	mu          sync.Mutex
+	calls       int
+	suspended   int
+	lastTimeout time.Duration
+	end         *sandbox.SessionEndedError
+}
+
+var _ sandbox.Session = (*FakeSession)(nil)
+
+func (s *FakeSession) Isolation() sandbox.IsolationClass { return sandbox.IsolationContainer }
+func (s *FakeSession) ExpiresAt() time.Time              { return s.expires }
+func (s *FakeSession) Done() <-chan struct{}             { return s.done }
+
+// Err is the session's end, or nil.
+func (s *FakeSession) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.end == nil {
+		return nil
+	}
+	return s.end
+}
+
+// End ends the session for reason, as a provider does when a lifetime passes or a
+// budget is exceeded.
+func (s *FakeSession) End(reason sandbox.SessionEnd) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.end == nil {
+		s.end = &sandbox.SessionEndedError{Reason: reason}
+		close(s.done)
+	}
+}
+
+// Suspends counts the Suspend calls the session received.
+func (s *FakeSession) Suspends() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.suspended
+}
+
+// LastTimeout is the timeout the last snippet call carried, as the caller set it.
+func (s *FakeSession) LastTimeout() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastTimeout
+}
+
+// RunJavaScript answers the nth call with n "x" characters.
+func (s *FakeSession) RunJavaScript(_ context.Context, req sandbox.Request) (sandbox.Result, error) {
+	if err := s.Err(); err != nil {
+		return sandbox.Result{}, sandbox.RefuseEndedSession(err)
+	}
+	s.mu.Lock()
+	s.calls++
+	n := s.calls
+	s.lastTimeout = req.Timeout
+	s.mu.Unlock()
+	return sandbox.Result{Stdout: strings.Repeat("x", n), Sandbox: "fake-sessions", Isolation: sandbox.IsolationContainer}, nil
+}
+
+// RunProject completes every project with no steps.
+func (s *FakeSession) RunProject(context.Context, sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
+	if err := s.Err(); err != nil {
+		return sandbox.ProjectResult{}, sandbox.RefuseEndedSession(err)
+	}
+	return sandbox.ProjectResult{Sandbox: "fake-sessions", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted}, nil
+}
+
+// Suspend counts itself.
+func (s *FakeSession) Suspend(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.suspended++
+	return nil
+}
+
+// Close ends the session as closed.
+func (s *FakeSession) Close(context.Context) error {
+	s.End(sandbox.SessionClosed)
+	return nil
+}

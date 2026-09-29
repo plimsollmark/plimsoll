@@ -168,8 +168,36 @@ func TestRunRequestsRejectInvalidMinimumIsolation(t *testing.T) {
 func TestRunJavaScriptUnknownGrantProfile(t *testing.T) {
 	svc := NewSandboxService(&fakeSandbox{}) // no Grants registry configured
 	_, err := svc.Run(context.Background(), jsGrantReq("1", "nope"))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument {
-		t.Fatalf("code = %v, want InvalidArgument for an unknown grant_profile", connect.CodeOf(err))
+	if connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("code = %v, want PermissionDenied for an unknown grant_profile", connect.CodeOf(err))
+	}
+}
+
+// TestGrantProfileRefusalDoesNotLeakExistence: a caller holding code:run but on no
+// profile's ACL must get the same answer for a configured profile and an absent one,
+// or it can enumerate the operator's profile names (external review, 2026-09-28).
+func TestGrantProfileRefusalDoesNotLeakExistence(t *testing.T) {
+	t.Setenv("HUE_TOKEN", "tok-xyz")
+	path := filepath.Join(t.TempDir(), "grants.json")
+	if err := os.WriteFile(path, []byte(`{"profiles":{"hue":{"base_url":"https://hue.internal","allow":["GET /v1/lights"],"allowed_callers":["mcp-a"],"token":{"type":"static","env":"HUE_TOKEN"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := grants.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewSandboxService(&fakeSandbox{jsResult: sandbox.Result{Sandbox: "fake"}})
+	svc.Grants = reg
+
+	ctx := authenticatedContext("mcp-b") // valid code:run, on no ACL
+	_, errExists := svc.Run(ctx, jsGrantReq("1", "hue"))
+	_, errAbsent := svc.Run(ctx, jsGrantReq("1", "does-not-exist"))
+	if connect.CodeOf(errExists) != connect.CodeOf(errAbsent) {
+		t.Fatalf("existence oracle: configured profile answers %v, absent profile answers %v",
+			connect.CodeOf(errExists), connect.CodeOf(errAbsent))
+	}
+	if a, b := strings.ReplaceAll(errExists.Error(), "hue", "X"), strings.ReplaceAll(errAbsent.Error(), "does-not-exist", "X"); a != b {
+		t.Fatalf("existence oracle in the wording: %q versus %q", errExists, errAbsent)
 	}
 }
 
@@ -670,5 +698,48 @@ func TestRunContextHasIndependentGlobalCeiling(t *testing.T) {
 	remaining := time.Until(deadline)
 	if remaining <= 0 || remaining > maxRunTimeout {
 		t.Fatalf("run context remaining = %v, want (0,%v]", remaining, maxRunTimeout)
+	}
+}
+
+type describingFake struct {
+	fakeSandbox
+	env sandbox.Environments
+}
+
+func (f *describingFake) Environments() sandbox.Environments { return f.env }
+
+// Describe passes each payload kind's statement through, caps a stated ceiling at
+// the daemon's own, and reports the envelope the provider was built with. A
+// provider that states nothing is reported as stating nothing.
+func TestDescribeReportsEnvironmentsAndResources(t *testing.T) {
+	svc := NewSandboxService(&describingFake{env: sandbox.Environments{
+		JavaScript: sandbox.PayloadEnvironment{Identity: "docker-image:sha256:aa", MaxTimeout: 30 * time.Second},
+		Module:     sandbox.PayloadEnvironment{MaxTimeout: time.Hour},
+	}})
+	svc.Resources = sandbox.Resources{MemoryMB: 512, CPUs: 0.5, PidsLimit: 64, DiskMB: 256}
+	resp, err := svc.Describe(context.Background(), connect.NewRequest(&plimsollv1.DescribeRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := resp.Msg
+	if js := m.GetJavascriptEnvironment(); js.GetIdentity() != "docker-image:sha256:aa" || js.GetMaxTimeoutMs() != 30000 {
+		t.Fatalf("javascript = %+v", js)
+	}
+	if got := m.GetModuleEnvironment().GetMaxTimeoutMs(); got != uint32(maxRunTimeout/time.Millisecond) {
+		t.Fatalf("module ceiling = %d ms, want the daemon's own %v", got, maxRunTimeout)
+	}
+	if p := m.GetProjectEnvironment(); p.GetIdentity() != "" || p.GetMaxTimeoutMs() != 0 {
+		t.Fatalf("project stated nothing but reads %+v", p)
+	}
+	if r := m.GetResources(); r.GetMemoryMb() != 512 || r.GetCpus() != 0.5 || r.GetPids() != 64 || r.GetDiskMb() != 256 {
+		t.Fatalf("resources = %+v", r)
+	}
+
+	resp, err = NewSandboxService(&fakeSandbox{}).Describe(context.Background(), connect.NewRequest(&plimsollv1.DescribeRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetJavascriptEnvironment().GetMaxTimeoutMs() != 0 || resp.Msg.GetJavascriptEnvironment().GetIdentity() != "" {
+		t.Fatalf("a provider that states nothing gained a statement: %+v", resp.Msg)
 	}
 }

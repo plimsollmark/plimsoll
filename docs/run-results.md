@@ -1,6 +1,6 @@
 # What comes back, and what it means
 
-Result semantics: a failed run is a normal result, an error means nothing ran, and truncation is machine-readable rather than annotated in the output.
+Result semantics: a failed run is a normal result, an error says whether anything ran, and truncation is machine-readable rather than annotated in the output.
 
 Part of the [plimsoll README](../README.md).
 
@@ -10,9 +10,41 @@ happened. That distinction is the difference between retrying safely and repeati
 something with side effects.
 
 **A non-zero exit code is a normal result, not a Go error.** The user's code failed;
-nothing went wrong with the sandbox. Errors are reserved for pre-dispatch failures
-(`ErrInvalidRequest`, `ErrUnsupported`, `ErrDisabled`, `ErrAtCapacity`), cancellation,
-and unmatched infrastructure faults.
+nothing went wrong with the sandbox. Errors cover refusals (`ErrInvalidRequest`,
+`ErrUnsupported`, `ErrDisabled`, `ErrAtCapacity`, `ErrInsufficientIsolation`),
+cancellation, and unmatched infrastructure faults.
+
+### Did anything run? The error says so
+
+An error code alone cannot answer that. `InvalidArgument` is usually a request that
+failed validation, but a simulation worker can also refuse a table after its container
+started; a capacity refusal can come from the daemon's limiter or from the provider.
+So a refusal raised before any code was dispatched is **marked**, and the mark carries
+a reason:
+
+```go
+if reason, ok := sandbox.NotDispatchedReason(err); ok {
+	// Nothing ran. Safe to retry, or to send the same request to another daemon
+	// when the reason allows it.
+}
+```
+
+| Reason | Raised when | Worth retrying elsewhere |
+|---|---|---|
+| `request` | the request is malformed or out of bounds | no, every daemon refuses it |
+| `permission` | missing or unknown token, missing scope, caller not allowed the grant profile | no, the caller's identity is the problem |
+| `protocol` | the daemon serves another protocol number | only on a daemon that speaks yours |
+| `unsupported` | this provider cannot do the operation, or execution is disabled | yes |
+| `isolation` | the provider's current isolation is below the request's floor | yes, on a stronger provider |
+| `capacity` | admission or the rate limit shed the run | yes, later or elsewhere |
+
+**No mark means the run may have executed**, whatever the error code, so it is never a
+safe automatic retry. That is the conservative default: a refusal path that forgot to
+mark its error reads as "may have run", never as "safe to repeat". The same call works
+on a local provider and through the Go client: on the wire the mark is the
+`plimsoll.v1.NotDispatched` error detail, and the client turns it back into the same
+Go error. A failure while authenticating that is not a refusal (the caller cancelled,
+the token verifier was unreachable) is not marked either.
 
 For projects, per-step failures live in `Steps` and the run's conclusion is a typed
 `ProjectResult.Outcome`, which is a stable retry classification rather than a message
@@ -25,10 +57,10 @@ to regex:
 | `timed_out` | the run exceeded its deadline | with care; side effects may exist |
 | `protocol_error` | the runner and the host disagreed | no, this is a bug to report |
 
-Read the isolation errors the same way. `ErrInsufficientIsolation` means **no code
-ran**. `ErrIsolationEvidenceMismatch` means execution **may already have happened**,
-which is why it is never a safe automatic retry. `ErrAtCapacity` is the one that is
-cleanly retryable with backoff, because admission refused the run before it started.
+Read the isolation errors the same way. `ErrInsufficientIsolation` is marked
+`isolation`: **no code ran**. `ErrIsolationEvidenceMismatch` is raised by the client
+after a run returned weaker evidence than the floor required, so execution **may
+already have happened**; it is never marked and never a safe automatic retry.
 
 ### Output comes back exactly as the guest wrote it
 

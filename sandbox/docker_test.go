@@ -138,6 +138,10 @@ func TestShippedSeccompProfileIsSaneAndTight(t *testing.T) {
 		"read", "write", "openat", "close", "mmap", "mprotect", "futex",
 		"clone", "execve", "wait4", "epoll_pwait", "getrandom",
 		"set_tid_address", "set_robust_list", "socket", "connect",
+		"kill", // a judge stops its own controller (docker/sim/oracle); see docs/seccomp.md
+		// Older forms of utimensat, which the kernel implements the same way; older C
+		// libraries still issue them (docs/seccomp.md, TestDockerLegacyTimestampSyscalls).
+		"utime", "utimes", "futimesat", "utimensat",
 	} {
 		if !allowed[n] {
 			t.Errorf("essential syscall %q is not allowed — the profile would break the workload", n)
@@ -590,10 +594,10 @@ func TestDockerTimeout(t *testing.T) {
 
 func TestDisabledRefusesToRun(t *testing.T) {
 	_, err := Disabled{}.RunJavaScript(context.Background(), Request{Code: "console.log(1)"})
-	if err != ErrDisabled {
+	if !errors.Is(err, ErrDisabled) {
 		t.Fatalf("err = %v, want ErrDisabled", err)
 	}
-	if _, err := (Disabled{}).RunProject(context.Background(), ProjectRequest{Steps: []string{"true"}}); err != ErrDisabled {
+	if _, err := (Disabled{}).RunProject(context.Background(), ProjectRequest{Steps: []string{"true"}}); !errors.Is(err, ErrDisabled) {
 		t.Fatalf("RunProject err = %v, want ErrDisabled", err)
 	}
 }

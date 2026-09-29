@@ -214,27 +214,8 @@ func FuzzReadConnectStream(f *testing.F) {
 	})
 }
 
-func FuzzParseRunnerOutput(f *testing.F) {
-	f.Add(`build output` + runnerSentinel + `{"steps":[{"command":"node x","exitCode":0,"durationMs":5}]}`)
-	f.Add(runnerSentinel + `{"artifacts":[{"path":"o.txt","content":"aGk="}],"artifactsTruncated":true}`)
-	f.Add(runnerSentinel + `{"error":"illegal file path"}`)
-	f.Add(runnerSentinel + `not json`)
-	f.Add(`no sentinel at all`)
-	f.Add(runnerSentinel + `{}` + runnerSentinel + `{"steps":[]}`) // hostile early sentinel
-	f.Add("")
-	f.Fuzz(func(t *testing.T, out string) {
-		report, found, err := parseRunnerOutput(out)
-		if found != strings.Contains(out, runnerSentinel) {
-			t.Fatalf("found=%v disagrees with sentinel presence in %q", found, out)
-		}
-		if !found && err != nil {
-			t.Fatalf("no sentinel but parse error %v", err)
-		}
-		if err != nil && (len(report.Steps) != 0 || len(report.Artifacts) != 0 || report.Err != "" || report.ArtifactsTruncated) {
-			t.Fatalf("parse error must return a zero report, got %+v", report)
-		}
-	})
-}
+// The runner report parser's fuzz target lives with the protocol, in
+// sandbox/internal/runnerwire (FuzzParse).
 
 func FuzzBuild(f *testing.F) {
 	f.Add("docker", "256", "1", "128", "160", "1", "runsc", "img@sha256:x")
