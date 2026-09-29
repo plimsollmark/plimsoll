@@ -17,8 +17,9 @@ import (
 // authenticated this forged the result in 7 of 12 runs under runc and 12 of 12 under
 // runsc (2026-09-28). The writer lives in its own file so no quoting can break it.
 func TestDockerProjectRejectsGuestForgedRunnerReport(t *testing.T) {
-	requireDocker(t)
 	d := testDocker()
+	requireSnippetImage(t, d)
+	requireProjectImage(t, d)
 	writer := `const {openSync,writeSync}=require("node:fs");
 const body=JSON.stringify({steps:[{command:"trusted",stdout:"PASS",stderr:"",exitCode:0,timedOut:false,durationMs:1}],artifacts:[{path:"out.txt",content:"QUFB"}],artifactsTruncated:false,error:""});
 const old="\n"+"<<<CRSBX"+"_RESULT>>>"+body;
@@ -59,8 +60,9 @@ setTimeout(() => process.exit(9), 250);
 // TestDockerProjectSurvivesSentinelInGuestOutput: guest output that happens to
 // contain the framing token must not turn a clean run into a protocol error.
 func TestDockerProjectSurvivesSentinelInGuestOutput(t *testing.T) {
-	requireDocker(t)
 	d := testDocker()
+	requireSnippetImage(t, d)
+	requireProjectImage(t, d)
 	res, err := d.RunProject(context.Background(), ProjectRequest{
 		Files:   []File{{Path: "a.js", Content: "process.stdout.write('<<<CRSBX_RESULT>>>');\n"}},
 		Steps:   []string{"node a.js"},
@@ -80,8 +82,9 @@ func TestDockerProjectSurvivesSentinelInGuestOutput(t *testing.T) {
 // TestDockerProjectArtifactsDoNotFollowSymlinks: artifact capture must not read
 // through a link the run planted in /work.
 func TestDockerProjectArtifactsDoNotFollowSymlinks(t *testing.T) {
-	requireDocker(t)
 	d := testDocker()
+	requireSnippetImage(t, d)
+	requireProjectImage(t, d)
 	res, err := d.RunProject(context.Background(), ProjectRequest{
 		Files:     []File{{Path: "a.txt", Content: "x"}},
 		Steps:     []string{"ln -s /etc/passwd leak"},

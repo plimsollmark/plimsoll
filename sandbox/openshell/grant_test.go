@@ -138,8 +138,16 @@ func (f *fakeGateway) ForwardTcp(ctx context.Context, stream *connect.BidiStream
 	if err != nil {
 		return connect.NewError(connect.CodeUnavailable, err)
 	}
-	defer conn.Close()
+	// The handler must not return while this goroutine can still Send: a Send after
+	// the handler has finished panics in net/http ("Write called after Handler
+	// finished"), which CI's timing hit on 2026-09-28.
+	sent := make(chan struct{})
+	defer func() {
+		_ = conn.Close()
+		<-sent
+	}()
 	go func() {
+		defer close(sent)
 		buf := make([]byte, 32<<10)
 		for {
 			n, err := conn.Read(buf)
