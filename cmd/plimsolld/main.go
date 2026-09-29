@@ -276,6 +276,9 @@ func main() {
 			os.Exit(1)
 		}
 		slog.Info("host-API grant profiles loaded", "count", gr.Len())
+		for _, name := range gr.OpenToEveryCaller() {
+			slog.Warn("grant profile is open to every authenticated caller (allowed_callers is \"*\")", "profile", name)
+		}
 	}
 
 	var verifier rpc.TokenVerifier
@@ -345,6 +348,7 @@ func main() {
 			Addr:            addr,
 			MetricsAddr:     metricsAddr,
 			RatePerMin:      ratePerMin,
+			PerCaller:       perKey,
 		}); err != nil {
 			slog.Error("hardened-mode policy violation; refusing to serve", "error", err)
 			os.Exit(1)

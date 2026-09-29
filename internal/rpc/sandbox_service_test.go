@@ -674,7 +674,7 @@ func TestClampTimeoutMs(t *testing.T) {
 	}
 }
 
-func TestRPCDeadlineIsEnforcedThroughContext(t *testing.T) {
+func TestRPCDeadlineReachesTheProvider(t *testing.T) {
 	svc := NewSandboxService(&contextDeadlineSandbox{})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
@@ -741,5 +741,35 @@ func TestDescribeReportsEnvironmentsAndResources(t *testing.T) {
 	}
 	if resp.Msg.GetJavascriptEnvironment().GetMaxTimeoutMs() != 0 || resp.Msg.GetJavascriptEnvironment().GetIdentity() != "" {
 		t.Fatalf("a provider that states nothing gained a statement: %+v", resp.Msg)
+	}
+}
+
+// TestAFailedRunStillCountsItsBrokeredCalls: a run that fails after it brokered calls
+// against the operator's API still reports them on its audit line; that failed run is
+// the one an operator investigates (external review of v0.10.0, finding 12, 2026-09-28).
+func TestAFailedRunStillCountsItsBrokeredCalls(t *testing.T) {
+	trace := &sandbox.CallTrace{Calls: []sandbox.CallRow{{Seq: 1, Method: "GET", Route: "/items/*", Status: 200, Delivered: true}}}
+	for _, tc := range []struct {
+		name string
+		fake *fakeSandbox
+	}{
+		{name: "javascript", fake: &fakeSandbox{jsResult: sandbox.Result{CallTrace: trace}, jsErr: errors.New("the exec stream was lost")}},
+		{name: "project", fake: &fakeSandbox{projResult: sandbox.ProjectResult{CallTrace: trace}, projErr: errors.New("the exec stream was lost")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			svc := NewSandboxService(&projectCapableFake{fakeSandbox: *tc.fake, supports: true})
+			svc.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+			req := jsReq("1")
+			if tc.name == "project" {
+				req = envelopeReq(&plimsollv1.ProjectRun{Files: []*plimsollv1.ProjectFile{{Path: "a.js", Content: "1"}}, Steps: []string{"node a.js"}})
+			}
+			if _, err := svc.Run(context.Background(), req); err == nil {
+				t.Fatal("the failed run succeeded")
+			}
+			if out := buf.String(); !strings.Contains(out, "run failed") || !strings.Contains(out, `"host_calls":1`) {
+				t.Fatalf("the failed run's audit line does not count its brokered call:\n%s", out)
+			}
+		})
 	}
 }

@@ -92,8 +92,8 @@ The defaults are deliberately safe rather than convenient: no provider, no netwo
 no grant. A deployment is only as isolated as its configuration. If you are running
 this against genuinely hostile input, set `PLIMSOLL_HARDENED=1`, which refuses to
 start unless VM or verified kernel isolation, multi-client auth, TLS on non-loopback
-listeners, pinned images, an explicit resource envelope, and per-caller rate limiting
-are all verifiably in force.
+listeners, pinned images, an explicit resource envelope, per-caller rate limiting, and
+a per-caller concurrency cap are all verifiably in force.
 
 `/metrics` has no authentication, and its labels name grant profiles and route
 templates. It is therefore served on a listener of its own, bound to this host only by

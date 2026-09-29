@@ -39,6 +39,7 @@ func hardenedDockerFacts() hardenedFacts {
 		Addr:            ":8746",
 		MetricsAddr:     defaultMetricsAddr,
 		RatePerMin:      30,
+		PerCaller:       4,
 	}
 }
 
@@ -269,4 +270,16 @@ func writeSelfSignedPair(t *testing.T) (certPath, keyPath string) {
 		t.Fatal(err)
 	}
 	return certPath, keyPath
+}
+
+// TestHardenedPolicyRequiresAPerCallerConcurrencyCap: a rate limit cannot bound a
+// slot that is held rather than started, so hardened mode refuses to serve with the
+// per-caller concurrency cap off (external review of v0.10.0, finding 3, 2026-09-28).
+func TestHardenedPolicyRequiresAPerCallerConcurrencyCap(t *testing.T) {
+	f := hardenedDockerFacts()
+	f.PerCaller = 0
+	err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f)
+	if err == nil || !strings.Contains(err.Error(), "SANDBOX_PER_KEY_CONCURRENT") {
+		t.Fatalf("hardened policy with no per-caller concurrency cap: %v", err)
+	}
 }

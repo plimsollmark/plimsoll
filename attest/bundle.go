@@ -154,6 +154,14 @@ type SessionReport struct {
 // statement fails: its tail cannot be told from a cut one. A session that ran no
 // call is its close statement alone, with a count of zero and no last record.
 func VerifyBundle(entries []Entry, v *Verifier) (Report, error) {
+	rep, _, err := verifyEntries(entries, v)
+	return rep, err
+}
+
+// verifyEntries is VerifyBundle, also returning each call entry's signed record by
+// index (the zero record for a close statement), so a replay reads its baseline from
+// what was signed rather than from the stored response.
+func verifyEntries(entries []Entry, v *Verifier) (Report, []sandbox.RunRecord, error) {
 	type chain struct {
 		calls  uint64
 		last   string
@@ -161,9 +169,12 @@ func VerifyBundle(entries []Entry, v *Verifier) (Report, error) {
 		index  int
 	}
 	var rep Report
+	recs := make([]sandbox.RunRecord, len(entries))
 	chains := map[string]*chain{}
 	for i, e := range entries {
-		fail := func(err error) (Report, error) { return Report{}, fmt.Errorf("entry %d: %w", i+1, err) }
+		fail := func(err error) (Report, []sandbox.RunRecord, error) {
+			return Report{}, nil, fmt.Errorf("entry %d: %w", i+1, err)
+		}
 		if predicateType(e.Envelope) == ClosePredicateType {
 			c, err := v.VerifyClose(e.Envelope)
 			if err != nil {
@@ -199,6 +210,7 @@ func VerifyBundle(entries []Entry, v *Verifier) (Report, error) {
 		if err := matchStored(e, rec); err != nil {
 			return fail(err)
 		}
+		recs[i] = rec
 		if rec.Session == "" {
 			if rec.Sequence != 0 || rec.PreviousSHA256 != "" {
 				return fail(fmt.Errorf("%w: a single run's record carries chain fields", ErrChain))
@@ -225,10 +237,10 @@ func VerifyBundle(entries []Entry, v *Verifier) (Report, error) {
 	}
 	for _, s := range rep.Sessions {
 		if !chains[s.Session].closed {
-			return Report{}, fmt.Errorf("%w: session %s has no close statement, so its last calls could have been cut", ErrChain, s.Session)
+			return Report{}, nil, fmt.Errorf("%w: session %s has no close statement, so its last calls could have been cut", ErrChain, s.Session)
 		}
 	}
-	return rep, nil
+	return rep, recs, nil
 }
 
 // ErrChain means a session's calls do not form an unbroken, closed chain.
@@ -249,7 +261,12 @@ func matchStored(e Entry, rec sandbox.RunRecord) error {
 		return fmt.Errorf("%w: the result", ErrStored)
 	case resp.GetSandbox() != rec.Provider || resp.GetIsolation() != rec.Isolation:
 		return fmt.Errorf("%w: the evidence", ErrStored)
-	case resp.GetRecord().GetRecordSha256() != rec.SHA256:
+	}
+	// The stored response carries its own copy of the record. Every field of it must
+	// be the signed record's, not only its digest field: a reader of the bundle, and
+	// any tool built on the stored response, would otherwise trust unsigned values.
+	stored := record.FromWire(resp.GetRecord())
+	if stored.Version != rec.Version || stored.SHA256 != rec.SHA256 || record.Digest(stored) != record.Digest(rec) {
 		return fmt.Errorf("%w: the response's own record", ErrStored)
 	}
 	return nil
@@ -314,22 +331,24 @@ func (r Replayed) Match() bool { return r.Err == nil && r.Replayed == r.Recorded
 // result digests. It is meaningful for deterministic workloads (the physics
 // oracle's trajectory is one); a workload that reads the clock or random
 // numbers differs by design. Session calls are skipped: replaying them needs a
-// fresh session and the calls in order. Entries are not verified here; run
-// VerifyBundle first.
-func Replay(ctx context.Context, entries []Entry, send func(context.Context, *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error)) ([]Replayed, error) {
+// fresh session and the calls in order. The bundle is verified with v first (as
+// VerifyBundle does) and nothing is sent unless it verifies; each baseline is the
+// signed record's result digest.
+func Replay(ctx context.Context, entries []Entry, v *Verifier, send func(context.Context, *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error)) ([]Replayed, error) {
+	_, recs, err := verifyEntries(entries, v)
+	if err != nil {
+		return nil, err
+	}
 	var out []Replayed
 	for i, e := range entries {
-		if predicateType(e.Envelope) == ClosePredicateType {
+		if predicateType(e.Envelope) == ClosePredicateType || recs[i].Session != "" {
 			continue
 		}
-		req, resp, err := e.Messages()
+		req, _, err := e.Messages()
 		if err != nil {
 			return nil, fmt.Errorf("entry %d: %w", i+1, err)
 		}
-		if resp.GetRecord().GetSession() != "" {
-			continue
-		}
-		r := Replayed{Entry: i + 1, Recorded: resp.GetRecord().GetResultSha256()}
+		r := Replayed{Entry: i + 1, Recorded: recs[i].ResultSHA256}
 		got, err := send(ctx, req)
 		if err != nil {
 			r.Err = err
@@ -351,21 +370,18 @@ type SessionSender interface {
 // ReplaySessions replays each session in a bundle into a fresh session from open,
 // its calls in their recorded order, and compares result digests call by call. A
 // session's later calls read what its earlier calls wrote, so only a whole session
-// replays; a deterministic session reproduces every call. Entries are not verified
-// here; run VerifyBundle first.
-func ReplaySessions(ctx context.Context, entries []Entry, open func(context.Context) (SessionSender, error)) ([]Replayed, error) {
+// replays; a deterministic session reproduces every call. The bundle is verified
+// with v first, as in Replay.
+func ReplaySessions(ctx context.Context, entries []Entry, v *Verifier, open func(context.Context) (SessionSender, error)) ([]Replayed, error) {
+	_, recs, err := verifyEntries(entries, v)
+	if err != nil {
+		return nil, err
+	}
 	var order []string
 	calls := map[string][]int{}
 	for i, e := range entries {
-		if predicateType(e.Envelope) == ClosePredicateType {
-			continue
-		}
-		_, resp, err := e.Messages()
-		if err != nil {
-			return nil, fmt.Errorf("entry %d: %w", i+1, err)
-		}
-		fp := resp.GetRecord().GetSession()
-		if fp == "" {
+		fp := recs[i].Session
+		if predicateType(e.Envelope) == ClosePredicateType || fp == "" {
 			continue
 		}
 		if _, seen := calls[fp]; !seen {
@@ -377,8 +393,8 @@ func ReplaySessions(ctx context.Context, entries []Entry, open func(context.Cont
 	for _, fp := range order {
 		sender, openErr := open(ctx)
 		for _, i := range calls[fp] {
-			req, resp, _ := entries[i].Messages()
-			r := Replayed{Entry: i + 1, Session: fp, Recorded: resp.GetRecord().GetResultSha256()}
+			req, _, _ := entries[i].Messages()
+			r := Replayed{Entry: i + 1, Session: fp, Recorded: recs[i].ResultSHA256}
 			switch {
 			case openErr != nil:
 				r.Err = openErr

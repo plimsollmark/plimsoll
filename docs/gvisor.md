@@ -114,8 +114,12 @@ SANDBOX_DOCKER_RUNTIME=runsc go test ./sandbox -run 'Docker|RunProject' -count=1
 
 - **The process limit covers the whole sandbox.** runsc applies `--pids-limit`
   (`SANDBOX_PIDS`) to the sandbox's cgroup on the host, which also holds gVisor's own
-  tasks (about 30 when idle, measured with release 20260907.0) and one host task per
-  guest process. A guest therefore gets fewer processes than the configured number. At
+  tasks (about 30 when idle, measured with release 20260907.0) and about two host tasks
+  per guest process. A guest therefore gets well under half the configured number: at
+  `SANDBOX_PIDS=256` a guest held 112 single-threaded processes beside the runner's and
+  its step's `node` before a spawn failed (measured 2026-09-29, same release), where
+  runc allowed 192 and more. `TestDockerGuestGetsItsProcessBudget` holds each runtime
+  to a floor below those numbers, so a release that raises the cost fails a test. At
   the limit a spawn fails with `ENOMEM`, not the `EAGAIN` runc gives, and in two of four
   measured runs at a limit of 256 the run instead ended with exit status 2 and no output.
   Size `SANDBOX_PIDS` with that overhead in mind. Inside the guest, `pids.max` is gVisor's

@@ -26,6 +26,8 @@ GATE_TOOLS := gate-tools.versions
 .PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
+## audit prerequisite: node on PATH; runnerwire's TestProjectRunnerAlwaysEmitsCompleteBoundedJSON
+##   and TestProjectRunnerReportsTruncationFlags skip without it
 audit: tools-check build vet race lint buf vuln
 	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi

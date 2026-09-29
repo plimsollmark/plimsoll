@@ -467,3 +467,23 @@ func TestLoadMaxCalls(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenToEveryCallerNamesWildcardProfiles: "*" in allowed_callers opens a profile
+// to every authenticated caller, so the registry names such profiles for the daemon to
+// log at startup (external review of v0.10.0, finding 13, 2026-09-28).
+func TestOpenToEveryCallerNamesWildcardProfiles(t *testing.T) {
+	t.Setenv("HUE_TOKEN", "tok-123")
+	p := writeGrants(t, `{
+	  "profiles": {
+	    "shared": {"base_url": "https://hue.internal", "allow": ["GET /v1/lights"], "allowed_callers": ["*"], "token": {"type": "static", "env": "HUE_TOKEN"}},
+	    "narrow": {"base_url": "https://hue.internal", "allow": ["GET /v1/lights"], "allowed_callers": ["mcp-a"], "token": {"type": "static", "env": "HUE_TOKEN"}}
+	  }
+	}`)
+	r, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := r.OpenToEveryCaller(); len(got) != 1 || got[0] != "shared" {
+		t.Fatalf("OpenToEveryCaller = %v, want [shared]", got)
+	}
+}

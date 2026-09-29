@@ -10,8 +10,9 @@
 # means a red result here is attributable to runsc and cannot mask a green runc
 # result, and a green result here is the first hosted proof of the kernel tier.
 #
-# Same rules as audit.yml: no E2B, no secrets, read-only permissions, actions pinned
-# by commit SHA. The gVisor release itself is pinned by SHA-512 in
+# The plain audit runs in audit.yml; this job runs only the required docker suite
+# under runsc. Same rules as audit.yml: no E2B, no secrets, read-only permissions,
+# actions pinned by commit SHA. The gVisor release itself is pinned by SHA-512 in
 # docker/gvisor.versions and verified by the installer before anything is installed.
 name: gvisor
 
@@ -40,12 +41,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Put installed tools on PATH
-        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      - name: Install the pinned gate tools
-        run: make tools
-
       # The committed installer: downloads the pinned release bundle, checks it
       # against the SHA-512 in docker/gvisor.versions, verifies the executable set,
       # installs, registers the runsc runtime with sidecar auto-download disabled,
@@ -64,7 +59,7 @@ jobs:
       # The suite reads SANDBOX_DOCKER_RUNTIME, so every docker test, the startup
       # smoke probe included, runs under runsc. The seccomp profile is skipped for
       # this runtime by design: gVisor filters syscalls in its own kernel.
-      - name: make audit DOCKER=1 under runsc
+      - name: make docker-suite under runsc
         env:
           SANDBOX_DOCKER_RUNTIME: runsc
-        run: make audit DOCKER=1
+        run: make docker-suite

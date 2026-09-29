@@ -33,6 +33,7 @@ type stub struct {
 	runs      int
 	lastToken string
 	floors    []string // minimum_isolation of every Run and OpenSession that reached it
+	ranIn     string   // the environment its records state, when not what Describe says
 }
 
 func (s *stub) Describe(context.Context, *connect.Request[plimsollv1.DescribeRequest]) (*connect.Response[plimsollv1.DescribeResponse], error) {
@@ -47,7 +48,19 @@ func (s *stub) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest
 	if err != nil {
 		return nil, err
 	}
-	resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req.Msg)}, resp)
+	env := s.ranIn
+	if env == "" {
+		// A daemon states the identity its Describe states for the payload's kind.
+		switch req.Msg.GetPayload().(type) {
+		case *plimsollv1.RunRequest_Project:
+			env = s.describe.GetProjectEnvironment().GetIdentity()
+		case *plimsollv1.RunRequest_Module:
+			env = s.describe.GetModuleEnvironment().GetIdentity()
+		default:
+			env = s.describe.GetJavascriptEnvironment().GetIdentity()
+		}
+	}
+	resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req.Msg), Environment: env}, resp)
 	return connect.NewResponse(resp), nil
 }
 
@@ -416,5 +429,30 @@ func TestAgainstARealDaemon(t *testing.T) {
 	if _, _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"},
 		Requirement{MinimumIsolation: sandbox.IsolationVM}); !errors.Is(err, ErrNoBackend) {
 		t.Fatalf("a vm floor on a process-tier daemon: %v", err)
+	}
+}
+
+// TestEnvironmentRequirementIsCheckedAgainstTheRun: a backend whose Describe answer
+// (cached for a minute) named the required environment but whose run record states
+// another must not be reported as a success, and must not be retried elsewhere,
+// because the run happened (external review of v0.10.0, finding 7, 2026-09-28).
+func TestEnvironmentRequirementIsCheckedAgainstTheRun(t *testing.T) {
+	moved := &stub{name: "moved", describe: describeAs("docker", "kernel"), answer: ok("x"), ranIn: "docker-image:2"}
+	spare := &stub{name: "spare", describe: describeAs("docker", "kernel"), answer: ok("x")}
+	p := pool(t, moved, spare)
+	ctx := context.Background()
+	req := Requirement{Environment: "docker-image:1"}
+	_, choice, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, req)
+	if !errors.Is(err, ErrEnvironmentMismatch) {
+		t.Fatalf("a run whose record states docker-image:2 under a docker-image:1 requirement: %v", err)
+	}
+	if _, marked := sandbox.NotDispatchedReason(err); marked || spare.runs != 0 || choice.Backend != "moved" {
+		t.Fatalf("the mismatch was treated as not dispatched (marked %v, spare ran %d, choice %+v)", marked, spare.runs, choice)
+	}
+	if _, _, err := p.RunProject(ctx, sandbox.ProjectRequest{Files: []sandbox.File{{Path: "a.js", Content: "1"}}, Steps: []string{"node a.js"}}, Requirement{Environment: "docker-image:1", Backend: "moved"}); !errors.Is(err, ErrEnvironmentMismatch) {
+		t.Fatalf("a project run: %v", err)
+	}
+	if _, _, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{Environment: "docker-image:1", Backend: "spare"}); err != nil {
+		t.Fatalf("a run whose record states the required environment: %v", err)
 	}
 }

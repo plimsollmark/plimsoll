@@ -8,10 +8,12 @@ private disclosure through GitHub Security Advisories.
 **CI runs the gate on your pull request, and you should still run it locally.** The
 [audit workflow](.github/workflows/audit.yml) runs `make audit` (build, vet, race
 tests, golangci-lint, `buf lint` plus a generated-code drift check, `govulncheck`)
-and then `make audit DOCKER=1` with the images prepared, so the docker, seccomp,
+and then `make docker-suite` with the images prepared, so the docker, seccomp,
 broker and smoke tests run on every push under runc. That second job is in required
 mode: a missing image or a skipped test fails it rather than passing quietly. The
 [gvisor workflow](.github/workflows/gvisor.yml) runs the same suite under runsc.
+Race tests run in the plain audit job; the provider jobs run their isolation tests
+without the race detector.
 
 What CI does not run is E2B. That suite needs a live paid account, and no automated
 run in this project is permitted to spend money, so no check ever verified that a

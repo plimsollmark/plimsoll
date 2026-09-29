@@ -1,15 +1,16 @@
 # The gate, run where a reader can see it.
 #
-# Two jobs, each a Makefile target, so what a check claims and what the Makefile
-# does cannot drift:
+# Two jobs, each using Makefile targets, so what a check claims and what the
+# Makefile does cannot drift:
 #
 #   audit         `make audit`: build, vet, race tests, golangci-lint, buf lint plus a
-#                 generated-code drift check, govulncheck. No containers.
-#   audit-docker  `make docker-images` then `make audit DOCKER=1`: the same gate plus
-#                 the docker suite under runc with the shipped seccomp profile, in
-#                 required mode. A missing daemon, a missing image or any skipped
-#                 test fails the job, so a green check means the suite ran: a
-#                 container came up read-only, every writable mount was a sized
+#                 generated-code drift check, govulncheck. No required containers.
+#   audit-docker  `make docker-images` then `make docker-suite`: the docker suite
+#                 under runc with the shipped seccomp profile, in required mode.
+#                 The audit job already runs the build, race tests and static checks.
+#                 A missing daemon, a missing image or any skipped test fails this
+#                 job, so a green check means the suite ran: a container came up
+#                 read-only, every writable mount was a sized
 #                 noexec tmpfs, the seccomp profile loaded, and the broker refused
 #                 what it was meant to refuse.
 #
@@ -73,10 +74,9 @@ jobs:
       - name: make audit
         run: make audit
 
-  # Same gate, plus the docker suite. `needs` keeps it from spending runner minutes
-  # on containers when the plain gate already failed, and keeps a docker failure
-  # attributable: if this job is red and `audit` is green, the isolation suite is
-  # what broke. ubuntu-latest ships a docker daemon; nothing here installs one.
+  # The required docker suite follows the audit job. `needs` keeps it from spending
+  # runner minutes on containers when the plain gate already failed, and keeps a
+  # docker failure attributable. ubuntu-latest ships a docker daemon.
   audit-docker:
     needs: audit
     runs-on: ubuntu-latest
@@ -90,12 +90,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Put installed tools on PATH
-        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      - name: Install the pinned gate tools
-        run: make tools
-
       - name: Report the daemon and its runtimes
         run: docker info --format 'server {{.ServerVersion}} runtimes {{range $k, $v := .Runtimes}}{{$k}} {{end}}'
 
@@ -105,5 +99,5 @@ jobs:
       - name: Pull the snippet image and build the project image
         run: make docker-images
 
-      - name: make audit DOCKER=1
-        run: make audit DOCKER=1
+      - name: make docker-suite
+        run: make docker-suite

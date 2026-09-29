@@ -261,6 +261,16 @@ func TestOpenShellReconcileOtherInstanceLive(t *testing.T) {
 	crashed := liveProvider(t, nil)
 	reaper := liveProvider(t, nil)
 	reaper.staleAfter = 3 * time.Second
+	// The reaper ages another instance's sandbox on the gateway's clock, which its own
+	// creates measure; a reaper that has created nothing reaps nothing of another's.
+	own, err := reaper.create(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reaper.deleteLater(own)
+	if _, known := reaper.gatewaySkew(); !known {
+		t.Fatal("a create measured no clock skew")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	b, err := crashed.create(ctx)
 	cancel()

@@ -34,7 +34,6 @@ const Version = 1
 const (
 	requestDomain = "plimsoll.run-request.v1"
 	resultDomain  = "plimsoll.run-result.v1"
-	recordDomain  = "plimsoll.run-record.v1"
 )
 
 // encoder streams an encoding into SHA-256. Every value, the domain included, is
@@ -214,9 +213,11 @@ func ResultDigest(m *plimsollv1.RunResponse) string {
 }
 
 // Digest is a record's own digest, over every field except SHA256 itself, in the
-// order of the wire message. The times count whole milliseconds, as on the wire.
+// order of the wire message. The version is the domain's suffix (recordDomain), so a
+// record read under another version's encoding cannot keep its digest. The times
+// count whole milliseconds, as on the wire.
 func Digest(r sandbox.RunRecord) string {
-	e := newEncoder(recordDomain)
+	e := newEncoder(recordDomain(r.Version))
 	e.str("request_sha256", r.RequestSHA256)
 	e.str("result_sha256", r.ResultSHA256)
 	e.str("provider", r.Provider)
@@ -229,6 +230,12 @@ func Digest(r sandbox.RunRecord) string {
 	e.uint("sequence", r.Sequence)
 	e.str("previous_sha256", r.PreviousSHA256)
 	return e.sum()
+}
+
+// recordDomain is the record digest's domain for an encoding version: version 1 is
+// "plimsoll.run-record.v1".
+func recordDomain(version int) string {
+	return "plimsoll.run-record.v" + strconv.Itoa(version)
 }
 
 // SessionFingerprint is the SHA-256 of a session ID, the value a session call's

@@ -38,8 +38,10 @@ import (
 // fixed set of maxForwardConns workers answers, at most maxForwardConns connections
 // are ever live or being dialed, an unfinished line is held to maxRelayLine bytes, and
 // failed dials slow the whole pool down (failedLocked). So no amount of output grows
-// plimsoll's goroutines, tokens or buffers; each counted line costs at most one dial,
-// and never more than a few a second while dials fail.
+// plimsoll's goroutines, tokens or buffers. Nor does it grow the load on the shared
+// gateway past a bound: failed dials are paced by the backoff, and a run's successful
+// dials are capped (forwardPool.maxDials), since a dial that succeeds and then carries
+// nothing, which a process holding the relay's port can cause, triggers no backoff.
 
 // relayScript is the in-sandbox relay: argv carries the loopback port and the Unix
 // socket path. It prints "ready" once both listeners are up, and "need" whenever a
@@ -100,15 +102,27 @@ func (p *Provider) startGrant(ctx context.Context, b box, grant *sandbox.HostAPI
 	if err != nil {
 		return nil, err
 	}
-	var r [2]byte
-	_, _ = rand.Read(r[:])
+	var r [4]byte
+	var port uint32
+	const portCount uint32 = 40000
+	const maxUniformDraw uint64 = (1 << 32) / uint64(portCount) * uint64(portCount)
+	for {
+		if _, err := rand.Read(r[:]); err != nil {
+			return nil, fmt.Errorf("relay port: %w", err)
+		}
+		draw := binary.BigEndian.Uint32(r[:])
+		if uint64(draw) < maxUniformDraw {
+			port = 20000 + draw%portCount
+			break
+		}
+	}
 	g := &grantRun{
 		p: p, b: b, broker: broker,
 		sock:      "/tmp/.plimsoll-host-" + randHex(6) + ".sock",
-		port:      20000 + uint32(binary.BigEndian.Uint16(r[:]))%40000,
+		port:      port,
 		relayDone: make(chan struct{}),
 	}
-	g.pool = newForwardPool(p, b, g.port)
+	g.pool = newForwardPool(p, b, g.port, dialCap(grant))
 	ready := make(chan struct{})
 	var once sync.Once
 	var lines relayLines
@@ -227,11 +241,24 @@ type forwardPool struct {
 	notBefore time.Time
 	tokens    []*forwardToken
 	live      map[net.Conn]*forwardToken
+	// dials counts connections this run has dialed or is dialing; no worker claims
+	// once it reaches maxDials. A failed dial or a refused stream gives its count back,
+	// since failures are paced by the backoff instead. capped says the cap was logged.
+	dials, maxDials int
+	capped          bool
+}
+
+// dialCap is a run's successful-dial cap: each brokered call needs at most one
+// forwarded connection, so a run that makes its whole call budget needs at most that
+// many, and maxForwardConns more covers connections dialed for guest connections that
+// closed before they were paired.
+func dialCap(grant *sandbox.HostAPIGrant) int {
+	return grant.CallBudget() + maxForwardConns
 }
 
 // newForwardPool starts the pool's maxForwardConns workers; they end when it closes.
-func newForwardPool(p *Provider, b box, port uint32) *forwardPool {
-	f := &forwardPool{p: p, b: b, port: port, accept: make(chan net.Conn, maxForwardConns), done: make(chan struct{}), live: map[net.Conn]*forwardToken{}}
+func newForwardPool(p *Provider, b box, port uint32, maxDials int) *forwardPool {
+	f := &forwardPool{p: p, b: b, port: port, accept: make(chan net.Conn, maxForwardConns), done: make(chan struct{}), live: map[net.Conn]*forwardToken{}, maxDials: maxDials}
 	f.wake = sync.NewCond(&f.mu)
 	for range maxForwardConns {
 		go f.worker()
@@ -260,7 +287,12 @@ func (f *forwardPool) worker() {
 func (f *forwardPool) claim() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for !f.closed && (f.pending == 0 || f.held >= maxForwardConns || time.Now().Before(f.notBefore)) {
+	for !f.closed && (f.pending == 0 || f.held >= maxForwardConns || f.dials >= f.maxDials || time.Now().Before(f.notBefore)) {
+		if f.pending > 0 && f.dials >= f.maxDials && !f.capped {
+			f.capped = true
+			slog.Warn("openshell grant: the run reached its forwarded-connection cap; further needs go unanswered",
+				"sandbox", f.b.name, "cap", f.maxDials)
+		}
 		f.wake.Wait()
 	}
 	if f.closed {
@@ -268,6 +300,7 @@ func (f *forwardPool) claim() bool {
 	}
 	f.pending--
 	f.held++
+	f.dials++
 	return true
 }
 
@@ -327,7 +360,14 @@ func (f *forwardPool) connect() {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.dialFailedLocked()
+}
+
+// dialFailedLocked undoes a claim whose dial failed: the slot and the dial's count go
+// back, and the need is counted again behind the backoff.
+func (f *forwardPool) dialFailedLocked() {
 	f.releaseLocked()
+	f.dials--
 	if !f.closed {
 		f.failedLocked()
 	}
@@ -440,6 +480,7 @@ func (f *forwardPool) ended(c *streamConn, refused bool) {
 	if !refused || f.closed {
 		return
 	}
+	f.dials--
 	if code := connect.CodeOf(c.rerr); code == connect.CodeUnauthenticated || code == connect.CodePermissionDenied {
 		f.tokens = slices.DeleteFunc(f.tokens, func(x *forwardToken) bool { return x == t })
 	}

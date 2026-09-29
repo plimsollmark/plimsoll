@@ -167,6 +167,7 @@ type hardenedFacts struct {
 	Addr            string                 // listen address
 	MetricsAddr     string                 // metrics listen address; "" = metrics off
 	RatePerMin      int                    // effective per-caller rate limit
+	PerCaller       int                    // effective per-caller concurrency cap; 0 = none
 }
 
 // enforceHardenedPolicy is the production policy PLIMSOLL_HARDENED=1 turns on.
@@ -286,6 +287,11 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	}
 	if f.RatePerMin <= 0 {
 		fail("hardened mode requires per-caller rate limiting: SANDBOX_RATE_PER_MIN must be positive")
+	}
+	// A rate limit bounds what a caller starts, not what it holds: without a
+	// concurrency cap one caller can hold every slot with long runs or open sessions.
+	if f.PerCaller <= 0 {
+		fail("hardened mode requires a per-caller concurrency cap: SANDBOX_PER_KEY_CONCURRENT must be positive")
 	}
 
 	if len(violations) > 0 {

@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"flag"
 	"fmt"
@@ -39,8 +40,10 @@ const usage = `usage:
   plimsoll-attest run -daemon URL -key FILE -bundle FILE REQUEST.json
                                                 run one request, append its signed record
   plimsoll-attest verify -pub FILE BUNDLE       check signatures, digests and session chains
-  plimsoll-attest replay -daemon URL BUNDLE     run each single run again and each session in a
-                                                fresh session, compare results
+  plimsoll-attest replay -daemon URL -pub FILE BUNDLE
+                                                verify the bundle as verify does, then run each
+                                                single run again and each session in a fresh
+                                                session, compare results
 
 environment:
   PLIMSOLL_CALLER_TOKEN   bearer token for the daemon (omit for an open dev daemon)
@@ -183,6 +186,23 @@ func summary(resp *plimsollv1.RunResponse) string {
 	return "no result"
 }
 
+// loadPublic reads the harness's public key from a PEM file.
+func loadPublic(path string) (ed25519.PublicKey, error) {
+	pemBytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return attest.ParsePublicKey(pemBytes)
+}
+
+// prefix shortens a digest for display without assuming its length.
+func prefix(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
 func readBundle(path string) ([]attest.Entry, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -201,11 +221,7 @@ func verify(args []string, stdout io.Writer) error {
 	if *pubPath == "" || fs.NArg() != 1 {
 		return errors.New("verify needs -pub FILE and one BUNDLE")
 	}
-	pemBytes, err := os.ReadFile(*pubPath)
-	if err != nil {
-		return err
-	}
-	pub, err := attest.ParsePublicKey(pemBytes)
+	pub, err := loadPublic(*pubPath)
 	if err != nil {
 		return err
 	}
@@ -219,7 +235,7 @@ func verify(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "verified %d entries signed by key %s: %d single runs", len(entries), attest.KeyID(pub), rep.Runs)
 	for _, s := range rep.Sessions {
-		fmt.Fprintf(stdout, "; session %s…, %d calls, chain closed", s.Session[:12], s.Calls)
+		fmt.Fprintf(stdout, "; session %s…, %d calls, chain closed", prefix(s.Session, 12), s.Calls)
 	}
 	fmt.Fprintln(stdout)
 	return nil
@@ -228,15 +244,25 @@ func verify(args []string, stdout io.Writer) error {
 func replay(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
 	daemon := fs.String("daemon", "", "the daemon's base URL")
+	pubPath := fs.String("pub", "", "the harness's public key (PEM PKIX Ed25519); the bundle is verified before anything is sent")
 	timeout := fs.Duration("timeout", 6*time.Minute, "how long to wait for each run")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *daemon == "" || fs.NArg() != 1 {
-		return errors.New("replay needs -daemon URL and one BUNDLE")
+	if *daemon == "" || *pubPath == "" || fs.NArg() != 1 {
+		return errors.New("replay needs -daemon URL, -pub FILE and one BUNDLE")
 	}
+	pub, err := loadPublic(*pubPath)
+	if err != nil {
+		return err
+	}
+	v := attest.NewVerifier(pub)
 	entries, err := readBundle(fs.Arg(0))
 	if err != nil {
+		return err
+	}
+	// Verify before dialing: a bundle that does not verify sends nothing anywhere.
+	if _, err := attest.VerifyBundle(entries, v); err != nil {
 		return err
 	}
 	r, err := remote(*daemon)
@@ -249,11 +275,11 @@ func replay(args []string, stdout io.Writer) error {
 		resp, _, err := r.Exchange(ctx, req)
 		return resp, err
 	}
-	results, err := attest.Replay(context.Background(), entries, send)
+	results, err := attest.Replay(context.Background(), entries, v, send)
 	if err != nil {
 		return err
 	}
-	sessions, err := attest.ReplaySessions(context.Background(), entries, func(ctx context.Context) (attest.SessionSender, error) {
+	sessions, err := attest.ReplaySessions(context.Background(), entries, v, func(ctx context.Context) (attest.SessionSender, error) {
 		s, err := r.OpenSession(ctx, client.SessionOptions{})
 		if err != nil {
 			return nil, err
@@ -271,12 +297,12 @@ func replay(args []string, stdout io.Writer) error {
 			differ++
 			fmt.Fprintf(stdout, "entry %d: the replay failed: %v\n", res.Entry, res.Err)
 		case res.Match() && res.Session != "":
-			fmt.Fprintf(stdout, "entry %d (session %s…): same result (%s)\n", res.Entry, res.Session[:12], res.Recorded[:16])
+			fmt.Fprintf(stdout, "entry %d (session %s…): same result (%s)\n", res.Entry, prefix(res.Session, 12), prefix(res.Recorded, 16))
 		case res.Match():
-			fmt.Fprintf(stdout, "entry %d: same result (%s)\n", res.Entry, res.Recorded[:16])
+			fmt.Fprintf(stdout, "entry %d: same result (%s)\n", res.Entry, prefix(res.Recorded, 16))
 		default:
 			differ++
-			fmt.Fprintf(stdout, "entry %d: different result: recorded %s, replayed %s\n", res.Entry, res.Recorded[:16], res.Replayed[:16])
+			fmt.Fprintf(stdout, "entry %d: different result: recorded %s, replayed %s\n", res.Entry, prefix(res.Recorded, 16), prefix(res.Replayed, 16))
 		}
 	}
 	if differ > 0 {

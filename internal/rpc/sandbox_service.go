@@ -44,9 +44,9 @@ func clampTimeoutMs(ms int32) time.Duration {
 	return d
 }
 
-// runContext makes the RPC ceiling an actual context deadline, not merely a hint
-// in Request.Timeout. Providers are required to honor ctx; this backstop still
-// bounds a provider whose own timeout fields were left unconfigured.
+// runContext passes the RPC ceiling to the provider as a context deadline even
+// when its own timeout fields are unconfigured. It stops only providers that
+// honor ctx; a provider that ignores ctx may keep the handler running.
 func runContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, maxRunTimeout)
 }
@@ -439,6 +439,9 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 		}
 		// A failed run is exactly the one an operator will go looking for, so it
 		// carries the join key too.
+		// A run can fail after it brokered calls; they happened, so they are counted.
+		s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
+		failed = append(failed, hostCallAttrs(res.CallTrace)...)
 		failed = append(append(failed, traceAttrs(env.traceID)...), t.attrs...)
 		s.logger().LogAttrs(ctx, slog.LevelError, "code run failed", failed...)
 		return nil, mapSandboxErr(err)
@@ -462,18 +465,7 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 	s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
 	// Bounded, metadata-only summary of the run's brokered host.* calls (never
 	// paths, bodies, or credentials). Emitted only when the run brokered something.
-	if t := res.CallTrace; t != nil {
-		attrs = append(attrs, slog.Int("host_calls", len(t.Calls)))
-		if t.Denied > 0 {
-			attrs = append(attrs, slog.Int("host_calls_denied", t.Denied))
-		}
-		if t.Dropped > 0 {
-			attrs = append(attrs, slog.Int("host_calls_dropped", t.Dropped))
-		}
-		if t.Shed > 0 {
-			attrs = append(attrs, slog.Int("host_calls_shed", t.Shed))
-		}
-	}
+	attrs = append(attrs, hostCallAttrs(res.CallTrace)...)
 	// Prospector advisory channel (Phase 2). Post-dispatch analysis over the
 	// immutable CallTrace: res is already final above, so computing advice cannot
 	// change ExitCode/Stdout/Stderr/Isolation — a run with advice is byte-identical
@@ -577,6 +569,8 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 			slog.String("error", err.Error()),
 		}
+		s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
+		failed = append(failed, hostCallAttrs(res.CallTrace)...)
 		failed = append(append(failed, traceAttrs(env.traceID)...), t.attrs...)
 		s.logger().LogAttrs(ctx, slog.LevelError, "project run failed", failed...)
 		return nil, mapSandboxErr(err)
@@ -608,18 +602,7 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 	// labeled /metrics series and summarize them on the audit line (never paths, bodies,
 	// or credentials). No-op when the run brokered nothing.
 	s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
-	if t := res.CallTrace; t != nil {
-		attrs = append(attrs, slog.Int("host_calls", len(t.Calls)))
-		if t.Denied > 0 {
-			attrs = append(attrs, slog.Int("host_calls_denied", t.Denied))
-		}
-		if t.Dropped > 0 {
-			attrs = append(attrs, slog.Int("host_calls_dropped", t.Dropped))
-		}
-		if t.Shed > 0 {
-			attrs = append(attrs, slog.Int("host_calls_shed", t.Shed))
-		}
-	}
+	attrs = append(attrs, hostCallAttrs(res.CallTrace)...)
 	// Advisory channel (Phase 2), identical to the snippet kind: post-dispatch analysis
 	// over the immutable CallTrace. res is already final above, so computing advice
 	// cannot change any step's output/exit or the outcome — a project run with advice is
@@ -848,4 +831,24 @@ func sandboxErrCode(err error) connect.Code {
 // serialization and disappear as an unstructured transport error.
 func wireString(s string) string {
 	return strings.ToValidUTF8(s, "\uFFFD")
+}
+
+// hostCallAttrs is the bounded, metadata-only summary of a run's brokered host.*
+// calls for its audit line (never paths, bodies, or credentials); nothing when the
+// run brokered nothing.
+func hostCallAttrs(t *sandbox.CallTrace) []slog.Attr {
+	if t == nil {
+		return nil
+	}
+	attrs := []slog.Attr{slog.Int("host_calls", len(t.Calls))}
+	if t.Denied > 0 {
+		attrs = append(attrs, slog.Int("host_calls_denied", t.Denied))
+	}
+	if t.Dropped > 0 {
+		attrs = append(attrs, slog.Int("host_calls_dropped", t.Dropped))
+	}
+	if t.Shed > 0 {
+		attrs = append(attrs, slog.Int("host_calls_shed", t.Shed))
+	}
+	return attrs
 }

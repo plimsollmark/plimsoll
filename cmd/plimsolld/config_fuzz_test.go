@@ -65,6 +65,7 @@ func FuzzDaemonConfigEnv(f *testing.F) {
 			Isolation:  sandbox.ParseIsolationClass(minIso),
 			Addr:       maxc, // arbitrary string; loopbackAddr must cope
 			RatePerMin: lc.RatePerMin,
+			PerCaller:  lc.PerKey,
 		})
 	})
 }

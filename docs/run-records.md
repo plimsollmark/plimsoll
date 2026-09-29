@@ -99,6 +99,10 @@ protobuf or JSON bytes, so any language reproduces it with a hash function alone
 
 ### Record: domain `plimsoll.run-record.v1`
 
+The domain ends in the record's `version` (`plimsoll.run-record.v<version>`), so the
+digest covers the version without a field of its own: a record read under another
+version's encoding cannot keep its digest.
+
 `request_sha256`, `result_sha256`, `provider`, `isolation`, `environment`, `policy`,
 `started_unix_ms`, `ended_unix_ms`, `session`, `sequence`, `previous_sha256`.
 
@@ -156,15 +160,17 @@ uses the standard library only (Ed25519, SHA-256, JSON).
   alone. The messages are stored binary because protobuf JSON writes every NaN as `"NaN"`
   and reads it back as one particular NaN, so a module output holding any other NaN
   would no longer match its signed digest. Verification checks
-  every signature, recomputes both content digests from the stored messages, and
+  every signature, recomputes both content digests from the stored messages, requires
+  the record the stored response carries to equal the signed one in every field, and
   checks each session's chain: calls numbered from 1 with no gap, each naming the
   record before it, and a close whose count and last record match. A chain without a
   close fails, because a cut tail looks exactly like an ended session. A session closed
   before any call is its close alone, with a count of zero and no last record. A call another
   holder of the session ID made shows up as a gap, since the daemon numbers the calls
   it executed.
-- **Replay.** Each stored single run is sent again and its result digest compared with
-  the signed one. It is meaningful for deterministic workloads; one that reads the
+- **Replay.** The bundle is verified first, and nothing is sent unless it verifies.
+  Each stored single run is then sent again and its result digest compared with the
+  signed one. It is meaningful for deterministic workloads; one that reads the
   clock or random numbers differs by design.
 
 From Go, one client option signs every run a client makes:
@@ -182,7 +188,7 @@ go run ./cmd/plimsoll-attest keygen -out harness          # harness.key (0600), 
 PLIMSOLL_CALLER_TOKEN=... go run ./cmd/plimsoll-attest run \
   -daemon http://127.0.0.1:8746 -key harness.key -bundle runs.jsonl request.json
 go run ./cmd/plimsoll-attest verify -pub harness.pub runs.jsonl
-go run ./cmd/plimsoll-attest replay -daemon http://127.0.0.1:8746 runs.jsonl
+go run ./cmd/plimsoll-attest replay -daemon http://127.0.0.1:8746 -pub harness.pub runs.jsonl
 ```
 
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as

@@ -365,3 +365,86 @@ func TestSessionCallsGetTheDaemonCeiling(t *testing.T) {
 		t.Fatalf("the call's timeout was %v, want the daemon's ceiling %v", got, maxRunTimeout)
 	}
 }
+
+// TestARateRefusedCallGivesBackTheSlotItTook: a call on a suspended session takes a
+// slot, then is refused by the caller's rate; the session was not resumed, so the
+// slot must come back at once rather than at the next idle suspend (external review
+// of v0.10.0, finding 3, 2026-09-28).
+func TestARateRefusedCallGivesBackTheSlotItTook(t *testing.T) {
+	svc, p := sessionService()
+	svc.Limiter = NewCodeLimiter(1, 0, 1, 1) // the open spends the only run this minute
+	svc.Sessions.IdleTimeout = 50 * time.Millisecond
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for p.Opened()[0].Suspends() == 0 || svc.Limiter.Stats().InFlight != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the idle session was never suspended")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("a call past the caller's rate: %v", err)
+	}
+	if n := svc.Limiter.Stats().InFlight; n != 0 {
+		t.Fatalf("the refused call left %d slot(s) held", n)
+	}
+}
+
+// slowCloseProvider opens sessions whose Close returns at once but whose end comes
+// only when the test ends them, a timing the session contract allows.
+type slowCloseProvider struct{ *sandboxtest.Sessions }
+
+type slowCloseSession struct{ *sandboxtest.FakeSession }
+
+func (slowCloseSession) Close(context.Context) error { return nil }
+
+func (p slowCloseProvider) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	s, err := p.Sessions.OpenSession(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return slowCloseSession{s.(*sandboxtest.FakeSession)}, nil
+}
+
+// TestCloseSessionHonoursItsContext: CloseSession's wait for the session to end is
+// bounded by the caller's context, and a later close collects the session once it
+// has ended (external review of v0.10.0, finding 11, 2026-09-28).
+func TestCloseSessionHonoursItsContext(t *testing.T) {
+	p := slowCloseProvider{&sandboxtest.Sessions{}}
+	svc := NewSandboxService(p)
+	svc.Sessions = SessionConfig{MaxSessions: 4, Lifetime: time.Minute, IdleTimeout: time.Minute, DiskBytes: 1 << 20}
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := p.Opened()[0]
+	t.Cleanup(func() { fake.End(sandbox.SessionClosed) })
+	short, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.CloseSession(short, closeReq(open.Msg.GetSessionId()))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if connect.CodeOf(err) != connect.CodeDeadlineExceeded {
+			t.Fatalf("CloseSession past its deadline: %v", err)
+		}
+		if _, marked := sandbox.NotDispatchedReason(err); marked {
+			t.Fatal("a close that has begun was marked not dispatched")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CloseSession ignored its context while the session was still ending")
+	}
+	fake.End(sandbox.SessionClosed)
+	closed, err := svc.CloseSession(ctx, closeReq(open.Msg.GetSessionId()))
+	if err != nil || closed.Msg.GetSession() == "" {
+		t.Fatalf("closing again once the session ended: %v", err)
+	}
+}

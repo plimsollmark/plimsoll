@@ -679,3 +679,45 @@ func TestGrantPoolReplacesARevokedToken(t *testing.T) {
 		t.Fatalf("%d of 2 calls succeeded on %d tokens: %s", n, tokens, res.Stdout)
 	}
 }
+
+// TestForwardPoolCapsDialsPerRun: a dial that succeeds and then carries nothing (a
+// process holding the relay's port can close every connection it accepts) triggers
+// no backoff, so a run's dials are capped instead: past the cap a need goes
+// unanswered, and a failed dial gives its count back (external review of v0.10.0,
+// finding 10, 2026-09-28).
+func TestForwardPoolCapsDialsPerRun(t *testing.T) {
+	f := &forwardPool{done: make(chan struct{}), live: map[net.Conn]*forwardToken{}, maxDials: 2, pending: 10}
+	f.wake = sync.NewCond(&f.mu)
+	for i := range 2 {
+		if !f.claim() {
+			t.Fatalf("dial %d under the cap was refused", i+1)
+		}
+	}
+	claimed := make(chan bool, 1)
+	go func() { claimed <- f.claim() }()
+	select {
+	case <-claimed:
+		t.Fatal("a third dial was claimed past a cap of two")
+	case <-time.After(200 * time.Millisecond):
+	}
+	// A failed dial gives its count back, so the waiting worker claims after the backoff.
+	f.mu.Lock()
+	f.dialFailedLocked()
+	f.mu.Unlock()
+	select {
+	case ok := <-claimed:
+		if !ok {
+			t.Fatal("the claim after a failed dial reported the pool closed")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a failed dial did not give its count back")
+	}
+	go func() { claimed <- f.claim() }()
+	_ = f.Close()
+	if <-claimed {
+		t.Fatal("a claim past the cap succeeded when the pool closed")
+	}
+	if got := dialCap(&sandbox.HostAPIGrant{MaxCalls: 4}); got != 4+maxForwardConns {
+		t.Fatalf("dialCap for a budget of 4 is %d", got)
+	}
+}

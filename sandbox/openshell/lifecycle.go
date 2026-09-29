@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/datamodelv1"
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1"
@@ -35,9 +36,10 @@ const (
 	// may reap a sandbox that has outlived its declaration.
 	lifetimeLabel = "plimsoll.lifetime"
 	// staleMargin is added to a declared lifetime before another instance's sandbox
-	// counts as abandoned (Provider.staleAfter; the live suite shortens it). It is far above the clock skew between NTP-synchronized
-	// hosts and above deleteBudget, the time the creator's own delete may still be
-	// retrying; a larger margin costs only that an orphan lives that much longer.
+	// counts as abandoned (Provider.staleAfter; the live suite shortens it). It is above
+	// deleteBudget, the time the creator's own delete may still be retrying; a larger
+	// margin costs only that an orphan lives that much longer. Clock skew is not
+	// assumed small: each create measures it (clockSkew) and ages are read with it.
 	staleMargin = 5 * time.Minute
 	// defaultLifetime is declared when the creating context has no deadline (a run
 	// always has one): the longest project budget plus the runner's grace.
@@ -58,6 +60,12 @@ const (
 	// deleteBudget bounds one background delete, retries included. The delete call
 	// alone takes about 5 s for a sandbox older than a second.
 	deleteBudget = 60 * time.Second
+	// postExitGrace bounds how long exec keeps reading after the exit event. A v0.1.2
+	// gateway ends the stream right after it (measured 2026-09-29: an exec of
+	// `echo hi` took 6 to 8 ms with this read in place), so it is paid only by a
+	// gateway that leaves the stream open; a second covers frames already in flight
+	// without visibly slowing each exec there.
+	postExitGrace = time.Second
 	// maxListPages bounds ReconcileOrphans' walk over ListSandboxes pages.
 	maxListPages = 50
 	// agentProposalsSetting is the effective setting that lets code inside a sandbox
@@ -177,6 +185,7 @@ func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, comman
 			p.deleteLater(b)
 		}
 	}()
+	issued := time.Now()
 	_, err := p.client.CreateSandbox(ctx, connect.NewRequest(&openshellv1.CreateSandboxRequest{
 		WorkspaceScope: ws(),
 		Name:           b.name,
@@ -193,6 +202,9 @@ func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, comman
 	sb, err := p.waitReady(ctx, b.name)
 	if err != nil {
 		return box{}, nil, err
+	}
+	if skew, ok := clockSkew(issued, time.Now(), sb.GetMetadata().GetCreatedTime()); ok {
+		p.noteSkew(skew)
 	}
 	b.id = sb.GetMetadata().GetId()
 	if err := p.verifySandbox(sb, labels, command); err != nil {
@@ -288,10 +300,26 @@ func (p *Provider) verifyConfig(ctx context.Context, name string) error {
 	case !cfg.GetConfigurationAdmitted():
 		return fmt.Errorf("openshell read policy back: the configuration is not admitted: %q", cfg.GetConfigurationError())
 	}
-	if v := cfg.GetSettings()[agentProposalsSetting].GetValue(); v.GetBoolValue() || v.GetStringValue() == "true" {
-		return fmt.Errorf("openshell read policy back: %s is on, so code in the sandbox could propose policy changes after the read-back", agentProposalsSetting)
+	return proposalsOff(cfg.GetSettings())
+}
+
+// proposalsOff proves agentProposalsSetting off, failing closed: only an explicit
+// boolean false, or the key reported with no value, which is the gateway's default of
+// false (crates/openshell-core/src/settings.rs at v0.1.2; a v0.1.2 gateway reports the
+// key with no value when nothing set it, measured 2026-09-29). A missing key, true, or
+// a value of another type cannot be proven off.
+func proposalsOff(settings map[string]*sandboxv1.EffectiveSetting) error {
+	setting, reported := settings[agentProposalsSetting]
+	if !reported {
+		return fmt.Errorf("openshell read policy back: the gateway did not report %s, so it cannot be proven off", agentProposalsSetting)
 	}
-	return nil
+	if setting.GetValue() == nil {
+		return nil
+	}
+	if b, ok := setting.GetValue().GetValue().(*sandboxv1.SettingValue_BoolValue); ok && !b.BoolValue {
+		return nil
+	}
+	return fmt.Errorf("openshell read policy back: %s is on or not a boolean false, so code in the sandbox could propose policy changes after the read-back", agentProposalsSetting)
 }
 
 // execOutput is one command's captured result. exited says the gateway delivered an
@@ -301,6 +329,10 @@ type execOutput struct {
 	stdoutTruncated, stderrTruncated bool
 	exitCode                         int
 	exited                           bool
+	// lateOutput says output arrived after the exit event. It is kept, since for a
+	// project run it could be the report; its arrival contradicts the ordering
+	// measured on v0.1.2, so it is logged too.
+	lateOutput bool
 }
 
 // exec runs argv in the sandbox over ExecSandboxInteractive, always the streaming RPC:
@@ -369,9 +401,32 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 		case *openshellv1.ExecSandboxEvent_Stderr:
 			stderr.write(pl.Stderr.GetData())
 		case *openshellv1.ExecSandboxEvent_Exit:
-			// The exit event follows the last output byte (measured: no output event
-			// ever arrived after it, including after 10 MB of stdout).
 			out.exitCode, out.exited = int(pl.Exit.GetExitCode()), true
+		}
+	}
+	if out.exited {
+		// Measured on v0.1.2: no output event ever arrived after the exit event,
+		// including after 10 MB of stdout. The protocol does not promise that order,
+		// so the stream is read to its end anyway, for at most postExitGrace, and
+		// anything that arrives is kept rather than dropped.
+		grace := time.AfterFunc(postExitGrace, cancel)
+		for {
+			ev, err := stream.Receive()
+			if err != nil {
+				break
+			}
+			switch pl := ev.GetPayload().(type) {
+			case *openshellv1.ExecSandboxEvent_Stdout:
+				stdout.write(pl.Stdout.GetData())
+				out.lateOutput = true
+			case *openshellv1.ExecSandboxEvent_Stderr:
+				stderr.write(pl.Stderr.GetData())
+				out.lateOutput = true
+			}
+		}
+		grace.Stop()
+		if out.lateOutput {
+			slog.Warn("openshell exec: output arrived after the exit status and was kept", "sandbox", b.name)
 		}
 	}
 	cancel()
@@ -573,7 +628,54 @@ func (p *Provider) orphaned(sb *openshellv1.Sandbox, now time.Time) bool {
 	if err != nil || secs == 0 || meta.GetCreatedTime() == nil {
 		return false
 	}
-	return now.After(meta.GetCreatedTime().AsTime().Add(time.Duration(secs)*time.Second + p.staleAfter))
+	// The creation time is the gateway's, so the age is read on the gateway's clock:
+	// a local clock running fast would otherwise delete a live sandbox.
+	skew, known := p.gatewaySkew()
+	if !known {
+		return false
+	}
+	return now.Add(skew).After(meta.GetCreatedTime().AsTime().Add(time.Duration(secs)*time.Second + p.staleAfter))
+}
+
+// skewSlack is how far a creation time may fall outside the local window around a
+// create before it counts as skew: a gateway that records whole seconds reports a
+// time up to a second before the create was issued.
+const skewSlack = time.Second
+
+// clockSkew estimates the gateway's clock minus this process's from one create: the
+// gateway stamped created between issued and ready on its own clock, so a time
+// outside that window (by more than skewSlack) is skew, and one inside it is none.
+func clockSkew(issued, ready time.Time, created *timestamppb.Timestamp) (time.Duration, bool) {
+	if created == nil {
+		return 0, false
+	}
+	c := created.AsTime()
+	switch {
+	case c.Before(issued.Add(-skewSlack)):
+		return c.Sub(issued), true
+	case c.After(ready.Add(skewSlack)):
+		return c.Sub(ready), true
+	}
+	return 0, true
+}
+
+// noteSkew records a measurement, and logs once when the clocks differ by more than
+// a fifth of the margin that separates a live sandbox from an abandoned one.
+func (p *Provider) noteSkew(d time.Duration) {
+	p.skewMu.Lock()
+	defer p.skewMu.Unlock()
+	p.skew, p.skewKnown = d, true
+	if d.Abs() > p.staleAfter/5 && !p.skewWarned {
+		p.skewWarned = true
+		slog.Warn("openshell: the gateway's clock differs from this host's; orphan ages use the gateway's",
+			"skew", d.String(), "stale_margin", p.staleAfter.String())
+	}
+}
+
+func (p *Provider) gatewaySkew() (time.Duration, bool) {
+	p.skewMu.Lock()
+	defer p.skewMu.Unlock()
+	return p.skew, p.skewKnown
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

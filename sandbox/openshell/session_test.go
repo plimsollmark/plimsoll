@@ -15,7 +15,7 @@ import (
 )
 
 // freshListing is what the process lister prints in an untouched session sandbox.
-const freshListing = `{"ptrace":"1","procs":[{"pid":1,"ppid":0,"state":"S","start":"100","cmd":"/.openshell/runtime/openshell-sandbox"},{"pid":7,"ppid":1,"state":"S","start":"101","cmd":"sleep 2147483647"}]}`
+const freshListing = `{"ptrace":"1","procs":[{"pid":1,"ppid":0,"state":"S","start":"100","cmd":"/.openshell/runtime/openshell-sandbox","cmdHex":"2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800"},{"pid":7,"ppid":1,"state":"S","start":"101","cmd":"sleep 2147483647","cmdHex":"736c656570003231343734383336343700"}]}`
 
 // sessionScript answers a session's execs: the lister gets listing(), the sweep
 // exits with sweep(), and anything else is a payload that prints "ok". It records
@@ -105,7 +105,7 @@ func TestOpenSessionCreatesAVerifiedSleepingSandbox(t *testing.T) {
 	if got := sc.seen(); !slices.Equal(got, []string{"list"}) {
 		t.Fatalf("execs at open: %v", got)
 	}
-	if !slices.Equal(s.baseline, []string{"1:100", "7:101"}) {
+	if !slices.Equal(s.baseline, []string{"1:100:2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800", "7:101:736c656570003231343734383336343700"}) {
 		t.Fatalf("baseline %v", s.baseline)
 	}
 	if !p.isTracked(s.b.name) {
@@ -162,7 +162,10 @@ func TestSessionCallVerifiesRunsAndSweeps(t *testing.T) {
 	if got := sc.seen(); !slices.Equal(got, []string{"list", "payload", "sweep"}) {
 		t.Fatalf("execs: %v", got)
 	}
-	if want := []string{"5242880", "200000", "1:100", "7:101"}; !slices.Equal(sc.sweeps[0], want) {
+	// Each kept process is named by PID, start time and command line, so one that lands
+	// on a spared PID in the same clock tick is not spared unless it is the same
+	// program (external review of v0.10.0, documentation item 5, 2026-09-28).
+	if want := []string{"5242880", "200000", "1:100:2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800", "7:101:736c656570003231343734383336343700"}; !slices.Equal(sc.sweeps[0], want) {
 		t.Fatalf("sweep arguments %v, want %v", sc.sweeps[0], want)
 	}
 	// A project call gets the same verification and sweep.

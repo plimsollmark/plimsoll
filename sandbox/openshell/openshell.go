@@ -243,6 +243,13 @@ type Provider struct {
 	killWait time.Duration
 	// staleAfter is staleMargin, a field so the live suite can wait seconds, not minutes.
 	staleAfter time.Duration
+	// skew is the gateway's clock minus this process's, measured at each create
+	// (clockSkew). orphaned reads another instance's sandbox age on the gateway's
+	// clock with it, and reaps no other instance's sandbox before a measurement.
+	skewMu     sync.Mutex
+	skew       time.Duration
+	skewKnown  bool
+	skewWarned bool
 
 	// The Preflight cache (preflightTTL; pfTTL is a field so tests can turn it off).
 	pfMu      sync.Mutex
@@ -484,6 +491,8 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 		res.TimedOut, res.ExitCode = true, 124
 		return res, nil
 	}
+	// The brokered calls happened whatever became of the exec stream.
+	fail.CallTrace = res.CallTrace
 	if ctxErr := runCtx.Err(); ctxErr != nil {
 		return fail, ctxErr
 	}

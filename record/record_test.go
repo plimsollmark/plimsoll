@@ -2,6 +2,7 @@ package record
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -236,19 +237,30 @@ func TestResultDigestCoversWhatCameBack(t *testing.T) {
 
 func TestRecordDigestCoversEveryField(t *testing.T) {
 	base := goldenRecord()
-	for name, apply := range map[string]func(*sandbox.RunRecord){
-		"request":     func(r *sandbox.RunRecord) { r.RequestSHA256 = RunRequestDigest(jsRequest()) },
-		"result":      func(r *sandbox.RunRecord) { r.ResultSHA256 = ResultDigest(jsResponse()) },
-		"provider":    func(r *sandbox.RunRecord) { r.Provider = "docker" },
-		"isolation":   func(r *sandbox.RunRecord) { r.Isolation = "kernel" },
-		"environment": func(r *sandbox.RunRecord) { r.Environment = "" },
-		"policy":      func(r *sandbox.RunRecord) { r.Policy = "" },
-		"started":     func(r *sandbox.RunRecord) { r.Started = r.Started.Add(time.Millisecond) },
-		"ended":       func(r *sandbox.RunRecord) { r.Ended = r.Ended.Add(time.Millisecond) },
-		"session":     func(r *sandbox.RunRecord) { r.Session = "" },
-		"sequence":    func(r *sandbox.RunRecord) { r.Sequence = 3 },
-		"previous":    func(r *sandbox.RunRecord) { r.PreviousSHA256 = "" },
-	} {
+	// Keyed by field name, and checked against the struct, so a field added to
+	// RunRecord fails here until the digest covers it. The version was once left out
+	// (external review of v0.10.0, finding 9, 2026-09-28).
+	moves := map[string]func(*sandbox.RunRecord){
+		"Version":        func(r *sandbox.RunRecord) { r.Version = 2 },
+		"RequestSHA256":  func(r *sandbox.RunRecord) { r.RequestSHA256 = RunRequestDigest(jsRequest()) },
+		"ResultSHA256":   func(r *sandbox.RunRecord) { r.ResultSHA256 = ResultDigest(jsResponse()) },
+		"Provider":       func(r *sandbox.RunRecord) { r.Provider = "docker" },
+		"Isolation":      func(r *sandbox.RunRecord) { r.Isolation = "kernel" },
+		"Environment":    func(r *sandbox.RunRecord) { r.Environment = "" },
+		"Policy":         func(r *sandbox.RunRecord) { r.Policy = "" },
+		"Started":        func(r *sandbox.RunRecord) { r.Started = r.Started.Add(time.Millisecond) },
+		"Ended":          func(r *sandbox.RunRecord) { r.Ended = r.Ended.Add(time.Millisecond) },
+		"Session":        func(r *sandbox.RunRecord) { r.Session = "" },
+		"Sequence":       func(r *sandbox.RunRecord) { r.Sequence = 3 },
+		"PreviousSHA256": func(r *sandbox.RunRecord) { r.PreviousSHA256 = "" },
+	}
+	fields := reflect.TypeOf(sandbox.RunRecord{})
+	for i := range fields.NumField() {
+		if name := fields.Field(i).Name; name != "SHA256" && moves[name] == nil {
+			t.Errorf("RunRecord.%s has no case here: add it and cover it in Digest", name)
+		}
+	}
+	for name, apply := range moves {
 		changed := base
 		apply(&changed)
 		if Digest(changed) == Digest(base) {

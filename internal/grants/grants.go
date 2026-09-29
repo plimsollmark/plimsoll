@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -198,6 +199,23 @@ func (r *Registry) Get(name string) (*Profile, bool) {
 	}
 	g, ok := r.profiles[name]
 	return g, ok
+}
+
+// OpenToEveryCaller lists, sorted, the profiles whose allowed_callers is "*": any
+// authenticated caller holding code:run may select them, so the ACL grants nothing
+// beyond that scope. The daemon logs each one at startup so the choice is visible.
+func (r *Registry) OpenToEveryCaller() []string {
+	if r == nil {
+		return nil
+	}
+	var names []string
+	for name, p := range r.profiles {
+		if _, all := p.allowedCallers["*"]; all {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // Len reports how many profiles are configured.

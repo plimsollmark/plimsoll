@@ -29,7 +29,12 @@ and Spring read `/orgs/..;/repos/x` as `/repos/x`.
 
 Over RPC, a caller selects a **named server-side profile** by id. Raw caller-supplied
 grants are intentionally not accepted over the wire, so base URL, routes, and
-credential all stay server-side, and every profile carries an `allowed_callers` ACL.
+credential all stay server-side, and every profile carries an `allowed_callers` ACL
+of authenticated principal IDs. The single entry `"*"` opens a profile to every
+authenticated caller holding `code:run`, so the ACL then grants nothing beyond that
+scope; it is meant for a profile shared on purpose, never as a placeholder, and the
+daemon logs a warning naming each such profile at startup. No caller can present
+`*` as its own ID: the verifier refuses that principal.
 
 ### The policy and the tool description are generated from one source
 

@@ -32,6 +32,8 @@ templated from trusted inputs only: route templates from the profile, plus count
 timings. No guest-controlled string is ever echoed, so a finding cannot become a
 prompt-injection or covert channel. This is the same rule as the base audit log:
 metadata yes, code and credentials never.
+The base audit line's `outcome_detail` can carry a project file path supplied by the
+authenticated caller, which is that caller's own input rather than guest content.
 
 ### The correlation id is the honest form of the claim
 

@@ -281,7 +281,8 @@ func TestBundleRoundTripsThroughJSONLines(t *testing.T) {
 }
 
 func TestReplayComparesResultDigests(t *testing.T) {
-	s := NewSigner(newKey(t))
+	key := newKey(t)
+	s := NewSigner(key)
 	req1, resp1 := exchange("a()", "same\n", sandbox.RunRecord{})
 	req2, resp2 := exchange("b()", "drifts\n", sandbox.RunRecord{})
 	e1, _ := s.Call(req1, resp1)
@@ -294,7 +295,7 @@ func TestReplayComparesResultDigests(t *testing.T) {
 		}
 		return &plimsollv1.RunResponse{Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte(out)}}}, nil
 	}
-	got, err := Replay(context.Background(), entries, send)
+	got, err := Replay(context.Background(), entries, NewVerifier(key.Public().(ed25519.PublicKey)), send)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +341,7 @@ func TestHarnessRecordsThroughTheClient(t *testing.T) {
 		}
 		return resp.Msg, nil
 	}
-	replayed, err := Replay(context.Background(), entries, send)
+	replayed, err := Replay(context.Background(), entries, NewVerifier(key.Public().(ed25519.PublicKey)), send)
 	if err != nil || len(replayed) != 2 || !replayed[0].Match() || !replayed[1].Match() {
 		t.Fatalf("replay %+v, %v", replayed, err)
 	}
@@ -399,7 +400,7 @@ func TestSessionRecordsVerifyAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReplaySessions(context.Background(), entries, func(ctx context.Context) (SessionSender, error) {
+	got, err := ReplaySessions(context.Background(), entries, NewVerifier(key.Public().(ed25519.PublicKey)), func(ctx context.Context) (SessionSender, error) {
 		s, err := plain.OpenSession(ctx, client.SessionOptions{})
 		return replaySender{s}, err
 	})

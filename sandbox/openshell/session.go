@@ -24,7 +24,8 @@ import (
 //   - A process a call starts outlives the call: a cancelled exec kills only the
 //     command's process group, and a normal exit kills nothing. So after every call
 //     the provider sweeps: one exec kills every process except the sandbox's own
-//     (PID 1 and the main process, recorded when the sandbox became ready), its own
+//     (PID 1 and the main process, recorded when the sandbox became ready by PID,
+//     start time and command line), its own
 //     ancestors and itself, by PID, until a scan finds none. A process is alive while
 //     any of its threads is, not while its /proc entry says so: a main thread that
 //     called pthread_exit leaves the entry a zombie with its other threads running.
@@ -75,13 +76,15 @@ for(let p=self;;){let st;try{st=fs.readFileSync("/proc/"+p+"/stat","latin1")}cat
 const pp=st.slice(st.lastIndexOf(")")+2).split(" ")[1];if(!pp||pp==="0"||skip.has(pp))break;skip.add(pp);p=pp}
 const procs=[];for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d)||(skip.has(d)&&d!=="1")||!live(d))continue;
 try{const st=fs.readFileSync("/proc/"+d+"/stat","latin1");const f=st.slice(st.lastIndexOf(")")+2).split(" ");
-const cmd=fs.readFileSync("/proc/"+d+"/cmdline","latin1").split("\0").join(" ").trim();
-procs.push({pid:+d,ppid:+f[1],state:f[0],start:f[19],cmd})}catch{}}
+const raw=fs.readFileSync("/proc/"+d+"/cmdline","latin1");const cmd=raw.split("\0").join(" ").trim();
+procs.push({pid:+d,ppid:+f[1],state:f[0],start:f[19],cmd,cmdHex:Buffer.from(raw,"latin1").toString("hex")})}catch{}}
 let ptrace="";try{ptrace=fs.readFileSync("/proc/sys/kernel/yama/ptrace_scope","latin1").trim()}catch{}
 process.stdout.write(JSON.stringify({ptrace,procs}))`
 
 // sweepScript kills every process that is not the sandbox's own (argv after the
-// first two: pid:starttime pairs), not an ancestor and not itself, until a scan
+// first two: pid:starttime:cmdline-hex identities, so a process that lands on a spared
+// PID in the same clock tick is spared only if its command line matches too), not an
+// ancestor and not itself, until a scan
 // finds none, then walks /tmp. Arguments: the disk budget in bytes (0 = none), the
 // entry bound, the pairs to keep. Its exit status is the verdict (the sweep*
 // constants); its stdout is a summary for the log only.
@@ -104,7 +107,8 @@ const nap=()=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);
 function others(){const o=[];for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d)||up.has(d))continue;
 let st;try{st=fs.readFileSync("/proc/"+d+"/stat","latin1")}catch{continue}
 const f=st.slice(st.lastIndexOf(")")+2).split(" ");if(!live(d))continue;
-if(!keep.has(d+":"+f[19]))o.push(+d)}return o}
+let cmd="";try{cmd=fs.readFileSync("/proc/"+d+"/cmdline").toString("hex")}catch{}
+if(!keep.has(d+":"+f[19]+":"+cmd))o.push(+d)}return o}
 let rounds=0,killed=0;
 for(let o=others();o.length>0;o=others()){if(++rounds>50)process.exit(1);
 for(const p of o){try{process.kill(p,"SIGKILL");killed++}catch{}}nap()}
@@ -136,7 +140,7 @@ type session struct {
 	mu       sync.Mutex
 	end      *sandbox.SessionEndedError
 	stopped  bool
-	baseline []string // pid:starttime of the sandbox's own processes
+	baseline []string // pid:starttime:cmdline-hex of the sandbox's own processes
 	life     *time.Timer
 }
 
@@ -338,11 +342,12 @@ func (s *session) start(ctx context.Context) error {
 type listing struct {
 	Ptrace string `json:"ptrace"`
 	Procs  []struct {
-		PID   int    `json:"pid"`
-		PPID  int    `json:"ppid"`
-		State string `json:"state"`
-		Start string `json:"start"`
-		Cmd   string `json:"cmd"`
+		PID    int    `json:"pid"`
+		PPID   int    `json:"ppid"`
+		State  string `json:"state"`
+		Start  string `json:"start"`
+		Cmd    string `json:"cmd"`
+		CmdHex string `json:"cmdHex"` // the raw command line, NUL separators included
 	} `json:"procs"`
 }
 
@@ -376,7 +381,7 @@ func (s *session) recordBaseline(ctx context.Context) error {
 		default:
 			return fmt.Errorf("openshell session: an untouched sandbox runs an unexpected process: pid %d ppid %d %q", pr.PID, pr.PPID, pr.Cmd)
 		}
-		keep = append(keep, strconv.Itoa(pr.PID)+":"+pr.Start)
+		keep = append(keep, strconv.Itoa(pr.PID)+":"+pr.Start+":"+pr.CmdHex)
 	}
 	if main != 1 || len(keep) != 2 {
 		return fmt.Errorf("openshell session: an untouched sandbox runs %d processes, %d of them the main process; want PID 1 and one main process", len(keep), main)
@@ -570,6 +575,8 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 		res.TimedOut, res.ExitCode = true, 124
 		return res, nil
 	}
+	// The brokered calls happened whatever became of the exec stream.
+	fail.CallTrace = res.CallTrace
 	return fail, s.callError(runCtx, err)
 }
 
@@ -619,6 +626,8 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 	if g != nil {
 		res.CallTrace = g.broker.Trace()
 	}
+	// The brokered calls happened whatever became of the run.
+	fail.CallTrace = res.CallTrace
 	if err != nil {
 		return fail, s.callError(runCtx, err)
 	}

@@ -233,7 +233,8 @@ and `SANDBOX_OPENSHELL_KEY_FILE` (the gateway and its mutual TLS files),
 `SANDBOX_MAX_SESSIONS` (open sessions at once; default 0, sessions off; startup fails when
 set for a provider without sessions), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
 12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends), `SANDBOX_SESSION_DISK_MB`
-(default 1024; 0 = no bound),
+(default 1024; 0 disables the check; disk use is measured after each call;
+exceeding the limit ends the session, but it is not enforced during the call),
 `PLIMSOLL_GRANTS_FILE` (named host-API capability
 profiles selectable via `grant_profile`), and dev-only `PLIMSOLL_INSECURE=1`
 (explicitly permits a real provider without auth). Operational knobs: `SANDBOX_MIN_ISOLATION`
@@ -337,7 +338,7 @@ rejected), TLS on any non-loopback listener (the metrics listener included), an 
 (docker: `SANDBOX_REQUIRE_PINNED_IMAGES=1`, no `unconfined` seccomp; e2b: an
 explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1`), an explicit
 per-run resource envelope (memory and CPU only for dockercloud, which has no disk
-control) plus aggregate memory budget, and per-caller rate limiting. Every violation is reported at once
+control) plus aggregate memory budget, per-caller rate limiting, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive: a rate limit bounds what a caller starts, not the slots its long runs or open sessions hold). Every violation is reported at once
 (one fix pass, not a startup loop). TLS itself is configured with
 `PLIMSOLL_TLS_CERT`/`PLIMSOLL_TLS_KEY` (both-or-neither; loaded and validated
 at startup); with them the daemon serves HTTP/1.1 + HTTP/2 over TLS instead of
@@ -655,11 +656,13 @@ means only that it passed under whatever happened to be on `PATH`, which is not 
 claim this gate makes. `make tools` installs the pinned set; the codegen plugins are
 pinned separately by go.mod `tool` directives.
 
-**CI** ([.github/workflows/](.github/workflows/)) runs plain `make audit`, `make audit
-DOCKER=1` under runc, and the same docker suite under runsc (a separate workflow, so a
-runsc failure cannot mask the runc result); what each green check proves is in
-[CONTRIBUTING.md](CONTRIBUTING.md). `DOCKER=1` is a request for proof: a missing daemon
-or image, or any `--- SKIP` line, fails it. No CI run exercises E2B or Docker Cloud
+**CI** ([.github/workflows/](.github/workflows/)) runs plain `make audit`, then
+`make docker-suite` under runc, and the same suite under runsc (a separate workflow,
+so a runsc failure cannot mask the runc result); what each green check proves is in
+[CONTRIBUTING.md](CONTRIBUTING.md). The provider jobs run the required suite without
+repeating the build, race tests, lint, generated-code check or vulnerability scan.
+`make docker-suite` is a request for proof: a missing daemon or image, or any
+`--- SKIP` line, fails it. No CI run exercises E2B or Docker Cloud
 Sandboxes, deliberately, because they spend: **never add an E2B key or a Docker token
 to repository secrets.** No CI run exercises OpenShell either, because it needs a
 gateway. Third-party actions are pinned by commit SHA, since a tag is

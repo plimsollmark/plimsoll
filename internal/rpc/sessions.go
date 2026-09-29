@@ -376,6 +376,7 @@ func (s *SandboxService) admitCall(_ context.Context, e *sessionEntry) (func(), 
 	e.mu.Lock()
 	suspended := e.release == nil
 	e.mu.Unlock()
+	took := false
 	if suspended {
 		rel, err := s.Limiter.Hold(e.principal)
 		if err != nil {
@@ -383,13 +384,24 @@ func (s *SandboxService) admitCall(_ context.Context, e *sessionEntry) (func(), 
 		}
 		e.mu.Lock()
 		if e.release == nil && !e.ended {
-			e.release = rel
+			e.release, took = rel, true
 		} else {
 			rel()
 		}
 		e.mu.Unlock()
 	}
 	if err := s.Limiter.Charge(e.principal); err != nil {
+		if took {
+			// The call is refused and the session was not resumed, so the slot this
+			// call took goes back now, not at the next idle suspend. The release is
+			// idempotent, so a concurrent end (watch) releasing it too is harmless.
+			e.mu.Lock()
+			if e.release != nil {
+				e.release()
+				e.release = nil
+			}
+			e.mu.Unlock()
+		}
 		return nil, err
 	}
 	return func() {}, nil
@@ -418,7 +430,15 @@ func (s *SandboxService) CloseSession(ctx context.Context, req *connect.Request[
 	}
 	e.mu.Unlock()
 	_ = e.sess.Close(ctx)
-	<-e.sess.Done()
+	// Close starts the end and Done says it has happened; nothing requires the two
+	// to coincide. The wait is the caller's to bound: a provider slow to finish must
+	// not hold the session's turn past it. The entry stays until Done, so closing
+	// again collects the count. Unmarked, because the close has begun.
+	select {
+	case <-e.sess.Done():
+	case <-ctx.Done():
+		return nil, mapSandboxErr(fmt.Errorf("the session is still ending; close it again to collect its count: %w", ctx.Err()))
+	}
 	s.sessions.remove(e.id)
 	end := sandbox.SessionClosed
 	var se *sandbox.SessionEndedError

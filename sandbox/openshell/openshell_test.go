@@ -573,6 +573,15 @@ func TestReadBackRefusals(t *testing.T) {
 				c.Settings[agentProposalsSetting] = &sandboxv1.EffectiveSetting{Value: &sandboxv1.SettingValue{Value: &sandboxv1.SettingValue_BoolValue{BoolValue: true}}}
 			}
 		}, agentProposalsSetting},
+		// External review of v0.10.0, finding 6 (2026-09-28): an absent key read as off.
+		{"agent proposals not reported", func(f *fakeGateway) {
+			f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) { delete(c.Settings, agentProposalsSetting) }
+		}, "did not report " + agentProposalsSetting},
+		{"agent proposals not a boolean", func(f *fakeGateway) {
+			f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) {
+				c.Settings[agentProposalsSetting] = &sandboxv1.EffectiveSetting{Value: &sandboxv1.SettingValue{Value: &sandboxv1.SettingValue_StringValue{StringValue: "yes"}}}
+			}
+		}, agentProposalsSetting},
 		{"image", func(f *fakeGateway) {
 			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Template.Image = "other:latest" }
 		}, "image reads back"},
@@ -711,6 +720,7 @@ func TestRefusalsBeforeDispatch(t *testing.T) {
 // unlabelled is touched.
 func TestReconcileOrphans(t *testing.T) {
 	f, p := newFake(t)
+	p.noteSkew(0) // the reaper has measured the gateway's clock, as any create does
 	run := func(instance, lifetime string) map[string]string {
 		l := map[string]string{instanceLabel: instance, runLabel: "1"}
 		if lifetime != "" {
@@ -1157,4 +1167,70 @@ func issue(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, name str
 		t.Fatal(err)
 	}
 	return cert
+}
+
+// TestReadBackAcceptsProposalsProvablyOff: the two states that prove the setting off
+// both pass: reported with no value (the gateway's default, what a v0.1.2 gateway
+// sends when nothing set it) and an explicit boolean false.
+func TestReadBackAcceptsProposalsProvablyOff(t *testing.T) {
+	for name, value := range map[string]*sandboxv1.SettingValue{
+		"unset": nil,
+		"false": {Value: &sandboxv1.SettingValue_BoolValue{BoolValue: false}},
+	} {
+		f, p := newFake(t)
+		f.run = echoScript
+		f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) {
+			c.Settings[agentProposalsSetting] = &sandboxv1.EffectiveSetting{Value: value}
+		}
+		if _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "x"}); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// TestReconcileReadsAgesOnTheGatewaysClock: another instance's sandbox is aged on the
+// gateway's clock, measured at each create, so a local clock running fast does not
+// reap a live sandbox, and a reaper that has measured nothing reaps no other
+// instance's sandbox (external review of v0.10.0, documentation item 4, 2026-09-28).
+func TestReconcileReadsAgesOnTheGatewaysClock(t *testing.T) {
+	f, p := newFake(t)
+	labels := map[string]string{instanceLabel: "other", runLabel: "1", lifetimeLabel: "60"}
+	ready, now := openshellv1.SandboxPhase_SANDBOX_PHASE_READY, time.Now()
+	// On the gateway's clock, six minutes behind this one, the sandbox is a second old.
+	f.addAt("plp-live-elsewhere", labels, ready, timestamppb.New(now.Add(-6*time.Minute-time.Second)))
+	f.mu.Lock()
+	sb := f.boxes["plp-live-elsewhere"].sb
+	f.mu.Unlock()
+	if p.orphaned(sb, now) {
+		t.Fatal("a reaper with no clock measurement would reap another instance's sandbox")
+	}
+	p.noteSkew(-6 * time.Minute)
+	if p.orphaned(sb, now) {
+		t.Fatal("a sandbox a second old on the gateway's clock was taken for abandoned")
+	}
+	if !p.orphaned(sb, now.Add(7*time.Minute)) {
+		t.Fatal("the sandbox was not reaped once past its lifetime and margin on the gateway's clock")
+	}
+}
+
+func TestClockSkew(t *testing.T) {
+	issued := time.Unix(1790000000, 0)
+	ready := issued.Add(2 * time.Second)
+	for name, tc := range map[string]struct {
+		created time.Time
+		want    time.Duration
+	}{
+		"inside the window":          {issued.Add(time.Second), 0},
+		"whole seconds, just before": {issued.Add(-500 * time.Millisecond), 0},
+		"gateway behind":             {issued.Add(-3 * time.Minute), -3 * time.Minute},
+		"gateway ahead":              {ready.Add(4 * time.Minute), 4 * time.Minute},
+	} {
+		got, ok := clockSkew(issued, ready, timestamppb.New(tc.created))
+		if !ok || got != tc.want {
+			t.Errorf("%s: skew %v (%v), want %v", name, got, ok, tc.want)
+		}
+	}
+	if _, ok := clockSkew(issued, ready, nil); ok {
+		t.Error("a missing creation time measured a skew")
+	}
 }

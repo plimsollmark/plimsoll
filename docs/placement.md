@@ -35,12 +35,17 @@ then sent:
 | `Backend` | Use this backend only. One that cannot take the request is an error, not a fallback: the caller asked for it by name. |
 | `Provider` | Keep only backends reporting this provider id (`docker`, `e2b`, `openshell`, ...). |
 | `MinimumIsolation` | Keep only backends whose current evidence meets the floor. The router merges it with the request's own `MinimumIsolation` (the stronger wins; an invalid one is refused) and stamps the result onto the request, so the daemon checks it again immediately before dispatch and the client checks the returned evidence: a backend whose tier dropped since its last `Describe` refuses or fails that check instead of running below the floor. |
-| `Environment` | Keep only backends whose environment identity for the payload kind equals this string. Identities are content-addressed, so equal strings mean the same software; a backend that states none is never kept, because an empty identity claims nothing. |
+| `Environment` | Keep only backends whose environment identity for the payload kind equals this string. Identities are content-addressed, so equal strings mean the same software; a backend that states none is never kept, because an empty identity claims nothing. A `Describe` answer can be up to the pool's TTL old, so after a run the router also compares the run record's environment with this string: a difference returns the result with `ErrEnvironmentMismatch`, unmarked and never retried, because the run happened. For a session, only the open is placed; check each call's record yourself. |
 | `GrantProfile` | The request carries a grant, so keep only backends that support grants for that payload kind. |
 | `Prefer` | Rank the survivors (by tier, by a price table of the caller's own, by anything in `client.Info`). Without it, the order the backends were given decides. |
 
 Payload kind is read from the call: a project needs `supports_project`, a module run
 needs `supports_module` and can never carry a grant.
+
+A grant profile name is the caller's own assertion about its fleet. Two daemons can
+load different profiles under the same name, including different upstream APIs, so a
+retry can reach a different upstream API. Placement checks grant support, not profile
+equivalence; the caller must align the profiles when that distinction matters.
 
 ## Retrying
 

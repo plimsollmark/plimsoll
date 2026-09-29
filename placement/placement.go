@@ -64,6 +64,12 @@ type seen struct {
 // sandbox.ErrUnsupported and is marked not dispatched, because nothing ran.
 var ErrNoBackend = errors.New("placement: no backend can take this request")
 
+// ErrEnvironmentMismatch means a backend ran the request and its run record states
+// an environment other than the one the requirement named: the Describe answer that
+// chose it was stale or wrong. The run happened, so it is unmarked and never retried,
+// like the client's isolation evidence check; the result comes back with it.
+var ErrEnvironmentMismatch = errors.New("placement: the run's record states another environment than the requirement")
+
 // New returns a pool over backends. descriptionTTL is how long a daemon's
 // Describe answer is reused; 0 means a minute. A backend whose description is
 // missing or stale is described again when the next request needs it, so a daemon
@@ -320,6 +326,23 @@ func retryable(err error) (sandbox.Refusal, bool) {
 	}
 }
 
+// ranIn checks what a run's record states against the requirement's environment.
+// The filter chose the backend from a Describe answer up to descriptionTTL old; the
+// record is the daemon's statement about this run.
+func ranIn(rec *sandbox.RunRecord, want string) error {
+	if want == "" {
+		return nil
+	}
+	if rec == nil || rec.Environment != want {
+		got := "none stated"
+		if rec != nil && rec.Environment != "" {
+			got = rec.Environment
+		}
+		return fmt.Errorf("%w: it ran in %s, not %s; execution has occurred", ErrEnvironmentMismatch, got, want)
+	}
+	return nil
+}
+
 // send tries each candidate in turn, and returns the first answer that is not a
 // refusal proving nothing ran. run reports whether its own error is retryable in
 // the same way, so a caller-side check (an isolation evidence mismatch) is never
@@ -327,7 +350,6 @@ func retryable(err error) (sandbox.Refusal, bool) {
 func send[T any](ctx context.Context, backends []Backend, run func(context.Context, Backend) (T, error)) (T, Choice, error) {
 	var zero T
 	choice := Choice{}
-	var lastErr error
 	for i, b := range backends {
 		res, err := run(ctx, b)
 		if err == nil {
@@ -340,9 +362,10 @@ func send[T any](ctx context.Context, backends []Backend, run func(context.Conte
 			return res, choice, err
 		}
 		choice.Retried = append(choice.Retried, Refusal{Backend: b.Name, Reason: reason, Err: err})
-		lastErr = err
 	}
-	return zero, choice, lastErr
+	// Every caller passes at least one backend (candidates refuses an empty pool), and
+	// the loop returns on the last one, so this is reached only by an empty list.
+	return zero, choice, notDispatched(fmt.Errorf("%w: %w (no candidate)", ErrNoBackend, sandbox.ErrUnsupported))
 }
 
 // RunJavaScript places one snippet and runs it.
@@ -355,7 +378,11 @@ func (p *Pool) RunJavaScript(ctx context.Context, in sandbox.Request, req Requir
 		return sandbox.Result{}, Choice{}, err
 	}
 	return send(ctx, backends, func(ctx context.Context, b Backend) (sandbox.Result, error) {
-		return b.Client.RunJavaScript(ctx, in)
+		res, err := b.Client.RunJavaScript(ctx, in)
+		if err == nil {
+			err = ranIn(res.Record, req.Environment)
+		}
+		return res, err
 	})
 }
 
@@ -369,7 +396,11 @@ func (p *Pool) RunProject(ctx context.Context, in sandbox.ProjectRequest, req Re
 		return sandbox.ProjectResult{}, Choice{}, err
 	}
 	return send(ctx, backends, func(ctx context.Context, b Backend) (sandbox.ProjectResult, error) {
-		return b.Client.RunProject(ctx, in)
+		res, err := b.Client.RunProject(ctx, in)
+		if err == nil {
+			err = ranIn(res.Record, req.Environment)
+		}
+		return res, err
 	})
 }
 
@@ -383,7 +414,11 @@ func (p *Pool) RunModule(ctx context.Context, in sandbox.ModuleRequest, req Requ
 		return sandbox.ModuleResult{}, Choice{}, err
 	}
 	return send(ctx, backends, func(ctx context.Context, b Backend) (sandbox.ModuleResult, error) {
-		return b.Client.RunModule(ctx, in)
+		res, err := b.Client.RunModule(ctx, in)
+		if err == nil {
+			err = ranIn(res.Record, req.Environment)
+		}
+		return res, err
 	})
 }
 

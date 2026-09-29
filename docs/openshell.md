@@ -40,7 +40,12 @@ over RPC, then requires every sandbox deleted after SIGTERM. The suite passed on
   must be an `@sha256:` reference.
 - **Agent policy proposals off.** A sandbox whose effective settings let code inside it
   propose policy changes is refused: a gateway in automatic approval mode could apply
-  one after plimsoll has checked the policy.
+  one after plimsoll has checked the policy. The setting must be provably off: reported
+  as `false`, or reported with no value, which is the gateway's default of `false`.
+  A gateway that does not report `agent_policy_proposals_enabled` at all, or reports
+  anything but a boolean `false`, is refused. Measured on v0.1.2: a sandbox nobody
+  configured reports the key with no value. Treating no value as off rests on v0.1.2's
+  default; a gateway release that changed that default would need this check changed.
 
 ## What each run does
 

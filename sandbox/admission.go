@@ -71,6 +71,9 @@ func WithAdmission(inner Sandbox, cfg AdmissionConfig) (Sandbox, error) {
 		a.memCap = cfg.TotalMemoryMB
 		a.perRun = cfg.PerRunMemoryMB
 	}
+	if g, ok := inner.(EgressGuardCapable); ok {
+		return &admissionGuardSandbox{admissionSandbox: a, guard: g}, nil
+	}
 	return a, nil
 }
 
@@ -227,4 +230,101 @@ func (a *admissionSandbox) Preflight(ctx context.Context) error {
 		return pf.Preflight(ctx)
 	}
 	return nil
+}
+
+// The decorator must stay transparent to every optional interface the rest of
+// plimsoll finds by type assertion; TestAdmissionForwardsEveryOptionalInterface
+// fails when one is added to the package without being classified there. Losing
+// SmokeTester, for instance, would make EnsureReady report ready without its
+// behavioral proof.
+var (
+	_ ProjectCapable     = (*admissionSandbox)(nil)
+	_ ModuleCapable      = (*admissionSandbox)(nil)
+	_ GrantCapable       = (*admissionSandbox)(nil)
+	_ Describer          = (*admissionSandbox)(nil)
+	_ Preflighter        = (*admissionSandbox)(nil)
+	_ SmokeTester        = (*admissionSandbox)(nil)
+	_ OrphanReconciler   = (*admissionSandbox)(nil)
+	_ Drainer            = (*admissionSandbox)(nil)
+	_ SessionProvider    = (*admissionSandbox)(nil)
+	_ EgressGuardCapable = (*admissionGuardSandbox)(nil)
+)
+
+// SmokeTest forwards to the wrapped provider. A provider without one has no smoke
+// test through the decorator either, which is what EnsureReady does unwrapped.
+func (a *admissionSandbox) SmokeTest(ctx context.Context) error {
+	if st, ok := a.Sandbox.(SmokeTester); ok {
+		return st.SmokeTest(ctx)
+	}
+	return nil
+}
+
+// ReconcileOrphans forwards to the wrapped provider; one without off-process
+// resources has none to reap.
+func (a *admissionSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
+	if r, ok := a.Sandbox.(OrphanReconciler); ok {
+		return r.ReconcileOrphans(ctx)
+	}
+	return 0, nil
+}
+
+// Drain forwards to the wrapped provider; one that leaves no work behind a run has
+// nothing to wait for.
+func (a *admissionSandbox) Drain(ctx context.Context) error {
+	if d, ok := a.Sandbox.(Drainer); ok {
+		return d.Drain(ctx)
+	}
+	return nil
+}
+
+// SupportsSessions forwards the wrapped provider's answer; callers check it, not the
+// method's presence, so a provider without sessions has none through the decorator.
+func (a *admissionSandbox) SupportsSessions() bool {
+	sp, ok := a.Sandbox.(SessionProvider)
+	return ok && sp.SupportsSessions()
+}
+
+// OpenSession admits a session as it admits a run, and keeps the reservation until
+// the session has ended: its sandbox holds memory between calls as well as during
+// them.
+func (a *admissionSandbox) OpenSession(ctx context.Context, opts SessionOptions) (Session, error) {
+	sp, ok := a.Sandbox.(SessionProvider)
+	if !ok || !sp.SupportsSessions() {
+		return nil, NotDispatched(RefusalUnsupported, fmt.Errorf("%w: the wrapped provider keeps no sessions", ErrUnsupported))
+	}
+	if err := a.checkMinimumIsolation(ctx, opts.MinimumIsolation); err != nil {
+		return nil, err
+	}
+	release, err := a.acquire()
+	if err != nil {
+		return nil, err
+	}
+	s, err := sp.OpenSession(ctx, opts)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	go func() {
+		<-s.Done()
+		release()
+	}()
+	return s, nil
+}
+
+// admissionGuardSandbox is the decorator around a provider that exposes an egress
+// guard. It is a separate type because an embedder mounts the guard when the type
+// assertion succeeds, so the plain decorator must not claim one it cannot serve.
+type admissionGuardSandbox struct {
+	*admissionSandbox
+	guard EgressGuardCapable
+}
+
+func (a *admissionGuardSandbox) EgressGuardPath() string { return a.guard.EgressGuardPath() }
+
+func (a *admissionGuardSandbox) EgressGuardKnownToken(token string) bool {
+	return a.guard.EgressGuardKnownToken(token)
+}
+
+func (a *admissionGuardSandbox) EgressGuardCall(ctx context.Context, token, method, rawTarget string, body []byte) EgressGuardResponse {
+	return a.guard.EgressGuardCall(ctx, token, method, rawTarget, body)
 }

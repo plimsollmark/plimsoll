@@ -170,13 +170,14 @@ floor per request, are in [docs/isolation-tiers.md](docs/isolation-tiers.md).
   [audit workflow](.github/workflows/audit.yml) has two jobs. `audit` runs plain
   `make audit` on every push and pull request: build, vet, race tests, lint,
   `buf lint`, a generated-code drift check, and `govulncheck`. `audit-docker` then
-  runs `make audit DOCKER=1` with the images prepared, in required mode: a missing
+  runs `make docker-suite` with the images prepared, in required mode: a missing
   daemon, a missing image or a skipped test fails the job. A green `audit-docker`
   therefore means the docker suite ran under runc with the shipped seccomp profile
   and proved a read-only root, sized `noexec` writable mounts, and the broker's
   refusals. The [gvisor workflow](.github/workflows/gvisor.yml) runs the same suite
-  under runsc, the kernel tier, from the pinned installer. What no check exercises
-  is E2B or Docker Cloud Sandboxes: those suites drive live paid services and are
+  under runsc, the kernel tier, from the pinned installer. The race detector runs in
+  the plain audit job; the two provider jobs run their isolation tests without it.
+  No check exercises E2B or Docker Cloud Sandboxes: those suites drive live paid services and are
   deliberately never wired to a runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Learn how it works
