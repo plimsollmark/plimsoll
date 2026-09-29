@@ -65,6 +65,7 @@ func helpText() string {
 	fmt.Fprintf(&b, "  SANDBOX_PROVIDER           %s | (unset = disabled)\n",
 		strings.Join(append(sandbox.ProviderNames(), daemonProviderNames()...), " | "))
 	b.WriteString(usageProviders)
+	b.WriteString("  DOCKER_DEFAULT_PLATFORM      Docker platform selected for image inspection and runs (for example linux/amd64)\n")
 	for _, name := range daemonProviderNames() {
 		b.WriteString(daemonProviders[name].usage)
 	}

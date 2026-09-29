@@ -1,5 +1,5 @@
 // A buck converter controller in C, compiled to WebAssembly inside the sandbox and
-// judged against the plant /models/buck.wasm: an averaged synchronous buck
+// run against the plant /models/buck.wasm: an averaged synchronous buck
 // converter (100 uH, 100 uF) that must hold 5 V from an input of 10 to 16 V while
 // the load resistance halves partway through the run, doubling the current it draws.
 //
@@ -12,7 +12,7 @@
 // have anti-windup: an integrator stops accumulating while its output is clamped.
 // Current feedback is what damps the LC resonance a voltage-only loop rings on.
 //
-// The contract with controller.js, the Node shim the judge runs: the module exports
+// The contract with controller.js, the Node shim the runner spawns: the module exports
 // one function, control, called once per 10 us tick with the output voltage, the
 // inductor current and the tick index, returning the duty cycle in [0, 1]. State
 // between ticks lives in globals, because a module instance lives for the whole

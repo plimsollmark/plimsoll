@@ -61,7 +61,11 @@ func TestOpenShellSessionDiskBudgetLive(t *testing.T) {
 }
 
 // TestOpenShellSessionMainProcessLive: code that kills the sandbox's main process
-// ends the session, reported as that and not as an infrastructure failure.
+// ends the session, reported as that and not as an infrastructure failure. The gateway
+// marks the sandbox a moment after the kill, and the sweep after the killing call can
+// finish first and find it clean (failed so on 2026-09-28 and 2026-09-29), so the end
+// is noticed by that call's check or, at the latest, by the next call's read-back,
+// which must refuse the call as not dispatched.
 func TestOpenShellSessionMainProcessLive(t *testing.T) {
 	p := liveProvider(t, nil)
 	s := openLive(t, p, sandbox.SessionOptions{Lifetime: 2 * time.Minute})
@@ -70,6 +74,16 @@ for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d))continue;
 let c="";try{c=fs.readFileSync("/proc/"+d+"/cmdline","latin1").split("\0").join(" ").trim()}catch{continue}
 if(c==="sleep 2147483647"){process.kill(+d,"SIGKILL");console.log("killed "+d)}}`})
 	t.Logf("the killing call: %+v, %v", res, err)
+	select {
+	case <-s.Done():
+		t.Log("noticed after the killing call")
+	case <-time.After(5 * time.Second):
+		_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: `console.log("ran")`})
+		if _, ok := sandbox.NotDispatchedReason(err); !ok {
+			t.Fatalf("the call after the kill was not refused as not dispatched: %v", err)
+		}
+		t.Log("noticed by the next call's read-back")
+	}
 	waitEnd(t, s, sandbox.SessionMainProcessEnded)
 	t.Logf("ended: %v", s.Err())
 }

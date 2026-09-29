@@ -3,6 +3,7 @@ package record
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,16 @@ func moduleRequest() *plimsollv1.RunRequest {
 			Rows: []*plimsollv1.ModuleRow{{Values: []float64{1, 2}}, {Values: []float64{0.5, -3}}},
 		}},
 	}
+}
+
+func versionTwoRequest(base *plimsollv1.RunRequest) *plimsollv1.RunRequest {
+	out := proto.Clone(base).(*plimsollv1.RunRequest)
+	out.Protocol = 2
+	out.SoftwareRule = &plimsollv1.SoftwareRule{Mode: "approved", Identities: []string{
+		"oci-manifest:linux/amd64@sha256:" + strings.Repeat("a", 64),
+		"oci-manifest:linux/amd64@sha256:" + strings.Repeat("b", 64),
+	}}
+	return out
 }
 
 func jsResponse() *plimsollv1.RunResponse {
@@ -103,18 +114,90 @@ func goldenRecord() sandbox.RunRecord {
 // to every verifier written against it.
 func TestGoldenVectors(t *testing.T) {
 	for _, c := range []struct{ name, got, want string }{
-		{"javascript request", RunRequestDigest(jsRequest()), "585a1b46c55ebacc1dfdd4336e302328c32ed3e2e7e8a8b460d252d0454be8fc"},
-		{"project request", RunRequestDigest(projectRequest()), "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0"},
-		{"module request", RunRequestDigest(moduleRequest()), "3679bdba8fdaa503650e79c970728f869a4cf4882446fbc9742a402195d5b6c1"},
+		{"version 1 javascript request", RunRequestDigest(jsRequest()), "585a1b46c55ebacc1dfdd4336e302328c32ed3e2e7e8a8b460d252d0454be8fc"},
+		{"version 1 project request", RunRequestDigest(projectRequest()), "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0"},
+		{"version 1 module request", RunRequestDigest(moduleRequest()), "3679bdba8fdaa503650e79c970728f869a4cf4882446fbc9742a402195d5b6c1"},
+		{"version 2 javascript request", RunRequestDigest(versionTwoRequest(jsRequest())), "0b662d4687a062429ab0be85c2445e6c0c9d402922ca223b74e3a1095da7d320"},
+		{"version 2 project request", RunRequestDigest(versionTwoRequest(projectRequest())), "abf8235a62b43c4384dc9e7a0f704f1f5f0936ac01a98d7344e50195455d97e1"},
+		{"version 2 module request", RunRequestDigest(versionTwoRequest(moduleRequest())), "f17657df096a7f2fe66fc012a8262bfe03a876e114264d95ce1ac79181c119a5"},
 		{"javascript result", ResultDigest(jsResponse()), "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d"},
 		{"project result", ResultDigest(projectResponse()), "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f"},
 		{"module result", ResultDigest(moduleResponse()), "7bf330fc9945ab802a68a0da5a53ec0a40344c5212106e159ce77479e687c2ec"},
-		{"record", Digest(goldenRecord()), "8ae67c9bb05dfaca639335a7224ec4152a1353407a94f6ed35d3b1f5d4853784"},
+		{"record", Digest(goldenRecord()), "a5107eb6b1f726e1b2d7183419502309bfa34d932a65f1494150228ae8349156"},
 		{"session fingerprint", SessionFingerprint("00112233445566778899aabbccddeeff"), "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s: got %s, want %s", c.name, c.got, c.want)
 		}
+	}
+}
+
+func TestSoftwareAdmissionRecordIsBoundToRequestAndResponse(t *testing.T) {
+	id := "oci-manifest:linux/amd64@sha256:" + strings.Repeat("a", 64)
+	req := &plimsollv1.RunRequest{Protocol: 2, SoftwareRule: &plimsollv1.SoftwareRule{Mode: "exact", Identities: []string{id}},
+		Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1"}}}
+	resp := &plimsollv1.RunResponse{Sandbox: "docker", Isolation: "kernel", Environment: "docker-image:sha256:outer", SoftwareIdentity: id,
+		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{}}}
+	resp.Record = Stamp(sandbox.RunRecord{RequestSHA256: RunRequestDigest(req), SoftwareRuleID: "exact:" + id}, resp)
+	if _, err := Check(req, resp); err != nil {
+		t.Fatal(err)
+	}
+	tampered := proto.Clone(resp).(*plimsollv1.RunResponse)
+	tampered.SoftwareIdentity = ""
+	if _, err := Check(req, tampered); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("changed selected image: %v", err)
+	}
+	tampered = proto.Clone(resp).(*plimsollv1.RunResponse)
+	tampered.GetRecord().SoftwareRuleId = "approved:sha256:deadbeef"
+	rec := FromWire(tampered.GetRecord())
+	tampered.GetRecord().RecordSha256 = Digest(rec)
+	if _, err := Check(req, tampered); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("changed rule with recomputed digest: %v", err)
+	}
+	changedReq := proto.Clone(req).(*plimsollv1.RunRequest)
+	changedReq.SoftwareRule.Identities = []string{"oci-manifest:linux/amd64@sha256:" + strings.Repeat("b", 64)}
+	if _, err := Check(changedReq, resp); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("changed request rule: %v", err)
+	}
+}
+
+func TestVersionOneRecordsRemainVerifiable(t *testing.T) {
+	req := jsRequest()
+	resp := jsResponse()
+	r := sandbox.RunRecord{Version: 1, RequestSHA256: RunRequestDigest(req), ResultSHA256: ResultDigest(resp),
+		Provider: resp.GetSandbox(), Isolation: resp.GetIsolation(), Started: time.UnixMilli(1), Ended: time.UnixMilli(2)}
+	r.SHA256 = Digest(r)
+	resp.Record = ToWire(r)
+	if _, err := Check(req, resp); err != nil {
+		t.Fatalf("old record: %v", err)
+	}
+	newRequest := proto.Clone(req).(*plimsollv1.RunRequest)
+	newRequest.Protocol = 2
+	if _, err := Check(newRequest, resp); !errors.Is(err, ErrVersion) {
+		t.Fatalf("version 1 record returned for protocol 2 request: %v", err)
+	}
+}
+
+func TestVersionTwoRecordRejectsEnvironmentDisagreement(t *testing.T) {
+	req := versionTwoRequest(jsRequest())
+	resp := jsResponse()
+	resp.Environment = "docker-image:sha256:outer"
+	resp.SoftwareIdentity = req.SoftwareRule.Identities[0]
+	rec := sandbox.RunRecord{Version: Version, RequestSHA256: RunRequestDigest(req),
+		ResultSHA256: ResultDigest(resp), Provider: resp.Sandbox, Isolation: resp.Isolation,
+		Environment: resp.Environment, SoftwareIdentity: resp.SoftwareIdentity,
+		SoftwareRuleID: (sandbox.SoftwareRule{Mode: sandbox.SoftwareApproved, Identities: req.SoftwareRule.Identities}).ID()}
+	rec.SHA256 = Digest(rec)
+	resp.Record = ToWire(rec)
+	if _, err := Check(req, resp); err != nil {
+		t.Fatalf("matching record: %v", err)
+	}
+	changed := proto.Clone(resp).(*plimsollv1.RunResponse)
+	changed.Record.Environment = "docker-image:sha256:other"
+	rec = FromWire(changed.Record)
+	changed.Record.RecordSha256 = Digest(rec)
+	if _, err := Check(req, changed); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("record environment differs from response even with a valid record digest: %v", err)
 	}
 }
 
@@ -161,6 +244,20 @@ func TestRequestDigestCoversWhatWasSent(t *testing.T) {
 		c.apply(changed)
 		if RunRequestDigest(base) == RunRequestDigest(changed) {
 			t.Errorf("%s: the request digest did not change", c.name)
+		}
+	}
+	versionTwo := versionTwoRequest(jsRequest())
+	for name, apply := range map[string]func(*plimsollv1.RunRequest){
+		"software mode":     func(m *plimsollv1.RunRequest) { m.SoftwareRule.Mode = "exact" },
+		"software identity": func(m *plimsollv1.RunRequest) { m.SoftwareRule.Identities[0] += "x" },
+		"software identity order": func(m *plimsollv1.RunRequest) {
+			m.SoftwareRule.Identities[0], m.SoftwareRule.Identities[1] = m.SoftwareRule.Identities[1], m.SoftwareRule.Identities[0]
+		},
+	} {
+		changed := proto.Clone(versionTwo).(*plimsollv1.RunRequest)
+		apply(changed)
+		if RunRequestDigest(changed) == RunRequestDigest(versionTwo) {
+			t.Errorf("%s did not move the version 2 request digest", name)
 		}
 	}
 	same := jsRequest()
@@ -241,18 +338,20 @@ func TestRecordDigestCoversEveryField(t *testing.T) {
 	// RunRecord fails here until the digest covers it. The version was once left out
 	// (external review of v0.10.0, finding 9, 2026-09-28).
 	moves := map[string]func(*sandbox.RunRecord){
-		"Version":        func(r *sandbox.RunRecord) { r.Version = 2 },
-		"RequestSHA256":  func(r *sandbox.RunRecord) { r.RequestSHA256 = RunRequestDigest(jsRequest()) },
-		"ResultSHA256":   func(r *sandbox.RunRecord) { r.ResultSHA256 = ResultDigest(jsResponse()) },
-		"Provider":       func(r *sandbox.RunRecord) { r.Provider = "docker" },
-		"Isolation":      func(r *sandbox.RunRecord) { r.Isolation = "kernel" },
-		"Environment":    func(r *sandbox.RunRecord) { r.Environment = "" },
-		"Policy":         func(r *sandbox.RunRecord) { r.Policy = "" },
-		"Started":        func(r *sandbox.RunRecord) { r.Started = r.Started.Add(time.Millisecond) },
-		"Ended":          func(r *sandbox.RunRecord) { r.Ended = r.Ended.Add(time.Millisecond) },
-		"Session":        func(r *sandbox.RunRecord) { r.Session = "" },
-		"Sequence":       func(r *sandbox.RunRecord) { r.Sequence = 3 },
-		"PreviousSHA256": func(r *sandbox.RunRecord) { r.PreviousSHA256 = "" },
+		"Version":          func(r *sandbox.RunRecord) { r.Version = 3 },
+		"RequestSHA256":    func(r *sandbox.RunRecord) { r.RequestSHA256 = RunRequestDigest(jsRequest()) },
+		"ResultSHA256":     func(r *sandbox.RunRecord) { r.ResultSHA256 = ResultDigest(jsResponse()) },
+		"Provider":         func(r *sandbox.RunRecord) { r.Provider = "docker" },
+		"Isolation":        func(r *sandbox.RunRecord) { r.Isolation = "kernel" },
+		"Environment":      func(r *sandbox.RunRecord) { r.Environment = "" },
+		"SoftwareIdentity": func(r *sandbox.RunRecord) { r.SoftwareIdentity = "oci-manifest:linux/amd64@sha256:aa" },
+		"SoftwareRuleID":   func(r *sandbox.RunRecord) { r.SoftwareRuleID = "exact:oci-manifest:linux/amd64@sha256:aa" },
+		"Policy":           func(r *sandbox.RunRecord) { r.Policy = "" },
+		"Started":          func(r *sandbox.RunRecord) { r.Started = r.Started.Add(time.Millisecond) },
+		"Ended":            func(r *sandbox.RunRecord) { r.Ended = r.Ended.Add(time.Millisecond) },
+		"Session":          func(r *sandbox.RunRecord) { r.Session = "" },
+		"Sequence":         func(r *sandbox.RunRecord) { r.Sequence = 3 },
+		"PreviousSHA256":   func(r *sandbox.RunRecord) { r.PreviousSHA256 = "" },
 	}
 	fields := reflect.TypeOf(sandbox.RunRecord{})
 	for i := range fields.NumField() {
@@ -337,8 +436,31 @@ func TestCheck(t *testing.T) {
 		}
 	}
 	future := proto.Clone(good).(*plimsollv1.RunResponse)
-	future.GetRecord().Version = 2
+	future.GetRecord().Version = 3
 	if _, err := Check(req, future); !errors.Is(err, ErrVersion) {
 		t.Errorf("an unknown version: got %v, want ErrVersion", err)
+	}
+}
+
+// Stamp takes the evidence from the response and leaves the response alone: a caller
+// that states other evidence cannot make the record and the response disagree
+// (review of 5d8724d, finding 7).
+func TestStampStatesTheResponsesEvidence(t *testing.T) {
+	req := jsRequest()
+	resp := jsResponse()
+	resp.Environment, resp.SoftwareIdentity = "docker-image:sha256:outer", "oci-manifest:linux/amd64@sha256:"+strings.Repeat("a", 64)
+	before := proto.Clone(resp).(*plimsollv1.RunResponse)
+	resp.Record = Stamp(sandbox.RunRecord{RequestSHA256: RunRequestDigest(req),
+		Environment: "docker-image:sha256:other", SoftwareIdentity: "oci-manifest:linux/amd64@sha256:other"}, resp)
+	after := proto.Clone(resp).(*plimsollv1.RunResponse)
+	after.Record = nil
+	if !proto.Equal(after, before) {
+		t.Fatalf("Stamp changed the response: %v, was %v", after, before)
+	}
+	if got := resp.GetRecord(); got.GetEnvironment() != before.GetEnvironment() || got.GetSoftwareIdentity() != before.GetSoftwareIdentity() {
+		t.Fatalf("record states %q, %q; the response %q, %q", got.GetEnvironment(), got.GetSoftwareIdentity(), before.GetEnvironment(), before.GetSoftwareIdentity())
+	}
+	if _, err := Check(req, resp); err != nil {
+		t.Fatal(err)
 	}
 }

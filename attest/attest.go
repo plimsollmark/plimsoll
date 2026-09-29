@@ -69,25 +69,28 @@ type Subject struct {
 
 // Predicate is a run record in the wire message's field names.
 type Predicate struct {
-	Version        int    `json:"version"`
-	RequestSHA256  string `json:"request_sha256"`
-	ResultSHA256   string `json:"result_sha256"`
-	Provider       string `json:"provider"`
-	Isolation      string `json:"isolation"`
-	Environment    string `json:"environment"`
-	Policy         string `json:"policy"`
-	StartedUnixMs  int64  `json:"started_unix_ms"`
-	EndedUnixMs    int64  `json:"ended_unix_ms"`
-	Session        string `json:"session"`
-	Sequence       uint64 `json:"sequence"`
-	PreviousSHA256 string `json:"previous_sha256"`
-	RecordSHA256   string `json:"record_sha256"`
+	Version          int    `json:"version"`
+	RequestSHA256    string `json:"request_sha256"`
+	ResultSHA256     string `json:"result_sha256"`
+	Provider         string `json:"provider"`
+	Isolation        string `json:"isolation"`
+	Environment      string `json:"environment"`
+	SoftwareIdentity string `json:"software_identity,omitempty"`
+	SoftwareRuleID   string `json:"software_rule_id,omitempty"`
+	Policy           string `json:"policy"`
+	StartedUnixMs    int64  `json:"started_unix_ms"`
+	EndedUnixMs      int64  `json:"ended_unix_ms"`
+	Session          string `json:"session"`
+	Sequence         uint64 `json:"sequence"`
+	PreviousSHA256   string `json:"previous_sha256"`
+	RecordSHA256     string `json:"record_sha256"`
 }
 
 func predicateOf(r sandbox.RunRecord) Predicate {
 	return Predicate{
 		Version: r.Version, RequestSHA256: r.RequestSHA256, ResultSHA256: r.ResultSHA256,
 		Provider: r.Provider, Isolation: r.Isolation, Environment: r.Environment, Policy: r.Policy,
+		SoftwareIdentity: r.SoftwareIdentity, SoftwareRuleID: r.SoftwareRuleID,
 		StartedUnixMs: r.Started.UnixMilli(), EndedUnixMs: r.Ended.UnixMilli(),
 		Session: r.Session, Sequence: r.Sequence, PreviousSHA256: r.PreviousSHA256,
 		RecordSHA256: r.SHA256,
@@ -98,6 +101,7 @@ func (p Predicate) record() sandbox.RunRecord {
 	return sandbox.RunRecord{
 		Version: p.Version, RequestSHA256: p.RequestSHA256, ResultSHA256: p.ResultSHA256,
 		Provider: p.Provider, Isolation: p.Isolation, Environment: p.Environment, Policy: p.Policy,
+		SoftwareIdentity: p.SoftwareIdentity, SoftwareRuleID: p.SoftwareRuleID,
 		Started: time.UnixMilli(p.StartedUnixMs).UTC(), Ended: time.UnixMilli(p.EndedUnixMs).UTC(),
 		Session: p.Session, Sequence: p.Sequence, PreviousSHA256: p.PreviousSHA256,
 		SHA256: p.RecordSHA256,
@@ -150,10 +154,14 @@ func (s *Signer) KeyID() string { return s.keyID }
 // received; this refusal catches a record assembled any other way.
 var ErrUnchecked = errors.New("attest: the record's digest does not match its fields; sign only records record.Check returned")
 
+// ErrSigningVersion means Sign was given a record version this harness no longer
+// signs. Verification can still accept older signed records already in bundles.
+var ErrSigningVersion = errors.New("attest: the harness only signs the current run record version")
+
 // Sign wraps rec in an in-toto statement and signs it as a DSSE envelope.
 func (s *Signer) Sign(rec sandbox.RunRecord) (Envelope, error) {
 	if rec.Version != record.Version {
-		return Envelope{}, fmt.Errorf("attest: record version %d, this harness signs %d", rec.Version, record.Version)
+		return Envelope{}, fmt.Errorf("%w: got %d, current version is %d", ErrSigningVersion, rec.Version, record.Version)
 	}
 	if rec.SHA256 != record.Digest(rec) {
 		return Envelope{}, ErrUnchecked
@@ -214,8 +222,11 @@ func (v *Verifier) Verify(env Envelope) (sandbox.RunRecord, error) {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: types or subjects", ErrStatement)
 	}
 	rec := st.Predicate.record()
-	if rec.Version != record.Version {
+	if rec.Version != 1 && rec.Version != record.Version {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: record version %d", ErrStatement, rec.Version)
+	}
+	if rec.Version == 1 && (rec.SoftwareIdentity != "" || rec.SoftwareRuleID != "") {
+		return sandbox.RunRecord{}, fmt.Errorf("%w: version 1 cannot carry software admission fields", ErrStatement)
 	}
 	if st.Subject[0].Digest["sha256"] != rec.SHA256 || rec.SHA256 != record.Digest(rec) {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: the record's digest does not match its fields or the subject", ErrStatement)

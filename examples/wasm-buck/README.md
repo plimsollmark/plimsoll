@@ -5,8 +5,8 @@ chip runs on, by switching its input on for a fraction of each cycle (the duty
 cycle). The controller that picks that fraction is firmware, and firmware is usually
 C. This example sends such a controller
 ([controller/controller.c](controller/controller.c)) as a file of an ordinary project
-run, compiles it to WebAssembly in the run's first step, and judges it against the
-buck plant (`/models/buck.wasm`) in the later steps. The plant, the judge
+run, compiles it to WebAssembly in the run's first step, and runs it against the
+buck plant (`/models/buck.wasm`) in the later steps. The plant, the runner
 (`/oracle/judge.mjs`) and the shim are the ones the cart-pole C controller in
 [examples/wasm-controller](../wasm-controller/) uses; only the controller and the
 plant's name differ.
@@ -32,12 +32,12 @@ One project run, two files, five steps:
 `controller.js` is the shared shim in
 [examples/internal/wasmshim](../internal/wasmshim/controller.js). It has no control
 arithmetic and knows nothing about the plant: it instantiates `controller.wasm` with
-an empty import object and, for each line the judge sends, calls the module's
+an empty import object and, for each line the runner sends, calls the module's
 exported `control` with every value on the line and then the tick index, here
 `double control(double v, double i, int k)`, and writes the duty cycle back.
 
 The program sends that run twice, then runs [controller/reference.js](controller/reference.js),
-the same law in JavaScript, through the same judge, and prints per scenario:
+the same law in JavaScript, through the same runner, and prints per scenario:
 
 ```
 s1  12 V in, 4 ohm, current doubles at 10 ms  9bcc0a3a963d1185  C = C = JavaScript: true  score 0.908, peak 5.062 V, 2.505 A
@@ -50,7 +50,7 @@ The score is the fraction of ticks from 2 ms on with the output within 0.1 V of
 5 V, and zero if the output ever exceeds 6 V or the inductor current 10 A. The floor
 is 0.6, from the buck environment's acceptance rule. This controller ramps its
 target over the first 3 ms, so in s1 the output first enters the band at 2.99 ms:
-99 of the 1,800 judged ticks, 5.5 of the 9.2 points s1 loses. The other 67 ticks
+99 of the 1,800 scored ticks, 5.5 of the 9.2 points s1 loses. The other 67 ticks
 are the dip when the load steps.
 
 The page it writes, [a buck converter controller in C](https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html)
@@ -69,7 +69,7 @@ shows the four scenarios, their fingerprints, and both sources.
 - **The compile is reproducible.** Two runs produce the same 1,583-byte
   `controller.wasm`, and its SHA-256 is the one in [fingerprints.json](fingerprints.json).
 - **The controller regulates.** No overvoltage or overcurrent in any scenario, and
-  0.89 to 0.91 of the judged ticks within the band.
+  0.89 to 0.91 of the scored ticks within the band.
 
 [sandbox/docker_wasm_buck_test.go](../../sandbox/docker_wasm_buck_test.go) asserts
 all of that under the shipped seccomp profile.
@@ -80,8 +80,8 @@ all of that under the shipped seccomp profile.
   microcontroller build would use its own number format, timer and analog-to-digital
   converter, and would be a different program with its own fingerprint.
 - **Not a hardware converter.** The simulator averages the switching behavior: the switching ripple
-  is averaged out, so the run judges the control law, not the switching stage.
-- **Not isolation beyond the run's tier.** The compiler, the judge and the controller
+  is averaged out, so the run tests the control law, not the switching stage.
+- **Not isolation beyond the run's tier.** The compiler, the runner and the controller
   run inside one project run, behind the tier the provider reports (`container` under
   runc here).
 - **Not that the fingerprint survives a toolchain bump.** The module's bytes depend on

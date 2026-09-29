@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The physics oracle: an AI-written controller, judged by a compiled plant</title>
-<meta name="description" content="An agent-written controller, sent as the only file of a sandbox run, judged against a cart-pole plant compiled to WebAssembly by the fingerprint of its trajectory. Run twice: one fingerprint. The agent's draft: another, and the pole falls at 5.96 s.">
+<title>The physics oracle: an AI-written controller, tested against a compiled plant</title>
+<meta name="description" content="An agent-written controller, sent as the only file of a sandbox run, tested against a cart-pole plant compiled to WebAssembly and identified by the fingerprint of its trajectory. Run twice: one fingerprint. The agent's draft: another, and the pole falls at 5.96 s.">
 <link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/oracle/index.html">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="plimsoll">
-<meta property="og:title" content="The physics oracle: an AI-written controller, judged by a compiled plant">
-<meta property="og:description" content="An agent-written controller, sent as the only file of a sandbox run, judged against a cart-pole plant compiled to WebAssembly by the fingerprint of its trajectory. Run twice: one fingerprint. The agent's draft: another, and the pole falls at 5.96 s.">
+<meta property="og:title" content="The physics oracle: an AI-written controller, tested against a compiled plant">
+<meta property="og:description" content="An agent-written controller, sent as the only file of a sandbox run, tested against a cart-pole plant compiled to WebAssembly and identified by the fingerprint of its trajectory. Run twice: one fingerprint. The agent's draft: another, and the pole falls at 5.96 s.">
 <meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/oracle/index.html">
 <meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/oracle-example.png">
 <meta property="og:image:width" content="1280">
@@ -55,12 +55,12 @@
 <body>
 <main>
 <nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
-<h1>The physics oracle: an AI-written controller, judged by a compiled plant</h1>
-<p class="sub">Every number on this page came from a real run through plimsoll's docker tier (container) on 2026-09-18. The controller is the only thing the caller sent. The <b>plant</b> (control engineering's word for the thing being controlled, here a cart on a rail with a pole hinged on top of it that the controller keeps upright by pushing the cart) is compiled to WebAssembly, and it and the judge that closes the loop are baked into the sandbox image. The judge ran the controller as a separate process, recorded every 10 ms tick, and the SHA-256 of that record is the fingerprint.</p>
+<h1>The physics oracle: an AI-written controller, tested against a compiled plant</h1>
+<p class="sub">Every number on this page came from a real run through plimsoll's docker tier (container) on 2026-09-18. The controller is the only thing the caller sent. The <b>plant</b> (control engineering's word for the thing being controlled, here a cart on a rail with a pole hinged on top of it that the controller keeps upright by pushing the cart) is compiled to WebAssembly, and it and the runner that closes the loop are baked into the sandbox image. The runner ran the controller as a separate process, recorded every 10 ms tick, and the SHA-256 of that record is the fingerprint.</p>
 
 <div class="row">
   <section class="panel">
-    <h3>What the plant did, replaying the judge's record</h3>
+    <h3>What the plant did, replaying the runner's record</h3>
     <div class="tabs" role="tablist">
       <button id="tab-accepted" aria-pressed="true">Accepted controller</button>
       <button id="tab-draft" aria-pressed="false">The agent's first draft</button>
@@ -72,7 +72,7 @@
       <span id="clock">t = 0.00 s</span>
     </div>
     <p class="note" id="code-note">Linear state feedback. Only + and *, so its arithmetic is plain IEEE doubles with no engine-specific libm.</p>
-    <p class="note">The browser only replays the judge's record; no physics runs here. Loops every 20 s; a fall holds for two seconds, then loops.</p>
+    <p class="note">The browser only replays the runner's record; no physics runs here. Loops every 20 s; a fall holds for two seconds, then loops.</p>
   </section>
 
   <section class="panel">
@@ -89,7 +89,7 @@
       <dt>What happened to the pole</dt>
       <dd id="fell"></dd>
     </dl>
-    <p class="note">Two different questions. <b>Identity:</b> the same fingerprint means the controller ran identically, to the last bit, and a different one means a different trajectory, which may or may not matter (a controller that changes the last digit of one number gets a different hash and the same balance). <b>Acceptance:</b> whether it balanced, and where the cart ended, are the judge's separate facts above. The record is written by the judge after the controller has exited, so the controller cannot alter it.</p>
+    <p class="note">Two different questions. <b>Identity:</b> the same fingerprint means the controller ran identically, to the last bit, and a different one means a different trajectory, which may or may not matter (a controller that changes the last digit of one number gets a different hash and the same balance). <b>Acceptance:</b> whether it balanced, and where the cart ended, are the runner's separate facts above. The record is written by the runner after the controller has exited, so the controller cannot alter it.</p>
   </section>
 </div>
 
@@ -114,7 +114,7 @@ rl.on(&#39;line&#39;, (line) =&gt; {
     <pre id="code-draft">// The agent&#39;s first draft: the same structure with the position and velocity
 // terms of the wrong sign, a classic mistake (the cart must move under the pole,
 // not away from where it stands). It balances the pole for a moment and then
-// runs off the rail. The judge records exactly where.
+// runs off the rail. The runner records exactly where.
 import { createInterface } from &#39;node:readline&#39;;
 const kp = 40, kd = 5, kx = -1, kv = -1;
 const rl = createInterface({ input: process.stdin });
@@ -135,18 +135,18 @@ rl.on(&#39;line&#39;, (line) =&gt; {
 <h2>How it works</h2>
 <ol>
   <li><b>The plant is image content.</b> A cart-pole simulator in the Reference FMU style, force as an input and no controller inside, compiled to WebAssembly and baked into plimsoll's module image at <code>/models/cartpole.wasm</code>. Register a simulator = build an image.</li>
-  <li><b>The judge is image content too.</b> <code>/oracle/run.mjs</code> loads the plant through Node's WASI support, spawns the caller's controller as a separate process, and each tick sends the state on its stdin and reads one number back, the force. It records every tick and writes the trajectory after the controller has exited.</li>
+  <li><b>The runner is image content too.</b> <code>/oracle/run.mjs</code> loads the plant through Node's WASI support, spawns the caller's controller as a separate process, and each tick sends the state on its stdin and reads one number back, the force. It records every tick and writes the trajectory after the controller has exited.</li>
   <li><b>The run is an ordinary project run.</b> One file, one step, one artifact, through plimsoll's ordinary project API on the docker tier: read-only root, no network, the syscall allowlist. The daemon knows nothing about physics.</li>
   <li><b>The fingerprint holds because of where the arithmetic lives.</b> The plant's <code>sin</code> and <code>cos</code> are wasi-libc code inside the module, WebAssembly has no fused multiply-add and rounds once per operation, and the controller's own arithmetic is plain doubles. Same bytes in, same bytes out: the sister repository's local run on a different Node major produced this exact fingerprint before the image did.</li>
 </ol>
 
 <h2>What this does not show</h2>
 <ul>
-  <li>The controller cannot alter the plant or the record, but it can read them: the judge and the plant sit on the container's read-only root, visible to any process in the run. Nothing here is secret. A hidden plant or a hidden judge needs the controller in its own namespace with only the state-and-force channel crossing, which is a different build of the same idea.</li>
-  <li>The judge protects the record from the controller; it does not make the controller's arithmetic portable. A controller that calls <code>Math.sin</code> ties its fingerprint to the JavaScript engine's implementation.</li>
+  <li>The controller cannot alter the plant or the record, but it can read them: the runner and the plant sit on the container's read-only root, visible to any process in the run. Nothing here is secret. A hidden plant or a hidden runner needs the controller in its own namespace with only the state-and-force channel crossing, which is a different build of the same idea.</li>
+  <li>The runner protects the record from the controller; it does not make the controller's arithmetic portable. A controller that calls <code>Math.sin</code> ties its fingerprint to the JavaScript engine's implementation.</li>
   <li>Forward Euler at 1 ms, the Reference FMUs' solver: adequate for a balancing demo, not a claim about accuracy.</li>
   <li><b>A fingerprint is identity within one build of the plant, and it is not a score.</b> The bytes come from the compiled module's own arithmetic, so recompiling <code>cartpole.wasm</code> with another toolchain, or changing the simulator, can move every fingerprint on this page while each controller still balances exactly as well as it did. Two controllers whose gains differ in the last digit balance the same and hash differently. That is what makes the number a reproducibility check and not a ranking.</li>
-  <li><b>Nothing here ranks two controllers that both balance.</b> The judge records whether and when the pole fell and where the cart ended; it does not report settling time, peak angle, or control effort, so this page cannot say which of two balancing controllers is better. Those are fuzzy measures over the same trajectory the judge already holds, which is an addition to the judge rather than a change to the run.</li>
+  <li><b>Nothing here ranks two controllers that both balance.</b> The runner records whether and when the pole fell and where the cart ended; it does not report settling time, peak angle, or control effort, so this page cannot say which of two balancing controllers is better. Those are fuzzy measures over the same trajectory the runner already records: a grader, the component that scores a run, could compute them from that record without any change to the run.</li>
   <li>One plant. A second plant is another simulator file and another image build.</li>
 </ul>
 <p class="note">Reproduce: <code>make docker-images &amp;&amp; go run ./examples/oracle</code> in the plimsoll repository, with docker. The page is written from the run.</p>

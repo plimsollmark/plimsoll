@@ -328,6 +328,9 @@ func (d *DockerCloud) RunJavaScript(ctx context.Context, req Request) (Result, e
 	if err := CheckMinimumIsolation(d.IsolationClass(), req.MinimumIsolation); err != nil {
 		return fail, err
 	}
+	if err := req.Software.Check(""); err != nil {
+		return fail, err
+	}
 	if err := d.validateConfig(); err != nil {
 		return fail, err
 	}
@@ -408,6 +411,9 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (Proje
 		return fail, err
 	}
 	if err := CheckMinimumIsolation(d.IsolationClass(), req.MinimumIsolation); err != nil {
+		return fail, err
+	}
+	if err := req.Software.Check(""); err != nil {
 		return fail, err
 	}
 	if err := d.validateConfig(); err != nil {

@@ -12,7 +12,7 @@
 // order, into a fresh session.
 //
 // The request file is a plimsoll.v1.RunRequest in protobuf JSON, for example
-// {"protocol": 1, "javascript": {"code": "console.log(1)"}}. The daemon's
+// {"protocol": 2, "javascript": {"code": "console.log(1)"}}. The daemon's
 // bearer token is read from PLIMSOLL_CALLER_TOKEN, and the signing key from
 // -key or, when that is absent, from PLIMSOLL_ATTEST_KEY (the PEM itself), so
 // neither appears in a process listing. The key never goes to the daemon.

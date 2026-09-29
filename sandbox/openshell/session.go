@@ -158,7 +158,11 @@ func (p *Provider) OpenSession(ctx context.Context, opts sandbox.SessionOptions)
 	if err != nil {
 		return nil, err
 	}
-	b, labels, err := p.createBox(ctx, opts.Lifetime, sessionCommand, map[string]string{sessionLabel: "1"})
+	// No sized /tmp, whatever DiskMB says: docker discards a tmpfs when its container
+	// stops, and a session is stopped to suspend it and to recover from a failed sweep,
+	// so its files would vanish (measured on v0.1.2, 2026-09-29). Its disk budget is
+	// measured after each call instead.
+	b, labels, err := p.createBox(ctx, opts.Lifetime, sessionCommand, map[string]string{sessionLabel: "1"}, nil)
 	if err != nil {
 		return nil, deadlineAware(ctx, err)
 	}
@@ -439,7 +443,7 @@ func (s *session) prepare(ctx context.Context) error {
 		s.finish(sandbox.SessionSandboxChanged, fmt.Sprintf("the sandbox is in phase %v, not ready", ph))
 		return sandbox.RefuseEndedSession(s.Err())
 	}
-	if err := s.p.verifySandbox(sb, s.labels, sessionCommand); err != nil {
+	if err := s.p.verifySandbox(sb, s.labels, sessionCommand, nil); err != nil {
 		s.finish(sandbox.SessionSandboxChanged, err.Error())
 		return sandbox.RefuseEndedSession(s.Err())
 	}
@@ -523,6 +527,9 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 	if err := sandbox.ValidateRequest(req); err != nil {
 		return fail, err
 	}
+	if err := req.Software.Check(""); err != nil {
+		return fail, err
+	}
 	timeout := clampTimeout(req.Timeout, snippetDefault, snippetMax)
 	if err := s.admit(ctx, req.Grant, req.MinimumIsolation); err != nil {
 		return fail, err
@@ -585,6 +592,9 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
 	fail := sandbox.ProjectResult{Sandbox: Name, Isolation: s.tier}
 	if err := sandbox.ValidateProjectRequest(req); err != nil {
+		return fail, err
+	}
+	if err := req.Software.Check(""); err != nil {
 		return fail, err
 	}
 	timeout := clampTimeout(req.Timeout, projectDefault, projectMax)

@@ -31,13 +31,14 @@
       HTML pages with no build step and no network calls.</li>
       <li><a href="examples/oracle/index.html">The physics oracle</a> — one real
       run, not a lesson: an agent-written controller sent as the only file of a
-      sandbox run, judged against a cart-pole plant compiled to WebAssembly by the
-      fingerprint of its trajectory.</li>
+      sandbox run, run against a cart-pole plant compiled to WebAssembly and
+      identified by the fingerprint of its trajectory.</li>
       <li><a href="examples/wasm-controller/index.html">A controller in C</a>: the
-      same judge with a swing-up controller written in C and compiled to WebAssembly
-      inside the run, compared tick by tick with the same law in JavaScript.</li>
+      swing-up controller written in C, compiled to WebAssembly inside the run, run
+      against its plant by the generic trial runner, and compared tick by tick with the
+      same law in JavaScript.</li>
       <li><a href="examples/wasm-buck/index.html">A power supply controller in C</a>:
-      a buck converter's control law in C, compiled and judged the same way, whose
+      a buck converter's control law in C, compiled and run the same way, whose
       trajectory is its JavaScript version's byte for byte in every scenario.</li>
       <li><a href="examples/providers/index.html">Same run, different sandboxes</a>:
       the oracle's run on a local container, E2B and Docker Cloud Sandboxes, with

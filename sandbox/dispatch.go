@@ -27,6 +27,9 @@ const (
 	RefusalIsolation
 	// RefusalCapacity: shed by admission or a rate limit. Retry later or elsewhere.
 	RefusalCapacity
+	// RefusalEnvironment: the selected software cannot meet the caller's rule.
+	// Another backend may have an approved image.
+	RefusalEnvironment
 )
 
 var refusalNames = [...]string{
@@ -37,6 +40,7 @@ var refusalNames = [...]string{
 	RefusalUnsupported: "unsupported",
 	RefusalIsolation:   "isolation",
 	RefusalCapacity:    "capacity",
+	RefusalEnvironment: "environment",
 }
 
 func (r Refusal) String() string {
@@ -95,6 +99,8 @@ func refused(err error) error {
 		return NotDispatched(RefusalIsolation, err)
 	case errors.Is(err, ErrAtCapacity):
 		return NotDispatched(RefusalCapacity, err)
+	case errors.Is(err, ErrSoftwareMismatch):
+		return NotDispatched(RefusalEnvironment, err)
 	default:
 		return err
 	}

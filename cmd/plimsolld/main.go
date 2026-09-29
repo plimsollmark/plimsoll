@@ -157,7 +157,8 @@ const usageLimits = `
   SANDBOX_SESSION_IDLE       suspend a session idle this long (default 5m; 0 =
                              never); its files are kept and the next call resumes it
   SANDBOX_SESSION_DISK_MB    end a session whose files exceed this after a call
-                             (default 1024; 0 = no bound)
+                             (default 1024; 0 = no bound); measured after each
+                             call, not enforced during it
 
 Endpoints outside auth: GET /healthz (liveness) and GET /readyz (provider
 readiness) on PLIMSOLL_ADDR, and GET /metrics (Prometheus text: run, shed-load,

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,21 @@ func TestSessionThroughTheClientVerifiesAsABundle(t *testing.T) {
 	rep, err := attest.VerifyBundle(entries, attest.NewVerifier(key.Public().(ed25519.PublicKey)))
 	if err != nil || len(rep.Sessions) != 1 || rep.Sessions[0].Calls != 4 {
 		t.Fatalf("bundle: %+v, %v", rep, err)
+	}
+}
+
+func TestClientOpenSessionRestoresSoftwareMismatch(t *testing.T) {
+	url, p := sessionServer(t) // the fake session provider states no software identity
+	rule := sandbox.SoftwareRule{Mode: sandbox.SoftwareExact, Identities: []string{"oci-manifest:linux/amd64@sha256:" + strings.Repeat("a", 64)}}
+	_, err := newRemote(t, url).OpenSession(context.Background(), SessionOptions{Software: rule})
+	if !errors.Is(err, sandbox.ErrSoftwareMismatch) {
+		t.Fatalf("open mismatch lost its typed error: %v", err)
+	}
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalEnvironment {
+		t.Fatalf("open mismatch lost its environment refusal: %v, %v", reason, ok)
+	}
+	if len(p.Opened()) != 0 {
+		t.Fatal("a mismatched OpenSession reached the provider")
 	}
 }
 

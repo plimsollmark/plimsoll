@@ -80,21 +80,28 @@
 
   <nav class="top"><a href="index.html">← All trainers</a></nav>
 
-  <p class="eyebrow">plimsoll trainer · 08 / broker transports</p>
+  <p class="eyebrow">plimsoll trainer · 08 / calling your API from the sandbox</p>
   <h1>The API broker</h1>
   <p class="promise">Code you do not trust needs to read from your API, and your API needs
-  a key. Everything about the broker follows from one decision: <b>the key never enters
-  the room with the code.</b> The code asks for a route; a guard on the host side checks
-  it against a short list, attaches the key, and forwards it. A fully compromised run
-  holds nothing worth stealing.</p>
+  a key. Everything on this page follows from one rule: <b>the key never enters the room
+  with the code</b>, the room being the sandbox the code runs in. The code asks for a
+  route; the <dfn>broker</dfn>, the part of plimsoll that runs outside the sandbox on the
+  host machine, checks the route against a short list, attaches the key itself, and sends
+  the call on to your API. Even fully hostile code in the room holds nothing worth
+  stealing.</p>
 
   <!-- 01 ─────────────────────────────────────────────────────────────────── -->
   <section id="line" aria-labelledby="h-line">
     <p class="draft" aria-hidden="true">01</p>
     <h2 id="h-line">The line the key never crosses</h2>
     <p>The room has no network. One private line leads out of it to the broker, which
-    holds the profile's route list and the credential minted for this run. The room
-    changes with the provider; the guard does not.</p>
+    holds the run's <dfn>grant</dfn>, its permission to call a listed set of routes on one
+    API, and a credential <dfn>minted</dfn> for this run, meaning created fresh for it
+    alone. The room changes with the <dfn>provider</dfn>, the backend that runs the code;
+    the broker does not. Pick one below: a docker container; a JavaScript engine compiled
+    to <dfn>WebAssembly</dfn>, a portable bytecode format, running inside the plimsoll
+    process (the wasm provider); or a small virtual machine on <dfn>E2B</dfn>, a hosted
+    service that starts one per run (e2b).</p>
     <div class="line-and-controls">
       <div class="line-panel">
         <svg id="lineSvg" viewBox="0 0 700 250" role="img" aria-label="Agent code inside a room with no network, one private line to the broker on the host side, which checks the route, attaches the key, and forwards to your API." style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
@@ -149,12 +156,12 @@
   <section id="checker" aria-labelledby="h-checker">
     <p class="draft" aria-hidden="true">02</p>
     <h2 id="h-checker">The route check, exactly</h2>
-    <p>The broker approves a string only if it is byte for byte the string that will be
+    <p>The broker approves a path only if it is, byte for byte, the path that will be
     sent. Type a path, or tap one of the attempts, and read the verdict the broker would
-    give against this profile's list. The rules below are the daemon's, in the same
-    order.</p>
+    give against the list of allowed routes below. The page applies the daemon's own
+    rules, in the daemon's order.</p>
     <div class="checker">
-      <div class="allow"><b>The profile's Allow list</b>GET /v1/warehouses<br>GET /v1/items/*<br>GET /v1/items/*/stock<br>POST /v1/orders</div>
+      <div class="allow"><b>This grant's Allow list</b>GET /v1/warehouses<br>GET /v1/items/*<br>GET /v1/items/*/stock<br>POST /v1/orders</div>
       <div class="try" id="tryRow" aria-label="Attempts to try"></div>
       <div class="input-row">
         <select id="method" aria-label="Method"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select>
@@ -163,14 +170,18 @@
       <div class="verdict" id="verdict" aria-live="polite"></div>
     </div>
     <div class="card">
-      <p><b>Why the string has to match the wire.</b> A guest could write
-      <code>/v1/items/%2e%2e/admin</code>: the broker would see a harmless-looking segment,
-      and the upstream would decode it to <code>..</code>. Or <code>/v1/items/42?x=/stock</code>:
-      the list would match it against a longer template while the request actually hits the
-      shorter route, because <code>net/http</code> strips everything after the
-      <code>?</code>. So anything that is not already in decoded, canonical, wire-ready form
-      is refused before matching, and the string approved is the string sent. The template
-      that matched, never the path, is what the call trace records.</p>
+      <p><b>Why the path checked has to be the path sent.</b> A <dfn>guest</dfn>, the code
+      running in the sandbox, could write <code>/v1/items/%2e%2e/admin</code>: the broker
+      would see a harmless-looking segment, and your API's server would decode it to
+      <code>..</code>, the parent directory. Or it could write
+      <code>/v1/items/42?x=/stock</code>: the list would match it against the longer
+      template <code>/v1/items/*/stock</code> (a route pattern, where <code>*</code> stands
+      for one segment), while the request actually reaches the shorter route, because Go's
+      <code>net/http</code> strips everything after the <code>?</code>. So any path not
+      already in its final form (decoded, clean, and with nothing an HTTP client would
+      re-encode) is refused before matching, and the path approved is the path sent. The
+      call trace, the broker's log of the run's calls, records the template that matched,
+      never the path itself.</p>
     </div>
   </section>
 
@@ -178,30 +189,30 @@
   <section id="words" aria-labelledby="h-words">
     <p class="draft" aria-hidden="true">03</p>
     <h2 id="h-words">The eight words</h2>
-    <p>Everything on this page is these eight ideas moving around.</p>
+    <p>If a word on this page loses you, it is one of these.</p>
     <div class="words">
-      <div class="word"><b>sandbox</b>a room where code we do not trust runs.<small>The provider decides how thick its walls are: in-process, a container, a container with gVisor, a microVM (a small virtual machine created for one run, on E2B or Docker Cloud Sandboxes).</small></div>
+      <div class="word"><b>sandbox</b>a room where code we do not trust runs.<small>The provider decides how thick its walls are: in-process, a container, a container under <dfn>gVisor</dfn> (a layer that answers the container's requests to the kernel itself), or a <dfn>microVM</dfn> (a small virtual machine created for one run, on E2B or on <dfn>Docker Cloud Sandboxes</dfn>, Docker's hosted sandbox service).</small></div>
       <div class="word"><b>grant</b>a per-run permission slip: this one run may call these routes on this one API.<small>Off by default, twice: no grant means no network, and an empty route list reaches nothing.</small></div>
-      <div class="word"><b>profile</b>a named grant held by the daemon.<small>Origin, routes, allowed callers, scopes, how the credential is minted. A caller selects one by name and can change nothing in it.</small></div>
-      <div class="word"><b>broker</b>the guard on the host side of the line.<small>Checks the route, counts the budget, attaches the key, forwards, records the template.</small></div>
-      <div class="word"><b>credential</b>what the guard attaches.<small>A fresh short-lived JWT per run with the caller as its subject, or one server-held static bearer. Either way it lives in Go.</small></div>
-      <div class="word"><b>the line</b>the one way out of the room.<small>A Unix socket, a host function, or one allowed exit. Only request and response bytes cross it.</small></div>
-      <div class="word"><b>egress</b>traffic leaving the room.<small>Denied. The line is not egress: it goes to the guard, not to the internet.</small></div>
-      <div class="word"><b>forward proxy</b>the industry's name for the guard.<small>A mandatory exit every outbound call must pass through, holding the policy. Service meshes do this with an egress gateway.</small></div>
+      <div class="word"><b>profile</b>a named grant held by the daemon.<small>The API's origin (scheme, host and port), the routes, the allowed callers, the scopes (permissions the credential carries), and how the credential is minted. A caller selects one by name and can change nothing in it.</small></div>
+      <div class="word"><b>broker</b>the checkpoint on the host side of the line.<small>Checks the route, counts the call against the budget, attaches the key, forwards the call, records the template.</small></div>
+      <div class="word"><b>credential</b>what the broker attaches.<small>A fresh short-lived JWT (a signed token) per run, naming the caller as its subject, or one static bearer token kept on the server. Either way it stays in the daemon's Go process.</small></div>
+      <div class="word"><b>the line</b>the one way out of the room.<small>A Unix socket (docker), a function the daemon gives the WebAssembly code (wasm), or one allowed network exit (e2b). Only request and response bytes cross it.</small></div>
+      <div class="word"><b><dfn>egress</dfn></b>traffic leaving the room.<small>Denied. The line is not egress: it goes to plimsoll, not to the internet.</small></div>
+      <div class="word"><b>forward proxy</b>the industry's name for this kind of checkpoint.<small>A mandatory exit that every outbound call must pass through, and that holds the rules. Service meshes such as Istio, which route the traffic between a cluster's services, do this with an egress gateway.</small></div>
     </div>
   </section>
 
   <!-- 04 ─────────────────────────────────────────────────────────────────── -->
   <section id="budget" aria-labelledby="h-budget">
     <p class="draft" aria-hidden="true">04</p>
-    <h2 id="h-budget">Four numbers the guard counts</h2>
-    <p>Generous for honest code and fatal for a loop that has run away, which is the only
-    thing a per-run cap can usefully tell apart.</p>
+    <h2 id="h-budget">Four numbers the broker counts</h2>
+    <p>Each limit is generous for honest code and stops a loop that has run away; telling
+    those two apart is all a per-run cap can usefully do.</p>
     <div class="budgets">
-      <div class="budget"><span class="v">256 calls</span><span class="k">per run, by default</span><small>A profile whose workload is a loop by design raises <code>max_calls</code>, never past 100,000.</small></div>
-      <div class="budget"><span class="v">1 MiB</span><span class="k">request body</span><small>Read from the guest and counted before any matching.</small></div>
-      <div class="budget"><span class="v">4 MiB</span><span class="k">response body</span><small>A larger upstream answer keeps its row, marked undelivered, so a capped 200 is not a success.</small></div>
-      <div class="budget"><span class="v">256 rows</span><span class="k">call trace</span><small>Whatever the call budget. Calls past the cap count as dropped, and a finding says "at least".</small></div>
+      <div class="budget"><span class="v">256 calls</span><span class="k">per run, by default</span><small>A profile whose workload is a loop by design can raise <code>max_calls</code>, never past 100,000.</small></div>
+      <div class="budget"><span class="v">1 MiB</span><span class="k">request body</span><small>Read from the guest and counted before any route matching.</small></div>
+      <div class="budget"><span class="v">4 MiB</span><span class="k">response body</span><small>A larger answer from your API is not delivered: its row in the call trace stays, marked undelivered, so a 200 cut off at the cap never counts as a success.</small></div>
+      <div class="budget"><span class="v">256 rows</span><span class="k">call trace</span><small>Whatever the call budget is. Calls past 256 rows are counted as dropped, and an advisor finding then says "at least".</small></div>
     </div>
   </section>
 
@@ -209,33 +220,35 @@
   <section id="far" aria-labelledby="h-far">
     <p class="draft" aria-hidden="true">05</p>
     <h2 id="h-far">E2B: the room is on someone else's servers</h2>
-    <p>With docker the room is on the host, so a socket reaches under the door. A
-    microVM runs on E2B's infrastructure; there is no hallway to run a line down. The
-    rule does not change, so the plumbing has to.</p>
+    <p>With docker the room is on the same machine as plimsoll, so a socket can reach
+    under the door. An E2B microVM runs on E2B's servers, so there is no hallway to run a
+    line down. The rule does not change, so the plumbing has to.</p>
     <ol class="far">
-      <li><b>All egress denied.</b> The VM's network is off, and the startup smoke test creates a no-grant VM and proves it live. That is the deny-all floor.</li>
-      <li><b>One allowed exit.</b> Pointed at plimsoll's host-side guard, the URL in <code>E2B_GUARD_URL</code>. The guard delegates to the same broker as every other provider.</li>
-      <li><b>The guest cannot forge the exit.</b> E2B's per-host header transform attaches the run's guard token to requests on their way out, outside the guest, so the code inside never sees it and cannot mint its own. The guard authenticates and admits a request before reading its body.</li>
+      <li><b>All egress denied.</b> The VM's network is off, and at startup the smoke test (one real throwaway run) creates a VM with no grant and proves it live. That is the starting point: <dfn>deny-all</dfn>, every connection blocked unless a rule allows it.</li>
+      <li><b>One allowed exit.</b> It points at plimsoll's <dfn>guard</dfn>, an HTTPS address served by the plimsoll daemon and set in <code>E2B_GUARD_URL</code>. The guard hands each call to the same broker every other provider uses.</li>
+      <li><b>The guest cannot forge the exit.</b> E2B's per-host header transform, a rule that adds a header to requests bound for one host, attaches the run's guard token to requests on their way out, outside the VM, so the code inside never sees the token and cannot make its own. The guard checks the token, and accepts or refuses the request, before reading its body.</li>
       <li><b>No guard, no grant.</b> With <code>E2B_GUARD_URL</code> unset, an E2B grant is refused outright rather than downgraded to something weaker.</li>
-      <li><b>The exception is proved separately.</b> The smoke test proves deny-all, not "denied except for the guard". <code>make e2b-guard-live</code> proves the guarded path, and it fails rather than skips when unconfigured, so a pass can only come from having exercised it.</li>
+      <li><b>The exception is proved separately.</b> The startup smoke test proves deny-all, not "denied except for the guard". <code>make e2b-guard-live</code> proves the path through the guard, and it fails rather than skips when its settings are missing, so a pass can only come from having actually used that path.</li>
     </ol>
     <div class="card warn">
-      <p><b>Docker Cloud Sandboxes has no line yet.</b> The other VM provider,
+      <p><b>Docker Cloud Sandboxes reaches the guard too.</b> The other VM provider,
       <code>dockercloud</code>, runs each sandbox on Docker-managed compute with its network
-      policy at deny-all, read back and checked on every run. With <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code> set, a grant
-      run gets exactly one network rule, the guard’s <code>host:443</code>, and the provider reads
+      policy at deny-all, read back and checked on every run. With <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code> set, a run
+      with a grant gets exactly one network rule, the guard’s <code>host:443</code>, and the provider reads
       it back before any code runs. Two things differ from E2B. The rule is applied through a
       Docker call outside its published API (the one its own <code>sbx</code> CLI makes). And
       Docker’s proxy only injects credentials for its own fixed list of services, so the guest
       holds its own run’s guard credential: short-lived, good only at the guard, only for this
       run’s routes and budget, dead when the run ends. The API key still never enters the VM.</p>
-      <p><b>OpenShell keeps its sandbox at no network rules at all, grant or not.</b> The
-      <code>openshell</code> provider reaches in instead of letting the guest reach out: a
-      small relay in the sandbox listens on a loopback port and on the Unix socket the
-      docker client uses, and plimsoll dials into that port through the gateway’s
-      <code>ForwardTcp</code> for each connection the guest opens. The broker, the minted
-      credential and the route check stay in plimsoll’s process; the policy read back
-      before the run is the no-grant policy, unchanged.</p>
+      <p><b><dfn>OpenShell</dfn>, NVIDIA’s agent sandbox runtime, keeps its sandbox at no
+      network rules at all, grant or not.</b> The <code>openshell</code> provider reaches in
+      instead of letting the guest reach out: a small relay program in the sandbox listens
+      on a loopback port and on the Unix socket the injected <code>host</code> client talks
+      to, the same client as under docker. For each connection the guest opens, plimsoll
+      dials into that port through <code>ForwardTcp</code>, a call on the OpenShell gateway
+      (the server that creates the sandboxes). The broker, the minted credential and the
+      route check stay in plimsoll’s process; the network policy read back before the run
+      is the no-grant policy, unchanged.</p>
     </div>
   </section>
 
@@ -243,20 +256,21 @@
   <section id="industry" aria-labelledby="h-industry">
     <p class="draft" aria-hidden="true">06</p>
     <h2 id="h-industry">The mainstream pattern, with one rule made stricter</h2>
-    <p>Mediating outbound calls from code you do not fully trust is a solved problem.
-    plimsoll uses the standard shapes, and refuses the one the cloud uses for its own VMs.</p>
+    <p>Controlling the outbound calls of code you do not fully trust is a solved problem.
+    plimsoll uses two standard designs, and refuses a third, the one cloud providers use to
+    hand credentials to their own VMs.</p>
     <div class="industry">
-      <div class="card good"><h3>Forced-egress forward proxy</h3><p>Default-deny network; every outbound call must pass one proxy that holds the policy. Envoy, Istio and Linkerd egress gateways are this shape. The guard is exactly this.</p></div>
-      <div class="card good"><h3>Short-lived scoped tokens</h3><p>A broker vends a narrow, expiring credential and injects it at the proxy. SPIFFE and SPIRE, OAuth client credentials. The JWT profile is this, with the calling principal as the subject.</p></div>
-      <div class="card bad"><h3>Metadata server: refused</h3><p>A link-local endpoint hands the credential <em>into</em> the VM, the way AWS IMDS and the GCP metadata server do, which is why IMDSv2 had to add defences against code inside the VM asking for it. For hostile code the key must never enter the room, so this shape is out.</p></div>
+      <div class="card good"><h3>Forced-egress forward proxy</h3><p>The network blocks everything by default, and every outbound call must pass one proxy that holds the rules. Egress gateways in Envoy, Istio and Linkerd are this design. plimsoll's guard is exactly this.</p></div>
+      <div class="card good"><h3>Short-lived scoped tokens</h3><p>A broker hands out a narrow, expiring credential and attaches it at the proxy. SPIFFE and SPIRE (a standard and a server for short-lived workload identities) and OAuth client credentials work this way. plimsoll's JWT profile is this, with the calling <dfn>principal</dfn>, the authenticated caller, as the token's subject.</p></div>
+      <div class="card bad"><h3>Metadata server: refused</h3><p>An address that only the VM itself can reach (a link-local endpoint) hands the credential <em>into</em> the VM, the way AWS's instance metadata service (IMDS) and the GCP metadata server do, which is why IMDSv2 had to add defences against code inside the VM asking for it. For hostile code the key must never enter the room, so this design is out.</p></div>
     </div>
   </section>
 
   <h2 style="margin-top:44px">Keep reading</h2>
   <ul class="links">
     <li><a href="private-api.html"><b>Internal · trainer site →</b><strong>Private API Flight Recorder</strong><small>The same line drawn as real processes, with the bytes on each hop.</small></a></li>
-    <li><a href="capacity-endpoint.html"><b>Internal · trainer site →</b><strong>The capacity endpoint</strong><small>What the guard does when your API says stop.</small></a></li>
-    <li><a href="advisor.html"><b>Internal · trainer site →</b><strong>Efficiency advisor</strong><small>What the guard learns from the templates it recorded.</small></a></li>
+    <li><a href="capacity-endpoint.html"><b>Internal · trainer site →</b><strong>The capacity endpoint</strong><small>What the broker does when your API says stop.</small></a></li>
+    <li><a href="advisor.html"><b>Internal · trainer site →</b><strong>Efficiency advisor</strong><small>What the route templates the broker recorded reveal about the code.</small></a></li>
     <li><a href="https://spiffe.io/docs/latest/spiffe-about/overview/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>SPIFFE</strong><small>Short-lived workload identity, the standard the JWT profile resembles.</small></a></li>
     <li><a href="https://istio.io/latest/docs/tasks/traffic-management/egress/egress-gateway/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Istio egress gateway</strong><small>A service mesh's forced-egress proxy, the same shape as the guard.</small></a></li>
   </ul>
@@ -282,9 +296,9 @@
 
   // 01: the room.
   var ROOMS = {
-    docker: { room: 'THE ROOM · a docker container', pipe: 'a Unix socket', caption: '<b>Docker.</b> The container runs with <code>--network none</code> and one per-run Unix socket mounted into it. A project run preloads the same <code>host</code> client into every step process with <code>node --import</code>, so every file in the project reaches the API through the identical global over the identical socket.', note: '<p>Under <code>runsc</code> the runtime must be registered with <code>--host-uds=open</code> or the guest cannot reach the socket at all; the installer sets it, and the startup smoke test mounts a throwaway socket exactly as a run does and must connect to it. A runtime that cannot broker refuses to serve rather than failing every granted run.</p>' },
-    wasm: { room: 'THE ROOM · QuickJS on wazero, in-process', pipe: 'a host function', caption: '<b>WASM.</b> There is no socket because there is no process boundary: <code>host.get</code> is a wazero host function. Only <code>{method, path, body}</code> and the bounded response cross linear memory; the credential stays in Go and never enters QuickJS. Snippets only: there is no project toolchain in-process, so a project grant is refused.', note: '<p>The room is the thinnest one (process tier), so this is for code you basically trust and for the inner loop. The guard is the same code as docker\'s; only the pipe differs.</p>' },
-    e2b: { room: 'THE ROOM · a Firecracker microVM, on E2B', pipe: 'one allowed exit', caption: '<b>E2B.</b> The VM\'s egress is denied except for one exit pointed at the guard named by <code>E2B_GUARD_URL</code>. E2B attaches the run\'s guard token to those requests outside the guest, so the code can use the exit but cannot forge a call through it. The guard delegates to the same broker. Section 05 has the whole path.', note: '<p>Without <code>E2B_GUARD_URL</code> an E2B grant is <code>ErrUnsupported</code>, never a downgrade. The guard is process-local: a run\'s guard credential lives only in the memory of the process that opened the run, so the public guard URL must resolve to that same process.</p>' }
+    docker: { room: 'THE ROOM · a docker container', pipe: 'a Unix socket', caption: '<b>Docker.</b> The container runs with <code>--network none</code> and one per-run Unix socket mounted into it. A project run (several files, run as build, lint and run steps) loads the same <code>host</code> client into every step\'s process with <code>node --import</code>, so every file in the project reaches the API through the same global object over the same socket.', note: '<p>Under <code>runsc</code>, gVisor\'s runtime, it must be registered with <code>--host-uds=open</code>, or the guest cannot reach the socket at all. The installer sets it, and the startup smoke test mounts a throwaway socket exactly as a run does and must connect to it. If the runtime cannot pass calls through to the broker, the daemon refuses to serve, rather than failing every run that has a grant.</p>' },
+    wasm: { room: 'THE ROOM · QuickJS on wazero, in-process', pipe: 'a host function', caption: '<b>WASM.</b> There is no socket because the code runs inside the daemon\'s own process: <code>host.get</code> is a function the daemon gives the WebAssembly code through wazero, its Go WebAssembly runtime. Only <code>{method, path, body}</code> and the size-limited response cross into the WebAssembly memory; the credential stays in Go and never enters QuickJS, the JavaScript engine. Snippets only: there is no project toolchain inside the daemon, so a project grant is refused.', note: '<p>This room has the thinnest walls (the process isolation tier), so it is for code you basically trust and for fast edit-and-run loops while developing. The broker is the same code as docker\'s; only the pipe differs.</p>' },
+    e2b: { room: 'THE ROOM · a Firecracker microVM, on E2B', pipe: 'one allowed exit', caption: '<b>E2B.</b> All traffic out of the VM is blocked except one exit, pointed at the guard, the address on the plimsoll daemon named by <code>E2B_GUARD_URL</code>. E2B attaches the run\'s guard token to those requests outside the VM, so the code can use the exit but cannot forge a call through it. The guard hands each call to the same broker. Section 05 has the whole path.', note: '<p>Without <code>E2B_GUARD_URL</code> an E2B grant fails with <code>ErrUnsupported</code>, never a quiet downgrade. The guard works only in the daemon process that opened the run: a run\'s guard credential lives only in that process\'s memory, so the public guard URL must reach that same process.</p>' }
   };
   function renderRoom(which) {
     press(el('roomSeg'), which);
@@ -319,10 +333,10 @@
     if (p === '' || p[0] !== '/') return { ok: false, why: 'the path must be rooted: it has to start with a slash.' };
     if (p.indexOf('%') >= 0) return { ok: false, why: 'percent-encoding is refused outright: decoding it would change the string, so the string approved would not be the string sent.' };
     if (p.indexOf('\\') >= 0) return { ok: false, why: 'a backslash is refused; it is not a path separator on the wire and not one the list understands either.' };
-    if (/[?#]/.test(p)) return { ok: false, why: 'a query or fragment is refused: net/http strips it when building the request, so the route matched here would not be the route hit upstream.' };
+    if (/[?#]/.test(p)) return { ok: false, why: 'a query or fragment is refused: net/http strips it when building the request, so the route matched here would not be the route your API receives.' };
     if (/[\x00-\x1f\x7f]/.test(p)) return { ok: false, why: 'a control character is refused.' };
     if (/[^A-Za-z0-9\-_.~$&+,\/:;=@]/.test(p)) return { ok: false, why: 'it contains a character an HTTP client would percent-encode on the wire, so the approved string and the sent string would differ.' };
-    if (cleanPath(p) !== p) return { ok: false, why: 'it is not canonical: a doubled slash, a trailing slash, or a dot segment. The broker matches only the clean form, and the clean form is what it would have to send.' };
+    if (cleanPath(p) !== p) return { ok: false, why: 'it is not in its clean form: it has a doubled slash, a trailing slash, or a dot segment. The broker matches only the clean form, and the clean form is what it would have to send.' };
     var segs = p.split('/');
     for (var i = 0; i < segs.length; i++) { if (segs[i] === '.' || segs[i] === '..') return { ok: false, why: 'a traversal segment is refused.' }; }
     for (var r = 0; r < ALLOW.length; r++) {
@@ -336,7 +350,7 @@
       if (match) return { ok: true, route: ALLOW[r][0] + ' ' + ALLOW[r][1] };
     }
     var sameShape = ALLOW.some(function (a) { return a[0] !== method.toUpperCase() && a[1].split('/').length === segs.length; });
-    return { ok: false, why: sameShape ? 'no route on the list matches this method and path. A segment must match exactly, case included, and the method is part of the route.' : 'no route on the list has this shape. A wildcard binds exactly one non-empty segment, so a shorter or longer path is a different route.' };
+    return { ok: false, why: sameShape ? 'no route on the list matches this method and path. A segment must match exactly, case included, and the method is part of the route.' : 'no route on the list has this shape. A * matches exactly one non-empty segment, so a shorter or longer path is a different route.' };
   }
   function renderVerdict() {
     var method = el('method').value;
@@ -351,7 +365,7 @@
     box.appendChild(line);
     var why = document.createElement('p');
     if (v.ok) {
-      why.textContent = 'On the list. The key is attached on this side of the line and the call goes upstream. The trace records the template ';
+      why.textContent = 'On the list. The key is attached on this side of the line and the call goes on to your API. The call trace records the template ';
       var t = document.createElement('span'); t.className = 'trace'; t.textContent = v.route; why.appendChild(t);
       why.appendChild(document.createTextNode(', never the path.'));
     } else {

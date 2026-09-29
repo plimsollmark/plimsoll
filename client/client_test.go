@@ -513,6 +513,18 @@ func TestRemoteRefusalsCarryNotDispatchedReason(t *testing.T) {
 	}
 }
 
+func TestRemoteRestoresSoftwareMismatch(t *testing.T) {
+	r := newRemote(t, startServer(t, nil)) // wasm states no selected image
+	rule := sandbox.SoftwareRule{Mode: sandbox.SoftwareExact, Identities: []string{"oci-manifest:linux/amd64@sha256:" + strings.Repeat("a", 64)}}
+	_, err := r.RunJavaScript(context.Background(), sandbox.Request{Code: "1", Software: rule})
+	if !errors.Is(err, sandbox.ErrSoftwareMismatch) {
+		t.Fatalf("software mismatch lost its typed error: %v", err)
+	}
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalEnvironment {
+		t.Fatalf("software mismatch lost its environment refusal: %v, %v", reason, ok)
+	}
+}
+
 // A failure after dispatch carries no detail, so it never reads as safe to retry.
 func TestRemoteInternalErrorIsNotMarked(t *testing.T) {
 	err := restoreSandboxError(connect.NewError(connect.CodeInternal, errors.New("provider crashed mid-run")))

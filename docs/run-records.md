@@ -1,31 +1,41 @@
 # Run records
 
-Every answered `Run` carries a **run record**: the daemon's statement of what the
-caller sent, what came back, the evidence the run executed under, and when. It is a
-set of SHA-256 digests plus a few plain fields, small enough to store beside every
-result.
+Every answered `Run` carries a <dfn>*run record*</dfn>: the daemon's statement of what
+the caller sent, what came back, the evidence the run executed under, and when. It is a
+set of SHA-256 <dfn>*digests*</dfn> (hashes of content, each used as the content's name:
+the same digest always means the same bytes) plus a few plain fields, small enough to
+store beside every result.
 
-The daemon computes the record and **holds no key**. A harness outside the daemon
-recomputes the digests from its own copy of the request and the result, refuses a
-record that does not match, and signs the ones that do. The split is deliberate: the
-daemon runs hostile code (on the wasm tier, in its own process), so a signing key
-inside it would be one engine escape away from forging every record.
+The daemon computes the record and **holds no key**. A <dfn>*harness*</dfn>, a program
+outside the daemon that drives runs and checks their results, recomputes the digests from
+its own copy of the request and the result, refuses a record that does not match, and
+signs the ones that do. The split is deliberate: the daemon runs hostile code (the
+`wasm` <dfn>*provider*</dfn>, one of the backends that can run the code, runs it inside
+the daemon's own process), so a signing key inside the daemon would be one engine
+<dfn>*escape*</dfn> (a bug that lets code act outside its sandbox) away from forging
+every record.
 
 What a record proves, and what it does not:
 
 - The two content digests prove that the request and result the caller holds are the
   ones the daemon states it received and returned. A changed byte anywhere in the code,
   a file, a step, the output or an artifact changes a digest.
-- The evidence fields (provider, tier, environment, policy) are the daemon's
-  statement, with the same qualification as the tier everywhere else in plimsoll:
-  configuration and provider evidence, **never runtime attestation**. A compromised
-  daemon can state anything.
-- A deterministic workload can be checked a stronger way: run the stored request
-  again, on the same backend or another, and compare result digests. The physics
-  oracle's trajectory already reproduces to the bit on five providers
-  ([the providers example](example-programs.md)).
+- The evidence fields are the daemon's statement: the provider (the backend that ran
+  the code), the <dfn>*isolation tier*</dfn> (how strong the sandbox's walls
+  are), the outer image, the selected software image, the caller's software rule and the
+  sandbox policy. They carry the same qualification as the tier everywhere else in
+  plimsoll: configuration and provider evidence, **never runtime
+  <dfn>*attestation*</dfn>** (cryptographic proof, usually rooted in the hardware, of what
+  software a machine is actually running). A compromised daemon can state anything.
+- A deterministic workload, one that gives the same output for the same input every
+  time, can be checked a stronger way: run the stored request again, on the same backend
+  or another, and compare result digests. The <dfn>*physics oracle*</dfn> example, which
+  tests agent-written code that balances a simulated pole, already reproduces its
+  <dfn>*trajectory*</dfn> (the record of every step of the simulation) to the bit on five
+  providers ([the providers example](example-programs.md)).
 - A refused or failed run returns an error, not a response, so it has no record. A
-  refusal marked not-dispatched ran nothing ([run results](run-results.md)).
+  refusal marked as not <dfn>*dispatched*</dfn>, meaning the code was never handed over
+  to start running, ran nothing ([run results](run-results.md)).
 
 The Go client checks every record it receives against the request it sent and the
 response it got (`record.Check`); a mismatch is `DataLoss` wrapping
@@ -34,47 +44,59 @@ executed. A response with no record is refused the same way (`DataLoss` wrapping
 `record.ErrNoRecord`): every daemon answer carries one. `Result.Record`,
 `ProjectResult.Record` and `ModuleResult.Record` hold the checked record; they are nil
 only from an in-process provider, which has no daemon to state one. Nothing a daemon
-executes depends on the record, so it did not move the protocol number.
+executes depends on the record, so adding it did not change the <dfn>*protocol
+number*</dfn>: the version every request states, which goes up only when a new request
+field changes what a daemon may execute.
 
 ## Fields
 
 | Field | Meaning |
 |---|---|
-| `version` | The encoding version, `1`. A verifier refuses a version it does not know. |
-| `request_sha256` | Digest of what the caller sent: protocol number, floor, timeout, payload. |
+| `version` | The encoding version, `2` for new records. New signers only sign version `2`; verifiers still accept existing version `1` signed records. A verifier refuses an unknown version. |
+| `request_sha256` | Digest of what the caller sent: protocol number, isolation <dfn>*floor*</dfn> (the weakest tier the caller accepts), timeout, software rule and payload. Version 1 omits the software rule. |
 | `result_sha256` | Digest of the result as sent: exit codes or outcome, output, truncation flags, steps, artifacts, module rows. |
 | `provider` | The provider that ran it (the response's `sandbox`). |
 | `isolation` | The tier the response states, verbatim. |
-| `environment` | The payload kind's content-addressed identity as `Describe` states it (a verified image ID, an image digest, the embedded interpreter's hash); empty when none is stated. |
-| `policy` | The sandbox policy the provider verified before the run, by digest (`openshell-policy:sha256:...` is the hash OpenShell's gateway itself reports); empty for providers without one. |
+| `environment` | The exact outer image artifact or embedded interpreter selected for the run. For Docker this is the image index ID (the ID of the list that points to the image for each platform), which may include fresh build metadata even when the executable image is unchanged. Empty when none is stated. |
+| `software_identity` | The <dfn>*manifest*</dfn> (the file listing one image's configuration and layers) of the executable image selected, with its platform, for example `oci-manifest:linux/amd64@sha256:<digest>`. Empty when the provider cannot establish which image it selected. |
+| `software_rule_id` | The software rule the caller required, which the daemon checks before the run starts: `exact:<identity>` or `approved:sha256:<digest of approved identities>`. Empty when the caller set no rule. The request digest covers the complete approved list. |
+| `policy` | The sandbox policy the provider verified before the run, by digest. For <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, it is the policy that sets the sandbox's network and filesystem rules, and `openshell-policy:sha256:...` is the hash its gateway itself reports. Empty for providers without one. |
 | `started_unix_ms`, `ended_unix_ms` | When the daemon received the request and when it finished the result. |
-| `session`, `sequence`, `previous_sha256` | A session call's place in its chain: the SHA-256 of the session ID (the ID is a capability and is never recorded), the call's number from 1, and the previous call's `record_sha256`. Empty or zero for a single run. |
+| `session`, `sequence`, `previous_sha256` | A call's place in its <dfn>*session*</dfn> (one sandbox kept open for many calls) and its chain: the SHA-256 of the session ID (the ID works like a password for the session, so it is never recorded), the call's number counting from 1, and the previous call's `record_sha256`. Empty or zero for a single run. |
 | `record_sha256` | Digest of every field above. |
 
-Left out on purpose: the **trace id** (the caller's correlation key; it changes
-nothing that runs, and leaving it out keeps one request's digest the same on every
-attempt), **durations** (they differ on every run, so a replay could never match),
+Left out on purpose: the **trace id** (the caller's own ID for matching this run to
+its logs; it changes nothing that runs, and leaving it out keeps one request's digest the
+same on every attempt), **durations** (they differ on every run, so a replay could never match),
 and **advice** (analysis of the run's host-API calls, not its output).
 
 ## The encoding
 
-Every digest is lowercase hex SHA-256 over a length-prefixed byte string, not over
-protobuf or JSON bytes, so any language reproduces it with a hash function alone.
+Every digest is lowercase hex SHA-256 over a byte string in which each piece is
+preceded by its length. It is not computed over the bytes of a
+<dfn>*protobuf*</dfn> message (protobuf is the binary format plimsoll's requests and
+responses travel in) or over JSON, so any language reproduces it with a hash function
+alone.
 
 - A **value** is its length as an unsigned 64-bit big-endian integer, then its bytes.
 - A **field** is its name encoded as a value, then its content encoded as a value.
 - A **digest** is SHA-256 over the domain string encoded as a value, then the fields
-  in the order listed below.
+  in the order listed below. The domain string names what is hashed, for example
+  `plimsoll.run-result.v1`.
 - Integers are decimal ASCII, with a leading `-` when negative (`124`, `-3`).
   Booleans are `true` or `false`. Floating-point numbers are their IEEE 754 binary64
-  bits, 8 bytes big-endian each, concatenated when a field holds several. Strings are
-  their UTF-8 bytes; output and artifact contents are their raw bytes.
+  bits (a Go `float64` or a JavaScript number), 8 bytes big-endian each, concatenated
+  when a field holds several. Strings are their UTF-8 bytes; output and artifact
+  contents are their raw bytes.
 - A repeated group is preceded by its count, so moving a boundary (a byte from one
   file's path into its content, two steps joined into one) always changes the digest.
 
-### Request: domain `plimsoll.run-request.v1`
+### Request: domains `plimsoll.run-request.v1` and `.v2`
 
-`protocol`, `minimum_isolation` (empty when none), `timeout_ms` (as sent), `kind`
+Protocol 1 uses the `.v1` domain and the original fields. Protocol 2 uses the
+`.v2` domain and adds, after `timeout_ms`, `software_mode` (`""`, `exact` or
+`approved`), `software_identities` (count) and each `software_identity` in the
+order sent. Then both versions encode `kind`
 (`javascript`, `project` or `module`), then by kind:
 
 - javascript: `code`, `grant_profile`
@@ -97,22 +119,29 @@ protobuf or JSON bytes, so any language reproduces it with a hash function alone
 - module: `outcome`, `outcome_detail`, `width`, `stdout`, `stderr`; `runs` (count),
   then per row `run_status`, `run_outputs`
 
-### Record: domain `plimsoll.run-record.v1`
+### Record: domains `plimsoll.run-record.v1` and `.v2`
 
 The domain ends in the record's `version` (`plimsoll.run-record.v<version>`), so the
 digest covers the version without a field of its own: a record read under another
 version's encoding cannot keep its digest.
 
-`request_sha256`, `result_sha256`, `provider`, `isolation`, `environment`, `policy`,
-`started_unix_ms`, `ended_unix_ms`, `session`, `sequence`, `previous_sha256`.
+Version 1 encodes `request_sha256`, `result_sha256`, `provider`, `isolation`,
+`environment`, `policy`, then `started_unix_ms`, `ended_unix_ms`, `session`,
+`sequence`, `previous_sha256`. Version 2 inserts `software_identity` and
+`software_rule_id` after `policy`; every other field stays in the same order.
+The approved-set rule ID is SHA-256 over its unique identities sorted in byte
+order and joined with a zero byte. Identity syntax excludes zero bytes. The
+`RunResponse` repeats the outer environment and selected software identities,
+and the official client checks that both agree with the record. It also checks
+that the selected software is in the rule the request sent.
 
 ## Reference implementation
 
-This Python computes a JavaScript request digest from the specification alone. It
+This Python computes a version 1 JavaScript request digest from the specification alone. It
 gives `585a1b46c55ebacc1dfdd4336e302328c32ed3e2e7e8a8b460d252d0454be8fc`, the first
-golden vector in `record/record_test.go`, where the other kinds' vectors are pinned
-too (all of them were cross-checked against an independent Python implementation of
-this page).
+golden vector (a fixed input kept in a test with the digest it must produce) in
+`record/record_test.go`, where the other kinds' vectors are fixed too (all of them were
+cross-checked against an independent Python implementation of this page).
 
 ```python
 import hashlib, struct
@@ -143,31 +172,44 @@ Package [attest](../attest/) is the harness's half. It runs outside the daemon a
 uses the standard library only (Ed25519, SHA-256, JSON).
 
 - **Sign.** The harness checks the record against its own copy of the request and the
-  response (`record.Check`), then signs it as a
-  [DSSE envelope (EXTERNAL · official docs ↗)](https://github.com/secure-systems-lab/dsse/blob/master/envelope.md)
-  around an
-  [in-toto Statement v1 (EXTERNAL · official docs ↗)](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md):
-  payload type `application/vnd.in-toto+json`, one subject named `run-record` whose
-  `sha256` is the record's own digest (over the encoding above, not over a file), and
-  predicate type `https://plimsollmark.github.io/plimsoll/run-record/v1` with the
-  record's fields as the predicate. A record whose digest does not match its fields is
-  never signed. The key ID is the hex SHA-256 of the public key's PKIX encoding.
+  response (`record.Check`), then signs it. A record whose digest does not match its
+  fields is never signed. The signed form is a <dfn>*DSSE*</dfn> envelope (Dead Simple
+  Signing Envelope, a small standard format that wraps a payload together with its
+  signatures:
+  [DSSE envelope (EXTERNAL · official docs ↗)](https://github.com/secure-systems-lab/dsse/blob/master/envelope.md))
+  around an <dfn>*in-toto*</dfn> statement (a standard format for signed statements about
+  software:
+  [in-toto Statement v1 (EXTERNAL · official docs ↗)](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md)).
+  In in-toto's terms, the subject is what a statement is about and the predicate is what
+  it says about it. Here:
+  - the payload type is `application/vnd.in-toto+json`;
+  - there is one subject, named `run-record`, whose `sha256` is the record's own digest
+    (over the encoding above, not over a file);
+  - the predicate type is `https://plimsollmark.github.io/plimsoll/run-record/v1`, and
+    the predicate is the record's fields.
+
+  The key ID is the hex SHA-256 of the public key's PKIX encoding (the standard DER
+  encoding of a public key).
 - **Close.** When a session ends, the daemon states how many calls it executed and the
   last record's digest; the harness signs that as a statement with predicate type
   `https://plimsollmark.github.io/plimsoll/session-close/v1`.
-- **Verify.** A bundle is JSON Lines: each call is its stored request and response (their
-  binary protobuf encodings, base64 in the line) and its envelope; a close is an envelope
+- **Verify.** A bundle is the file of signed records the harness keeps, in JSON Lines
+  (one JSON object per line). A call's line is its stored request and response (their
+  binary protobuf encodings, in base64) and its envelope; a close's line is an envelope
   alone. The messages are stored binary because protobuf JSON writes every NaN as `"NaN"`
   and reads it back as one particular NaN, so a module output holding any other NaN
-  would no longer match its signed digest. Verification checks
-  every signature, recomputes both content digests from the stored messages, requires
-  the record the stored response carries to equal the signed one in every field, and
-  checks each session's chain: calls numbered from 1 with no gap, each naming the
-  record before it, and a close whose count and last record match. A chain without a
-  close fails, because a cut tail looks exactly like an ended session. A session closed
-  before any call is its close alone, with a count of zero and no last record. A call another
-  holder of the session ID made shows up as a gap, since the daemon numbers the calls
-  it executed.
+  would no longer match its signed digest. Verification:
+  - checks every signature;
+  - recomputes both content digests from the stored messages;
+  - requires the record the stored response carries to equal the signed one in every
+    field;
+  - checks each session's chain: calls numbered from 1 with no gap, each naming the
+    record before it, and a close whose count and last record match.
+
+  A chain without a close fails, because a chain whose last calls were cut off looks
+  exactly like an ended session. A session closed before any call is its close alone,
+  with a count of zero and no last record. A call another holder of the session ID made
+  shows up as a gap, since the daemon numbers the calls it executed.
 - **Replay.** The bundle is verified first, and nothing is sent unless it verifies.
   Each stored single run is then sent again and its result digest compared with the
   signed one. It is meaningful for deterministic workloads; one that reads the
@@ -180,7 +222,8 @@ signer := attest.NewSigner(key) // the key stays in the harness process
 remote, err := client.New(url, client.WithRecorder(attest.NewHarness(signer, bundleFile)))
 ```
 
-A failure to keep a record returns the executed result with `client.ErrNotRecorded`.
+If the harness fails to keep a record, the client returns the executed result together
+with `client.ErrNotRecorded`.
 The command-line harness does the same from files:
 
 ```sh
@@ -192,6 +235,6 @@ go run ./cmd/plimsoll-attest replay -daemon http://127.0.0.1:8746 -pub harness.p
 ```
 
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as
-`{"protocol": 1, "javascript": {"code": "console.log(1)"}}`. The token comes from the
+`{"protocol": 2, "javascript": {"code": "console.log(1)"}}`. The token comes from the
 environment and the key from a file or `PLIMSOLL_ATTEST_KEY`, so neither appears in a
 process listing.

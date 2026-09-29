@@ -1,7 +1,7 @@
 // Package wasmshim holds the Node shim that runs a controller compiled to
-// WebAssembly under the judge: controller.js, sent as a project file beside
+// WebAssembly under the runner: controller.js, sent as a project file beside
 // controller.wasm. One shim serves every single-output plant, because it passes the
-// module whatever observations the judge sends. The examples embed it from here and
+// module whatever observations the runner sends. The examples embed it from here and
 // the docker tests read the same file, so there is one copy.
 package wasmshim
 

@@ -22,12 +22,12 @@
 # The control-design environments (docs/examples/envs) add
 # plants of our own behind the generic stepping shim sim/shim_env.c, which takes
 # its value references from a plant.h in the model directory, and the generic
-# judge /oracle/judge.mjs, which takes plant and scenario on its command line.
+# trial runner /oracle/judge.mjs, which takes plant and scenario on its command line.
 # /models/shower.wasm (sim/models/Shower), /models/ship.wasm (sim/models/Ship, a
 # Nomoto heading model) and /models/buck.wasm (sim/models/Buck, an averaged buck
 # converter) are the plants of our own so far, plus /models/slits.wasm
 # (sim/models/Slits), a standalone double-slit wave plant with sixteen inputs and
-# an exact output Jacobian, which is why the judge asks a plant how many inputs it
+# an exact output Jacobian, which is why the runner asks a plant how many inputs it
 # takes and which Jacobian it offers. /models/blackhole.wasm (sim/models/BlackHole,
 # Schwarzschild geodesics with two thrusters, the first FMI-style plant with two
 # inputs), /models/rocket.wasm (sim/models/Rocket, the relativistic rocket) and
@@ -39,7 +39,7 @@
 # generic shim sim/shim_env.c (its plant.h names the value references; the vendored
 # shim_step.c it replaced stepped byte-identically, which the oracle test's pinned
 # fingerprints prove), kept as WebAssembly rather than AOT-compiled
-# because Node, not the worker, loads it. /oracle/run.mjs is the judge: a project
+# because Node, not the worker, loads it. /oracle/run.mjs is the runner: a project
 # step runs it with the caller's controller file, it loads the plant through
 # Node's WASI support, runs the controller as a separate process, exchanges one
 # line per tick, and writes the trajectory whose SHA-256 is the fingerprint.

@@ -89,3 +89,16 @@ func resourceLimits(memoryMB int, cpus float64) (*structpb.Struct, error) {
 		"cpu":    strconv.FormatFloat(cpus, 'f', -1, 64),
 	}})
 }
+
+// tmpDriverConfig is the docker driver config that mounts /tmp as a tmpfs of size
+// bytes, or nil for 0. Docker refuses nosuid and nodev as tmpfs options and applies
+// both to every tmpfs anyway (measured on v0.1.2, 2026-09-29), so noexec is the only
+// option sent; the smoke test checks all three on the mount itself.
+func tmpDriverConfig(size int64) (*structpb.Struct, error) {
+	if size <= 0 {
+		return nil, nil
+	}
+	return structpb.NewStruct(map[string]any{"docker": map[string]any{"mounts": []any{
+		map[string]any{"type": "tmpfs", "target": "/tmp", "size_bytes": float64(size), "options": []any{"noexec"}},
+	}}})
+}

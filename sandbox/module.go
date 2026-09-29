@@ -43,6 +43,7 @@ type ModuleRequest struct {
 	Step             float64
 	Timeout          time.Duration
 	MinimumIsolation IsolationClass // Unknown = no request-specific floor
+	Software         SoftwareRule
 }
 
 // ModuleRun is one row's result. Status is the number of steps the instance
@@ -62,16 +63,18 @@ type ModuleRun struct {
 // project. Stdout is the worker's one summary line and Stderr its diagnostics,
 // both bounded. Pre-dispatch failures and infrastructure faults are Go errors.
 type ModuleResult struct {
-	Runs      []ModuleRun
-	Width     int
-	Sandbox   string
-	Isolation IsolationClass
-	Outcome   ProjectOutcome
-	Detail    string
-	Stdout    string
-	Stderr    string
-	Duration  time.Duration
-	Record    *RunRecord // mirrors ProjectResult.Record
+	Runs                []ModuleRun
+	Width               int
+	Sandbox             string
+	Isolation           IsolationClass
+	SoftwareIdentity    string // selected module image manifest, if established
+	EnvironmentIdentity string // outer image artifact selected for this run
+	Outcome             ProjectOutcome
+	Detail              string
+	Stdout              string
+	Stderr              string
+	Duration            time.Duration
+	Record              *RunRecord // mirrors ProjectResult.Record
 }
 
 // MaxSteps is the worker's bound on steps per row for this envelope:

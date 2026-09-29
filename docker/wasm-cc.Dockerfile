@@ -2,7 +2,7 @@
 # run in this image can compile C source to a WebAssembly module inside the sandbox
 # (a build step) and then run it (a later step), with no network at either point.
 # examples/wasm-controller is the reason it exists: a cart-pole controller written
-# in C, compiled here, and judged by /oracle/judge.mjs against /models/cartpole.wasm,
+# in C, compiled here, and run by /oracle/judge.mjs against /models/cartpole.wasm,
 # both inherited unchanged from plimsoll/sandbox-sim.
 #
 # Built by `make docker-images` as plimsoll/sandbox-wasm-cc:latest; point a daemon at

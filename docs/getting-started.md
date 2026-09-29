@@ -1,19 +1,27 @@
 # Getting started
 
-By the end of this page you will have a `plimsolld` that authenticates you, a Go
-program of your own that runs a snippet through it and states the isolation floor
-it requires, and you will have watched that program be refused before anything ran
-when the daemon could not meet the floor, then satisfied when you switched to a
-stronger tier. Steps 2 through 4 use only your machine and loopback, with no docker
-or service account. Cloning and building may download code; the last step installs
-gVisor and needs docker. Nothing here spends money; the E2B provider is not part
-of this page.
+By the end of this page you will have:
 
-You need Go 1.26.6 or newer and git. The module's own floor is lower, so a project
-that depends on plimsoll builds unchanged, but the daemon wants the pinned
-toolchain: `govulncheck` is clean there, while earlier 1.26.x carried standard
-library advisories in the reverse-proxy and HTTP/2 paths this code calls. The last
-step needs Linux, docker, and root for the gVisor installer.
+- `plimsolld`, the plimsoll server, running on your machine and accepting only callers
+  it knows;
+- a Go program of your own that sends it JavaScript and states the weakest sandbox it
+  will accept;
+- seen the daemon refuse that program before running anything, and then run it once you
+  switch the daemon to a stronger sandbox.
+
+The strength of a run's sandbox is its <dfn>*isolation tier*</dfn>, one of four levels
+(weakest first: `process`, `container`, `kernel`, `vm`). The weakest tier a request will
+accept is its <dfn>*floor*</dfn>.
+
+Steps 2 to 4 need only your machine: no docker, no cloud account, and no network beyond
+`127.0.0.1`. Cloning and building may download code. Step 5 needs docker, and its last
+part needs root. Nothing on this page costs money, because it uses no cloud service.
+
+You need git and Go 1.26.6 or newer. On 1.26.6, Go's vulnerability scanner
+(`govulncheck`) reports no known vulnerabilities in the standard library code the daemon
+calls; earlier 1.26 releases had published vulnerabilities in its reverse proxy and
+HTTP/2 code. The module itself declares Go 1.26.2 as its minimum, so a project that only
+imports plimsoll still builds on those releases. Step 5 needs Linux.
 
 ## 1. Clone and build
 
@@ -24,18 +32,18 @@ go build ./...
 
 ## 2. Create a caller
 
-A caller is a program the daemon will accept requests from. Give it an id and let
-the command mint its token:
+A caller is a program the daemon will accept requests from. Give it an id, and the
+command creates its token:
 
 ```sh
 TOKEN="$(go run ./cmd/plimsoll-clients create \
   -file clients.json -id tutorial -token-stdout)"
 ```
 
-The token is printed once, to stdout, and nowhere else; `clients.json` holds only
-its SHA-256 fingerprint. The command's other output goes to stderr and ends with a
-reminder that a running daemon does not notice file edits. There is no daemon yet,
-so move on. [docs/callers.md](callers.md) covers rotation, revocation and import.
+The token is printed once, to stdout, and nowhere else; `clients.json` keeps only a
+SHA-256 hash of it. The command's other messages go to stderr and end with a reminder
+that a running daemon does not notice changes to the file. There is no daemon yet, so
+move on. [docs/callers.md](callers.md) covers rotation, revocation and import.
 
 ## 3. Start the daemon
 
@@ -50,13 +58,20 @@ PLIMSOLL_LOG_FORMAT=text \
 go run ./cmd/plimsolld
 ```
 
-Three choices are made on that line. `wasm` is the in-process provider: JavaScript
-runs on an embedded QuickJS engine inside the daemon, with no docker daemon and no
-per-run cost, at process-tier isolation, which is not a boundary for hostile code.
-`127.0.0.1:8746` binds loopback only; the default `:8746` listens on every
-interface. The clients file turns authentication on, and it fails closed: a request
-without a valid token is refused before its body is read. Leave this terminal
-running. You should see:
+That command makes three choices:
+
+- `SANDBOX_PROVIDER=wasm` picks the <dfn>*provider*</dfn>, the backend that runs the
+  code. `wasm` runs JavaScript on <dfn>*QuickJS*</dfn>, a small JavaScript engine compiled
+  to <dfn>*WebAssembly*</dfn> (a portable bytecode that runs inside a host program), inside
+  the daemon itself. It needs no docker and costs nothing per run, and its tier is
+  `process`: no wall at all against hostile code.
+- `PLIMSOLL_ADDR=127.0.0.1:8746` makes the daemon listen on your machine only. The
+  default, `:8746`, listens on every network interface.
+- `PLIMSOLL_CLIENTS_FILE` turns authentication on, and it <dfn>*fails closed*</dfn>:
+  anything it cannot verify is refused, so a request without a valid token is turned
+  away before its body is read.
+
+Leave this terminal running. You should see:
 
 ```
 level=INFO msg="sandbox provider ready" provider=wasm
@@ -123,25 +138,28 @@ floor process  ran behind process, exit 0, stdout "42\n"
 floor kernel   refused before dispatch; nothing ran
 ```
 
-Read the two lines as the whole design. The first request said "process or
-stronger", the daemon's evidence said `process`, so it ran, and the result reports
-the tier it actually ran behind. The second said "kernel or stronger". The handler
-compared that floor with the provider's evidence immediately before admission and
-refused, so **no code ran**; the client sees it as `ErrInsufficientIsolation`
-through `errors.Is`, the same sentinel an in-process provider would return. That
-refusal is the case the project exists for: a deployment still pointing at the
-development tier while the caller demands a production one.
+These two lines are the whole design. The first request asked for `process` or
+stronger. The daemon's provider reports `process`, so the code ran, and the result names
+the tier it ran behind. The second request asked for `kernel` or stronger. Just before
+starting the run, the daemon compared that floor with what its provider reports, and
+refused, so **no code ran**. Your program sees the refusal as `ErrInsufficientIsolation`
+through `errors.Is`, the same error value an in-process provider returns. This refusal
+is the case plimsoll exists for: a deployment still set up for development while the
+caller demands production-grade isolation.
 
-Three things worth noticing in the client. `client.New` accepts loopback cleartext
-as is and refuses any other cleartext address unless you opt into the
-development-only `client.WithInsecureHTTP()`. The token rides on every request; in a
-real caller it comes from that caller's secret store, not an environment variable
-in a tutorial. And a snippet that fails is not an error: `exit` would be non-zero
-and `err` nil, because the user's code failing is a normal result and only a run
-that could not happen is an error.
+Three more things about the client:
 
-In the daemon's terminal, one audit line per run names the caller and never the
-code or the token:
+- `client.New` accepts unencrypted HTTP to a loopback address such as `127.0.0.1`. It
+  refuses unencrypted HTTP to any other address unless you opt into the
+  development-only `client.WithInsecureHTTP()`.
+- The token goes with every request. A real caller would read it from its secret store,
+  not from an environment variable.
+- A snippet that fails is not an error. Its exit code is non-zero and `err` is nil,
+  because code that ran and failed is a normal result; `err` means the run could not
+  happen.
+
+In the daemon's terminal, each run writes one log line that names the caller, and never
+the code or the token:
 
 ```
 level=INFO msg="code run" op=javascript caller=tutorial code_bytes=18 grant_profile="" sandbox=wasm isolation=process exit_code=0 timed_out=false duration_ms=292
@@ -152,9 +170,10 @@ level=INFO msg="code run" op=javascript caller=tutorial code_bytes=18 grant_prof
 Stop the daemon (Ctrl-C). The program and the caller stay as they are; only the
 daemon's configuration changes.
 
-**Container tier.** With docker installed, prepare the images with `make
-docker-images`. The provider checks its snippet and project images at startup, then
-you can restart under the docker provider:
+**Container tier.** With docker installed, build the sandbox images with `make
+docker-images`, then restart the daemon with the docker provider. At startup the
+provider checks that both of its images, one for snippets and one for projects, are
+present:
 
 ```sh
 make docker-images
@@ -166,10 +185,12 @@ PLIMSOLL_LOG_FORMAT=text \
 go run ./cmd/plimsolld
 ```
 
-Startup takes a few seconds longer: the provider launches a throwaway container and
-proves from its own mount table that the root is read-only and every writable
-mount is a sized `noexec` tmpfs. It also warns, correctly, that `runc` shares the
-host kernel. Run the client again:
+Startup takes a few seconds longer. The provider starts a throwaway container and
+checks, from inside it, that the root filesystem is read-only and that the only
+writable places are fixed-size <dfn>*tmpfs*</dfn> mounts (filesystems held in memory),
+from which no program can be run. It also warns, correctly, that
+<dfn>*runc*</dfn>, docker's default runtime, lets the container share your machine's
+kernel. Run the client again:
 
 ```
 floor process  ran behind container, exit 0, stdout "42\n"
@@ -177,12 +198,16 @@ floor kernel   refused before dispatch; nothing ran
 ```
 
 The first line moved up a tier without the program changing. The second is still
-refused, because a container under `runc` is not a kernel boundary and the daemon
+refused, because a container under `runc` is not a kernel-level wall, and the daemon
 will not say it is.
 
-**Kernel tier.** Install the pinned gVisor release and register the `runsc` runtime
-(the installer sets the `--host-uds=open` flag the broker socket needs), then add
-one variable:
+**Kernel tier.** Install <dfn>*gVisor*</dfn>, a layer that handles the container's
+requests to the operating system itself, so the code never talks to your kernel
+directly. The installer fetches a <dfn>*pinned*</dfn> gVisor release (one exact version,
+which changes only when this repository changes it) and registers gVisor's runtime,
+<dfn>*runsc*</dfn>, with docker. It also sets the `--host-uds=open` flag, which lets a
+sandbox connect to a socket on your machine; plimsoll passes a run's API calls through
+one. Then add one variable:
 
 ```sh
 sudo ./docker/install-gvisor.sh
@@ -195,20 +220,21 @@ PLIMSOLL_LOG_FORMAT=text \
 go run ./cmd/plimsolld
 ```
 
-The outputs quoted above are from real runs on the wasm and `runc` paths. With
-`runsc` registered, the second line of the client's output reads `ran behind
-kernel`, because the floor is now met; the daemon's startup log carries
-`isolation=kernel` after it has verified the runtime registration and run the same
-mount checks under it. That tier is provider and configuration evidence plus the
-behavioral smoke test, not an attestation, and the README says exactly what it
-rests on under [docs/isolation-tiers.md](isolation-tiers.md).
+The outputs above are from real runs of the `wasm` and `runc` setups. With `runsc`
+registered, the second line of the client's output reads `ran behind kernel`, because
+the floor is now met. The daemon's startup log shows `isolation=kernel` once it has
+confirmed that docker has `runsc` registered and has rerun the same filesystem checks
+under it. That tier rests on configuration and those checks. It is not
+<dfn>*attestation*</dfn>, cryptographic proof from the hardware of what software is
+running. [docs/isolation-tiers.md](isolation-tiers.md) says exactly what each tier rests
+on.
 
 ## Embedding it instead of running the daemon
 
-If your program is the one that should run the code, skip the daemon and use the
-package. `sandbox.Build` reads the environment, returns an error rather than guessing,
-and selects the Disabled provider when `SANDBOX_PROVIDER` is unset, so execution is
-opt-in and cannot be switched on by accident.
+If your own program should run the code, skip the daemon and import the package.
+`sandbox.Build` reads its settings from the environment, returns an error instead of
+guessing at a bad setting, and picks the Disabled provider when `SANDBOX_PROVIDER` is
+unset, so nothing runs unless you opt in.
 
 ```sh
 go get github.com/plimsollmark/plimsoll
@@ -227,9 +253,9 @@ result, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
 // result.ExitCode != 0, which is a normal result, not an error.
 ```
 
-The output caps apply either way: a stream is cut at the provider's limit (64 KiB per
-stream by default) and the result's truncation flags are the only way a caller learns
-it happened, because the retained bytes are never annotated in band. See
+Output limits apply either way. Each output stream is cut at the provider's limit, 64
+KiB by default, and the result's truncation flags are the only sign that it was cut:
+plimsoll never writes a marker into the output itself. See
 [what comes back](run-results.md).
 
 ## Installing without a clone
@@ -239,8 +265,9 @@ go install github.com/plimsollmark/plimsoll/cmd/plimsolld@latest
 go install github.com/plimsollmark/plimsoll/cmd/plimsoll-clients@latest
 ```
 
-There are no prebuilt binaries and no daemon container image yet; `go install` builds
-from the tagged module source, verified against `sum.golang.org` like any other module.
+There are no prebuilt binaries and no daemon container image yet. `go install` builds
+from the tagged module source, checked against Go's checksum database
+(`sum.golang.org`) like any other module.
 
 ## Where next
 
@@ -248,10 +275,13 @@ from the tagged module source, verified against `sum.golang.org` like any other 
   explains every outcome the client can see and which ones are safe to retry.
 - [docs/callers.md](callers.md) for a second caller, rotation, revocation, and what
   a running daemon does with a changed file.
-- Grants, for letting the snippet call your own API without ever holding the
-  credential: [capability grants](capability-grants.md), then
+- A <dfn>*grant*</dfn> lets a run's code call your own API without ever holding the
+  credential: read [capability grants](capability-grants.md), then run
   `go run ./examples/grant`.
-- Production posture: `PLIMSOLL_HARDENED=1` refuses to serve unless every advertised
-  property is verifiably in force ([hardened mode](hardened-mode.md)).
+- For production, <dfn>*hardened mode*</dfn> (`PLIMSOLL_HARDENED=1`) makes the daemon
+  refuse to start unless every production safeguard is configured
+  ([hardened mode](hardened-mode.md)).
 - The [interactive lessons](https://plimsollmark.github.io/plimsoll/trainers/) cover
-  the same ground with pictures and no clone.
+  the same ground with pictures and no clone, and the
+  [glossary](https://plimsollmark.github.io/plimsoll/trainers/glossary.html) defines
+  every term in one plain sentence.

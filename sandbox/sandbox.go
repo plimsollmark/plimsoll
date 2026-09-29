@@ -144,6 +144,7 @@ type Request struct {
 	Timeout          time.Duration
 	Grant            *HostAPIGrant
 	MinimumIsolation IsolationClass // Unknown = no request-specific floor
+	Software         SoftwareRule
 }
 
 // File is one file written into a project's work dir before steps run.
@@ -163,6 +164,7 @@ type ProjectRequest struct {
 	Artifacts        []string
 	Grant            *HostAPIGrant  // optional per-run scoped host-API access; nil = isolated
 	MinimumIsolation IsolationClass // Unknown = no request-specific floor
+	Software         SoftwareRule
 }
 
 // Artifact is an output file captured after a run (binary-safe).
@@ -238,13 +240,15 @@ func (o ProjectOutcome) String() string {
 // ArtifactsTruncated reports that the aggregate artifact byte budget dropped one
 // or more requested artifacts that existed.
 type ProjectResult struct {
-	Steps              []StepResult
-	Sandbox            string
-	Isolation          IsolationClass // boundary tier this run executed behind
-	Outcome            ProjectOutcome
-	Detail             string // context for a non-completed Outcome; "" when completed
-	Artifacts          []Artifact
-	ArtifactsTruncated bool
+	Steps               []StepResult
+	Sandbox             string
+	Isolation           IsolationClass // boundary tier this run executed behind
+	SoftwareIdentity    string         // selected image manifest, if the provider established it
+	EnvironmentIdentity string         // outer image artifact selected for this run
+	Outcome             ProjectOutcome
+	Detail              string // context for a non-completed Outcome; "" when completed
+	Artifacts           []Artifact
+	ArtifactsTruncated  bool
 	// CallTrace is bounded, metadata-only evidence of the host.* calls this project
 	// run's broker served (route templates, methods, sizes, timings), mirroring
 	// Result.CallTrace. Non-nil only when the run carried a host-API grant that made
@@ -294,15 +298,17 @@ type AdviceFinding struct {
 // failures. StdoutTruncated/StderrTruncated report that the output cap dropped
 // bytes; the retained prefix is returned unmarked.
 type Result struct {
-	Stdout          string
-	Stderr          string
-	StdoutTruncated bool
-	StderrTruncated bool
-	ExitCode        int
-	TimedOut        bool
-	Duration        time.Duration
-	Sandbox         string
-	Isolation       IsolationClass // boundary tier this run executed behind
+	Stdout              string
+	Stderr              string
+	StdoutTruncated     bool
+	StderrTruncated     bool
+	ExitCode            int
+	TimedOut            bool
+	Duration            time.Duration
+	Sandbox             string
+	Isolation           IsolationClass // boundary tier this run executed behind
+	SoftwareIdentity    string         // selected image manifest or interpreter, if established
+	EnvironmentIdentity string         // outer image artifact selected for this run
 	// CallTrace is bounded, metadata-only evidence of the host.* calls this run's
 	// broker served (route templates, methods, sizes, timings). It is non-nil only
 	// when the run carried a host-API grant that made calls, and is purely advisory:
@@ -323,19 +329,21 @@ type Result struct {
 // length-prefixed encoding in docs/run-records.md. In a session the last three
 // fields chain the calls; for a single run they are empty or zero.
 type RunRecord struct {
-	Version        int    // encoding version, 1
-	RequestSHA256  string // protocol number, floor, timeout and payload; never the trace id
-	ResultSHA256   string // the result as sent, without durations or advice
-	Provider       string // the provider that ran it, as the daemon reported
-	Isolation      string // the tier as the daemon reported it, verbatim
-	Environment    string // the payload kind's content-addressed identity, or ""
-	Policy         string // the verified sandbox policy's digest, or ""
-	Started        time.Time
-	Ended          time.Time
-	Session        string // SHA-256 of the session ID; "" for a single run
-	Sequence       uint64 // the call's number in its session, from 1; 0 for a single run
-	PreviousSHA256 string // the previous call's SHA256; "" for a single run or a first call
-	SHA256         string // over every field above
+	Version          int    // encoding version, 2 for new records
+	RequestSHA256    string // protocol number, floor, timeout, software rule and payload; never the trace id
+	ResultSHA256     string // the result as sent, without durations or advice
+	Provider         string // the provider that ran it, as the daemon reported
+	Isolation        string // the tier as the daemon reported it, verbatim
+	Environment      string // the payload kind's content-addressed identity, or ""
+	SoftwareIdentity string // selected executable image or interpreter, or ""
+	SoftwareRuleID   string // the caller's exact or approved-set rule, or ""
+	Policy           string // the verified sandbox policy's digest, or ""
+	Started          time.Time
+	Ended            time.Time
+	Session          string // SHA-256 of the session ID; "" for a single run
+	Sequence         uint64 // the call's number in its session, from 1; 0 for a single run
+	PreviousSHA256   string // the previous call's SHA256; "" for a single run or a first call
+	SHA256           string // over every field above
 }
 
 // Sandbox is an isolated code runner.

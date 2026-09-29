@@ -20,6 +20,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -317,8 +318,9 @@ func (r *Remote) Describe(ctx context.Context) (Info, error) {
 
 func payloadEnvironment(e *plimsollv1.PayloadEnvironment) sandbox.PayloadEnvironment {
 	return sandbox.PayloadEnvironment{
-		Identity:   e.GetIdentity(),
-		MaxTimeout: time.Duration(e.GetMaxTimeoutMs()) * time.Millisecond,
+		Identity:         e.GetIdentity(),
+		SoftwareIdentity: e.GetSoftwareIdentity(),
+		MaxTimeout:       time.Duration(e.GetMaxTimeoutMs()) * time.Millisecond,
 	}
 }
 
@@ -329,7 +331,7 @@ func (r *Remote) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbox
 	if in.Grant != nil {
 		return sandbox.Result{Sandbox: r.Name()}, ErrRawGrantUnsupported
 	}
-	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation)
+	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation, in.Software)
 	req.Payload = &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{
 		Code:         in.Code,
 		GrantProfile: r.jsGrant,
@@ -366,7 +368,7 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 	for _, f := range in.Files {
 		preq.Files = append(preq.Files, &plimsollv1.ProjectFile{Path: f.Path, Content: f.Content})
 	}
-	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation)
+	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation, in.Software)
 	req.Payload = &plimsollv1.RunRequest_Project{Project: preq}
 	resp, rec, err := r.run(ctx, req)
 	if resp == nil {
@@ -392,17 +394,19 @@ func javascriptResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (san
 		return sandbox.Result{}, false
 	}
 	return sandbox.Result{
-		Stdout:          string(m.Javascript.GetStdout()),
-		Stderr:          string(m.Javascript.GetStderr()),
-		StdoutTruncated: m.Javascript.GetStdoutTruncated(),
-		StderrTruncated: m.Javascript.GetStderrTruncated(),
-		ExitCode:        int(m.Javascript.GetExitCode()),
-		TimedOut:        m.Javascript.GetTimedOut(),
-		Duration:        time.Duration(resp.GetDurationMs()) * time.Millisecond,
-		Sandbox:         resp.GetSandbox(),
-		Isolation:       sandbox.ParseIsolationClass(resp.GetIsolation()),
-		Advice:          adviceFromWire(m.Javascript.GetAdvice()),
-		Record:          rec,
+		Stdout:              string(m.Javascript.GetStdout()),
+		Stderr:              string(m.Javascript.GetStderr()),
+		StdoutTruncated:     m.Javascript.GetStdoutTruncated(),
+		StderrTruncated:     m.Javascript.GetStderrTruncated(),
+		ExitCode:            int(m.Javascript.GetExitCode()),
+		TimedOut:            m.Javascript.GetTimedOut(),
+		Duration:            time.Duration(resp.GetDurationMs()) * time.Millisecond,
+		Sandbox:             resp.GetSandbox(),
+		Isolation:           sandbox.ParseIsolationClass(resp.GetIsolation()),
+		SoftwareIdentity:    resp.GetSoftwareIdentity(),
+		EnvironmentIdentity: resp.GetEnvironment(),
+		Advice:              adviceFromWire(m.Javascript.GetAdvice()),
+		Record:              rec,
 	}, true
 }
 
@@ -414,13 +418,15 @@ func projectResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbo
 	}
 	m := pm.Project
 	out := sandbox.ProjectResult{
-		Sandbox:            resp.GetSandbox(),
-		Isolation:          sandbox.ParseIsolationClass(resp.GetIsolation()),
-		Outcome:            outcomeFromWire(m.GetOutcome()),
-		Detail:             m.GetOutcomeDetail(),
-		ArtifactsTruncated: m.GetArtifactsTruncated(),
-		Advice:             adviceFromWire(m.GetAdvice()),
-		Record:             rec,
+		Sandbox:             resp.GetSandbox(),
+		Isolation:           sandbox.ParseIsolationClass(resp.GetIsolation()),
+		SoftwareIdentity:    resp.GetSoftwareIdentity(),
+		EnvironmentIdentity: resp.GetEnvironment(),
+		Outcome:             outcomeFromWire(m.GetOutcome()),
+		Detail:              m.GetOutcomeDetail(),
+		ArtifactsTruncated:  m.GetArtifactsTruncated(),
+		Advice:              adviceFromWire(m.GetAdvice()),
+		Record:              rec,
 	}
 	for _, s := range m.GetSteps() {
 		out.Steps = append(out.Steps, sandbox.StepResult{
@@ -456,7 +462,7 @@ func (r *Remote) RunModule(ctx context.Context, in sandbox.ModuleRequest) (sandb
 	for _, row := range in.Rows {
 		mreq.Rows = append(mreq.Rows, &plimsollv1.ModuleRow{Values: row})
 	}
-	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation)
+	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation, in.Software)
 	req.Payload = &plimsollv1.RunRequest_Module{Module: mreq}
 	resp, rec, err := r.run(ctx, req)
 	if resp == nil {
@@ -468,15 +474,17 @@ func (r *Remote) RunModule(ctx context.Context, in sandbox.ModuleRequest) (sandb
 	}
 	m := mm.Module
 	out := sandbox.ModuleResult{
-		Width:     int(m.GetWidth()),
-		Sandbox:   resp.GetSandbox(),
-		Isolation: sandbox.ParseIsolationClass(resp.GetIsolation()),
-		Outcome:   outcomeFromWire(m.GetOutcome()),
-		Detail:    m.GetOutcomeDetail(),
-		Stdout:    string(m.GetStdout()),
-		Stderr:    string(m.GetStderr()),
-		Duration:  time.Duration(resp.GetDurationMs()) * time.Millisecond,
-		Record:    rec,
+		Width:               int(m.GetWidth()),
+		Sandbox:             resp.GetSandbox(),
+		Isolation:           sandbox.ParseIsolationClass(resp.GetIsolation()),
+		SoftwareIdentity:    resp.GetSoftwareIdentity(),
+		EnvironmentIdentity: resp.GetEnvironment(),
+		Outcome:             outcomeFromWire(m.GetOutcome()),
+		Detail:              m.GetOutcomeDetail(),
+		Stdout:              string(m.GetStdout()),
+		Stderr:              string(m.GetStderr()),
+		Duration:            time.Duration(resp.GetDurationMs()) * time.Millisecond,
+		Record:              rec,
 	}
 	for _, run := range m.GetRuns() {
 		out.Runs = append(out.Runs, sandbox.ModuleRun{Status: run.GetStatus(), Outputs: run.GetOutputs()})
@@ -492,12 +500,13 @@ func (r *Remote) RunModule(ctx context.Context, in sandbox.ModuleRequest) (sandb
 
 // envelope builds the shared part of every request: the protocol number this
 // client speaks, the caller's floor, the trace id from ctx, and the timeout.
-func (r *Remote) envelope(ctx context.Context, timeout time.Duration, minimum sandbox.IsolationClass) *plimsollv1.RunRequest {
+func (r *Remote) envelope(ctx context.Context, timeout time.Duration, minimum sandbox.IsolationClass, software sandbox.SoftwareRule) *plimsollv1.RunRequest {
 	return &plimsollv1.RunRequest{
 		Protocol:         Protocol,
 		MinimumIsolation: minimumIsolationWire(minimum),
 		TraceId:          TraceIDFrom(ctx),
 		TimeoutMs:        timeoutMs(timeout),
+		SoftwareRule:     softwarewire.ToWire(software),
 	}
 }
 
@@ -600,6 +609,8 @@ func restoreSandboxError(err error) error {
 		case sentinel != nil: // the session ended
 		case reason == sandbox.RefusalIsolation:
 			sentinel = sandbox.ErrInsufficientIsolation
+		case reason == sandbox.RefusalEnvironment:
+			sentinel = sandbox.ErrSoftwareMismatch
 		default:
 			sentinel = sandbox.ErrDisabled
 		}
@@ -697,6 +708,8 @@ func refusalFromWire(r plimsollv1.NotDispatchedReason) sandbox.Refusal {
 		return sandbox.RefusalIsolation
 	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY:
 		return sandbox.RefusalCapacity
+	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ENVIRONMENT:
+		return sandbox.RefusalEnvironment
 	default:
 		return sandbox.RefusalUnknown
 	}

@@ -78,17 +78,20 @@
 
   <p class="eyebrow">plimsoll trainer · 09 / private api lab</p>
   <h1>Private API Flight Recorder</h1>
-  <p class="promise">When a model asks which warehouses are short on stock, what process
-  calls what process? This page follows the actual messages from the model to its MCP
-  host, through a Node gateway and a Go dataplane, into plimsoll, and back out to a
-  private inventory API. <b>Stockroom is a worked example, not a product.</b> Every process
-  boundary and every wire message below is real; only the company is invented.</p>
+  <p class="promise">When a language model asks which warehouses are short on stock,
+  which process calls which? This page follows the actual messages from the model to the
+  application hosting it, which speaks <dfn>MCP</dfn> (Model Context Protocol, the open
+  standard an AI application uses to offer tools to a model), then through a Node gateway
+  (the company's web server) and a Go dataplane (the service that does the real work),
+  into plimsoll, and back out to a private inventory API. <b>Stockroom is a worked
+  example, not a product.</b> Every process boundary and every message on the wire below
+  is real; only the company is invented.</p>
 
   <div class="card">
     <p><b>The one sentence.</b> <code>run_javascript</code> is the MCP tool.
-    <code>inventory.warehouses.list()</code> is a runtime global inside the guest, the
-    isolated process that runs the model-authored JavaScript. <code>GET /v1/warehouses</code>
-    is a route in the Node gateway. They are three different things, and confusing them is
+    <code>inventory.warehouses.list()</code> is a global function inside the
+    <dfn>guest</dfn>, the isolated process that runs the JavaScript the model wrote.
+    <code>GET /v1/warehouses</code> is a route in the Node gateway. They are three different things, and confusing them is
     how a private API accidentally becomes a public one.</p>
   </div>
 
@@ -98,7 +101,31 @@
     <h2 id="h-stack">Eight actors, one question</h2>
     <p>Every card is a process, an external service, or a named layer inside a process.
     Every line between cards is a message. Two ways to ask for the same stock data end at
-    the same system of record and do not have the same graph.</p>
+    the same system of record, the vendor system that holds the real stock counts, and pass
+    through different processes on the way. In <dfn>code mode</dfn> the model writes a
+    short program that calls the inventory API, and plimsoll runs it in a sandbox; the
+    program's API calls go through the <dfn>broker</dfn>, the part of plimsoll outside the
+    sandbox that makes each call and holds the credential. With a direct tool, the model
+    calls one ready-made tool and plimsoll is not involved.</p>
+    <p>For code mode, also pick where plimsoll runs: embedded as a Go package, or as
+    plimsolld, the plimsoll daemon, reached over <dfn>Connect</dfn> (an RPC framework that
+    serves typed procedure calls over ordinary HTTP). Then pick the <dfn>provider</dfn>,
+    the backend that runs the code. Each provider reports an <dfn>isolation tier</dfn>,
+    how strong the wall around the run is, from process (weakest) through container and
+    kernel to vm:</p>
+    <ul>
+      <li><code>docker / runc</code>: a container under <dfn>runc</dfn>, Docker's default
+      runtime, which shares the host's kernel (container tier).</li>
+      <li><code>docker / runsc</code>: a container under <dfn>runsc</dfn>, the runtime of
+      <dfn>gVisor</dfn>, a layer that answers the container's requests to the kernel itself
+      (kernel tier).</li>
+      <li><code>wasm</code>: a JavaScript engine compiled to <dfn>WebAssembly</dfn>, a
+      portable bytecode format, running inside the plimsoll process (process tier).</li>
+      <li><code>e2b</code>: a small virtual machine on <dfn>E2B</dfn>, a hosted service
+      (vm tier). When the run has a <dfn>grant</dfn>, permission to call listed routes of
+      one API, the VM's only network exit is plimsoll's <dfn>guard</dfn>, an HTTPS address
+      on the plimsoll daemon that hands each call to the broker.</li>
+    </ul>
 
     <div class="controls-2">
       <div class="control">
@@ -116,7 +143,7 @@
         </div>
       </div>
       <div class="control" id="providerControl">
-        <p class="control-label">The enforcement layer</p>
+        <p class="control-label">The provider</p>
         <div class="seg" role="group" aria-label="Provider" data-key="provider">
           <button type="button" data-value="runc">docker / runc<small>container tier</small></button>
           <button type="button" data-value="runsc">docker / runsc<small>kernel tier</small></button>
@@ -145,8 +172,8 @@
   <section id="sentence" aria-labelledby="h-sentence">
     <p class="draft" aria-hidden="true">02</p>
     <h2 id="h-sentence">Which of these is the MCP tool?</h2>
-    <p>MCP is the protocol the model's host uses to call an operation registered on a
-    server. The guest global is JavaScript that exists only after plimsoll has started the
+    <p>MCP is the protocol the application hosting the model uses to call an operation
+    registered on a server. The guest global is JavaScript that exists only after plimsoll has started the
     isolated guest. The REST route is a private endpoint in the gateway.</p>
     <div class="control">
       <div class="seg" role="group" aria-label="Answer" id="answerSeg">
@@ -163,7 +190,10 @@
     <p class="draft" aria-hidden="true">03</p>
     <h2 id="h-wire">The bytes on each hop</h2>
     <p>A protocol is the contract between two sides: where the bytes go, what shape they
-    have, who answers, and what the receiver does next. Pick a hop.</p>
+    have, who answers, and what the receiver does next. Pick a hop, one step from one
+    process to the next. "stdio" means the host starts the MCP server as a child process
+    and talks to it over its standard input and output. The Connect hops carry
+    <dfn>protobuf</dfn> messages, in Google's schema-defined binary format.</p>
     <div class="control">
       <div class="seg" role="group" aria-label="Hop" id="hopSeg">
         <button type="button" data-value="mcp-http">MCP over HTTP</button>
@@ -181,12 +211,13 @@
   <section id="windows" aria-labelledby="h-windows">
     <p class="draft" aria-hidden="true">04</p>
     <h2 id="h-windows">Four windows into one call</h2>
-    <p>The model, the MCP wire, the guest and the private API have different contracts.</p>
+    <p>The model, the MCP connection, the guest and the private API each see a different
+    part of the same call.</p>
     <div class="windows">
-      <div class="card"><h3>The model sees</h3><ul><li>A tool named <code>run_javascript</code> with an input schema: <code>code</code>, <code>timeoutMs</code>.</li><li>A description that names the globals and points at the resource <code>stockroom://sandbox-api.d.ts</code>.</li><li>Never an origin, a token, or a route list.</li></ul></div>
-      <div class="card"><h3>The MCP wire sends</h3><ul><li>JSON-RPC <code>tools/call</code> with the code as a string argument, over Streamable HTTP or stdio.</li><li>The caller's bearer to the gateway, which the gateway never forwards into the guest.</li><li>Back: a result with text content, and structured content when declared.</li></ul></div>
-      <div class="card"><h3>The guest runtime gets</h3><ul><li>Preloaded globals: <code>inventory.*</code> (the preamble) over <code>host.*</code> (the generic client).</li><li>One private line to the broker; no ambient network.</li><li>Never the private origin, never the minted token.</li></ul></div>
-      <div class="card"><h3>The private API receives</h3><ul><li><code>GET /v1/warehouses</code> with a per-run JWT whose subject is the authenticated principal.</li><li>Only routes on the profile; a byte-for-byte match, never a decoded surprise.</li><li>From the broker's address, never from the guest's.</li></ul></div>
+      <div class="card"><h3>The model sees</h3><ul><li>A tool named <code>run_javascript</code> with an input schema: <code>code</code>, <code>timeoutMs</code>.</li><li>A description that names the globals and points at an MCP resource (a document the server offers the model), <code>stockroom://sandbox-api.d.ts</code>, the TypeScript declarations of those globals.</li><li>Never the private API's address, a token, or a route list.</li></ul></div>
+      <div class="card"><h3>The MCP wire sends</h3><ul><li>A JSON-RPC <code>tools/call</code> request (JSON-RPC is the request format MCP uses) with the code as a string argument, over Streamable HTTP (MCP's HTTP transport) or stdio.</li><li>The caller's bearer token for the gateway, which the gateway never forwards into the guest.</li><li>Back: a result with text content, plus structured JSON when the tool declares an output schema.</li></ul></div>
+      <div class="card"><h3>The guest runtime gets</h3><ul><li>Preloaded globals: <code>inventory.*</code> (the preamble, a small library placed before the model's code) built on <code>host.*</code> (the generic client that calls the broker).</li><li>One private line to the broker; no other network access.</li><li>Never the private API's address, never the token <dfn>minted</dfn> (created fresh) for this run.</li></ul></div>
+      <div class="card"><h3>The private API receives</h3><ul><li><code>GET /v1/warehouses</code> with a per-run JWT (a signed token) whose subject is the <dfn>principal</dfn>, the authenticated caller.</li><li>Only routes the grant lists, matched byte for byte, so a path never decodes into a surprise.</li><li>From the broker's address, never from the guest's.</li></ul></div>
     </div>
   </section>
 
@@ -194,14 +225,15 @@
   <section id="brings" aria-labelledby="h-brings">
     <p class="draft" aria-hidden="true">05</p>
     <h2 id="h-brings">What plimsoll adds to a private API</h2>
-    <p>Stockroom keeps its domain API and its MCP product. plimsoll contributes the
-    controlled middle: a place where agent-authored code can loop, filter and compose
-    private data while the origin, the route policy, the caller identity, the token, the
-    network boundary and the audit line stay outside the guest.</p>
+    <p>Stockroom keeps its own inventory API and its MCP server. plimsoll adds the
+    controlled middle: a place where code an agent wrote can loop over, filter and combine
+    private data, while the API's address, the list of allowed routes, the caller's
+    identity, the token, the network boundary and the audit line all stay outside the
+    guest.</p>
     <div class="brings">
-      <div class="card"><h3>Better than one-shot tools</h3><p><code>inventory.items.counts(id)</code> can sit inside a loop or a condition. The model does not need one MCP round trip per item, and the advisor tells it when the loop should have been one call.</p></div>
-      <div class="card"><h3>Safer than a raw SDK secret</h3><p>The guest sees typed helpers. plimsoll holds the private origin and the per-run credential, and allows only the registered routes.</p></div>
-      <div class="card"><h3>Clearer than magic</h3><p>The MCP description and <code>stockroom://sandbox-api.d.ts</code> explain the model-facing contract. This page explains the process-facing one.</p></div>
+      <div class="card"><h3>Better than one-shot tools</h3><p><code>inventory.items.counts(id)</code> can sit inside a loop or a condition. The model does not need one MCP round trip per item, and the efficiency advisor tells it when the loop should have been one call.</p></div>
+      <div class="card"><h3>Safer than a raw SDK secret</h3><p>The guest sees typed helper functions. plimsoll holds the private API's address and the per-run credential, and allows only the listed routes.</p></div>
+      <div class="card"><h3>Clearer than magic</h3><p>The MCP description and <code>stockroom://sandbox-api.d.ts</code> explain what the model can call. This page explains what each process sends to the next.</p></div>
     </div>
   </section>
 
@@ -210,10 +242,10 @@
     <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>Route allow-lists, credentials, budgets and the transport on each provider.</small></a></li>
     <li><a href="agent-products.html"><b>Internal · trainer site →</b><strong>Agent products</strong><small>How tool descriptions, resources and code mode become a model-facing contract.</small></a></li>
     <li><a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>MCP transports</strong><small>Streamable HTTP and stdio, in the specification.</small></a></li>
-    <li><a href="https://www.jsonrpc.org/specification" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>JSON-RPC 2.0</strong><small>The envelope MCP uses: requests, responses, ids, params and errors.</small></a></li>
+    <li><a href="https://www.jsonrpc.org/specification" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>JSON-RPC 2.0</strong><small>The message format MCP uses: requests, responses, ids, params and errors.</small></a></li>
     <li><a href="https://ts.sdk.modelcontextprotocol.io/server" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>MCP TypeScript server API</strong><small>Server construction and transport connections in the TypeScript SDK.</small></a></li>
     <li><a href="https://hono.dev/docs" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Hono</strong><small>The small Web Standards web framework the example gateway's HTTP layer uses.</small></a></li>
-    <li><a href="https://connectrpc.com/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Connect RPC</strong><small>Protobuf-generated RPC over HTTP, compatible with gRPC and gRPC-Web.</small></a></li>
+    <li><a href="https://connectrpc.com/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Connect RPC</strong><small>RPC over HTTP generated from protobuf schemas, compatible with gRPC and gRPC-Web.</small></a></li>
     <li><a href="https://grpc.io/docs/what-is-grpc" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>gRPC core concepts</strong><small>How .proto services become typed client and server calls.</small></a></li>
     <li><a href="https://protobuf.dev/overview/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Protocol Buffers</strong><small>The schema and serialization layer underneath the typed RPC contract.</small></a></li>
   </ul>
@@ -233,7 +265,7 @@
   function el(id) { return document.getElementById(id); }
   var state = { path: 'code', deploy: 'local', provider: 'runsc' };
 
-  var TIER = { runc: ['container', 'Node in a docker container under runc; the guest reaches the broker over the per-run socket'], runsc: ['kernel', 'Node in a docker container under gVisor; the same socket, verified reachable at startup'], wasm: ['process', 'QuickJS on wazero inside the plimsoll process; the guest reaches the broker through a bounded host function'], e2b: ['vm', 'Node in a Firecracker microVM on E2B; the guest reaches the broker through the one allowed exit to the guard'] };
+  var TIER = { runc: ['container', 'Node in a docker container under runc; the guest reaches the broker over the per-run socket'], runsc: ['kernel', 'Node in a docker container under gVisor; the same socket, verified reachable at startup'], wasm: ['process', 'QuickJS on wazero inside the plimsoll process; the guest reaches the broker through a size-limited function the daemon provides'], e2b: ['vm', 'Node in a Firecracker microVM on E2B; the guest reaches the broker through the one allowed exit to the guard'] };
 
   function actors(s) {
     var code = s.path === 'code';
@@ -242,12 +274,12 @@
     return [
       { cls: '', kicker: 'outside Stockroom', name: 'LLM model', p: 'Chooses a tool from the host\'s registry and writes its arguments. It is not the MCP server and it never opens the private API.', facts: '<b>owns</b> reasoning and tool selection · <b>sees</b> tool descriptions, schemas, resource hints', wire: code ? 'tools/call run_javascript { code, timeoutMs }' : 'tools/call list_warehouses {}' },
       { cls: '', kicker: 'host process', name: 'MCP client / host', p: 'Holds the server connection and places tools into the model\'s context. An IDE, an agent runtime, a desktop app.', facts: '<b>calls</b> POST /mcp, or spawns the stdio server · <b>protocol</b> MCP Streamable HTTP JSON-RPC, or stdio', wire: 'POST /mcp · JSON-RPC 2.0 · Authorization: Bearer ‹caller token›' },
-      { cls: '', kicker: 'Node process', name: 'Stockroom gateway', p: 'One Node process owns both the model-facing /mcp route and the private /v1/* REST routes. Its HTTP layer is Hono.', facts: '<b>owns</b> Hono edge, MCP tools, auth capture, Connect clients · <b>calls</b> stockClient and codegenClient', wire: code ? 'Connect · POST /stockroom.v1.CodegenService/RunJavaScript' : 'Connect · POST /stockroom.v1.StockService/ListWarehouses' },
-      { cls: '', kicker: 'Go process · :8746', name: 'Stockroom dataplane', p: 'Domain and execution core. Authenticates RPCs, enforces scopes, owns StockService and CodegenService.', facts: '<b>calls</b> the WMS/ERP directly, or plimsoll for code · <b>protocol</b> Connect server: gRPC, gRPC-Web, Connect/JSON', wire: code ? (remote ? 'Connect · POST /plimsoll.v1.SandboxService/Run · javascript payload, grant_profile "inventory", minimum_isolation' : 'in-process · sandbox.Request{ Code, Timeout, Grant, MinimumIsolation }') : 'vendor HTTPS · stock query', skipTo: !code },
-      { cls: 'plimsoll', kicker: remote ? 'Go process · plimsolld' : 'Go package · in the dataplane', name: 'plimsoll', p: 'Checks the envelope and the floor, freezes the grant, mints the run\'s token, starts the provider, brokers permitted calls.', facts: '<b>owns</b> provider boundary, route allow-list, token, budgets · <b>calls</b> the guest runtime and the private origin', wire: 'starts the guest behind the ' + tier[0] + ' tier · preloads inventory.* over host.*', skipped: !code },
-      { cls: 'guest', kicker: 'untrusted process · ' + tier[0] + ' tier', name: 'Guest JavaScript', p: tier[1] + '.', facts: '<b>owns</b> only its computation and stdout/stderr · <b>cannot hold</b> a token, the private origin, or ambient network', wire: 'inventory.warehouses.list() → host.get("/v1/warehouses") → the broker · attaches the minted JWT · GET /v1/warehouses', skipped: !code },
+      { cls: '', kicker: 'Node process', name: 'Stockroom gateway', p: 'One Node process owns both the model-facing /mcp route and the private /v1/* REST routes. Its HTTP layer is Hono.', facts: '<b>owns</b> the Hono HTTP layer, MCP tools, auth capture, Connect clients · <b>calls</b> stockClient and codegenClient', wire: code ? 'Connect · POST /stockroom.v1.CodegenService/RunJavaScript' : 'Connect · POST /stockroom.v1.StockService/ListWarehouses' },
+      { cls: '', kicker: 'Go process · :8746', name: 'Stockroom dataplane', p: 'The business logic and the code-running core. Authenticates RPCs, enforces scopes, owns StockService and CodegenService.', facts: '<b>calls</b> the WMS/ERP directly, or plimsoll for code · <b>protocol</b> Connect server: gRPC, gRPC-Web, Connect/JSON', wire: code ? (remote ? 'Connect · POST /plimsoll.v1.SandboxService/Run · javascript payload, grant_profile "inventory", minimum_isolation' : 'in-process · sandbox.Request{ Code, Timeout, Grant, MinimumIsolation }') : 'vendor HTTPS · stock query', skipTo: !code },
+      { cls: 'plimsoll', kicker: remote ? 'Go process · plimsolld' : 'Go package · in the dataplane', name: 'plimsoll', p: 'Checks the request and its minimum isolation tier, fixes the grant for this run, mints the run\'s token, starts the provider, makes the permitted API calls.', facts: '<b>owns</b> provider boundary, route allow-list, token, budgets · <b>calls</b> the guest runtime and the private origin', wire: 'starts the guest behind the ' + tier[0] + ' tier · preloads inventory.* over host.*', skipped: !code },
+      { cls: 'guest', kicker: 'untrusted process · ' + tier[0] + ' tier', name: 'Guest JavaScript', p: tier[1] + '.', facts: '<b>owns</b> only its computation and stdout/stderr · <b>cannot hold</b> a token, the private API\'s address, or any other network access', wire: 'inventory.warehouses.list() → host.get("/v1/warehouses") → the broker · attaches the minted JWT · GET /v1/warehouses', skipped: !code },
       { cls: '', kicker: 'route in the Node gateway', name: 'Gateway REST route', p: 'GET /v1/warehouses is an HTTP route inside the existing gateway process, not a new process and not a model-facing tool. It is the private surface plimsoll may call.', facts: '<b>receives</b> HTTP from the broker · <b>does</b> stockClient.listWarehouses({}) · Connect to Go StockService', wire: 'Connect · StockService/ListWarehouses · then vendor HTTPS', skipped: !code },
-      { cls: '', kicker: 'external service', name: 'WMS / ERP', p: 'The system of record for stock. Outside both plimsoll and the Stockroom process boundary.', facts: '<b>receives</b> provider-specific stock requests from Go · <b>returns</b> warehouse, item, count or adjustment data', wire: null }
+      { cls: '', kicker: 'external service', name: 'WMS / ERP', p: 'The warehouse management or ERP system: the system of record for stock. Outside both plimsoll and the Stockroom process boundary.', facts: '<b>receives</b> provider-specific stock requests from Go · <b>returns</b> warehouse, item, count or adjustment data', wire: null }
     ];
   }
 
@@ -279,8 +311,8 @@
       }
     });
     el('stackNote').innerHTML = code
-      ? '<p><b>Code mode.</b> The model writes a program; the gateway hands it to the dataplane; ' + (state.deploy === 'remote' ? 'the dataplane calls a separate plimsolld over Connect with a javascript payload, the profile name and the floor' : 'the dataplane calls the embedded sandbox package with a Go request carrying the grant and the floor') + '; plimsoll starts the guest behind the <b>' + TIER[state.provider][0] + '</b> tier; the guest\'s <code>inventory.warehouses.list()</code> becomes one brokered <code>GET /v1/warehouses</code> that lands back on the gateway\'s own private route. Five processes or packages touch the request, and the one that runs the model\'s code holds nothing.</p>'
-      : '<p><b>The direct tool.</b> <code>list_warehouses</code> is an ordinary MCP tool: the gateway calls the dataplane\'s StockService, which calls the vendor. No plimsoll, no guest, no brokered route. It ends at the same system of record as code mode and has a different process graph, which is the point of drawing both.</p>';
+      ? '<p><b>Code mode.</b> The model writes a program; the gateway hands it to the dataplane; ' + (state.deploy === 'remote' ? 'the dataplane calls a separate plimsolld over Connect with a javascript payload, the profile name and the minimum isolation tier' : 'the dataplane calls the embedded sandbox package with a Go request carrying the grant and the floor') + '; plimsoll starts the guest behind the <b>' + TIER[state.provider][0] + '</b> tier; the guest\'s <code>inventory.warehouses.list()</code> becomes one <code>GET /v1/warehouses</code>, made by the broker, that lands back on the gateway\'s own private route. Five processes or packages touch the request, and the one that runs the model\'s code holds nothing.</p>'
+      : '<p><b>The direct tool.</b> <code>list_warehouses</code> is an ordinary MCP tool: the gateway calls the dataplane\'s StockService, which calls the vendor. No plimsoll, no guest, no call through the broker. It ends at the same system of record as code mode and has a different process graph, which is the point of drawing both.</p>';
   }
   el('stack').addEventListener('click', function (e) {
     var b = e.target.closest('.seg[data-key] button[data-value]');
@@ -310,8 +342,8 @@
     'mcp-http': { head: 'Streamable HTTP carries JSON-RPC to the Node gateway', code: 'POST /mcp HTTP/1.1\nAuthorization: Bearer <caller token>\nContent-Type: application/json\n\n{"jsonrpc":"2.0","id":42,\n "method":"tools/call",\n "params":{\n   "name":"run_javascript",\n   "arguments":{"code":"await inventory.warehouses.list()"}\n }}\n\n← {"jsonrpc":"2.0","id":42,\n   "result":{"content":[{"type":"text","text":"..."}]}}', note: 'The gateway\'s HTTP endpoint receives JSON-RPC. The code travels as a string argument; the caller\'s bearer authenticates the caller to the gateway and goes no further.' },
     'mcp-stdio': { head: 'The same server over stdio, no HTTP listener', code: 'MCP host process\n  spawn: Stockroom MCP server\n  stdin  ── JSON-RPC tools/list ──→\n  stdout ← JSON-RPC tools/list result ←\n\nThe child creates:\n  new StdioServerTransport()\n  the shared MCP server + tool handlers\n\nNo POST /mcp. No gateway HTTP listener.\nThe tool definitions and handlers are the same.', note: 'A different transport, the same tool registry. Nothing about plimsoll changes with the transport the host chose.' },
     'connect': { head: 'Connect / gRPC from the gateway to the Go dataplane', code: 'HTTP/2\nPOST /stockroom.v1.StockService/ListWarehouses\nContent-Type: application/grpc+proto\nAuthorization: Bearer <caller token>\n\nprotobuf: ListWarehousesRequest{}\n\nGo handler:\n  StockService.ListWarehouses(ctx, request)\n  → the WMS client', note: 'Not a REST route and not an MCP tools/call. The method and message types come from the example\'s stock.proto. Code mode uses the same RPC family for CodegenService/RunJavaScript.' },
-    'plimsoll': { head: 'The dataplane to plimsoll: in-process, or one Connect procedure', code: 'EMBEDDED\n  sandbox.Request{ Code, Timeout, Grant, MinimumIsolation }\n  → the docker provider → per-run host-api.sock\n\nREMOTE\n  HTTP/2  POST /plimsoll.v1.SandboxService/Run\n  Run {\n    protocol: 1, minimum_isolation: "kernel", trace_id: "…", timeout_ms: 20000,\n    javascript: { code, grant_profile: "inventory" }\n  }\n  → RunResponse { sandbox, isolation, duration_ms, javascript: { stdout, stderr, exit_code, … } }', note: 'One procedure, an envelope around exactly one payload kind. A daemon on another protocol number refuses before reading the payload; a raw grant cannot travel, only a profile name.' },
-    'guest': { head: 'The guest to the broker: bytes across the line, the key never', code: 'GUEST CODE\n  inventory.warehouses.list()\n    → host.get("/v1/warehouses")\n\nDOCKER\n  guest Node → /run/host-api.sock → broker\n\nWASM\n  QuickJS → bounded wazero host function → broker\n\nE2B\n  guest Node → the one allowed exit → the guard → broker\n\nThe guest sends method / path / body.\nThe broker supplies origin / token / policy.', note: 'The guest supplies a relative route and a body. The broker checks the route byte for byte, attaches the minted JWT, forwards, and records the template.' },
+    'plimsoll': { head: 'The dataplane to plimsoll: in-process, or one Connect procedure', code: 'EMBEDDED\n  sandbox.Request{ Code, Timeout, Grant, MinimumIsolation }\n  → the docker provider → per-run host-api.sock\n\nREMOTE\n  HTTP/2  POST /plimsoll.v1.SandboxService/Run\n  Run {\n    protocol: 2, minimum_isolation: "kernel", trace_id: "…", timeout_ms: 20000,\n    javascript: { code, grant_profile: "inventory" }\n  }\n  → RunResponse { sandbox, isolation, duration_ms, javascript: { stdout, stderr, exit_code, … } }', note: 'One procedure, Run: shared fields, such as the protocol number, the minimum isolation tier and the timeout, around exactly one payload kind. A daemon speaking another protocol number refuses before reading the payload; a raw grant cannot be sent, only a profile name.' },
+    'guest': { head: 'The guest to the broker: bytes across the line, the key never', code: 'GUEST CODE\n  inventory.warehouses.list()\n    → host.get("/v1/warehouses")\n\nDOCKER\n  guest Node → /run/host-api.sock → broker\n\nWASM\n  QuickJS → bounded wazero host function → broker\n\nE2B\n  guest Node → the one allowed exit → the guard → broker\n\nThe guest sends method / path / body.\nThe broker supplies origin / token / policy.', note: 'The guest supplies a relative route and a body. The broker checks the route byte for byte, attaches the minted JWT, forwards the call, and records the route template.' },
     'rest': { head: 'The broker to the private REST route', code: 'GET /v1/warehouses HTTP/1.1\nHost: gateway.stockroom.internal\nAuthorization: Bearer <per-run JWT · sub = the authenticated principal · aud = inventory>\n\nGateway handler:\n  stockClient.listWarehouses({})\n  → Connect/gRPC → Go StockService\n  → vendor HTTPS → WMS / ERP\n\n← 200 application/json\n   [{"id":"w-1","name":"North"}, …]  (bounded to 4 MiB by the broker)', note: 'A private route in the same Node process as /mcp, reached from the broker\'s address with a token whose subject is the caller, not the model. The response is capped on its way back to the guest.' }
   };
   function renderHop(which) {

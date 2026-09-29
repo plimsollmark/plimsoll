@@ -37,6 +37,8 @@ func reasonWire(r sandbox.Refusal) plimsollv1.NotDispatchedReason {
 		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ISOLATION
 	case sandbox.RefusalCapacity:
 		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY
+	case sandbox.RefusalEnvironment:
+		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ENVIRONMENT
 	default:
 		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_UNSPECIFIED
 	}

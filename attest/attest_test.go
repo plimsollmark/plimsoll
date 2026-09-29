@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,45 @@ func TestSignAndVerify(t *testing.T) {
 	tampered.GetJavascript().Stdout = []byte("2\n")
 	if _, err := s.Call(req, tampered); !errors.Is(err, record.ErrMismatch) {
 		t.Fatalf("a mismatched record: %v", err)
+	}
+}
+
+func TestVersionOneRecordIsNotSignedByNewHarness(t *testing.T) {
+	key := newKey(t)
+	req, resp := exchange("old", "ok", sandbox.RunRecord{})
+	r := record.FromWire(resp.GetRecord())
+	r.Version = 1
+	r.SHA256 = record.Digest(r)
+	resp.Record = record.ToWire(r)
+	signer := NewSigner(key)
+	if _, err := signer.Sign(r); !errors.Is(err, ErrSigningVersion) {
+		t.Fatalf("Sign accepted a new version 1 record: %v", err)
+	}
+	if _, err := signer.Call(req, resp); !errors.Is(err, ErrSigningVersion) {
+		t.Fatalf("Call signed a version 1 daemon response: %v", err)
+	}
+}
+
+func TestPublishedVersionOneBundleRemainsVerifiable(t *testing.T) {
+	data, err := os.ReadFile("../docs/examples/sessions/bundle.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := ReadBundle(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPEM, err := os.ReadFile("../docs/examples/sessions/harness.pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := ParsePublicKey(publicPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := VerifyBundle(entries, NewVerifier(publicKey))
+	if err != nil || len(report.Sessions) != 1 || report.Sessions[0].Calls != 5 {
+		t.Fatalf("published version 1 bundle: report %+v, err %v", report, err)
 	}
 }
 

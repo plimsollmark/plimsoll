@@ -26,14 +26,15 @@ import (
 // records what reached it.
 type stub struct {
 	plimsollv1connect.UnimplementedSandboxServiceHandler
-	name      string
-	describe  *plimsollv1.DescribeResponse
-	answer    func(*plimsollv1.RunRequest) (*plimsollv1.RunResponse, error)
-	openErr   error
-	runs      int
-	lastToken string
-	floors    []string // minimum_isolation of every Run and OpenSession that reached it
-	ranIn     string   // the environment its records state, when not what Describe says
+	name        string
+	describe    *plimsollv1.DescribeResponse
+	answer      func(*plimsollv1.RunRequest) (*plimsollv1.RunResponse, error)
+	openErr     error
+	runs        int
+	lastToken   string
+	floors      []string // minimum_isolation of every Run and OpenSession that reached it
+	ranIn       string   // the environment its records state, when not what Describe says
+	ranSoftware string   // selected software, when different from Describe
 }
 
 func (s *stub) Describe(context.Context, *connect.Request[plimsollv1.DescribeRequest]) (*connect.Response[plimsollv1.DescribeResponse], error) {
@@ -49,18 +50,30 @@ func (s *stub) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest
 		return nil, err
 	}
 	env := s.ranIn
+	software := s.ranSoftware
 	if env == "" {
 		// A daemon states the identity its Describe states for the payload's kind.
 		switch req.Msg.GetPayload().(type) {
 		case *plimsollv1.RunRequest_Project:
 			env = s.describe.GetProjectEnvironment().GetIdentity()
+			if software == "" {
+				software = s.describe.GetProjectEnvironment().GetSoftwareIdentity()
+			}
 		case *plimsollv1.RunRequest_Module:
 			env = s.describe.GetModuleEnvironment().GetIdentity()
+			if software == "" {
+				software = s.describe.GetModuleEnvironment().GetSoftwareIdentity()
+			}
 		default:
 			env = s.describe.GetJavascriptEnvironment().GetIdentity()
+			if software == "" {
+				software = s.describe.GetJavascriptEnvironment().GetSoftwareIdentity()
+			}
 		}
 	}
-	resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req.Msg), Environment: env}, resp)
+	resp.Environment, resp.SoftwareIdentity = env, software
+	rule := sandbox.SoftwareRule{Mode: sandbox.SoftwareMode(req.Msg.GetSoftwareRule().GetMode()), Identities: req.Msg.GetSoftwareRule().GetIdentities()}
+	resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req.Msg), SoftwareRuleID: rule.ID()}, resp)
 	return connect.NewResponse(resp), nil
 }
 
@@ -101,6 +114,29 @@ func ok(stdout string) func(*plimsollv1.RunRequest) (*plimsollv1.RunResponse, er
 			resp.Result = &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte(stdout)}}
 		}
 		return resp, nil
+	}
+}
+
+func TestSoftwareRuleSelectsApprovedImageAndTravelsWithRequest(t *testing.T) {
+	a := "oci-manifest:linux/amd64@sha256:" + strings.Repeat("a", 64)
+	b := "oci-manifest:linux/amd64@sha256:" + strings.Repeat("b", 64)
+	first := &stub{name: "first", describe: describeAs("fake", "vm", func(d *plimsollv1.DescribeResponse) {
+		d.JavascriptEnvironment.SoftwareIdentity = a
+	}), answer: ok("first")}
+	second := &stub{name: "second", describe: describeAs("fake", "vm", func(d *plimsollv1.DescribeResponse) {
+		d.JavascriptEnvironment.SoftwareIdentity = b
+	}), answer: ok("second")}
+	p := pool(t, first, second)
+	req := Requirement{Software: sandbox.SoftwareRule{Mode: sandbox.SoftwareExact, Identities: []string{b}}}
+	result, choice, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}, req)
+	if err != nil || choice.Backend != "second" || first.runs != 0 || second.runs != 1 ||
+		result.Record.SoftwareIdentity != b || result.Record.SoftwareRuleID != "exact:"+b {
+		t.Fatalf("choice %+v, result %+v, err %v", choice, result, err)
+	}
+	approved := Requirement{Software: sandbox.SoftwareRule{Mode: sandbox.SoftwareApproved, Identities: []string{a, b}}}
+	_, choice, err = p.RunJavaScript(context.Background(), sandbox.Request{Code: "2"}, approved)
+	if err != nil || choice.Backend != "first" || first.runs != 1 {
+		t.Fatalf("approved choice %+v, error %v", choice, err)
 	}
 }
 
@@ -226,6 +262,7 @@ func TestRetriesOnlyRefusalsThatRanNothing(t *testing.T) {
 		"capacity":    {refuse(plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY), 1, "second"},
 		"unsupported": {refuse(plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_UNSUPPORTED), 1, "second"},
 		"isolation":   {refuse(plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ISOLATION), 1, "second"},
+		"environment": {refuse(plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ENVIRONMENT), 1, "second"},
 		"permission":  {refuse(plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PERMISSION), 0, "first"},
 		"request":     {refuse(plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST), 0, "first"},
 		"unmarked":    {failUnmarked, 0, "first"},

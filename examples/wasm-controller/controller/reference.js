@@ -1,12 +1,12 @@
 // The JavaScript controller that controller.c is a line-for-line port of: the same
-// swing-up law, run by the judge as a Node process. While the pole is down it drives
+// swing-up law, spawned by the runner as a Node process. While the pole is down it drives
 // the cart so the pole's mechanical energy climbs toward its upright value (push in
 // the direction that adds energy, with a small centring term so the cart stays on
 // the track); once the pole is near upright and slow it hands over to a linear
 // balancing law with the angle wrapped into [-pi, pi]. Pole mass 0.1 kg and
 // half-length 0.5 m are the plant's defaults.
 //
-// The example judges this file beside the C build so the page can compare their
+// The example runs this file beside the C build so the page can compare their
 // fingerprints from one run. Every expression has the operand order of its C twin,
 // so the only arithmetic that differs between the two is cos: V8's Math.cos here,
 // the cos compiled into controller.wasm there.

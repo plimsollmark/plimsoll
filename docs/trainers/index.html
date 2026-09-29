@@ -27,27 +27,27 @@
     <header class="catalog-head">
       <p class="catalog-eyebrow">interactive field guide</p>
       <h2>Lessons on running code you do not trust.</h2>
-      <p>Twelve compact trainers, each one page, with no build step and no network calls. They cover what the walls are and how the daemon proves them, how to call it from Go or from an agent, and how the broker lets sandboxed code reach an API without ever holding the key. Four go deeper: the broker's transports, a caller's own private API, the metadata-only efficiency advisor, and the capacity signal that lets the broker back off from an overloaded API.</p>
+      <p>Twelve compact trainers, each one page, with no build step and no network calls. They cover the walls plimsoll can put around code, called <dfn>isolation tiers</dfn>, and how the daemon proves each one; how to call it from Go or from an AI agent; and how sandboxed code can use an API without ever holding its key. That is the job of the <dfn>broker</dfn>, the part of plimsoll that makes API calls for the code, and four trainers go deeper into it: how it connects to each kind of sandbox, a worked example with a private API, the efficiency advisor that reads a run's API calls afterwards, and how it backs off from an overloaded API. Each new word is defined where it first appears and collected in the <a href="glossary.html">glossary (INTERNAL · trainer site →)</a>.</p>
     </header>
 
     <a class="catalog-live" href="../examples/oracle/index.html">
-      <p class="catalog-eyebrow">see one real run · physics oracle</p>
-      <strong>An agent wrote a controller. A compiled cart-pole judged it.</strong>
-      <p>Not a lesson: every number on that page came from one run through the docker tier on 2026-09-18. The controller was the only file the caller sent, the plant and the judge were baked into the sandbox image, and the judge recorded every 10 ms tick after running the controller as a separate process. The accepted controller balanced for 20 s and produced the same trajectory fingerprint twice; the agent's first draft dropped the pole at 5.96 s. Replay both in the browser.</p>
+      <p class="catalog-eyebrow">see one real run</p>
+      <strong>An AI agent wrote code to balance a pole on a cart. The sandbox ran it against a simulator.</strong>
+      <p>Not a lesson: every number on that page came from one run in a locked-down docker container on 2026-09-18. The agent's <dfn>controller</dfn>, a program that decides every 10 ms of simulated time how to push the cart, was the only file the caller sent. The simulated <dfn>cart-pole</dfn> (a cart on a rail with a pole hinged on top) and a runner program were built into the sandbox image; the runner ran the controller as a separate process and recorded the state every 10 ms. The accepted controller balanced the pole for 20 s and produced the same record, bit for bit, twice. The agent's first draft dropped the pole at 5.96 s. Replay both in the browser.</p>
       <span class="catalog-cta">Open the run report →</span>
     </a>
 
     <a class="catalog-live" href="../examples/providers/index.html">
       <p class="catalog-eyebrow">see real runs · same run, different sandboxes</p>
-      <strong>The oracle's run on a local container, E2B and Docker Cloud Sandboxes: one fingerprint.</strong>
-      <p>Not a lesson: on 2026-09-24 the same accepted controller, judge and plant went to each provider in turn, with nothing changed but <code>SANDBOX_PROVIDER</code>. A locked-down local container reported the container tier; E2B and Docker Cloud Sandboxes microVMs (small virtual machines created for one run) reported vm. Different Node versions, and all three trajectory fingerprints equal to the one the oracle page published.</p>
+      <strong>The same run on a local container and on two cloud services: identical results.</strong>
+      <p>Not a lesson: on 2026-09-24 the same accepted controller, runner and simulator ran on three <dfn>providers</dfn> (the backends that run code), with nothing changed but <code>SANDBOX_PROVIDER</code>. A locked-down local container reported the container tier. <dfn>E2B</dfn> and <dfn>Docker Cloud Sandboxes</dfn>, two hosted services, each ran it in a <dfn>microVM</dfn>, a small virtual machine created for one run, and reported vm. The Node versions differed, and all three records hashed to the same value the first report published.</p>
       <span class="catalog-cta">Open the run report →</span>
     </a>
 
     <a class="catalog-live" href="../examples/wasm-controller/index.html">
       <p class="catalog-eyebrow">see real runs · controller in C</p>
-      <strong>The same judge, with a controller written in C and compiled inside the run.</strong>
-      <p>Not a lesson: the run's first step compiled the C to WebAssembly with no network, the judge swung the pole up on four scenarios, and the page compares each record with the same law in JavaScript, value by value. The fingerprints differ where the two languages' cos differs in the last bit; the page shows exactly where, and that the motion itself never did.</p>
+      <strong>The same cart-pole, with a controller written in C and compiled inside the run.</strong>
+      <p>Not a lesson: the run's first step compiled the C to <dfn>WebAssembly</dfn>, a portable bytecode, with no network. A runner built into the image then ran it in four scenarios where it swings the pole up from hanging, and the page compares each record with the same controller in JavaScript, value by value. The records differ where the two languages' <code>cos</code> functions disagree in the last bit; the page shows exactly where, and that the motion itself never differed.</p>
       <span class="catalog-cta">Open the run report →</span>
     </a>
 
@@ -56,7 +56,7 @@
       <a class="catalog-card" href="plain-english.html" style="--card-accent:#3d8168">
         <span class="catalog-number">00 / START HERE</span>
         <h2>Plain English</h2>
-        <p>Brand new? Decode every scary word (WASM, container, gVisor, VM, RPC) and learn the one idea behind all of them: how many walls stand between untrusted code and your stuff.</p>
+        <p>Brand new? Start here. One idea is behind every page: how many walls stand between untrusted code and your stuff. This page names each wall in plain words, then gives its real name.</p>
         <div class="catalog-topics"><span>no jargon</span><span>walls</span><span>wasm/rpc/e2b</span><span>start here</span></div>
         <span class="catalog-cta">Start from zero →</span>
       </a>
@@ -64,8 +64,8 @@
       <a class="catalog-card" href="concepts.html" style="--card-accent:#177f99">
         <span class="catalog-number">01 / FOUNDATIONS</span>
         <h2>Concepts and providers</h2>
-        <p>The boundary as the load line the project is named for: paint a provider's mark, set the caller's floor, and read the dispatch ticket. Then what each provider must prove at startup, what a grant is and is not, the three result channels, admission, and the switch-on checklist.</p>
-        <div class="catalog-topics"><span>load line</span><span>WASM/gVisor/E2B</span><span>Preflight</span><span>results</span><span>admission</span></div>
+        <p>Why the project is named after the <dfn>load line</dfn>, the mark on a ship's hull that shows how deep it may sit: pick a provider, set the <dfn>floor</dfn> (the weakest tier a request accepts), and see whether the run goes ahead. Then what each provider proves at startup, what a <dfn>grant</dfn> (one run's permission to call listed API routes) is and is not, the three kinds of answer, how the daemon caps the runs it takes at once, and a checklist for switching it on.</p>
+        <div class="catalog-topics"><span>load line</span><span>providers</span><span>startup checks</span><span>results</span><span>capacity</span></div>
         <span class="catalog-cta">Read the line →</span>
       </a>
 
@@ -78,10 +78,10 @@
       </a>
 
       <a class="catalog-card" href="dependencies.html" style="--card-accent:#9a4e78">
-        <span class="catalog-number">03 / TRUSTED SURFACE</span>
+        <span class="catalog-number">03 / WHAT IT DEPENDS ON</span>
         <h2>Dependencies</h2>
-        <p>The whole trusted surface on one page: four Go modules and what each one touches, what every provider needs outside the binary, what is pinned by digest, and the checks an upgrade has to clear. A reference sheet, not a lesson.</p>
-        <div class="catalog-topics"><span>Go modules</span><span>runtimes</span><span>TCB</span><span>supply chain</span></div>
+        <p>Everything plimsoll's safety depends on, on one page: the four Go modules it imports and what each one touches, what each provider needs outside the program, which versions are fixed by a hash of their content, and the checks an upgrade has to pass. A reference sheet, not a lesson.</p>
+        <div class="catalog-topics"><span>Go modules</span><span>runtimes</span><span>what to trust</span><span>upgrades</span></div>
         <span class="catalog-cta">Read the dependency list →</span>
       </a>
     </section>
@@ -91,32 +91,32 @@
       <a class="catalog-card" href="integrations.html" style="--card-accent:#1c779f">
         <span class="catalog-number">04 / CLIENT CONTRACT</span>
         <h2>Integrations</h2>
-        <p>Embed a local provider or use the official remote client without losing validation, capability, or isolation semantics.</p>
-        <div class="catalog-topics"><span>Go client</span><span>Connect</span><span>projects</span><span>results</span></div>
+        <p>Run plimsoll inside your own Go program, or call a remote daemon with the official client, and get the same request checks, permissions and isolation guarantees either way.</p>
+        <div class="catalog-topics"><span>Go client</span><span>RPC</span><span>projects</span><span>results</span></div>
         <span class="catalog-cta">Wire plimsoll in →</span>
       </a>
 
       <a class="catalog-card" href="agent-products.html" style="--card-accent:#c06c26">
-        <span class="catalog-number">05 / MCP + AGENTS</span>
+        <span class="catalog-number">05 / AI AGENTS</span>
         <h2>Agent products</h2>
-        <p>Design a bounded <code>run_code</code> surface with tenant identity, strict envelopes, quotas, and useful failure UX.</p>
-        <div class="catalog-topics"><span>MCP</span><span>code mode</span><span>identity</span><span>quotas</span></div>
+        <p>Design a <code>run_code</code> tool for an AI agent over <dfn>MCP</dfn>, the standard way an AI application offers tools to a model: who is calling, strict limits on each request, quotas, and failure messages the agent can act on.</p>
+        <div class="catalog-topics"><span>MCP</span><span>agents</span><span>identity</span><span>quotas</span></div>
         <span class="catalog-cta">Design the product surface →</span>
       </a>
 
       <a class="catalog-card" href="discoverability.html" style="--card-accent:#7857c8">
         <span class="catalog-number">06 / DISCOVERABLE CONTRACT</span>
         <h2>Discoverable tools</h2>
-        <p>Stop clients guessing: give every tool an <code>outputSchema</code> and honest annotations, type the injected sandbox globals, serve the contract at runtime, and gate it with a drift test.</p>
-        <div class="catalog-topics"><span>outputSchema</span><span>annotations</span><span>.d.ts</span><span>drift test</span></div>
+        <p>Stop clients guessing: describe each tool's output with a schema (<code>outputSchema</code>), label honestly what each tool does, give the sandboxed code type definitions for what it can call, serve that description at runtime, and add a test that fails when it drifts from the code.</p>
+        <div class="catalog-topics"><span>output schemas</span><span>tool labels</span><span>TypeScript types</span><span>drift test</span></div>
         <span class="catalog-cta">Make it self-describing →</span>
       </a>
 
       <a class="catalog-card" href="customer-examples.html" style="--card-accent:#287d69">
         <span class="catalog-number">07 / COOKBOOK</span>
         <h2>Customer examples</h2>
-        <p>Apply concrete recipes for SaaS code mode, analytics, approved automation, project evaluation, and private deployment.</p>
-        <div class="catalog-topics"><span>recipes</span><span>SDK preamble</span><span>approval</span><span>private</span></div>
+        <p>Worked recipes: an AI agent in a SaaS product writing code against the product's API, analytics, automation that needs a person's approval, checking whole projects, and running plimsoll privately.</p>
+        <div class="catalog-topics"><span>recipes</span><span>API helper code</span><span>approval</span><span>private</span></div>
         <span class="catalog-cta">Open the integration cookbook →</span>
       </a>
     </section>
@@ -124,34 +124,34 @@
     <h2 class="catalog-section-title">Broker deep dives</h2>
     <section class="catalog-grid" aria-label="Broker deep-dive trainers">
       <a class="catalog-card" href="brokering.html" style="--card-accent:#177f99">
-        <span class="catalog-number">08 / BROKER TRANSPORTS</span>
+        <span class="catalog-number">08 / HOW THE BROKER CONNECTS</span>
         <h2>The API Broker</h2>
-        <p>How agent code reaches your API without ever holding the key, how Docker and WASM use one shared guard through different transports, and why E2B remains the hard case.</p>
-        <div class="catalog-topics"><span>broker</span><span>egress</span><span>forward proxy</span><span>E2B</span></div>
+        <p>How agent code reaches your API without ever holding the key, how Docker and WASM reach the same broker by different routes, and why E2B is the hard case.</p>
+        <div class="catalog-topics"><span>broker</span><span>network access</span><span>proxies</span><span>E2B</span></div>
         <span class="catalog-cta">Follow a request →</span>
       </a>
 
       <a class="catalog-card" href="private-api.html" style="--card-accent:#6754a6">
         <span class="catalog-number">09 / PRIVATE API LAB</span>
         <h2>Private API Flight Recorder</h2>
-        <p>Stop guessing about the call graph. Follow the LLM, MCP host, Node gateway, Go dataplane, plimsoll, isolated guest, and private API as two traces diverge and return.</p>
-        <div class="catalog-topics"><span>process graph</span><span>MCP wire</span><span>private REST</span><span>code mode</span></div>
+        <p>See which program calls which. Follow two requests from the language model through the MCP host, a Node gateway, a Go service, plimsoll, the sandboxed code and a private API, where their paths split, and back.</p>
+        <div class="catalog-topics"><span>call paths</span><span>MCP messages</span><span>private REST API</span><span>agent code</span></div>
         <span class="catalog-cta">Trace the real processes →</span>
       </a>
 
       <a class="catalog-card" href="advisor.html" style="--card-accent:#b8860b">
-        <span class="catalog-number">10 / ADVISORY EVIDENCE</span>
+        <span class="catalog-number">10 / EFFICIENCY ADVICE</span>
         <h2>Efficiency Advisor</h2>
-        <p>See how the shipped advisor analyzes bounded broker metadata after a run, routes a fix to the agent or operator, and never changes execution.</p>
-        <div class="catalog-topics"><span>metadata</span><span>broker</span><span>call patterns</span><span>insights</span></div>
+        <p>See how the advisor reads the list of API calls a run made (which routes, how many, how long; never the data), after the run has finished, and sends a suggested fix to the agent or to the operator without changing how anything ran.</p>
+        <div class="catalog-topics"><span>call records</span><span>broker</span><span>call patterns</span><span>suggested fixes</span></div>
         <span class="catalog-cta">Inspect the evidence →</span>
       </a>
 
       <a class="catalog-card" href="capacity-endpoint.html" style="--card-accent:#3d8168">
-        <span class="catalog-number">11 / BACKPRESSURE</span>
+        <span class="catalog-number">11 / OVERLOADED APIS</span>
         <h2>The capacity endpoint</h2>
-        <p>See how a cheap readiness or capacity read lets the broker shed calls under upstream overload, detect recovery early, and wire the probe from OpenAPI.</p>
-        <div class="catalog-topics"><span>429/503</span><span>circuit breaker</span><span>health_check</span><span>specgen</span></div>
+        <p>See how the broker stops sending calls to an API that says it is overloaded, how one cheap health request can tell it early that the API has recovered, and how to set that request up from an OpenAPI description.</p>
+        <div class="catalog-topics"><span>429/503</span><span>pausing calls</span><span>health checks</span><span>OpenAPI</span></div>
         <span class="catalog-cta">Design the recovery signal →</span>
       </a>
     </section>

@@ -176,7 +176,8 @@ const (
 	// The provider's current isolation evidence is below the request's floor.
 	NotDispatchedReason_NOT_DISPATCHED_REASON_ISOLATION NotDispatchedReason = 5
 	// Shed by admission or a rate limit; retry later or elsewhere.
-	NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY NotDispatchedReason = 6
+	NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY    NotDispatchedReason = 6
+	NotDispatchedReason_NOT_DISPATCHED_REASON_ENVIRONMENT NotDispatchedReason = 7
 )
 
 // Enum value maps for NotDispatchedReason.
@@ -189,6 +190,7 @@ var (
 		4: "NOT_DISPATCHED_REASON_UNSUPPORTED",
 		5: "NOT_DISPATCHED_REASON_ISOLATION",
 		6: "NOT_DISPATCHED_REASON_CAPACITY",
+		7: "NOT_DISPATCHED_REASON_ENVIRONMENT",
 	}
 	NotDispatchedReason_value = map[string]int32{
 		"NOT_DISPATCHED_REASON_UNSPECIFIED": 0,
@@ -198,6 +200,7 @@ var (
 		"NOT_DISPATCHED_REASON_UNSUPPORTED": 4,
 		"NOT_DISPATCHED_REASON_ISOLATION":   5,
 		"NOT_DISPATCHED_REASON_CAPACITY":    6,
+		"NOT_DISPATCHED_REASON_ENVIRONMENT": 7,
 	}
 )
 
@@ -443,18 +446,20 @@ func (x *DescribeResponse) GetSessionIdleTimeoutMs() uint32 {
 // PayloadEnvironment is one payload kind's environment as the daemon states it.
 type PayloadEnvironment struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// identity names the software the code starts in, set only when that name is
-	// content-addressed (a verified image ID, an image digest, an interpreter
-	// hash), prefixed by how it was derived ("docker-image:", "dockercloud-image:",
-	// "quickjs-wasm:"). Equal strings mean the same software; different or empty
-	// strings claim nothing. A mutable name (a tag, a template name) is never sent.
+	// identity names the exact outer image artifact or embedded interpreter, set
+	// only when content-addressed. An OCI index can change when attached build
+	// metadata changes, even when its selected executable manifest does not.
+	// A mutable name (a tag or template name) is never sent.
 	Identity string `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
 	// max_timeout_ms is the longest one run of this kind may take on this daemon
 	// (the provider's ceiling, capped by the daemon's own). 0 = the kind is
 	// unsupported or no ceiling is stated.
-	MaxTimeoutMs  uint32 `protobuf:"varint,2,opt,name=max_timeout_ms,json=maxTimeoutMs,proto3" json:"max_timeout_ms,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	MaxTimeoutMs uint32 `protobuf:"varint,2,opt,name=max_timeout_ms,json=maxTimeoutMs,proto3" json:"max_timeout_ms,omitempty"`
+	// Selected executable image manifest and platform, separate from the outer
+	// index in identity. Empty means the provider cannot establish it.
+	SoftwareIdentity string `protobuf:"bytes,3,opt,name=software_identity,json=softwareIdentity,proto3" json:"software_identity,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *PayloadEnvironment) Reset() {
@@ -501,6 +506,68 @@ func (x *PayloadEnvironment) GetMaxTimeoutMs() uint32 {
 	return 0
 }
 
+func (x *PayloadEnvironment) GetSoftwareIdentity() string {
+	if x != nil {
+		return x.SoftwareIdentity
+	}
+	return ""
+}
+
+// An explicit caller rule for the selected software. Empty mode and identities
+// impose no rule. "exact" takes one identity; "approved" takes 1 to 32,
+// bounding the caller-controlled list to about 8 KiB at 256 bytes per identity.
+type SoftwareRule struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Mode          string                 `protobuf:"bytes,1,opt,name=mode,proto3" json:"mode,omitempty"`
+	Identities    []string               `protobuf:"bytes,2,rep,name=identities,proto3" json:"identities,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SoftwareRule) Reset() {
+	*x = SoftwareRule{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SoftwareRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SoftwareRule) ProtoMessage() {}
+
+func (x *SoftwareRule) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SoftwareRule.ProtoReflect.Descriptor instead.
+func (*SoftwareRule) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *SoftwareRule) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *SoftwareRule) GetIdentities() []string {
+	if x != nil {
+		return x.Identities
+	}
+	return nil
+}
+
 // RunResources is the per-run resource envelope the operator configured. Each
 // provider refuses to start with a dimension it cannot enforce, so a non-zero
 // value is enforced; 0 means the provider's default, which is not stated here.
@@ -518,7 +585,7 @@ type RunResources struct {
 
 func (x *RunResources) Reset() {
 	*x = RunResources{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[3]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -530,7 +597,7 @@ func (x *RunResources) String() string {
 func (*RunResources) ProtoMessage() {}
 
 func (x *RunResources) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[3]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -543,7 +610,7 @@ func (x *RunResources) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunResources.ProtoReflect.Descriptor instead.
 func (*RunResources) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{3}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RunResources) GetMemoryMb() uint32 {
@@ -609,7 +676,7 @@ type AdviceFinding struct {
 
 func (x *AdviceFinding) Reset() {
 	*x = AdviceFinding{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[4]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -621,7 +688,7 @@ func (x *AdviceFinding) String() string {
 func (*AdviceFinding) ProtoMessage() {}
 
 func (x *AdviceFinding) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[4]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -634,7 +701,7 @@ func (x *AdviceFinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdviceFinding.ProtoReflect.Descriptor instead.
 func (*AdviceFinding) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{4}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *AdviceFinding) GetPattern() string {
@@ -740,6 +807,9 @@ type RunRequest struct {
 	// Total wall-clock budget in milliseconds for whatever the payload is;
 	// optional, defaulted and clamped server-side.
 	TimeoutMs int32 `protobuf:"varint,4,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	// Checked by the daemon before dispatch. Older daemons would drop this field,
+	// so its addition raises the protocol number.
+	SoftwareRule *SoftwareRule `protobuf:"bytes,5,opt,name=software_rule,json=softwareRule,proto3" json:"software_rule,omitempty"`
 	// Exactly one payload. An empty oneof is InvalidArgument.
 	//
 	// Types that are valid to be assigned to Payload:
@@ -754,7 +824,7 @@ type RunRequest struct {
 
 func (x *RunRequest) Reset() {
 	*x = RunRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[5]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -766,7 +836,7 @@ func (x *RunRequest) String() string {
 func (*RunRequest) ProtoMessage() {}
 
 func (x *RunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[5]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -779,7 +849,7 @@ func (x *RunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunRequest.ProtoReflect.Descriptor instead.
 func (*RunRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{5}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RunRequest) GetProtocol() uint32 {
@@ -808,6 +878,13 @@ func (x *RunRequest) GetTimeoutMs() int32 {
 		return x.TimeoutMs
 	}
 	return 0
+}
+
+func (x *RunRequest) GetSoftwareRule() *SoftwareRule {
+	if x != nil {
+		return x.SoftwareRule
+	}
+	return nil
 }
 
 func (x *RunRequest) GetPayload() isRunRequest_Payload {
@@ -883,7 +960,7 @@ type JavaScriptRun struct {
 
 func (x *JavaScriptRun) Reset() {
 	*x = JavaScriptRun{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[6]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -895,7 +972,7 @@ func (x *JavaScriptRun) String() string {
 func (*JavaScriptRun) ProtoMessage() {}
 
 func (x *JavaScriptRun) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[6]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -908,7 +985,7 @@ func (x *JavaScriptRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JavaScriptRun.ProtoReflect.Descriptor instead.
 func (*JavaScriptRun) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{6}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *JavaScriptRun) GetCode() string {
@@ -941,6 +1018,12 @@ type RunResponse struct {
 	// refuses an answer without it. Nothing a daemon executes depends on it, so
 	// it did not move the protocol number.
 	Record *RunRecord `protobuf:"bytes,4,opt,name=record,proto3" json:"record,omitempty"`
+	// The selected executable image identity, when the provider can establish it.
+	// The checked record repeats this field and binds it to the caller's rule.
+	SoftwareIdentity string `protobuf:"bytes,5,opt,name=software_identity,json=softwareIdentity,proto3" json:"software_identity,omitempty"`
+	// Exact outer image or interpreter artifact selected for this run, when
+	// stated. The record repeats it so the client checks both statements.
+	Environment string `protobuf:"bytes,6,opt,name=environment,proto3" json:"environment,omitempty"`
 	// Exactly one result, of the payload's kind.
 	//
 	// Types that are valid to be assigned to Result:
@@ -955,7 +1038,7 @@ type RunResponse struct {
 
 func (x *RunResponse) Reset() {
 	*x = RunResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[7]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -967,7 +1050,7 @@ func (x *RunResponse) String() string {
 func (*RunResponse) ProtoMessage() {}
 
 func (x *RunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[7]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -980,7 +1063,7 @@ func (x *RunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunResponse.ProtoReflect.Descriptor instead.
 func (*RunResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{7}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *RunResponse) GetSandbox() string {
@@ -1009,6 +1092,20 @@ func (x *RunResponse) GetRecord() *RunRecord {
 		return x.Record
 	}
 	return nil
+}
+
+func (x *RunResponse) GetSoftwareIdentity() string {
+	if x != nil {
+		return x.SoftwareIdentity
+	}
+	return ""
+}
+
+func (x *RunResponse) GetEnvironment() string {
+	if x != nil {
+		return x.Environment
+	}
+	return ""
 }
 
 func (x *RunResponse) GetResult() isRunResponse_Result {
@@ -1078,19 +1175,18 @@ func (*RunResponse_Module) isRunResponse_Result() {}
 // library.
 type RunRecord struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// version is the encoding version; 1. A verifier refuses a version it does
-	// not know rather than guessing at its fields.
+	// version is the encoding version; new records use 2. Version 1 remains
+	// verifiable. A verifier refuses an unknown version.
 	Version uint32 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	// request_sha256 covers what the caller sent: the protocol number, floor,
-	// timeout and payload, never the trace id.
+	// request_sha256 covers what the caller sent: protocol number, floor,
+	// timeout, software rule and payload, never the trace id.
 	RequestSha256 string `protobuf:"bytes,2,opt,name=request_sha256,json=requestSha256,proto3" json:"request_sha256,omitempty"`
 	// result_sha256 covers the result as sent: exit codes or outcome, output,
 	// truncation flags, steps, artifacts, module rows; never a duration or advice.
 	ResultSha256 string `protobuf:"bytes,3,opt,name=result_sha256,json=resultSha256,proto3" json:"result_sha256,omitempty"`
 	Provider     string `protobuf:"bytes,4,opt,name=provider,proto3" json:"provider,omitempty"`   // RunResponse.sandbox
 	Isolation    string `protobuf:"bytes,5,opt,name=isolation,proto3" json:"isolation,omitempty"` // RunResponse.isolation
-	// environment is the payload kind's identity as Describe states it (a
-	// content-addressed image or interpreter), empty when none is stated.
+	// environment is the exact outer image artifact or interpreter selected.
 	Environment string `protobuf:"bytes,6,opt,name=environment,proto3" json:"environment,omitempty"`
 	Policy      string `protobuf:"bytes,7,opt,name=policy,proto3" json:"policy,omitempty"` // DescribeResponse.policy
 	// When the daemon received the request and when it finished the result.
@@ -1100,9 +1196,11 @@ type RunRecord struct {
 	// a single run. session is the SHA-256 of the session ID (the ID itself is a
 	// capability and is never recorded), sequence counts the session's executed
 	// calls from 1, and previous_sha256 is the record_sha256 of the call before.
-	Session        string `protobuf:"bytes,10,opt,name=session,proto3" json:"session,omitempty"`
-	Sequence       uint64 `protobuf:"varint,11,opt,name=sequence,proto3" json:"sequence,omitempty"`
-	PreviousSha256 string `protobuf:"bytes,12,opt,name=previous_sha256,json=previousSha256,proto3" json:"previous_sha256,omitempty"`
+	Session          string `protobuf:"bytes,10,opt,name=session,proto3" json:"session,omitempty"`
+	Sequence         uint64 `protobuf:"varint,11,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	PreviousSha256   string `protobuf:"bytes,12,opt,name=previous_sha256,json=previousSha256,proto3" json:"previous_sha256,omitempty"`
+	SoftwareIdentity string `protobuf:"bytes,14,opt,name=software_identity,json=softwareIdentity,proto3" json:"software_identity,omitempty"` // RunResponse.software_identity
+	SoftwareRuleId   string `protobuf:"bytes,15,opt,name=software_rule_id,json=softwareRuleId,proto3" json:"software_rule_id,omitempty"`     // exact identity or digest of approved set
 	// record_sha256 covers every field above.
 	RecordSha256  string `protobuf:"bytes,13,opt,name=record_sha256,json=recordSha256,proto3" json:"record_sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1111,7 +1209,7 @@ type RunRecord struct {
 
 func (x *RunRecord) Reset() {
 	*x = RunRecord{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[8]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1123,7 +1221,7 @@ func (x *RunRecord) String() string {
 func (*RunRecord) ProtoMessage() {}
 
 func (x *RunRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[8]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1136,7 +1234,7 @@ func (x *RunRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunRecord.ProtoReflect.Descriptor instead.
 func (*RunRecord) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{8}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *RunRecord) GetVersion() uint32 {
@@ -1223,6 +1321,20 @@ func (x *RunRecord) GetPreviousSha256() string {
 	return ""
 }
 
+func (x *RunRecord) GetSoftwareIdentity() string {
+	if x != nil {
+		return x.SoftwareIdentity
+	}
+	return ""
+}
+
+func (x *RunRecord) GetSoftwareRuleId() string {
+	if x != nil {
+		return x.SoftwareRuleId
+	}
+	return ""
+}
+
 func (x *RunRecord) GetRecordSha256() string {
 	if x != nil {
 		return x.RecordSha256
@@ -1256,7 +1368,7 @@ type JavaScriptResult struct {
 
 func (x *JavaScriptResult) Reset() {
 	*x = JavaScriptResult{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[9]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1268,7 +1380,7 @@ func (x *JavaScriptResult) String() string {
 func (*JavaScriptResult) ProtoMessage() {}
 
 func (x *JavaScriptResult) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[9]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1281,7 +1393,7 @@ func (x *JavaScriptResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JavaScriptResult.ProtoReflect.Descriptor instead.
 func (*JavaScriptResult) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{9}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *JavaScriptResult) GetStdout() []byte {
@@ -1343,7 +1455,7 @@ type ProjectFile struct {
 
 func (x *ProjectFile) Reset() {
 	*x = ProjectFile{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[10]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1355,7 +1467,7 @@ func (x *ProjectFile) String() string {
 func (*ProjectFile) ProtoMessage() {}
 
 func (x *ProjectFile) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[10]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1368,7 +1480,7 @@ func (x *ProjectFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProjectFile.ProtoReflect.Descriptor instead.
 func (*ProjectFile) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{10}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ProjectFile) GetPath() string {
@@ -1404,7 +1516,7 @@ type StepResult struct {
 
 func (x *StepResult) Reset() {
 	*x = StepResult{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[11]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1416,7 +1528,7 @@ func (x *StepResult) String() string {
 func (*StepResult) ProtoMessage() {}
 
 func (x *StepResult) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[11]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1429,7 +1541,7 @@ func (x *StepResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepResult.ProtoReflect.Descriptor instead.
 func (*StepResult) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{11}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *StepResult) GetCommand() string {
@@ -1498,7 +1610,7 @@ type Artifact struct {
 
 func (x *Artifact) Reset() {
 	*x = Artifact{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[12]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1510,7 +1622,7 @@ func (x *Artifact) String() string {
 func (*Artifact) ProtoMessage() {}
 
 func (x *Artifact) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[12]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1523,7 +1635,7 @@ func (x *Artifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Artifact.ProtoReflect.Descriptor instead.
 func (*Artifact) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{12}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Artifact) GetPath() string {
@@ -1555,7 +1667,7 @@ type ProjectRun struct {
 
 func (x *ProjectRun) Reset() {
 	*x = ProjectRun{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[13]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1567,7 +1679,7 @@ func (x *ProjectRun) String() string {
 func (*ProjectRun) ProtoMessage() {}
 
 func (x *ProjectRun) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[13]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1580,7 +1692,7 @@ func (x *ProjectRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProjectRun.ProtoReflect.Descriptor instead.
 func (*ProjectRun) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{13}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ProjectRun) GetFiles() []*ProjectFile {
@@ -1635,7 +1747,7 @@ type ProjectResult struct {
 
 func (x *ProjectResult) Reset() {
 	*x = ProjectResult{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[14]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1647,7 +1759,7 @@ func (x *ProjectResult) String() string {
 func (*ProjectResult) ProtoMessage() {}
 
 func (x *ProjectResult) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[14]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1660,7 +1772,7 @@ func (x *ProjectResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProjectResult.ProtoReflect.Descriptor instead.
 func (*ProjectResult) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{14}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ProjectResult) GetSteps() []*StepResult {
@@ -1718,7 +1830,7 @@ type ModuleRow struct {
 
 func (x *ModuleRow) Reset() {
 	*x = ModuleRow{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[15]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1730,7 +1842,7 @@ func (x *ModuleRow) String() string {
 func (*ModuleRow) ProtoMessage() {}
 
 func (x *ModuleRow) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[15]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1743,7 +1855,7 @@ func (x *ModuleRow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModuleRow.ProtoReflect.Descriptor instead.
 func (*ModuleRow) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{15}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ModuleRow) GetValues() []float64 {
@@ -1771,7 +1883,7 @@ type ModuleRun struct {
 
 func (x *ModuleRun) Reset() {
 	*x = ModuleRun{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[16]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1783,7 +1895,7 @@ func (x *ModuleRun) String() string {
 func (*ModuleRun) ProtoMessage() {}
 
 func (x *ModuleRun) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[16]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1796,7 +1908,7 @@ func (x *ModuleRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModuleRun.ProtoReflect.Descriptor instead.
 func (*ModuleRun) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{16}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ModuleRun) GetModel() string {
@@ -1842,7 +1954,7 @@ type ModuleRowResult struct {
 
 func (x *ModuleRowResult) Reset() {
 	*x = ModuleRowResult{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[17]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1854,7 +1966,7 @@ func (x *ModuleRowResult) String() string {
 func (*ModuleRowResult) ProtoMessage() {}
 
 func (x *ModuleRowResult) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[17]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1867,7 +1979,7 @@ func (x *ModuleRowResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModuleRowResult.ProtoReflect.Descriptor instead.
 func (*ModuleRowResult) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{17}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ModuleRowResult) GetStatus() int32 {
@@ -1904,7 +2016,7 @@ type ModuleResult struct {
 
 func (x *ModuleResult) Reset() {
 	*x = ModuleResult{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[18]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1916,7 +2028,7 @@ func (x *ModuleResult) String() string {
 func (*ModuleResult) ProtoMessage() {}
 
 func (x *ModuleResult) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[18]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1929,7 +2041,7 @@ func (x *ModuleResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModuleResult.ProtoReflect.Descriptor instead.
 func (*ModuleResult) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{18}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ModuleResult) GetRuns() []*ModuleRowResult {
@@ -1983,15 +2095,16 @@ type OpenSessionRequest struct {
 	MinimumIsolation string `protobuf:"bytes,2,opt,name=minimum_isolation,json=minimumIsolation,proto3" json:"minimum_isolation,omitempty"`
 	TraceId          string `protobuf:"bytes,3,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"` // see RunRequest.trace_id
 	// Shorter than the daemon's own, or 0 for the daemon's.
-	LifetimeMs    uint32 `protobuf:"varint,4,opt,name=lifetime_ms,json=lifetimeMs,proto3" json:"lifetime_ms,omitempty"`
-	IdleTimeoutMs uint32 `protobuf:"varint,5,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3" json:"idle_timeout_ms,omitempty"`
+	LifetimeMs    uint32        `protobuf:"varint,4,opt,name=lifetime_ms,json=lifetimeMs,proto3" json:"lifetime_ms,omitempty"`
+	IdleTimeoutMs uint32        `protobuf:"varint,5,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3" json:"idle_timeout_ms,omitempty"`
+	SoftwareRule  *SoftwareRule `protobuf:"bytes,6,opt,name=software_rule,json=softwareRule,proto3" json:"software_rule,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *OpenSessionRequest) Reset() {
 	*x = OpenSessionRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[19]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2003,7 +2116,7 @@ func (x *OpenSessionRequest) String() string {
 func (*OpenSessionRequest) ProtoMessage() {}
 
 func (x *OpenSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[19]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2016,7 +2129,7 @@ func (x *OpenSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenSessionRequest.ProtoReflect.Descriptor instead.
 func (*OpenSessionRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{19}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *OpenSessionRequest) GetProtocol() uint32 {
@@ -2054,23 +2167,31 @@ func (x *OpenSessionRequest) GetIdleTimeoutMs() uint32 {
 	return 0
 }
 
+func (x *OpenSessionRequest) GetSoftwareRule() *SoftwareRule {
+	if x != nil {
+		return x.SoftwareRule
+	}
+	return nil
+}
+
 type OpenSessionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// session_id is 128 random bits in hex: a capability. Send it only to the
 	// daemon; it is never logged or recorded, and records carry its SHA-256.
-	SessionId     string `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Session       string `protobuf:"bytes,2,opt,name=session,proto3" json:"session,omitempty"`     // the SHA-256 of session_id, as records carry it
-	Sandbox       string `protobuf:"bytes,3,opt,name=sandbox,proto3" json:"sandbox,omitempty"`     // the provider
-	Isolation     string `protobuf:"bytes,4,opt,name=isolation,proto3" json:"isolation,omitempty"` // the tier measured at open
-	ExpiresUnixMs int64  `protobuf:"varint,5,opt,name=expires_unix_ms,json=expiresUnixMs,proto3" json:"expires_unix_ms,omitempty"`
-	IdleTimeoutMs uint32 `protobuf:"varint,6,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3" json:"idle_timeout_ms,omitempty"` // after this long without a call the sandbox is suspended
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SessionId        string `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Session          string `protobuf:"bytes,2,opt,name=session,proto3" json:"session,omitempty"`     // the SHA-256 of session_id, as records carry it
+	Sandbox          string `protobuf:"bytes,3,opt,name=sandbox,proto3" json:"sandbox,omitempty"`     // the provider
+	Isolation        string `protobuf:"bytes,4,opt,name=isolation,proto3" json:"isolation,omitempty"` // the tier measured at open
+	ExpiresUnixMs    int64  `protobuf:"varint,5,opt,name=expires_unix_ms,json=expiresUnixMs,proto3" json:"expires_unix_ms,omitempty"`
+	IdleTimeoutMs    uint32 `protobuf:"varint,6,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3" json:"idle_timeout_ms,omitempty"`       // after this long without a call the sandbox is suspended
+	SoftwareIdentity string `protobuf:"bytes,7,opt,name=software_identity,json=softwareIdentity,proto3" json:"software_identity,omitempty"` // selected image, when the provider can establish it
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *OpenSessionResponse) Reset() {
 	*x = OpenSessionResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[20]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2082,7 +2203,7 @@ func (x *OpenSessionResponse) String() string {
 func (*OpenSessionResponse) ProtoMessage() {}
 
 func (x *OpenSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[20]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2095,7 +2216,7 @@ func (x *OpenSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenSessionResponse.ProtoReflect.Descriptor instead.
 func (*OpenSessionResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{20}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *OpenSessionResponse) GetSessionId() string {
@@ -2140,6 +2261,13 @@ func (x *OpenSessionResponse) GetIdleTimeoutMs() uint32 {
 	return 0
 }
 
+func (x *OpenSessionResponse) GetSoftwareIdentity() string {
+	if x != nil {
+		return x.SoftwareIdentity
+	}
+	return ""
+}
+
 // SessionRunRequest is a RunRequest with a session ID, for a call in a session.
 // It is a separate message so that a daemon that predates sessions refuses it
 // (Unimplemented) instead of dropping the ID and running the payload alone. A
@@ -2151,6 +2279,7 @@ type SessionRunRequest struct {
 	TraceId          string                 `protobuf:"bytes,3,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
 	TimeoutMs        int32                  `protobuf:"varint,4,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
 	SessionId        string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SoftwareRule     *SoftwareRule          `protobuf:"bytes,6,opt,name=software_rule,json=softwareRule,proto3" json:"software_rule,omitempty"`
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*SessionRunRequest_Javascript
@@ -2162,7 +2291,7 @@ type SessionRunRequest struct {
 
 func (x *SessionRunRequest) Reset() {
 	*x = SessionRunRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[21]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2174,7 +2303,7 @@ func (x *SessionRunRequest) String() string {
 func (*SessionRunRequest) ProtoMessage() {}
 
 func (x *SessionRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[21]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2187,7 +2316,7 @@ func (x *SessionRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionRunRequest.ProtoReflect.Descriptor instead.
 func (*SessionRunRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{21}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *SessionRunRequest) GetProtocol() uint32 {
@@ -2223,6 +2352,13 @@ func (x *SessionRunRequest) GetSessionId() string {
 		return x.SessionId
 	}
 	return ""
+}
+
+func (x *SessionRunRequest) GetSoftwareRule() *SoftwareRule {
+	if x != nil {
+		return x.SoftwareRule
+	}
+	return nil
 }
 
 func (x *SessionRunRequest) GetPayload() isSessionRunRequest_Payload {
@@ -2280,7 +2416,7 @@ type SessionRunResponse struct {
 
 func (x *SessionRunResponse) Reset() {
 	*x = SessionRunResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[22]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2292,7 +2428,7 @@ func (x *SessionRunResponse) String() string {
 func (*SessionRunResponse) ProtoMessage() {}
 
 func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[22]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2305,7 +2441,7 @@ func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionRunResponse.ProtoReflect.Descriptor instead.
 func (*SessionRunResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{22}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *SessionRunResponse) GetRun() *RunResponse {
@@ -2339,7 +2475,7 @@ type CloseSessionRequest struct {
 
 func (x *CloseSessionRequest) Reset() {
 	*x = CloseSessionRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2351,7 +2487,7 @@ func (x *CloseSessionRequest) String() string {
 func (*CloseSessionRequest) ProtoMessage() {}
 
 func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2364,7 +2500,7 @@ func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionRequest.ProtoReflect.Descriptor instead.
 func (*CloseSessionRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{23}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *CloseSessionRequest) GetProtocol() uint32 {
@@ -2396,7 +2532,7 @@ type CloseSessionResponse struct {
 
 func (x *CloseSessionResponse) Reset() {
 	*x = CloseSessionResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2408,7 +2544,7 @@ func (x *CloseSessionResponse) String() string {
 func (*CloseSessionResponse) ProtoMessage() {}
 
 func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2421,7 +2557,7 @@ func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionResponse.ProtoReflect.Descriptor instead.
 func (*CloseSessionResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{24}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *CloseSessionResponse) GetSession() string {
@@ -2464,7 +2600,7 @@ type SessionEnded struct {
 
 func (x *SessionEnded) Reset() {
 	*x = SessionEnded{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2476,7 +2612,7 @@ func (x *SessionEnded) String() string {
 func (*SessionEnded) ProtoMessage() {}
 
 func (x *SessionEnded) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2489,7 +2625,7 @@ func (x *SessionEnded) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionEnded.ProtoReflect.Descriptor instead.
 func (*SessionEnded) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{25}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SessionEnded) GetReason() SessionEnd {
@@ -2520,7 +2656,7 @@ type NotDispatched struct {
 
 func (x *NotDispatched) Reset() {
 	*x = NotDispatched{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2532,7 +2668,7 @@ func (x *NotDispatched) String() string {
 func (*NotDispatched) ProtoMessage() {}
 
 func (x *NotDispatched) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2545,7 +2681,7 @@ func (x *NotDispatched) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotDispatched.ProtoReflect.Descriptor instead.
 func (*NotDispatched) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{26}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *NotDispatched) GetReason() NotDispatchedReason {
@@ -2577,10 +2713,16 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x06policy\x18\x0e \x01(\tR\x06policy\x12+\n" +
 	"\x11supports_sessions\x18\x0f \x01(\bR\x10supportsSessions\x12.\n" +
 	"\x13session_lifetime_ms\x18\x10 \x01(\rR\x11sessionLifetimeMs\x125\n" +
-	"\x17session_idle_timeout_ms\x18\x11 \x01(\rR\x14sessionIdleTimeoutMsJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"V\n" +
+	"\x17session_idle_timeout_ms\x18\x11 \x01(\rR\x14sessionIdleTimeoutMsJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\x83\x01\n" +
 	"\x12PayloadEnvironment\x12\x1a\n" +
 	"\bidentity\x18\x01 \x01(\tR\bidentity\x12$\n" +
-	"\x0emax_timeout_ms\x18\x02 \x01(\rR\fmaxTimeoutMs\"l\n" +
+	"\x0emax_timeout_ms\x18\x02 \x01(\rR\fmaxTimeoutMs\x12+\n" +
+	"\x11software_identity\x18\x03 \x01(\tR\x10softwareIdentity\"B\n" +
+	"\fSoftwareRule\x12\x12\n" +
+	"\x04mode\x18\x01 \x01(\tR\x04mode\x12\x1e\n" +
+	"\n" +
+	"identities\x18\x02 \x03(\tR\n" +
+	"identities\"l\n" +
 	"\fRunResources\x12\x1b\n" +
 	"\tmemory_mb\x18\x01 \x01(\rR\bmemoryMb\x12\x12\n" +
 	"\x04cpus\x18\x02 \x01(\x01R\x04cpus\x12\x12\n" +
@@ -2600,14 +2742,15 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x10added_latency_ms\x18\n" +
 	" \x01(\x03R\x0eaddedLatencyMs\x12\x1f\n" +
 	"\vbytes_moved\x18\v \x01(\x03R\n" +
-	"bytesMoved\"\xbf\x02\n" +
+	"bytesMoved\"\xff\x02\n" +
 	"\n" +
 	"RunRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
 	"\btrace_id\x18\x03 \x01(\tR\atraceId\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x04 \x01(\x05R\ttimeoutMs\x12<\n" +
+	"timeout_ms\x18\x04 \x01(\x05R\ttimeoutMs\x12>\n" +
+	"\rsoftware_rule\x18\x05 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12<\n" +
 	"\n" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1a.plimsoll.v1.JavaScriptRunH\x00R\n" +
@@ -2617,20 +2760,22 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\apayload\"H\n" +
 	"\rJavaScriptRun\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12#\n" +
-	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\xce\x02\n" +
+	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\x9d\x03\n" +
 	"\vRunResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12\x1f\n" +
 	"\vduration_ms\x18\x03 \x01(\x03R\n" +
 	"durationMs\x12.\n" +
-	"\x06record\x18\x04 \x01(\v2\x16.plimsoll.v1.RunRecordR\x06record\x12?\n" +
+	"\x06record\x18\x04 \x01(\v2\x16.plimsoll.v1.RunRecordR\x06record\x12+\n" +
+	"\x11software_identity\x18\x05 \x01(\tR\x10softwareIdentity\x12 \n" +
+	"\venvironment\x18\x06 \x01(\tR\venvironment\x12?\n" +
 	"\n" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1d.plimsoll.v1.JavaScriptResultH\x00R\n" +
 	"javascript\x126\n" +
 	"\aproject\x18\v \x01(\v2\x1a.plimsoll.v1.ProjectResultH\x00R\aproject\x123\n" +
 	"\x06module\x18\f \x01(\v2\x19.plimsoll.v1.ModuleResultH\x00R\x06moduleB\b\n" +
-	"\x06result\"\xb5\x03\n" +
+	"\x06result\"\x8c\x04\n" +
 	"\tRunRecord\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12%\n" +
 	"\x0erequest_sha256\x18\x02 \x01(\tR\rrequestSha256\x12#\n" +
@@ -2644,7 +2789,9 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\asession\x18\n" +
 	" \x01(\tR\asession\x12\x1a\n" +
 	"\bsequence\x18\v \x01(\x04R\bsequence\x12'\n" +
-	"\x0fprevious_sha256\x18\f \x01(\tR\x0epreviousSha256\x12#\n" +
+	"\x0fprevious_sha256\x18\f \x01(\tR\x0epreviousSha256\x12+\n" +
+	"\x11software_identity\x18\x0e \x01(\tR\x10softwareIdentity\x12(\n" +
+	"\x10software_rule_id\x18\x0f \x01(\tR\x0esoftwareRuleId\x12#\n" +
 	"\rrecord_sha256\x18\r \x01(\tR\frecordSha256\"\x86\x02\n" +
 	"\x10JavaScriptResult\x12\x16\n" +
 	"\x06stdout\x18\x01 \x01(\fR\x06stdout\x12\x16\n" +
@@ -2701,14 +2848,15 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\aoutcome\x18\x05 \x01(\x0e2\x1b.plimsoll.v1.ProjectOutcomeR\aoutcome\x12%\n" +
 	"\x0eoutcome_detail\x18\x06 \x01(\tR\routcomeDetail\x12\x16\n" +
 	"\x06stdout\x18\a \x01(\fR\x06stdout\x12\x16\n" +
-	"\x06stderr\x18\b \x01(\fR\x06stderr\"\xc1\x01\n" +
+	"\x06stderr\x18\b \x01(\fR\x06stderr\"\x81\x02\n" +
 	"\x12OpenSessionRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
 	"\btrace_id\x18\x03 \x01(\tR\atraceId\x12\x1f\n" +
 	"\vlifetime_ms\x18\x04 \x01(\rR\n" +
 	"lifetimeMs\x12&\n" +
-	"\x0fidle_timeout_ms\x18\x05 \x01(\rR\ridleTimeoutMs\"\xd6\x01\n" +
+	"\x0fidle_timeout_ms\x18\x05 \x01(\rR\ridleTimeoutMs\x12>\n" +
+	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\"\x83\x02\n" +
 	"\x13OpenSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
@@ -2716,7 +2864,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\asandbox\x18\x03 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x04 \x01(\tR\tisolation\x12&\n" +
 	"\x0fexpires_unix_ms\x18\x05 \x01(\x03R\rexpiresUnixMs\x12&\n" +
-	"\x0fidle_timeout_ms\x18\x06 \x01(\rR\ridleTimeoutMs\"\xb3\x02\n" +
+	"\x0fidle_timeout_ms\x18\x06 \x01(\rR\ridleTimeoutMs\x12+\n" +
+	"\x11software_identity\x18\a \x01(\tR\x10softwareIdentity\"\xf3\x02\n" +
 	"\x11SessionRunRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
@@ -2724,7 +2873,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"timeout_ms\x18\x04 \x01(\x05R\ttimeoutMs\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x05 \x01(\tR\tsessionId\x12<\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\x12>\n" +
+	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12<\n" +
 	"\n" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1a.plimsoll.v1.JavaScriptRunH\x00R\n" +
@@ -2765,7 +2915,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x1eSESSION_END_MAIN_PROCESS_ENDED\x10\x04\x12\x1f\n" +
 	"\x1bSESSION_END_BOUNDARY_FAILED\x10\x05\x12\x1f\n" +
 	"\x1bSESSION_END_SANDBOX_CHANGED\x10\x06\x12\x18\n" +
-	"\x14SESSION_END_SHUTDOWN\x10\a*\x99\x02\n" +
+	"\x14SESSION_END_SHUTDOWN\x10\a*\xc0\x02\n" +
 	"\x13NotDispatchedReason\x12%\n" +
 	"!NOT_DISPATCHED_REASON_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dNOT_DISPATCHED_REASON_REQUEST\x10\x01\x12$\n" +
@@ -2773,7 +2923,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x1eNOT_DISPATCHED_REASON_PROTOCOL\x10\x03\x12%\n" +
 	"!NOT_DISPATCHED_REASON_UNSUPPORTED\x10\x04\x12#\n" +
 	"\x1fNOT_DISPATCHED_REASON_ISOLATION\x10\x05\x12\"\n" +
-	"\x1eNOT_DISPATCHED_REASON_CAPACITY\x10\x062\x89\x03\n" +
+	"\x1eNOT_DISPATCHED_REASON_CAPACITY\x10\x06\x12%\n" +
+	"!NOT_DISPATCHED_REASON_ENVIRONMENT\x10\a2\x89\x03\n" +
 	"\x0eSandboxService\x128\n" +
 	"\x03Run\x12\x17.plimsoll.v1.RunRequest\x1a\x18.plimsoll.v1.RunResponse\x12G\n" +
 	"\bDescribe\x12\x1c.plimsoll.v1.DescribeRequest\x1a\x1d.plimsoll.v1.DescribeResponse\x12P\n" +
@@ -2795,7 +2946,7 @@ func file_plimsoll_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_plimsoll_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_plimsoll_v1_sandbox_proto_goTypes = []any{
 	(ProjectOutcome)(0),          // 0: plimsoll.v1.ProjectOutcome
 	(SessionEnd)(0),              // 1: plimsoll.v1.SessionEnd
@@ -2803,74 +2954,78 @@ var file_plimsoll_v1_sandbox_proto_goTypes = []any{
 	(*DescribeRequest)(nil),      // 3: plimsoll.v1.DescribeRequest
 	(*DescribeResponse)(nil),     // 4: plimsoll.v1.DescribeResponse
 	(*PayloadEnvironment)(nil),   // 5: plimsoll.v1.PayloadEnvironment
-	(*RunResources)(nil),         // 6: plimsoll.v1.RunResources
-	(*AdviceFinding)(nil),        // 7: plimsoll.v1.AdviceFinding
-	(*RunRequest)(nil),           // 8: plimsoll.v1.RunRequest
-	(*JavaScriptRun)(nil),        // 9: plimsoll.v1.JavaScriptRun
-	(*RunResponse)(nil),          // 10: plimsoll.v1.RunResponse
-	(*RunRecord)(nil),            // 11: plimsoll.v1.RunRecord
-	(*JavaScriptResult)(nil),     // 12: plimsoll.v1.JavaScriptResult
-	(*ProjectFile)(nil),          // 13: plimsoll.v1.ProjectFile
-	(*StepResult)(nil),           // 14: plimsoll.v1.StepResult
-	(*Artifact)(nil),             // 15: plimsoll.v1.Artifact
-	(*ProjectRun)(nil),           // 16: plimsoll.v1.ProjectRun
-	(*ProjectResult)(nil),        // 17: plimsoll.v1.ProjectResult
-	(*ModuleRow)(nil),            // 18: plimsoll.v1.ModuleRow
-	(*ModuleRun)(nil),            // 19: plimsoll.v1.ModuleRun
-	(*ModuleRowResult)(nil),      // 20: plimsoll.v1.ModuleRowResult
-	(*ModuleResult)(nil),         // 21: plimsoll.v1.ModuleResult
-	(*OpenSessionRequest)(nil),   // 22: plimsoll.v1.OpenSessionRequest
-	(*OpenSessionResponse)(nil),  // 23: plimsoll.v1.OpenSessionResponse
-	(*SessionRunRequest)(nil),    // 24: plimsoll.v1.SessionRunRequest
-	(*SessionRunResponse)(nil),   // 25: plimsoll.v1.SessionRunResponse
-	(*CloseSessionRequest)(nil),  // 26: plimsoll.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil), // 27: plimsoll.v1.CloseSessionResponse
-	(*SessionEnded)(nil),         // 28: plimsoll.v1.SessionEnded
-	(*NotDispatched)(nil),        // 29: plimsoll.v1.NotDispatched
+	(*SoftwareRule)(nil),         // 6: plimsoll.v1.SoftwareRule
+	(*RunResources)(nil),         // 7: plimsoll.v1.RunResources
+	(*AdviceFinding)(nil),        // 8: plimsoll.v1.AdviceFinding
+	(*RunRequest)(nil),           // 9: plimsoll.v1.RunRequest
+	(*JavaScriptRun)(nil),        // 10: plimsoll.v1.JavaScriptRun
+	(*RunResponse)(nil),          // 11: plimsoll.v1.RunResponse
+	(*RunRecord)(nil),            // 12: plimsoll.v1.RunRecord
+	(*JavaScriptResult)(nil),     // 13: plimsoll.v1.JavaScriptResult
+	(*ProjectFile)(nil),          // 14: plimsoll.v1.ProjectFile
+	(*StepResult)(nil),           // 15: plimsoll.v1.StepResult
+	(*Artifact)(nil),             // 16: plimsoll.v1.Artifact
+	(*ProjectRun)(nil),           // 17: plimsoll.v1.ProjectRun
+	(*ProjectResult)(nil),        // 18: plimsoll.v1.ProjectResult
+	(*ModuleRow)(nil),            // 19: plimsoll.v1.ModuleRow
+	(*ModuleRun)(nil),            // 20: plimsoll.v1.ModuleRun
+	(*ModuleRowResult)(nil),      // 21: plimsoll.v1.ModuleRowResult
+	(*ModuleResult)(nil),         // 22: plimsoll.v1.ModuleResult
+	(*OpenSessionRequest)(nil),   // 23: plimsoll.v1.OpenSessionRequest
+	(*OpenSessionResponse)(nil),  // 24: plimsoll.v1.OpenSessionResponse
+	(*SessionRunRequest)(nil),    // 25: plimsoll.v1.SessionRunRequest
+	(*SessionRunResponse)(nil),   // 26: plimsoll.v1.SessionRunResponse
+	(*CloseSessionRequest)(nil),  // 27: plimsoll.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil), // 28: plimsoll.v1.CloseSessionResponse
+	(*SessionEnded)(nil),         // 29: plimsoll.v1.SessionEnded
+	(*NotDispatched)(nil),        // 30: plimsoll.v1.NotDispatched
 }
 var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	5,  // 0: plimsoll.v1.DescribeResponse.javascript_environment:type_name -> plimsoll.v1.PayloadEnvironment
 	5,  // 1: plimsoll.v1.DescribeResponse.project_environment:type_name -> plimsoll.v1.PayloadEnvironment
 	5,  // 2: plimsoll.v1.DescribeResponse.module_environment:type_name -> plimsoll.v1.PayloadEnvironment
-	6,  // 3: plimsoll.v1.DescribeResponse.resources:type_name -> plimsoll.v1.RunResources
-	9,  // 4: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
-	16, // 5: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
-	19, // 6: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
-	11, // 7: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
-	12, // 8: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
-	17, // 9: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
-	21, // 10: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
-	7,  // 11: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
-	13, // 12: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
-	14, // 13: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
-	0,  // 14: plimsoll.v1.ProjectResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
-	15, // 15: plimsoll.v1.ProjectResult.artifacts:type_name -> plimsoll.v1.Artifact
-	7,  // 16: plimsoll.v1.ProjectResult.advice:type_name -> plimsoll.v1.AdviceFinding
-	18, // 17: plimsoll.v1.ModuleRun.rows:type_name -> plimsoll.v1.ModuleRow
-	20, // 18: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
-	0,  // 19: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
-	9,  // 20: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
-	16, // 21: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
-	10, // 22: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
-	1,  // 23: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 24: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 25: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
-	2,  // 26: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
-	8,  // 27: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
-	3,  // 28: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
-	22, // 29: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
-	24, // 30: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
-	26, // 31: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
-	10, // 32: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
-	4,  // 33: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
-	23, // 34: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
-	25, // 35: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
-	27, // 36: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
-	32, // [32:37] is the sub-list for method output_type
-	27, // [27:32] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	7,  // 3: plimsoll.v1.DescribeResponse.resources:type_name -> plimsoll.v1.RunResources
+	6,  // 4: plimsoll.v1.RunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	10, // 5: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	17, // 6: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	20, // 7: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
+	12, // 8: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
+	13, // 9: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
+	18, // 10: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
+	22, // 11: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
+	8,  // 12: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	14, // 13: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
+	15, // 14: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
+	0,  // 15: plimsoll.v1.ProjectResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	16, // 16: plimsoll.v1.ProjectResult.artifacts:type_name -> plimsoll.v1.Artifact
+	8,  // 17: plimsoll.v1.ProjectResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	19, // 18: plimsoll.v1.ModuleRun.rows:type_name -> plimsoll.v1.ModuleRow
+	21, // 19: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
+	0,  // 20: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	6,  // 21: plimsoll.v1.OpenSessionRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	6,  // 22: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	10, // 23: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	17, // 24: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	11, // 25: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
+	1,  // 26: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 27: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 28: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
+	2,  // 29: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
+	9,  // 30: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
+	3,  // 31: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
+	23, // 32: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
+	25, // 33: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
+	27, // 34: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
+	11, // 35: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
+	4,  // 36: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
+	24, // 37: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
+	26, // 38: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
+	28, // 39: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
+	35, // [35:40] is the sub-list for method output_type
+	30, // [30:35] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_plimsoll_v1_sandbox_proto_init() }
@@ -2878,17 +3033,17 @@ func file_plimsoll_v1_sandbox_proto_init() {
 	if File_plimsoll_v1_sandbox_proto != nil {
 		return
 	}
-	file_plimsoll_v1_sandbox_proto_msgTypes[5].OneofWrappers = []any{
+	file_plimsoll_v1_sandbox_proto_msgTypes[6].OneofWrappers = []any{
 		(*RunRequest_Javascript)(nil),
 		(*RunRequest_Project)(nil),
 		(*RunRequest_Module)(nil),
 	}
-	file_plimsoll_v1_sandbox_proto_msgTypes[7].OneofWrappers = []any{
+	file_plimsoll_v1_sandbox_proto_msgTypes[8].OneofWrappers = []any{
 		(*RunResponse_Javascript)(nil),
 		(*RunResponse_Project)(nil),
 		(*RunResponse_Module)(nil),
 	}
-	file_plimsoll_v1_sandbox_proto_msgTypes[21].OneofWrappers = []any{
+	file_plimsoll_v1_sandbox_proto_msgTypes[22].OneofWrappers = []any{
 		(*SessionRunRequest_Javascript)(nil),
 		(*SessionRunRequest_Project)(nil),
 	}
@@ -2898,7 +3053,7 @@ func file_plimsoll_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plimsoll_v1_sandbox_proto_rawDesc), len(file_plimsoll_v1_sandbox_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   27,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

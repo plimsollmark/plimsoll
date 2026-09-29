@@ -1,4 +1,4 @@
-// Command wasm-buck judges a buck converter controller written in C: the project run
+// Command wasm-buck runs and scores a buck converter controller written in C: the project run
 // compiles it to WebAssembly inside the sandbox, then runs it against the buck
 // plant, which is WebAssembly too, under the same shim as examples/wasm-controller.
 // See README.md for what this proves and what it does not.
@@ -52,7 +52,7 @@ var fixtureJSON []byte
 var pageTemplate string
 
 // width is the plant's observation count: output voltage and inductor current. The
-// judge appends the duty cycle to each tick of its record.
+// runner appends the duty cycle to each tick of its record.
 const width = 2
 
 // fixture is fingerprints.json: the build step, the plant, the scenarios, and the
@@ -91,7 +91,7 @@ type result struct {
 
 func main() {
 	out := flag.String("out", filepath.Join("docs", "examples", "wasm-buck", "index.html"), "page to write")
-	image := flag.String("image", "plimsoll/sandbox-wasm-cc:latest", "project image carrying the C toolchain, the plant and the judge")
+	image := flag.String("image", "plimsoll/sandbox-wasm-cc:latest", "project image carrying the C toolchain, the plant and the runner")
 	flag.Parse()
 	if err := realMain(*out, *image); err != nil {
 		fmt.Fprintln(os.Stderr, "wasm-buck:", err)
@@ -131,7 +131,7 @@ func realMain(out, image string) error {
 		if err != nil {
 			return fmt.Errorf("C run %d: %w", i, err)
 		}
-		fmt.Printf("run %d     | controller.wasm %d bytes, sha256 %s  (compile %d ms, judging %d ms, %s tier)\n", i, r.wasmBytes, r.wasmSHA256[:16], r.buildMs, r.judgeMs, r.isolation)
+		fmt.Printf("run %d     | controller.wasm %d bytes, sha256 %s  (compile %d ms, trials %d ms, %s tier)\n", i, r.wasmBytes, r.wasmSHA256[:16], r.buildMs, r.judgeMs, r.isolation)
 		runs = append(runs, r)
 	}
 	js, err := judge(ctx, p.Sandbox, fx, []sandbox.File{{Path: "reference.js", Content: referenceJS}}, "", "reference.js")
@@ -191,7 +191,7 @@ func num(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
 
 func round(v float64) float64 { return math.Round(v*1e6) / 1e6 }
 
-// judge sends one project run: an optional compile, then one judge step per
+// judge sends one project run: an optional compile, then one runner step per
 // scenario, each running controller (a file of the run) as the controller process.
 func judge(ctx context.Context, sb sandbox.Sandbox, fx fixture, files []sandbox.File, build, controller string) (result, error) {
 	var steps, artifacts []string
@@ -243,7 +243,7 @@ func judge(ctx context.Context, sb sandbox.Sandbox, fx fixture, files []sandbox.
 			Fingerprint string `json:"fingerprint"`
 		}
 		if err := json.Unmarshal([]byte(strings.TrimSpace(step.Stdout)), &v); err != nil {
-			return result{}, fmt.Errorf("%s: judge stdout %q: %w", s.ID, step.Stdout, err)
+			return result{}, fmt.Errorf("%s: runner stdout %q: %w", s.ID, step.Stdout, err)
 		}
 		traj := byPath[s.ID+".bin"]
 		if len(traj) != ticks*(width+1)*8 {
@@ -252,14 +252,14 @@ func judge(ctx context.Context, sb sandbox.Sandbox, fx fixture, files []sandbox.
 		ts := sha256.Sum256(traj)
 		fp := hex.EncodeToString(ts[:])
 		if fp != v.Fingerprint {
-			return result{}, fmt.Errorf("%s: the judge printed %s but the artifact hashes to %s", s.ID, v.Fingerprint, fp)
+			return result{}, fmt.Errorf("%s: the runner printed %s but the artifact hashes to %s", s.ID, v.Fingerprint, fp)
 		}
 		r.scenarios[s.ID] = judged{fingerprint: fp, trajectory: traj}
 	}
 	return r, nil
 }
 
-// at reads column col of tick k from a judge record: per tick v, i, duty as
+// at reads column col of tick k from a runner record: per tick v, i, duty as
 // little-endian float64.
 func at(traj []byte, k, col int) float64 {
 	return math.Float64frombits(binary.LittleEndian.Uint64(traj[(k*(width+1)+col)*8:]))
@@ -272,7 +272,7 @@ type verdict struct {
 	MaxI    float64
 }
 
-// score is the buck environment's verifier, restated: the fraction of ticks from
+// score is the buck environment's grader, restated: the fraction of ticks from
 // 2 ms on with the output within 0.1 V of 5 V, and zero with a reason if the output
 // ever exceeds 6 V or the inductor current 10 A in magnitude.
 func score(traj []byte, tickS float64) verdict {
@@ -416,7 +416,7 @@ func render(fx fixture, runs []result, rows []scenarioRow, replay []byte) ([]byt
 		"Source":      html.EscapeString(controllerC),
 		"Reference":   html.EscapeString(referenceJS),
 		"Data":        string(raw),
-		"Description": fmt.Sprintf("A buck converter controller in C, compiled to WebAssembly in plimsoll's sandbox and judged on a simulated power supply: identical to its JavaScript law in all %d scenarios.", len(rows)),
+		"Description": fmt.Sprintf("A buck converter controller in C, compiled to WebAssembly in plimsoll's sandbox and tested on a simulated power supply: identical to its JavaScript law in all %d scenarios.", len(rows)),
 	})
 	return b.Bytes(), err
 }

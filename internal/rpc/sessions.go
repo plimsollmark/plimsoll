@@ -41,6 +41,8 @@ type sessionEntry struct {
 	fingerprint string
 	principal   string
 	sess        sandbox.Session
+	software    sandbox.Environments // identities captured when the session opened
+	rule        sandbox.SoftwareRule
 	idleTimeout time.Duration
 	turn        chan struct{} // one call at a time, in order
 
@@ -151,7 +153,7 @@ func shorter(configured time.Duration, requestedMs uint32) time.Duration {
 // OpenSession opens a session for the calling principal.
 func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
 	m := req.Msg
-	env, err := parseEnvelope(m.GetProtocol(), m.GetMinimumIsolation(), 0, m.GetTraceId())
+	env, err := parseEnvelope(m.GetProtocol(), m.GetMinimumIsolation(), 0, m.GetTraceId(), m.GetSoftwareRule())
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +164,18 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	}
 	if err := sandbox.CheckMinimumIsolation(s.Sandbox.IsolationClass(), env.minimum); err != nil {
 		return nil, mapSandboxErr(err)
+	}
+	var software sandbox.Environments
+	if d, ok := s.Sandbox.(sandbox.Describer); ok {
+		software = d.Environments()
+	}
+	if err := env.software.Check(software.JavaScript.SoftwareIdentity); err != nil {
+		return nil, mapSandboxErr(err)
+	}
+	if pc, ok := s.Sandbox.(sandbox.ProjectCapable); ok && pc.SupportsProjects() {
+		if err := env.software.Check(software.Project.SoftwareIdentity); err != nil {
+			return nil, mapSandboxErr(err)
+		}
 	}
 	if !s.sessions.reserve(s.Sessions.MaxSessions) {
 		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
@@ -199,6 +213,8 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		id:          hex.EncodeToString(id),
 		principal:   auditCaller(ctx),
 		sess:        sess,
+		software:    software,
+		rule:        env.software,
 		idleTimeout: idle,
 		turn:        make(chan struct{}, 1),
 		release:     release,
@@ -220,12 +236,13 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	}
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "session opened", append(attrs, traceAttrs(env.traceID)...)...)
 	return connect.NewResponse(&plimsollv1.OpenSessionResponse{
-		SessionId:     e.id,
-		Session:       e.fingerprint,
-		Sandbox:       s.Sandbox.Name(),
-		Isolation:     sess.Isolation().String(),
-		ExpiresUnixMs: sess.ExpiresAt().UnixMilli(),
-		IdleTimeoutMs: uint32(idle / time.Millisecond),
+		SessionId:        e.id,
+		Session:          e.fingerprint,
+		Sandbox:          s.Sandbox.Name(),
+		Isolation:        sess.Isolation().String(),
+		ExpiresUnixMs:    sess.ExpiresAt().UnixMilli(),
+		IdleTimeoutMs:    uint32(idle / time.Millisecond),
+		SoftwareIdentity: software.JavaScript.SoftwareIdentity,
 	}), nil
 }
 
@@ -293,7 +310,7 @@ func (s *SandboxService) suspend(e *sessionEntry) {
 func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {
 	received := time.Now()
 	m := req.Msg
-	env, err := parseEnvelope(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(), m.GetTraceId())
+	env, err := parseEnvelope(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(), m.GetTraceId(), m.GetSoftwareRule())
 	if err != nil {
 		return nil, err
 	}
@@ -303,6 +320,16 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	}
 	if m.GetPayload() == nil {
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("payload must be exactly one of javascript or project"))
+	}
+	// The open's rule cannot be silently dropped by a raw session caller. The
+	// request must carry the effective rule so its digest and record bind it.
+	effective, err := sandbox.MergeSoftwareRules(e.rule, env.software)
+	if err != nil {
+		return nil, mapSandboxErr(err)
+	}
+	if effective.ID() != env.software.ID() {
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
+			fmt.Errorf("%w: session call omitted the software rule established at open", sandbox.ErrInvalidRequest))
 	}
 	// One call at a time, in arrival order, so the chain numbers calls as they ran.
 	select {
@@ -334,6 +361,8 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 		admit:    func(ctx context.Context) (func(), error) { return s.admitCall(ctx, e) },
 		js:       e.sess.RunJavaScript,
 		project:  e.sess.RunProject,
+		software: e.software,
+		session:  true,
 		attrs:    []slog.Attr{slog.String("session", e.fingerprint), slog.Uint64("session_call", seq)},
 	}
 	var resp *plimsollv1.RunResponse
@@ -349,7 +378,7 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	e.mu.Lock()
 	link := sandbox.RunRecord{Session: e.fingerprint, Sequence: seq, PreviousSHA256: e.last}
 	e.mu.Unlock()
-	resp.Record = s.runRecord(record.SessionRunRequestDigest(m), resp, received, time.Now(), link)
+	resp.Record = s.runRecord(record.SessionRunRequestDigest(m), resp, received, time.Now(), link, env.software)
 	e.mu.Lock()
 	e.calls, e.last = seq, resp.Record.GetRecordSha256()
 	e.mu.Unlock()

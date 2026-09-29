@@ -1,4 +1,4 @@
-// The Node side of a WebAssembly controller. The judge (/oracle/judge.mjs) spawns
+// The Node side of a WebAssembly controller. The runner (/oracle/judge.mjs) spawns
 // this file as the controller process and speaks its line protocol: one line of
 // observations in, one number out, once per tick. This shim does no control
 // arithmetic of its own. It instantiates controller.wasm (compiled from the
@@ -13,9 +13,9 @@
 //
 // The module gets an empty import object, so it cannot reach the host at all: no
 // WASI, no clock, no file, no host math. A module that imports anything is refused
-// before the judge's first tick, with the imports named. Its sin and cos, when it
+// before the runner's first tick, with the imports named. Its sin and cos, when it
 // has any, are therefore the libm compiled into it, and the numbers it returns
-// depend only on its own bytes and the inputs the judge sends.
+// depend only on its own bytes and the inputs the runner sends.
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
@@ -41,7 +41,7 @@ if (typeof exports._initialize === 'function') exports._initialize();
 let k = 0;
 const rl = createInterface({ input: process.stdin });
 rl.on('line', (line) => {
-  // The observations are everything before an optional '|' (the judge's --jac
+  // The observations are everything before an optional '|' (the runner's --jac
   // appendix), separated by single spaces.
   const obs = line.split('|')[0].trim().split(' ').map(Number);
   const u = exports.control(...obs, k++);

@@ -9,9 +9,9 @@ func init() {
 	daemonProviders[openshell.Name] = daemonProvider{
 		build: openshell.FromEnv,
 		usage: openshellUsage,
-		// The gateway sets the process limit for all its sandboxes and OpenShell has no
-		// disk control, so the provider refuses SANDBOX_PIDS and SANDBOX_DISK_MB.
-		hardenedEnvelope: []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS"},
+		// The gateway sets the process limit for all its sandboxes, so the provider
+		// refuses SANDBOX_PIDS; SANDBOX_DISK_MB sizes /tmp.
+		hardenedEnvelope: []string{"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB"},
 		pinnedImages:     true,
 	}
 }
@@ -32,6 +32,11 @@ const openshellUsage = `
                              when SANDBOX_REQUIRE_PINNED_IMAGES=1). openshell
                              honors SANDBOX_MEMORY_MB and SANDBOX_CPUS (default 256
                              MiB and 1 CPU, since OpenShell's own default is no
-                             limit); SANDBOX_PIDS and SANDBOX_DISK_MB fail startup,
-                             because the gateway sets them for all its sandboxes
+                             limit). SANDBOX_DISK_MB mounts each run's /tmp, the
+                             only writable directory, as a noexec tmpfs of that
+                             size (never a session's, whose files a suspend would
+                             discard); the gateway must set allow_driver_config =
+                             true. Unset, /tmp is bounded only by the host's disk.
+                             SANDBOX_PIDS fails startup,
+                             because the gateway sets it for all its sandboxes
 `

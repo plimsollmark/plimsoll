@@ -1,105 +1,126 @@
 # Isolation tiers, and asserting a floor
 
-What problem the reported tier solves, what evidence each tier rests on, and how a caller demands one per request.
+An <dfn>*isolation tier*</dfn> is how strong the wall around a run is, reported as one of four levels, weakest first: `process`, `container`, `kernel`, `vm`. This page covers why plimsoll reports it, what evidence each tier rests on, and how a request demands a minimum.
 
 Part of the [plimsoll README](../README.md).
 
 ## The problem
 
-Agent frameworks increasingly need to run model-authored code. A single-runtime vendor
-has exactly one boundary to describe, so the products that offer this converge on one
-security sentence: "isolated per request, nothing persists."
+AI agent frameworks increasingly need to run code a model wrote. A vendor with one kind
+of sandbox has one wall to describe, so the products that offer this all say the same
+thing: "isolated per request, nothing persists."
 
-Checked in September 2026 against the current documentation for E2B, Modal, Daytona,
-Vercel Sandbox, Cloudflare and Northflank: none of them returns the isolation boundary a
-run executed behind, and none refuses a run that would execute below a minimum the
-caller stated. Modal comes closest, in the other direction: passing
-`experimental_options={"vm_runtime": True}` to `Sandbox.create()` opts into a full VM
-instead of the gVisor default, but nothing reports back which runtime served a given
-call. Kubernetes RuntimeClass (`runtimeClassName: gvisor`) is the same shape one layer
-down, a declaration in a pod spec rather than a per-request floor.
+In September 2026 we checked the current documentation of six hosted sandbox services:
+<dfn>*E2B*</dfn> (which runs code in small virtual machines), Modal, Daytona, Vercel
+Sandbox, Cloudflare and Northflank. None of them returns the wall a run actually got, and
+none refuses a run that would get less than a minimum the caller stated. Modal comes
+closest, from the other side: passing `experimental_options={"vm_runtime": True}` to
+`Sandbox.create()` asks for a full virtual machine instead of its default,
+<dfn>*gVisor*</dfn> (a layer that answers a container's requests to the kernel itself), but
+nothing reports which of the two served a given call. Kubernetes <dfn>*RuntimeClass*</dfn>
+(`runtimeClassName: gvisor`), the pod setting that picks which runtime runs a
+pod, has the same shape one layer down: a declaration in a pod spec, not a minimum per
+request.
 
-The case this is built for is the one Northflank documents plainly: it runs Kata
-Containers where nested virtualization is available and gVisor where it is not. That is
-a reasonable engineering decision, and it means the boundary your code ran behind is a
-property of the host it landed on. The caller has no way to ask which it got.
+The case plimsoll is built for is one Northflank documents plainly: it runs
+<dfn>*Kata Containers*</dfn> (each container inside its own lightweight virtual machine)
+where <dfn>*nested virtualization*</dfn> (a virtual machine inside another one) is
+available, and gVisor where it is not. That is a reasonable engineering decision, and it
+means the wall your code got depends on the machine it landed on. The caller has no way to
+ask which it got.
 
-If your service does report the tier and enforce a caller's floor, open an issue and
-this section gets corrected.
+If your service does report the tier and enforce a caller's minimum, open an issue and this
+section will be corrected.
 
-Meanwhile the ecosystem ships safety claims that nothing checks. The founding example
-for this project: a popular embeddable JavaScript sandbox advertised a `MemoryLimit`
-that was a **no-op**. The library promised a limit it did not enforce, and nothing in
-the type system or the docs revealed it.
+Safety claims that nothing checks are common. The example that started this project: a
+popular embeddable JavaScript sandbox advertised a `MemoryLimit` that did **nothing**. The
+library promised a limit it did not enforce, and nothing in its types or its docs revealed
+that.
 
-plimsoll is the policy and evidence layer in front of a sandbox, not a sandbox
-itself. Isolation is delegated to gVisor and Firecracker, which are better at it.
+plimsoll is not a sandbox itself. It sits in front of one, decides which requests may run,
+and reports the evidence. The walls come from gVisor and <dfn>*Firecracker*</dfn> (AWS's
+open-source virtual machine monitor), which are better at building them.
 
 ## Isolation tiers
 
-Select a provider with `SANDBOX_PROVIDER`. **The default is Disabled**, so nothing
-executes unless you opt in explicitly.
+Pick the <dfn>*provider*</dfn>, the backend that runs the code, with `SANDBOX_PROVIDER`.
+**The default is Disabled**, so nothing runs unless you opt in.
 
 | `SANDBOX_PROVIDER` | Provider | Tier | Use it for |
 |---|---|---|---|
 | unset | Disabled | none | the default; returns `ErrDisabled` |
-| `wasm` | in-process QuickJS via wazero | **process** | dev and low-latency snippets, **not hostile code** |
-| `docker` | locked-down `docker run` | container, or **kernel** under verified gVisor `runsc` | self-hosted production |
-| `e2b` | E2B Firecracker microVM | **VM** | hardware-virtualized isolation |
-| `dockercloud` | Docker Cloud Sandboxes microVM | **VM** | hardware-virtualized isolation on Docker-managed runners |
-| `openshell` | NVIDIA OpenShell sandbox on the gateway's docker driver | container | platforms that already run an OpenShell gateway; the same caveat as docker under `runc` |
+| `wasm` | <dfn>*QuickJS*</dfn>, a small JavaScript engine compiled to <dfn>*WebAssembly*</dfn> (a portable bytecode), run by <dfn>*wazero*</dfn>, a WebAssembly runtime written in Go, inside the daemon | **process** | development and fast snippets, **not hostile code** |
+| `docker` | a locked-down `docker run` | container, or **kernel** under gVisor's runtime `runsc`, once verified | self-hosted production |
+| `e2b` | an E2B <dfn>*microVM*</dfn>, a small virtual machine made for one run | **VM** | isolation by <dfn>*hardware virtualization*</dfn>, the processor's own separation between virtual machines |
+| `dockercloud` | a microVM from <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted sandbox service | **VM** | the same, on Docker's machines |
+| `openshell` | a sandbox from an <dfn>*OpenShell*</dfn> gateway (NVIDIA's agent sandbox runtime), created with docker | container | platforms that already run an OpenShell gateway; the same caveat as docker under `runc` |
 
-> **The WASM tier is in-process.** It is not an OS boundary and not a VM boundary. A
-> QuickJS engine escape lands in the daemon process. It exists for latency and for
-> development. Do not point it at genuinely hostile code.
+> **The WASM tier runs inside the daemon.** It is neither an operating-system wall nor a
+> virtual machine wall. An <dfn>*escape*</dfn>, a bug that lets code out of the QuickJS
+> engine, lands inside the daemon process. It exists for speed and for development. Do not
+> point it at hostile code.
 
-Container tier under stock `runc` shares the host kernel. For hostile production
-input, use `e2b`, or `docker` with `SANDBOX_DOCKER_RUNTIME=runsc`.
+The container tier, with docker's default runtime `runc`, shares the host's kernel. For
+hostile code in production, use `e2b`, or `docker` with `SANDBOX_DOCKER_RUNTIME=runsc`.
 
-Every real provider runs a startup **`SmokeTest`** that checks behavior rather than
-configuration, and none serves if it fails. The Docker smoke test launches a
-throwaway container and proves, from its own mount table and by attempting a real
-write at every mount point, that the root filesystem is read-only and that the
-promised `noexec` tmpfs mounts are the only writable ones, and it reads the
-container's own `pids.max` and refuses to serve unless it equals the configured
-process limit (a runtime can accept `--pids-limit` without applying it). Under gVisor the
-container's copy is emulated and always reads `max`, and gVisor enforces the limit on the
-sandbox's cgroup on the host, so there the smoke test reads that host cgroup instead. The E2B smoke test
-completes a real secured microVM create, stages files, runs a probe through the
-actual project-step path, and checks live that egress is denied.
+Every real provider runs a startup **`SmokeTest`** that checks behaviour, not just
+configuration, and the daemon serves nothing if it fails.
 
-**Exactly what the kernel and VM tiers rest on**, since a security claim that is not
-falsifiable is not worth reading. For `docker`, kernel tier requires that the daemon
-this provider is actually connected to registers the configured OCI runtime, and
-that `runsc` resolves there to an executable named `runsc`; runs then launch under
-that runtime. That is daemon-registration evidence plus the behavioral smoke above.
-It is not proof that the running kernel boundary is gVisor, and the code says so at
-[docker.go](../sandbox/docker.go) `Preflight`. For `e2b`, VM tier follows from provider
-identity: E2B runs each sandbox in a Firecracker microVM, and plimsoll reports that
-rather than measuring it. Its smoke test proves the microVM behaves as promised,
-including denied egress, not that a hypervisor is present. Both are stronger than a
-datasheet sentence and weaker than attestation; if your threat model needs the
-latter, neither tier here supplies it.
+- The docker test starts a throwaway container. From the container's own list of mounted
+  filesystems, and by trying a real write at every mount point, it proves that the root
+  filesystem is read-only and that the only writable places are the promised
+  <dfn>*tmpfs*</dfn> mounts (filesystems held in memory) marked `noexec` (nothing on them
+  can run). It also reads the container's process limit, `pids.max`, and refuses to serve
+  unless it equals the configured limit, because a runtime can accept `--pids-limit`
+  without applying it. Under gVisor the container sees an emulated copy of that file that
+  always reads `max`, while gVisor applies the limit to the sandbox's <dfn>*cgroup*</dfn>
+  on the host (the kernel's record of a group of processes' limits), so there the test reads
+  the host's copy instead.
+- The E2B test creates a real microVM with its access tokens, copies files into it, runs a
+  test program through exactly the path a project step takes, and checks live that
+  <dfn>*egress*</dfn>, traffic leaving the VM, is blocked.
 
-For `openshell`, container tier follows from the gateway's own report: `GetGatewayInfo`
-must name the docker compute driver, and any other driver is refused. The gateway does
-not say which OCI runtime its docker uses, so plimsoll reports container even where that
-runtime is gVisor. Its smoke test proves from inside a sandbox that only `/tmp` accepts
-writes, that egress is refused, that the requested limits are in the sandbox's cgroup,
-and that cancelling a command kills it ([openshell.md](openshell.md)).
+**Exactly what the kernel and vm tiers rest on**, because a security claim nobody could
+prove wrong is not worth reading.
+
+- For `docker`, the kernel tier requires that the docker daemon this provider is actually
+  connected to has the configured <dfn>*OCI runtime*</dfn> (the program docker calls to
+  start a container) registered, and that `runsc` there is a program named `runsc`; runs
+  then start under that runtime. That is evidence from docker's registration plus the
+  startup test above. It is not proof that the wall actually running is gVisor, and the
+  code says so at [docker.go](../sandbox/docker.go) `Preflight`.
+- For `e2b`, the vm tier follows from which provider it is: E2B runs each sandbox in a
+  Firecracker microVM, and plimsoll reports that without measuring it. Its startup test
+  proves the microVM behaves as promised, including blocked egress, not that a
+  <dfn>*hypervisor*</dfn> (the program that runs virtual machines) is present.
+
+Both are stronger than a sentence in a datasheet and weaker than
+<dfn>*attestation*</dfn>, cryptographic proof from the hardware of what software is
+running. If your <dfn>*threat model*</dfn> (the attacks you must hold out against) needs
+attestation, neither tier here supplies it.
+
+For `openshell`, the container tier follows from the gateway's own report:
+`GetGatewayInfo` must say it creates sandboxes with docker (its docker compute driver), and
+any other driver is refused. The gateway does not say which OCI runtime its docker uses, so
+plimsoll reports `container` even where that runtime is gVisor. Its startup test proves
+from inside a sandbox that only `/tmp` accepts writes, that egress is refused, that the
+requested limits are in the sandbox's cgroup, and that cancelling a command kills it
+([openshell.md](openshell.md)).
 
 ## Asserting a floor
 
-`MinimumIsolation` on a request is a per-dispatch security floor, compared against
-current provider evidence immediately before admission. `ErrInsufficientIsolation`
-means **no code ran**, and the error is marked as refused before dispatch with reason
-`isolation`, so a caller can send the request to a stronger provider
+A request's `MinimumIsolation` is its <dfn>*floor*</dfn>: the weakest tier it will
+accept. The daemon compares it with what its provider currently reports just before
+<dfn>*admission*</dfn>, the capacity check right before a run starts.
+`ErrInsufficientIsolation` means **no code ran**. The error is marked as refused before
+<dfn>*dispatch*</dfn> (the handover to the provider), with the reason `isolation`, so a
+caller can safely send the request to a stronger provider
 ([run results](run-results.md#did-anything-run-the-error-says-so)).
 
-The client also checks the evidence that comes back. A mismatch is
-`ErrIsolationEvidenceMismatch`, and it is deliberately not a safe retry signal:
-execution may already have happened.
+The official client also checks the tier that comes back. A mismatch is
+`ErrIsolationEvidenceMismatch`, and it deliberately does not mean "safe to retry": the
+code may already have run.
 
-`SANDBOX_MIN_ISOLATION` is the operator-wide startup floor. It is not a substitute for
-a caller asserting its own requirement, because a stale `Describe` response must never
-be able to authorize a later downgrade.
+`SANDBOX_MIN_ISOLATION` is the operator's floor for the whole daemon, checked at startup.
+It does not replace a caller's own floor on each request: a `Describe` answer the caller
+read earlier can be out of date, and must never be what allows a weaker run later.

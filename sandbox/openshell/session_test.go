@@ -259,6 +259,33 @@ func TestSessionEndsWhenTheMainProcessDies(t *testing.T) {
 	}
 }
 
+// The gateway can mark the sandbox after the killing call's sweep has found it clean
+// (seen live twice); the next call's read-back then ends the session and refuses the
+// call before its payload runs.
+func TestSessionNoticesALateMainProcessEndAtTheNextCall(t *testing.T) {
+	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
+	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "kill the main process"}); err != nil {
+		t.Fatal(err)
+	}
+	if s.Err() != nil {
+		t.Fatalf("ended before the gateway marked the sandbox: %v", s.Err())
+	}
+	f.setPhase(s.b.name, openshellv1.SandboxPhase_SANDBOX_PHASE_ERROR)
+	_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "the next call"})
+	if _, ok := sandbox.NotDispatchedReason(err); !ok || sandbox.SessionEndReason(err) != sandbox.SessionMainProcessEnded {
+		t.Fatalf("the next call: %v", err)
+	}
+	payloads := 0
+	for _, k := range sc.seen() {
+		if k == "payload" {
+			payloads++
+		}
+	}
+	if payloads != 1 {
+		t.Fatalf("%d payloads ran, want only the killing call's", payloads)
+	}
+}
+
 func TestSessionRefusesACallAfterAnOutOfBandChange(t *testing.T) {
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
 	f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) {

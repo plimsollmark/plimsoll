@@ -54,10 +54,11 @@ option is intentionally only process-tier.
     pinned inputs with [sandbox/wasm/build.sh](sandbox/wasm/build.sh).
 - [placement/](placement/): the routing library for a caller with several daemons
   (Carroll's MP-B, 2026-09-28). It filters backends by what `Describe` states (payload
-  kind, floor, grant capability, environment identity), ranks them by the caller's own
+  kind, floor, grant capability, selected software identity), ranks them by the caller's own
   comparison, sends with each backend's own credential, and retries on another backend
-  only after a refusal marked not-dispatched with reason unsupported, isolation or
-  capacity. No change to `sandbox` or `plimsolld`: one daemon still serves one provider.
+  only after a refusal marked not-dispatched with reason unsupported, isolation,
+  environment or capacity. The daemon enforces software rules before dispatch;
+  one daemon still serves one provider.
   [docs/placement.md](docs/placement.md).
 - [record/](record/) and [attest/](attest/): run records. `record` computes the digests
   the daemon states on every run and the client checks; `attest` is the harness outside
@@ -87,7 +88,7 @@ option is intentionally only process-tier.
   image carries the Greedy fixture that proves the worker's per-instance memory cap
   (256 pages; a greedy row fails alone), and the physics oracle: a cart-pole simulator
   kept as WebAssembly at `/models/cartpole.wasm` behind a stepping shim, and the
-  judge `/oracle/run.mjs` that runs a caller's controller as a separate process and
+  runner `/oracle/run.mjs` that runs a caller's controller as a separate process and
   fingerprints the trajectory (`sandbox/docker_oracle_test.go`).
   [docker/wasm-cc.Dockerfile](docker/wasm-cc.Dockerfile) derives
   `plimsoll/sandbox-wasm-cc` from the sim image: the C half of wasi-sdk 27 (clang and
@@ -101,12 +102,12 @@ option is intentionally only process-tier.
   `advisor` (the efficiency advisor over a loopback daemon: a per-item loop,
   the finding that names the granted collection route, the rewrite, and the API's
   own request count as the witness), `oracle` (needs docker: an agent-written
-  controller judged against the module image's cart-pole simulator by trajectory
-  fingerprint, through the ordinary project API; the page it writes replays the
+  controller run against the module image's cart-pole simulator and checked by its
+  trajectory fingerprint, through the ordinary project API; the page it writes replays the
   runs, and `sandbox/docker_oracle_test.go` asserts the fingerprints), and
   `wasm-controller` (needs docker: a swing-up controller in C compiled to
-  WebAssembly by the run's first step in `plimsoll/sandbox-wasm-cc` and judged on
-  four scenarios by the unchanged judge through the shared Node shim
+  WebAssembly by the run's first step in `plimsoll/sandbox-wasm-cc` and run on
+  four scenarios by the generic trial runner `/oracle/judge.mjs` through the shared Node shim
   ([examples/internal/wasmshim](examples/internal/wasmshim/), which passes the module
   every observation and the tick index, so it serves any single-output simulator, and gives
   the module no imports); the page it writes, `docs/examples/wasm-controller/index.html`, replays
@@ -114,11 +115,11 @@ option is intentionally only process-tier.
   `sandbox/docker_wasm_controller_test.go` asserts a reproducible compile,
   one fingerprint per scenario, the score floor, and that the only difference from
   the JavaScript law is `cos`), `wasm-buck` (needs docker: the buck converter's
-  average current-mode law in C under the same shim and judge; the law calls no
+  average current-mode law in C under the same shim and runner; the law calls no
   library function, so `sandbox/docker_wasm_buck_test.go` requires the C trajectory
   to equal `controller/reference.js`'s byte for byte in all four scenarios, plus a
   reproducible compile and the regulation floor; the page it writes is
-  `docs/examples/wasm-buck/index.html`), and `providers` (the oracle's run, with its judge and
+  `docs/examples/wasm-buck/index.html`), and `providers` (the oracle's run, with its runner and
   simulator sent as project files, on every provider the machine can reach, each built
   by the constructor plimsolld uses (`sandbox.Build`, or `openshell.FromEnv`) and proven
   by `EnsureReady`; the page it writes compares the
@@ -166,7 +167,7 @@ failed), not a Go `error`. Returned errors cover typed pre-dispatch failures
 cancellation/deadline, and unmatched infrastructure failures. **Whether anything ran
 is a mark, not a code:** a refusal raised before any code was dispatched is a
 `sandbox.NotDispatchedError` carrying a `Refusal` reason (`request`, `permission`,
-`protocol`, `unsupported`, `isolation`, `capacity`; `sandbox.NotDispatchedReason(err)`
+`protocol`, `unsupported`, `isolation`, `environment`, `capacity`; `sandbox.NotDispatchedReason(err)`
 reads it). The sandbox package marks its validators, isolation checks, admission and
 every `ErrUnsupported`/`ErrDisabled` site at the source; the RPC layer builds every
 handler-side refusal through `refuse` (a test fails on a Connect error built anywhere
@@ -204,7 +205,7 @@ and its hardened-mode envelope.
 | `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. |
 | `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. Sandboxes are stamped with a per-instance metadata ID; `ReconcileOrphans` (run periodically by the daemon) reaps stamped, untracked microVMs that leaked past a malformed create response or failed teardown. |
 | `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | written against Docker's published API contract; live suite passed 2026-09-24. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
-| `openshell` | NVIDIA OpenShell sandbox through a gateway | container (the gateway's docker driver; any other driver is refused) | built by plimsolld, not `Build`. Keeps sessions (a sweep of every non-own process after each call, `sleep` as the main process, a read-back before each call). Each run creates a sandbox with no network rules (the gateway's deny-all default) and `/tmp` as the only writable directory, reads it back and refuses any difference, runs the payload over the streamed exec (the deadline cancels the stream, which kills the command's process group; a `setsid` descendant lives until the delete), and deletes the sandbox off the result path; `Drain` waits for those deletes at shutdown. Every sandbox declares its lifetime, so `ReconcileOrphans` also reaps what a crashed instance left behind, once that lifetime plus 5 minutes has passed. Grants keep the no-grant policy: a relay in the sandbox pairs the guest's socket connections with connections plimsoll dials in through `ForwardTcp` (session tokens revoked at the run's end), and plimsoll serves the shared broker on them. Module runs: `ErrUnsupported`. Operator setup, grants and the smoke test: [docs/openshell.md](docs/openshell.md). |
+| `openshell` | NVIDIA OpenShell sandbox through a gateway | container (the gateway's docker driver; any other driver is refused) | built by plimsolld, not `Build`. Keeps sessions (a sweep of every non-own process after each call, `sleep` as the main process, a read-back before each call). Each run creates a sandbox with no network rules (the gateway's deny-all default) and `/tmp` as the only writable directory (a `noexec` tmpfs of `SANDBOX_DISK_MB` when that is set), reads it back and refuses any difference, runs the payload over the streamed exec (the deadline cancels the stream, which kills the command's process group; a `setsid` descendant lives until the delete), and deletes the sandbox off the result path; `Drain` waits for those deletes at shutdown. Every sandbox declares its lifetime, so `ReconcileOrphans` also reaps what a crashed instance left behind, once that lifetime plus 5 minutes has passed. Grants keep the no-grant policy: a relay in the sandbox pairs the guest's socket connections with connections plimsoll dials in through `ForwardTcp` (session tokens revoked at the run's end), and plimsoll serves the shared broker on them. Module runs: `ErrUnsupported`. Operator setup, grants and the smoke test: [docs/openshell.md](docs/openshell.md). |
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
 
 Relevant env: `SANDBOX_DOCKER_IMAGE`, `SANDBOX_DOCKER_PROJECT_IMAGE`,
@@ -232,12 +233,17 @@ requested at create and verified after it, and rejects `SANDBOX_PIDS`/`SANDBOX_D
 and `SANDBOX_OPENSHELL_KEY_FILE` (the gateway and its mutual TLS files),
 `SANDBOX_OPENSHELL_IMAGE` (must carry `node`, `sh`, `/runner.mjs` and
 `/usr/local/lib/plimsoll-runner-guard.so`; openshell honors
-`SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` and rejects `SANDBOX_PIDS`/`SANDBOX_DISK_MB`),
+`SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` (plus an equal amount of swap on a host with swap:
+OpenShell sets no swap limit), rejects `SANDBOX_PIDS`, and with `SANDBOX_DISK_MB`
+mounts a run's `/tmp` as a `noexec` tmpfs of that size through the sandbox's driver config,
+which needs the gateway's `allow_driver_config = true`; never a session's),
 `SANDBOX_MAX_SESSIONS` (open sessions at once; default 0, sessions off; startup fails when
 set for a provider without sessions), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
 12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends), `SANDBOX_SESSION_DISK_MB`
 (default 1024; 0 disables the check; disk use is measured after each call;
-exceeding the limit ends the session, but it is not enforced during the call),
+exceeding the limit ends the session, but it is not enforced during the call; openshell's
+`SANDBOX_DISK_MB` caps runs only, because docker discards a tmpfs when a suspend stops the
+container),
 `PLIMSOLL_GRANTS_FILE` (named host-API capability
 profiles selectable via `grant_profile`), and dev-only `PLIMSOLL_INSECURE=1`
 (explicitly permits a real provider without auth). Operational knobs: `SANDBOX_MIN_ISOLATION`
@@ -258,16 +264,21 @@ ignored for e2b and dockercloud, whose runners live off-host). Each provider rep
 RPC** reports the active provider, tier, project and module support, and
 operation-specific grant support (via `ProjectCapable` / `ModuleCapable` /
 `GrantCapable`) so a gateway does not
-hard-code claims. It also states, informationally, each payload kind's environment
-(`sandbox.Describer`: a content-addressed identity such as the verified docker image ID,
-a pinned dockercloud digest or the embedded QuickJS hash, never a tag or template name,
-plus the provider's timeout ceiling capped by the daemon's five minutes) and the per-run
-resource envelope; equal identities mean the same software, and nothing enforces them. **A reported tier is configuration and provider evidence plus the
+hard-code claims. It also states each payload kind's environment
+(`sandbox.Describer`): an exact outer artifact identity such as Docker's verified
+image index ID, a separate `SoftwareIdentity` for the selected platform manifest
+when Docker can establish it, and the provider's timeout ceiling. A tag or template
+name is never an identity. The per-run resource envelope is also reported. A caller
+can require one exact software identity or an explicit approved set through
+`sandbox.SoftwareRule`; the daemon checks it before dispatch and the client checks
+the returned run record. A missing software identity fails a required rule. Other
+providers leave it empty until they can establish their selected artifact.
+**A reported tier is configuration and provider evidence plus the
 behavioral smoke tests below — never runtime attestation**, and any surface that
 advertises a tier has to carry that qualification (README states it in full under the
 provider table). It also advertises minimum-isolation protocol support; this is
 discovery only. Execution is one procedure, **`Run`**: an envelope (a `protocol`
-number, the `minimum_isolation` floor, the opaque `trace_id`, the timeout) around
+number, the `minimum_isolation` floor, the software rule, the opaque `trace_id`, the timeout) around
 exactly one payload (`javascript`, `project` or `module`), answered by an envelope
 (provider, isolation evidence, duration) around a result of the same kind. The
 protocol number is the mixed-version gate: protobuf drops fields a receiver does not
@@ -280,7 +291,8 @@ number. Bump `protocol.Number` when a request field is added whose omission woul
 change what a daemon may execute; an informational field does not bump it. Every answered
 `Run` carries a **run record** (`RunResponse.record`, package [record](record/)): SHA-256
 digests of the request as sent and the result as returned, the evidence (provider, tier,
-the kind's environment identity, the verified policy) and the daemon's start and end
+outer environment, selected software identity, caller's admission rule, verified
+sandbox policy) and the daemon's start and end
 times. The daemon only hashes and holds no key; the official client recomputes both
 digests and returns a mismatch as `DataLoss` (`record.ErrMismatch`), and a harness outside
 the daemon signs checked records. Encoding and field list: [docs/run-records.md](docs/run-records.md). The daemon serves `GET /healthz` and

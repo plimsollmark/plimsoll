@@ -1,10 +1,10 @@
 // Command providers runs the physics oracle's run on every provider this machine can
-// reach and writes a page comparing them: the same controller, the same judge, the
+// reach and writes a page comparing them: the same controller, the same runner, the
 // same plant, and the fingerprint of the trajectory from each provider.
 //
 // The run is the one examples/oracle publishes: its accepted controller
-// (examples/oracle/controllers/accepted.js), its judge (docker/sim/oracle/run.mjs)
-// and the cart-pole plant, started 0.2 rad from upright for 20 s. Here the judge and
+// (examples/oracle/controllers/accepted.js), its runner (docker/sim/oracle/run.mjs)
+// and the cart-pole plant, started 0.2 rad from upright for 20 s. Here the runner and
 // the plant travel as ordinary project files instead of image content, so any
 // provider whose image has Node 20 or later can run it: the plant is sent base64
 // encoded and a first step decodes it. Each provider is built from an environment of
@@ -202,7 +202,7 @@ func targets() []target {
 			"SANDBOX_MEMORY_MB":            "2048",
 		}},
 		{Key: "wasm", Name: "WebAssembly (in-process QuickJS)", Where: "inside the daemon",
-			Skip: "snippets only: the process tier runs no multi-file projects, so it cannot host the judge"},
+			Skip: "snippets only: the process tier runs no multi-file projects, so it cannot host the runner"},
 	}
 	for i := range ts {
 		switch ts[i].Key {
@@ -272,7 +272,7 @@ func runOn(ctx context.Context, t target, files []sandbox.File, r *row) ([]byte,
 		for _, st := range res.Steps {
 			detail += fmt.Sprintf("; %q exit %d stderr %q", st.Command, st.ExitCode, strings.TrimSpace(st.Stderr))
 		}
-		return nil, fmt.Errorf("the judge did not complete: outcome %s (%s), %d of %d steps, %d artifacts%s",
+		return nil, fmt.Errorf("the runner did not complete: outcome %s (%s), %d of %d steps, %d artifacts%s",
 			res.Outcome, res.Detail, len(res.Steps), len(steps), len(res.Artifacts), detail)
 	}
 	for _, s := range res.Steps {
@@ -283,12 +283,12 @@ func runOn(ctx context.Context, t target, files []sandbox.File, r *row) ([]byte,
 	}
 	var v verdict
 	if err := json.Unmarshal([]byte(strings.TrimSpace(res.Steps[2].Stdout)), &v); err != nil {
-		return nil, fmt.Errorf("judge stdout %q: %w", res.Steps[2].Stdout, err)
+		return nil, fmt.Errorf("runner stdout %q: %w", res.Steps[2].Stdout, err)
 	}
 	sum := sha256.Sum256(res.Artifacts[0].Content)
 	r.Fingerprint = hex.EncodeToString(sum[:])
 	if r.Fingerprint != v.Fingerprint {
-		return nil, fmt.Errorf("the judge printed %s but the artifact hashes to %s", v.Fingerprint, r.Fingerprint)
+		return nil, fmt.Errorf("the runner printed %s but the artifact hashes to %s", v.Fingerprint, r.Fingerprint)
 	}
 	r.Tier = res.Isolation.String()
 	r.Node = strings.TrimSpace(res.Steps[0].Stdout)
@@ -296,7 +296,7 @@ func runOn(ctx context.Context, t target, files []sandbox.File, r *row) ([]byte,
 	return res.Artifacts[0].Content, nil
 }
 
-// decode reads the judge's record: per tick x, v, theta, omega, force as float64.
+// decode reads the runner's record: per tick x, v, theta, omega, force as float64.
 func decode(b []byte) (x, theta, force []float64, err error) {
 	const width = 5
 	if len(b)%(8*width) != 0 {

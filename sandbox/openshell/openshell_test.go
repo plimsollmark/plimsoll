@@ -79,7 +79,8 @@ func TestConfigValidate(t *testing.T) {
 		{"NaN CPU", func(c *Config) { c.CPUs = math.NaN() }, "CPU"},
 		{"tiny CPU", func(c *Config) { c.CPUs = 0.001 }, "CPU"},
 		{"pids", func(c *Config) { c.PidsLimit = 64 }, "SANDBOX_PIDS"},
-		{"disk", func(c *Config) { c.DiskMB = 512 }, "SANDBOX_DISK_MB"},
+		{"negative disk", func(c *Config) { c.DiskMB = -1 }, "disk limit"},
+		{"huge disk", func(c *Config) { c.DiskMB = maxDiskMB + 1 }, "disk limit"},
 	} {
 		c := good
 		tc.adjust(&c)
@@ -596,6 +597,11 @@ func TestReadBackRefusals(t *testing.T) {
 		{"lifetime label", func(f *fakeGateway) {
 			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Metadata.Labels[lifetimeLabel] = "99999" }
 		}, "label plimsoll.lifetime"},
+		{"driver config not sent", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) {
+				sb.Spec.Template.DriverConfig, _ = structpb.NewStruct(map[string]any{"docker": map[string]any{"privileged": true}})
+			}
+		}, "driver config"},
 		{"providers", func(f *fakeGateway) {
 			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Providers = []string{"github"} }
 		}, "credential providers"},

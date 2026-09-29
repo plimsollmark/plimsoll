@@ -115,9 +115,14 @@ type DockerSandbox struct {
 	// not the mutable tags, so a tag re-pointed after Preflight cannot substitute an
 	// unverified image (and with it, auto-created unbounded writable volumes).
 	verifiedImageIDs map[string]string
-	lastVerified     time.Time
-	preflightNow     func() time.Time // test clock; nil uses time.Now
-	preflightWait    time.Duration    // bounded wait on preflight contention; 0 uses the default
+	// verifiedManifestIDs are the platform manifests selected from each verified
+	// outer image index. An empty value means this Docker store did not expose a
+	// verifiable manifest descriptor.
+	verifiedManifestIDs map[string]string
+	verifiedPlatform    string
+	lastVerified        time.Time
+	preflightNow        func() time.Time // test clock; nil uses time.Now
+	preflightWait       time.Duration    // bounded wait on preflight contention; 0 uses the default
 }
 
 const (
@@ -484,7 +489,7 @@ func (d *DockerSandbox) preflightWaitBudget() time.Duration {
 //
 // Failing immediately here was measured to be severe for concurrent consumers:
 // with a 5 s cache TTL, every expiry turned a burst of legitimate runs into
-// errors (47 of 48 judged runs lost at 24 workers, while neighbouring levels lost
+// errors (47 of 48 graded runs lost at 24 workers, while neighbouring levels lost
 // none, purely depending on where the expiry fell). Waiting is still safe for the
 // reason the fail-fast existed: callers never block on the mutex, they poll, they
 // honour their own context deadline, and they give up after a bound, so no
@@ -624,6 +629,11 @@ func (d *DockerSandbox) Preflight(ctx context.Context) (retErr error) {
 	// use rather than a lazy first pull.
 	images := d.configuredImages()
 	verifiedIDs := make(map[string]string, len(images))
+	verifiedManifests := make(map[string]string, len(images))
+	platform := dockerSelectedPlatform(ctx, pinnedHost)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for _, img := range images {
 		id, err := verifyImageForRun(ctx, pinnedHost, img)
 		if err != nil {
@@ -631,12 +641,47 @@ func (d *DockerSandbox) Preflight(ctx context.Context) (retErr error) {
 		}
 		verifiedIDs[img] = id
 	}
+	if platform != "" {
+		containerdStore, err := dockerUsesContainerdStore(ctx, pinnedHost)
+		if err != nil {
+			return fmt.Errorf("docker image store: %w", err)
+		}
+		for _, img := range images {
+			manifest, supported, err := inspectPlatformImage(ctx, pinnedHost, verifiedIDs[img], platform)
+			if err != nil {
+				return fmt.Errorf("selected platform of image %q: %w", img, err)
+			}
+			if !supported {
+				// Only the classic store, identified by what docker info says rather
+				// than by this failure, falls back to Docker's default selection. On
+				// the containerd store the failure fails this Preflight, so a passing
+				// error cannot switch software identity off until the next one.
+				if containerdStore {
+					return fmt.Errorf("docker could not inspect the %s manifest of image %q on the containerd image store", platform, img)
+				}
+				if os.Getenv("DOCKER_DEFAULT_PLATFORM") != "" {
+					return fmt.Errorf("cannot verify image %q for DOCKER_DEFAULT_PLATFORM=%q", img, platform)
+				}
+				platform = "" // classic image store: Docker's default selection, no software identity
+				break
+			}
+			verifiedManifests[img] = manifest
+		}
+	}
+	if platform == "" {
+		clear(verifiedManifests)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	d.stateMu.Lock()
 	d.daemonHost = pinnedHost
 	d.ready = true
 	d.runtimeVerified = runtimeVerified
 	d.verifiedRuntime = d.Runtime
 	d.verifiedImageIDs = verifiedIDs
+	d.verifiedManifestIDs = verifiedManifests
+	d.verifiedPlatform = platform
 	d.lastVerified = d.preflightTime()
 	d.stateMu.Unlock()
 	return nil
@@ -742,6 +787,159 @@ func verifyImageForRun(ctx context.Context, host, image string) (string, error) 
 		return "", fmt.Errorf("docker image %q declares VOLUME %s; docker would auto-create unbounded writable host volumes for it, so this image is refused — rebuild it without VOLUME", image, strings.Join(volumes, ", "))
 	}
 	return id, nil
+}
+
+// dockerSelectedPlatform fixes the platform Docker will select at launch. A
+// caller may intentionally set DOCKER_DEFAULT_PLATFORM; otherwise the daemon's
+// native platform is used. The launch receives this exact value explicitly, so
+// a later environment change cannot select a different manifest.
+func dockerSelectedPlatform(ctx context.Context, host string) string {
+	if p := os.Getenv("DOCKER_DEFAULT_PLATFORM"); p != "" {
+		return p
+	}
+	args, err := dockerArgs(host, "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}")
+	if err != nil {
+		return ""
+	}
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// inspectPlatformImage inspects, once, the config of the very platform a run will
+// select, from an immutable outer image ID. supported is false when this Docker
+// cannot answer for that platform. A VOLUME or malformed output is a hard
+// Preflight failure. The manifest identity is claimed only when the descriptor's
+// platform and ID agree; older stores may not expose it, and then it stays empty
+// and a caller who requires it gets a pre-dispatch refusal.
+func inspectPlatformImage(ctx context.Context, host, imageID, platform string) (manifest string, supported bool, err error) {
+	args, err := dockerArgs(host, "image", "inspect", "--platform", platform, "--format", "{{json .}}", imageID)
+	if err != nil {
+		return "", false, err
+	}
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", false, ctx.Err()
+		}
+		return "", false, nil
+	}
+	_, volumes, err := parseImageIDAndVolumes(out)
+	if err != nil {
+		return "", false, err
+	}
+	if len(volumes) != 0 {
+		return "", false, fmt.Errorf("image declares VOLUME %s; it would create an unbounded writable host volume", strings.Join(volumes, ", "))
+	}
+	return parseDockerSelectedManifest(out, platform), true, nil
+}
+
+// dockerUsesContainerdStore reports whether the daemon keeps images in the
+// containerd image store, which answers image inspect for a platform. docker info
+// names the snapshotter as the storage driver's driver-type; the classic store
+// does not.
+func dockerUsesContainerdStore(ctx context.Context, host string) (bool, error) {
+	args, err := dockerArgs(host, "info", "--format", "{{json .DriverStatus}}")
+	if err != nil {
+		return false, err
+	}
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		return false, fmt.Errorf("docker info: %w", err)
+	}
+	return containerdStoreFromDriverStatus(out)
+}
+
+func containerdStoreFromDriverStatus(out []byte) (bool, error) {
+	var status [][]string
+	if err := json.Unmarshal(bytes.TrimSpace(out), &status); err != nil {
+		return false, fmt.Errorf("docker info driver status: %w", err)
+	}
+	for _, kv := range status {
+		if len(kv) == 2 && kv[0] == "driver-type" && kv[1] == "io.containerd.snapshotter.v1" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// normalizePlatform writes os/arch[/variant] the way Docker's own platform
+// matching compares it (containerd's platforms.Normalize), so the daemon's
+// linux/arm64 and an image's linux/arm64/v8 are one platform: aarch64 is arm64
+// and x86_64 is amd64, arm64's default variant v8 and amd64's v1 are dropped, and
+// arm without a variant is arm/v7. An identity is written with this form, so it is
+// the same on every host.
+func normalizePlatform(p string) string {
+	parts := strings.Split(strings.ToLower(p), "/")
+	if len(parts) < 2 || len(parts) > 3 {
+		return strings.ToLower(p)
+	}
+	osName, arch, variant := parts[0], parts[1], ""
+	if len(parts) == 3 {
+		variant = parts[2]
+	}
+	switch arch {
+	case "aarch64", "arm64":
+		arch = "arm64"
+		switch variant {
+		case "8", "v8", "v8.0":
+			variant = ""
+		case "9", "9.0", "v9.0":
+			variant = "v9"
+		}
+	case "x86_64", "x86-64", "amd64":
+		arch = "amd64"
+		if variant == "v1" {
+			variant = ""
+		}
+	case "armhf":
+		arch, variant = "arm", "v7"
+	case "armel":
+		arch, variant = "arm", "v6"
+	case "arm":
+		switch variant {
+		case "", "7":
+			variant = "v7"
+		case "5", "6", "8":
+			variant = "v" + variant
+		}
+	}
+	if variant == "" {
+		return osName + "/" + arch
+	}
+	return osName + "/" + arch + "/" + variant
+}
+
+func parseDockerSelectedManifest(out []byte, platform string) string {
+	var inspected struct {
+		ID         string `json:"Id"`
+		OS         string `json:"Os"`
+		Arch       string `json:"Architecture"`
+		Variant    string `json:"Variant"`
+		Descriptor struct {
+			Digest    string `json:"digest"`
+			MediaType string `json:"mediaType"`
+		} `json:"Descriptor"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(out), &inspected) != nil {
+		return ""
+	}
+	actual := inspected.OS + "/" + inspected.Arch
+	if inspected.Variant != "" {
+		actual += "/" + inspected.Variant
+	}
+	manifestType := inspected.Descriptor.MediaType == "application/vnd.oci.image.manifest.v1+json" ||
+		inspected.Descriptor.MediaType == "application/vnd.docker.distribution.manifest.v2+json"
+	if normalizePlatform(actual) != normalizePlatform(platform) || inspected.ID != inspected.Descriptor.Digest || !manifestType ||
+		!strings.HasPrefix(inspected.ID, "sha256:") || len(inspected.ID) != len("sha256:")+64 {
+		return ""
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(inspected.ID, "sha256:")); err != nil {
+		return ""
+	}
+	return "oci-manifest:" + normalizePlatform(platform) + "@" + inspected.ID
 }
 
 // parseImageIDAndVolumes decodes `docker image inspect --format '{{json .}}'`
@@ -1009,6 +1207,9 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	// Override any image ENTRYPOINT (the project image's is the runner protocol):
 	// the probe must be exactly `node -` reading the script from stdin.
 	runArgs := d.lockdownArgs(name, workTmpfs, state.runtime)
+	if state.platform != "" {
+		runArgs = append(runArgs, "--platform", state.platform)
+	}
 	if socketPath != "" {
 		// Mounted exactly as brokerForRun mounts the per-run broker socket.
 		runArgs = append(runArgs, "-v", socketPath+":"+containerSocketPath)
@@ -1201,6 +1402,9 @@ func (d *DockerSandbox) proveSandboxPidsLimit(ctx context.Context, state dockerE
 	// lockdownArgs starts with "run", "--rm", "-i"; detach so the container is alive
 	// while its cgroup is read. --rm stays, and forceRemove covers every exit path.
 	runArgs := append([]string{"run", "-d"}, d.lockdownArgs(name, false, state.runtime)[1:]...)
+	if state.platform != "" {
+		runArgs = append(runArgs, "--platform", state.platform)
+	}
 	runArgs = append(runArgs, "--entrypoint", "node", image, "-e", "setTimeout(() => {}, 30000)")
 	defer d.forceRemove(state.host, name)
 	id, err := docker(runArgs...)
@@ -1315,9 +1519,13 @@ type dockerExecutionState struct {
 	isolation IsolationClass
 	// imageID/projectImageID are the Preflight-verified content IDs runs launch in
 	// place of the mutable Image/ProjectImage references.
-	imageID        string
-	projectImageID string
-	moduleImageID  string // "" when no module image is configured
+	imageID         string
+	projectImageID  string
+	moduleImageID   string // "" when no module image is configured
+	platform        string
+	imageManifest   string
+	projectManifest string
+	moduleManifest  string
 }
 
 func (d *DockerSandbox) executionState() (dockerExecutionState, error) {
@@ -1341,12 +1549,16 @@ func (d *DockerSandbox) executionState() (dockerExecutionState, error) {
 		isolation = IsolationKernel
 	}
 	return dockerExecutionState{
-		host:           d.daemonHost,
-		runtime:        d.verifiedRuntime,
-		isolation:      isolation,
-		imageID:        imageID,
-		projectImageID: projectImageID,
-		moduleImageID:  moduleImageID,
+		host:            d.daemonHost,
+		runtime:         d.verifiedRuntime,
+		isolation:       isolation,
+		imageID:         imageID,
+		projectImageID:  projectImageID,
+		moduleImageID:   moduleImageID,
+		platform:        d.verifiedPlatform,
+		imageManifest:   d.verifiedManifestIDs[d.Image],
+		projectManifest: d.verifiedManifestIDs[d.ProjectImage],
+		moduleManifest:  d.verifiedManifestIDs[d.ModuleImage],
 	}, nil
 }
 
@@ -1437,6 +1649,9 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 	if err := CheckMinimumIsolation(isolation, req.MinimumIsolation); err != nil {
 		return Result{Sandbox: d.Name(), Isolation: isolation}, err
 	}
+	if err := req.Software.Check(execState.imageManifest); err != nil {
+		return Result{Sandbox: d.Name(), Isolation: isolation}, err
+	}
 	timeout := d.snippetTimeout(req.Timeout)
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -1454,6 +1669,9 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 	}
 	defer broker.Close()
 	args := append(d.lockdownArgs(name, false, execState.runtime), capArgs...)
+	if execState.platform != "" {
+		args = append(args, "--platform", execState.platform)
+	}
 	// Launch the Preflight-verified content ID, not the mutable tag.
 	args = append(args, execState.imageID, "node", "-") // read the script from stdin
 	args, err = dockerArgs(execState.host, args...)
@@ -1477,13 +1695,15 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 	}
 
 	res := Result{
-		Stdout:          stdout.String(),
-		Stderr:          stderr.String(),
-		StdoutTruncated: stdout.Truncated(),
-		StderrTruncated: stderr.Truncated(),
-		Duration:        duration,
-		Sandbox:         d.Name(),
-		Isolation:       isolation,
+		Stdout:              stdout.String(),
+		Stderr:              stderr.String(),
+		StdoutTruncated:     stdout.Truncated(),
+		StderrTruncated:     stderr.Truncated(),
+		Duration:            duration,
+		Sandbox:             d.Name(),
+		Isolation:           isolation,
+		SoftwareIdentity:    execState.imageManifest,
+		EnvironmentIdentity: dockerImageIdentity(execState.imageID),
 		// Metadata-only evidence of the run's brokered host.* calls. Nil unless the
 		// run carried a grant that made calls; it never affects execution below.
 		CallTrace: broker.traceSnapshot(),
@@ -1554,6 +1774,9 @@ func (d *DockerSandbox) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	if err := CheckMinimumIsolation(execState.isolation, req.MinimumIsolation); err != nil {
 		return ProjectResult{Sandbox: d.Name(), Isolation: execState.isolation}, err
 	}
+	if err := req.Software.Check(execState.projectManifest); err != nil {
+		return ProjectResult{Sandbox: d.Name(), Isolation: execState.isolation}, err
+	}
 	return d.runPlan(ctx, execState, execState.projectImageID, req)
 }
 
@@ -1561,7 +1784,15 @@ func (d *DockerSandbox) RunProject(ctx context.Context, req ProjectRequest) (Pro
 // req as its plan and classifies what came back. RunProject and RunModule share
 // it: a module run is a project run whose one step is the worker, so every
 // lockdown, timeout, output cap and outcome rule is written once.
-func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionState, imageID string, req ProjectRequest) (ProjectResult, error) {
+func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionState, imageID string, req ProjectRequest) (out ProjectResult, errOut error) {
+	selected := execState.projectManifest
+	if imageID == execState.moduleImageID && execState.moduleImageID != "" {
+		selected = execState.moduleManifest
+	}
+	defer func() {
+		out.SoftwareIdentity = selected
+		out.EnvironmentIdentity = dockerImageIdentity(imageID)
+	}()
 	isolation := execState.isolation
 	timeout := d.projectTimeout(req.Timeout)
 
@@ -1603,6 +1834,9 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	// image; they are empty for a no-grant run.
 	args := d.lockdownArgs(name, true, execState.runtime)
 	args = append(args, capArgs...)
+	if execState.platform != "" {
+		args = append(args, "--platform", execState.platform)
+	}
 	args = append(args, imageID)
 	args, err = dockerArgs(execState.host, args...)
 	if err != nil {
@@ -1722,6 +1956,9 @@ func (d *DockerSandbox) RunModule(ctx context.Context, req ModuleRequest) (Modul
 	if err := CheckMinimumIsolation(isolation, req.MinimumIsolation); err != nil {
 		return ModuleResult{Sandbox: d.Name(), Isolation: isolation}, err
 	}
+	if err := req.Software.Check(execState.moduleManifest); err != nil {
+		return ModuleResult{Sandbox: d.Name(), Isolation: isolation}, err
+	}
 
 	var table strings.Builder
 	for _, row := range req.Rows {
@@ -1744,7 +1981,8 @@ func (d *DockerSandbox) RunModule(ctx context.Context, req ModuleRequest) (Modul
 		Timeout:   req.Timeout,
 		Artifacts: []string{moduleResultsArtifact},
 	})
-	res := ModuleResult{Sandbox: d.Name(), Isolation: isolation, Duration: time.Since(started)}
+	res := ModuleResult{Sandbox: d.Name(), Isolation: isolation, SoftwareIdentity: execState.moduleManifest,
+		EnvironmentIdentity: dockerImageIdentity(execState.moduleImageID), Duration: time.Since(started)}
 	if err != nil {
 		return res, err
 	}

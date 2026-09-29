@@ -13,13 +13,14 @@ import (
 // never runtime attestation, and nothing enforces it: the isolation tier and the
 // per-run checks are what bound a run.
 type PayloadEnvironment struct {
-	// Identity names the software the code starts in, and is set only when that
-	// name is content-addressed: a verified image ID, an image digest, the hash of
-	// an embedded interpreter. Two backends reporting the same string start the
-	// code in the same software; different strings, or an empty one, claim
-	// nothing. A mutable name (an image tag, a template name) is never reported,
-	// because the same name can later mean different content.
+	// Identity names the exact outer image artifact or embedded interpreter.
+	// An OCI index can change with attached build metadata while its selected
+	// executable manifest stays the same. A mutable tag is never reported.
 	Identity string
+	// SoftwareIdentity names the selected executable image manifest and platform,
+	// separately from the outer image index in Identity. Empty means the provider
+	// cannot establish the selected artifact. This is evidence, not attestation.
+	SoftwareIdentity string
 	// MaxTimeout is the provider's own ceiling on one run of this kind: a longer
 	// requested timeout is cut to it. 0 means the kind is unsupported or the
 	// provider does not state a ceiling.
@@ -39,9 +40,9 @@ type Environments struct {
 }
 
 // Describer is the optional interface through which a provider states its
-// Environments. It is informational discovery, like ProjectCapable: Describe
-// reports it, and no admission or dispatch decision reads it. A provider that
-// does not implement it states nothing.
+// Environments. Describe reports it; the RPC edge also uses SoftwareIdentity
+// for admission before dispatch. A provider that does not implement it states
+// nothing and cannot satisfy a required software rule.
 type Describer interface {
 	Environments() Environments
 }
@@ -75,6 +76,9 @@ func (d *DockerSandbox) Environments() Environments {
 		env.JavaScript.Identity = dockerImageIdentity(state.imageID)
 		env.Project.Identity = dockerImageIdentity(state.projectImageID)
 		env.Module.Identity = dockerImageIdentity(state.moduleImageID)
+		env.JavaScript.SoftwareIdentity = state.imageManifest
+		env.Project.SoftwareIdentity = state.projectManifest
+		env.Module.SoftwareIdentity = state.moduleManifest
 	}
 	return env
 }

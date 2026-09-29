@@ -90,6 +90,9 @@ const (
 	minMemoryMB = 6
 	// minCPUs is docker's smallest CPU limit.
 	minCPUs = 0.01
+	// maxDiskMB bounds DiskMB so the size in bytes stays exact in the float64 a
+	// protobuf Struct holds (2^53), with room to spare: 1 TiB.
+	maxDiskMB = 1 << 20
 )
 
 // Config is the provider's configuration. New reads nothing from the environment.
@@ -113,11 +116,18 @@ type Config struct {
 	// limit at all, so a limit is always requested.
 	MemoryMB int
 	CPUs     float64
-	// PidsLimit and DiskMB must be 0: OpenShell sets the process limit for every
-	// sandbox of a gateway (the docker driver's sandbox_pids_limit), and has no disk
-	// control.
+	// PidsLimit must be 0: OpenShell sets the process limit for every sandbox of a
+	// gateway (the docker driver's sandbox_pids_limit).
 	PidsLimit int
-	DiskMB    int
+	// DiskMB, when positive, mounts each run's /tmp (the only directory the run policy
+	// lets code write) as a noexec tmpfs of that size through the docker driver's
+	// driver_config, so a run cannot write more. The gateway must set
+	// allow_driver_config = true. Session sandboxes never get it: docker discards a
+	// tmpfs when its container stops, and a session is stopped to suspend it, so its
+	// disk budget (SessionOptions.DiskBytes) is measured after each call instead. 0
+	// sends no driver config and leaves /tmp on the container's writable layer, bounded
+	// only by the host's disk.
+	DiskMB int
 }
 
 func (c Config) memoryMB() int {
@@ -161,8 +171,8 @@ func (c Config) validate() error {
 	if c.PidsLimit != 0 {
 		return errors.New("openshell cannot enforce a per-sandbox process limit (SANDBOX_PIDS): the gateway sets one for all of its sandboxes; leave it unset")
 	}
-	if c.DiskMB != 0 {
-		return errors.New("openshell cannot enforce a per-sandbox disk limit (SANDBOX_DISK_MB): OpenShell has no disk control; leave it unset")
+	if c.DiskMB < 0 || c.DiskMB > maxDiskMB {
+		return fmt.Errorf("openshell: disk limit %d MiB must be 0 (no limit) or at most %d MiB", c.DiskMB, maxDiskMB)
 	}
 	return nil
 }
@@ -236,6 +246,8 @@ type Provider struct {
 	policy     *sandboxv1.SandboxPolicy
 	policyHash string
 	resources  *structpb.Struct
+	// runDisk is each run's driver config (the sized /tmp); nil when DiskMB is 0.
+	runDisk *structpb.Struct
 	// instance labels every sandbox this provider creates, so ReconcileOrphans finds
 	// its own and never another instance's.
 	instance string
@@ -305,12 +317,17 @@ func newProvider(cfg Config, client openshellv1connect.OpenShellClient) (*Provid
 	if err != nil {
 		return nil, err
 	}
+	runDisk, err := tmpDriverConfig(int64(cfg.DiskMB) << 20)
+	if err != nil {
+		return nil, err
+	}
 	return &Provider{
 		cfg:        cfg,
 		client:     client,
 		policy:     policy,
 		policyHash: hash,
 		resources:  resources,
+		runDisk:    runDisk,
 		instance:   randHex(8),
 		killWait:   15 * time.Second,
 		staleAfter: staleMargin,
@@ -444,6 +461,9 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	if err := sandbox.ValidateRequest(req); err != nil {
 		return fail, err
 	}
+	if err := req.Software.Check(""); err != nil {
+		return fail, err
+	}
 	timeout := clampTimeout(req.Timeout, snippetDefault, snippetMax)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -511,6 +531,9 @@ var runnerCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && export LD
 func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
 	fail := sandbox.ProjectResult{Sandbox: Name, Isolation: p.IsolationClass()}
 	if err := sandbox.ValidateProjectRequest(req); err != nil {
+		return fail, err
+	}
+	if err := req.Software.Check(""); err != nil {
 		return fail, err
 	}
 	timeout := clampTimeout(req.Timeout, projectDefault, projectMax)

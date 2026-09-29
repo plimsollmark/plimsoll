@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/datamodelv1"
@@ -162,13 +164,14 @@ func (p *Provider) create(ctx context.Context) (box, error) {
 	if dl, ok := ctx.Deadline(); ok {
 		lifetime = time.Until(dl)
 	}
-	b, _, err := p.createBox(ctx, lifetime, nil, nil)
+	b, _, err := p.createBox(ctx, lifetime, nil, nil, p.runDisk)
 	return b, err
 }
 
 // createBox is create with the lifetime to declare, the main process (nil leaves the
-// gateway's default, a login shell) and extra labels.
-func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, command []string, extra map[string]string) (box, map[string]string, error) {
+// gateway's default, a login shell), extra labels and the driver config (the sized
+// /tmp; nil sends none).
+func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, command []string, extra map[string]string, disk *structpb.Struct) (box, map[string]string, error) {
 	b := box{name: namePrefix + randHex(7)}
 	labels := map[string]string{
 		instanceLabel: p.instance,
@@ -191,12 +194,15 @@ func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, comman
 		Name:           b.name,
 		Labels:         labels,
 		Spec: &openshellv1.SandboxSpec{
-			Template: &openshellv1.SandboxTemplate{Image: p.cfg.Image, Resources: p.resources},
+			Template: &openshellv1.SandboxTemplate{Image: p.cfg.Image, Resources: p.resources, DriverConfig: disk},
 			Policy:   p.policy,
 			Command:  command,
 		},
 	}))
 	if err != nil {
+		if disk != nil && strings.Contains(err.Error(), "allow_driver_config") {
+			return box{}, nil, fmt.Errorf("openshell create sandbox: %w (SANDBOX_DISK_MB sizes /tmp through the sandbox's driver config, which this gateway accepts only with allow_driver_config = true)", err)
+		}
 		return box{}, nil, fmt.Errorf("openshell create sandbox: %w", err)
 	}
 	sb, err := p.waitReady(ctx, b.name)
@@ -207,7 +213,7 @@ func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, comman
 		p.noteSkew(skew)
 	}
 	b.id = sb.GetMetadata().GetId()
-	if err := p.verifySandbox(sb, labels, command); err != nil {
+	if err := p.verifySandbox(sb, labels, command, disk); err != nil {
 		return box{}, nil, err
 	}
 	if err := p.verifyConfig(ctx, b.name); err != nil {
@@ -253,9 +259,10 @@ func conditionSummary(sb *openshellv1.Sandbox) string {
 }
 
 // verifySandbox checks the sandbox record against the request: every label sent, the
-// configured image, the requested limits, the policy as sent, no credential providers
-// attached, and, when command is not nil, the main process.
-func (p *Provider) verifySandbox(sb *openshellv1.Sandbox, labels map[string]string, command []string) error {
+// configured image, the requested limits, the driver config as sent (none when disk is
+// nil), the policy as sent, no credential providers attached, and, when command is not
+// nil, the main process.
+func (p *Provider) verifySandbox(sb *openshellv1.Sandbox, labels map[string]string, command []string, disk *structpb.Struct) error {
 	meta, spec := sb.GetMetadata(), sb.GetSpec()
 	for key, want := range labels {
 		if got := meta.GetLabels()[key]; got != want {
@@ -269,6 +276,8 @@ func (p *Provider) verifySandbox(sb *openshellv1.Sandbox, labels map[string]stri
 		return fmt.Errorf("openshell verify sandbox: image reads back %q, requested %q", spec.GetTemplate().GetImage(), p.cfg.Image)
 	case !proto.Equal(spec.GetTemplate().GetResources(), p.resources):
 		return fmt.Errorf("openshell verify sandbox: resources read back as %v, requested %v", spec.GetTemplate().GetResources().AsMap(), p.resources.AsMap())
+	case !sameStruct(spec.GetTemplate().GetDriverConfig(), disk):
+		return fmt.Errorf("openshell verify sandbox: driver config read back as %v, requested %v", spec.GetTemplate().GetDriverConfig().AsMap(), disk.AsMap())
 	case !proto.Equal(spec.GetPolicy(), p.policy):
 		return errors.New("openshell verify sandbox: the sandbox spec's policy differs from the policy sent")
 	case len(spec.GetProviders()) > 0:
@@ -687,4 +696,13 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
+}
+
+// sameStruct is proto.Equal for a Struct field, except that an absent Struct and an
+// empty one are the same: a gateway may send back an empty driver config for none.
+func sameStruct(got, want *structpb.Struct) bool {
+	if len(got.GetFields()) == 0 && len(want.GetFields()) == 0 {
+		return true
+	}
+	return proto.Equal(got, want)
 }

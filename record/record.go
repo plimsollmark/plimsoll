@@ -23,17 +23,19 @@ import (
 	"time"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 // Version is the encoding version this package computes and checks.
-const Version = 1
+const Version = 2
 
 // Each encoding opens with its domain string, so a digest of one kind can never
 // equal a digest of another, whatever the fields hold.
 const (
-	requestDomain = "plimsoll.run-request.v1"
-	resultDomain  = "plimsoll.run-result.v1"
+	requestDomain   = "plimsoll.run-request.v1"
+	requestDomainV2 = "plimsoll.run-request.v2"
+	resultDomain    = "plimsoll.run-result.v1"
 )
 
 // encoder streams an encoding into SHA-256. Every value, the domain included, is
@@ -86,7 +88,7 @@ func (e *encoder) sum() string { return hex.EncodeToString(e.h.Sum(nil)) }
 // is the caller's correlation key and changes nothing that runs.
 func RunRequestDigest(m *plimsollv1.RunRequest) string {
 	return requestDigest(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(),
-		m.GetJavascript(), m.GetProject(), m.GetModule())
+		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), m.GetModule())
 }
 
 // SessionRunRequestDigest is the request digest of a session call: the same
@@ -95,7 +97,7 @@ func RunRequestDigest(m *plimsollv1.RunRequest) string {
 // the session's fingerprint instead.
 func SessionRunRequestDigest(m *plimsollv1.SessionRunRequest) string {
 	return requestDigest(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(),
-		m.GetJavascript(), m.GetProject(), nil)
+		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), nil)
 }
 
 // AsRunRequest is a session call's request as the Run request with the same
@@ -103,7 +105,7 @@ func SessionRunRequestDigest(m *plimsollv1.SessionRunRequest) string {
 func AsRunRequest(m *plimsollv1.SessionRunRequest) *plimsollv1.RunRequest {
 	out := &plimsollv1.RunRequest{
 		Protocol: m.GetProtocol(), MinimumIsolation: m.GetMinimumIsolation(),
-		TraceId: m.GetTraceId(), TimeoutMs: m.GetTimeoutMs(),
+		TraceId: m.GetTraceId(), TimeoutMs: m.GetTimeoutMs(), SoftwareRule: m.GetSoftwareRule(),
 	}
 	switch p := m.GetPayload().(type) {
 	case *plimsollv1.SessionRunRequest_Javascript:
@@ -114,12 +116,23 @@ func AsRunRequest(m *plimsollv1.SessionRunRequest) *plimsollv1.RunRequest {
 	return out
 }
 
-func requestDigest(protocol uint32, floor string, timeoutMs int32,
+func requestDigest(protocol uint32, floor string, timeoutMs int32, rule *plimsollv1.SoftwareRule,
 	js *plimsollv1.JavaScriptRun, p *plimsollv1.ProjectRun, mod *plimsollv1.ModuleRun) string {
-	e := newEncoder(requestDomain)
+	domain := requestDomain
+	if protocol >= 2 {
+		domain = requestDomainV2
+	}
+	e := newEncoder(domain)
 	e.uint("protocol", uint64(protocol))
 	e.str("minimum_isolation", floor)
 	e.int("timeout_ms", int64(timeoutMs))
+	if protocol >= 2 {
+		e.str("software_mode", rule.GetMode())
+		e.int("software_identities", int64(len(rule.GetIdentities())))
+		for _, id := range rule.GetIdentities() {
+			e.str("software_identity", id)
+		}
+	}
 	switch {
 	case js != nil:
 		e.str("kind", "javascript")
@@ -224,6 +237,10 @@ func Digest(r sandbox.RunRecord) string {
 	e.str("isolation", r.Isolation)
 	e.str("environment", r.Environment)
 	e.str("policy", r.Policy)
+	if r.Version >= 2 {
+		e.str("software_identity", r.SoftwareIdentity)
+		e.str("software_rule_id", r.SoftwareRuleID)
+	}
 	e.int("started_unix_ms", r.Started.UnixMilli())
 	e.int("ended_unix_ms", r.Ended.UnixMilli())
 	e.str("session", r.Session)
@@ -248,38 +265,42 @@ func SessionFingerprint(sessionID string) string {
 // ToWire puts a record on the wire.
 func ToWire(r sandbox.RunRecord) *plimsollv1.RunRecord {
 	return &plimsollv1.RunRecord{
-		Version:        uint32(r.Version),
-		RequestSha256:  r.RequestSHA256,
-		ResultSha256:   r.ResultSHA256,
-		Provider:       r.Provider,
-		Isolation:      r.Isolation,
-		Environment:    r.Environment,
-		Policy:         r.Policy,
-		StartedUnixMs:  r.Started.UnixMilli(),
-		EndedUnixMs:    r.Ended.UnixMilli(),
-		Session:        r.Session,
-		Sequence:       r.Sequence,
-		PreviousSha256: r.PreviousSHA256,
-		RecordSha256:   r.SHA256,
+		Version:          uint32(r.Version),
+		RequestSha256:    r.RequestSHA256,
+		ResultSha256:     r.ResultSHA256,
+		Provider:         r.Provider,
+		Isolation:        r.Isolation,
+		Environment:      r.Environment,
+		SoftwareIdentity: r.SoftwareIdentity,
+		SoftwareRuleId:   r.SoftwareRuleID,
+		Policy:           r.Policy,
+		StartedUnixMs:    r.Started.UnixMilli(),
+		EndedUnixMs:      r.Ended.UnixMilli(),
+		Session:          r.Session,
+		Sequence:         r.Sequence,
+		PreviousSha256:   r.PreviousSHA256,
+		RecordSha256:     r.SHA256,
 	}
 }
 
 // FromWire reads a record off the wire, unchecked.
 func FromWire(m *plimsollv1.RunRecord) sandbox.RunRecord {
 	return sandbox.RunRecord{
-		Version:        int(m.GetVersion()),
-		RequestSHA256:  m.GetRequestSha256(),
-		ResultSHA256:   m.GetResultSha256(),
-		Provider:       m.GetProvider(),
-		Isolation:      m.GetIsolation(),
-		Environment:    m.GetEnvironment(),
-		Policy:         m.GetPolicy(),
-		Started:        time.UnixMilli(m.GetStartedUnixMs()).UTC(),
-		Ended:          time.UnixMilli(m.GetEndedUnixMs()).UTC(),
-		Session:        m.GetSession(),
-		Sequence:       m.GetSequence(),
-		PreviousSHA256: m.GetPreviousSha256(),
-		SHA256:         m.GetRecordSha256(),
+		Version:          int(m.GetVersion()),
+		RequestSHA256:    m.GetRequestSha256(),
+		ResultSHA256:     m.GetResultSha256(),
+		Provider:         m.GetProvider(),
+		Isolation:        m.GetIsolation(),
+		Environment:      m.GetEnvironment(),
+		SoftwareIdentity: m.GetSoftwareIdentity(),
+		SoftwareRuleID:   m.GetSoftwareRuleId(),
+		Policy:           m.GetPolicy(),
+		Started:          time.UnixMilli(m.GetStartedUnixMs()).UTC(),
+		Ended:            time.UnixMilli(m.GetEndedUnixMs()).UTC(),
+		Session:          m.GetSession(),
+		Sequence:         m.GetSequence(),
+		PreviousSHA256:   m.GetPreviousSha256(),
+		SHA256:           m.GetRecordSha256(),
 	}
 }
 
@@ -289,16 +310,20 @@ func FromWire(m *plimsollv1.RunRecord) sandbox.RunRecord {
 var ErrMismatch = errors.New("record: the run record does not match the request and result it came with")
 
 // Stamp completes r as the record of resp and returns it in wire form: the
-// version, the result's digest, the evidence resp carries (provider and tier) and
-// the record's own digest. The caller sets what only it knows: the request's digest
-// (RunRequestDigest or SessionRunRequestDigest), the environment and policy, the
-// start and end, and a session call's place in its chain. Call it on the finished
+// version, the result's digest, the evidence resp carries (provider, tier, outer
+// environment and selected software identity) and the record's own digest. The
+// caller sets what only it knows: the request's digest (RunRequestDigest or
+// SessionRunRequestDigest), the software rule's ID, the policy, the start and end,
+// and a session call's place in its chain. Stamp reads resp and never changes it, so
+// a record cannot state evidence its response does not. Call it on the finished
 // response, since the result digest covers it.
 func Stamp(r sandbox.RunRecord, resp *plimsollv1.RunResponse) *plimsollv1.RunRecord {
 	r.Version = Version
 	r.ResultSHA256 = ResultDigest(resp)
 	r.Provider = resp.GetSandbox()
 	r.Isolation = resp.GetIsolation()
+	r.Environment = resp.GetEnvironment()
+	r.SoftwareIdentity = resp.GetSoftwareIdentity()
 	r.SHA256 = Digest(r)
 	return ToWire(r)
 }
@@ -315,7 +340,7 @@ var ErrNoRecord = errors.New("record: the response carries no run record")
 // caller sent and the response it received, and returns it. A response with no
 // record is ErrNoRecord.
 func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	r, err := check(RunRequestDigest(req), resp)
+	r, err := check(RunRequestDigest(req), req.GetProtocol(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +355,7 @@ func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.R
 // call's place in its chain needs the chain around it, which CheckSessionCall
 // (live) and attest.VerifyBundle (stored) check.
 func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	return check(RunRequestDigest(req), resp)
+	return check(RunRequestDigest(req), req.GetProtocol(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
 }
 
 // CheckSessionCall verifies a session call's record against the request sent and
@@ -340,7 +365,7 @@ func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*s
 // daemon executed a call this caller did not make: someone else holds the
 // session ID.
 func CheckSessionCall(req *plimsollv1.SessionRunRequest, resp *plimsollv1.RunResponse, fingerprint string, prevSeq uint64, prev string) (*sandbox.RunRecord, error) {
-	r, err := check(SessionRunRequestDigest(req), resp)
+	r, err := check(SessionRunRequestDigest(req), req.GetProtocol(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
 	if err != nil {
 		return nil, err
 	}
@@ -360,20 +385,31 @@ var ErrChain = errors.New("record: the session's chain of records is broken")
 
 // check verifies everything a record states that the caller can recompute, given
 // the request digest of what it sent.
-func check(requestDigest string, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
+func check(requestDigest string, protocol uint32, rule sandbox.SoftwareRule, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
+	if err := rule.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: invalid software rule: %v", ErrMismatch, err)
+	}
 	if resp.GetRecord() == nil {
 		return nil, ErrNoRecord
 	}
 	r := FromWire(resp.GetRecord())
 	switch {
-	case r.Version != Version:
-		return nil, fmt.Errorf("%w: %d (this client knows %d)", ErrVersion, r.Version, Version)
+	case r.Version != 1 && r.Version != Version:
+		return nil, fmt.Errorf("%w: %d (this client knows 1 and %d)", ErrVersion, r.Version, Version)
+	case protocol >= 2 && r.Version != Version:
+		return nil, fmt.Errorf("%w: protocol %d requires record version %d", ErrVersion, protocol, Version)
+	case r.Version == 1 && (r.SoftwareIdentity != "" || r.SoftwareRuleID != ""):
+		return nil, fmt.Errorf("%w: version 1 cannot carry software admission fields", ErrMismatch)
 	case r.RequestSHA256 != requestDigest:
 		return nil, fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
 	case r.ResultSHA256 != ResultDigest(resp):
 		return nil, fmt.Errorf("%w: result digest %s, the result received digests to %s", ErrMismatch, r.ResultSHA256, ResultDigest(resp))
 	case r.Provider != resp.GetSandbox() || r.Isolation != resp.GetIsolation():
 		return nil, fmt.Errorf("%w: the record names %s at %q, the response %s at %q", ErrMismatch, r.Provider, r.Isolation, resp.GetSandbox(), resp.GetIsolation())
+	case r.Version >= 2 && r.Environment != resp.GetEnvironment():
+		return nil, fmt.Errorf("%w: record environment differs from response", ErrMismatch)
+	case r.Version >= 2 && (r.SoftwareIdentity != resp.GetSoftwareIdentity() || r.SoftwareRuleID != rule.ID() || !rule.Allows(r.SoftwareIdentity)):
+		return nil, fmt.Errorf("%w: selected software or admission rule differs from the request and response", ErrMismatch)
 	case r.SHA256 != Digest(r):
 		return nil, fmt.Errorf("%w: record digest %s, its fields digest to %s", ErrMismatch, r.SHA256, Digest(r))
 	}

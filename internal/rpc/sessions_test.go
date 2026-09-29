@@ -26,6 +26,60 @@ func sessionService() (*SandboxService, *sandboxtest.Sessions) {
 	return svc, p
 }
 
+type softwareSessions struct{ *sandboxtest.Sessions }
+
+func (*softwareSessions) Environments() sandbox.Environments {
+	e := sandbox.PayloadEnvironment{Identity: "outer:test", SoftwareIdentity: "oci-manifest:linux/amd64@sha256:aaaa"}
+	return sandbox.Environments{JavaScript: e, Project: e}
+}
+
+// Both modes: an approved rule with one identity is merged to exact on every call,
+// and must still match the rule the session was opened with.
+func TestSessionSoftwareRuleCannotBeDropped(t *testing.T) {
+	for _, mode := range []string{"exact", "approved"} {
+		t.Run(mode, func(t *testing.T) { testSessionSoftwareRuleCannotBeDropped(t, mode) })
+	}
+}
+
+func testSessionSoftwareRuleCannotBeDropped(t *testing.T, mode string) {
+	svc, p := sessionService()
+	svc.Sandbox = &softwareSessions{p}
+	ctx := authenticatedContext("alice")
+	id := svc.Sandbox.(sandbox.Describer).Environments().JavaScript.SoftwareIdentity
+	wrong := openReq()
+	wrong.Msg.SoftwareRule = &plimsollv1.SoftwareRule{Mode: "exact", Identities: []string{id + "-other"}}
+	_, err := svc.OpenSession(ctx, wrong)
+	if !errors.Is(err, sandbox.ErrSoftwareMismatch) || len(p.Opened()) != 0 {
+		t.Fatalf("mismatched OpenSession reached the provider: %v", err)
+	}
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalEnvironment {
+		t.Fatalf("mismatched OpenSession has no environment refusal: %v, %v", reason, ok)
+	}
+	openRequest := openReq()
+	openRequest.Msg.SoftwareRule = &plimsollv1.SoftwareRule{Mode: mode, Identities: []string{id}}
+	opened, err := svc.OpenSession(ctx, openRequest)
+	if err != nil || opened.Msg.GetSoftwareIdentity() != id {
+		t.Fatalf("open: %+v, %v", opened, err)
+	}
+	call := callReq(opened.Msg.GetSessionId(), "1")
+	_, err = svc.SessionRun(ctx, call)
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("rule omitted from a call: %v", err)
+	}
+	call.Msg.SoftwareRule = openRequest.Msg.SoftwareRule
+	response, err := svc.SessionRun(ctx, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(response.Msg.GetRun().GetJavascript().GetStdout()) != "x" || len(p.Opened()) != 1 {
+		t.Fatalf("refused call reached provider: %+v", response.Msg)
+	}
+	rec, err := record.CheckSessionCall(call.Msg, response.Msg.GetRun(), opened.Msg.GetSession(), 0, "")
+	if err != nil || rec.SoftwareIdentity != id || rec.SoftwareRuleID != "exact:"+id {
+		t.Fatalf("record: %+v, %v", rec, err)
+	}
+}
+
 func openReq() *connect.Request[plimsollv1.OpenSessionRequest] {
 	return connect.NewRequest(&plimsollv1.OpenSessionRequest{Protocol: protocol.Number})
 }

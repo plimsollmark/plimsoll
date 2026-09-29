@@ -320,6 +320,9 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (Result, error) {
 	if err := CheckMinimumIsolation(e.IsolationClass(), req.MinimumIsolation); err != nil {
 		return Result{Sandbox: e.Name(), Isolation: e.IsolationClass()}, err
 	}
+	if err := req.Software.Check(""); err != nil {
+		return Result{Sandbox: e.Name(), Isolation: e.IsolationClass()}, err
+	}
 	if strings.TrimSpace(e.APIKey) == "" {
 		return Result{Sandbox: "e2b"}, errors.New("E2B_API_KEY is not set")
 	}
@@ -407,6 +410,9 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult
 		return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, err
 	}
 	if err := CheckMinimumIsolation(e.IsolationClass(), req.MinimumIsolation); err != nil {
+		return ProjectResult{Sandbox: e.Name(), Isolation: e.IsolationClass()}, err
+	}
+	if err := req.Software.Check(""); err != nil {
 		return ProjectResult{Sandbox: e.Name(), Isolation: e.IsolationClass()}, err
 	}
 	if strings.TrimSpace(e.APIKey) == "" {

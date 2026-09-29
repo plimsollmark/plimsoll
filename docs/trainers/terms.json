@@ -1,0 +1,576 @@
+{
+  "about": [
+    "The term registry: the one home of every plain definition the public docs use.",
+    "glossary.html is generated from it, and so are the definitions the Plain English decoder shows.",
+    "terms_test.go holds every page in enforced_pages to one rule: the first use of a registered term",
+    "on that page is a marked definition (<dfn> in HTML, <dfn>*term*</dfn> in markdown) or a link to",
+    "its glossary entry. A term marked assumed is one the reader is expected to know; it is listed in",
+    "the glossary but its first use is not enforced. A term that names a chapter gets a link to",
+    "that chapter of glossary.html from its A to Z entry. After editing this file, run",
+    "go test ./docs/trainers -run TestGeneratedBlocks -update to regenerate the pages built from it."
+  ],
+  "enforced_pages": [
+    "README.md",
+    "docs/getting-started.md",
+    "docs/trainers/index.html",
+    "docs/trainers/quick-start.html",
+    "docs/trainers/plain-english.html",
+    "docs/trainers/concepts.html",
+    "docs/isolation-tiers.md",
+    "docs/limitations.md",
+    "docs/example-programs.md",
+    "docs/trainers/glossary.html",
+    "docs/dependencies.md",
+    "docs/sessions.md",
+    "docs/placement.md",
+    "docs/run-records.md",
+    "docs/openshell.md",
+    "docs/guest-dependencies.md",
+    "docs/trainers/dependencies.html",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "docs/callers.md",
+    "docs/hardened-mode.md",
+    "docs/gvisor.md",
+    "docs/seccomp.md",
+    "docs/dockercloud.md",
+    "docs/releasing.md",
+    "docs/run-results.md",
+    "docs/inner-loop-workflow.md",
+    "docs/seams.md",
+    "docs/trainers/README.md",
+    "docs/trainers/architecture.html",
+    "docs/trainers/discoverability.html",
+    "docs/trainers/customer-examples.html",
+    "docs/trainers/integrations.html",
+    "docs/trainers/agent-products.html",
+    "docs/trainers/brokering.html",
+    "docs/trainers/advisor.html",
+    "docs/trainers/capacity-endpoint.html",
+    "docs/trainers/private-api.html",
+    "docs/efficiency-advisor.md",
+    "docs/capability-grants.md",
+    "docs/architecture/credential-minting.md"
+  ],
+  "chapters": [
+    {"anchor": "what-runs-your-container", "title": "What actually runs your container"}
+  ],
+  "terms": [
+    {
+      "term": "admission",
+      "anchor": "admission",
+      "variants": ["admitted", "admit", "admits"],
+      "definition": "The daemon's capacity check just before a run starts: it reserves a slot within the concurrency and memory limits, or refuses at once instead of queueing."
+    },
+    {
+      "term": "attestation",
+      "anchor": "attestation",
+      "variants": ["attestations", "attests", "attested"],
+      "definition": "Cryptographic proof, usually rooted in the hardware, of exactly what software a machine is running; plimsoll's isolation tiers are evidence it collected, not attestation."
+    },
+    {
+      "term": "backpressure",
+      "anchor": "backpressure",
+      "variants": ["back-pressure"],
+      "definition": "An overloaded service telling its callers to slow down, and the callers doing so."
+    },
+    {
+      "term": "broker",
+      "anchor": "broker",
+      "variants": ["brokers", "brokered", "brokering"],
+      "definition": "The part of plimsoll that makes API calls for sandboxed code: it checks each call against the grant, attaches the credential itself, and counts the calls, so the code never sees the credential."
+    },
+    {
+      "term": "buck converter",
+      "anchor": "buck-converter",
+      "variants": ["buck converters"],
+      "definition": "A power-supply circuit that turns a higher DC voltage into a lower one by switching it on and off many times a second."
+    },
+    {
+      "term": "cart-pole",
+      "anchor": "cart-pole",
+      "variants": ["cart-poles", "cartpole"],
+      "definition": "A cart on a rail with a pole hinged on top; the task is to push the cart left and right so the pole stays upright."
+    },
+    {
+      "term": "cgroup",
+      "anchor": "cgroup",
+      "variants": ["cgroups"],
+      "chapter": "what-runs-your-container",
+      "definition": "The Linux kernel feature that caps and counts the memory, CPU time and number of processes a group of processes may use."
+    },
+    {
+      "term": "circuit breaker",
+      "anchor": "circuit-breaker",
+      "variants": ["circuit breakers"],
+      "definition": "A switch in the broker that, after the API answers 429 (too many requests) or 503 (unavailable), stops forwarding calls for a cooldown so the API can recover."
+    },
+    {
+      "term": "code mode",
+      "anchor": "code-mode",
+      "variants": [],
+      "definition": "Letting an AI agent write a short program that calls an API and run it in a sandbox, instead of calling one tool per step."
+    },
+    {
+      "term": "Connect",
+      "anchor": "connect",
+      "variants": [],
+      "case_sensitive": true,
+      "definition": "An RPC framework whose Go library serves protobuf-defined procedures over ordinary HTTP; plimsolld and its Go client use it."
+    },
+    {
+      "term": "container",
+      "anchor": "container",
+      "variants": ["containers"],
+      "assumed": true,
+      "definition": "A process started with its own view of files, network and other processes, while still sharing the host's operating-system kernel."
+    },
+    {
+      "term": "content-addressed",
+      "anchor": "content-addressed",
+      "variants": ["content addressed"],
+      "definition": "Identified by a digest of its own content, so the identifier can never later point at different content."
+    },
+    {
+      "term": "control law",
+      "anchor": "control-law",
+      "variants": ["control laws"],
+      "definition": "The formula a controller applies at each tick to turn its measurements into an action."
+    },
+    {
+      "term": "controller",
+      "anchor": "controller",
+      "variants": ["controllers"],
+      "definition": "A program that reads a system's state at every tick and decides how to push it, for example to keep a pole balanced on a cart."
+    },
+    {
+      "term": "deny-all",
+      "anchor": "deny-all",
+      "variants": ["deny all"],
+      "definition": "A network policy that blocks every connection unless a rule explicitly allows it."
+    },
+    {
+      "term": "digest",
+      "anchor": "digest",
+      "variants": ["digests"],
+      "definition": "A SHA-256 hash of some content, used as its name: the same digest always means the same bytes."
+    },
+    {
+      "term": "dispatch",
+      "anchor": "dispatch",
+      "variants": ["dispatched", "dispatching", "dispatches"],
+      "definition": "Handing a checked request to the provider so the code starts running; a request refused before dispatch ran nothing."
+    },
+    {
+      "term": "Docker Cloud Sandboxes",
+      "anchor": "docker-cloud-sandboxes",
+      "variants": ["Docker Cloud Sandbox"],
+      "definition": "Docker's hosted service that runs each sandbox as a microVM on Docker-managed machines; the dockercloud provider starts one per run and is billed per use."
+    },
+    {
+      "term": "DSSE",
+      "anchor": "dsse",
+      "variants": ["Dead Simple Signing Envelope"],
+      "definition": "Dead Simple Signing Envelope: a small standard format that wraps a payload together with its signatures."
+    },
+    {
+      "term": "E2B",
+      "anchor": "e2b",
+      "variants": [],
+      "definition": "A hosted service that runs code in Firecracker microVMs; the e2b provider starts one per run and is billed per use."
+    },
+    {
+      "term": "egress",
+      "anchor": "egress",
+      "variants": [],
+      "definition": "Network traffic leaving the sandbox; plimsoll runs have none, apart from the single path a grant opens to the broker."
+    },
+    {
+      "term": "escape",
+      "anchor": "escape",
+      "variants": ["escapes", "escaped"],
+      "definition": "A bug that lets code inside a sandbox act outside it."
+    },
+    {
+      "term": "fail closed",
+      "anchor": "fail-closed",
+      "variants": ["fails closed", "failed closed", "fail-closed"],
+      "definition": "To refuse, rather than allow, when a check cannot be completed or a required setting is missing."
+    },
+    {
+      "term": "fan-out",
+      "anchor": "fan-out",
+      "variants": ["fan-outs", "fan out", "N+1"],
+      "definition": "Calling an API once per item of a list instead of once for the whole list; also called the N+1 pattern."
+    },
+    {
+      "term": "fingerprint",
+      "anchor": "fingerprint",
+      "variants": ["fingerprints", "fingerprinted", "fingerprinting"],
+      "definition": "A SHA-256 hash that stands for some content: equal fingerprints mean identical bytes, and any change gives a different fingerprint."
+    },
+    {
+      "term": "Firecracker",
+      "anchor": "firecracker",
+      "variants": [],
+      "definition": "The open-source virtual machine monitor, built by AWS, that starts and runs microVMs; E2B runs every sandbox on it."
+    },
+    {
+      "term": "floor",
+      "anchor": "floor",
+      "variants": ["floors"],
+      "definition": "The weakest isolation tier a request will accept; if the daemon's provider is weaker, the request is refused and nothing runs."
+    },
+    {
+      "term": "govulncheck",
+      "anchor": "govulncheck",
+      "variants": [],
+      "definition": "Go's official vulnerability scanner, which reports known vulnerabilities only in code your program actually calls."
+    },
+    {
+      "term": "grant",
+      "anchor": "grant",
+      "variants": ["grants", "granted"],
+      "definition": "Permission, attached to one run, for its code to call listed routes of one HTTP API through the broker; a run without a grant has no network at all."
+    },
+    {
+      "term": "grant profile",
+      "anchor": "grant-profile",
+      "variants": ["grant profiles", "named profile", "named profiles"],
+      "definition": "A grant stored on the server under a name, holding the API's address, the allowed routes, the callers allowed to use it and how its credential is made; a caller sends only the name."
+    },
+    {
+      "term": "guard",
+      "anchor": "guard",
+      "variants": ["egress guard"],
+      "definition": "The HTTPS endpoint, served by the plimsoll daemon, that is the only address a microVM run with a grant may reach; it checks the run's guard credential and hands each call to the broker."
+    },
+    {
+      "term": "guest",
+      "anchor": "guest",
+      "variants": ["guests"],
+      "definition": "The code running inside a sandbox, seen from the host machine that runs it."
+    },
+    {
+      "term": "gVisor",
+      "anchor": "gvisor",
+      "variants": [],
+      "chapter": "what-runs-your-container",
+      "definition": "Google's open-source stand-in kernel, written in Go and running as an ordinary program, that handles almost every request a container's code makes itself and uses only a short, locked-down list of real kernel calls."
+    },
+    {
+      "term": "hardened mode",
+      "anchor": "hardened-mode",
+      "variants": [],
+      "definition": "The startup setting PLIMSOLL_HARDENED=1, under which the daemon refuses to start unless every production safeguard is configured."
+    },
+    {
+      "term": "hardware virtualization",
+      "anchor": "hardware-virtualization",
+      "variants": ["hardware virtualisation", "hardware-virtualized", "hardware-virtualised"],
+      "definition": "Processor support for running several virtual machines on one computer, each with its own kernel, kept apart by the CPU itself."
+    },
+    {
+      "term": "harness",
+      "anchor": "harness",
+      "variants": ["harnesses"],
+      "definition": "A program outside the daemon that drives runs and checks their results; plimsoll's attest harness signs run records and verifies them later."
+    },
+    {
+      "term": "hypervisor",
+      "anchor": "hypervisor",
+      "variants": ["hypervisors"],
+      "chapter": "what-runs-your-container",
+      "definition": "The program that runs virtual machines and keeps them apart, so code that breaks out of a virtual machine still has to break the hypervisor."
+    },
+    {
+      "term": "in-toto",
+      "anchor": "in-toto",
+      "variants": [],
+      "definition": "A standard format for signed statements about software; plimsoll's harness signs each run record as an in-toto statement inside a DSSE envelope."
+    },
+    {
+      "term": "isolation tier",
+      "anchor": "isolation-tier",
+      "variants": ["isolation tiers", "tier", "tiers"],
+      "chapter": "what-runs-your-container",
+      "definition": "How strong the wall around a run is, reported as one of four levels, weakest first: process, container, kernel, vm."
+    },
+    {
+      "term": "Kata Containers",
+      "anchor": "kata-containers",
+      "variants": ["Kata"],
+      "chapter": "what-runs-your-container",
+      "definition": "An open-source container runtime that starts a small virtual machine, with its own kernel, for each sandbox, so the processor's virtualization features keep sandboxes apart."
+    },
+    {
+      "term": "kernel",
+      "anchor": "kernel",
+      "variants": ["kernels"],
+      "assumed": true,
+      "chapter": "what-runs-your-container",
+      "definition": "The core part of the operating system that talks to the hardware and does every file, network and memory operation on every program's behalf."
+    },
+    {
+      "term": "load line",
+      "anchor": "load-line",
+      "variants": ["load lines", "load-line", "Plimsoll line"],
+      "definition": "The mark painted on a ship's hull showing how low it may safely sit in the water, where anyone can check it; plimsoll is named after it."
+    },
+    {
+      "term": "manifest",
+      "anchor": "manifest",
+      "variants": ["manifests"],
+      "definition": "A file that lists what something contains, such as the files in a release or the layers of a container image."
+    },
+    {
+      "term": "MCP",
+      "anchor": "mcp",
+      "variants": ["Model Context Protocol"],
+      "definition": "Model Context Protocol: the open standard an AI application uses to offer tools, such as a run-code tool, to a language model."
+    },
+    {
+      "term": "microVM",
+      "anchor": "microvm",
+      "variants": ["microVMs", "micro-VM"],
+      "definition": "A small virtual machine with its own kernel, started for one run and destroyed after it."
+    },
+    {
+      "term": "mint",
+      "anchor": "mint",
+      "variants": ["mints", "minted", "minting", "minter", "minters"],
+      "definition": "To create a fresh credential for one run, ideally short-lived and limited to that run's routes, so a stolen copy is soon useless."
+    },
+    {
+      "term": "module run",
+      "anchor": "module-run",
+      "variants": ["module runs"],
+      "definition": "Running a compiled simulator that is baked into a docker image, once for each row of a table of parameters."
+    },
+    {
+      "term": "namespace",
+      "anchor": "namespace",
+      "variants": ["namespaces"],
+      "chapter": "what-runs-your-container",
+      "definition": "A Linux kernel feature that controls what a program can see: its own files, its own process list, its own network."
+    },
+    {
+      "term": "nested virtualization",
+      "anchor": "nested-virtualization",
+      "variants": ["nested virtualisation"],
+      "definition": "Running a virtual machine inside another virtual machine; not every cloud server allows it."
+    },
+    {
+      "term": "noexec",
+      "anchor": "noexec",
+      "variants": [],
+      "definition": "A mount option that stops the kernel from running any program stored on that filesystem."
+    },
+    {
+      "term": "nosuid",
+      "anchor": "nosuid",
+      "variants": [],
+      "definition": "A mount option that stops a program on that filesystem from gaining extra privileges through its set-user-ID bit."
+    },
+    {
+      "term": "OCI runtime",
+      "anchor": "oci-runtime",
+      "variants": ["OCI runtimes", "container runtime", "container runtimes"],
+      "chapter": "what-runs-your-container",
+      "definition": "The program Docker hands a container to, which builds the walls around it, such as runc (the default), runsc (gVisor) or Kata Containers; OCI, the Open Container Initiative, wrote the standard it follows, so one can replace another without changing the image."
+    },
+    {
+      "term": "OpenShell",
+      "anchor": "openshell",
+      "variants": [],
+      "definition": "NVIDIA OpenShell, an agent sandbox runtime whose gateway server creates and deletes sandboxes on request; the openshell provider asks a gateway for one sandbox per run."
+    },
+    {
+      "term": "physics oracle",
+      "anchor": "physics-oracle",
+      "variants": ["oracle", "oracles"],
+      "definition": "The example that tests an agent-written controller by running it against a simulated cart-pole inside the sandbox and fingerprinting what happens."
+    },
+    {
+      "term": "pinned",
+      "anchor": "pinned",
+      "variants": ["pinning", "pin", "pins"],
+      "definition": "Fixed to one exact version, usually by digest, so it changes only when someone edits the pin."
+    },
+    {
+      "term": "preflight",
+      "anchor": "preflight",
+      "variants": ["preflights"],
+      "definition": "The configuration check a provider runs at startup and on each readiness poll: for docker it confirms the images and the runtime exist; for the cloud providers it checks settings only."
+    },
+    {
+      "term": "principal",
+      "anchor": "principal",
+      "variants": ["principals"],
+      "definition": "The authenticated identity a request comes from; in plimsolld, the caller id listed in the clients file."
+    },
+    {
+      "term": "process",
+      "anchor": "process",
+      "variants": ["processes"],
+      "assumed": true,
+      "definition": "One running program, with its own memory and its own permissions."
+    },
+    {
+      "term": "protobuf",
+      "anchor": "protobuf",
+      "variants": ["Protocol Buffers"],
+      "definition": "Protocol Buffers: Google's schema-defined binary format for messages, which plimsoll uses for its RPC requests and responses."
+    },
+    {
+      "term": "protocol number",
+      "anchor": "protocol-number",
+      "variants": ["protocol numbers"],
+      "definition": "A number every request carries to name the protocol version it speaks; a daemon serving a different version refuses the request before reading it, rather than running it without fields it does not know."
+    },
+    {
+      "term": "provenance",
+      "anchor": "provenance",
+      "variants": [],
+      "definition": "A record of where an artifact came from and how it was built, kept so that someone else can check it."
+    },
+    {
+      "term": "provider",
+      "anchor": "provider",
+      "variants": ["providers"],
+      "definition": "The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud or openshell."
+    },
+    {
+      "term": "QuickJS",
+      "anchor": "quickjs",
+      "variants": ["QuickJS-ng"],
+      "definition": "A small JavaScript engine; plimsoll embeds a build of it, compiled to WebAssembly, for its wasm provider."
+    },
+    {
+      "term": "RPC",
+      "anchor": "rpc",
+      "variants": ["RPCs", "remote procedure call"],
+      "assumed": true,
+      "definition": "Remote procedure call: one program sending a request to another over the network and getting an answer back."
+    },
+    {
+      "term": "run record",
+      "anchor": "run-record",
+      "variants": ["run records"],
+      "definition": "The statement plimsolld attaches to every answered run: SHA-256 digests of the request and the result, the isolation evidence, and the start and end times; the official client recomputes the digests and rejects a mismatch."
+    },
+    {
+      "term": "runc",
+      "anchor": "runc",
+      "variants": [],
+      "chapter": "what-runs-your-container",
+      "definition": "Docker's default container runtime, and usually Kubernetes's too, which separates containers with the kernel's namespaces and cgroups while they all share the host's kernel."
+    },
+    {
+      "term": "runsc",
+      "anchor": "runsc",
+      "variants": [],
+      "chapter": "what-runs-your-container",
+      "definition": "gVisor's container runtime: the program docker calls instead of runc to start a container under gVisor."
+    },
+    {
+      "term": "RuntimeClass",
+      "anchor": "runtimeclass",
+      "variants": [],
+      "definition": "The Kubernetes setting that chooses which container runtime, such as gVisor's runsc, runs a pod."
+    },
+    {
+      "term": "sandbox",
+      "anchor": "sandbox",
+      "variants": ["sandboxes", "sandboxed"],
+      "assumed": true,
+      "definition": "A place where code runs with something stopping it from reaching the rest of the machine."
+    },
+    {
+      "term": "seccomp",
+      "anchor": "seccomp",
+      "variants": [],
+      "definition": "A Linux kernel feature that limits which system calls a process may make; plimsoll ships a profile listing the calls its containers may use."
+    },
+    {
+      "term": "session",
+      "anchor": "session",
+      "variants": ["sessions"],
+      "definition": "One sandbox kept open for many calls: files one call writes are there for the next, but no process outlives the call that started it."
+    },
+    {
+      "term": "shed",
+      "anchor": "shed",
+      "variants": ["sheds", "shedding"],
+      "definition": "To refuse extra work at once, instead of queueing it, when a limit is reached."
+    },
+    {
+      "term": "supply chain",
+      "anchor": "supply-chain",
+      "variants": ["supply-chain"],
+      "definition": "Everything outside your own code that ends up in what you run: dependencies, base images, build tools, and the people and servers that publish them."
+    },
+    {
+      "term": "syscall",
+      "anchor": "syscall",
+      "variants": ["syscalls", "system call", "system calls"],
+      "definition": "A request from a program to the operating-system kernel, such as opening a file, starting a process or opening a network connection."
+    },
+    {
+      "term": "TCB",
+      "anchor": "tcb",
+      "variants": ["trusted computing base", "trusted surface"],
+      "definition": "Trusted computing base: the code that has to be correct for a security promise to hold, so a bug anywhere in it can break the promise."
+    },
+    {
+      "term": "threat model",
+      "anchor": "threat-model",
+      "variants": ["threat models"],
+      "definition": "The list of attackers and attacks a system is designed to hold out against."
+    },
+    {
+      "term": "tick",
+      "anchor": "tick",
+      "variants": ["ticks"],
+      "definition": "One fixed time step of a simulation; the cart-pole examples take 10 ms per tick, so 100 ticks make one simulated second."
+    },
+    {
+      "term": "tmpfs",
+      "anchor": "tmpfs",
+      "variants": [],
+      "definition": "A filesystem held in memory, with a size limit set when it is mounted; its contents disappear when the container stops."
+    },
+    {
+      "term": "token bucket",
+      "anchor": "token-bucket",
+      "variants": ["token-bucket"],
+      "definition": "A rate limit that allows short bursts: each caller's allowance refills at a steady rate and each run spends one unit of it."
+    },
+    {
+      "term": "trajectory",
+      "anchor": "trajectory",
+      "variants": ["trajectories"],
+      "definition": "The full record of a simulation run: every state at every tick, in order."
+    },
+    {
+      "term": "virtual machine",
+      "anchor": "virtual-machine",
+      "variants": ["virtual machines", "VM", "VMs"],
+      "assumed": true,
+      "chapter": "what-runs-your-container",
+      "definition": "A complete computer simulated in software, with its own kernel, kept apart from other virtual machines by the processor's virtualization features."
+    },
+    {
+      "term": "wazero",
+      "anchor": "wazero",
+      "variants": [],
+      "definition": "A WebAssembly runtime written in pure Go; plimsoll uses it to run QuickJS inside the daemon with a hard memory cap."
+    },
+    {
+      "term": "WebAssembly",
+      "anchor": "webassembly",
+      "variants": ["WASM"],
+      "definition": "A portable bytecode format that runs inside a host program, which decides everything the code can reach: no files, network or system calls unless the host provides them."
+    }
+  ]
+}

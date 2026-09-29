@@ -95,16 +95,26 @@ message DescribeResponse {
 
 // PayloadEnvironment is one payload kind's environment as the daemon states it.
 message PayloadEnvironment {
-  // identity names the software the code starts in, set only when that name is
-  // content-addressed (a verified image ID, an image digest, an interpreter
-  // hash), prefixed by how it was derived ("docker-image:", "dockercloud-image:",
-  // "quickjs-wasm:"). Equal strings mean the same software; different or empty
-  // strings claim nothing. A mutable name (a tag, a template name) is never sent.
+  // identity names the exact outer image artifact or embedded interpreter, set
+  // only when content-addressed. An OCI index can change when attached build
+  // metadata changes, even when its selected executable manifest does not.
+  // A mutable name (a tag or template name) is never sent.
   string identity = 1;
   // max_timeout_ms is the longest one run of this kind may take on this daemon
   // (the provider's ceiling, capped by the daemon's own). 0 = the kind is
   // unsupported or no ceiling is stated.
   uint32 max_timeout_ms = 2;
+  // Selected executable image manifest and platform, separate from the outer
+  // index in identity. Empty means the provider cannot establish it.
+  string software_identity = 3;
+}
+
+// An explicit caller rule for the selected software. Empty mode and identities
+// impose no rule. "exact" takes one identity; "approved" takes 1 to 32,
+// bounding the caller-controlled list to about 8 KiB at 256 bytes per identity.
+message SoftwareRule {
+  string mode = 1;
+  repeated string identities = 2;
 }
 
 // RunResources is the per-run resource envelope the operator configured. Each
@@ -174,6 +184,9 @@ message RunRequest {
   // Total wall-clock budget in milliseconds for whatever the payload is;
   // optional, defaulted and clamped server-side.
   int32 timeout_ms = 4;
+  // Checked by the daemon before dispatch. Older daemons would drop this field,
+  // so its addition raises the protocol number.
+  SoftwareRule software_rule = 5;
   // Exactly one payload. An empty oneof is InvalidArgument.
   oneof payload {
     JavaScriptRun javascript = 10;
@@ -209,6 +222,12 @@ message RunResponse {
   // refuses an answer without it. Nothing a daemon executes depends on it, so
   // it did not move the protocol number.
   RunRecord record = 4;
+  // The selected executable image identity, when the provider can establish it.
+  // The checked record repeats this field and binds it to the caller's rule.
+  string software_identity = 5;
+  // Exact outer image or interpreter artifact selected for this run, when
+  // stated. The record repeats it so the client checks both statements.
+  string environment = 6;
   // Exactly one result, of the payload's kind.
   oneof result {
     JavaScriptResult javascript = 10;
@@ -227,19 +246,18 @@ message RunResponse {
 // any language can reproduce it without a protobuf or JSON canonicalization
 // library.
 message RunRecord {
-  // version is the encoding version; 1. A verifier refuses a version it does
-  // not know rather than guessing at its fields.
+  // version is the encoding version; new records use 2. Version 1 remains
+  // verifiable. A verifier refuses an unknown version.
   uint32 version = 1;
-  // request_sha256 covers what the caller sent: the protocol number, floor,
-  // timeout and payload, never the trace id.
+  // request_sha256 covers what the caller sent: protocol number, floor,
+  // timeout, software rule and payload, never the trace id.
   string request_sha256 = 2;
   // result_sha256 covers the result as sent: exit codes or outcome, output,
   // truncation flags, steps, artifacts, module rows; never a duration or advice.
   string result_sha256 = 3;
   string provider = 4; // RunResponse.sandbox
   string isolation = 5; // RunResponse.isolation
-  // environment is the payload kind's identity as Describe states it (a
-  // content-addressed image or interpreter), empty when none is stated.
+  // environment is the exact outer image artifact or interpreter selected.
   string environment = 6;
   string policy = 7; // DescribeResponse.policy
   // When the daemon received the request and when it finished the result.
@@ -252,6 +270,8 @@ message RunRecord {
   string session = 10;
   uint64 sequence = 11;
   string previous_sha256 = 12;
+  string software_identity = 14; // RunResponse.software_identity
+  string software_rule_id = 15; // exact identity or digest of approved set
   // record_sha256 covers every field above.
   string record_sha256 = 13;
 }
@@ -406,6 +426,7 @@ message OpenSessionRequest {
   // Shorter than the daemon's own, or 0 for the daemon's.
   uint32 lifetime_ms = 4;
   uint32 idle_timeout_ms = 5;
+  SoftwareRule software_rule = 6;
 }
 
 message OpenSessionResponse {
@@ -417,6 +438,7 @@ message OpenSessionResponse {
   string isolation = 4; // the tier measured at open
   int64 expires_unix_ms = 5;
   uint32 idle_timeout_ms = 6; // after this long without a call the sandbox is suspended
+  string software_identity = 7; // selected image, when the provider can establish it
 }
 
 // SessionRunRequest is a RunRequest with a session ID, for a call in a session.
@@ -429,6 +451,7 @@ message SessionRunRequest {
   string trace_id = 3;
   int32 timeout_ms = 4;
   string session_id = 5;
+  SoftwareRule software_rule = 6;
   oneof payload {
     JavaScriptRun javascript = 10;
     ProjectRun project = 11;
@@ -504,4 +527,5 @@ enum NotDispatchedReason {
   NOT_DISPATCHED_REASON_ISOLATION = 5;
   // Shed by admission or a rate limit; retry later or elsewhere.
   NOT_DISPATCHED_REASON_CAPACITY = 6;
+  NOT_DISPATCHED_REASON_ENVIRONMENT = 7;
 }

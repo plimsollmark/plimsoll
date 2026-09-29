@@ -90,7 +90,7 @@
 
   <p class="eyebrow">plimsoll trainer · 00 / start here</p>
   <h1>Plain English</h1>
-  <p class="promise">Every word the other pages use, on one page that assumes nothing.
+  <p class="promise">The idea behind every other page, for a reader who assumes nothing.
   Underneath all of them is one question: <b>if a stranger's code turns out to be
   malicious, how many walls stand between it and your stuff?</b> Start with the picture.</p>
 
@@ -107,7 +107,7 @@
       <div class="seg" role="group" aria-label="Where the code runs" id="whereSeg">
         <button type="button" data-value="wasm">Inside your own program<small>a sealed engine, instant</small></button>
         <button type="button" data-value="docker">In a box on your machine<small>a container, quick</small></button>
-        <button type="button" data-value="gvisor">In a box with a stand-in core<small>the same container plus gVisor</small></button>
+        <button type="button" data-value="gvisor">In a box with a stand-in core<small>the same container, plus a second wall</small></button>
         <button type="button" data-value="e2b">In a throwaway computer in the cloud<small>a virtual machine, slowest, off your hardware</small></button>
       </div>
     </div>
@@ -202,7 +202,9 @@
     <p class="draft" aria-hidden="true">02</p>
     <h2 id="h-decoder">One sentence, two ways</h2>
     <p>Here is what plimsoll is, written the way the other pages write it. Flip it to plain
-    words, or tap any underlined term for what it means and why you would care.</p>
+    words, or tap any underlined term for what it means and why you would care. Every other
+    term the docs use has a one-sentence entry in the
+    <a href="glossary.html">glossary (INTERNAL · trainer site →)</a>.</p>
 
     <div class="control">
       <div class="seg" role="group" aria-label="Wording" id="modeSeg">
@@ -235,7 +237,9 @@
   <section id="doors" aria-labelledby="h-doors">
     <p class="draft" aria-hidden="true">04</p>
     <h2 id="h-doors">Which door for which job</h2>
-    <p>Pick the job. A door lights up when the job calls for one. API access uses the broker with a door you choose separately.</p>
+    <p>Pick the job. A door lights up when the job calls for one. The last job, reading
+    your API, does not depend on the door: any door can use the <dfn>broker</dfn>, the part of
+    plimsoll that makes the API call for the code, so the code never holds your key.</p>
 
     <div class="control">
       <div class="seg" role="group" aria-label="The job" id="jobSeg">
@@ -260,7 +264,7 @@
       <div class="door" data-door="docker">
         <h3>A box on your machine<small>the real name: docker</small></h3>
         <dl>
-          <dt>Wall</dt><dd>Solid. Add the stand-in core (gVisor) for a second wall.</dd>
+          <dt>Wall</dt><dd>Solid. For a second wall, add the stand-in core, <dfn>gVisor</dfn>: it answers the code's requests to the operating system itself, so the real core is never touched directly.</dd>
           <dt>Speed</dt><dd>Quick. A box starts in well under a second.</dd>
           <dt>Can run</dt><dd>Snippets, whole projects, and compiled simulators.</dd>
           <dt>If the wall cracks</dt><dd>Stuck in the box. Still your machine.</dd>
@@ -284,15 +288,16 @@
 
   <h2 style="margin-top:44px">Keep reading</h2>
   <ul class="links">
-    <li><a href="concepts.html"><b>Internal · trainer site →</b><strong>Concepts</strong><small>The same walls with their real names, as a load line on a hull you can move the water against.</small></a></li>
+    <li><a href="concepts.html"><b>Internal · trainer site →</b><strong>Concepts</strong><small>The same walls with their real names, drawn as marks painted on a ship's hull.</small></a></li>
     <li><a href="architecture.html"><b>Internal · trainer site →</b><strong>Architecture</strong><small>The trip from section 03 with every real gate on an interactive map.</small></a></li>
     <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>How code behind a wall reads from your API without ever holding the key.</small></a></li>
+    <li><a href="glossary.html"><b>Internal · trainer site →</b><strong>Glossary</strong><small>Every term the docs use, each in one plain sentence.</small></a></li>
   </ul>
 
   <footer>
-    <p>Nothing on this page runs code or calls a network. The pictures are drawings of the
-    four ways plimsoll can be set up, and the claims in them are checked against the
-    daemon's source by the tests in this directory.</p>
+    <p>Nothing on this page runs code or calls a network. The pictures are drawings of four
+    ways plimsoll can be set up. The definitions the decoder shows come from the same file
+    as the glossary, and a test fails if the two disagree.</p>
   </footer>
 
 </div>
@@ -340,17 +345,32 @@
   });
   renderScene('wasm');
 
-  // 02: one sentence, two ways. Each term carries both wordings and its own card.
+  // 02: one sentence, two ways. Each term carries both wordings and its own card; the
+  // plain definition itself comes from the registry, through the generated block below.
+  // terms:begin rpc sandbox isolation-tier process webassembly container gvisor microvm syscall
+  // Generated from terms.json; edit that file, not these lines.
+  var DEFINED = {
+    "rpc": "Remote procedure call: one program sending a request to another over the network and getting an answer back.",
+    "sandbox": "A place where code runs with something stopping it from reaching the rest of the machine.",
+    "isolation-tier": "How strong the wall around a run is, reported as one of four levels, weakest first: process, container, kernel, vm.",
+    "process": "One running program, with its own memory and its own permissions.",
+    "webassembly": "A portable bytecode format that runs inside a host program, which decides everything the code can reach: no files, network or system calls unless the host provides them.",
+    "container": "A process started with its own view of files, network and other processes, while still sharing the host's operating-system kernel.",
+    "gvisor": "Google's open-source stand-in kernel, written in Go and running as an ordinary program, that handles almost every request a container's code makes itself and uses only a short, locked-down list of real kernel calls.",
+    "microvm": "A small virtual machine with its own kernel, started for one run and destroyed after it.",
+    "syscall": "A request from a program to the operating-system kernel, such as opening a file, starting a process or opening a network connection."
+  };
+  // terms:end
   var TERMS = {
-    rpc: { j: 'an RPC service', p: 'a separate helper program you send requests to', word: 'RPC', means: 'Send a request to another program and get the answer back. The mailman, not a wall.', care: 'Because plimsoll is one: your program talks to it instead of running strangers’ code itself.', wall: false },
-    sandbox: { j: 'a sandbox', p: 'a walled-off place', word: 'sandbox', means: 'Anywhere code runs with something stopping it from reaching the rest of the machine.', care: 'The whole product is one. The interesting question is always how thick its wall is.', wall: false },
-    tier: { j: 'a chosen isolation tier', p: 'a wall of a thickness you choose', word: 'isolation tier', means: 'How thick the wall is: process, then container, then a stand-in core, then a whole computer.', care: 'Every answer plimsoll gives names the tier that ran the code, and you can refuse anything thinner.', wall: false },
-    process: { j: 'process', p: 'running program', word: 'process', means: 'One running program and everything inside it: one pile of memory, one set of permissions.', care: '“Process-tier” means the code runs right next to yours, inside the same program.', wall: true },
-    wasm: { j: 'a WASM engine', p: 'a sealed mini-engine', word: 'WASM', means: 'WebAssembly: a sealed mini-computer that runs inside a normal program. Here it runs JavaScript and nothing else.', care: 'It is the thinnest wall. No operating-system wall, so it shares your program.', wall: true },
-    container: { j: 'a Docker container', p: 'a boxed-off slice of your machine', word: 'container', means: 'A boxed-off slice of your computer with its own files, that still borrows the real operating-system core underneath.', care: 'The middle wall: solid, but standing on a shared foundation.', wall: true },
-    gvisor: { j: 'gVisor', p: 'a stand-in operating-system core', word: 'gVisor', means: 'A look-alike operating-system core that answers the code’s requests itself, so the container never touches the real one.', care: 'An extra wall bolted onto the container. plimsoll calls the result the kernel tier.', wall: true },
-    vm: { j: 'a disposable microVM', p: 'a whole throwaway computer, walled off by the hardware', word: 'virtual machine', means: 'A complete fake computer with its own core, kept apart by the hardware itself. E2B or Docker Cloud Sandboxes starts one, uses it, and destroys it.', care: 'The strongest wall, the slowest to start, and the one that costs money per run.', wall: true },
-    syscall: { j: 'syscall', p: 'request to the operating system, such as opening a file or using the network', word: 'syscall', means: 'How a program asks the operating system to do anything real.', care: 'Not a wall. Walls get thicker by limiting which of these requests are allowed to go through.', wall: false }
+    rpc: { j: 'an RPC service', p: 'a separate helper program you send requests to', word: 'RPC', def: 'rpc', care: 'Because plimsoll is one: your program talks to it instead of running strangers’ code itself.', wall: false },
+    sandbox: { j: 'a sandbox', p: 'a walled-off place', word: 'sandbox', def: 'sandbox', care: 'The whole product is one. The interesting question is always how thick its wall is.', wall: false },
+    tier: { j: 'a chosen isolation tier', p: 'a wall of a thickness you choose', word: 'isolation tier', def: 'isolation-tier', care: 'Every answer plimsoll gives names the tier that ran the code, and you can refuse anything thinner.', wall: false },
+    process: { j: 'process', p: 'running program', word: 'process', def: 'process', care: '“Process-tier” means the code runs right next to yours, inside the same program.', wall: true },
+    wasm: { j: 'a WASM engine', p: 'a sealed mini-engine', word: 'WebAssembly (WASM)', def: 'webassembly', care: 'It is the thinnest wall. No operating-system wall, so it shares your program.', wall: true },
+    container: { j: 'a Docker container', p: 'a boxed-off slice of your machine', word: 'container', def: 'container', care: 'The middle wall: solid, but standing on a shared foundation.', wall: true },
+    gvisor: { j: 'gVisor', p: 'a stand-in operating-system core', word: 'gVisor', def: 'gvisor', care: 'An extra wall bolted onto the container. plimsoll calls the result the kernel tier.', wall: true },
+    vm: { j: 'a disposable microVM', p: 'a whole throwaway computer, walled off by the hardware', word: 'microVM', def: 'microvm', care: 'The strongest wall, the slowest to start, and the one that costs money per run: E2B or Docker Cloud Sandboxes starts one, uses it, and destroys it.', wall: true },
+    syscall: { j: 'syscall', p: 'request to the operating system, such as opening a file or using the network', word: 'syscall', def: 'syscall', care: 'Not a wall. Walls get thicker by limiting which of these requests are allowed to go through.', wall: false }
   };
   var TEMPLATE = 'plimsoll is {rpc}. You send it JavaScript from someone you do not trust; it runs that code in {sandbox} at {tier}: {wasm} inside its own {process}, {container}, that container under {gvisor}, or {vm}. Every {syscall} the code makes is something the wall either allows or stops, and every result says which wall ran it.';
   var mode = 'jargon';
@@ -389,7 +409,7 @@
     w.querySelector('.word').textContent = t.word;
     card.appendChild(w);
     var dl = document.createElement('dl');
-    [['In plain words', t.means], ['Why you would care', t.care]].forEach(function (pair) {
+    [['In plain words', DEFINED[t.def]], ['Why you would care', t.care]].forEach(function (pair) {
       var dt = document.createElement('dt'); dt.textContent = pair[0];
       var dd = document.createElement('dd'); dd.textContent = pair[1];
       dl.appendChild(dt); dl.appendChild(dd);
@@ -420,7 +440,7 @@
     hostile: { lit: ['docker', 'e2b'], text: '<b>A box with the stand-in core, or a throwaway computer.</b> Assume the wall will crack one day and ask where the code lands. A plain box lands it on your machine’s shared core; the stand-in core or a separate computer keeps it further away. plimsoll refuses to call anything thinner than those two good enough for hostile code.' },
     project: { lit: ['docker', 'e2b'], text: '<b>A box or a throwaway computer.</b> A project needs files on disk and build tools, and the sealed engine has neither: it runs one snippet and nothing else. Both other doors carry the tools baked in, because the box has no internet to fetch them with.' },
     offbox: { lit: ['e2b'], text: '<b>A throwaway computer.</b> It is the only door where the code never runs on your hardware at all. You pay for that in start-up time and per-run cost, and the wall is the strongest there is.' },
-    api: { lit: [], path: 'broker', text: '<b>Use the API broker with one chosen wall.</b> Reading your API does not decide where the code runs. Choose a wall by the other jobs, then give the run permission to call an approved route. Once that provider’s broker path is configured, guest code asks plimsoll’s broker; the downstream API key stays outside the guest. <a href="brokering.html">INTERNAL · trainer site → The API broker</a> shows the request and the provider-specific connection.' }
+    api: { lit: [], path: 'broker', text: '<b>Use the API broker with one chosen wall.</b> Reading your API does not decide where the code runs. Choose a wall by the other jobs, then give the run permission to call an approved route. Once the provider is set up for it, the code asks plimsoll’s broker, and your API key stays outside the sandbox. <a href="brokering.html">INTERNAL · trainer site → The API broker</a> shows the request and the provider-specific connection.' }
   };
   function renderJob(which) {
     press(el('jobSeg'), which);

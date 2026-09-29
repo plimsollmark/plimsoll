@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>A buck converter controller in C, identical to its JavaScript law to the bit</title>
-<meta name="description" content="A buck converter controller in C, compiled to WebAssembly in plimsoll's sandbox and judged on a simulated power supply: identical to its JavaScript law in all 4 scenarios.">
+<meta name="description" content="A buck converter controller in C, compiled to WebAssembly in plimsoll's sandbox and tested on a simulated power supply: identical to its JavaScript law in all 4 scenarios.">
 <link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="plimsoll">
 <meta property="og:title" content="A buck converter controller in C, identical to its JavaScript law to the bit">
-<meta property="og:description" content="A buck converter controller in C, compiled to WebAssembly in plimsoll's sandbox and judged on a simulated power supply: identical to its JavaScript law in all 4 scenarios.">
+<meta property="og:description" content="A buck converter controller in C, compiled to WebAssembly in plimsoll's sandbox and tested on a simulated power supply: identical to its JavaScript law in all 4 scenarios.">
 <meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html">
 <meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/wasm-buck-example.png">
 <meta property="og:image:width" content="1280">
@@ -59,7 +59,7 @@
 <main>
 <nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>A buck converter controller in C, identical to its JavaScript law to the bit</h1>
-<p class="sub">Measured on 2026-09-25 in real runs through plimsoll's docker tier (container). A <b>buck converter</b> is the power supply that turns a battery or bus voltage into the lower voltage a chip runs on, by switching the input on for a fraction of each cycle (the <b>duty cycle</b>); the controller that picks that fraction is firmware, usually written in C. The caller sent two files: <code>controller.c</code>, such a controller, and <code>controller.js</code>, a Node shim with no arithmetic of its own, the same one the <a href="https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html">cart-pole C controller</a> runs under. The run's first step compiled the C to WebAssembly inside the sandbox, with no network. The later steps handed the module to the judge baked into the image, which drove a simulated converter (the <b>plant</b>, itself compiled to WebAssembly) through the controller one 10 microsecond tick at a time for 20 ms and recorded every tick. The SHA-256 of that record is the <b>fingerprint</b>.</p>
+<p class="sub">Measured on 2026-09-25 in real runs through plimsoll's docker tier (container). A <b>buck converter</b> is the power supply that turns a battery or bus voltage into the lower voltage a chip runs on, by switching the input on for a fraction of each cycle (the <b>duty cycle</b>); the controller that picks that fraction is firmware, usually written in C. The caller sent two files: <code>controller.c</code>, such a controller, and <code>controller.js</code>, a Node shim with no arithmetic of its own, the same one the <a href="https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html">cart-pole C controller</a> runs under. The run's first step compiled the C to WebAssembly inside the sandbox, with no network. The later steps handed the module to the runner baked into the image, which drove a simulated converter (the <b>plant</b>, itself compiled to WebAssembly) through the controller one 10 microsecond tick at a time for 20 ms and recorded every tick. The SHA-256 of that record is the <b>fingerprint</b>.</p>
 
 <div class="tiles">
   <div class="tile"><div class="big">4 of 4</div><div class="what">scenarios where the C port's record is byte-identical to the JavaScript law's</div></div>
@@ -106,7 +106,7 @@
 <p class="note">For engineers: in the plant's own terms the load halves. Its parameter is the load resistance, which drops from 4 to 2 ohm at 10 ms; at 5 V that is a 100 percent load step, 1.25 A to 2.50 A. A lower resistance is a heavier load, which is why the rest of this page says the current doubles rather than that the load halves.</p>
 
 <h2>Every scenario</h2>
-<p class="note">The controller is not told the input voltage, the load, or when the load steps; it sees only the output voltage and the inductor current. Three runs judged each scenario: the C build twice and the JavaScript law once.</p>
+<p class="note">The controller is not told the input voltage, the load, or when the load steps; it sees only the output voltage and the inductor current. Three runs covered each scenario: the C build twice and the JavaScript law once.</p>
 <div class="tablewrap"><table>
 <tr><th>scenario</th><th>input</th><th>load, then when its resistance halves (current doubles)</th><th>score</th><th>peak V</th><th>peak |A|</th><th>fingerprint (C run 1)</th><th>C run 2 and JavaScript (the run writes no page unless both match)</th></tr>
 <tr><td>s1</td><td class="num">12 V</td><td class="num">4 ohm, 10 ms</td><td class="num">0.908</td><td class="num">5.062</td><td class="num">2.505</td><td><span class="fp">9bcc0a3a963d11853ba0bd1a7bc3850a00d55115b6a2ee3de2cdd51ad69006f7</span></td><td><span class="yes">both identical</span></td></tr>
@@ -121,7 +121,7 @@
 
 <div class="row2">
 <div class="panel"><h3>controller.c (what ran)</h3><pre>// A buck converter controller in C, compiled to WebAssembly inside the sandbox and
-// judged against the plant /models/buck.wasm: an averaged synchronous buck
+// run against the plant /models/buck.wasm: an averaged synchronous buck
 // converter (100 uH, 100 uF) that must hold 5 V from an input of 10 to 16 V while
 // the load resistance halves partway through the run, doubling the current it draws.
 //
@@ -134,7 +134,7 @@
 // have anti-windup: an integrator stops accumulating while its output is clamped.
 // Current feedback is what damps the LC resonance a voltage-only loop rings on.
 //
-// The contract with controller.js, the Node shim the judge runs: the module exports
+// The contract with controller.js, the Node shim the runner spawns: the module exports
 // one function, control, called once per 10 us tick with the output voltage, the
 // inductor current and the tick index, returning the duty cycle in [0, 1]. State
 // between ticks lives in globals, because a module instance lives for the whole
@@ -202,8 +202,8 @@ rl.on(&#39;line&#39;, (line) =&gt; {
 <h2>What this does not show</h2>
 <ul>
 <li>Not firmware on a chip. The C uses <code>double</code> and runs as WebAssembly; a microcontroller build would use its own number format, timer and ADC, and would be a different program with its own fingerprint.</li>
-<li>Not a hardware converter. The simulator averages the switching behavior (the switching ripple is averaged out), so the run judges the control law, not the switching stage.</li>
-<li>Not isolation beyond the run's tier. The compiler, the judge and the controller run inside one project run, behind the tier the provider reports (container here).</li>
+<li>Not a hardware converter. The simulator averages the switching behavior (the switching ripple is averaged out), so the run tests the control law, not the switching stage.</li>
+<li>Not isolation beyond the run's tier. The compiler, the runner and the controller run inside one project run, behind the tier the provider reports (container here).</li>
 </ul>
 <p class="note">Source and how to rerun: <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/wasm-buck">examples/wasm-buck on GitHub ↗</a>. The draft-versus-accepted replay of the same plant: <a href="https://plimsollmark.github.io/plimsoll/examples/envs/buck-converter/index.html">buck converter replay</a>.</p>
 </main>

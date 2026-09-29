@@ -87,18 +87,22 @@
 
   <p class="eyebrow">plimsoll trainer · 06 / discoverable contract</p>
   <h1>Discoverable tools</h1>
-  <p class="promise">A model calling your <code>run_code</code> tool has to know what the
-  tool returns and what the globals inside the sandbox accept. If the only source is a
-  name, it probes blind. <b>The fix is one document that produces every view of the
+  <p class="promise">A model calling your <code>run_code</code> tool, offered to it over
+  <dfn>MCP</dfn> (Model Context Protocol, the standard an AI application uses to offer tools
+  to a model), has to know what the tool returns and what the functions injected into the
+  sandbox (its typed globals) accept. If the only source is a name, it probes blind. <b>The fix is one document that produces every view of the
   contract</b>, and a test that fails the moment a real return stops matching it.</p>
 
   <!-- 01 ─────────────────────────────────────────────────────────────────── -->
   <section id="views" aria-labelledby="h-views">
     <p class="draft" aria-hidden="true">01</p>
     <h2 id="h-views">One operation, three views</h2>
-    <p><code>getLight(id)</code> from the specgen example, as the three audiences see it.
-    The tool definition, the typed globals and the route list are all generated from the
-    same OpenAPI document, so they agree by construction. Flip the switch to change the API
+    <p><code>getLight(id)</code> from the specgen example, as its three audiences see it:
+    the model reads the tool definition, the sandbox code calls the typed globals, and the
+    <dfn>broker</dfn>, the part of plimsoll that makes the sandbox's API calls, enforces the
+    route list. <code>plimsoll-specgen</code> generates all three from the same OpenAPI
+    document (a machine-readable description of an HTTP API), so they agree by
+    construction. Flip the switch to change the API
     underneath them and watch which views go stale, and which check would catch it.</p>
 
     <div class="control">
@@ -116,9 +120,12 @@
   <section id="annotations" aria-labelledby="h-annotations">
     <p class="draft" aria-hidden="true">02</p>
     <h2 id="h-annotations">Mark each tool honestly</h2>
-    <p>Tool annotations tell a client how a call behaves before it runs it. A wrong hint
-    is worse than none: a mutating tool marked read-only invites unconfirmed calls. Fill in
-    the four hints for four tools, then check.</p>
+    <p>Tool annotations are four hints in an MCP tool definition that tell a client how a
+    call behaves before it runs it: read-only, idempotent (calling it twice has the same
+    effect as calling it once), destructive, and open-world (it can reach things outside
+    your own backend). A wrong hint is worse than none: a tool that changes state but is
+    marked read-only invites unconfirmed calls. Fill in the four hints for four tools, then
+    check.</p>
     <div class="board" id="board"></div>
     <div class="board-actions">
       <button type="button" id="checkBoard">Check my hints</button>
@@ -141,11 +148,11 @@
   <section id="delivery" aria-labelledby="h-delivery">
     <p class="draft" aria-hidden="true">04</p>
     <h2 id="h-delivery">Serve the typed globals at runtime</h2>
-    <p>The injected globals are not MCP tools, so they get no schema for free. A model
+    <p>The typed globals are not MCP tools, so they get no schema for free. A model
     needs their signatures before it writes sandbox code. Pick the delivery by what your
     server already registers, and keep one generated source.</p>
     <div class="delivery">
-      <div class="card good"><h3>An MCP resource</h3><p>A URI such as <code>stockroom://sandbox-api.d.ts</code> that returns the generated <code>.d.ts</code> (or the same facts as JSON). Best when the server already registers resources: the client discovers the globals the way it discovers everything else.</p></div>
+      <div class="card good"><h3>An MCP resource</h3><p>A resource is data an MCP server offers at a URI for the client to read. Here, a URI such as <code>stockroom://sandbox-api.d.ts</code> that returns the generated <code>.d.ts</code>, a TypeScript declaration file (or the same facts as JSON). Best when the server already registers resources: the client discovers the globals the way it discovers everything else.</p></div>
       <div class="card"><h3>A describe tool</h3><p><code>describe_sandbox_api</code> returning, per function, the typed parameters, the return schema, a one-line description and an example. For servers with no resource surface yet.</p></div>
     </div>
     <div class="card bad"><p><b>Not both.</b> A resource and a tool that can disagree are two sources of truth, and they will drift. Whichever you pick, it is rendered from the same document as the tool schema and the route list.</p></div>
@@ -155,17 +162,18 @@
   <section id="gate" aria-labelledby="h-gate">
     <p class="draft" aria-hidden="true">05</p>
     <h2 id="h-gate">The drift gate</h2>
-    <p>A plausible-looking schema is not a correct one. Confirm the definitions against
-    the current protocol specification once, then test every declared shape against real
-    returns on every build.</p>
+    <p>A plausible-looking schema is not a correct one, and a correct one drifts: the API
+    changes and the description does not. Confirm the definitions against the current
+    protocol specification once, then test every declared shape against real returns on
+    every build.</p>
     <ul class="gate" id="gateList">
       <li><label><input type="checkbox"><span><b>Checked against the current MCP specification, not memory.</b><small>outputSchema, structuredContent and the four annotations as the 2025-06-18 revision or later defines them, not as plausible JSON.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>Every tool has a complete inputSchema.</b><small>Required and optional marked, so a client never guesses an argument. run_code's schema has no property that carries authority.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>Every tool has a complete inputSchema.</b><small>Required and optional marked, so a client never guesses an argument. run_code's schema has no property that gives the code a permission.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>The four annotations are set per tool from behaviour.</b><small>list_* read-only and idempotent; set_* idempotent only for an absolute write; recall_* and run_code neither.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>Every outputSchema comes from observed returns.</b><small>And the tool returns the object in structuredContent, with absent fields optional rather than defaulted.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>The typed globals are published.</b><small>A .d.ts with parameters, optionality, returns and an example per function, served as a resource or a describe tool.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>A drift test runs in the build gate.</b><small>It calls each tool against the backend or fixtures, validates the response against its outputSchema, and fails loudly.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>Nothing in the contract carries a secret or authority.</b><small>Schemas, types and examples describe shape. The credential and the route list never appear in a description, an example return or the sandbox types.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>Nothing in the contract carries a secret or a permission.</b><small>Schemas, types and examples describe shape. The credential and the route list never appear in a description, an example return or the sandbox types.</small></span></label></li>
     </ul>
     <div class="card" id="gateReadout"></div>
   </section>
@@ -198,9 +206,9 @@
 
   // 01: three views of getLight(id).
   var VIEWS = [
-    { who: 'the model · tools/list', name: 'run_code', text: '{\n  "name": "run_code",\n  "description": "Run JavaScript against the home.* client. Only the listed operations are permitted …",\n  "inputSchema": { "type": "object", "required": ["code"],\n    "properties": { "code": { "type": "string" }, "timeout_ms": { "type": "integer", "maximum": 30000 } },\n    "additionalProperties": false },\n  "outputSchema": { "type": "object", "required": ["stdout", "exit_code", "isolation"], … },\n  "annotations": { "readOnlyHint": false, "idempotentHint": false, "openWorldHint": true }\n}', stale: false, note: 'What run_code returns never changes with the API; the tool is the envelope, not the operation. The description is generated from the same document as the other two views.' },
+    { who: 'the model · tools/list', name: 'run_code', text: '{\n  "name": "run_code",\n  "description": "Run JavaScript against the home.* client. Only the listed operations are permitted …",\n  "inputSchema": { "type": "object", "required": ["code"],\n    "properties": { "code": { "type": "string" }, "timeout_ms": { "type": "integer", "maximum": 30000 } },\n    "additionalProperties": false },\n  "outputSchema": { "type": "object", "required": ["stdout", "exit_code", "isolation"], … },\n  "annotations": { "readOnlyHint": false, "idempotentHint": false, "openWorldHint": true }\n}', stale: false, note: 'What run_code returns never changes with the API; the tool is the wrapper that runs any operation, not the operation itself. The description is generated from the same document as the other two views.' },
     { who: 'the sandbox code · sandbox-api.d.ts', name: 'home.getLight', text: 'interface Light {\n  id: string;\n  on: boolean;\n  <span class="f">brightness</span>: number;   <span class="c">// 0..100</span>\n  color?: string;    <span class="c">// absent when unknown</span>\n}\n\n/** Get one light by id.\n *  @example await home.getLight("l-7")\n *  → { id: "l-7", on: true, brightness: 40 } */\ndeclare const home: {\n  getLight(id: string): Promise&lt;Light&gt;;\n  …\n};', stale: true, note: 'Stale on drift: the type still promises brightness, so code written against it reads undefined. The drift test is what catches it, not the model.' },
-    { who: 'the broker · Allow list', name: 'GET /lights/*', text: '[\n  "GET /lights",\n  "POST /lights",\n  "DELETE /lights/*",\n  "GET /lights/*",\n  "PATCH /lights/*",\n  "PUT /lights/*",\n  "GET /rooms/*/lights",\n  "GET /scenes",\n  "GET /status"\n]', stale: false, note: 'Unaffected by a field rename: the route is the same. The route list is authority; the other two views are description.' }
+    { who: 'the broker · Allow list', name: 'GET /lights/*', text: '[\n  "GET /lights",\n  "POST /lights",\n  "DELETE /lights/*",\n  "GET /lights/*",\n  "PATCH /lights/*",\n  "PUT /lights/*",\n  "GET /rooms/*/lights",\n  "GET /scenes",\n  "GET /status"\n]', stale: false, note: 'Unaffected by a field rename: the route is the same. The route list is what gets enforced; the other two views only describe.' }
   ];
   function renderViews(which) {
     press(el('driftSeg'), which);
@@ -222,7 +230,7 @@
       g.appendChild(d);
     });
     el('driftNote').innerHTML = which === 'same'
-      ? '<p><b>Three views, one source.</b> plimsoll-specgen reads the OpenAPI document once and writes the route list, the preamble and its types, and the tool description. A path parameter becomes a whole-segment wildcard; an operation becomes a typed method; a summary becomes a line of description. It is deterministic and offline, and it refuses at parse time anything the broker could not enforce.</p>'
+      ? '<p><b>Three views, one source.</b> plimsoll-specgen reads the OpenAPI document once and writes the route list, the preamble (the JavaScript that defines the typed globals) and its types, and the tool description. A path parameter becomes a <code>*</code> that matches one whole path segment; an operation becomes a typed method; a summary becomes a line of description. It is deterministic and offline, and it refuses at parse time anything the broker could not enforce.</p>'
       : '<p><b>The API renamed a field and nobody regenerated.</b> The route list is still right, so the call still succeeds, which is exactly why a schema check has to exist: the only thing that notices is a test that validates a real return against the declared shape (section 05). Regenerate from the corrected document and all three views move together.</p>';
   }
   el('driftSeg').addEventListener('click', function (e) {
@@ -237,7 +245,7 @@
     { name: 'list_lights', answer: ['true', 'true', 'false', 'false'], why: 'Pure discovery of a closed set from your own backend.' },
     { name: 'set_light_brightness', answer: ['false', 'true', 'false', 'false'], why: 'Mutates state, but an absolute value repeats to the same result, so repeating it is safe.' },
     { name: 'recall_scene', answer: ['false', 'unknown', 'false', 'false'], why: 'Changes state; scenes may transition or layer, so whether a repeat is safe is genuinely unknown.' },
-    { name: 'run_code', answer: ['false', 'false', 'unknown', 'true'], why: 'Arbitrary model-authored code: not read-only, not safely repeatable, destructiveness depends on the code, and it can reach brokered external routes.' }
+    { name: 'run_code', answer: ['false', 'false', 'unknown', 'true'], why: 'Arbitrary model-authored code: not read-only, not safely repeatable, destructiveness depends on the code, and it can reach external routes through the broker.' }
   ];
   function renderBoard() {
     var b = el('board');

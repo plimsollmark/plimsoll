@@ -61,18 +61,23 @@
 
   <p class="eyebrow">plimsoll trainer · 07 / cookbook</p>
   <h1>Customer examples</h1>
-  <p class="promise">Five jobs customers actually bring, each as a recipe: <b>the code the
-  agent writes, the profile exactly as the daemon's grants file spells it, the floor, and
-  the provider that fits.</b> Every recipe ends with three calls it must refuse, because a
-  recipe is defined as much by what it turns away as by its happy path.</p>
+  <p class="promise">Five jobs customers actually bring, each as a recipe with <b>four
+  ingredients</b>: the code the agent writes; the profile, a <dfn>grant</dfn> (permission for
+  a run's code to call listed routes of one API) stored under a name, exactly as the daemon's
+  grants file spells it; the <dfn>floor</dfn>, the weakest <dfn>isolation tier</dfn> (how
+  strong the wall around a run is) the run accepts; and the <dfn>provider</dfn> that fits,
+  the backend that runs the code. Every recipe ends with three calls it must refuse, because
+  a recipe is defined as much by what it turns away as by its happy path.</p>
 
   <!-- 01 ─────────────────────────────────────────────────────────────────── -->
   <section id="recipes" aria-labelledby="h-recipes">
     <p class="draft" aria-hidden="true">01</p>
     <h2 id="h-recipes">Pick a job</h2>
     <p>Each card's profile is in the format <code>PLIMSOLL_GRANTS_FILE</code> loads. The
-    caller sends only the profile's name; nothing in these files can be changed from the
-    wire.</p>
+    caller sends only the profile's name; nothing in these files can be changed by a
+    request. The first recipe is <dfn>code mode</dfn>: instead of calling one tool per step,
+    the agent writes a short program that calls the API, and that program runs in a
+    sandbox.</p>
 
     <div class="control">
       <div class="seg" role="group" aria-label="Recipe" id="recipeSeg">
@@ -94,13 +99,13 @@
     <p>The ingredients differ; what has to be proved before launch does not. Check it
     against the customer's deployment, not a local demo.</p>
     <ul class="gate" id="gateList">
-      <li><label><input type="checkbox"><span><b>Identity is mapped, not pretended.</b><small>One plimsoll client per tenant when downstream policy needs separation. A shared gateway token yields one service subject and does not carry the original customer identity anywhere.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>The profile is pinned in trusted configuration.</b><small>Never a model-controlled argument, and the calling principal is in its <code>allowed_callers</code>.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>An undeclared route and an encoded traversal were tried.</b><small>Both refused by the broker on every provider the recipe uses, before the domain API saw either.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>Identity is mapped, not pretended.</b><small>One plimsoll client (a caller credential) per tenant, meaning per customer organisation, when the downstream API's policy must tell tenants apart. A shared gateway token gives every request the same subject and carries the original customer's identity nowhere.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>The profile is chosen in trusted configuration.</b><small>Never an argument the model controls, and the calling <dfn>principal</dfn>, the authenticated identity the request comes from, is in its <code>allowed_callers</code>.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>A route not on the list and an encoded path traversal were tried.</b><small>Both were refused by the <dfn>broker</dfn>, the part of plimsoll that makes the sandbox's API calls, on every provider the recipe uses, before the customer's API saw either. An encoded traversal hides <code>../</code> in a path, for example as <code>%2e%2e/</code>.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>The floor is enforced at three layers.</b><small><code>SANDBOX_MIN_ISOLATION</code> on the daemon, <code>MinimumIsolation</code> on each request, and the returned tier read before any output is used.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>Every outcome is framed.</b><small>Bounded stdout and stderr, exit code, timed out, duration, sandbox, isolation; a guest failure is a result, not a transport error.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>Quotas are set and shed, not queued.</b><small>Count, rate, memory, time and output, keyed to the caller, with bounded retry documented for capacity only.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>The token is nowhere the guest can look.</b><small>Code, preamble, environment, stdout, stderr, errors, traces, logs. It lives in Go.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>Every outcome has the same shape.</b><small>Size-capped stdout and stderr, exit code, timed out, duration, sandbox, isolation; a failure of the <dfn>guest</dfn>, the code running in the sandbox, is a result, not a transport error.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>Quotas are set, and work past them is <dfn>shed</dfn>, refused at once, not queued.</b><small>Count, rate, memory, time and output, keyed to the caller, with bounded retry documented for capacity only.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>The token is nowhere the guest can look.</b><small>Code, preamble (the helper JavaScript loaded before the code), environment, stdout, stderr, errors, traces, logs. It lives in Go.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>The audit line names identifiers, never contents.</b><small>Caller, profile, provider, isolation, sizes, exit, duration; no code, no token, no customer data.</small></span></label></li>
     </ul>
     <div class="card" id="gateReadout"></div>
@@ -129,38 +134,38 @@
 
   var RECIPES = {
     readonly: {
-      ingredients: [['profile', 'saas-read, JavaScript, selected by the gateway'], ['floor', 'kernel: model-authored code over a customer API'], ['provider', 'docker on verified runsc; e2b or dockercloud with the guard for off-host (on dockercloud the guest holds its own run’s short-lived guard credential)'], ['what the model controls', 'the code and a small timeout, nothing else']],
+      ingredients: [['profile', 'saas-read, JavaScript, selected by the gateway'], ['floor', 'kernel: model-authored code over a customer API'], ['provider', 'docker on verified runsc (gVisor); e2b or dockercloud with the guard for off-host (on dockercloud the guest holds its own run’s short-lived guard credential)'], ['what the model controls', 'the code and a small timeout, nothing else']],
       profile: '{\n  "profiles": {\n    "saas-read": {\n      "base_url": "https://api.saas.example",\n      "allow": ["GET /v1/invoices/open", "GET /v1/invoices/*"],\n      "allowed_callers": ["gw-acme", "gw-birch"],\n      "scopes": ["invoices:read"],\n      "token": { "type": "jwt", "secret_env": "SAAS_JWT_SECRET", "ttl_sec": 60, "audience": "saas" },\n      "preamble_file": "saas.client.js",\n      "advice": "caller"\n    }\n  }\n}',
       code: '<span class="c">// what the agent writes; saas.* is the preamble over host.get</span>\nconst invoices = await saas.invoices.open();\nconst overdue = invoices.filter((x) =&gt; x.daysOverdue &gt; 0);\nconsole.log(JSON.stringify({ open: invoices.length, overdue: overdue.length }));',
-      method: '<p>The gateway exposes one <code>run_code</code> tool and selects <code>saas-read</code> from its own configuration. plimsolld checks the caller is in <code>allowed_callers</code>, mints a 60 s JWT with the caller as subject, and the broker attaches it host-side to the two routes and nothing else. The SaaS API verifies the token\'s audience and scope.</p>',
+      method: '<p>The gateway exposes one <code>run_code</code> tool and selects <code>saas-read</code> from its own configuration. plimsolld checks the caller is in <code>allowed_callers</code> and creates (mints) a JWT valid for 60 s with the caller as subject, and the broker attaches it, outside the sandbox, to calls on the two routes and nothing else. The SaaS API verifies the token\'s audience and scope.</p>',
       refuses: [['POST /v1/invoices/42/void', 'not on the list: a read profile has no writes, and the method is part of the route'], ['GET /v1/customers', 'not on the list, however reasonable it sounds; the broker refuses before sending'], ['grant_profile from the model', 'the tool schema has no such property, and a caller outside allowed_callers could not select it anyway']]
     },
     analytics: {
       ingredients: [['profile', 'support-week: exactly one route'], ['floor', 'kernel'], ['provider', 'docker on verified runsc'], ['data minimisation', 'at the API: tenant-filtered by the token subject, fields cut to what the question needs']],
       profile: '{\n  "profiles": {\n    "support-week": {\n      "base_url": "https://support.internal",\n      "allow": ["GET /v1/analytics/week"],\n      "allowed_callers": ["gw-acme"],\n      "scopes": ["support:read"],\n      "token": { "type": "jwt", "secret_env": "SUPPORT_JWT_SECRET", "ttl_sec": 60, "audience": "support" },\n      "advice": "operator"\n    }\n  }\n}',
       code: '<span class="c">// one snapshot in, any number of questions answered locally</span>\nconst rows = await host.get("/v1/analytics/week");\nconst byQueue = {};\nfor (const row of rows) byQueue[row.queue] = (byQueue[row.queue] || 0) + 1;\nconsole.log(JSON.stringify(byQueue));',
-      method: '<p>An analytics agent needs to slice the same data a dozen ways. Instead of a tool per aggregation or a broad key, the API exposes one tenant-filtered, field-minimised snapshot and the sandbox does the arithmetic. The API derives the tenant from the minted token\'s subject, so a different tenant\'s gateway principal gets a different snapshot from the same route.</p>',
-      refuses: [['GET /v1/tickets/1042', 'not on the list: the recipe grants a snapshot, not the tickets it was built from'], ['another tenant\'s data', 'the subject in the token is the caller, minted per run; nothing in the code can name a tenant'], ['a 40 MiB snapshot', 'over the 4 MiB response cap: the row is kept, marked undelivered, and the guest gets an error rather than a partial body']]
+      method: '<p>An analytics agent needs to slice the same data a dozen ways. Instead of a tool per aggregation or a broad key, the API exposes one tenant-filtered, field-minimised snapshot and the sandbox does the arithmetic. The API derives the tenant from the minted token\'s subject, so a different tenant\'s gateway identity gets a different snapshot from the same route.</p>',
+      refuses: [['GET /v1/tickets/1042', 'not on the list: the recipe grants a snapshot, not the tickets it was built from'], ['another tenant\'s data', 'the subject in the token is the caller, minted per run; nothing in the code can name a tenant'], ['a 40 MiB snapshot', 'over the 4 MiB response cap: the call\'s trace row is kept, marked undelivered, and the guest gets an error rather than a partial body']]
     },
     writes: {
       ingredients: [['profiles', 'two: tickets-read for analysis, tickets-close for the adapter'], ['approval owner', 'the gateway, from a strict proposal schema; never plimsoll, never the model'], ['floor', 'kernel for both runs'], ['token', 'the write profile mints for 30 s, to a separate principal']],
       profile: '{\n  "profiles": {\n    "tickets-read": {\n      "base_url": "https://tickets.internal",\n      "allow": ["GET /v1/tickets/*"],\n      "allowed_callers": ["gw-analysis"],\n      "scopes": ["tickets:read"],\n      "token": { "type": "jwt", "secret_env": "TICKETS_JWT_SECRET", "audience": "tickets" }\n    },\n    "tickets-close": {\n      "base_url": "https://tickets.internal",\n      "allow": ["POST /v1/tickets/*/close"],\n      "allowed_callers": ["gw-approvals"],\n      "scopes": ["tickets:close"],\n      "token": { "type": "jwt", "secret_env": "TICKETS_JWT_SECRET", "ttl_sec": 30, "audience": "tickets" }\n    }\n  }\n}',
       code: '<span class="c">// the analysis run emits a proposal, not an action</span>\nconst t = await host.get("/v1/tickets/t-42");\nconsole.log(JSON.stringify({ action: "close_ticket", id: t.id, reason: "duplicate" }));\n\n<span class="c">// after approval, a fixed adapter the product owns, under the other profile</span>\nawait host.post("/v1/tickets/" + APPROVED.id + "/close", { reason: APPROVED.reason });',
-      method: '<p>The analysis run reads and prints a proposal. The gateway parses it against a strict schema (no extra fields, ids bound to the tenant), applies its own rules, obtains approval bound to that exact ticket and action, and only then runs a fixed adapter under <code>tickets-close</code> as a different principal. The write run never executes the analysis program; it executes the product\'s own few lines with the approved values.</p>',
-      refuses: [['the analysis run selecting tickets-close', 'gw-analysis is not in that profile\'s allowed_callers; code:run alone grants nothing downstream'], ['a proposal with an extra field', 'the gateway\'s schema rejects it before any policy runs; console text is never executed as code'], ['reusing an approval', 'bound to tenant, action, object and expiry; a changed id needs a new decision. This is the product\'s check, not plimsoll\'s']]
+      method: '<p>The analysis run reads and prints a proposal. The gateway parses it against a strict schema (no extra fields, ids bound to the tenant), applies its own rules, obtains approval bound to that exact ticket and action, and only then runs a fixed adapter under <code>tickets-close</code> as a different caller identity. The write run never executes the analysis program; it executes the product\'s own few lines with the approved values.</p>',
+      refuses: [['the analysis run selecting tickets-close', 'gw-analysis is not in that profile\'s allowed_callers; the code:run permission alone gives no access to any API'], ['a proposal with an extra field', 'the gateway\'s schema rejects it before any policy runs; console text is never executed as code'], ['reusing an approval', 'bound to tenant, action, object and expiry; a changed id needs a new decision. This is the product\'s check, not plimsoll\'s']]
     },
     project: {
       ingredients: [['profile', 'none: Grant is nil, the run has no network'], ['floor', 'kernel'], ['provider', 'docker with the project image, an e2b template, or a dockercloud image, each with the toolchain baked in'], ['ceilings', '200 files, 4 MiB of content, 20 steps, 100 artifact paths']],
       profile: null,
       code: '<span class="c">// a Go embedder, or the same fields over the remote client</span>\nres, err := runner.RunProject(ctx, sandbox.ProjectRequest{\n    Files:            []sandbox.File{{Path: "src/main.ts", Content: source}},\n    Steps:            []string{"npm test", "npm run build"},\n    Artifacts:        []string{"dist/report.json"},\n    Timeout:          90 * time.Second,\n    MinimumIsolation: sandbox.IsolationKernel,\n})',
-      method: '<p>A coding or grading agent drops files, runs checks in order, and gets back the artifacts it named. Steps stop at the first failure and each one that ran returns its own exit code and output; a failed test is a result with <code>Outcome</code> completed, not an error. Leaving <code>Grant</code> nil is a choice: docker and guarded e2b would broker a project grant, and this job does not need one.</p>',
-      refuses: [['SANDBOX_PROVIDER=wasm', 'ErrUnsupported: there is no filesystem or toolchain in-process, so a project has nowhere to run'], ['a file at ../../etc/passwd', 'ErrInvalidRequest before staging: absolute paths, traversal, backslashes and control characters are refused'], ['npm install as a step', 'not refused, but it fails: the run has no egress, so every tool the steps need is baked into the image beforehand']]
+      method: '<p>A coding or grading agent drops files, runs checks in order, and gets back the artifacts it named. Steps stop at the first failure and each one that ran returns its own exit code and output; a failed test is a result with <code>Outcome</code> completed, not an error. Leaving <code>Grant</code> nil is a choice: docker, and e2b with its guard, would carry a project grant through the broker, and this job does not need one.</p>',
+      refuses: [['SANDBOX_PROVIDER=wasm', 'ErrUnsupported: there is no filesystem or toolchain in-process, so a project has nowhere to run'], ['a file at ../../etc/passwd', 'ErrInvalidRequest before staging: absolute paths, traversal, backslashes and control characters are refused'], ['npm install as a step', 'not refused, but it fails: the run has no outbound network, so every tool the steps need is baked into the image beforehand']]
     },
     private: {
       ingredients: [['daemon', 'your plimsolld, TLS on, hardened mode on'], ['auth', 'one client per product in PLIMSOLL_CLIENTS_FILE; the file holds fingerprints, not tokens'], ['floor', 'SANDBOX_MIN_ISOLATION=kernel on the daemon, and on every request'], ['checks', 'Describe once at startup, the floor on each call, the tier on each result']],
-      profile: '<span class="c"># the daemon\'s environment, not a grants file</span>\nSANDBOX_PROVIDER=docker\nSANDBOX_DOCKER_RUNTIME=runsc\nSANDBOX_DOCKER_SECCOMP=docker/seccomp.json\nSANDBOX_REQUIRE_PINNED_IMAGES=1\nSANDBOX_MIN_ISOLATION=kernel\nPLIMSOLL_CLIENTS_FILE=/etc/plimsoll/clients.json\nPLIMSOLL_TLS_CERT=/etc/plimsoll/tls.crt\nPLIMSOLL_TLS_KEY=/etc/plimsoll/tls.key\nPLIMSOLL_HARDENED=1',
+      profile: '<span class="c"># the daemon\'s environment, not a grants file</span>\nSANDBOX_PROVIDER=docker\nSANDBOX_DOCKER_RUNTIME=runsc\nSANDBOX_DOCKER_SECCOMP=docker/seccomp.json\nSANDBOX_REQUIRE_PINNED_IMAGES=1\nSANDBOX_MIN_ISOLATION=kernel\nPLIMSOLL_CLIENTS_FILE=/etc/plimsoll/clients.json\nPLIMSOLL_TLS_CERT=/etc/plimsoll/tls.crt\nPLIMSOLL_TLS_KEY=/etc/plimsoll/tls.key\n<span class="c"># plus the per-run limits, total memory budget, rate limit and per-caller\n# concurrency cap that hardened mode requires (see docs/hardened-mode.md)</span>\nPLIMSOLL_HARDENED=1',
       code: 'r, err := client.New("https://plimsoll.internal:8746", client.WithToken(token))\n<span class="c">// cleartext off loopback would be client.ErrInsecureHTTP</span>\ninfo, err := r.Describe(ctx)\nif info.Protocol != client.Protocol || !info.Isolation.Meets(min) { return errNotReady }\nres, err := r.RunJavaScript(ctx, sandbox.Request{Code: source, MinimumIsolation: min})\n<span class="c">// a DataLoss error here means execution may already have happened</span>\nif !res.Isolation.Meets(min) { return errEvidence }',
-      method: '<p>Hardened mode turns the production posture into a startup policy: the daemon refuses to serve unless kernel or vm isolation is proven, auth is multi-client, TLS is on for any non-loopback listener, images are pinned, seccomp is not unconfined, the resource envelope and aggregate budget are explicit, and per-caller rate limiting is on. Every violation is reported at once, so it is one fix pass rather than a startup loop.</p>',
+      method: '<p>Hardened mode (<code>PLIMSOLL_HARDENED=1</code>) turns the production settings into a startup requirement: the daemon refuses to serve unless kernel or vm isolation is proven, auth is multi-client, TLS is on for any listener reachable beyond this machine, images are pinned to exact digests, seccomp is not unconfined, the per-run resource limits and the total memory budget are set explicitly, per-caller rate limiting is on, and each caller has a cap on how many runs it can have going at once. Every violation is reported at once, so it is one fix pass rather than a startup loop.</p>',
       refuses: [['http:// to a non-loopback host', 'client.ErrInsecureHTTP before any request; WithInsecureHTTP is a development-only opt-in'], ['PLIMSOLL_TOKEN under PLIMSOLL_HARDENED', 'a shared token is not multi-client auth; the daemon refuses to start and says so'], ['a daemon on another protocol number', 'Unimplemented before the payload is read, on both Describe and Run; upgrade one side']]
     }
   };
@@ -231,10 +236,10 @@
     out.classList.remove('good', 'warn');
     if (done === boxes.length) {
       out.classList.add('good');
-      out.innerHTML = '<p><b>All ' + boxes.length + ' hold.</b> Explicit identity and authority, bounded outcomes, tier evidence per run, fair quotas, negative-route coverage, and no guest-visible credential.</p>';
+      out.innerHTML = '<p><b>All ' + boxes.length + ' hold.</b> Explicit identity and permissions, size-capped outcomes, tier evidence on every run, fair quotas, tests of refused routes, and no credential the guest can see.</p>';
     } else {
       out.classList.add('warn');
-      out.innerHTML = '<p><b>' + done + ' of ' + boxes.length + '.</b> Keep the integration off. A missing principal, ACL, negative test, result frame, quota, audit rule or token-secrecy proof leaves the customer boundary incomplete, whatever the demo showed.</p>';
+      out.innerHTML = '<p><b>' + done + ' of ' + boxes.length + '.</b> Keep the integration off. A missing caller identity, allowed_callers list, refused-route test, result shape, quota, audit rule or proof that the token stays hidden leaves the customer boundary incomplete, whatever the demo showed.</p>';
     }
   }
   el('gateList').addEventListener('change', renderGate);

@@ -92,20 +92,25 @@
 
   <nav class="top"><a href="index.html">← All trainers</a></nav>
 
-  <p class="eyebrow">plimsoll trainer · 05 / mcp + agents</p>
+  <p class="eyebrow">plimsoll trainer · 05 / AI agents</p>
   <h1>Agent products</h1>
-  <p class="promise">"Code mode" replaces a menu of read-only tools with one
-  <code>run_code</code> tool and a small SDK the code can call. <b>It makes the agent's
-  interface narrower, not its permissions wider.</b> The way to check that is to follow one
+  <p class="promise"><dfn>Code mode</dfn> replaces a menu of read-only tools with one
+  <code>run_code</code> tool: the agent writes a short program against a small SDK, and the
+  program runs in a sandbox. The agent's host offers that tool to the model over
+  <dfn>MCP</dfn> (Model Context Protocol), the tool-calling standard most agent hosts
+  speak. <b>It makes the agent's interface narrower, not its permissions wider.</b> The way to check that is to follow one
   tool call down through every layer and ask, at each one, what it can and cannot change.</p>
 
   <!-- 01 ─────────────────────────────────────────────────────────────────── -->
   <section id="call" aria-labelledby="h-call">
     <p class="draft" aria-hidden="true">01</p>
     <h2 id="h-call">One tool call, four layers</h2>
-    <p>The model writes the tool arguments. The gateway, which authenticated the session,
-    adds everything that carries authority. plimsolld checks the envelope and brokers the
-    run. The domain API sees a route and a token, never the model. Choose what the model
+    <p>The model writes the tool arguments. The gateway, your service between the agent and
+    plimsoll, has already authenticated the user, and it adds everything that gives the run
+    a permission. plimsolld checks the request and runs the code; its <dfn>broker</dfn>, the
+    part of plimsoll that makes the code's API calls, attaches the credential to each one.
+    The domain API, the customer's own API the code calls, sees a route and a token, never
+    the model. Choose what the model
     sends and watch where it stops.</p>
 
     <div class="control">
@@ -126,9 +131,11 @@
   <section id="identity" aria-labelledby="h-identity">
     <p class="draft" aria-hidden="true">02</p>
     <h2 id="h-identity">Four identities, and where they may collapse</h2>
-    <p>An agent session, the tenant the gateway resolved it to, the principal plimsolld
-    authenticates, and the subject the domain API reads from the minted token. The last
-    two are built from the token the gateway holds, so the gateway's choice of token
+    <p>The four: the agent conversation; the tenant (the customer organisation) the gateway
+    maps it to; the <dfn>principal</dfn>, the caller identity plimsolld authenticates; and
+    the subject the domain API reads from the token plimsolld <dfn>minted</dfn>, meaning
+    created fresh for that one run. The last two are built from the token the gateway
+    holds, so the gateway's choice of token
     decides whether tenants stay apart downstream.</p>
 
     <div class="control">
@@ -169,13 +176,14 @@
   <section id="trust" aria-labelledby="h-trust">
     <p class="draft" aria-hidden="true">04</p>
     <h2 id="h-trust">Model trust decides the floor</h2>
-    <p>The provider's name is not a policy. Decide the minimum wall for each kind of code,
-    put it on every request as <code>minimum_isolation</code>, and read the tier every
-    result reports.</p>
+    <p>The name of the <dfn>provider</dfn>, the backend that runs the code, is not a policy.
+    Decide the minimum wall for each kind of code, the request's <dfn>floor</dfn>, put it on
+    every request as <code>minimum_isolation</code>, and read the <dfn>isolation tier</dfn>,
+    the strength of the wall, that every result reports.</p>
     <div class="trust">
-      <div class="card"><p><span class="floor">floor: none · process is fine</span></p><p><b>Code you basically trust.</b> Your own team's formulas, a demo, the inner loop while building the product. The in-process engine is instant and free; its escape lands in the daemon, which you have decided you can live with.</p></div>
-      <div class="card warn"><p><span class="floor">floor: kernel</span></p><p><b>Model-authored code over your API.</b> Treat it as hostile unless a policy says otherwise. Verified <code>runsc</code> paints this mark and brokers both snippet and project grants. A plain container is not a hostile boundary, whatever its image is called.</p></div>
-      <div class="card good"><p><span class="floor">floor: vm</span></p><p><b>Hostile code, or not on your hardware.</b> One disposable microVM (a small virtual machine created for one run) per run, on E2B or Docker Cloud Sandboxes. Grants need the provider's egress guard (<code>E2B_GUARD_URL</code> or <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>); on Docker Cloud Sandboxes the guest holds its own run's short-lived guard credential. The template or image must already carry every tool, because the VM has no way to fetch one.</p></div>
+      <div class="card"><p><span class="floor">floor: none · process is fine</span></p><p><b>Code you basically trust.</b> Your own team's formulas, a demo, the inner loop while building the product. The engine inside the daemon (the <code>wasm</code> provider) is instant and free; an <dfn>escape</dfn> from it, a bug that lets the code act outside the engine, lands in the daemon, which you have decided you can live with.</p></div>
+      <div class="card warn"><p><span class="floor">floor: kernel</span></p><p><b>Model-authored code over your API.</b> Treat it as hostile unless a policy says otherwise. Docker with verified <code>runsc</code>, the runtime of <dfn>gVisor</dfn> (a stand-in kernel that runs as an ordinary program), earns this tier, and carries both snippet and project <dfn>grants</dfn> (permission for the code to call listed routes of one API) through the broker. A plain container is not a wall against hostile code, whatever its image is called.</p></div>
+      <div class="card good"><p><span class="floor">floor: vm</span></p><p><b>Hostile code, or not on your hardware.</b> One disposable <dfn>microVM</dfn> (a small virtual machine created for one run) per run, on <dfn>E2B</dfn> or <dfn>Docker Cloud Sandboxes</dfn>, two hosted services that bill per use. Grants need the provider's <dfn>guard</dfn>, the one address on the plimsoll daemon the VM may reach (<code>E2B_GUARD_URL</code> or <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>); on Docker Cloud Sandboxes the <dfn>guest</dfn>, the code in the VM, holds its own run's short-lived guard credential. The template or image must already carry every tool, because the VM has no way to fetch one.</p></div>
     </div>
   </section>
 
@@ -183,9 +191,10 @@
   <section id="sdk" aria-labelledby="h-sdk">
     <p class="draft" aria-hidden="true">05</p>
     <h2 id="h-sdk">Ergonomics in the preamble, authority in the profile</h2>
-    <p>A small SDK can dress the generic client up as <code>inventory.items.get(id)</code>.
-    It runs inside the sandbox with the hostile code, so it is a convenience and a
-    backstop, never the thing that enforces anything.</p>
+    <p>A small SDK, the preamble (JavaScript loaded before the agent's code), can dress the
+    generic <code>host.*</code> client up as <code>inventory.items.get(id)</code>. It runs
+    inside the sandbox with the hostile code, so it is a convenience and a backstop, never
+    the thing that enforces anything.</p>
     <div class="split">
       <div class="card">
         <h3>The preamble (runs in the guest)</h3>
@@ -199,8 +208,8 @@
       <div class="card good">
         <h3>The profile (held by plimsolld)</h3>
         <ul>
-          <li>The upstream origin. The guest never learns it.</li>
-          <li>The exact routes, byte for byte; <code>*</code> for a whole segment.</li>
+          <li>The API's address (its origin). The guest never learns it.</li>
+          <li>The exact routes, byte for byte; <code>*</code> matches one whole path segment.</li>
           <li>Who may select it: <code>allowed_callers</code>.</li>
           <li>Scopes, and how the credential is minted: one static bearer, or a fresh JWT per run with the principal as its subject.</li>
         </ul>
@@ -211,7 +220,7 @@
       directly with any path it likes. That is fine: the broker checks the route against the
       profile exactly as it would have anyway, and refuses the same way. The <code>grant</code>
       example in the repository does precisely this and is refused, then succeeds under a
-      separate grant that lists the route. Nothing in the guest is load-bearing.</p>
+      separate grant that lists the route. Nothing in the guest is relied on for security.</p>
     </div>
   </section>
 
@@ -223,15 +232,15 @@
     under overload, bad code, a weak backend, two tenants, one forbidden route and one
     downstream outage: each must produce a different, safe answer.</p>
     <ul class="gate" id="gateList">
-      <li><label><input type="checkbox" data-required="1"><span><b>Nothing the model writes carries authority.</b><small>The tool schema accepts code and a small timeout, with no other properties. Profile, floor, origin and token are gateway configuration.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Nothing the model writes can widen a permission.</b><small>The tool schema accepts code and a small timeout, with no other properties. Profile, floor, origin and token are gateway configuration.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>Per-tenant limits key off the plimsoll principal.</b><small>One client id per tenant in <code>PLIMSOLL_CLIENTS_FILE</code>, so <code>SANDBOX_PER_KEY_CONCURRENT</code> and <code>SANDBOX_RATE_PER_MIN</code> mean one tenant, not the whole product.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Only capacity is retried.</b><small><code>ErrAtCapacity</code> gets a bounded, jittered backoff. <code>ErrInvalidRequest</code>, <code>ErrUnsupported</code> and <code>ErrDisabled</code> need a code, feature or operator change, and the agent is told which.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Guest failures come back for revision.</b><small>Non-zero exit and <code>timed_out</code> are structured results with bounded stdout and stderr, never a generic tool crash.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Every request states the floor; every result's tier is read.</b><small>Weak or unknown evidence stops dispatch and alerts. The daemon's own <code>SANDBOX_MIN_ISOLATION</code> stays set as well.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Two tenants were run and stayed apart.</b><small>ACL decisions, minted subjects, downstream data, rate keys and audit callers all distinct.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>One forbidden route and one encoded traversal were tried.</b><small>Both refused at the broker on every enabled provider, without reaching the domain API.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>No token anywhere the guest can look.</b><small>Code, stdout, stderr, environment, error text, UI traces, logs. The per-run credential lives in Go, on the host side of the socket.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>Quota and retry guidance is published.</b> <span class="opt">recommended</span><small>The source, time and output envelope, and when a client should wait.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Only capacity is retried.</b><small><code>ErrAtCapacity</code> gets a capped backoff with random jitter. <code>ErrInvalidRequest</code>, <code>ErrUnsupported</code> and <code>ErrDisabled</code> need a code, feature or operator change, and the agent is told which.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Guest failures come back for revision.</b><small>Non-zero exit and <code>timed_out</code> are structured results with size-capped stdout and stderr, never a generic tool crash.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Every request states the floor; every result's tier is read.</b><small>A tier weaker than the floor, or missing, stops further runs and raises an alert. The daemon's own <code>SANDBOX_MIN_ISOLATION</code> stays set as well.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Two tenants were run and stayed apart.</b><small><code>allowed_callers</code> decisions, minted token subjects, downstream data, rate-limit keys and the callers on the audit line all distinct.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>One forbidden route and one encoded path traversal (<code>../</code> hidden as <code>%2e%2e/</code>) were tried.</b><small>Both refused at the broker on every enabled provider, without reaching the domain API.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>No token anywhere the guest can look.</b><small>Code, stdout, stderr, environment, error text, UI traces, logs. The per-run credential lives in Go, outside the sandbox, on the host side of the socket.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>Quota and retry guidance is published.</b> <span class="opt">recommended</span><small>The limits on code size, time and output, and when a client should wait.</small></span></label></li>
     </ul>
     <div class="card" id="gateReadout"></div>
   </section>
@@ -269,19 +278,19 @@
   // plimsolld and broker rows are what the daemon actually does.
   var LAYERS = [
     { who: 'M', name: 'The model', sub: 'writes the tool arguments and nothing else' },
-    { who: 'G', name: 'Your gateway', sub: 'authenticated the session; adds all authority' },
-    { who: 'P', name: 'plimsolld', sub: 'checks the envelope, brokers the run' },
+    { who: 'G', name: 'Your gateway', sub: 'authenticated the user; adds every permission' },
+    { who: 'P', name: 'plimsolld', sub: 'checks the request, runs it, brokers its API calls' },
     { who: 'A', name: 'The domain API', sub: 'sees a route and a token' }
   ];
   var CALLS = {
     ok: {
       rows: [
         { env: '{ "tool": "run_code",\n  "code": "const w = await inventory.warehouses.list(); …",  // 1.2 KiB\n  "timeout_ms": 20000 }', state: 'pass', verdict: 'schema valid · <b>forwarded</b>' },
-        { env: 'Run {\n  protocol: 1, minimum_isolation: "kernel", trace_id: "sess-7f3a-042",\n  javascript: { code, grant_profile: <span class="add">"inventory-read"</span> }\n}\nAuthorization: Bearer <span class="add">‹the gateway’s token for principal acme-gw›</span>', state: 'pass', verdict: 'profile, floor and token added from configuration · <b>sent</b>' },
-        { env: 'validate 1.2 KiB ≤ 256 KiB · profile allowed_callers has acme-gw · evidence kernel meets kernel · slot taken\nmint JWT { sub: "acme-gw", scope: "inventory:read", exp: +60s } · <span class="add">held in Go</span>', state: 'pass', verdict: 'admitted · <b>ran behind kernel</b>' },
+        { env: 'Run {\n  protocol: 2, minimum_isolation: "kernel", trace_id: "sess-7f3a-042",\n  javascript: { code, grant_profile: <span class="add">"inventory-read"</span> }\n}\nAuthorization: Bearer <span class="add">‹the gateway’s token for principal acme-gw›</span>', state: 'pass', verdict: 'profile, floor and token added from configuration · <b>sent</b>' },
+        { env: 'validate 1.2 KiB ≤ 256 KiB · profile allowed_callers has acme-gw · evidence kernel meets kernel · slot taken\nmint JWT { sub: "acme-gw", scope: "inventory:read", exp: +60s } · <span class="add">held in Go</span>', state: 'pass', verdict: 'slot reserved · <b>ran behind kernel</b>' },
         { env: 'GET /v1/warehouses\nAuthorization: Bearer ‹JWT sub=acme-gw›\n→ 200, 4,112 bytes', state: 'pass', verdict: 'route was on the profile · <b>served</b>' }
       ],
-      note: '<p>The model controlled two things: the code and a timeout inside the product’s cap. Everything with authority was added one layer down, from configuration the model cannot reach. The response goes back up the same way (03).</p>'
+      note: '<p>The model controlled two things: the code and a timeout inside the product’s cap. Everything that grants a permission was added one layer down, from configuration the model cannot reach. The response goes back up the same way (03).</p>'
     },
     profile: {
       rows: [
@@ -290,7 +299,7 @@
         { env: '', state: 'skip', verdict: 'never reached' },
         { env: '', state: 'skip', verdict: 'never reached' }
       ],
-      note: '<p>The profile is not a model-controlled argument, so the only place it can appear is one the schema does not have. Had a gateway forwarded it anyway, plimsolld would still check <code>allowed_callers</code> for that profile against the gateway’s own principal, which is the second reason the model cannot borrow a profile it was never given.</p>'
+      note: '<p>The profile is not an argument the model controls, so the only place it can appear is one the schema does not have. Had a gateway forwarded it anyway, plimsolld would still check <code>allowed_callers</code> for that profile against the gateway’s own identity (its principal), which is the second reason the model cannot borrow a profile it was never given.</p>'
     },
     size: {
       rows: [
@@ -314,10 +323,10 @@
       rows: [
         { env: '{ "tool": "run_code",\n  "code": "await host.get(<span class="bad">\'/v1/admin/users\'</span>) …",\n  "timeout_ms": 20000 }', state: 'pass', verdict: 'the code is just a string here · <b>forwarded</b>' },
         { env: 'adds grant_profile "inventory-read", floor kernel, the gateway’s token', state: 'pass', verdict: 'nothing to see yet · <b>sent</b>' },
-        { env: 'admitted; the run starts behind kernel\nbroker: GET /v1/admin/users is not on the profile’s Allow list\n→ <span class="bad">refused, counted as Denied in the CallTrace</span>; the guest gets an error, the run continues', state: 'stop', verdict: 'the broker refuses the call, not the run · <b>host_calls_denied: 1</b>' },
+        { env: 'slot reserved; the run starts behind kernel\nbroker: GET /v1/admin/users is not on the profile’s Allow list\n→ <span class="bad">refused, counted as Denied in the CallTrace</span>; the guest gets an error, the run continues', state: 'stop', verdict: 'the broker refuses the call, not the run · <b>host_calls_denied: 1</b>' },
         { env: '', state: 'skip', verdict: 'never sees the request' }
       ],
-      note: '<p>This is the case the preamble cannot help with and the broker exists for. The route check happens at call time, on the host side of the socket, against the exact list the operator wrote. The audit line records a denied count and the route template, never the path the guest tried.</p>'
+      note: '<p>This is the case the preamble cannot help with and the broker exists for. The route check happens at call time, outside the sandbox on the host side of the socket, against the exact list the operator wrote. The audit line records a denied count and the route template (the matched pattern), never the path the guest tried.</p>'
     }
   };
   function renderCall(which) {
@@ -348,12 +357,12 @@
   // 02: four identities.
   var IDS = {
     shared: {
-      badges: [['agent session', 'sess-7f3a · tenant Acme · user 19', ''], ['gateway resolved', 'tenant acme / user 19', ''], ['plimsoll principal', 'product-gw', 'collapsed'], ['token subject downstream', 'sub = product-gw', 'collapsed']],
+      badges: [['agent conversation', 'sess-7f3a · tenant Acme · user 19', ''], ['gateway resolved', 'tenant acme / user 19', ''], ['plimsoll principal', 'product-gw', 'collapsed'], ['token subject downstream', 'sub = product-gw', 'collapsed']],
       keyed: [['allowed_callers on the profile', 'one entry admits every tenant'], ['per-caller concurrency and rate', 'one bucket for the whole product'], ['audit line caller', 'product-gw for every run'], ['JWT sub at the domain API', 'the API cannot tell tenants apart from the token']],
       note: '<p><b>Everything after the gateway is one identity.</b> Fine for a single-tenant product. For more than one tenant it means one busy tenant spends everyone’s rate limit, the audit stream cannot be split per customer, and the domain API has to trust a tenant id the gateway puts somewhere else, which is a request parameter the token no longer vouches for.</p>'
     },
     tenant: {
-      badges: [['agent session', 'sess-7f3a · tenant Acme · user 19', ''], ['gateway resolved', 'tenant acme / user 19', ''], ['plimsoll principal', 'gw-acme', ''], ['token subject downstream', 'sub = gw-acme', '']],
+      badges: [['agent conversation', 'sess-7f3a · tenant Acme · user 19', ''], ['gateway resolved', 'tenant acme / user 19', ''], ['plimsoll principal', 'gw-acme', ''], ['token subject downstream', 'sub = gw-acme', '']],
       keyed: [['allowed_callers on the profile', 'lists each tenant’s client id'], ['per-caller concurrency and rate', 'one bucket per tenant'], ['audit line caller', 'gw-acme, gw-birch, …'], ['JWT sub at the domain API', 'the tenant, from a signed claim']],
       note: '<p><b>The tenant survives every hop.</b> The gateway holds one plimsoll client per tenant (created offline with <code>plimsoll-clients</code>; the file stores only fingerprints), so the principal, the limiter key, the audit caller and the minted subject are all the tenant. The domain API derives the tenant from a claim it can verify, not from anything the model or the gateway typed into a request.</p>'
     }
@@ -395,11 +404,11 @@
     },
     fail: {
       json: '{\n  <span class="k">"stdout"</span>: <span class="s">""</span>,\n  <span class="k">"stderr"</span>: <span class="s">"TypeError: Cannot read properties of undefined (reading \'sku\')\\n    at &lt;anonymous&gt;:4:21\\n"</span>,\n  <span class="k">"exit_code"</span>: 1,\n  <span class="k">"timed_out"</span>: false,\n  <span class="k">"duration_ms"</span>: 96,\n  <span class="k">"sandbox"</span>: <span class="s">"docker"</span>,\n  <span class="k">"isolation"</span>: <span class="s">"kernel"</span>\n}',
-      note: '<p><b>The same shape.</b> The code threw; that is the code’s result, and the agent needs the stderr to fix line 4. Not a tool error, not a retry. Treat stdout and stderr as hostile text: bounded, displayed as text, never executed as markup, and never fed to a prompt unlabelled.</p>'
+      note: '<p><b>The same shape.</b> The code threw; that is the code’s result, and the agent needs the stderr to fix line 4. Not a tool error, not a retry. Treat stdout and stderr as hostile text: size-capped, displayed as text, never executed as markup, and never fed to a prompt unlabelled.</p>'
     },
     refused: {
       json: '{\n  <span class="k">"error"</span>: <span class="s">"at_capacity"</span>,\n  <span class="k">"message"</span>: <span class="s">"the execution service is busy; retry after a short wait"</span>,\n  <span class="k">"retry_after_ms"</span>: 800\n}',
-      note: '<p><b>A different shape, on purpose.</b> Nothing ran, and the daemon said so: the error carries the not-dispatched mark with reason <code>capacity</code>. The class maps from that reason and the typed error (<code>ErrAtCapacity</code> here; <code>ErrInvalidRequest</code> would say what to fix; <code>ErrInsufficientIsolation</code> is the gateway’s bug, not the model’s), the message carries no code and no infrastructure detail, and only this class comes with a retry hint.</p>'
+      note: '<p><b>A different shape, on purpose.</b> Nothing ran, and the daemon said so: the error carries the mark that says the request was never handed to the provider (not dispatched), with reason <code>capacity</code>. The class maps from that reason and the typed error (<code>ErrAtCapacity</code> here; <code>ErrInvalidRequest</code> would say what to fix; <code>ErrInsufficientIsolation</code> is the gateway’s bug, not the model’s), the message carries no code and no infrastructure detail, and only this class comes with a retry hint.</p>'
     }
   };
   function renderResp(which) {
@@ -422,7 +431,7 @@
     out.classList.remove('good', 'warn');
     if (done === required) {
       out.classList.add('good');
-      out.innerHTML = '<p><b>All ' + required + ' required gates hold.</b> Bounded inputs and outputs, fair admission, actionable failure classes, a verified wall on every run, tenants kept apart, a tested route boundary, and no credential anywhere the guest can look.</p>';
+      out.innerHTML = '<p><b>All ' + required + ' required gates hold.</b> Capped inputs and outputs, fair capacity limits, actionable failure classes, a verified wall on every run, tenants kept apart, a tested route boundary, and no credential anywhere the guest can look.</p>';
     } else {
       out.classList.add('warn');
       out.innerHTML = '<p><b>' + done + ' of ' + required + ' required gates hold.</b> Keep run_code off. A successful positive call does not make up for an ambiguous retry, a shared identity, a weak tier, an untested route boundary or an exposed token.</p>';

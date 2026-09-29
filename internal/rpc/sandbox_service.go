@@ -15,6 +15,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/internal/quantise"
+	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -253,7 +254,7 @@ func payloadEnvironment(e sandbox.PayloadEnvironment) *plimsollv1.PayloadEnviron
 	if ceiling > maxRunTimeout {
 		ceiling = maxRunTimeout
 	}
-	return &plimsollv1.PayloadEnvironment{Identity: e.Identity, MaxTimeoutMs: uint32(ceiling / time.Millisecond)}
+	return &plimsollv1.PayloadEnvironment{Identity: e.Identity, SoftwareIdentity: e.SoftwareIdentity, MaxTimeoutMs: uint32(ceiling / time.Millisecond)}
 }
 
 func nonNegative(n int) uint32 {
@@ -266,9 +267,10 @@ func nonNegative(n int) uint32 {
 // envelope is the part of a RunRequest every payload kind shares, parsed once
 // before the payload is looked at.
 type envelope struct {
-	minimum sandbox.IsolationClass
-	timeout time.Duration
-	traceID string
+	minimum  sandbox.IsolationClass
+	timeout  time.Duration
+	traceID  string
+	software sandbox.SoftwareRule
 }
 
 // target is where a checked snippet or project runs: the provider itself for a
@@ -280,17 +282,26 @@ type target struct {
 	admit    func(context.Context) (func(), error)
 	js       func(context.Context, sandbox.Request) (sandbox.Result, error)
 	project  func(context.Context, sandbox.ProjectRequest) (sandbox.ProjectResult, error)
-	attrs    []slog.Attr // added to the audit line (a session's fingerprint and call number)
+	software sandbox.Environments
+	// session is set for a session call: software then holds the identities its
+	// sandbox was opened with, which every call runs on.
+	session bool
+	attrs   []slog.Attr // added to the audit line (a session's fingerprint and call number)
 }
 
 // runTarget is the provider, admitted through the limiter.
 func (s *SandboxService) runTarget() target {
+	var software sandbox.Environments
+	if d, ok := s.Sandbox.(sandbox.Describer); ok {
+		software = d.Environments()
+	}
 	return target{
 		provider: s.Sandbox.Name(),
 		tier:     s.Sandbox.IsolationClass(),
 		admit:    s.limit,
 		js:       s.Sandbox.RunJavaScript,
 		project:  s.Sandbox.RunProject,
+		software: software,
 	}
 }
 
@@ -301,12 +312,12 @@ func (s *SandboxService) runTarget() target {
 // Then the floor is parsed (an unparseable floor is InvalidArgument, never "no
 // floor") and the timeout clamped.
 func checkEnvelope(req *plimsollv1.RunRequest) (envelope, error) {
-	return parseEnvelope(req.GetProtocol(), req.GetMinimumIsolation(), req.GetTimeoutMs(), req.GetTraceId())
+	return parseEnvelope(req.GetProtocol(), req.GetMinimumIsolation(), req.GetTimeoutMs(), req.GetTraceId(), req.GetSoftwareRule())
 }
 
 // parseEnvelope is checkEnvelope over the fields themselves, which a session
 // call's request shares.
-func parseEnvelope(proto uint32, floor string, timeoutMs int32, traceID string) (envelope, error) {
+func parseEnvelope(proto uint32, floor string, timeoutMs int32, traceID string, rule *plimsollv1.SoftwareRule) (envelope, error) {
 	if err := checkProtocol(proto); err != nil {
 		return envelope{}, err
 	}
@@ -314,7 +325,11 @@ func parseEnvelope(proto uint32, floor string, timeoutMs int32, traceID string) 
 	if err != nil {
 		return envelope{}, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
 	}
-	return envelope{minimum: minimum, timeout: clampTimeoutMs(timeoutMs), traceID: traceID}, nil
+	software := softwarewire.FromWire(rule)
+	if err := software.Validate(); err != nil {
+		return envelope{}, mapSandboxErr(err)
+	}
+	return envelope{minimum: minimum, timeout: clampTimeoutMs(timeoutMs), traceID: traceID, software: software}, nil
 }
 
 // checkProtocol refuses a request that omits the protocol number or states
@@ -354,7 +369,7 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 	if err != nil {
 		return nil, err
 	}
-	resp.Record = s.runRecord(record.RunRequestDigest(req.Msg), resp, received, time.Now(), sandbox.RunRecord{})
+	resp.Record = s.runRecord(record.RunRequestDigest(req.Msg), resp, received, time.Now(), sandbox.RunRecord{}, env.software)
 	return connect.NewResponse(resp), nil
 }
 
@@ -363,23 +378,14 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 // as it will be sent, the evidence, and the times. link carries a session call's
 // chain fields and is zero for a single run. The daemon holds no key, so this is
 // hashing only.
-func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunResponse, started, ended time.Time, link sandbox.RunRecord) *plimsollv1.RunRecord {
+func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunResponse, started, ended time.Time, link sandbox.RunRecord, rule sandbox.SoftwareRule) *plimsollv1.RunRecord {
 	var env sandbox.Environments
 	if d, ok := s.Sandbox.(sandbox.Describer); ok {
 		env = d.Environments()
 	}
-	var environment string
-	switch resp.GetResult().(type) {
-	case *plimsollv1.RunResponse_Javascript:
-		environment = env.JavaScript.Identity
-	case *plimsollv1.RunResponse_Project:
-		environment = env.Project.Identity
-	case *plimsollv1.RunResponse_Module:
-		environment = env.Module.Identity
-	}
 	return record.Stamp(sandbox.RunRecord{
 		RequestSHA256:  requestDigest,
-		Environment:    environment,
+		SoftwareRuleID: rule.ID(),
 		Policy:         env.Policy,
 		Started:        started,
 		Ended:          ended,
@@ -393,7 +399,7 @@ func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunRes
 // profile is the payload's, because a module payload has no such field.
 func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *plimsollv1.JavaScriptRun, t target) (*plimsollv1.RunResponse, error) {
 	code := p.GetCode()
-	sbReq := sandbox.Request{Code: code, Timeout: env.timeout, MinimumIsolation: env.minimum}
+	sbReq := sandbox.Request{Code: code, Timeout: env.timeout, MinimumIsolation: env.minimum, Software: env.software}
 	if err := sandbox.ValidateRequest(sbReq); err != nil {
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
 	}
@@ -409,6 +415,9 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 	}
 	sbReq.Grant = grant
 	if err := sandbox.CheckMinimumIsolation(t.tier, sbReq.MinimumIsolation); err != nil {
+		return nil, mapSandboxErr(err)
+	}
+	if err := sbReq.Software.Check(t.software.JavaScript.SoftwareIdentity); err != nil {
 		return nil, mapSandboxErr(err)
 	}
 
@@ -490,9 +499,11 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 	attrs = append(attrs, adviceAuditAttrs(mode, retention, allFindings)...)
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "code run", attrs...)
 	return &plimsollv1.RunResponse{
-		Sandbox:    wireString(res.Sandbox),
-		Isolation:  res.Isolation.String(),
-		DurationMs: res.Duration.Milliseconds(),
+		Sandbox:          wireString(res.Sandbox),
+		Isolation:        res.Isolation.String(),
+		DurationMs:       res.Duration.Milliseconds(),
+		SoftwareIdentity: t.ranSoftware(res.SoftwareIdentity, t.software.JavaScript.SoftwareIdentity),
+		Environment:      describedEnvironment(res.EnvironmentIdentity, t.software.JavaScript.Identity),
 		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{
 			Stdout:          []byte(res.Stdout),
 			Stderr:          []byte(res.Stderr),
@@ -523,6 +534,7 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 		Timeout:          env.timeout,
 		Artifacts:        append([]string(nil), artifacts...),
 		MinimumIsolation: env.minimum,
+		Software:         env.software,
 	}
 	if err := sandbox.ValidateProjectRequest(sbReq); err != nil {
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
@@ -539,6 +551,9 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 	}
 	sbReq.Grant = grant
 	if err := sandbox.CheckMinimumIsolation(t.tier, sbReq.MinimumIsolation); err != nil {
+		return nil, mapSandboxErr(err)
+	}
+	if err := sbReq.Software.Check(t.software.Project.SoftwareIdentity); err != nil {
 		return nil, mapSandboxErr(err)
 	}
 
@@ -642,10 +657,12 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 		result.Artifacts = append(result.Artifacts, &plimsollv1.Artifact{Path: wireString(a.Path), Content: a.Content})
 	}
 	return &plimsollv1.RunResponse{
-		Sandbox:    wireString(res.Sandbox),
-		Isolation:  res.Isolation.String(),
-		DurationMs: time.Since(started).Milliseconds(),
-		Result:     &plimsollv1.RunResponse_Project{Project: result},
+		Sandbox:          wireString(res.Sandbox),
+		Isolation:        res.Isolation.String(),
+		DurationMs:       time.Since(started).Milliseconds(),
+		SoftwareIdentity: t.ranSoftware(res.SoftwareIdentity, t.software.Project.SoftwareIdentity),
+		Environment:      describedEnvironment(res.EnvironmentIdentity, t.software.Project.Identity),
+		Result:           &plimsollv1.RunResponse_Project{Project: result},
 	}, nil
 }
 
@@ -666,11 +683,20 @@ func (s *SandboxService) runModule(ctx context.Context, env envelope, p *plimsol
 		Step:             p.GetStep(),
 		Timeout:          env.timeout,
 		MinimumIsolation: env.minimum,
+		Software:         env.software,
 	}
 	if err := sandbox.ValidateModuleRequest(sbReq); err != nil {
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
 	}
 	if err := sandbox.CheckMinimumIsolation(s.Sandbox.IsolationClass(), sbReq.MinimumIsolation); err != nil {
+		return nil, mapSandboxErr(err)
+	}
+	var selected, outer string
+	if d, ok := s.Sandbox.(sandbox.Describer); ok {
+		kind := d.Environments().Module
+		selected, outer = kind.SoftwareIdentity, kind.Identity
+	}
+	if err := sbReq.Software.Check(selected); err != nil {
 		return nil, mapSandboxErr(err)
 	}
 
@@ -744,11 +770,37 @@ func (s *SandboxService) runModule(ctx context.Context, env envelope, p *plimsol
 		result.Runs = append(result.Runs, &plimsollv1.ModuleRowResult{Status: run.Status, Outputs: run.Outputs})
 	}
 	return &plimsollv1.RunResponse{
-		Sandbox:    wireString(res.Sandbox),
-		Isolation:  res.Isolation.String(),
-		DurationMs: res.Duration.Milliseconds(),
-		Result:     &plimsollv1.RunResponse_Module{Module: result},
+		Sandbox:          wireString(res.Sandbox),
+		Isolation:        res.Isolation.String(),
+		DurationMs:       res.Duration.Milliseconds(),
+		SoftwareIdentity: res.SoftwareIdentity,
+		Environment:      describedEnvironment(res.EnvironmentIdentity, outer),
+		Result:           &plimsollv1.RunResponse_Module{Module: result},
 	}, nil
+}
+
+// ranSoftware is the software identity a response states: what the run reported,
+// or for a session call the identity its sandbox was opened with. Never the
+// Describe answer read before a single run's admission, which a Preflight between
+// admission and launch can change; an empty identity fails a required rule at the
+// client.
+func (t target) ranSoftware(reported, opened string) string {
+	if reported != "" || !t.session {
+		return reported
+	}
+	return opened
+}
+
+// describedEnvironment is the outer environment a response states. Docker reports
+// the image each run launched; the other providers state one fixed, configured
+// identity through Describe and not per run, so their Describe value stands in.
+// The software identity a rule is checked against never falls back to Describe:
+// see ranSoftware.
+func describedEnvironment(actual, described string) string {
+	if actual != "" {
+		return actual
+	}
+	return described
 }
 
 // outcomeWire maps the sandbox package's typed project outcome to its wire enum.
@@ -778,6 +830,7 @@ func isInfraErr(err error) bool {
 		!errors.Is(err, sandbox.ErrAtCapacity) &&
 		!errors.Is(err, sandbox.ErrInvalidRequest) &&
 		!errors.Is(err, sandbox.ErrInsufficientIsolation) &&
+		!errors.Is(err, sandbox.ErrSoftwareMismatch) &&
 		!errors.Is(err, context.Canceled) &&
 		!errors.Is(err, context.DeadlineExceeded)
 }
@@ -810,7 +863,7 @@ func sandboxErrCode(err error) connect.Code {
 		return connect.CodeCanceled
 	case errors.Is(err, context.DeadlineExceeded):
 		return connect.CodeDeadlineExceeded
-	case errors.Is(err, sandbox.ErrDisabled), errors.Is(err, sandbox.ErrInsufficientIsolation), errors.Is(err, sandbox.ErrSessionEnded):
+	case errors.Is(err, sandbox.ErrDisabled), errors.Is(err, sandbox.ErrInsufficientIsolation), errors.Is(err, sandbox.ErrSoftwareMismatch), errors.Is(err, sandbox.ErrSessionEnded):
 		return connect.CodeFailedPrecondition
 	case errors.Is(err, sandbox.ErrUnsupported):
 		return connect.CodeUnimplemented

@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Plain definitions of every term the plimsoll docs use, starting with what actually runs your container: runc, gVisor and Kata Containers.">
+  <title>Glossary · plimsoll</title>
+  <link rel="stylesheet" href="plain.css">
+  <style>
+  /* Page-local styles; the base every plain page shares is plain.css. The A to Z list is
+     generated from terms.json, so only its look lives here. */
+
+  /* 01: the housing picture, and the three runtimes side by side. Stacked on a phone,
+     three across on a wide screen. */
+  .housing { display: grid; grid-template-columns: 1fr; gap: 8px; justify-items: center; margin-top: 12px; }
+  .housing svg { display: block; width: 100%; max-width: 280px; height: auto; }
+  .runtimes { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
+  .runtime { min-width: 0; padding: 12px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+  .runtime-name { margin: 0; font-family: var(--mono); font-weight: 700; color: var(--accent-deep); }
+  .runtime dl { margin: 4px 0 0; font-size: 0.94rem; }
+  .runtime dt { margin-top: 8px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+  .runtime dd { margin: 2px 0 0; }
+
+  /* 02: the A to Z list. */
+  .glossary { margin: 14px 0 0; }
+  .glossary .entry { padding: 12px 10px; border-top: 1px solid var(--line); scroll-margin-top: 16px; }
+  .glossary .entry:first-child { border-top: 0; }
+  /* The entry a link arrived at. */
+  .glossary .entry:target { background: var(--accent-soft); border-radius: 8px; }
+  .glossary dt { font-family: var(--mono); font-weight: 700; color: var(--accent-deep); }
+  .glossary dd { margin: 3px 0 0; }
+  .glossary .more { font-size: 0.88rem; white-space: nowrap; }
+
+  @media (min-width: 760px) {
+    .housing, .runtimes { grid-template-columns: repeat(3, 1fr); }
+  }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="top"><a href="index.html">← All trainers</a></nav>
+
+  <p class="eyebrow">plimsoll · reference</p>
+  <h1>Glossary</h1>
+  <p class="promise">Terms the plimsoll docs use that a working engineer may not know. Each
+  chapter explains a group of related terms with a picture; the A to Z list gives every term
+  in one plain sentence. A page that uses one of these words defines it where it first
+  appears, or links here.</p>
+
+  <!-- 01 ─────────────────────────────────────────────────────────────────── -->
+  <section id="what-runs-your-container" aria-labelledby="h-runtimes">
+    <p class="draft" aria-hidden="true">01</p>
+    <h2 id="h-runtimes">What actually runs your container</h2>
+    <p>When Docker runs a container, Docker doesn't build the walls around it itself. It hands
+    that job to a smaller program called an <dfn>OCI runtime</dfn>. OCI, the
+    <a href="https://opencontainers.org/" target="_blank" rel="noopener">Open Container Initiative (EXTERNAL · official site ↗)</a>,
+    is the industry group that wrote the standard for how a container gets started. Any
+    runtime that follows it can be swapped in under Docker without changing your image, and
+    which one you pick decides how strong the walls around untrusted code are. plimsoll
+    reports that choice with every run as its <dfn>isolation tier</dfn>.</p>
+    <p>Think of your computer as a plot of land, and the programs you run as tenants who want
+    to live on it. The runtime is the builder who decides what kind of housing each tenant
+    gets. The thing tenants would most like to share is the foundation: the
+    <dfn>kernel</dfn>, the core part of the operating system that talks to the hardware and
+    does every file, network and memory operation on every program's behalf.</p>
+
+    <!-- Three panels drawn in one 640-wide coordinate space; each svg's viewBox shows its
+         own panel, so they stack on a phone and sit side by side on a wide screen. -->
+    <div class="housing">
+      <svg viewBox="4 4 210 242" role="img" aria-label="runc: an apartment building whose units all stand on one shared kernel." style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+        <defs><pattern id="groundHatch1" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="#dcd7cb" stroke-width="2"/></pattern></defs>
+        <g>
+          <rect x="8" y="8" width="202" height="234" rx="14" fill="#fbfaf6" stroke="#dcd7cb" stroke-width="2"/>
+          <text x="22" y="32" font-size="13" font-weight="700" fill="#0b2a3a">runc</text>
+          <text x="22" y="50" font-size="11" fill="#586770">the apartment building</text>
+          <rect x="34" y="66" width="150" height="118" rx="4" fill="#ffffff" stroke="#0b2a3a" stroke-width="2.5"/>
+          <rect x="46" y="78" width="60" height="44" rx="4" fill="#e0f1f5" stroke="#177f99" stroke-width="1.5"/>
+          <rect x="112" y="78" width="60" height="44" rx="4" fill="#e0f1f5" stroke="#177f99" stroke-width="1.5"/>
+          <rect x="46" y="132" width="60" height="44" rx="4" fill="#e0f1f5" stroke="#177f99" stroke-width="1.5"/>
+          <rect x="112" y="132" width="60" height="44" rx="4" fill="#e0f1f5" stroke="#177f99" stroke-width="1.5"/>
+          <rect x="22" y="190" width="174" height="22" rx="4" fill="url(#groundHatch1)" stroke="#dcd7cb"/>
+          <text x="109" y="205" font-size="10.5" font-weight="700" fill="#586770" text-anchor="middle">one kernel, shared</text>
+          <text x="109" y="232" font-size="11" fill="#586770" text-anchor="middle">every unit stands on it</text>
+        </g>
+      </svg>
+      <svg viewBox="215 4 210 242" role="img" aria-label="runsc (gVisor): the same building with a guard in every unit, standing between the tenants and the one kernel." style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+        <defs><pattern id="groundHatch2" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="#dcd7cb" stroke-width="2"/></pattern></defs>
+        <g>
+          <rect x="219" y="8" width="202" height="234" rx="14" fill="#fbfaf6" stroke="#dcd7cb" stroke-width="2"/>
+          <text x="233" y="32" font-size="13" font-weight="700" fill="#0b2a3a">runsc (gVisor)</text>
+          <text x="233" y="50" font-size="11" fill="#586770">a guard in every unit</text>
+          <rect x="245" y="66" width="150" height="118" rx="4" fill="#ffffff" stroke="#0b2a3a" stroke-width="2.5"/>
+          <rect x="257" y="78" width="60" height="44" rx="4" fill="#e0f1f5" stroke="#177f99" stroke-width="1.5"/>
+          <rect x="323" y="78" width="60" height="44" rx="4" fill="#e0f1f5" stroke="#177f99" stroke-width="1.5"/>
+          <rect x="257" y="132" width="60" height="44" rx="4" fill="#e0f1f5" stroke="#177f99" stroke-width="1.5"/>
+          <rect x="323" y="132" width="60" height="44" rx="4" fill="#e0f1f5" stroke="#177f99" stroke-width="1.5"/>
+          <circle cx="287" cy="100" r="8" fill="#0b4c61"/>
+          <circle cx="353" cy="100" r="8" fill="#0b4c61"/>
+          <circle cx="287" cy="154" r="8" fill="#0b4c61"/>
+          <circle cx="353" cy="154" r="8" fill="#0b4c61"/>
+          <rect x="233" y="190" width="174" height="22" rx="4" fill="url(#groundHatch2)" stroke="#dcd7cb"/>
+          <text x="320" y="205" font-size="10.5" font-weight="700" fill="#586770" text-anchor="middle">one kernel, behind the guards</text>
+          <text x="320" y="232" font-size="11" fill="#586770" text-anchor="middle">the guard answers most requests</text>
+        </g>
+      </svg>
+      <svg viewBox="426 4 210 242" role="img" aria-label="Kata Containers: a village of separate tiny houses, each on its own kernel." style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+        <defs><pattern id="groundHatch3" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="#dcd7cb" stroke-width="2"/></pattern></defs>
+        <g>
+          <rect x="430" y="8" width="202" height="234" rx="14" fill="#fbfaf6" stroke="#dcd7cb" stroke-width="2"/>
+          <text x="444" y="32" font-size="13" font-weight="700" fill="#0b2a3a">Kata Containers</text>
+          <text x="444" y="50" font-size="11" fill="#586770">the tiny house village</text>
+          <polygon points="440,120 463,96 486,120" fill="#ffffff" stroke="#0b2a3a" stroke-width="2"/>
+          <rect x="444" y="120" width="38" height="46" fill="#e0f1f5" stroke="#0b2a3a" stroke-width="2"/>
+          <rect x="438" y="170" width="50" height="12" rx="2" fill="url(#groundHatch3)" stroke="#dcd7cb"/>
+          <polygon points="505,120 528,96 551,120" fill="#ffffff" stroke="#0b2a3a" stroke-width="2"/>
+          <rect x="509" y="120" width="38" height="46" fill="#e0f1f5" stroke="#0b2a3a" stroke-width="2"/>
+          <rect x="503" y="170" width="50" height="12" rx="2" fill="url(#groundHatch3)" stroke="#dcd7cb"/>
+          <polygon points="570,120 593,96 616,120" fill="#ffffff" stroke="#0b2a3a" stroke-width="2"/>
+          <rect x="574" y="120" width="38" height="46" fill="#e0f1f5" stroke="#0b2a3a" stroke-width="2"/>
+          <rect x="568" y="170" width="50" height="12" rx="2" fill="url(#groundHatch3)" stroke="#dcd7cb"/>
+          <text x="463" y="198" font-size="10" font-weight="700" fill="#586770" text-anchor="middle">kernel</text>
+          <text x="528" y="198" font-size="10" font-weight="700" fill="#586770" text-anchor="middle">kernel</text>
+          <text x="593" y="198" font-size="10" font-weight="700" fill="#586770" text-anchor="middle">kernel</text>
+          <text x="531" y="232" font-size="11" fill="#586770" text-anchor="middle">each house, its own kernel</text>
+        </g>
+      </svg>
+    </div>
+
+    <h3>1. runc: the apartment building</h3>
+    <p><b>What it is.</b>
+    <a href="https://github.com/opencontainers/runc" target="_blank" rel="noopener"><dfn>runc</dfn> (EXTERNAL · source repo ↗)</a>
+    is Docker's default runtime, and usually the default under Kubernetes too. It separates
+    programs with two features built into the Linux kernel:
+    <a href="https://man7.org/linux/man-pages/man7/namespaces.7.html" target="_blank" rel="noopener"><dfn>namespaces</dfn> (EXTERNAL · man page ↗)</a>,
+    which control what each program can see (its own files, its own process list, its own
+    network), and
+    <a href="https://man7.org/linux/man-pages/man7/cgroups.7.html" target="_blank" rel="noopener"><dfn>cgroups</dfn> (EXTERNAL · man page ↗)</a>,
+    which cap how much memory and CPU it can use.</p>
+    <p><b>In the analogy.</b> An apartment building. Every unit has its own walls and its own
+    front door, but they all stand on one foundation and share the building's plumbing and
+    wiring: the one kernel.</p>
+    <p><b>The catch.</b> The walls are only as good as the foundation. Every tenant talks
+    straight to the shared kernel, so a bug in the kernel is a crack in the foundation. A
+    tenant who finds one can reach the building's utilities, and from there every unit, the
+    landlord's (your machine's) included.</p>
+    <p><b>In plimsoll:</b> the <b>container</b> tier.</p>
+
+    <h3>2. runsc (gVisor): a security guard in every unit</h3>
+    <p><b>What it is.</b>
+    <a href="https://gvisor.dev/docs/" target="_blank" rel="noopener"><dfn>gVisor</dfn> (EXTERNAL · official docs ↗)</a>
+    comes from Google, and <dfn>runsc</dfn> is the name of its runtime. It puts a stand-in
+    kernel, written in Go and running as an ordinary program, between your code and the real
+    kernel. Your code's requests (open this file, send this packet) go to the stand-in, which
+    handles almost all of them itself and uses only a short, locked-down list of real kernel
+    calls.</p>
+    <!-- "guard" in the next two paragraphs is the analogy's security guard, not plimsoll's
+         guard (the E2B address), so the term check skips them (data-terms="off"). -->
+    <p data-terms="off"><b>In the analogy.</b> Still the apartment building, but every unit has a security guard
+    inside, and tenants aren't allowed to touch the pipes, wires or doors themselves. Ask for a
+    glass of water and the guard gets it, mostly from his own supply. He only goes to the
+    building's real plumbing for a short list of simple jobs, so a trick that would crack the
+    real foundation never gets near it.</p>
+    <p data-terms="off"><b>The catch.</b> Every request goes through the guard, so programs that do a lot of file
+    or network work run slower. And the guard doesn't know every trick the real kernel does:
+    some less common kernel features are missing, so a few programs won't run under it.</p>
+    <p><b>In plimsoll:</b> the <b>kernel</b> tier (the <code>docker</code> <dfn>provider</dfn>,
+    plimsoll's name for the backend that runs the code, with
+    <code>SANDBOX_DOCKER_RUNTIME=runsc</code>).</p>
+
+    <h3>3. Kata Containers: the tiny house village</h3>
+    <p><b>What it is.</b>
+    <a href="https://katacontainers.io/learn/" target="_blank" rel="noopener"><dfn>Kata Containers</dfn> (EXTERNAL · official site ↗)</a>
+    starts a small <dfn>virtual machine</dfn> (VM) for each sandbox, with its own separate
+    kernel inside. The CPU's virtualization features keep the VMs apart, not just the host
+    kernel's rules.</p>
+    <p><b>In the analogy.</b> A village of separate tiny houses. Each one has its own
+    foundation, plumbing and wiring, so breaking the plumbing in your house floods nobody
+    else's.</p>
+    <p><b>The catch.</b> Every house has to be built before anyone moves in, so a sandbox takes
+    longer to start, and each one uses more memory because it carries its own kernel. It also
+    needs a machine that allows virtualization, which on a cloud server often means bare metal
+    or <dfn>nested virtualization</dfn> (a VM running inside another VM) switched on.</p>
+    <p><b>In plimsoll:</b> the <b>VM</b> tier. The <code>e2b</code> provider uses the same idea
+    with
+    <a href="https://firecracker-microvm.github.io/" target="_blank" rel="noopener"><dfn>Firecracker</dfn> (EXTERNAL · official site ↗)</a>,
+    a VM builder made for small VMs that start fast, and <dfn>Docker Cloud Sandboxes</dfn>,
+    Docker's hosted service, also run each sandbox in its own small VM.</p>
+
+    <h3>Side by side</h3>
+    <div class="runtimes">
+      <div class="runtime">
+        <p class="runtime-name">runc</p>
+        <dl>
+          <dt>What keeps tenants apart</dt><dd>Walls in the shared kernel (namespaces, cgroups)</dd>
+          <dt>What an attacker has to break</dt><dd>One kernel bug</dd>
+          <dt>What it costs</dt><dd>Almost nothing extra</dd>
+          <dt>plimsoll tier</dt><dd>container</dd>
+          <dt>Fits</dt><dd>Code you or your team wrote</dd>
+        </dl>
+      </div>
+      <div class="runtime">
+        <p class="runtime-name">runsc (gVisor)</p>
+        <dl>
+          <dt>What keeps tenants apart</dt><dd>A stand-in kernel that does the work itself</dd>
+          <dt>What an attacker has to break</dt><dd>The stand-in, then the short list of real kernel calls it may use</dd>
+          <dt>What it costs</dt><dd>Slower file and network work; some kernel features missing</dd>
+          <dt>plimsoll tier</dt><dd>kernel</dd>
+          <dt>Fits</dt><dd>Untrusted code, including on servers that can't run VMs</dd>
+        </dl>
+      </div>
+      <div class="runtime">
+        <p class="runtime-name">Kata</p>
+        <dl>
+          <dt>What keeps tenants apart</dt><dd>A separate VM per sandbox, kept apart by the CPU</dd>
+          <dt>What an attacker has to break</dt><dd>The VM's own kernel, then the <dfn>hypervisor</dfn> (the program that runs VMs)</dd>
+          <dt>What it costs</dt><dd>Slower start, more memory, needs virtualization</dd>
+          <dt>plimsoll tier</dt><dd>VM</dd>
+          <dt>Fits</dt><dd>Untrusted code, when the start time and memory are affordable</dd>
+        </dl>
+      </div>
+    </div>
+    <p>plimsoll has one more tier that isn't an OCI runtime at all: <b>process</b>. The
+    <code>wasm</code> provider runs code inside plimsoll's own process, which is fine for quick
+    snippets you trust and not for a stranger's code.</p>
+    <p><b>Why this matters when you use plimsoll.</b> When you ask for a minimum tier on a run
+    (<code>minimum_isolation</code>), this ladder is what you're choosing on, and plimsoll
+    refuses the run rather than quietly use a weaker builder. It's also why plimsoll can only
+    say "container" for the <code>openshell</code> provider today: <dfn>OpenShell</dfn>,
+    NVIDIA's agent sandbox runtime, doesn't report which runtime its Docker uses.</p>
+  </section>
+
+  <!-- 02 ─────────────────────────────────────────────────────────────────── -->
+  <section id="terms" aria-labelledby="h-terms">
+    <p class="draft" aria-hidden="true">02</p>
+    <h2 id="h-terms">Every term, A to Z</h2>
+    <!-- glossary:begin: generated from terms.json; edit that file, then run go test ./docs/trainers -run TestGeneratedBlocks -update -->
+    <dl class="glossary">
+      <div class="entry" id="admission">
+        <dt>admission</dt>
+        <dd>The daemon's capacity check just before a run starts: it reserves a slot within the concurrency and memory limits, or refuses at once instead of queueing.</dd>
+      </div>
+      <div class="entry" id="attestation">
+        <dt>attestation</dt>
+        <dd>Cryptographic proof, usually rooted in the hardware, of exactly what software a machine is running; plimsoll's isolation tiers are evidence it collected, not attestation.</dd>
+      </div>
+      <div class="entry" id="backpressure">
+        <dt>backpressure</dt>
+        <dd>An overloaded service telling its callers to slow down, and the callers doing so.</dd>
+      </div>
+      <div class="entry" id="broker">
+        <dt>broker</dt>
+        <dd>The part of plimsoll that makes API calls for sandboxed code: it checks each call against the grant, attaches the credential itself, and counts the calls, so the code never sees the credential.</dd>
+      </div>
+      <div class="entry" id="buck-converter">
+        <dt>buck converter</dt>
+        <dd>A power-supply circuit that turns a higher DC voltage into a lower one by switching it on and off many times a second.</dd>
+      </div>
+      <div class="entry" id="cart-pole">
+        <dt>cart-pole</dt>
+        <dd>A cart on a rail with a pole hinged on top; the task is to push the cart left and right so the pole stays upright.</dd>
+      </div>
+      <div class="entry" id="cgroup">
+        <dt>cgroup</dt>
+        <dd>The Linux kernel feature that caps and counts the memory, CPU time and number of processes a group of processes may use. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="circuit-breaker">
+        <dt>circuit breaker</dt>
+        <dd>A switch in the broker that, after the API answers 429 (too many requests) or 503 (unavailable), stops forwarding calls for a cooldown so the API can recover.</dd>
+      </div>
+      <div class="entry" id="code-mode">
+        <dt>code mode</dt>
+        <dd>Letting an AI agent write a short program that calls an API and run it in a sandbox, instead of calling one tool per step.</dd>
+      </div>
+      <div class="entry" id="connect">
+        <dt>Connect</dt>
+        <dd>An RPC framework whose Go library serves protobuf-defined procedures over ordinary HTTP; plimsolld and its Go client use it.</dd>
+      </div>
+      <div class="entry" id="container">
+        <dt>container</dt>
+        <dd>A process started with its own view of files, network and other processes, while still sharing the host's operating-system kernel.</dd>
+      </div>
+      <div class="entry" id="content-addressed">
+        <dt>content-addressed</dt>
+        <dd>Identified by a digest of its own content, so the identifier can never later point at different content.</dd>
+      </div>
+      <div class="entry" id="control-law">
+        <dt>control law</dt>
+        <dd>The formula a controller applies at each tick to turn its measurements into an action.</dd>
+      </div>
+      <div class="entry" id="controller">
+        <dt>controller</dt>
+        <dd>A program that reads a system's state at every tick and decides how to push it, for example to keep a pole balanced on a cart.</dd>
+      </div>
+      <div class="entry" id="deny-all">
+        <dt>deny-all</dt>
+        <dd>A network policy that blocks every connection unless a rule explicitly allows it.</dd>
+      </div>
+      <div class="entry" id="digest">
+        <dt>digest</dt>
+        <dd>A SHA-256 hash of some content, used as its name: the same digest always means the same bytes.</dd>
+      </div>
+      <div class="entry" id="dispatch">
+        <dt>dispatch</dt>
+        <dd>Handing a checked request to the provider so the code starts running; a request refused before dispatch ran nothing.</dd>
+      </div>
+      <div class="entry" id="docker-cloud-sandboxes">
+        <dt>Docker Cloud Sandboxes</dt>
+        <dd>Docker's hosted service that runs each sandbox as a microVM on Docker-managed machines; the dockercloud provider starts one per run and is billed per use.</dd>
+      </div>
+      <div class="entry" id="dsse">
+        <dt>DSSE</dt>
+        <dd>Dead Simple Signing Envelope: a small standard format that wraps a payload together with its signatures.</dd>
+      </div>
+      <div class="entry" id="e2b">
+        <dt>E2B</dt>
+        <dd>A hosted service that runs code in Firecracker microVMs; the e2b provider starts one per run and is billed per use.</dd>
+      </div>
+      <div class="entry" id="egress">
+        <dt>egress</dt>
+        <dd>Network traffic leaving the sandbox; plimsoll runs have none, apart from the single path a grant opens to the broker.</dd>
+      </div>
+      <div class="entry" id="escape">
+        <dt>escape</dt>
+        <dd>A bug that lets code inside a sandbox act outside it.</dd>
+      </div>
+      <div class="entry" id="fail-closed">
+        <dt>fail closed</dt>
+        <dd>To refuse, rather than allow, when a check cannot be completed or a required setting is missing.</dd>
+      </div>
+      <div class="entry" id="fan-out">
+        <dt>fan-out</dt>
+        <dd>Calling an API once per item of a list instead of once for the whole list; also called the N+1 pattern.</dd>
+      </div>
+      <div class="entry" id="fingerprint">
+        <dt>fingerprint</dt>
+        <dd>A SHA-256 hash that stands for some content: equal fingerprints mean identical bytes, and any change gives a different fingerprint.</dd>
+      </div>
+      <div class="entry" id="firecracker">
+        <dt>Firecracker</dt>
+        <dd>The open-source virtual machine monitor, built by AWS, that starts and runs microVMs; E2B runs every sandbox on it.</dd>
+      </div>
+      <div class="entry" id="floor">
+        <dt>floor</dt>
+        <dd>The weakest isolation tier a request will accept; if the daemon's provider is weaker, the request is refused and nothing runs.</dd>
+      </div>
+      <div class="entry" id="govulncheck">
+        <dt>govulncheck</dt>
+        <dd>Go's official vulnerability scanner, which reports known vulnerabilities only in code your program actually calls.</dd>
+      </div>
+      <div class="entry" id="grant">
+        <dt>grant</dt>
+        <dd>Permission, attached to one run, for its code to call listed routes of one HTTP API through the broker; a run without a grant has no network at all.</dd>
+      </div>
+      <div class="entry" id="grant-profile">
+        <dt>grant profile</dt>
+        <dd>A grant stored on the server under a name, holding the API's address, the allowed routes, the callers allowed to use it and how its credential is made; a caller sends only the name.</dd>
+      </div>
+      <div class="entry" id="guard">
+        <dt>guard</dt>
+        <dd>The HTTPS endpoint, served by the plimsoll daemon, that is the only address a microVM run with a grant may reach; it checks the run's guard credential and hands each call to the broker.</dd>
+      </div>
+      <div class="entry" id="guest">
+        <dt>guest</dt>
+        <dd>The code running inside a sandbox, seen from the host machine that runs it.</dd>
+      </div>
+      <div class="entry" id="gvisor">
+        <dt>gVisor</dt>
+        <dd>Google's open-source stand-in kernel, written in Go and running as an ordinary program, that handles almost every request a container's code makes itself and uses only a short, locked-down list of real kernel calls. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="hardened-mode">
+        <dt>hardened mode</dt>
+        <dd>The startup setting PLIMSOLL_HARDENED=1, under which the daemon refuses to start unless every production safeguard is configured.</dd>
+      </div>
+      <div class="entry" id="hardware-virtualization">
+        <dt>hardware virtualization</dt>
+        <dd>Processor support for running several virtual machines on one computer, each with its own kernel, kept apart by the CPU itself.</dd>
+      </div>
+      <div class="entry" id="harness">
+        <dt>harness</dt>
+        <dd>A program outside the daemon that drives runs and checks their results; plimsoll's attest harness signs run records and verifies them later.</dd>
+      </div>
+      <div class="entry" id="hypervisor">
+        <dt>hypervisor</dt>
+        <dd>The program that runs virtual machines and keeps them apart, so code that breaks out of a virtual machine still has to break the hypervisor. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="in-toto">
+        <dt>in-toto</dt>
+        <dd>A standard format for signed statements about software; plimsoll's harness signs each run record as an in-toto statement inside a DSSE envelope.</dd>
+      </div>
+      <div class="entry" id="isolation-tier">
+        <dt>isolation tier</dt>
+        <dd>How strong the wall around a run is, reported as one of four levels, weakest first: process, container, kernel, vm. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="kata-containers">
+        <dt>Kata Containers</dt>
+        <dd>An open-source container runtime that starts a small virtual machine, with its own kernel, for each sandbox, so the processor's virtualization features keep sandboxes apart. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="kernel">
+        <dt>kernel</dt>
+        <dd>The core part of the operating system that talks to the hardware and does every file, network and memory operation on every program's behalf. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="load-line">
+        <dt>load line</dt>
+        <dd>The mark painted on a ship's hull showing how low it may safely sit in the water, where anyone can check it; plimsoll is named after it.</dd>
+      </div>
+      <div class="entry" id="manifest">
+        <dt>manifest</dt>
+        <dd>A file that lists what something contains, such as the files in a release or the layers of a container image.</dd>
+      </div>
+      <div class="entry" id="mcp">
+        <dt>MCP</dt>
+        <dd>Model Context Protocol: the open standard an AI application uses to offer tools, such as a run-code tool, to a language model.</dd>
+      </div>
+      <div class="entry" id="microvm">
+        <dt>microVM</dt>
+        <dd>A small virtual machine with its own kernel, started for one run and destroyed after it.</dd>
+      </div>
+      <div class="entry" id="mint">
+        <dt>mint</dt>
+        <dd>To create a fresh credential for one run, ideally short-lived and limited to that run's routes, so a stolen copy is soon useless.</dd>
+      </div>
+      <div class="entry" id="module-run">
+        <dt>module run</dt>
+        <dd>Running a compiled simulator that is baked into a docker image, once for each row of a table of parameters.</dd>
+      </div>
+      <div class="entry" id="namespace">
+        <dt>namespace</dt>
+        <dd>A Linux kernel feature that controls what a program can see: its own files, its own process list, its own network. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="nested-virtualization">
+        <dt>nested virtualization</dt>
+        <dd>Running a virtual machine inside another virtual machine; not every cloud server allows it.</dd>
+      </div>
+      <div class="entry" id="noexec">
+        <dt>noexec</dt>
+        <dd>A mount option that stops the kernel from running any program stored on that filesystem.</dd>
+      </div>
+      <div class="entry" id="nosuid">
+        <dt>nosuid</dt>
+        <dd>A mount option that stops a program on that filesystem from gaining extra privileges through its set-user-ID bit.</dd>
+      </div>
+      <div class="entry" id="oci-runtime">
+        <dt>OCI runtime</dt>
+        <dd>The program Docker hands a container to, which builds the walls around it, such as runc (the default), runsc (gVisor) or Kata Containers; OCI, the Open Container Initiative, wrote the standard it follows, so one can replace another without changing the image. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="openshell">
+        <dt>OpenShell</dt>
+        <dd>NVIDIA OpenShell, an agent sandbox runtime whose gateway server creates and deletes sandboxes on request; the openshell provider asks a gateway for one sandbox per run.</dd>
+      </div>
+      <div class="entry" id="physics-oracle">
+        <dt>physics oracle</dt>
+        <dd>The example that tests an agent-written controller by running it against a simulated cart-pole inside the sandbox and fingerprinting what happens.</dd>
+      </div>
+      <div class="entry" id="pinned">
+        <dt>pinned</dt>
+        <dd>Fixed to one exact version, usually by digest, so it changes only when someone edits the pin.</dd>
+      </div>
+      <div class="entry" id="preflight">
+        <dt>preflight</dt>
+        <dd>The configuration check a provider runs at startup and on each readiness poll: for docker it confirms the images and the runtime exist; for the cloud providers it checks settings only.</dd>
+      </div>
+      <div class="entry" id="principal">
+        <dt>principal</dt>
+        <dd>The authenticated identity a request comes from; in plimsolld, the caller id listed in the clients file.</dd>
+      </div>
+      <div class="entry" id="process">
+        <dt>process</dt>
+        <dd>One running program, with its own memory and its own permissions.</dd>
+      </div>
+      <div class="entry" id="protobuf">
+        <dt>protobuf</dt>
+        <dd>Protocol Buffers: Google's schema-defined binary format for messages, which plimsoll uses for its RPC requests and responses.</dd>
+      </div>
+      <div class="entry" id="protocol-number">
+        <dt>protocol number</dt>
+        <dd>A number every request carries to name the protocol version it speaks; a daemon serving a different version refuses the request before reading it, rather than running it without fields it does not know.</dd>
+      </div>
+      <div class="entry" id="provenance">
+        <dt>provenance</dt>
+        <dd>A record of where an artifact came from and how it was built, kept so that someone else can check it.</dd>
+      </div>
+      <div class="entry" id="provider">
+        <dt>provider</dt>
+        <dd>The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud or openshell.</dd>
+      </div>
+      <div class="entry" id="quickjs">
+        <dt>QuickJS</dt>
+        <dd>A small JavaScript engine; plimsoll embeds a build of it, compiled to WebAssembly, for its wasm provider.</dd>
+      </div>
+      <div class="entry" id="rpc">
+        <dt>RPC</dt>
+        <dd>Remote procedure call: one program sending a request to another over the network and getting an answer back.</dd>
+      </div>
+      <div class="entry" id="run-record">
+        <dt>run record</dt>
+        <dd>The statement plimsolld attaches to every answered run: SHA-256 digests of the request and the result, the isolation evidence, and the start and end times; the official client recomputes the digests and rejects a mismatch.</dd>
+      </div>
+      <div class="entry" id="runc">
+        <dt>runc</dt>
+        <dd>Docker's default container runtime, and usually Kubernetes's too, which separates containers with the kernel's namespaces and cgroups while they all share the host's kernel. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="runsc">
+        <dt>runsc</dt>
+        <dd>gVisor's container runtime: the program docker calls instead of runc to start a container under gVisor. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="runtimeclass">
+        <dt>RuntimeClass</dt>
+        <dd>The Kubernetes setting that chooses which container runtime, such as gVisor's runsc, runs a pod.</dd>
+      </div>
+      <div class="entry" id="sandbox">
+        <dt>sandbox</dt>
+        <dd>A place where code runs with something stopping it from reaching the rest of the machine.</dd>
+      </div>
+      <div class="entry" id="seccomp">
+        <dt>seccomp</dt>
+        <dd>A Linux kernel feature that limits which system calls a process may make; plimsoll ships a profile listing the calls its containers may use.</dd>
+      </div>
+      <div class="entry" id="session">
+        <dt>session</dt>
+        <dd>One sandbox kept open for many calls: files one call writes are there for the next, but no process outlives the call that started it.</dd>
+      </div>
+      <div class="entry" id="shed">
+        <dt>shed</dt>
+        <dd>To refuse extra work at once, instead of queueing it, when a limit is reached.</dd>
+      </div>
+      <div class="entry" id="supply-chain">
+        <dt>supply chain</dt>
+        <dd>Everything outside your own code that ends up in what you run: dependencies, base images, build tools, and the people and servers that publish them.</dd>
+      </div>
+      <div class="entry" id="syscall">
+        <dt>syscall</dt>
+        <dd>A request from a program to the operating-system kernel, such as opening a file, starting a process or opening a network connection.</dd>
+      </div>
+      <div class="entry" id="tcb">
+        <dt>TCB</dt>
+        <dd>Trusted computing base: the code that has to be correct for a security promise to hold, so a bug anywhere in it can break the promise.</dd>
+      </div>
+      <div class="entry" id="threat-model">
+        <dt>threat model</dt>
+        <dd>The list of attackers and attacks a system is designed to hold out against.</dd>
+      </div>
+      <div class="entry" id="tick">
+        <dt>tick</dt>
+        <dd>One fixed time step of a simulation; the cart-pole examples take 10 ms per tick, so 100 ticks make one simulated second.</dd>
+      </div>
+      <div class="entry" id="tmpfs">
+        <dt>tmpfs</dt>
+        <dd>A filesystem held in memory, with a size limit set when it is mounted; its contents disappear when the container stops.</dd>
+      </div>
+      <div class="entry" id="token-bucket">
+        <dt>token bucket</dt>
+        <dd>A rate limit that allows short bursts: each caller's allowance refills at a steady rate and each run spends one unit of it.</dd>
+      </div>
+      <div class="entry" id="trajectory">
+        <dt>trajectory</dt>
+        <dd>The full record of a simulation run: every state at every tick, in order.</dd>
+      </div>
+      <div class="entry" id="virtual-machine">
+        <dt>virtual machine</dt>
+        <dd>A complete computer simulated in software, with its own kernel, kept apart from other virtual machines by the processor's virtualization features. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
+      </div>
+      <div class="entry" id="wazero">
+        <dt>wazero</dt>
+        <dd>A WebAssembly runtime written in pure Go; plimsoll uses it to run QuickJS inside the daemon with a hard memory cap.</dd>
+      </div>
+      <div class="entry" id="webassembly">
+        <dt>WebAssembly</dt>
+        <dd>A portable bytecode format that runs inside a host program, which decides everything the code can reach: no files, network or system calls unless the host provides them.</dd>
+      </div>
+    </dl>
+    <!-- glossary:end -->
+  </section>
+
+  <footer>
+    <p>The A to Z list is generated from <code>terms.json</code> in this directory, the one
+    place these definitions are written, and a term explained in a chapter links back to it. A
+    test fails when a page on the newcomer path uses one of these terms for the first time
+    without defining it or linking here.</p>
+  </footer>
+
+</div>
+</body>
+</html>

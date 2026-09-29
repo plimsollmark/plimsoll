@@ -42,15 +42,22 @@
   <p class="eyebrow">plimsoll trainer</p>
   <h1>Dependencies</h1>
   <p class="promise">Two lists, not one. What is compiled into the daemon, and what a
-  provider needs while it is running, are different questions with different failure
-  modes. This page is the whole list, short enough to read on a phone.</p>
+  <dfn>provider</dfn>, the backend that actually runs the code, needs while it is running,
+  are different questions with different failure modes. This page is the whole list,
+  short enough to read on a phone.</p>
 
   <h2>The two lists</h2>
   <div class="card">
     <h3>Compiled in</h3>
-    <p>Four Go modules, linked into <code>plimsolld</code>. They are in the process that
-    handles hostile input, so each one is part of the trusted computing base whether or
-    not a particular run touches it.</p>
+    <p>Four Go modules, linked into <code>plimsolld</code>: <dfn>Connect</dfn>, the RPC
+    framework that serves plimsoll's procedures over ordinary HTTP;
+    <dfn>protobuf</dfn> (Protocol Buffers), Google's schema-defined binary format for the
+    messages; <dfn>wazero</dfn>, a runtime written in pure Go for
+    <dfn>WebAssembly</dfn>, a portable bytecode format that runs inside a host program;
+    and <code>golang.org/x/net</code>, Go's extra HTTP/2 code. They are in the process
+    that handles hostile input, so each one is part of the <dfn>trusted computing
+    base</dfn>, the code that has to be correct for plimsoll's security promises to hold,
+    whether or not a particular run touches it.</p>
     <h3>Needed at run time</h3>
     <p>Whatever the selected provider reaches outside the binary: a container daemon and
     its images, or a cloud API and a template or image. Nothing here is linked into plimsoll. A
@@ -59,7 +66,8 @@
   </div>
   <p>Those two failure modes are why the daemon checks them separately. A dependency
   that is absent makes the service refuse to serve. A dependency that is present but
-  weaker than promised is the thing the startup smoke test exists to catch.</p>
+  weaker than promised is the thing the startup smoke test, a real throwaway sandbox the
+  daemon starts and checks before it serves, exists to catch.</p>
 
   <h2>Compiled in: four modules</h2>
   <p>Tap one for what it does, what hostile input reaches it, and what an upgrade has to
@@ -86,8 +94,8 @@
       <p><span class="label">Hostile input reaches it:</span> yes. A caller controls the
       bytes it parses.</p>
       <p><span class="label">An upgrade re-proves:</span> that the generated code still
-      matches the schema. The gate regenerates and fails on any drift, so a bump cannot
-      quietly change the wire contract.</p>
+      matches the schema. The test gate (<code>make audit</code>) regenerates the code and
+      fails on any difference, so a bump cannot quietly change the wire contract.</p>
     </div>
   </details>
 
@@ -95,9 +103,10 @@
     <summary>wazero <span class="what">the WebAssembly runtime</span></summary>
     <div>
       <p><span class="label">Does:</span> runs the embedded JavaScript engine for the
-      WASM provider, and applies the per-run memory cap in pages.</p>
+      <code>wasm</code> provider, and applies the per-run memory cap in WebAssembly memory
+      pages.</p>
       <p><span class="label">Hostile input reaches it:</span> yes, the most directly of
-      the four. It executes the guest.</p>
+      the four. It executes the <dfn>guest</dfn>, the code inside the sandbox.</p>
       <p><span class="label">An upgrade re-proves:</span> that the memory cap is still
       enforced by the runtime rather than by a wrapper that reports it. This is the whole
       reason plimsoll drives wazero itself.</p>
@@ -108,18 +117,20 @@
     <summary>golang.org/x/net <span class="what">HTTP/2 plumbing</span></summary>
     <div>
       <p><span class="label">Does:</span> the HTTP/2 paths the daemon serves and the
-      broker calls out through.</p>
+      <dfn>broker</dfn>, the part of plimsoll that makes API calls for sandboxed code,
+      calls out through.</p>
       <p><span class="label">Hostile input reaches it:</span> indirectly, on both sides of
       the broker.</p>
       <p><span class="label">An upgrade re-proves:</span> nothing new, but this is the
-      module whose advisories most often decide which toolchain the canonical build pins.
-      See the two numbers below.</p>
+      module whose security advisories most often decide which Go toolchain the official
+      build is <dfn>pinned</dfn> to, fixed at one exact version. See the two numbers
+      below.</p>
     </div>
   </details>
 
   <p><code>golang.org/x/sys</code> and <code>golang.org/x/text</code> come along
-  indirectly. Adding a fifth direct module is a decision about the trusted surface, not a
-  convenience: anything that parses input or runs code has to earn its place.</p>
+  indirectly. Adding a fifth direct module is a decision about what plimsoll trusts, not
+  a convenience: anything that parses input or runs code has to earn its place.</p>
 
   <div class="card bad">
     <h3>One module is banned by name</h3>
@@ -139,10 +150,12 @@
       <dd>Nothing. The engine is embedded in the executable.</dd>
       <dt>Fails when</dt>
       <dd>Effectively never for missing dependencies. It is the provider that still works
-      on an air-gapped host with nothing installed.</dd>
+      on an air-gapped host, one with no network connection, with nothing installed.</dd>
       <dt>The trade</dt>
-      <dd>An escape from the engine lands inside <code>plimsolld</code> itself, so this
-      tier is for development and for code you are not treating as hostile.</dd>
+      <dd>An <dfn>escape</dfn>, a bug that lets code act outside its sandbox, from the
+      engine lands inside <code>plimsolld</code> itself. So the process <dfn>tier</dfn>,
+      the weakest of the four levels of wall strength plimsoll reports, is for development
+      and for code you are not treating as hostile.</dd>
     </dl>
   </div>
 
@@ -151,16 +164,20 @@
     <dl>
       <dt>Needs outside the binary</dt>
       <dd>A reachable container daemon, a runtime (<code>runc</code>, or
-      <code>runsc</code> for a gVisor boundary), and the images named by
-      <code>SANDBOX_DOCKER_IMAGE</code> and <code>SANDBOX_DOCKER_PROJECT_IMAGE</code>.
-      Simulation runs add <code>SANDBOX_DOCKER_MODULE_IMAGE</code>.</dd>
+      <code>runsc</code> for a <dfn>gVisor</dfn> boundary: gVisor is Google's stand-in
+      kernel, which answers a container's requests to the kernel itself), and the images
+      named by <code>SANDBOX_DOCKER_IMAGE</code> and
+      <code>SANDBOX_DOCKER_PROJECT_IMAGE</code>. Simulation runs (<dfn>module runs</dfn>,
+      which run a compiled simulator once per row of a parameter table) add
+      <code>SANDBOX_DOCKER_MODULE_IMAGE</code>.</dd>
       <dt>Fails when</dt>
       <dd>The daemon is down, an image is absent, or the runtime is not registered. All
       three are startup failures, not run failures: the daemon refuses to serve.</dd>
       <dt>Worth knowing</dt>
       <dd>Set <code>SANDBOX_REQUIRE_PINNED_IMAGES</code> and both images must be named by
-      digest. Every run then launches the exact image the startup check inspected, so
-      re-pointing a mutable tag cannot smuggle a different image past it.</dd>
+      <dfn>digest</dfn>, the SHA-256 hash of the image's content. Every run then launches
+      the exact image the startup check inspected, so pointing a tag at a different image
+      later cannot slip it past that check.</dd>
     </dl>
   </div>
 
@@ -168,9 +185,11 @@
     <h3>E2B <span class="tier">virtual machine</span></h3>
     <dl>
       <dt>Needs outside the binary</dt>
-      <dd>The E2B API, an <code>E2B_API_KEY</code>, and a template named by
-      <code>E2B_TEMPLATE</code> that already bakes the toolchain. Host-API grants need
-      <code>E2B_GUARD_URL</code> as well.</dd>
+      <dd>The API of <dfn>E2B</dfn>, a hosted service that runs each sandbox in a small
+      virtual machine; an <code>E2B_API_KEY</code>; and a template (the image E2B starts
+      each sandbox from) named by <code>E2B_TEMPLATE</code> that already has the toolchain
+      built in. Host-API <dfn>grants</dfn>, permission for a run's code to call listed
+      routes of one API, need <code>E2B_GUARD_URL</code> as well.</dd>
       <dt>Fails when</dt>
       <dd>The network is down, the key is wrong, or the template is missing. Its startup
       configuration check cannot tell you any of that, which is why the behavioural smoke
@@ -186,29 +205,36 @@
     <h3>Docker Cloud Sandboxes <span class="tier">virtual machine</span></h3>
     <dl>
       <dt>Needs outside the binary</dt>
-      <dd>The Docker Cloud Sandboxes service; a Docker personal access token with the
+      <dd><dfn>Docker Cloud Sandboxes</dfn>, Docker's hosted service that runs each
+      sandbox as a small virtual machine on Docker's machines; a Docker personal access
+      token with the
       "Cloud Sandboxes" scope in <code>DOCKER_SBX_TOKEN</code> and the account it belongs
       to in <code>DOCKER_SBX_USERNAME</code>; the management endpoint in
       <code>SANDBOX_DOCKERCLOUD_API_URL</code>, which is required because Docker documents
       no default; and the image each sandbox boots, <code>SANDBOX_DOCKERCLOUD_IMAGE</code>,
       which must already carry the toolchain. The account's cloud network policy must
-      default to deny-all (<code>sbx --cloud policy init deny-all</code>), because a create
-      that carries its own policy fails.</dd>
+      default to <dfn>deny-all</dfn>, blocking every connection that no rule allows
+      (<code>sbx --cloud policy init deny-all</code>), because a create that carries its
+      own policy fails.</dd>
       <dt>Fails when</dt>
       <dd>The network is down, the token is wrong or lacks a permission a run needs, or the
       account's policy is not deny-all. As with E2B, the startup configuration check cannot
       tell you the first two, so the smoke test creates one real sandbox first. The policy is
-      read back on every run, and a sandbox that is not sealed is refused.</dd>
+      read back on every run, and a sandbox that is not sealed (deny-all, plus, for a grant
+      run, only the rule its grant needs) is refused.</dd>
       <dt>Worth knowing</dt>
       <dd>The sandbox API refuses the personal access token itself, so the daemon exchanges
-      it at Docker Hub for a short-lived bearer. A pinned image must name its linux/amd64
-      manifest digest: the hash of that one platform's image, not of the multi-platform
-      index that lists several, because the cloud reports the manifest it booted. With
+      it at Docker Hub for a short-lived bearer token. A pinned image must name its
+      linux/amd64 <dfn>manifest</dfn> digest, the hash of the file that describes that one
+      platform's image, not of the multi-platform index that lists several, because the
+      cloud reports the manifest it booted. With
       <code>SANDBOX_CPUS</code> and <code>SANDBOX_MEMORY_MB</code> unset, each sandbox is
-      the Micro size (1 CPU, 2 GiB). Host-API grants need <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>: the
-      grant run's one network rule, the guard's host on 443, is applied through a Docker call
-      outside its published API and read back through the published one, and the guest holds its
-      own run's short-lived guard credential. There are no module runs.
+      the Micro size (1 CPU, 2 GiB). Host-API grants need
+      <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>: the grant run's one network rule, to the
+      host of the <dfn>guard</dfn> (the one plimsoll address a run with a grant may reach)
+      on port 443, is applied through a Docker call outside its published API and read
+      back through the published one, and the guest holds its own run's short-lived guard
+      credential. There are no module runs.
       Docker bills each sandbox per second, so, like E2B, no automated run touches it.</dd>
     </dl>
   </div>
@@ -217,9 +243,12 @@
     <h3>NVIDIA OpenShell <span class="tier">container</span></h3>
     <dl>
       <dt>Needs outside the binary</dt>
-      <dd>An OpenShell gateway running the docker compute driver, at
-      <code>SANDBOX_OPENSHELL_GATEWAY_URL</code>, over mutual TLS: the CA its certificate
-      chains to in <code>SANDBOX_OPENSHELL_CA_FILE</code>, and a client identity the gateway
+      <dd>A gateway of <dfn>OpenShell</dfn>, NVIDIA's agent sandbox runtime; the gateway
+      is its server that creates and deletes sandboxes on request. It must run the docker
+      compute driver, the part that turns each sandbox into a docker container, and be
+      reachable at <code>SANDBOX_OPENSHELL_GATEWAY_URL</code> over mutual TLS, in which
+      both sides present a certificate: the certificate authority its certificate chains
+      to in <code>SANDBOX_OPENSHELL_CA_FILE</code>, and a client identity the gateway
       accepts in <code>SANDBOX_OPENSHELL_CERT_FILE</code> and
       <code>SANDBOX_OPENSHELL_KEY_FILE</code>. The image each sandbox boots,
       <code>SANDBOX_OPENSHELL_IMAGE</code>, must carry <code>node</code>, <code>sh</code>
@@ -234,10 +263,12 @@
       factory, because its generated protocol code registers the same names as OpenShell's
       own Go SDK, and a Go program that registers a name twice refuses to start. OpenShell's
       own default is no memory or CPU limit, so plimsoll always requests both
-      (<code>SANDBOX_MEMORY_MB</code>, <code>SANDBOX_CPUS</code>). A process or disk limit
-      fails startup instead: the gateway sets the first for all of its sandboxes, and
-      OpenShell has no control for the second. Each run gets a fresh sandbox, deleted when the
-      run ends; there are no grants or module runs yet. The gateway is free, so its live suite
+      (<code>SANDBOX_MEMORY_MB</code>, <code>SANDBOX_CPUS</code>). A process limit fails
+      startup instead, because the gateway sets one for all of its sandboxes. A disk limit
+      (<code>SANDBOX_DISK_MB</code>) makes <code>/tmp</code>, the only writable directory, a
+      fixed-size filesystem held in memory, which the gateway allows only when its operator
+      sets <code>allow_driver_config</code>. Each run gets a fresh sandbox, deleted when the
+      run ends; module runs are not supported. The gateway is free, so its live suite
       costs nothing, but no automated run has a gateway to drive.</dd>
     </dl>
   </div>
@@ -247,8 +278,8 @@
   because the tools are already in the image: the project image carries Node and the
   TypeScript toolchain, a derived image carries Python with NumPy and SciPy, and a third
   carries the simulation worker with its compiled simulators. Third-party packages for
-  projects are baked into a derived image at build time, where Node's own lookup finds
-  them.</p>
+  projects are built into an image derived from plimsoll's, at build time, where Node's
+  own lookup finds them.</p>
   <p>The point is not convenience. A live install inside a run would mean fetching code
   you have not reviewed, at the moment you are least able to review it, into the process
   you trust least. Baking turns that into a reviewed ingredient of an image you built.</p>
@@ -258,13 +289,14 @@
   a file that holds it.</p>
   <dl>
     <dt>The embedded JavaScript engine</dt>
-    <dd>A QuickJS-ng build, pinned by SHA-256, with a test that fails if the embedded
-    artifact stops matching. Recorded in <code>sandbox/wasm/README.md</code>.</dd>
+    <dd>A <dfn>QuickJS-ng</dfn> build (QuickJS is a small JavaScript engine, and
+    QuickJS-ng its maintained fork), pinned by SHA-256, with a test that fails if the
+    embedded file stops matching. Recorded in <code>sandbox/wasm/README.md</code>.</dd>
     <dt>The gVisor release</dt>
     <dd>Installed by a script that pins a specific release and its checksum rather than
     tracking the latest one.</dd>
     <dt>The three gate tools</dt>
-    <dd>The gate shells out to tools that are not Go dependencies, so nothing in
+    <dd>The test gate runs tools that are not Go dependencies, so nothing in
     <code>go.mod</code> can pin them. <code>gate-tools.versions</code> does, and the
     gate's first step refuses to run against any other version. Otherwise a passing gate
     would only mean it passed against whatever happened to be installed.</dd>
@@ -277,16 +309,17 @@
     client is generated from them, so moving to a newer OpenShell is a deliberate copy, not
     a drift.</dd>
     <dt>Third-party CI actions</dt>
-    <dd>Pinned by commit, not by tag, for exactly the same reason as everything above.</dd>
+    <dd>The reusable steps the GitHub workflows call. Pinned by commit, not by tag, for
+    exactly the same reason as everything above.</dd>
   </dl>
 
   <h2>The toolchain is two numbers on purpose</h2>
-  <p><code>go.mod</code> carries a language floor and a pinned toolchain, and they are
-  deliberately different. The floor is the oldest version that can build this module, kept
-  low so a project that depends on plimsoll is not forced to upgrade. The pinned toolchain
-  is the one the canonical build uses, kept current because the standard library it ships
-  had advisories in the HTTP/2 and reverse-proxy paths this code actually calls. Build the
-  daemon with the pinned one or newer.</p>
+  <p><code>go.mod</code> carries a minimum Go version and a pinned toolchain, and they are
+  deliberately different. The minimum is the oldest version that can build this module,
+  kept low so a project that depends on plimsoll is not forced to upgrade. The pinned
+  toolchain is the one the official build uses, kept current because the standard library
+  of earlier versions had security advisories in the HTTP/2 and reverse-proxy paths this
+  code actually calls. Build the daemon with the pinned one or newer.</p>
 
   <h2>Bumping any of it</h2>
   <p>An upgrade is not finished when the number changes. It is finished when the same
@@ -297,8 +330,9 @@
     <pre><code>make audit</code></pre></li>
     <li><strong>The container suite.</strong> Adds the real isolation tests: a container
     comes up read-only, every writable mount is a sized no-execute temporary filesystem,
-    the syscall profile loads, and the broker refuses what it should. Under this flag a
-    missing daemon fails instead of skipping.
+    the profile of allowed <dfn>system calls</dfn> (the requests a program makes to the
+    kernel) loads, and the broker refuses what it should. Under this flag a missing daemon
+    fails instead of skipping.
     <pre><code>make audit DOCKER=1</code></pre></li>
     <li><strong>The kernel-tier run.</strong> The same suite again under
     <code>runsc</code>, as its own run so a gVisor failure is attributable on its own.</li>

@@ -1,5 +1,5 @@
 // A cart-pole swing-up controller in C, compiled to WebAssembly inside the sandbox
-// and judged against the plant /models/cartpole.wasm.
+// and run against the plant /models/cartpole.wasm.
 //
 // The law: while the pole is down, drive the cart so the pole's mechanical energy
 // climbs toward its upright value (push in the direction that adds energy, with a
@@ -8,7 +8,7 @@
 // into [-pi, pi]. Pole mass 0.1 kg and half-length 0.5 m are the plant's defaults;
 // the cart mass is not known and the law does not need it.
 //
-// The contract with controller.js, the Node shim the judge runs: the module exports
+// The contract with controller.js, the Node shim the runner spawns: the module exports
 // one function, control, called once per tick with the state and the tick index,
 // returning the force in newtons. State between ticks lives in globals, because a
 // module instance lives for the whole episode. The module must import nothing: the

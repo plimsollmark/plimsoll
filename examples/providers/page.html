@@ -62,7 +62,7 @@
 <main>
 <nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>Same run, different sandboxes: one fingerprint on every provider</h1>
-<p class="sub">The results on this page were measured in real runs on {{.Date}}; the inputs the runs were given are named as inputs where they appear. The run is the one the <a href="https://plimsollmark.github.io/plimsoll/examples/oracle/index.html">physics oracle page</a> publishes: the same accepted controller, the same judge, the same cart-pole plant, started 0.2 rad from upright for 20 seconds. Here it was sent to each plimsoll provider in turn, with nothing changed but the provider. Switching is one setting, <code>SANDBOX_PROVIDER</code>, and the code that calls plimsoll does not change.</p>
+<p class="sub">The results on this page were measured in real runs on {{.Date}}; the inputs the runs were given are named as inputs where they appear. The run is the one the <a href="https://plimsollmark.github.io/plimsoll/examples/oracle/index.html">physics oracle page</a> publishes: the same accepted controller, the same runner, the same cart-pole plant, started 0.2 rad from upright for 20 seconds. Here it was sent to each plimsoll provider in turn, with nothing changed but the provider. Switching is one setting, <code>SANDBOX_PROVIDER</code>, and the code that calls plimsoll does not change.</p>
 
 <section class="panel wide">
 <h3>The verdict, provider by provider</h3>
@@ -95,9 +95,9 @@
 
 <h2>How it works</h2>
 <ol>
-<li><b>The same files everywhere.</b> The controller, the judge (<code>run.mjs</code>) and the plant (<code>cartpole.wasm</code>, sent base64 encoded and decoded by the first step) are ordinary project files, so no provider needs a special image. Any image with Node 20 or later can judge the run. One more file, a one-line <code>package.json</code> declaring ES modules, is what made that true: Node 22 recognizes the controller's <code>import</code> syntax on its own, Node 20 does not, and the first E2B attempt failed on exactly that.</li>
-<li><b>Built the way the daemon builds them.</b> Each provider is built from its own settings by the constructor plimsolld uses (plimsoll's provider factory, or the OpenShell provider's own, since the daemon builds that one itself), must pass its readiness checks and startup smoke test before its run counts, and then runs three steps: print the Node version, decode the plant, run the judge.</li>
-<li><b>The same check.</b> The judge prints the SHA-256 of the record it wrote; the program hashes the returned artifact itself, refuses a mismatch, and compares the result with the fingerprint the oracle page published.</li>
+<li><b>The same files everywhere.</b> The controller, the runner (<code>run.mjs</code>) and the plant (<code>cartpole.wasm</code>, sent base64 encoded and decoded by the first step) are ordinary project files, so no provider needs a special image. Any image with Node 20 or later can host the run. One more file, a one-line <code>package.json</code> declaring ES modules, is what made that true: Node 22 recognizes the controller's <code>import</code> syntax on its own, Node 20 does not, and the first E2B attempt failed on exactly that.</li>
+<li><b>Built the way the daemon builds them.</b> Each provider is built from its own settings by the constructor plimsolld uses (plimsoll's provider factory, or the OpenShell provider's own, since the daemon builds that one itself), must pass its readiness checks and startup smoke test before its run counts, and then runs three steps: print the Node version, decode the plant, start the runner.</li>
+<li><b>The same check.</b> The runner prints the SHA-256 of the record it wrote; the program hashes the returned artifact itself, refuses a mismatch, and compares the result with the fingerprint the oracle page published.</li>
 </ol>
 
 <h2>What this does not show</h2>

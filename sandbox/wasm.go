@@ -151,6 +151,9 @@ func (w *WasmSandbox) RunJavaScript(ctx context.Context, req Request) (Result, e
 	if err := CheckMinimumIsolation(w.IsolationClass(), req.MinimumIsolation); err != nil {
 		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass()}, err
 	}
+	if err := req.Software.Check(""); err != nil {
+		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass()}, err
+	}
 	if w.configErr != nil {
 		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass()}, w.configErr
 	}

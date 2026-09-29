@@ -4,45 +4,54 @@ Stated here so you do not have to discover it in review.
 
 Part of the [plimsoll README](../README.md).
 
-Stated so you do not have to discover it in review:
-
-- It does not implement an isolation boundary. gVisor and Firecracker do that.
-- WASM supports snippets only, not multi-file projects, and WASM project grants are
-  rejected outright.
+- **It does not build the walls itself.** <dfn>*gVisor*</dfn> (a layer that answers a
+  container's requests to the kernel itself) and <dfn>*Firecracker*</dfn> (AWS's
+  open-source virtual machine monitor) do that.
+- **`wasm` runs snippets only.** That <dfn>*provider*</dfn> (a provider is the backend
+  that runs the code) runs JavaScript on <dfn>*QuickJS*</dfn>, a small engine compiled to
+  <dfn>*WebAssembly*</dfn> (a portable bytecode), inside the daemon. It has no multi-file
+  projects, so a project <dfn>*grant*</dfn>, permission for a run's code to call listed
+  routes of your API, is rejected on it outright.
 - **No package installation during a run.** A run has no network, so `npm install`
   cannot happen inside it, from a public registry or a private one. Dependencies are
-  baked into the project image at build time, which is also where the registry
+  built into the project image ahead of time, which is also where the registry
   credential lives and the only place it ever exists;
-  [docs/guest-dependencies.md](guest-dependencies.md) is the recipe. An agent
-  that must install arbitrary packages mid-run is the case the general-purpose
-  sandbox VMs cover and this component does not.
-- E2B grants require `E2B_GUARD_URL`; the forced, authenticated guard keeps
-  credentials and route enforcement outside the hostile VM. Without a grant,
-  E2B runs deny egress.
-- **The E2B guard is process-local, so it does not sit behind an ordinary load
-  balancer.** A run's guard credential lives in the memory of the process that
-  created that run, so a guard request routed to a second replica is rejected as an
-  unknown credential even though it is valid. Whatever serves the public guard URL
-  must be the same process that launches the runs. Running more than one replica
-  needs the guard path pinned per instance (a distinct hostname or path per daemon),
-  not round-robin.
-- **`/readyz` reports configuration and reachable dependencies, not a working run.**
-  For `docker` it probes the pinned daemon and runtime; for `e2b` it validates
-  configuration and does not prove the API is reachable, the key is valid, or the
-  guard is routable. The behavioural proof is the startup `SmokeTest`, which runs
-  once and creates a real (billable) microVM — deliberately not on an unauthenticated
-  poll path. A green `/readyz` on `e2b` means "configured", not "working".
-- **The isolation tiers are evidence, not attestation.** `kernel` and `vm` rest on
-  provider identity and daemon/runtime configuration plus the behavioural smoke
-  tests, as spelled out above. Nothing here measures a hypervisor or verifies a
-  kernel boundary cryptographically. If your threat model needs attestation, no tier
-  in this component supplies it.
-- There is no fleet-level gateway across instances. The control surface is per
-  instance.
-- There is no auto-patching supply chain. Images, the QuickJS artifact, gVisor, the
-  codegen plugins, and the three tools the gate shells out to are pinned instead,
-  which buys determinism and gives up automatic updates. One qualification, because
-  "verified by digest" is not uniformly true: the gVisor installer pins the release
-  on every architecture, but the checksum it compares against is recorded in this
-  repository only for x86_64. Elsewhere it verifies the release bucket's own
-  `.sha512`, which catches a corrupted transfer, not a compromised bucket.
+  [docs/guest-dependencies.md](guest-dependencies.md) is the recipe. An agent that must
+  install arbitrary packages mid-run is the case general-purpose sandbox virtual machines
+  cover and plimsoll does not.
+- **<dfn>*E2B*</dfn> grants need `E2B_GUARD_URL`.** E2B is a hosted service that runs each
+  request in a <dfn>*microVM*</dfn>, a small virtual machine made for one run. With a
+  grant, the VM's one permitted connection goes to the <dfn>*guard*</dfn>, an address on
+  the plimsoll server that checks each call, so the credential and the route checks stay
+  outside the hostile VM. Without a grant, an E2B run has no <dfn>*egress*</dfn>: nothing
+  leaves the VM.
+- **The E2B guard only works in the daemon process that started the run, so it cannot sit
+  behind an ordinary load balancer.** A run's guard credential lives in the memory of the
+  process that created the run, so a guard request sent to a second copy of the daemon is
+  rejected as an unknown credential, even though it is valid. Whatever serves the public
+  guard URL must be the same process that launches the runs. Running more than one copy
+  needs a separate guard address for each daemon (a distinct hostname or path), not
+  requests spread across the copies in turn.
+- **`/readyz` reports configuration and reachable dependencies, not a working run.** For
+  `docker` it checks the docker daemon and runtime it is configured to use. For `e2b` it
+  checks settings only, and does not prove the API is reachable, the key is valid, or the
+  guard can be reached. The proof of behaviour is the startup `SmokeTest`, which runs once
+  and creates a real microVM that costs money, so it deliberately does not run on
+  `/readyz`, which anyone can poll without logging in. A green `/readyz` on `e2b` means
+  "configured", not "working".
+- **The <dfn>*isolation tiers*</dfn> are evidence, not <dfn>*attestation*</dfn>.** A tier
+  is how strong the wall around a run is; attestation is cryptographic proof from the
+  hardware of what software is running. `kernel` and `vm` rest on which provider it is,
+  the daemon's and the runtime's configuration, and the startup tests, as
+  [isolation-tiers.md](isolation-tiers.md) spells out. Nothing here measures a
+  <dfn>*hypervisor*</dfn> (the program that runs virtual machines) or checks a kernel wall
+  cryptographically. If your <dfn>*threat model*</dfn> (the attacks
+  you must hold out against) needs attestation, no tier here supplies it.
+- **There is no single control point across several daemons.** Each daemon is configured
+  and controlled on its own.
+- **Nothing updates itself.** The images, the QuickJS build, gVisor, the code generators,
+  and the three tools the test gate runs are <dfn>*pinned*</dfn> instead: each is fixed to
+  one exact version, usually by its <dfn>*digest*</dfn> (a SHA-256 hash of its content), so
+  builds are repeatable but updates are manual. gVisor is checked the same way, by a
+  SHA-512 of its release recorded in this repository for each architecture the installer
+  supports (x86_64 and aarch64); it refuses any other architecture.

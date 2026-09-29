@@ -2,7 +2,7 @@ import {nodes, providers, categories, paths, pathSteps, connections} from './arc
 
 const $ = id => document.getElementById(id);
 const svgNS = 'http://www.w3.org/2000/svg';
-const types = {request:'Request / control', authority:'Authority / setup', api:'API call', response:'Response', deny:'Failure / refusal', observe:'Observation'};
+const types = {request:'Request / control', authority:'Permission / setup', api:'API call', response:'Response', deny:'Failure / refusal', observe:'Observation'};
 const state = {path:paths[0], provider:'runsc', index:0, node:null, filter:'all', playing:false};
 let timer;
 let animation;
@@ -195,7 +195,7 @@ function renderStep() {
     <h2>${html(step.title)}</h2>
     <div class="from-to"><button type="button" data-inspect="${step.from}">${html(nodes[step.from].name)}</button><span aria-label="to">→</span><button type="button" data-inspect="${step.to}">${html(nodes[step.to].name)}</button></div>
     <section><h3>What crosses this connection</h3><p>${html(step.moves)}</p></section>
-    <section><div class="payload-label"><h3>Inside the envelope</h3><span>ILLUSTRATIVE, ABBREVIATED</span></div><pre class="payload">${html(step.payload)}</pre></section>
+    <section><div class="payload-label"><h3>What the message carries</h3><span>ILLUSTRATIVE, ABBREVIATED</span></div><pre class="payload">${html(step.payload)}</pre></section>
     <section><h3>What happens here, and why</h3><p class="step-why">${html(step.why)}</p></section>
     <p class="inspect-tip">Click either component name above to explore its other connections.</p>
   </div>`;

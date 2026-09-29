@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -46,6 +47,8 @@ type smokeEvidence struct {
 	// The sandbox's own cgroup limits, read inside it. pids.max is the gateway-wide
 	// process limit.
 	MemoryMax, CPUMax, PidsMax string
+	// TmpMount is /tmp's line in /proc/mounts (the last, if it is mounted over).
+	TmpMount string
 	// The runner round trip with a project at the size ceiling.
 	PlanBytes int
 	RoundTrip time.Duration
@@ -111,7 +114,7 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	slog.Info("openshell smoke passed",
 		"gateway_version", ev.GatewayVersion, "tier", tier.String(), "policy_hash", ev.PolicyHash,
 		"swept", ev.Swept, "writable", ev.Writable, "egress", ev.Egress, "dns", ev.DNS, "interfaces", ev.Interfaces,
-		"memory_max", ev.MemoryMax, "cpu_max", ev.CPUMax, "pids_max", ev.PidsMax,
+		"memory_max", ev.MemoryMax, "cpu_max", ev.CPUMax, "pids_max", ev.PidsMax, "tmp_mount", ev.TmpMount,
 		"plan_bytes", ev.PlanBytes, "round_trip", ev.RoundTrip,
 		"hung_processes", ev.HungProcesses, "kill_confirmed_after", ev.KillConfirmed)
 	return nil
@@ -173,6 +176,7 @@ const read = f => { try { return fs.readFileSync(f, "utf8").trim(); } catch (e) 
   report.memoryMax = read("/sys/fs/cgroup/memory.max");
   report.cpuMax = read("/sys/fs/cgroup/cpu.max");
   report.pidsMax = read("/sys/fs/cgroup/pids.max");
+  report.tmpMount = read("/proc/mounts").split("\n").filter(l => l.split(" ")[1] === "/tmp").pop() || "";
   report.interfaces = read("/proc/net/dev").split("\n").slice(2).map(l => l.split(":")[0].trim()).filter(Boolean);
   process.stdout.write(JSON.stringify(report));
 })();
@@ -198,6 +202,7 @@ func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) err
 		DNS           string            `json:"dns"`
 		MemoryMax     string            `json:"memoryMax"`
 		CPUMax        string            `json:"cpuMax"`
+		TmpMount      string            `json:"tmpMount"`
 		PidsMax       string            `json:"pidsMax"`
 		Interfaces    []string          `json:"interfaces"`
 	}
@@ -206,14 +211,38 @@ func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) err
 	}
 	ev.Node, ev.Swept, ev.Writable, ev.WritableFiles = report.Node, report.Swept, report.Writable, report.WritableFiles
 	ev.Egress, ev.DNS, ev.Interfaces = report.Egress, report.DNS, report.Interfaces
-	ev.MemoryMax, ev.CPUMax, ev.PidsMax = report.MemoryMax, report.CPUMax, report.PidsMax
+	ev.MemoryMax, ev.CPUMax, ev.PidsMax, ev.TmpMount = report.MemoryMax, report.CPUMax, report.PidsMax, report.TmpMount
 	if err := checkWritable(report.Swept, report.Writable, report.WritableFiles); err != nil {
 		return err
 	}
 	if err := checkEgress(report.Egress); err != nil {
 		return err
 	}
+	if err := checkTmpMount(report.TmpMount, p.cfg.DiskMB); err != nil {
+		return err
+	}
 	return checkLimits(report.MemoryMax, report.CPUMax, p.cfg.memoryMB(), p.cfg.cpus())
+}
+
+// checkTmpMount proves the disk cap from inside the sandbox: with DiskMB set, /tmp
+// must be a tmpfs of exactly that size (the kernel prints it in KiB) mounted noexec,
+// nosuid and nodev. The per-run read-back only proves the gateway kept the driver
+// config; this proves the driver turned it into the mount.
+func checkTmpMount(line string, diskMB int) error {
+	if diskMB <= 0 {
+		return nil
+	}
+	f := strings.Fields(line)
+	if len(f) < 4 || f[1] != "/tmp" || f[2] != "tmpfs" {
+		return fmt.Errorf("SANDBOX_DISK_MB is set but /tmp is not a tmpfs inside the sandbox (mount line %q); the disk cap is not in force", truncate([]byte(line), 200))
+	}
+	opts := strings.Split(f[3], ",")
+	for _, want := range []string{"noexec", "nosuid", "nodev", "size=" + strconv.Itoa(diskMB*1024) + "k"} {
+		if !slices.Contains(opts, want) {
+			return fmt.Errorf("/tmp is mounted %q, without %s; the disk cap is not in force as configured", f[3], want)
+		}
+	}
+	return nil
 }
 
 // underTmp reports whether path is /tmp or beneath it: the only writable directory

@@ -70,27 +70,36 @@
 
   <nav class="top"><a href="index.html">← All trainers</a></nav>
 
-  <p class="eyebrow">plimsoll trainer · 11 / backpressure</p>
+  <p class="eyebrow">plimsoll trainer · 11 / when your API is overloaded</p>
   <h1>The capacity endpoint</h1>
-  <p class="promise">When a customer's API starts returning 503 under load, the code in the
-  sandbox keeps calling it, because it is untrusted code and cannot be relied on to back
-  off. <b>The broker is the one thing on the wire that both sees the distress signal and
-  controls the next call</b>, so it sheds. What it cannot know on its own is when to stop
-  shedding. That is what a cheap, honest health route is for.</p>
+  <p class="promise">When a customer's API starts returning 503 (service unavailable)
+  under load, the code in the sandbox keeps calling it: it is untrusted code, and cannot
+  be relied on to back off. <b>The <dfn>broker</dfn>, the part of plimsoll that makes each
+  API call for the sandboxed code, is the one thing in between that both sees the 503 and
+  controls the next call</b>, so it <dfn>sheds</dfn> calls: it refuses them itself, at
+  once, instead of forwarding them. What it cannot know on its own is when to stop. That
+  is what a cheap, honest health route on your API is for: a route whose success means
+  the API can take traffic again.</p>
 
   <!-- 01 ─────────────────────────────────────────────────────────────────── -->
   <section id="strip" aria-labelledby="h-strip">
     <p class="draft" aria-hidden="true">01</p>
     <h2 id="h-strip">Eighty calls into a two-second outage</h2>
-    <p>One brokered call every 100 ms for eight seconds. The upstream is overloaded from
-    0.5 s to 2.5 s and answers every forwarded call in that window with the status you
-    choose. The breaker's rules below are the daemon's own constants: a 1 s cooldown when
-    the upstream gives no <code>Retry-After</code>, any <code>Retry-After</code> honoured
-    up to 30 s, one health probe per second while shedding, and none after a 429.</p>
+    <p>In the chart, the sandboxed code makes one call through the broker every 100 ms
+    for eight seconds. Your API is overloaded from 0.5 s to 2.5 s, and answers every call
+    forwarded in that window with the status you choose. An overloaded answer opens the
+    broker's <dfn>circuit breaker</dfn>: for a cooldown, the broker stops forwarding calls
+    so the API can recover. Its rules are the daemon's own constants: a 1 s cooldown when
+    the API sends no <code>Retry-After</code> header, any <code>Retry-After</code> honoured
+    up to 30 s, one health probe (a request to the health route) per second while
+    shedding, and no probes at all after a 429.</p>
+    <p>The health route is named in the run's <dfn>grant</dfn>, its permission to call
+    listed routes of your API, which comes from a <dfn>grant profile</dfn>, a named grant
+    stored on the server.</p>
 
     <div class="controls-3">
       <div class="control">
-        <p class="control-label">The upstream answers</p>
+        <p class="control-label">Your API answers</p>
         <div class="seg" role="group" aria-label="Status" data-key="status">
           <button type="button" data-value="503">503<small>the service is degraded</small></button>
           <button type="button" data-value="429">429<small>this caller is over its allowance</small></button>
@@ -101,11 +110,11 @@
         <div class="seg" role="group" aria-label="Retry-After" data-key="retry">
           <button type="button" data-value="0">none<small>1 s default cooldown</small></button>
           <button type="button" data-value="5">5 s</button>
-          <button type="button" data-value="90">90 s<small>clamped to 30 s</small></button>
+          <button type="button" data-value="90">90 s<small>cut to 30 s</small></button>
         </div>
       </div>
       <div class="control">
-        <p class="control-label">The profile declares <code>health_check</code></p>
+        <p class="control-label">The grant profile declares <code>health_check</code></p>
         <div class="seg" role="group" aria-label="Health route" data-key="health">
           <button type="button" data-value="yes">yes<small>GET /status</small></button>
           <button type="button" data-value="no">no</button>
@@ -114,11 +123,11 @@
     </div>
 
     <div class="strip">
-      <svg id="stripSvg" viewBox="0 0 820 150" role="img" aria-label="Strip chart of eighty brokered calls across eight seconds, showing which were forwarded, which met an overloaded upstream, which were shed, and when health probes ran." style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"></svg>
+      <svg id="stripSvg" viewBox="0 0 820 150" role="img" aria-label="Strip chart of eighty calls through the broker across eight seconds, showing which were forwarded, which met an overloaded API, which were shed, and when health probes ran." style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"></svg>
       <p class="legend">
         <span><i style="background:#0b2a3a"></i>forwarded, 2xx</span>
         <span><i style="background:#b83f43"></i>forwarded, overloaded reply</span>
-        <span><i style="background:#fbe6e7;border:1px dashed #b83f43"></i>shed: fast local 503, never forwarded</span>
+        <span><i style="background:#fbe6e7;border:1px dashed #b83f43"></i>shed: the broker answers 503 itself, never forwarded</span>
         <span><i style="background:#fff;border:2px solid #177f99;border-radius:50%"></i>probe, not ready</span>
         <span><i style="background:#177f99;border-radius:50%"></i>probe, 2xx: breaker closes</span>
       </p>
@@ -137,26 +146,29 @@
       <div class="card good">
         <h3>503: the service is degraded</h3>
         <p>The question is "can the service take traffic again?", which is exactly what a
-        readiness route reports. So while shedding, one elected caller per second sends a
-        GET to the declared route, host-side, with the run's own credential. The probe is
-        not traced and not charged to the run's call budget, and a hung route is abandoned
-        after 2 s. The first 2xx closes the breaker on the spot.</p>
+        readiness route (one that answers 2xx only when the service can serve) reports. So
+        while shedding, one call per second is picked to probe: the broker, outside the
+        sandbox, sends a GET to the declared route with the run's own credential. The probe
+        is not recorded in the call trace and does not count against the run's call budget,
+        and a route that does not answer is given up on after 2 s. The first 2xx closes the
+        breaker on the spot.</p>
       </div>
       <div class="card warn">
         <h3>429: this caller spent its allowance</h3>
         <p>The question is "has my quota reset?", and a healthy service says nothing about
         that. A 2xx from the health route would reopen the gate and push the run's traffic
-        straight back into the limiter that asked it to wait. So a 429 window is never
-        probed: it is waited out, for the <code>Retry-After</code> the upstream gave or the
+        straight back into the rate limiter that asked it to wait. So a 429 window is never
+        probed: it is waited out, for the <code>Retry-After</code> the API gave or the
         default. A window opened by a 429 keeps that property even if a 503 extends it.</p>
       </div>
     </div>
     <div class="card">
-      <p>Everything here is scoped to one run. One run's breaker never sheds another run's
-      calls, and a shed is recorded as <code>Shed</code> in the run's call trace, distinct
-      from a policy <code>Denied</code>, and surfaced as <code>host_calls_shed</code> on the
-      audit line. The guest sees a 503 either way; the difference is that a shed one cost
-      the upstream nothing.</p>
+      <p>Everything here applies to one run. One run's breaker never sheds another run's
+      calls. A shed call is counted as <code>Shed</code> in the run's call trace (the
+      broker's log of the run's calls), separately from <code>Denied</code>, a call the
+      grant's rules refused, and appears as <code>host_calls_shed</code> on the run's audit
+      line. The <dfn>guest</dfn>, the code in the sandbox, sees a 503 either way; the
+      difference is that a shed call cost your API nothing.</p>
     </div>
   </section>
 
@@ -167,10 +179,10 @@
     <p>A 2xx has to mean "ready for traffic", and nothing else. Four routes an API might
     already have, and what each one's 2xx actually promises.</p>
     <div class="routes">
-      <div class="card warn"><p><code class="path">GET /livez</code>, <code class="path">/ping</code> <span class="tone warn">weak</span></p><p>Promises the process is running. A live process can be shedding load; this route stays 2xx all through an overload, so the breaker would close into the fire.</p></div>
+      <div class="card warn"><p><code class="path">GET /livez</code>, <code class="path">/ping</code> <span class="tone warn">weak</span></p><p>Promises the process is running. A live process can be shedding load; this route stays 2xx all through an overload, so the breaker would close while the API is still overloaded.</p></div>
       <div class="card good"><p><code class="path">GET /readyz</code>, <code class="path">/health</code> <span class="tone good">good</span></p><p>Promises the service can serve. Flips to non-2xx under load and back on recovery, which is the whole signal.</p></div>
-      <div class="card good"><p><code class="path">GET /status</code>, <code class="path">/capacity</code> <span class="tone good">best</span></p><p>The same readiness answer plus headroom: queue depth, remaining rate budget. The breaker uses the status line; your own dashboards can use the body.</p></div>
-      <div class="card bad"><p><code class="path">GET /items</code>, a real query <span class="tone bad">avoid</span></p><p>One expensive request succeeded. Polling it once a second is a second thing to overload, and it can pass while the API is still fragile.</p></div>
+      <div class="card good"><p><code class="path">GET /status</code>, <code class="path">/capacity</code> <span class="tone good">best</span></p><p>The same readiness answer plus the spare capacity left (headroom): queue depth, remaining rate budget. The breaker uses only the status code; your own dashboards can use the body.</p></div>
+      <div class="card bad"><p><code class="path">GET /items</code>, a real query <span class="tone bad">avoid</span></p><p>Its 2xx says only that one expensive request succeeded. Polling it once a second adds load to an API that is already overloaded, and it can succeed while the API is still fragile.</p></div>
     </div>
   </section>
 
@@ -179,15 +191,16 @@
     <p class="draft" aria-hidden="true">04</p>
     <h2 id="h-design">Designing the route the broker will trust</h2>
     <p>These are the properties that make a route's 2xx mean "ready". Untick the fourth
-    and trace it: the first probe answers 2xx, the breaker closes, the run resumes into
-    the still-struggling API, and the next call trips it again.</p>
+    and follow what happens: the first probe answers 2xx, the breaker closes, the run
+    resumes calling the still-struggling API, and the next call opens the breaker
+    again.</p>
     <ul class="gate" id="gateList">
-      <li><label><input type="checkbox" data-required="1"><span><b>A concrete GET with no path parameters.</b><small>The broker polls one literal path. A grant validates <code>health_check</code> as a concrete GET and refuses anything else at load.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Cheap: no heavy query, no fan-out.</b><small>It is asked up to once a second while the run sheds.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Reports readiness, not liveness.</b><small>2xx only when the service can genuinely take traffic again.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>A concrete GET with no path parameters.</b><small>The broker polls one fixed path, with no <code>*</code> in it. When the grant profile is loaded, <code>health_check</code> must be such a GET, and anything else is refused.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Cheap: no heavy query, no calls out to many other services.</b><small>It is asked up to once a second while the run sheds.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Reports readiness, not liveness.</b><small>Whether the service can serve, not merely whether its process is up: 2xx only when it can genuinely take traffic again.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>Can return non-2xx while overloaded.</b><small>The breaker closes on the first 2xx. A route that cannot fail cannot say "not yet".</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Side-effect free, fast to authorise.</b><small>It runs with the run's credential and is abandoned after 2 s. A pure read.</small></span></label></li>
-      <li><label><input type="checkbox"><span><b>Reports real headroom.</b> <span class="opt">recommended</span><small>In-flight count and remaining rate budget in the body, so the same route drives your capacity dashboards.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Changes nothing, fast to authorise.</b><small>It runs with the run's credential and is given up on after 2 s. A pure read.</small></span></label></li>
+      <li><label><input type="checkbox"><span><b>Reports real headroom.</b> <span class="opt">recommended</span><small>Requests in progress and remaining rate budget in the body, so the same route drives your capacity dashboards.</small></span></label></li>
     </ul>
     <div class="card" id="gateReadout"></div>
   </section>
@@ -196,22 +209,23 @@
   <section id="wiring" aria-labelledby="h-wiring">
     <p class="draft" aria-hidden="true">05</p>
     <h2 id="h-wiring">Wired from the OpenAPI document, not by hand</h2>
-    <p><code>plimsoll-specgen</code> derives the profile's route list and the guest SDK
-    from one OpenAPI document. The health route comes from the same document, so adopting
-    backpressure is one tag and one field.</p>
+    <p><code>plimsoll-specgen</code> reads one OpenAPI document (the machine-readable
+    description of your API) and writes the profile's route list and the client library the
+    guest calls. The health route comes from the same document, so turning on the recovery
+    probe takes one tag and one field.</p>
     <ol class="wire">
-      <li><b>Tag the operation.</b><small>Only the extension designates a probe. A path called <code>/status</code> or <code>/healthz</code> is not evidence of what it measures, and a probe that answers 200 for the wrong reason reopens the gate onto a struggling API.</small><pre><code>get:
+      <li><b>Tag the operation.</b><small>Only the <code>x-plimsoll-health-check</code> extension, a custom field in the document, marks a probe. A path called <code>/status</code> or <code>/healthz</code> is not evidence of what it measures, and a probe that answers 200 for the wrong reason reopens the gate onto a struggling API.</small><pre><code>get:
   summary: Readiness and headroom
   x-plimsoll-health-check: true</code></pre></li>
-      <li><b>specgen refuses the wrong shape.</b><small>A tag on a non-GET or on a path with a parameter fails generation closed, and two tagged routes are an error rather than a guess.</small></li>
-      <li><b>One line comes out.</b><small>Beside the route list, the preamble and the tool description, the generator writes a one-line health file, only when the document tags a route.</small><pre><code>plimsoll-specgen -emit health   # GET /status</code></pre></li>
-      <li><b>The profile gets the field.</b><small>Paste it as <code>health_check</code> in the grant profile. The routes and the SDK came from the same document, so nothing is mirrored by hand and nothing drifts.</small></li>
+      <li><b>specgen refuses the wrong shape.</b><small>A tag on an operation that is not a GET, or on a path with a parameter, makes generation fail, and two tagged routes are an error rather than a guess.</small></li>
+      <li><b>One line comes out.</b><small>Beside the route list, the preamble (the client library code placed before the guest's code) and the tool description (the text an agent's model reads about the tool), the generator writes a one-line health file, only when the document tags a route.</small><pre><code>plimsoll-specgen -emit health   # GET /status</code></pre></li>
+      <li><b>The profile gets the field.</b><small>Paste it as <code>health_check</code> in the grant profile. The routes and the client library came from the same document, so nothing is copied by hand and nothing drifts out of step.</small></li>
     </ol>
   </section>
 
   <h2 style="margin-top:44px">Keep reading</h2>
   <ul class="links">
-    <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>The choke point this page relies on: every brokered call, the route check, the key that never crosses.</small></a></li>
+    <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>The single checkpoint this page relies on: every call it makes, the route check, the key that never enters the sandbox.</small></a></li>
     <li><a href="advisor.html"><b>Internal · trainer site →</b><strong>Efficiency advisor</strong><small>The other thing the broker learns from the calls it forwards, after the run.</small></a></li>
     <li><a href="https://www.rfc-editor.org/rfc/rfc9110#field.retry-after" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>HTTP Retry-After</strong><small>The header the breaker honours, in the HTTP semantics specification.</small></a></li>
   </ul>
@@ -295,7 +309,7 @@
     // the outage band
     svg.appendChild(svgEl('rect', { x: x(DOWN_FROM), y: 22, width: x(DOWN_TO) - x(DOWN_FROM), height: 96, fill: '#fbe6e7', opacity: '0.7' }));
     var band = svgEl('text', { x: (x(DOWN_FROM) + x(DOWN_TO)) / 2, y: 16, 'text-anchor': 'middle', 'font-size': '10', fill: '#b83f43', 'font-weight': '700' });
-    band.textContent = 'upstream overloaded · answers ' + state.status;
+    band.textContent = 'your API overloaded · answers ' + state.status;
     svg.appendChild(band);
     // axis
     for (var s = 0; s <= 8; s++) {
@@ -344,11 +358,11 @@
     var note;
     var cd = (r.cooldown / 1000) + ' s';
     if (state.status === '429') {
-      note = '<p><b>A 429 is waited out.</b> The window is ' + cd + (state.retry === '90' ? ' (90 s clamped to the 30 s cap)' : '') + ', no probe is ever sent even though a health route ' + (state.health === 'yes' ? 'is declared' : 'is not declared') + ', and the run resumes only when the window lapses' + (lag === null ? ', which is after the end of this chart' : '') + '. Reopening on a healthy 2xx would push the traffic straight back into the limiter that asked it to stop.</p>';
+      note = '<p><b>A 429 is waited out.</b> The window is ' + cd + (state.retry === '90' ? ' (90 s cut to the 30 s cap)' : '') + ', no probe is ever sent even though a health route ' + (state.health === 'yes' ? 'is declared' : 'is not declared') + ', and the run resumes only when the window lapses' + (lag === null ? ', which is after the end of this chart' : '') + '. Reopening on a healthy 2xx would push the traffic straight back into the rate limiter that asked it to stop.</p>';
     } else if (state.health === 'no') {
-      note = '<p><b>Shedding, but blind.</b> With no health route the breaker waits out each ' + cd + ' window. ' + (r.cooldown <= DEFAULT_COOLDOWN ? 'A 1 s window lapses while the upstream is still down, so the next call is forwarded, meets a 503 and trips it again: forwarded overloaded replies pile up.' : 'The window outlasts the outage, so the run sits idle long after the API is fine.') + ' Correct, and expensive in one direction or the other.</p>';
+      note = '<p><b>Shedding, but blind.</b> With no health route the breaker waits out each ' + cd + ' window. ' + (r.cooldown <= DEFAULT_COOLDOWN ? 'A 1 s window lapses while the API is still down, so the next call is forwarded, meets a 503 and opens the breaker again: forwarded overloaded replies pile up.' : 'The window outlasts the outage, so the run sits idle long after the API is fine.') + ' Correct, and expensive in one direction or the other.</p>';
     } else {
-      note = '<p><b>Shed, then recover early.</b> One probe per second while shedding; the first 2xx closes the breaker' + (lag !== null && lag <= 0.2 ? ' and the run resumed within a call of the upstream recovering' : '') + '. ' + (r.cooldown <= DEFAULT_COOLDOWN ? 'The 1 s windows lapse before a probe can help, so the upstream still takes an overloaded call each second; a Retry-After makes the window long enough for the probe to matter.' : 'The ' + cd + ' window would have kept the run idle until well past recovery; the probe made that window irrelevant.') + '</p>';
+      note = '<p><b>Shed, then recover early.</b> One probe per second while shedding; the first 2xx closes the breaker' + (lag !== null && lag <= 0.2 ? ' and the run resumed within a call of the API recovering' : '') + '. ' + (r.cooldown <= DEFAULT_COOLDOWN ? 'The 1 s windows lapse before a probe can help, so the API still takes an overloaded call each second; a Retry-After makes the window long enough for the probe to matter.' : 'The ' + cd + ' window would have kept the run idle until well past recovery; the probe made that window irrelevant.') + '</p>';
     }
     el('stripNote').innerHTML = note;
   }
@@ -369,7 +383,7 @@
     out.classList.remove('good', 'warn');
     if (done === required) {
       out.classList.add('good');
-      out.innerHTML = '<p><b>A probe the broker can trust.</b> A cheap concrete GET whose 2xx means the upstream is genuinely ready, so shedding ends the moment pressure clears and not a moment before.</p>';
+      out.innerHTML = '<p><b>A probe the broker can trust.</b> A cheap GET on one fixed path whose 2xx means the API is genuinely ready, so shedding ends the moment pressure clears and not a moment before.</p>';
     } else {
       out.classList.add('warn');
       out.innerHTML = '<p><b>' + done + ' of ' + required + '.</b> Not a safe recovery probe yet. A route that is expensive, or that answers 2xx while the API is still struggling, either amplifies the overload or ends shedding too early.</p>';

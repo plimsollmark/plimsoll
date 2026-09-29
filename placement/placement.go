@@ -1,18 +1,19 @@
 // Package placement chooses which plimsoll daemon runs a request, and sends it
-// there. It is a library a caller links, not a service and not a change to the
-// daemon: each daemon still serves one provider with its own credentials in its
-// own process, which is the reason plimsoll has no multi-provider daemon
+// there. It is a library a caller links, not a service. The daemon checks the
+// selected software rule before dispatch; each daemon still serves one provider
+// with its own credentials in its own process, which is the reason plimsoll has no multi-provider daemon
 // (docs/seams.md).
 //
 // What it does, in order, for every request:
 //
-//   - Filter by what the daemons state: the payload kind, the isolation floor
-//     against current evidence, whether a grant profile can be used at all, and,
-//     when asked, that the environment is the one named.
+//   - Filter by what the daemons state: the payload kind, isolation floor,
+//     grant support and, when asked, the selected software identity. The
+//     request carries the software rule so the daemon checks it before dispatch.
 //   - Rank what is left by the caller's preference, which defaults to the order
 //     the daemons were given.
 //   - Send, and retry on another daemon only when the refusal proves nothing ran
-//     (the not-dispatched mark with reason unsupported, isolation or capacity). An
+//     (the not-dispatched mark with reason unsupported, isolation, environment or
+//     capacity). An
 //     error without that mark may have executed and is never re-sent.
 //
 // Each daemon keeps the caller's own credential: a Pool is built from clients the
@@ -115,10 +116,14 @@ type Requirement struct {
 	// stamps it onto the payload, so the daemon checks it again before dispatch and
 	// the client checks the returned evidence against it.
 	MinimumIsolation sandbox.IsolationClass
-	// Environment, when set, keeps only backends whose environment identity for the
-	// payload kind equals it. Equal identities mean the same software; an empty one
-	// claims nothing, so a backend that states none is never kept by this.
+	// Environment filters by the exact outer image or interpreter identity. Placement
+	// selects from Describe, then checks the returned record after dispatch; use Software
+	// when code must be refused before dispatch unless its selected image is approved.
 	Environment string
+	// Software selects the platform image by an exact identity or an approved
+	// set. The rule is also sent to the daemon for a pre-dispatch check and is
+	// bound to the signed run record. Empty means no software restriction.
+	Software sandbox.SoftwareRule
 	// GrantProfile says the request carries a grant, so a backend must support
 	// grants for the payload kind. The profile itself lives on each daemon, and the
 	// client was configured with its name; this is only the capability check.
@@ -282,6 +287,9 @@ func unfit(info client.Info, k kind, req Requirement) string {
 		}
 		return "environment is " + got + ", not " + req.Environment
 	}
+	if !req.Software.Allows(env.SoftwareIdentity) {
+		return "selected software is outside the approved rule"
+	}
 	return ""
 }
 
@@ -319,7 +327,7 @@ func retryable(err error) (sandbox.Refusal, bool) {
 		return reason, false
 	}
 	switch reason {
-	case sandbox.RefusalUnsupported, sandbox.RefusalIsolation, sandbox.RefusalCapacity:
+	case sandbox.RefusalUnsupported, sandbox.RefusalIsolation, sandbox.RefusalCapacity, sandbox.RefusalEnvironment:
 		return reason, true
 	default:
 		return reason, false
@@ -373,6 +381,12 @@ func (p *Pool) RunJavaScript(ctx context.Context, in sandbox.Request, req Requir
 	if err := floor(&req, &in.MinimumIsolation); err != nil {
 		return sandbox.Result{}, Choice{}, err
 	}
+	var err error
+	req.Software, err = sandbox.MergeSoftwareRules(in.Software, req.Software)
+	if err != nil {
+		return sandbox.Result{}, Choice{}, err
+	}
+	in.Software = req.Software
 	backends, err := p.candidates(ctx, kindJavaScript, req)
 	if err != nil {
 		return sandbox.Result{}, Choice{}, err
@@ -391,6 +405,12 @@ func (p *Pool) RunProject(ctx context.Context, in sandbox.ProjectRequest, req Re
 	if err := floor(&req, &in.MinimumIsolation); err != nil {
 		return sandbox.ProjectResult{}, Choice{}, err
 	}
+	var err error
+	req.Software, err = sandbox.MergeSoftwareRules(in.Software, req.Software)
+	if err != nil {
+		return sandbox.ProjectResult{}, Choice{}, err
+	}
+	in.Software = req.Software
 	backends, err := p.candidates(ctx, kindProject, req)
 	if err != nil {
 		return sandbox.ProjectResult{}, Choice{}, err
@@ -409,6 +429,12 @@ func (p *Pool) RunModule(ctx context.Context, in sandbox.ModuleRequest, req Requ
 	if err := floor(&req, &in.MinimumIsolation); err != nil {
 		return sandbox.ModuleResult{}, Choice{}, err
 	}
+	var err error
+	req.Software, err = sandbox.MergeSoftwareRules(in.Software, req.Software)
+	if err != nil {
+		return sandbox.ModuleResult{}, Choice{}, err
+	}
+	in.Software = req.Software
 	backends, err := p.candidates(ctx, kindModule, req)
 	if err != nil {
 		return sandbox.ModuleResult{}, Choice{}, err
@@ -428,6 +454,12 @@ func (p *Pool) OpenSession(ctx context.Context, opts client.SessionOptions, req 
 	if err := floor(&req, &opts.MinimumIsolation); err != nil {
 		return nil, Choice{}, err
 	}
+	var err error
+	req.Software, err = sandbox.MergeSoftwareRules(opts.Software, req.Software)
+	if err != nil {
+		return nil, Choice{}, err
+	}
+	opts.Software = req.Software
 	backends, err := p.candidates(ctx, kindJavaScript, req)
 	if err != nil {
 		return nil, Choice{}, err

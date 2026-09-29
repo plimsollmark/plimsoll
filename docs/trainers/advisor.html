@@ -83,22 +83,32 @@
 
   <nav class="top"><a href="index.html">← All trainers</a></nav>
 
-  <p class="eyebrow">plimsoll trainer · 10 / advisory evidence</p>
+  <p class="eyebrow">plimsoll trainer · 10 / advice from the call log</p>
   <h1>Efficiency advisor</h1>
   <p class="promise">An agent adds up a column by fetching 128 rows one at a time. The
-  agent cannot see that; it wrote a loop that works. The customer's API cannot see it; it
-  served 128 valid requests. <b>The broker in the middle saw all 128, with their route
-  template and timing</b>, because it was already checking each one. The advisor is that
-  view, read after the run, from metadata and nothing else.</p>
+  agent cannot see the waste; it wrote a loop that works. The customer's API cannot see
+  it; it served 128 valid requests. <b>The <dfn>broker</dfn> in the middle saw all
+  128</b>: it is the part of plimsoll that makes each API call for the sandboxed code,
+  after checking the call against the run's <dfn>grant</dfn>, its permission to call
+  listed routes of one API. Because it was already checking each call, it saw each one's
+  route template (the allowed route it matched, such as <code>GET /items/*</code>) and
+  timing. The advisor reads that record after the run, and uses metadata and nothing
+  else.</p>
 
   <!-- 01 ─────────────────────────────────────────────────────────────────── -->
   <section id="ledger" aria-labelledby="h-ledger">
     <p class="draft" aria-hidden="true">01</p>
-    <h2 id="h-ledger">The ledger, and what a detector makes of it</h2>
-    <p>The rows below are what a run's call trace holds. The finding is computed here, in
-    the page, by the same rules the detectors apply: only calls the broker delivered with a
-    2xx count, severity follows the count, and the cost compares the pattern with one
-    ideal call. Change the run and the profile.</p>
+    <h2 id="h-ledger">The call trace, and what a detector makes of it</h2>
+    <p>The rows below are what a run's call trace holds: the broker's log of the calls the
+    run made. A detector is a rule that looks for one wasteful pattern in those rows and
+    reports it as a finding. This page computes the finding itself, with the detectors'
+    rules: only calls the broker delivered with a 2xx status count, the severity rises
+    with the count, and the cost compares the pattern with one ideal call.</p>
+    <p>Pick a run, and pick what the run's <dfn>grant profile</dfn>, the named grant
+    stored on the server, knows about a collection route (a route such as
+    <code>GET /items</code> that returns every item in one call). A profile may also
+    declare a catalog: the API's full list of routes, including ones the grant leaves
+    out.</p>
 
     <div class="controls-2">
       <div class="control">
@@ -130,25 +140,26 @@
   <section id="row" aria-labelledby="h-row">
     <p class="draft" aria-hidden="true">02</p>
     <h2 id="h-row">What one row holds, and what it cannot</h2>
-    <p>The struck-through rows are not redacted. They have no field to live in, so
-    nothing downstream of the trace can hold them either: not a finding, not the caller
-    hint, not the audit record, not the metrics.</p>
+    <p>The struck-through rows are not redacted; a trace row has no field for them at
+    all. So nothing built from the trace can hold them either, whether a finding, the hint
+    returned to the caller, the audit record or the metrics.</p>
     <ul class="pins">
-      <li><span class="name">Method, Route</span><span>The verb and the matched route <b>template</b>, such as <code>GET /items/*</code>: the string from the operator's own profile, never the path the guest sent.</span></li>
-      <li><span class="name">Status, Delivered</span><span>The upstream status, and whether the broker handed the response to the guest. A capped or unreadable body keeps its row, marked undelivered, so a 200 the guest never saw is not counted as a record retrieved.</span></li>
-      <li><span class="name">Bytes, Latency</span><span>Request and response sizes, and the round trip. Sizes only, so a repeated read of the same size cannot be told apart from a changed one, which is why that detector caps its severity.</span></li>
-      <li><span class="name">Denied, Shed, Dropped</span><span>Counts kept beside the rows: refused by policy, shed by the breaker, and rows past the 256-row cap, which makes a count say "at least".</span></li>
+      <li><span class="name">Method, Route</span><span>The verb and the matched route <b>template</b>, such as <code>GET /items/*</code>: the string from the profile the operator (whoever runs plimsoll) wrote, never the path the <dfn>guest</dfn>, the code in the sandbox, sent.</span></li>
+      <li><span class="name">Status, Delivered</span><span>The HTTP status your API returned, and whether the broker handed the response to the guest. A response body over the size cap, or one that could not be read, keeps its row, marked undelivered, so a 200 the guest never saw is not counted as a record retrieved.</span></li>
+      <li><span class="name">Bytes, Latency</span><span>Request and response sizes, and the round trip. Sizes only, so a repeated read of the same size cannot be told apart from a changed one, which is why the repeated-read detector caps its severity at medium.</span></li>
+      <li><span class="name"><code>Denied</code>, <code>Shed</code>, <code>Dropped</code></span><span>Counts kept beside the rows: calls refused by policy (over the budget, a route not on the list, or too large); calls <dfn>shed</dfn>, refused at once without reaching your API, while it recovers from a 429 or 503; and calls past the 256-row cap, which makes a count say "at least".</span></li>
       <li class="absent"><span class="name">Path</span><span>No field. <code>/items/8813</code> is never recorded; only the template it matched.</span></li>
       <li class="absent"><span class="name">Query, Body</span><span>No field. Not the request body, not the response body, not a query value.</span></li>
-      <li class="absent"><span class="name">Credential</span><span>No field. The minted token lives in Go and is attached upstream of the trace.</span></li>
-      <li class="absent"><span class="name">Start time</span><span>No field. Rows have durations, not timestamps, so the trace cannot tell serial calls from concurrent ones. A "sequential calls" detector was deleted for exactly that reason, along with an "aggregate in code" one that would have needed the row data.</span></li>
+      <li class="absent"><span class="name">Credential</span><span>No field. The token, <dfn>minted</dfn> (created fresh) for this run, stays in the daemon's Go process; the broker attaches it to the outgoing request, outside anything the trace records.</span></li>
+      <li class="absent"><span class="name">Start time</span><span>No field. Rows have durations, not timestamps, so the trace cannot tell serial calls from concurrent ones. A "sequential calls" detector was deleted for exactly that reason, along with an "aggregate in code" one that would have needed the rows' contents.</span></li>
     </ul>
     <div class="card">
-      <p><b>The one thing that answers "so you just record less".</b> A caller may stamp
-      an opaque <code>trace_id</code> on the run; the daemon echoes it onto the audit line
-      and does nothing else with it. The path and the body then exist in exactly one
-      place, one layer up, in the caller's own log, joinable by that id. That is the
-      difference between recording less and recording only the part that is ours.</p>
+      <p><b>The one thing that answers "so you just record less".</b> A caller may put
+      its own <code>trace_id</code> on the run, an ID plimsoll never interprets; the daemon
+      copies it onto the run's audit line and does nothing else with it. The path and the
+      body then exist in exactly one place, one layer up, in the caller's own log, and the
+      two logs can be joined on that ID. That is the difference between recording less and
+      recording only the part that is ours.</p>
     </div>
   </section>
 
@@ -156,16 +167,17 @@
   <section id="routing" aria-labelledby="h-routing">
     <p class="draft" aria-hidden="true">03</p>
     <h2 id="h-routing">Who may see it, and what is kept</h2>
-    <p>Two profile settings, orthogonal to each other. <code>advice</code> decides who can
-    act; <code>advice_retention</code> decides what reaches the durable audit log. plimsoll
-    stores nothing itself, so retention is about what it emits.</p>
+    <p>Two profile settings, independent of each other. <code>advice</code> decides who
+    sees findings they can act on; <code>advice_retention</code> decides what is written to
+    the audit log the operator keeps. plimsoll stores nothing itself, so retention is about
+    what it writes out.</p>
     <div class="controls-2">
       <div class="control">
         <p class="control-label"><code>advice</code></p>
         <div class="seg" role="group" aria-label="advice" data-key="advice">
           <button type="button" data-value="off">off<small>nothing computed</small></button>
-          <button type="button" data-value="operator">operator<small>operator surfaces only</small></button>
-          <button type="button" data-value="caller">caller<small>plus the agent-fixable subset on the result</small></button>
+          <button type="button" data-value="operator">operator<small>the operator's views only</small></button>
+          <button type="button" data-value="caller">caller<small>also the findings the agent can fix, on the result</small></button>
         </div>
       </div>
       <div class="control">
@@ -189,9 +201,9 @@
     has by construction; untick one and name what it would let through.</p>
     <ul class="gate" id="gateList">
       <li><label><input type="checkbox" data-required="1"><span><b>Metadata only.</b><small>Route templates, counts, sizes, timings. A row has no field for a path, a body or a credential.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Advice never touches the run.</b><small>Computed after dispatch over the already-final result. A run with advice is byte-identical in execution to one without; a finding cannot gate admission, change an exit code, or slow anything.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Advice never touches the run.</b><small>Computed after the run, over its already-final result. A run with advice executes byte for byte the same as one without; a finding cannot decide whether a run may start, change an exit code, or slow anything.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>plimsoll never calls an LLM.</b><small>It emits prompt text. Feeding it to a model is the customer's choice, inside the customer's deployment.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Built from trusted inputs only.</b><small>Templates from the operator's profile plus numbers. No guest-controlled string is ever templated into a finding, so the advice channel cannot carry an injection.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Built from trusted inputs only.</b><small>Route templates from the operator's profile, plus numbers. No text the guest controls is ever copied into a finding, so the advice cannot carry an injection (text planted to trick whatever reads the finding, such as the agent's model).</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>Off by default, per profile.</b><small><code>advice: off</code> computes nothing; a customer who does not want traffic analysed gets silence.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>Bounded like the broker.</b><small>The trace is capped at 256 rows whatever the call budget; past the cap, calls are counted as dropped and a finding says "at least".</small></span></label></li>
     </ul>
@@ -200,7 +212,7 @@
 
   <h2 style="margin-top:44px">Keep reading</h2>
   <ul class="links">
-    <li><a href="../examples/advisor/report.html"><b>Internal · trainer site →</b><strong>13 requests became 1</strong><small>The advisor on one measured run through a loopback daemon: the loop, the finding, the rewrite, and the API's own request count as the witness.</small></a></li>
+    <li><a href="../examples/advisor/report.html"><b>Internal · trainer site →</b><strong>13 requests became 1</strong><small>The advisor on one measured run through a daemon on the same machine: the loop, the finding, the rewrite, and the API's own request count as the witness.</small></a></li>
     <li><a href="capacity-endpoint.html"><b>Internal · trainer site →</b><strong>The capacity endpoint</strong><small>The other thing the broker does with what it sees, during the run rather than after.</small></a></li>
     <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>Where the rows come from.</small></a></li>
   </ul>
@@ -322,9 +334,9 @@
     var computed = a !== 'off';
     var items = [
       ['the run’s result, advice field', computed && a === 'caller' ? 'agent-fixable findings only' : 'nothing', computed && a === 'caller'],
-      ['operator surfaces (report, audit)', computed ? 'every finding' : 'nothing', computed],
+      ['the operator\'s report and audit log', computed ? 'every finding' : 'nothing', computed],
       ['/metrics aggregates', computed ? 'profile, pattern, severity, remedy counts; no route' : 'nothing', computed],
-      ['durable audit log', !computed ? 'nothing' : r === 'none' ? 'nothing (the default)' : r === 'aggregate' ? 'per-run totals' : 'one metadata-only record per finding', computed && r !== 'none']
+      ['the kept audit log', !computed ? 'nothing' : r === 'none' ? 'nothing (the default)' : r === 'aggregate' ? 'per-run totals' : 'one metadata-only record per finding', computed && r !== 'none']
     ];
     var ul = el('flow');
     ul.innerHTML = '';
@@ -338,8 +350,8 @@
     });
     var note;
     if (!computed) note = '<p><b>Nothing is computed.</b> The trace still exists for the run’s duration, because the broker needs it to enforce budgets; it is discarded with the response.</p>';
-    else if (a === 'operator') note = '<p><b>The agent sees nothing.</b> Findings reach the report and the audit surfaces only; the retention setting decides how much of that is durable. Findings with no granted route are operator-only regardless of this setting.</p>';
-    else note = '<p><b>The caller gets the subset it can act on.</b> Only findings with a granted suggested route, or a cache remedy, ride on the result. The wire hint and the metrics are governed by <code>advice</code> alone; retention changes only what the audit log keeps.</p>';
+    else if (a === 'operator') note = '<p><b>The agent sees nothing.</b> Findings reach the operator\'s report and audit log only; the retention setting decides how much of that is kept. Findings with no granted route are operator-only regardless of this setting.</p>';
+    else note = '<p><b>The caller gets the subset it can act on.</b> Only findings with a granted suggested route, or a cache remedy, ride on the result. The hint on the result and the metrics are set by <code>advice</code> alone; retention changes only what the audit log keeps.</p>';
     el('flowNote').innerHTML = note;
   }
 
@@ -375,7 +387,7 @@
       out.innerHTML = '<p><b>All six hold.</b> The advisor may learn from the shape of traffic and never from its contents, and it cannot change what ran.</p>';
     } else {
       out.classList.add('warn');
-      out.innerHTML = '<p><b>' + done + ' of ' + required + '.</b> Any one gap, a body read, a run blocked, a guest string echoed, turns a coach into a liability. Each of these is a property of the code, not a policy someone has to remember.</p>';
+      out.innerHTML = '<p><b>' + done + ' of ' + required + '.</b> Any one gap (a body read, a run blocked, a guest\'s text echoed) turns a coach into a liability. Each of these is a property of the code, not a policy someone has to remember.</p>';
     }
   }
   el('gateList').addEventListener('change', renderGate);

@@ -43,6 +43,9 @@ type fakeGateway struct {
 	deleteErr   error
 	run         func(e *fakeExec) error
 	forward     *fakeForwarding // SSH sessions and ForwardTcp (grant_test.go); nil refuses them
+	// allowDriverConfig is the gateway's allow_driver_config: off, a create carrying a
+	// driver config is refused, as v0.1.2 refuses it.
+	allowDriverConfig bool
 }
 
 type fakeBox struct {
@@ -219,6 +222,9 @@ func (f *fakeGateway) CreateSandbox(_ context.Context, req *connect.Request[open
 	}
 	if len(req.Msg.GetName()) > 19 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("name exceeds maximum length"))
+	}
+	if len(req.Msg.GetSpec().GetTemplate().GetDriverConfig().GetFields()) > 0 && !f.allowDriverConfig {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("driver_config is disabled on this gateway; the administrator must enable allow_driver_config"))
 	}
 	id := make([]byte, 8)
 	_, _ = rand.Read(id)

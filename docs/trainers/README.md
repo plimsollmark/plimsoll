@@ -1,116 +1,208 @@
 # plimsoll trainers
 
-This directory is a dependency-free interactive field guide to plimsoll. Open
-[`index.html`](index.html) directly in a browser, or serve the directory with any
+This directory is a set of interactive lessons about plimsoll that needs no dependencies.
+Open [`index.html`](index.html) directly in a browser, or serve the directory with any
 static file server. No build step is required.
 
 ## Serving them locally
 
-The pages are static and make no runtime API calls, so any static file server
+The pages are static and make no API calls while you read them, so any static file server
 works:
 
     python3 -m http.server 48173 --bind 127.0.0.1 --directory docs/trainers
     # open http://127.0.0.1:48173/
 
-Start with **Plain English** (`plain-english.html`) if the vocabulary is new. It is a
-zero-jargon on-ramp that decodes WASM/container/gVisor/VM/RPC and teaches the one idea
-behind the whole model (how many walls stand between untrusted code and the host). It
-hands off to the Architecture trainer, which walks the same trip with the real gate names.
+Start with **Plain English** (`plain-english.html`) if the vocabulary is new. It explains,
+without jargon, the words the other lessons lean on: <dfn>*WebAssembly*</dfn> (a portable
+bytecode that runs inside a host program), container, <dfn>*gVisor*</dfn> (a stand-in
+kernel that runs as an ordinary program), virtual machine and RPC. It also teaches the one
+idea behind the whole model: how many walls stand between untrusted code and the host. It
+hands off to the Architecture trainer, which walks the same trip with the real names of
+the checks.
 
-The curriculum then flows in two tracks:
+The lessons then run in this order:
 
-1. Learn the system: concepts, architecture, providers, and dependencies.
-2. Build with it: client integrations, MCP/agent product design, making that surface
-   self-describing (schemas, annotations, typed sandbox globals, a drift test), and
-   customer recipes.
-3. Go deeper: compare provider-specific broker transports, run the two-sided private
-   API lab against the fictional inventory API, and inspect the shipped metadata-only
-   efficiency advisor plus the E2B guard-backed grant path.
+1. Learn the system: concepts, architecture, <dfn>*providers*</dfn> (the backends that
+   run the code), and dependencies.
+2. Build with it: client integrations; designing a product in which an AI agent reaches
+   plimsoll through <dfn>*MCP*</dfn> (Model Context Protocol, the standard an AI
+   application uses to offer tools to a model); making that tool describe itself (schemas,
+   annotations, typed sandbox globals, a test that catches drift); and customer recipes.
+3. Go deeper: compare how each provider carries a sandboxed program's API calls to the
+   <dfn>*broker*</dfn>, the part of plimsoll that makes those calls and holds the
+   credential; run the two-sided private API lab against the fictional inventory API; and
+   inspect the shipped efficiency advisor, which sees only metadata. This track also
+   covers <dfn>*E2B*</dfn>, a hosted service that runs code in small virtual machines:
+   there a run's <dfn>*grant*</dfn> (its permission to call listed routes of one API)
+   works only through the <dfn>*guard*</dfn>, the one address on the plimsoll daemon that
+   such a virtual machine may reach.
 
-Every trainer is one HTML file on the shared base `plain.css`, with its own markup,
-its own `<style>` for whatever makes it itself, and its own script when it has an
-instrument to drive (a load-line console, a route checker, a breaker strip chart, a
-call ledger). The one exception is the Architecture explorer, which is an interactive
-map with its own model and script. See **Page shapes** below.
+Every trainer is one HTML file on the shared base `plain.css`, with its own markup, its own
+`<style>` for whatever makes it itself, and its own script when it has an interactive
+instrument to drive (a ship's-hull console, a route checker, a live chart of the breaker
+that pauses calls to a struggling API, a call ledger). The one exception is the
+Architecture explorer, an interactive map with its own data model and script. See **Page
+shapes** below.
 
-No page in the catalog calls a network API at runtime. Every number a lesson shows
-is either part of its embedded lesson model or computed in the page, so a trainer
-cannot present fixture output as if it were a live run.
+No page in the catalog calls a network API while it runs. Every number a lesson shows is
+either part of the lesson's own embedded data or computed in the page, so a trainer cannot
+present canned example output as if it were a live run.
 
 ## Page shapes
 
 Which shape a page uses is declared in `pageShape` in
-[`trainer_test.go`](trainer_test.go), and the structural checks follow that
-declaration, so a page that is deliberately different is a row of data rather than an
-exception inside each test.
+[`trainer_test.go`](trainer_test.go), and the structural checks follow that declaration,
+so a page that is deliberately different is a row of data rather than an exception inside
+each test.
 
 | Shape | What it is | Pages |
 | --- | --- | --- |
-| `plain` (default) | One scrolling document on the shared base `plain.css` (palette, type, section rhythm with the draft numerals, cards, native disclosures, segmented controls, sliders, tone chips, reading list, footer), with its own markup, its own `<style>` for whatever makes it itself, and its own script if it has an instrument to drive. Everything the page computes, it computes in the page from the daemon's published rules; nothing calls a network. | every page but one |
-| `explorer` | `trainerData` in `path-explorer` mode plus a page-local interactive map (`architecture.css`, `architecture.mjs`, `architecture-model.mjs`). | `architecture.html` |
+| `plain` (default) | One scrolling document on the shared base `plain.css` (colours, type, section spacing with the faint large section numbers, cards, `<details>` disclosures, segmented controls, sliders, coloured tone labels, reading list, footer), with its own markup, its own `<style>` for whatever makes it itself, and its own script if it has an instrument to drive. Everything the page computes, it computes in the page from the daemon's published rules; nothing calls a network. | every page but one |
+| `explorer` | `trainerData` in `path-explorer` mode plus an interactive map of its own (`architecture.css`, `architecture.mjs`, `architecture-model.mjs`). | `architecture.html` |
 
-The architecture explorer derives its component cards, directed connections,
-provider descriptions and worked request paths from the same registry in
-`architecture-model.mjs`. Keep that registry as the source when changing a path:
-separate handwritten arrows or explanations can disagree with the step navigator.
-Its caller-token path explains operator setup and possession-based identity lookup:
-the operator supplies the caller token, plimsolld hashes the presented token and
-looks up the configured caller, and the downstream API credential stays separate.
-The page illustrates this flow; it does not issue tokens. Run
-`node docs/trainers/architecture-model.test.mjs` and the browser check in
-`scripts/check-architecture.mjs` when changing the map or its navigation.
+The architecture explorer builds its component cards, its arrows between components, its
+provider descriptions and its worked request paths from one data model in
+`architecture-model.mjs`. Change a path there: a separate hand-written arrow or
+explanation can disagree with the step-by-step navigator. One of its paths shows how a
+caller's token identifies the caller: the operator gives the caller a token, plimsolld
+hashes whatever token a request presents and looks the hash up among the configured
+callers (so whoever holds the token is that caller), and the credential for the
+downstream API stays a separate thing. The page illustrates this flow; it does not issue
+tokens. When you change the map or its navigation, run both of its checks from the
+repository root.
 
-The chapter renderer (`trainer.js`, `trainer.css`) was the default until 2026-09-19.
-No catalog page uses it now: eleven pages were rebuilt as plain pages with their own
-instruments, because a chapter-at-a-time renderer could not draw the picture each
-subject needed. `trainer.css` still styles the catalog and the quick start,
-and `trainer.js` still drives the private positioning page (see **Pages that are
-not in this directory**), which is why both are kept.
+The data model's own test needs only Node:
 
-A `plain` page is checked for what that shape promises: it loads `plain.css` and not
-the lesson stylesheet, it has one `<h1>`, it links back to the catalog, and its own
-markup uses neither a fixed position nor `100vw`, the two things that make a page
-awkward on a phone. `plain.css` itself is checked once for being mobile first (the
-narrow layout is the base, a `min-width` media query is the enhancement, no
-`prefers-color-scheme`). Adding a plain page means adding its row to `pageShape`;
-nothing else.
+```sh
+node docs/trainers/architecture-model.test.mjs
+```
+
+The browser check, [`check-architecture.mjs`](check-architecture.mjs), drives the page in
+a headless Chromium through Playwright. It steps through every worked path for each
+provider, follows every connection between components, checks every link on the page,
+and checks the map at four widths from 390 to 1512 pixels. It fails on a page error, a
+failed request, a request that leaves the local server, or an arrow whose endpoints are
+cut off, and writes screenshots and a JSON summary to `tmp/`. Playwright is not a dependency of this repository, so install it
+once under `tmp/` (ignored by git). The version below is the one the check was last run
+with:
+
+```sh
+npm install --prefix tmp/playwright playwright@1.60.0
+tmp/playwright/node_modules/.bin/playwright install chromium   # downloads the browser once
+```
+
+On Linux, Chromium also needs some system libraries; `playwright install-deps chromium`
+installs them and needs root. Then serve `docs/` on the port the check expects, and run
+it:
+
+```sh
+python3 -m http.server 8766 --bind 127.0.0.1 --directory docs &
+PLAYWRIGHT_MODULE=$PWD/tmp/playwright/node_modules/playwright node docs/trainers/check-architecture.mjs
+```
+
+It prints each worked path it verified, then the summary, and exits 0 when every check
+passes; the first failed check stops it with a non-zero exit and the reason. Pass another
+local URL as its argument to check a server on a different port.
+
+The chapter renderer (`trainer.js`, `trainer.css`) was the default until 2026-09-19. No
+catalog page uses it now: eleven pages were rebuilt as plain pages with their own
+instruments, because a renderer that shows one chapter at a time could not draw the
+picture each subject needed. `trainer.css` still styles the catalog and the quick start,
+and `trainer.js` still drives the private positioning page (see **Pages that are not in
+this directory**), which is why both are kept.
+
+A `plain` page is checked for what that shape promises: it loads `plain.css` and not the
+lesson stylesheet, it has one `<h1>`, it links back to the catalog, and its own markup
+uses neither a fixed position nor `100vw`, the two things that make a page awkward on a
+phone. `plain.css` itself is checked once for being mobile first (the narrow layout is
+the base, a `min-width` media query adds the wider one, no `prefers-color-scheme`).
+Adding a plain page means adding its row to `pageShape`; nothing else.
 
 ## Editing a trainer
 
-- Give each page one instrument that shows the subject's own mechanism (the floor
-  against the evidence, the route check, the breaker, the detector), computed in the
-  page from the daemon's published rules, and keep the rest short enough to read on a
-  phone. Section numbers are the faint draft numerals; headings state a fact, never a
-  play on words.
-- Keep learner-controlled text as `textContent`. Page copy is trusted and may use
-  small amounts of HTML for code and links; anything a reader types (the route
-  checker's path) is never placed with `innerHTML`.
-- Label invented values as examples. A simulated tape or latency must not be
+- Give each page one instrument that shows the subject's own mechanism (the minimum wall
+  strength a request demands against what the provider proved, the route check, the
+  breaker, the advisor's pattern detector), computed in the page from the daemon's
+  published rules, and keep the rest short enough to read on a phone. Section numbers are
+  the faint large numerals; headings state a fact, never a play on words.
+- Keep learner-controlled text as `textContent`. Page copy is trusted and may use small
+  amounts of HTML for code and links; anything a reader types (the route checker's path)
+  is never placed with `innerHTML`.
+- Label invented values as examples. A simulated call log or latency must not be
   presented as a recording of an actual run.
 - Update the catalog when adding or renaming a page, and regenerate the social cards
   when a title or description changes (`docs/social/gen-cards.mjs`).
-- Run `go test ./docs/trainers`. To see a page at phone and desktop width with a
-  check for page errors and horizontal overflow, render it headless (a script for
-  this lives under the gitignored `tmp/` while a session is open; the shape is six
+- Define every registered term where the page first uses it (see **Terms and the
+  glossary** below).
+- Run `go test ./docs/trainers`. To see a page at phone and desktop width, with a check
+  for page errors and for content wider than the screen, render it in a headless browser
+  (such a script is kept in the gitignored `tmp/`, never committed; it takes about six
   lines of Playwright).
 
-The facts about providers and grants follow [`AGENTS.md`](../../AGENTS.md), not the
-older archived architecture HTML. In particular, WASM is only process-tier;
-Docker/runc is container-tier; Docker/runsc reaches kernel-tier only with current
-Preflight evidence; E2B is VM-tier; Docker and WASM JavaScript snippets support
-host-API grants through one shared broker core; and E2B supports grants only through
-its configured egress guard. Project support is provider-specific: Docker projects
-take grants, WASM projects reject them.
+The facts about providers and grants follow [`AGENTS.md`](../../AGENTS.md), not the older
+archived architecture HTML. Each provider reports an <dfn>*isolation tier*</dfn>, how
+strong the wall around a run is, and the pages state them this way:
 
+- `wasm` is only `process` tier.
+- `docker` with <dfn>*runc*</dfn>, docker's default runtime, is `container`
+  tier.
+- `docker` with <dfn>*runsc*</dfn>, gVisor's runtime, reaches `kernel` tier only with
+  current <dfn>*preflight*</dfn> evidence (preflight is the check a provider runs at
+  startup and on every readiness poll).
+- `e2b` is `vm` tier.
+- JavaScript snippets on `docker` and `wasm` support grants to a host API through one
+  shared broker core; `e2b` supports grants only through its configured guard.
+- Project support differs by provider: `docker` projects take grants, `wasm` projects
+  reject them.
+
+## Terms and the glossary
+
+The public pages share one list of terms, and a test holds pages to it. The facts below
+come from the header of [`terms_test.go`](terms_test.go), which is the reference.
+
+- **[`terms.json`](terms.json) is the registry.** Each entry is a term, the other forms
+  it takes, one plain sentence defining it, and its anchor in the glossary. A term marked
+  `assumed` (container, process, RPC, sandbox, kernel, virtual machine) is one the reader
+  is expected to know: it is listed in the glossary, but its first use is not enforced.
+  The file also holds `enforced_pages`, the pages the first-use rule applies to.
+- **[`glossary.html`](glossary.html) is generated from it**, and so are the definitions
+  the Plain English decoder shows. After editing `terms.json`, run
+  `go test ./docs/trainers -run TestGeneratedBlocks -update` to rewrite those blocks, and
+  commit them with it; without `-update`, `TestGeneratedBlocks` fails whenever a
+  generated block and the registry disagree.
+- **`TestRegisteredTermsAreDefinedAtFirstUse` holds every page in `enforced_pages` to one
+  rule:** the first time a registered term appears in the page's prose, it is a marked
+  definition or a link to its glossary entry. Replacing the word with plain words is the
+  third way to pass, and often the best one.
+- **How to mark a definition.** In HTML, `<dfn>broker</dfn>`, followed in the same
+  sentence by a plain definition. In markdown, `<dfn>*broker*</dfn>`: GitHub strips the
+  `<dfn>` tag and keeps the italics inside it (checked against GitHub's renderer on
+  2026-09-29), so a GitHub reader sees the term in italics and the tag stays in the
+  source for the test. A link counts when its href ends in `glossary.html#<anchor>` for
+  that term; markdown pages link the published copy,
+  `https://plimsollmark.github.io/plimsoll/trainers/glossary.html#<anchor>`, because
+  GitHub shows an `.html` file in the repository as source.
+- **What the test reads as prose:** the page body without code (`<code>`, `<pre>`,
+  backticks, fenced blocks), headings, SVG drawings, scripts, styles, image alt text,
+  HTML comments, link text that is a bare file path, and the generated glossary list.
+  Headings are skipped because a definition cannot sit inside one; the first sentence
+  under the heading defines the term instead. Text a page builds in its own script is
+  not checked, a known gap, so read it by hand.
+- **The `data-terms="off"` opt-out.** An HTML element marked `data-terms="off"` is
+  skipped. Use it only where a registered word appears in its everyday sense, such as
+  the security guard in the glossary's housing analogy, and say why in a comment beside
+  it.
+- **Adding a term.** Keep the list in alphabetical order, one entry per anchor, no form
+  claimed by two terms, and each definition one plain sentence ending in a full stop,
+  with no dash punctuation; `TestTermRegistryIsWellFormed` checks all of it.
 
 ## Pages that are not in this directory
 
-One related page deliberately lives elsewhere, because it is not a lesson about
-plimsoll:
+One related page deliberately lives elsewhere, because it is not a lesson about plimsoll:
 
 - `../positioning/docker-agent-boundaries.html` is a competitive comparison of Docker
   Offload, Docker Sandboxes and the MCP Toolkit against plimsoll. It is commercial
-  positioning, it dates fast, and it is private. It still renders with the shared
-  chrome here, borrowing `trainer.css` and `trainer.js` across the directory boundary
-  and setting `data-trainer-base="../trainers/"` so the reference shelf's internal
-  links resolve. `TestPositioningTrainerResolvesSharedAssets` guards that wiring.
+  positioning, it dates fast, and it is private. It still renders with this directory's
+  shared page frame, borrowing `trainer.css` and `trainer.js` across the directory
+  boundary and setting `data-trainer-base="../trainers/"` so the internal links on its
+  reading list resolve. `TestPositioningTrainerResolvesSharedAssets` guards that wiring.

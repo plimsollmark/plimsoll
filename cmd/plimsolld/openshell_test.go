@@ -46,12 +46,17 @@ func TestBuildOpenShellFromEnv(t *testing.T) {
 	if _, ok := p.Sandbox.(sandbox.Drainer); !ok {
 		t.Fatal("the provider does not implement sandbox.Drainer, so shutdown would not wait for its deletes")
 	}
+	disk := maps.Clone(good)
+	disk["SANDBOX_DISK_MB"] = "100"
+	if p, err := buildProvider(getenvFrom(disk)); err != nil || p.Resources.DiskMB != 100 {
+		t.Fatalf("SANDBOX_DISK_MB=100: %+v, %v", p.Resources, err)
+	}
 	for name, c := range map[string]struct {
 		bend func(map[string]string)
 		want string
 	}{
 		"process limit":      {func(e map[string]string) { e["SANDBOX_PIDS"] = "64" }, "SANDBOX_PIDS"},
-		"disk limit":         {func(e map[string]string) { e["SANDBOX_DISK_MB"] = "100" }, "SANDBOX_DISK_MB"},
+		"negative disk":      {func(e map[string]string) { e["SANDBOX_DISK_MB"] = "-1" }, "SANDBOX_DISK_MB"},
 		"no gateway":         {func(e map[string]string) { delete(e, "SANDBOX_OPENSHELL_GATEWAY_URL") }, "openshell"},
 		"no client key":      {func(e map[string]string) { delete(e, "SANDBOX_OPENSHELL_KEY_FILE") }, "mutual TLS"},
 		"no image":           {func(e map[string]string) { delete(e, "SANDBOX_OPENSHELL_IMAGE") }, "image is required"},
@@ -69,16 +74,17 @@ func TestBuildOpenShellFromEnv(t *testing.T) {
 }
 
 // TestHardenedPolicyOpenShell: hardened mode refuses the provider by its tier
-// (container), asks for a pinned image, and never for the process or disk limit the
-// provider itself rejects.
+// (container), asks for a pinned image and the disk limit it enforces, and never for
+// the process limit the provider itself rejects.
 func TestHardenedPolicyOpenShell(t *testing.T) {
 	f := hardenedDockerFacts()
 	f.Provider, f.Isolation = "openshell", sandbox.IsolationContainer
 	err := enforceHardenedPolicy(getenvFrom(map[string]string{"SANDBOX_MEMORY_MB": "256", "SANDBOX_CPUS": "1"}), f)
-	if err == nil || !strings.Contains(err.Error(), "requires vm") || !strings.Contains(err.Error(), "SANDBOX_REQUIRE_PINNED_IMAGES=1 so the openshell image") {
-		t.Fatalf("err = %v, want the tier and pin violations", err)
+	if err == nil || !strings.Contains(err.Error(), "requires vm") || !strings.Contains(err.Error(), "SANDBOX_REQUIRE_PINNED_IMAGES=1 so the openshell image") ||
+		!strings.Contains(err.Error(), "SANDBOX_DISK_MB") {
+		t.Fatalf("err = %v, want the tier, pin and disk limit violations", err)
 	}
-	if strings.Contains(err.Error(), "SANDBOX_DISK_MB") || strings.Contains(err.Error(), "SANDBOX_PIDS") {
+	if strings.Contains(err.Error(), "SANDBOX_PIDS") {
 		t.Fatalf("err = %v, demands a limit the provider rejects", err)
 	}
 }

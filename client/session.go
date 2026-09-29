@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -18,6 +19,7 @@ import (
 // daemon's; a longer one than the daemon's is cut to it.
 type SessionOptions struct {
 	MinimumIsolation sandbox.IsolationClass
+	Software         sandbox.SoftwareRule
 	Lifetime         time.Duration
 	IdleTimeout      time.Duration
 }
@@ -32,6 +34,7 @@ type Session struct {
 	id          string
 	fingerprint string
 	isolation   sandbox.IsolationClass
+	software    sandbox.SoftwareRule
 	expires     time.Time
 	idle        time.Duration
 
@@ -58,6 +61,7 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 		TraceId:          TraceIDFrom(ctx),
 		LifetimeMs:       durationMs(opts.Lifetime),
 		IdleTimeoutMs:    durationMs(opts.IdleTimeout),
+		SoftwareRule:     softwarewire.ToWire(opts.Software),
 	})
 	r.auth(req)
 	resp, err := r.client.OpenSession(ctx, req)
@@ -70,6 +74,7 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 		id:          m.GetSessionId(),
 		fingerprint: m.GetSession(),
 		isolation:   sandbox.ParseIsolationClass(m.GetIsolation()),
+		software:    opts.Software,
 		expires:     time.UnixMilli(m.GetExpiresUnixMs()),
 		idle:        time.Duration(m.GetIdleTimeoutMs()) * time.Millisecond,
 	}
@@ -79,6 +84,10 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 	if err := sandbox.CheckResultIsolation(s.isolation, opts.MinimumIsolation); err != nil {
 		_, _ = s.Close(context.WithoutCancel(ctx))
 		return nil, connect.NewError(connect.CodeDataLoss, err)
+	}
+	if !opts.Software.Allows(m.GetSoftwareIdentity()) {
+		_, _ = s.Close(context.WithoutCancel(ctx))
+		return nil, connect.NewError(connect.CodeDataLoss, sandbox.ErrSoftwareMismatch)
 	}
 	return s, nil
 }
@@ -122,7 +131,11 @@ func (s *Session) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbo
 	if in.Grant != nil {
 		return fail, ErrRawGrantUnsupported
 	}
-	req := s.envelope(ctx, in.Timeout, in.MinimumIsolation)
+	software, err := sandbox.MergeSoftwareRules(s.software, in.Software)
+	if err != nil {
+		return fail, err
+	}
+	req := s.envelope(ctx, in.Timeout, in.MinimumIsolation, software)
 	req.Payload = &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: in.Code, GrantProfile: s.r.jsGrant}}
 	resp, rec, err := s.call(ctx, req)
 	if resp == nil {
@@ -154,7 +167,11 @@ func (s *Session) RunProject(ctx context.Context, in sandbox.ProjectRequest) (sa
 	for _, f := range in.Files {
 		p.Files = append(p.Files, &plimsollv1.ProjectFile{Path: f.Path, Content: f.Content})
 	}
-	req := s.envelope(ctx, in.Timeout, in.MinimumIsolation)
+	software, err := sandbox.MergeSoftwareRules(s.software, in.Software)
+	if err != nil {
+		return fail, err
+	}
+	req := s.envelope(ctx, in.Timeout, in.MinimumIsolation, software)
 	req.Payload = &plimsollv1.SessionRunRequest_Project{Project: p}
 	resp, rec, err := s.call(ctx, req)
 	if resp == nil {
@@ -173,13 +190,14 @@ func (s *Session) RunProject(ctx context.Context, in sandbox.ProjectRequest) (sa
 	return res, nil
 }
 
-func (s *Session) envelope(ctx context.Context, timeout time.Duration, minimum sandbox.IsolationClass) *plimsollv1.SessionRunRequest {
+func (s *Session) envelope(ctx context.Context, timeout time.Duration, minimum sandbox.IsolationClass, software sandbox.SoftwareRule) *plimsollv1.SessionRunRequest {
 	return &plimsollv1.SessionRunRequest{
 		Protocol:         Protocol,
 		MinimumIsolation: minimumIsolationWire(minimum),
 		TraceId:          TraceIDFrom(ctx),
 		TimeoutMs:        timeoutMs(timeout),
 		SessionId:        s.id,
+		SoftwareRule:     softwarewire.ToWire(software),
 	}
 }
 
@@ -268,6 +286,7 @@ func (s *Session) Exchange(ctx context.Context, req *plimsollv1.RunRequest) (*pl
 		TraceId:          req.GetTraceId(),
 		TimeoutMs:        req.GetTimeoutMs(),
 		SessionId:        s.id,
+		SoftwareRule:     req.GetSoftwareRule(),
 	}
 	switch p := req.GetPayload().(type) {
 	case *plimsollv1.RunRequest_Javascript:

@@ -1,31 +1,42 @@
 # Third-party packages in project runs
 
-A run has no network. Docker runs launch with `--network none`, the WASM guest has no
-sockets, and an E2B microVM denies egress except through the grant guard. So
-`npm install` cannot happen inside a run, from a public registry or a private one,
-and no grant changes that: the broker carries one allowlisted API origin with exact
-routes and a 4 MiB response budget, which no package manager can work through.
+A run has no network, whichever <dfn>*provider*</dfn> (the backend that runs the code) it
+uses:
+
+- Docker runs launch with `--network none`.
+- The `wasm` provider's <dfn>*guest*</dfn> (the code in the sandbox) has no sockets.
+- An <dfn>*E2B*</dfn> <dfn>*microVM*</dfn> (E2B is a hosted service that runs each
+  sandbox in a small virtual machine made for one run) denies <dfn>*egress*</dfn>, any
+  connection out of it, except through the <dfn>*guard*</dfn>: the one plimsoll address a
+  run with a <dfn>*grant*</dfn> (permission to call listed routes of one API) may reach.
+
+So `npm install` cannot happen inside a run, from a public registry or a private one,
+and no grant changes that. The <dfn>*broker*</dfn>, the part of plimsoll that makes a
+grant's API calls, reaches one API address, only on the exact routes the grant lists,
+with at most 4 MiB per response: no package manager can work through that.
 
 Packages a project imports therefore come from the **project image**, and the
 operator decides them **at image build time**. That is also the only place a
 registry credential ever exists. This page is the recipe, with outputs pasted from a
 real run. It covers project runs (`RunProject`); snippet runs use the separate
-`SANDBOX_DOCKER_IMAGE` and the same derived-image approach applies, but the outputs
-here are from projects.
+`SANDBOX_DOCKER_IMAGE`, and the same approach (build your own image on top of
+plimsoll's) applies there, but the outputs here are from projects.
 
 ## How a project finds a package
 
-Project files are written to `/work`, a tmpfs, and every step runs with `/work` as its
-working directory. Node resolves a bare import by walking up parent directories
-looking for `node_modules`: `/work/node_modules`, then `/node_modules`. A package
-installed at `/node_modules` in the image is therefore found by every project file,
-for both `import` and `require`, with no `NODE_PATH` and no change to the runner.
-TypeScript's node-style resolution walks the same directories.
+Project files are written to `/work`, a <dfn>*tmpfs*</dfn> (a filesystem held in
+memory, with a size limit), and every step runs with `/work` as its working directory.
+Node resolves a bare import (a package name, such as `left-pad`, rather than a file path)
+by walking up parent directories looking for `node_modules`: `/work/node_modules`, then
+`/node_modules`. A package installed at `/node_modules` in the image is therefore found
+by every project file, for both `import` and `require`, with no `NODE_PATH` and no
+change to the runner. TypeScript's node-style resolution walks the same directories.
 
 ## The recipe
 
 Start from the shipped toolchain image and install from a lockfile at the filesystem
-root, with lifecycle scripts disabled:
+root, with packages' lifecycle scripts (the commands a package can run when it is
+installed) disabled:
 
 ```dockerfile
 FROM plimsoll/sandbox:latest
@@ -43,22 +54,24 @@ Dockerfile:
 docker build -t my-org/plimsoll-sandbox:2026-09-17 .
 ```
 
-Four choices in that file are load-bearing:
+Four choices in that file matter:
 
 - **`npm ci` from a lockfile**, never `npm install`: the image contains exactly the
   versions and integrity hashes the lockfile names, and rebuilding yields the same
   tree.
-- **`--ignore-scripts`**: install-time lifecycle scripts are code execution, and the
-  image build is not the sandbox. Packages whose install step compiles native code
-  will not work this way; prefer pure-JavaScript packages, or build such a package
-  deliberately in its own `RUN` step where you can read what it does.
+- **`--ignore-scripts`**: install-time scripts run code, and the image build does not
+  happen inside the sandbox. Packages whose install step compiles native code will not
+  work this way; prefer pure-JavaScript packages, or build such a package deliberately
+  in its own `RUN` step where you can read what it does.
 - **`WORKDIR /`** puts the tree at `/node_modules`, the one place every project file
   resolves.
 - **`USER node`** restores the unprivileged user the runner expects; the daemon also
-  enforces `--user` and drops capabilities at run time.
+  enforces `--user` and drops Linux capabilities (the kernel's separate root privileges)
+  at run time.
 
 **A private registry** supplies its credential to the build only, through a BuildKit
-secret mount, so it never lands in an image layer:
+secret mount (a file docker makes available to one `RUN` step and never writes into the
+image), so it never lands in an image layer:
 
 ```dockerfile
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
@@ -80,11 +93,16 @@ SANDBOX_DOCKER_PROJECT_IMAGE=my-org/plimsoll-sandbox:2026-09-17 \
 ...
 ```
 
-Preflight inspects the image on the daemon's own docker (it must be present there),
-rejects an image that declares a `VOLUME`, and every run launches the content-addressed
-image ID that Preflight inspected, so re-pointing the tag later cannot change what
-runs. In production set `SANDBOX_REQUIRE_PINNED_IMAGES=1` and name the image by
-`@sha256:` digest; hardened mode requires it.
+<dfn>*Preflight*</dfn>, the configuration check the provider runs at startup and on each
+readiness poll, inspects the image on the docker daemon plimsoll uses (the image must be
+present there) and rejects an image that declares a `VOLUME`, because docker would
+create an unbounded writable volume for it. Every run then launches the
+<dfn>*content-addressed*</dfn> image ID that preflight inspected, an ID computed from the
+image's own content, so pointing the tag at another image later cannot change what runs.
+In production set `SANDBOX_REQUIRE_PINNED_IMAGES=1` and name the image by its `@sha256:`
+<dfn>*digest*</dfn> (the SHA-256 hash of its content). <dfn>*Hardened mode*</dfn>, the
+setting under which the daemon refuses to start unless every production safeguard is
+configured, requires it.
 
 ## What a project sees
 
@@ -100,9 +118,9 @@ import not-in-the-image  outcome completed, isolation container
 
 The first is the package resolving from `/node_modules` with no network. The second is
 what a missing package looks like: a **normal result**, `outcome: completed` with the
-step's exit code 1 and Node's own error on stderr, not a Go error and not an
-infrastructure fault. Nothing in plimsoll knows what the agent wanted to import; the
-sandbox does not read guest output, so the operator learns it from the caller.
+step's exit code 1 and Node's own error on stderr, not a Go error and not a failure of
+plimsoll itself. Nothing in plimsoll knows what the agent wanted to import; the sandbox
+does not read guest output, so the operator learns it from the caller.
 
 ## Other runtimes: the same recipe
 
@@ -120,35 +138,44 @@ ENV OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 USER node
 ```
 
-The base keeps the contract every project image inherits: its entrypoint loads
+The base image carries what every project image inherits: its entrypoint loads
 `/usr/local/lib/plimsoll-runner-guard.so` into `node /runner.mjs` before the runner
-reads a plan; `USER node`, no `VOLUME`, and a read-only root at run time also apply.
+reads a plan, which stops a project step from reading the runner's plan, its report or
+its memory; `USER node`, no `VOLUME`, and a read-only root at run time also apply.
 Point a daemon at the image with `SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest`
 and a project whose step is `python3 main.py` runs through `RunProject` unchanged.
 
-Three things in that file are load-bearing:
+Three things in that file matter:
 
-- **NumPy and SciPy live in the image root.** A native extension is a shared object
-  that must be mapped executable, and the run's writable mounts (`/work`, `/tmp`,
-  `/dev/shm`) are `noexec` tmpfs. The read-only image root is the only place a
-  native library can load from, which is the same reason `/node_modules` is baked
-  in. `sandbox/docker_python_test.go` proves the extensions load under the shipped
-  seccomp profile: it solves a 3x3 system through SciPy's LAPACK binding and takes
-  an FFT, and checks the values to 1e-9.
-- **One BLAS thread.** Alpine's OpenBLAS sizes its thread pool from the host's core
-  count, not the run's CPU quota, so without `OPENBLAS_NUM_THREADS=1` a run inside a
-  1-CPU, 256-process cgroup would start a thread per host core. One thread also
-  makes reductions repeat bit-for-bit across runs, which anything comparing results
-  between runs needs. The image's `ENV` reaches every step process; the test
-  checks that too.
+- **NumPy and SciPy live in the image root.** A native extension is compiled machine
+  code (a shared object, `.so`) that must be mapped into memory as executable, and the
+  run's writable mounts (`/work`, `/tmp`, `/dev/shm`) are `noexec` tmpfs, where nothing
+  can be executed. The read-only image root is the only place a native library can load
+  from, which is the same reason `/node_modules` is built into the image.
+  `sandbox/docker_python_test.go` proves the extensions load under the shipped
+  <dfn>*seccomp*</dfn> profile (seccomp is the Linux feature that limits which kernel
+  requests a process may make; the profile lists the ones plimsoll's containers may use):
+  it solves a 3x3 linear system through SciPy's LAPACK binding (the standard
+  linear-algebra library) and takes a fast Fourier transform, and checks the values to
+  1e-9.
+- **One BLAS thread.** Alpine's OpenBLAS (the linear-algebra library NumPy calls) sizes
+  its thread pool from the host's core count, not the run's CPU quota, so without
+  `OPENBLAS_NUM_THREADS=1` a run inside a 1-CPU, 256-process <dfn>*cgroup*</dfn> (the
+  kernel's cap on the memory, CPU and process count of a group of processes) would start
+  a thread per host core. One thread also makes reductions (sums over many numbers, whose
+  rounding depends on their order) repeat bit-for-bit across runs, which anything
+  comparing results between runs needs. The image's `ENV` reaches every step process;
+  the test checks that too.
 - **No pip.** A run never installs anything, on any provider (see the limits
   below), and the image does not ship pip, so `python3 -m pip install` fails with
   "No module named pip" rather than reaching for a network the run does not have.
   The test runs that step and requires it to fail.
 
-One caveat on the pins. The `node:22-alpine` base tag floats with Alpine's current
-release, and `make docker-images` pulls it every time, so the three version pins
-track whichever Alpine that tag currently carries. An `apk add` failure reading
+One caveat on the three version <dfn>*pins*</dfn> on the `apk add` line: `~=` fixes
+each package's upstream version (3.14.7, 2.4.6, 1.17.1) and leaves only Alpine's
+packaging revision free. The `node:22-alpine` base tag moves with Alpine's current
+release, and `make docker-images` pulls it every time, so the three pins track whichever
+Alpine that tag currently carries. An `apk add` failure reading
 "unable to select packages ... breaks: world[python3~3.x]" means the base moved;
 the fix is a deliberate bump of the pins to what
 `apk search -x python3 py3-numpy py3-scipy` reports inside `plimsoll/sandbox`. It
@@ -158,81 +185,103 @@ happened on the first build of the file, 2026-09-18, when the tag moved from Alp
 <a id="a-compiled-model-is-image-content-too"></a>
 ### A compiled simulator is image content too
 
-A physical simulator compiled to WebAssembly takes the same path as an interpreter or
-a package: a file in the image root, named by a step.
+A physical simulator compiled to <dfn>*WebAssembly*</dfn> (a portable bytecode format
+that runs inside a host program) takes the same path as an interpreter or a package: a
+file in the image root, named by a step.
 [docker/sim.Dockerfile](../docker/sim.Dockerfile) is that recipe, built by
 `make docker-images` as `plimsoll/sandbox-sim:latest`. The image ships:
 
-- `/usr/local/bin/sim-worker`, a C program on WasmEdge's C API
-  ([docker/sim/worker.c](../docker/sim/worker.c)). It loads one AOT-compiled
-  module once, runs one fresh instance per parameter set, and writes one binary
-  artifact: per run an int32 step count, then the module's own `sim_width()`
-  float64 outputs per step (two for the Reference FMUs, three for Lorenz).
-- `/models/vanderpol.so` and `/models/bouncingball.so`: two Modelica Reference
-  FMUs (FMI 3.0, C source, BSD-2) compiled to wasm32-wasi by wasi-sdk 27 behind a
-  small shim ([docker/sim/shim.c](../docker/sim/shim.c)), then AOT-compiled by
-  WasmEdge 0.17.1 into shared objects; and `/models/lorenz.so`, a Lorenz simulator
-  of our own in the same style ([docker/sim/models/Lorenz](../docker/sim/models/Lorenz)),
-  there because chaos turns any one-ulp arithmetic difference into a checksum miss.
-  `/models/greedy.so` is a test fixture proving the worker caps every instance at
-  256 pages (16 MiB): a row that asks for more fails alone.
-- `/models/cartpole.wasm` and `/oracle/run.mjs`: the physics oracle. A cart-pole
-  simulator with the force as an input, kept as WebAssembly because Node, not the
-  worker, loads it, and the judge that runs a caller's controller as a separate
-  process against it and fingerprints the trajectory. `examples/oracle` is the
-  demonstration; the page it writes replays the recorded runs.
+- `/usr/local/bin/sim-worker`, a C program built on the C API of WasmEdge (a WebAssembly
+  runtime) ([docker/sim/worker.c](../docker/sim/worker.c)). It loads one module that was
+  compiled ahead of time (AOT) to machine code, once, runs one fresh instance per
+  parameter set, and writes one binary artifact (an output file returned with the
+  result): per run an int32 step count, then the module's own `sim_width()` float64
+  outputs per step (two for the Reference FMUs, three for Lorenz).
+- `/models/vanderpol.so` and `/models/bouncingball.so`: two Modelica Reference FMUs (an
+  FMU is a simulation model packaged to the FMI standard; these are FMI 3.0 models
+  published as C source under BSD-2), compiled to wasm32-wasi by wasi-sdk 27 behind a
+  small adapter ([docker/sim/shim.c](../docker/sim/shim.c)), then AOT-compiled by
+  WasmEdge 0.17.1 into shared objects; and `/models/lorenz.so`, a simulator of our own
+  for the Lorenz system in the same style ([docker/sim/models/Lorenz](../docker/sim/models/Lorenz)).
+  Lorenz is there because it is chaotic, and chaos turns a difference in the last bit of
+  any one arithmetic result into a checksum miss. `/models/greedy.so` is a test fixture
+  proving the worker caps every instance at 256 WebAssembly memory pages (16 MiB): a row
+  that asks for more fails alone.
+- `/models/cartpole.wasm` and `/oracle/run.mjs`: the <dfn>*physics oracle*</dfn>, which
+  tests a caller's program against a simulation. The first is a <dfn>*cart-pole*</dfn>
+  simulator (a cart on a rail with a pole hinged on top) with the force on the cart as
+  its input, kept as WebAssembly because Node, not the worker, loads it. The second is
+  the runner: it runs a caller's <dfn>*controller*</dfn> (a program that reads the
+  simulation's state at every step and decides how to push) as a separate process
+  against the simulator, and <dfn>*fingerprints*</dfn> the <dfn>*trajectory*</dfn>: it
+  takes the SHA-256 hash of the record of every state at every step, so equal
+  fingerprints mean identical runs. `examples/oracle` is the demonstration; the page it
+  writes replays the recorded runs.
 - Seven more simulators in the same form, each a `.wasm` file under `/models` that
-  the judge (`/oracle/judge.mjs`) steps one tick at a time, with the controller in
-  its own process. The sources are under [docker/sim/models](../docker/sim/models):
-  - `shower.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/shower/index.html)): a mixing valve, a pipe modelled as a transport delay, and a
-    shower head; a toilet flush drops the cold pressure mid-run. The controller
-    sets the hot fraction and must not scald.
-  - `buck.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/buck-converter/index.html)): an averaged synchronous buck converter; the controller sets the
-    duty cycle and must hold the output voltage through a load step.
-  - `ship.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/ship-heading/index.html)): a first-order Nomoto ship with a lagging, rate-limited rudder and
-    wave forcing; the controller holds an ordered heading.
-  - `blackhole.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/black-hole-orbit/index.html)): a probe on a Schwarzschild geodesic with two small
-    thrusters, asked to hold a circular orbit inside the innermost stable one.
-  - `rocket.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/twin-paradox-rocket/index.html)): the relativistic rocket equations in the ship's proper time;
-    the controller has to arrive home when Earth's clock reads an ordered date.
+  the generic trial runner (`/oracle/judge.mjs`) steps one <dfn>*tick*</dfn> (one fixed time step) at
+  a time, with the controller in its own process. The sources are under
+  [docker/sim/models](../docker/sim/models):
+  - `shower.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/shower/index.html)): a mixing valve, a pipe modelled as a transport delay (water takes a fixed time
+    to travel it), and a shower head; a toilet flush drops the cold pressure mid-run. The
+    controller sets the hot fraction and must not scald.
+  - `buck.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/buck-converter/index.html)): a synchronous <dfn>*buck converter*</dfn> (a power-supply circuit that turns a
+    higher DC voltage into a lower one by switching it on and off many times a second),
+    modelled by its average over each switching cycle. The controller sets the duty cycle
+    (the fraction of each cycle the switch is on) and must hold the output voltage through
+    a load step, a sudden change in the current drawn.
+  - `ship.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/ship-heading/index.html)): a ship turning by the first-order Nomoto model (the standard simplest model
+    of how a ship answers its rudder), with a rudder that lags and can only move so fast,
+    and waves pushing it; the controller holds an ordered heading.
+  - `blackhole.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/black-hole-orbit/index.html)): a probe falling freely around a non-rotating black hole (on a
+    Schwarzschild geodesic) with two small thrusters, asked to hold a circular orbit
+    inside the innermost stable one, closer in than any orbit that holds without thrust.
+  - `rocket.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/twin-paradox-rocket/index.html)): the relativistic rocket equations in the ship's proper time (the time the
+    ship's own clock shows); the controller has to arrive home when Earth's clock reads
+    an ordered date.
   - `satclock.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/satellite-clock/index.html)): a navigation satellite's clock, which runs about 38.6
     microseconds a day fast from relativity, steered through a delayed
     measurement.
   - `slits.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/double-slit/index.html)): an aperture of sixteen phase-plate cells and a
     64-point screen; the controller sets all sixteen phases to produce a target
-    pattern, and the simulator also exports the exact output Jacobian.
+    pattern, and the simulator also exports the exact output Jacobian (how fast each
+    output changes with each input).
 
   Each replay page runs two hand-written controllers against the simulator on one
   scenario through the project API, a draft that fails and an accepted one that
   passes, and shows both trajectories and their fingerprints. Those controllers
   and their scoring programs are not published; a controller is the caller's.
-  Cart-pole has the same page for its swing-up task
+  Cart-pole has the same page for its swing-up task, swinging the pole up from hanging
+  and balancing it
   ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/cartpole-swingup/index.html)).
 - `libwasmedge`, the runner and `USER node`, on `node:22-bookworm-slim` rather than
-  the Alpine base the other images share: WasmEdge's release binaries are glibc.
+  the Alpine base the other images share: WasmEdge's release binaries are built against
+  glibc, which Alpine does not use.
 
-A step names the worker, a simulator and the sweep:
+A step names the worker, a simulator and the sweep (the range of parameter values to
+run):
 
 ```sh
 sim-worker /models/vanderpol.so 100 1 20 out.bin 0.1 5.0 2.0 0.0
 #          simulator           N  threads t_end out  p0min p0max p1 p2
 ```
 
-and `out.bin` comes back as an artifact. Three things in that file are load-bearing:
+and `out.bin` comes back as an artifact. Three things in that file matter:
 
 - **The simulator lives in the image root, for the same reason NumPy does.** An AOT
   module is machine code that WasmEdge loads with `dlopen`, so it must be mapped
   executable, and every writable mount of a run is `noexec`.
   `sandbox/docker_sim_test.go` proves both halves under the shipped seccomp
   profile: the sweeps run from `/models`, and a byte-identical copy of the simulator
-  under `/work` is refused by the loader. Register a simulator = build an image, by
-  design rather than as a workaround.
+  under `/work` is refused by the loader. Registering a simulator means building an
+  image, by design rather than as a workaround.
 - **Bit-identity is the test, not a tolerance.** The test compares the SHA-256 of
-  each sweep's artifact with a native C run of the same shim: 100 parameter sets
-  of each Reference FMU, state events included, and 50 Lorenz rows of 60 s
-  match to the byte. WebAssembly's
-  floating-point semantics (no fused multiply-add outside relaxed SIMD, one
-  rounding per operation) are what turn a numeric comparison into a checksum.
+  each sweep's artifact with a native C run of the same adapter code: 100 parameter
+  sets of each Reference FMU, state events (the moments a model switches behaviour,
+  such as the ball bouncing) included, and 50 Lorenz rows of 60 s match to the
+  byte. WebAssembly's floating-point rules (one rounding per operation, and no fused
+  multiply-add, which would skip the rounding between a multiply and an add, outside the
+  optional relaxed SIMD instructions) are what turn a numeric comparison into a
+  checksum.
 - **Every input is pinned.** The WasmEdge tarball by SHA-256 from the release's
   checksum file, the Reference FMUs by the commit behind the tag, the wasi-sdk
   image by digest. The wasm bytes, and so the checksums the test asserts, depend
@@ -240,33 +289,35 @@ and `out.bin` comes back as an artifact. Three things in that file are load-bear
   depends on the WasmEdge version. Bump any of them deliberately and regenerate
   the checksums from a native run.
 
-The same image also backs the typed operation. Point a daemon at it with
-`SANDBOX_DOCKER_MODULE_IMAGE=plimsoll/sandbox-sim:latest` and a `Run` with a `module` payload takes a
-`model` ID and a parameter table (one row per instance) and returns every row's
-status and outputs, decoded from the worker's versioned record; `Describe` then
-reports `supports_module`. It is the project machinery with one step and one
-artifact, so the same limits apply (8 MiB of results, the project timeout), and a
-table whose results could not fit is refused before any row runs rather than
-truncated. Nothing about the image changes between the two paths: the `model` ID
-`vanderpol` is `/models/vanderpol.so`, and adding a simulator is adding a line to this
-recipe's `wasm` and `build` stages.
+The same image also backs a dedicated operation. Point a daemon at it with
+`SANDBOX_DOCKER_MODULE_IMAGE=plimsoll/sandbox-sim:latest` and a `Run` with a `module`
+payload takes a `model` ID and a parameter table (one row per instance) and returns
+every row's status and outputs, decoded from the worker's versioned binary record;
+`Describe`, the procedure that reports what a daemon offers, then reports
+`supports_module`. It is the project machinery with one step and one artifact, so the
+same limits apply (8 MiB of results, the project timeout), and a table whose results
+could not fit is refused before any row runs rather than truncated. Nothing about the
+image changes between the two paths: the `model` ID `vanderpol` is
+`/models/vanderpol.so`, and adding a simulator is adding a line to this recipe's `wasm`
+and `build` stages.
 
 ### A compiler is image content too
 
 A compiler is one more program in the image root, named by a step.
 [docker/wasm-cc.Dockerfile](../docker/wasm-cc.Dockerfile) derives
 `plimsoll/sandbox-wasm-cc:latest` from the sim image, built by `make docker-images`,
-and adds the C half of wasi-sdk 27 at `/opt/wasi-sdk` (on `PATH`): clang, the
-WebAssembly linker, and a wasm32-wasip1 C library with its libm. It is taken from the
-same digest-pinned wasi-sdk image the sim build compiles the plants with, and adds
-about 150 MB. A project whose first step is
+and adds the C half of wasi-sdk 27 (the toolkit for compiling C to WebAssembly) at
+`/opt/wasi-sdk` (on `PATH`): clang, the WebAssembly linker, and a wasm32-wasip1 C
+library with its libm, the C math library. It is taken from the same digest-pinned
+wasi-sdk image the sim build compiles the simulators with, and adds about 150 MB. A
+project whose first step is
 
 ```sh
 clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -o controller.wasm controller.c
 ```
 
 gets a WebAssembly module in `/work` with no network, and a later step loads it with
-Node. Two things make that work under the run's lockdown:
+Node. Two things make that work under the run's restrictions:
 
 - **The compiler runs from the image root; its output is data.** clang and the linker
   are native programs, so they live in the read-only root like every other
@@ -274,21 +325,23 @@ Node. Two things make that work under the run's lockdown:
   reads and compiles in memory, never a native program the kernel would be asked to
   execute.
 - **libm is compiled into the module.** A controller that calls `cos` links
-  wasi-libc's implementation, so the module needs no host function for it and its
-  arithmetic does not depend on the Node that runs it.
+  wasi-libc's implementation, so the module needs nothing from the program hosting it
+  for that, and its arithmetic does not depend on the Node that runs it.
   [examples/wasm-controller](../examples/wasm-controller/) runs such a module with an
-  empty import object, and its README explains why the result still differs, in the
-  last bit, from a JavaScript program calling `Math.cos`.
+  empty import object (it gives the module nothing outside itself to call), and its
+  README explains why the result still differs, in the last bit, from a JavaScript
+  program calling `Math.cos`.
 
 ## Limits, stated plainly
 
 - No package installation during a run, ever, on any provider. An agent that must
-  install arbitrary packages mid-run is the case general-purpose sandbox VMs cover
-  and this component does not.
+  install arbitrary packages mid-run is the case general-purpose sandbox virtual
+  machines cover and plimsoll does not.
 - The image root is read-only in a run. A package that writes beside itself at
   runtime fails with a normal non-zero exit; `/work` and `/tmp` are the writable
   places, and they are the run's sized `noexec` tmpfs mounts.
 - Changing the dependency set means rebuilding, re-pinning and redeploying the
   image, and every caller of a daemon sees the same set.
-- E2B: the template bakes the toolchain the same way (`e2b/e2b.Dockerfile`), and the
-  recipe applies there; this page did not exercise that path.
+- E2B: its template (the image E2B starts each sandbox from) builds in the toolchain the
+  same way (`e2b/e2b.Dockerfile`), and the recipe applies there; this page did not
+  exercise that path.

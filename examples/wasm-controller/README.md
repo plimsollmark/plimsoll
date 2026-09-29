@@ -2,10 +2,12 @@
 
 A cart-pole swing-up controller written in C
 ([controller/controller.c](controller/controller.c)), sent as a file of an ordinary
-project run, compiled to WebAssembly by the run's first step, and judged against the
-cart-pole plant by the later steps. The plant (`/models/cartpole.wasm`) and the judge
-(`/oracle/judge.mjs`) are the ones [examples/oracle](../oracle/) uses; what is new is
-that the controller is no longer JavaScript.
+project run, compiled to WebAssembly by the run's first step, and run against the
+cart-pole plant by the later steps. The plant (`/models/cartpole.wasm`) is the one
+[examples/oracle](../oracle/) uses. The runner is the image's generic trial runner
+(`/oracle/judge.mjs`), a generalization of the oracle's runner (`/oracle/run.mjs`) that
+takes the plant and the scenario on its command line. What is new is that the controller is no longer
+JavaScript.
 
 ```sh
 make docker-images && go run ./examples/wasm-controller
@@ -25,12 +27,12 @@ One project run, two files, five steps:
 | `clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -o controller.wasm controller.c` | compiles the controller inside the sandbox, with `--network none` like every step |
 | `node /oracle/judge.mjs controller.js /models/cartpole.wasm 3.14159 0.5 1 0.01 20 s1.bin` and three more | one per scenario: the pole starts hanging (about pi rad), the cart mass varies from 0.8 to 1.2 kg |
 
-The judge spawns `controller.js`, the shared shim in
+The runner spawns `controller.js`, the shared shim in
 [examples/internal/wasmshim](../internal/wasmshim/controller.js), as the controller
-process, exactly as it would a controller written in JavaScript, so the judge did not
+process, exactly as it would a controller written in JavaScript, so the runner did not
 change. That file is a shim with no control arithmetic and no knowledge of the plant:
 it instantiates `controller.wasm` once per episode and, for each line of state the
-judge sends, calls the module's exported `control` with every value on the line and
+runner sends, calls the module's exported `control` with every value on the line and
 then the tick index, here `double control(double x, double v, double theta, double
 omega, int k)`, and writes the result back. State between ticks lives in the module's
 globals. The [buck converter example](../wasm-buck/) runs under the same shim.
@@ -40,14 +42,14 @@ WASI, not a clock, not `Math.cos`; a module that imports something is refused be
 the first tick, with the import named. So `sin` and `cos` are wasi-libc's, compiled
 into the module, and the whole closed loop (plant and controller) is WebAssembly.
 
-The page the run writes, live: [a controller in C, judged by its trajectory](https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html)
+The page the run writes, live: [a controller in C, checked by its trajectory](https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html)
 (source: [docs/examples/wasm-controller/index.html](../../docs/examples/wasm-controller/index.html)).
 It replays scenario s1, shows the source, the four scenarios and their fingerprints,
 and the comparison with the JavaScript law below, every number from the run.
 
 The program sends that run twice, then the two comparison runs described under "Does
 it reproduce the JavaScript controller bit for bit?", and prints, per scenario, the trajectory's
-fingerprint (the SHA-256 of the judge's per-tick record), whether both runs agree,
+fingerprint (the SHA-256 of the runner's per-tick record), whether both runs agree,
 whether it is the fingerprint recorded in [fingerprints.json](fingerprints.json), and
 the swing-up score: 1 minus the time the final unbroken upright stretch began, over
 20 s, and zero if the cart ever leaves the 2.4 m track.
@@ -61,14 +63,14 @@ s4  theta0 3.14159 cart 0.8  kg  a9a6287641198364  run 1 = run 2, = recorded  up
 
 ## What it proves
 
-- **A program in a compiled language can be built and judged through the unchanged
-  project API.** No daemon change, no new operation, no new environment variable: a
+- **A program in a compiled language can be built and run through the unchanged
+  project API, and scored from the record it returns.** No daemon change, no new operation, no new environment variable: a
   derived image and two steps. The same recipe holds for any language whose
   compiler targets WebAssembly and fits in an image.
 - **The compile is reproducible.** Two runs produce a byte-identical
   `controller.wasm`, and its SHA-256 is the one recorded in `fingerprints.json`.
 - **Each trajectory has one fingerprint.** Both runs give the same fingerprint for
-  every scenario, and it is the recorded one; the judge's printed fingerprint is the
+  every scenario, and it is the recorded one; the runner's printed fingerprint is the
   hash of the artifact that came back.
 - **The controller works.** Upright within 2.5 s and held to 20 s in all four
   scenarios, scoring above the 0.85 floor.
@@ -96,7 +98,7 @@ is identical.
 What does not differ is the motion. In every scenario the recorded state (cart
 position and velocity, pole angle and angular velocity) is bit-identical to the
 JavaScript run at every tick, including the ticks after each differing force: the
-judge hands the plant each force exactly as the controller wrote it, and a difference
+runner hands the plant each force exactly as the controller wrote it, and a difference
 that small is rounded away in the plant's next step. Two fingerprints, one swing.
 
 The run proves `cos` is the whole difference: the same `controller.c`, built with
@@ -112,7 +114,7 @@ Node or which V8 runs them.
 
 ## What it does not prove
 
-- **Not isolation beyond the run's tier.** The compiler, the judge and the controller
+- **Not isolation beyond the run's tier.** The compiler, the runner and the controller
   run inside one project run, behind whatever tier the daemon reports (`container`
   under runc here). The module's empty import object keeps it from calling the host,
   but that is a property of this shim, not a sandbox boundary; the sandbox boundary
@@ -123,4 +125,5 @@ Node or which V8 runs them.
 - **Not other languages.** Only C is set up: the image carries the C half of wasi-sdk
   (no C++ headers or libraries). Rust or Zig would be another derived image.
 - **Not a general agent loop.** Nothing here writes the controller; it is a fixed file.
-  The example shows the judging path an agent-written C controller would take.
+  The example shows the compile, run and scoring path an agent-written C controller
+  would take.

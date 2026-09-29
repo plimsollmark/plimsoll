@@ -3,11 +3,11 @@
 // plant, and the trajectory's fingerprint is the acceptance test.
 //
 // It builds plimsolld from this checkout, starts it on loopback with the docker
-// provider and the module image as the project image (so the image's judge,
+// provider and the module image as the project image (so the image's runner,
 // /oracle/run.mjs, and its plant, /models/cartpole.wasm, are what run), then sends
 // three ordinary project runs through the official client: the accepted controller
 // twice and the agent's draft once. Each run's only file is the controller; the
-// judge runs it as a separate process, records every 10 ms tick, and the artifact
+// runner runs it as a separate process, records every 10 ms tick, and the artifact
 // it writes is hashed here. The page it renders replays the recorded trajectories.
 //
 //	make docker-images && go run ./examples/oracle
@@ -54,11 +54,11 @@ var draftSource string
 
 const (
 	ticks = 2000 // 20 s at 10 ms
-	width = 4    // x, v, theta, omega; the judge appends the force
+	width = 4    // x, v, theta, omega; the runner appends the force
 	step  = "node --no-warnings /oracle/run.mjs controller.js"
 )
 
-// verdict is the judge's one stdout line.
+// verdict is the runner's one stdout line.
 type verdict struct {
 	Fingerprint string   `json:"fingerprint"`
 	Ticks       int      `json:"ticks"`
@@ -67,7 +67,7 @@ type verdict struct {
 	FinalTheta  float64  `json:"final_theta"`
 }
 
-// run is one judged controller: what the judge said, what the artifact hashed to,
+// run is one controller's run: what the runner said, what the artifact hashed to,
 // and the trajectory decoded for the page.
 type run struct {
 	Name        string    `json:"name"`
@@ -84,7 +84,7 @@ type run struct {
 
 func main() {
 	out := flag.String("out", filepath.Join("docs", "examples", "oracle", "index.html"), "page to write")
-	image := flag.String("image", "plimsoll/sandbox-sim:latest", "module image carrying the plant and the judge")
+	image := flag.String("image", "plimsoll/sandbox-sim:latest", "module image carrying the plant and the runner")
 	flag.Parse()
 	if err := realMain(*out, *image); err != nil {
 		fmt.Fprintln(os.Stderr, "oracle:", err)
@@ -188,20 +188,20 @@ func judge(ctx context.Context, remote *client.Remote, name, source string) (run
 		return run{}, fmt.Errorf("%s: %w", name, err)
 	}
 	if res.Outcome != sandbox.ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 0 {
-		return run{}, fmt.Errorf("%s: the judge did not complete: outcome %s (%s), steps %+v", name, res.Outcome, res.Detail, res.Steps)
+		return run{}, fmt.Errorf("%s: the runner did not complete: outcome %s (%s), steps %+v", name, res.Outcome, res.Detail, res.Steps)
 	}
 	if len(res.Artifacts) != 1 {
 		return run{}, fmt.Errorf("%s: %d artifacts, want the trajectory", name, len(res.Artifacts))
 	}
 	var v verdict
 	if err := json.Unmarshal([]byte(strings.TrimSpace(res.Steps[0].Stdout)), &v); err != nil {
-		return run{}, fmt.Errorf("%s: judge stdout %q: %w", name, res.Steps[0].Stdout, err)
+		return run{}, fmt.Errorf("%s: runner stdout %q: %w", name, res.Steps[0].Stdout, err)
 	}
 	sum := sha256.Sum256(res.Artifacts[0].Content)
 	r := run{Name: name, Fingerprint: hex.EncodeToString(sum[:]), FellAt: v.FellAt, FinalX: v.FinalX, FinalTheta: v.FinalTheta,
 		Isolation: res.Isolation.String(), DurationMs: sumDurations(res.Steps)}
 	if r.Fingerprint != v.Fingerprint {
-		return run{}, fmt.Errorf("%s: the judge printed %s but the artifact hashes to %s", name, v.Fingerprint, r.Fingerprint)
+		return run{}, fmt.Errorf("%s: the runner printed %s but the artifact hashes to %s", name, v.Fingerprint, r.Fingerprint)
 	}
 	r.X, r.Theta, r.Force, err = decode(res.Artifacts[0].Content)
 	if err != nil {
@@ -218,7 +218,7 @@ func sumDurations(steps []sandbox.StepResult) int64 {
 	return ms
 }
 
-// decode reads the judge's record: per tick x, v, theta, omega, force as
+// decode reads the runner's record: per tick x, v, theta, omega, force as
 // little-endian float64. The page keeps x, theta and the force, rounded for
 // display; the fingerprint is of the exact bytes.
 func decode(b []byte) (x, theta, force []float64, err error) {
@@ -317,7 +317,7 @@ func startDaemon(ctx context.Context, binary, addr, clientsPath, image string, s
 		"PLIMSOLL_METRICS_ADDR=off",
 		"PLIMSOLL_CLIENTS_FILE="+clientsPath,
 	)
-	// The shipped syscall allowlist, when this runs from the checkout: the judge
+	// The shipped syscall allowlist, when this runs from the checkout: the runner
 	// and its child process must work under the same profile a deployment uses.
 	if abs, err := filepath.Abs(filepath.Join("docker", "seccomp.json")); err == nil {
 		if _, err := os.Stat(abs); err == nil && os.Getenv("SANDBOX_DOCKER_SECCOMP") == "" {

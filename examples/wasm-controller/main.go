@@ -1,4 +1,4 @@
-// Command wasm-controller judges a controller written in C: the project run
+// Command wasm-controller runs and scores a controller written in C: the project run
 // compiles it to WebAssembly inside the sandbox, then runs it against the
 // cart-pole plant, which is WebAssembly too. See README.md for what this proves
 // and what it does not.
@@ -6,7 +6,7 @@
 // It builds plimsolld from this checkout, starts it on loopback with the docker
 // provider and plimsoll/sandbox-wasm-cc as the project image, and sends ordinary
 // project runs through the official client. The C run's files are controller.c and
-// controller.js (the Node shim the judge spawns as the controller process, shared
+// controller.js (the Node shim the runner spawns as the controller process, shared
 // with the other C example from examples/internal/wasmshim); its
 // first step compiles controller.c with the image's wasi-sdk, and one step per
 // swing-up scenario runs /oracle/judge.mjs against /models/cartpole.wasm. Each
@@ -65,7 +65,7 @@ var fixtureJSON []byte
 var pageTemplate string
 
 const (
-	width = 4   // x, v, theta, omega; the judge appends the force
+	width = 4   // x, v, theta, omega; the runner appends the force
 	track = 2.4 // metres either side of centre; leaving it scores zero
 	// uprightCos is the score's upright test: cos theta above it.
 	uprightCos = 0.98
@@ -100,7 +100,7 @@ type judged struct {
 }
 
 // result is one project run: the compiled module's hash (when the run compiled
-// one), each scenario's judgement, and the evidence the run reported.
+// one), each scenario's fingerprint, record and score, and the evidence the run reported.
 type result struct {
 	wasmSHA256 string
 	wasmBytes  int
@@ -112,7 +112,7 @@ type result struct {
 
 func main() {
 	out := flag.String("out", filepath.Join("docs", "examples", "wasm-controller", "index.html"), "page to write")
-	image := flag.String("image", "plimsoll/sandbox-wasm-cc:latest", "project image carrying the C toolchain, the plant and the judge")
+	image := flag.String("image", "plimsoll/sandbox-wasm-cc:latest", "project image carrying the C toolchain, the plant and the runner")
 	flag.Parse()
 	if err := realMain(*out, *image); err != nil {
 		fmt.Fprintln(os.Stderr, "wasm-controller:", err)
@@ -185,7 +185,7 @@ func realMain(out, image string) error {
 		if err != nil {
 			return fmt.Errorf("C run %d: %w", i, err)
 		}
-		fmt.Printf("run %d     | controller.wasm %d bytes, sha256 %s  (compile %d ms, judging %d ms, %s tier)\n", i, r.wasmBytes, r.wasmSHA256[:16], r.buildMs, r.judgeMs, r.isolation)
+		fmt.Printf("run %d     | controller.wasm %d bytes, sha256 %s  (compile %d ms, trials %d ms, %s tier)\n", i, r.wasmBytes, r.wasmSHA256[:16], r.buildMs, r.judgeMs, r.isolation)
 		runs = append(runs, r)
 	}
 	hostCos, err := judge(ctx, remote, fx, []sandbox.File{{Path: "controller.c", Content: controllerC}, {Path: "controller.js", Content: mathCos}}, fx.MathCosBuild, "controller.js")
@@ -266,7 +266,7 @@ func realMain(out, image string) error {
 
 func num(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
 
-// judge sends one project run: an optional compile, then one judge step per
+// judge sends one project run: an optional compile, then one runner step per
 // scenario, each running controller (a file of the run) as the controller process.
 func judge(ctx context.Context, remote *client.Remote, fx fixture, files []sandbox.File, build, controller string) (result, error) {
 	var steps, artifacts []string
@@ -318,7 +318,7 @@ func judge(ctx context.Context, remote *client.Remote, fx fixture, files []sandb
 			Fingerprint string `json:"fingerprint"`
 		}
 		if err := json.Unmarshal([]byte(strings.TrimSpace(step.Stdout)), &v); err != nil {
-			return result{}, fmt.Errorf("%s: judge stdout %q: %w", s.ID, step.Stdout, err)
+			return result{}, fmt.Errorf("%s: runner stdout %q: %w", s.ID, step.Stdout, err)
 		}
 		traj := byPath[s.ID+".bin"]
 		if len(traj) != ticks*(width+1)*8 {
@@ -327,7 +327,7 @@ func judge(ctx context.Context, remote *client.Remote, fx fixture, files []sandb
 		ts := sha256.Sum256(traj)
 		fp := hex.EncodeToString(ts[:])
 		if fp != v.Fingerprint {
-			return result{}, fmt.Errorf("%s: the judge printed %s but the artifact hashes to %s", s.ID, v.Fingerprint, fp)
+			return result{}, fmt.Errorf("%s: the runner printed %s but the artifact hashes to %s", s.ID, v.Fingerprint, fp)
 		}
 		score, failure := score(traj)
 		r.scenarios[s.ID] = judged{fingerprint: fp, trajectory: traj, score: score, failure: failure}
@@ -335,7 +335,7 @@ func judge(ctx context.Context, remote *client.Remote, fx fixture, files []sandb
 	return r, nil
 }
 
-// at reads column col of tick k from a judge record: per tick x, v, theta, omega,
+// at reads column col of tick k from a runner record: per tick x, v, theta, omega,
 // force as little-endian float64.
 func at(traj []byte, k, col int) float64 {
 	return math.Float64frombits(binary.LittleEndian.Uint64(traj[(k*(width+1)+col)*8:]))
@@ -515,7 +515,7 @@ func render(fx fixture, runs []result, js result, rows []scenarioRow, isolation 
 	if cmp.StateTick != nil {
 		state = fmt.Sprintf("the state parts from tick %d", *cmp.StateTick)
 	}
-	description := fmt.Sprintf("A cart-pole swing-up controller written in C, compiled to WebAssembly inside a sandbox run and judged by the fingerprint of its trajectory. "+
+	description := fmt.Sprintf("A cart-pole swing-up controller written in C, compiled to WebAssembly inside a sandbox run and checked by the fingerprint of its trajectory. "+
 		"The compile and every trajectory repeat exactly. Against the JavaScript law it was ported from, %d of %d scenarios match to the last bit. "+
 		"On %s the records differ in %d of %d rows, first at tick %d, because cos differs in the last bit; %s.",
 		identical, len(rows), s1.ID, len(cmp.Rows), len(runs[0].scenarios[s1.ID].trajectory)/8/(width+1), cmp.Rows[0].Tick, state)
@@ -580,7 +580,7 @@ func startDaemon(ctx context.Context, binary, addr, clientsPath, image string, s
 		"PLIMSOLL_CLIENTS_FILE="+clientsPath,
 	)
 	// The shipped syscall allowlist, when this runs from the checkout: the compiler,
-	// the judge and the controller process must all work under the profile a
+	// the runner and the controller process must all work under the profile a
 	// deployment uses.
 	if abs, err := filepath.Abs(filepath.Join("docker", "seccomp.json")); err == nil {
 		if _, err := os.Stat(abs); err == nil && os.Getenv("SANDBOX_DOCKER_SECCOMP") == "" {

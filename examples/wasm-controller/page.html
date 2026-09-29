@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>A controller in C, compiled to WebAssembly in the sandbox and judged by its trajectory</title>
+<title>A controller in C, compiled to WebAssembly in the sandbox and checked by its trajectory</title>
 <meta name="description" content="{{.Description}}">
 <link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="plimsoll">
-<meta property="og:title" content="A controller in C, compiled to WebAssembly in the sandbox and judged by its trajectory">
+<meta property="og:title" content="A controller in C, compiled to WebAssembly in the sandbox and checked by its trajectory">
 <meta property="og:description" content="{{.Description}}">
 <meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html">
 <meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/wasm-controller-example.png">
@@ -61,8 +61,8 @@
 <body>
 <main>
 <nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
-<h1>A controller in C, compiled to WebAssembly in the sandbox and judged by its trajectory</h1>
-<p class="sub">The results on this page were measured in real runs through plimsoll's docker tier ({{.Isolation}}) on {{.Date}}; the inputs the runs were given are named as inputs where they appear. The caller sent two files: <code>controller.c</code>, a controller that swings a hanging pole up and balances it, and <code>controller.js</code>, a Node shim with no arithmetic of its own. The run's first step compiled the C to WebAssembly inside the sandbox, with no network. The later steps handed the result to the judge baked into the image, which pushed a simulated cart with a pole hinged on it (the <b>plant</b>, control engineering's word for the thing being controlled, itself compiled to WebAssembly) through the controller one {{.TickMs}} ms tick at a time and recorded every tick. The SHA-256 of that record is the <b>fingerprint</b>.</p>
+<h1>A controller in C, compiled to WebAssembly in the sandbox and checked by its trajectory</h1>
+<p class="sub">The results on this page were measured in real runs through plimsoll's docker tier ({{.Isolation}}) on {{.Date}}; the inputs the runs were given are named as inputs where they appear. The caller sent two files: <code>controller.c</code>, a controller that swings a hanging pole up and balances it, and <code>controller.js</code>, a Node shim with no arithmetic of its own. The run's first step compiled the C to WebAssembly inside the sandbox, with no network. The later steps handed the result to the runner baked into the image, which pushed a simulated cart with a pole hinged on it (the <b>plant</b>, control engineering's word for the thing being controlled, itself compiled to WebAssembly) through the controller one {{.TickMs}} ms tick at a time and recorded every tick. The SHA-256 of that record is the <b>fingerprint</b>.</p>
 
 <div class="row">
   <section class="panel">
@@ -74,7 +74,7 @@
       <span id="clock">t = 0.00 s</span>
     </div>
     <p class="note" id="stage-note"></p>
-    <p class="note">The browser only replays the judge's record; no physics runs here. Loops every {{.TEnd}} s.</p>
+    <p class="note">The browser only replays the runner's record; no physics runs here. Loops every {{.TEnd}} s.</p>
   </section>
 
   <section class="panel">
@@ -130,11 +130,11 @@
   <li><b>It proves identical replay.</b> The fingerprint is the SHA-256 of every recorded tick's state and force as raw doubles, so the same fingerprint twice means the two runs produced the same record to the last bit, and a different one means some bit somewhere differs. It is sensitive to one bit anywhere in the record, the controller's forces included, as the comparison above shows.</li>
   <li><b>It does not prove physical accuracy.</b> The simulator uses fixed steps to represent a cart and a pole. A fingerprint says the plant and the controller computed the same thing again; it says nothing about how close that thing is to a real cart on a real rail. Nor does a different fingerprint by itself mean different physics: the record holds the controller's forces, so a last-bit change there changes the hash even when the plant rounds it away.</li>
   <li><b>It does not say which <code>cos</code> is right.</b> Both builds are deterministic and both swing the pole up; they are two slightly different programs, and the fingerprint tells them apart. Which to trust is a question about the math library, not about the run.</li>
-  <li><b>It does not rank controllers.</b> Two controllers whose gains differ in the last digit balance the same and hash differently. Whether the pole came up, and when, is the judge's separate score in the table.</li>
+  <li><b>It does not rank controllers.</b> Two controllers whose gains differ in the last digit balance the same and hash differently. Whether the pole came up, and when, is the separate score in the table, which the example program computes on the host from the runner's record.</li>
   <li><b>It does not survive a toolchain change.</b> The module's bytes depend on the compiler image and the flags; change either and the recorded hashes change, deliberately.</li>
-  <li><b>It is not isolation.</b> The compiler, the judge and the controller all run inside one project run, behind the tier the daemon reports. The shim gives the module an empty import object, so it cannot call the host, but that is a property of the shim; the sandbox boundary is the tier.</li>
+  <li><b>It is not isolation.</b> The compiler, the runner and the controller all run inside one project run, behind the tier the daemon reports. The shim gives the module an empty import object, so it cannot call the host, but that is a property of the shim; the sandbox boundary is the tier.</li>
 </ul>
-<p class="note">The same judge and plant, with a JavaScript controller written by an agent: <a href="https://plimsollmark.github.io/plimsoll/examples/oracle/index.html">the physics oracle run report (INTERNAL · run report →)</a>. Reproduce this page: <code>make docker-images &amp;&amp; go run ./examples/wasm-controller</code> in the plimsoll repository, with docker. The page is written from the run.</p>
+<p class="note">The same plant, with a JavaScript controller written by an agent and the physics oracle's own runner: <a href="https://plimsollmark.github.io/plimsoll/examples/oracle/index.html">the physics oracle run report (INTERNAL · run report →)</a>. Reproduce this page: <code>make docker-images &amp;&amp; go run ./examples/wasm-controller</code> in the plimsoll repository, with docker. The page is written from the run.</p>
 
 <script type="application/json" id="data">{{.Data}}</script>
 <script>
@@ -191,7 +191,7 @@
     li(`Tick ${r.tick} (t = ${(r.tick * h).toFixed(2)} s), differing in ${r.columns.join(', ')}: pole angle <code>${r.theta}</code> rad; the C build returned <code>${r.force_c}</code> N and JavaScript <code>${r.force_js}</code> N, ${r.ulps} representable double${r.ulps === 1 ? '' : 's'} apart.`);
   }
   li(V.state_tick == null
-    ? `Every other value is bit-identical, the state in the rows after each differing force included. The judge hands the plant each force exactly as the controller wrote it, so at those ticks the plant did receive different forces; its next state came out bit-identical anyway, because a difference that small was rounded away in its arithmetic. The two swings are the same swing.`
+    ? `Every other value is bit-identical, the state in the rows after each differing force included. The runner hands the plant each force exactly as the controller wrote it, so at those ticks the plant did receive different forces; its next state came out bit-identical anyway, because a difference that small was rounded away in its arithmetic. The two swings are the same swing.`
     : `The state first differs at tick ${V.state_tick}; the largest pole-angle difference over the run is ${V.max_theta_delta.toExponential(2)} rad.`);
   li(V.state_tick == null
     ? `So the fingerprints differ while the cart and pole never moved differently: the record holds the forces too, and ${V.rows.length} value${V.rows.length === 1 ? '' : 's'} out of ${N * 5}, off by a few representable doubles, are enough to change its hash.`
@@ -289,7 +289,7 @@
     const tx = fa.sx(r.tick * h);
     chart.append(el('line', { x1: tx, y1: 40, x2: tx, y2: 240, stroke: '#8a1c1c', 'stroke-dasharray': '3 3' }));
   }
-  txt('chart-note', `Left: the two pole angles over the whole run of ${S.id}, drawn over each other, unwrapped as the judge records them (0 and 2 pi are both upright, pi is hanging); ` +
+  txt('chart-note', `Left: the two pole angles over the whole run of ${S.id}, drawn over each other, unwrapped as the runner records them (0 and 2 pi are both upright, pi is hanging); ` +
     (V.state_tick == null ? `they are bit-identical at every tick, so the dashed line sits exactly on the solid one. ` : `they first differ at tick ${V.state_tick}. `) +
     `Right: how many representable doubles apart the two forces are at each tick; the green line is exactly zero, and the red stems are the only ticks where it is not. The dotted red lines on the left mark those ticks.`);
 })();
