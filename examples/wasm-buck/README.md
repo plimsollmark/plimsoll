@@ -27,7 +27,7 @@ One project run, two files, five steps:
 | Step | What it is |
 |---|---|
 | `clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -o controller.wasm controller.c` | compiles the controller inside the sandbox, with `--network none` like every step |
-| `node /oracle/judge.mjs controller.js /models/buck.wasm 12 4 0.01 1e-05 0.02 s1.bin` and three more | one per scenario: 10 to 16 V in, a 2 to 8 ohm load whose resistance halves (so its current doubles) at an unknown moment, 2,000 ticks of 10 microseconds |
+| `node /oracle/judge.mjs controller.js /models/buck.wasm s1.scenario 1e-05 0.02 s1.bin` and three more (each `.scenario` file holds that scenario's three parameters, here `12 4 0.01`; the runner deletes it before the controller starts) | one per scenario: 10 to 16 V in, a 2 to 8 ohm load whose resistance halves (so its current doubles) at an unknown moment, 2,000 ticks of 10 microseconds |
 
 `controller.js` is the shared shim in
 [examples/internal/wasmshim](../internal/wasmshim/controller.js). It has no control

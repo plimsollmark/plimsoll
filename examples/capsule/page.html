@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>plimsoll run records as Agent Action Capsules</title>
+<meta name="description" content="Five calls from plimsoll's published session bundle, each stated as an Agent Action Capsule (draft-mih-scitt-agent-action-capsule-05) and checked by plimsoll's verifier and by both of the capsule project's verifiers.">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/capsule/index.html">
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --blue: #2a78d6; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  p { margin: 6px 0; }
+  .sub { color: var(--ink2); margin-bottom: 18px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0 6px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .tile .k { color: var(--ink2); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  .tile .v { font-size: 20px; font-weight: 650; margin-top: 2px; }
+  .tile .n { color: var(--ink2); font-size: 12.5px; margin-top: 2px; }
+  code, .mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .mono { word-break: break-all; }
+  pre { margin: 0; padding: 8px 10px; background: #fff; border: 1px solid var(--line); border-radius: 6px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink2); font-weight: 600; font-size: 13px; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-weight: 600; font-size: 13px; white-space: nowrap; }
+  .badge.ok { background: #e6f4ea; color: #1e6b2f; }
+  .badge.no { background: #fdecea; color: #8a1c1c; }
+  .note { color: var(--ink2); font-size: 13px; }
+  .wide { overflow-x: auto; }
+  ul li { margin: 4px 0; }
+  a { color: var(--blue); }
+  @media (max-width: 900px) { .tiles { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/sessions/index.html">The session these came from</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
+<h1>plimsoll run records as Agent Action Capsules</h1>
+<p class="sub">An <a href="https://datatracker.ietf.org/doc/draft-mih-scitt-agent-action-capsule/">Agent Action Capsule ↗</a> is a signed JSON record of one action an automated system took: why it ended as it did, what is known about its effect, and who vouches for that. This page takes the five calls in plimsoll's <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/index.html">published session bundle</a> and states each as a capsule ({{.Spec}}). plimsoll's own verifier checks the bundle first; only a record it accepted becomes a capsule. Then both of the capsule project's verifiers check the result, including copies deliberately broken to be refused.</p>
+
+<div class="tiles">
+  <div class="tile"><div class="k">Capsules</div><div class="v">{{len .Capsules}}</div><div class="n">one per call, chained in call order</div></div>
+  <div class="tile"><div class="k">Checks as expected</div><div class="v">{{.Passed}} of {{.Run}}</div><div class="n">plimsoll's verifier, and the capsule project's in Go and in Python</div></div>
+  <div class="tile"><div class="k">Stated from</div><div class="v">backfilled</div><div class="n">records made 28 Sept, stated as capsules afterwards</div></div>
+  <div class="tile"><div class="k">Import time</div><div class="v" style="font-size:16px">{{.ImportedAt}}</div><div class="n">pass it to reproduce every capsule ID</div></div>
+</div>
+
+<h2>The capsules</h2>
+<div class="wide"><table>
+<tr><th>Call</th><th>What the call's code did</th><th>Verdict</th><th>Effect</th><th>Capsule ID</th><th>Source: plimsoll run record</th><th>Follows</th></tr>
+{{range .Capsules}}<tr><td>{{.Sequence}}</td><td>{{.Result}}</td><td><code>{{.Verdict}}</code></td><td><code>{{.Status}}</code></td><td class="mono"><a href="https://plimsollmark.github.io/plimsoll/examples/capsule/capsules/{{.ID}}.json">{{short .ID}}</a></td><td class="mono">{{short .Record}}</td><td class="mono">{{if .Parent}}{{short .Parent}}{{else}}(first call){{end}}</td></tr>
+{{end}}</table></div>
+<p class="note">Call 1's own test failed on purpose (the session example plants a bug and fixes it in call 2). It is still <code>executed</code> and <code>confirmed</code>: plimsoll ran the code and observed the result, and the exit code is inside the digested response. A failing program is a result, not an unknown.</p>
+
+<h2>What each verifier did</h2>
+<div class="wide"><table>
+<tr><th style="width:13%">Verifier</th><th style="width:30%">Input</th><th style="width:17%">Expected</th><th>Result</th><th style="width:1%"></th></tr>
+{{range .Checks}}<tr><td>{{.Verifier}}</td><td>{{.What}}</td><td>{{.Want}}</td><td>{{.Got}}</td><td>{{if .Skipped}}<span class="badge">not run</span>{{else if .OK}}<span class="badge ok">as expected</span>{{else}}<span class="badge no">not as expected</span>{{end}}</td></tr>
+{{end}}</table></div>
+<p class="note">The Python verifier is the capsule project's reference implementation (<code>agent-action-capsule</code> 0.6.0, with its own canonicalization and SHA-256), so it shares no code with the Go emitter that built the capsules. Signatures are checked twice: in Go by the emitter's <code>VerifyEnvelope</code> (go-cose), and in Python by the project's own <code>verify_producer_envelope</code>, which reaches COSE_Sign1 through <a href="https://github.com/action-state-group/scitt-cose">scitt-cose ↗</a> 0.4.0. scitt-cose implements COSE_Sign1 from scratch rather than wrapping a COSE library, so the two signature checks share no COSE code either.</p>
+<p class="note">The last two rows differ on purpose. Removing a capsule from the middle of the chain is caught because the next capsule names it as its parent. Removing the last one is not caught by a store check, because nothing names it; that is what the capsule project's witnessed log is for, and these capsules were not sent to one. plimsoll's bundle ends in a signed statement of how many calls the session made and which record was last, so its verifier catches a missing tail on its own.</p>
+
+<h2>How a plimsoll outcome reads as a capsule</h2>
+<div class="wide"><table>
+<tr><th>plimsoll outcome</th><th><code>verdict_class</code></th><th><code>effect.status</code></th><th>Derived <code>effect_mode</code></th><th><code>reason_digest</code></th></tr>
+<tr><td><code>completed</code>, any exit code</td><td><code>executed</code></td><td><code>confirmed</code></td><td><code>confirmed</code></td><td>absent</td></tr>
+<tr><td><code>timed_out</code></td><td><code>timeout</code></td><td><code>dispatched</code></td><td><code>dispatched_unconfirmed</code></td><td>the outcome</td></tr>
+<tr><td><code>setup_failed</code></td><td><code>errored</code></td><td><code>dispatched</code></td><td><code>dispatched_unconfirmed</code></td><td>the outcome</td></tr>
+<tr><td><code>protocol_error</code></td><td><code>errored</code></td><td><code>dispatched</code></td><td><code>dispatched_unconfirmed</code></td><td>the outcome</td></tr>
+</table></div>
+<p class="note">Every row uses <code>effect_attestation: gate_executed</code>, the capsule vocabulary's strongest grade: the engine observed the effect boundary directly. plimsoll ran the code, so that is what it did. The bundle above exercises only the first row; the other three are built and checked by both verifiers in <code>examples/capsule/mapping_test.go</code>. <code>setup_failed</code> and <code>protocol_error</code> share a class and a status, and a <code>dispatched</code> effect may not carry a response digest, so the reason digest (a digest of <code>{"plimsoll_outcome": ...}</code>) is what keeps them apart. Each session call after the first chains to the one before with <code>relation: follows</code>, which orders without claiming anything about the parent.</p>
+
+<h2>What these capsules claim, and what they do not</h2>
+<ul>
+<li><strong>They are backfilled, and say so.</strong> <code>provenance_mode</code> is <code>backfilled</code> with <code>time_rung: self_attested</code>: the times come from plimsoll's records, which a harness signed, and no witness saw them. <code>source_ref</code> is each call's plimsoll run record, by the SHA-256 plimsoll's verifier checks; <code>import_batch</code> is the SHA-256 of the bundle file itself.</li>
+<li><strong>The producer is a collector.</strong> <code>provenance: collector</code>: this program read signed records afterwards; it did not run the code. The <code>gate_executed</code> grade is the gate's, carried from the record the capsule cites. Whether a collector may carry that grade, or only the gate itself may state it, is a question for the specification's authors, not something this page settles.</li>
+<li><strong>No model identity.</strong> The five calls were written by hand for the session example, so there is no model to attest. An execution layer never learns which model wrote the code it runs; that identity has to come from the caller.</li>
+<li><strong><code>code_execution</code> is not a registered effect type.</strong> The seeded types are <code>write_order</code>, <code>send_payment</code> and <code>inference_completion</code>. The Python verifier reports the value as informational, which is what the specification says it must do.</li>
+<li><strong>Nothing here was sent anywhere.</strong> No capsule was registered with a transparency service. The producer key was made for this run and discarded; its public half is <a href="https://plimsollmark.github.io/plimsoll/examples/capsule/producer.pub">producer.pub</a>.</li>
+<li><strong>Refusals are missing.</strong> The specification requires a capsule for every verdict, refusals included, and calls a success-only trail survivorship-biased. plimsoll answers a refused run with an error that carries no record today, so there is nothing to state a <code>blocked</code> or <code>denied</code> capsule from.</li>
+</ul>
+
+<h2>Check it yourself</h2>
+<pre>git clone https://github.com/plimsollmark/plimsoll &amp;&amp; cd plimsoll/examples/capsule
+go run . -out /tmp/capsule-check            # Go 1.27; same capsule IDs, new signatures
+pip install "agent-action-capsule[envelope]==0.6.0"
+agent-action-capsule verify --store ../../docs/examples/capsule/capsules</pre>
+<p class="note">Files beside this page: <a href="https://github.com/plimsollmark/plimsoll/tree/main/docs/examples/capsule/capsules">capsules/ ↗</a> (one JSON file per capsule, named by its ID: the store the Python verifier reads), <a href="https://plimsollmark.github.io/plimsoll/examples/capsule/envelopes.jsonl">envelopes.jsonl</a> (each capsule's COSE_Sign1 signature, base64), and <a href="https://plimsollmark.github.io/plimsoll/examples/capsule/producer.pub">producer.pub</a>. The import this page states used the bundle <span class="mono">{{.Batch}}</span>.</p>
+</main>
+</body>
+</html>

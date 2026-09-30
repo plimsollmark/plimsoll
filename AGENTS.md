@@ -89,12 +89,18 @@ option is intentionally only process-tier.
   (256 pages; a greedy row fails alone), and the physics oracle: a cart-pole simulator
   kept as WebAssembly at `/models/cartpole.wasm` behind a stepping shim, and the
   runner `/oracle/run.mjs` that runs a caller's controller as a separate process and
-  fingerprints the trajectory (`sandbox/docker_oracle_test.go`).
+  fingerprints the trajectory (`sandbox/docker_oracle_test.go`). The generic trial runner
+  `/oracle/judge.mjs` (any plant, the scenario chosen by data) takes each scenario from a
+  file it deletes before the controller starts, never from a command line, and
+  re-executes itself under the runner guard, proven by the runner's own same-uid probe,
+  so a controller can read neither a hidden scenario parameter nor the runner's memory
+  and descriptors (`sandbox/docker_judge_scenario_test.go`). `/oracle/run.mjs` is
+  vendored unchanged and does not guard itself; its scenarios are public.
   [docker/wasm-cc.Dockerfile](docker/wasm-cc.Dockerfile) derives
   `plimsoll/sandbox-wasm-cc` from the sim image: the C half of wasi-sdk 27 (clang and
   a wasm32-wasip1 libc with libm), pinned by the same image digest the sim build
   uses, so a project step can compile C to a WebAssembly module with no network.
-- [examples/](examples/) — nine runnable programs: `minimal` (one snippet and the
+- [examples/](examples/) — ten runnable programs: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
   the injected client and being refused by the broker anyway, then the identical
   request succeeding under a separate per-run grant that lists it), `daemon` (the
@@ -109,7 +115,8 @@ option is intentionally only process-tier.
   WebAssembly by the run's first step in `plimsoll/sandbox-wasm-cc` and run on
   four scenarios by the generic trial runner `/oracle/judge.mjs` through the shared Node shim
   ([examples/internal/wasmshim](examples/internal/wasmshim/), which passes the module
-  every observation and the tick index, so it serves any single-output simulator, and gives
+  every observation and the tick index, with optional `control_count` and
+  `control_output` exports for multiple commands, and gives
   the module no imports); the page it writes, `docs/examples/wasm-controller/index.html`, replays
   the swing-up and compares the record with `controller/reference.js` tick by tick;
   `sandbox/docker_wasm_controller_test.go` asserts a reproducible compile,
@@ -124,11 +131,15 @@ option is intentionally only process-tier.
   by the constructor plimsolld uses (`sandbox.Build`, or `openshell.FromEnv`) and proven
   by `EnsureReady`; the page it writes compares the
   fingerprints with the one the oracle page published; E2B and dockercloud rows need
-  their credentials and are paid, and the openshell row needs a gateway), and `sessions`
+  their credentials and are paid, and the openshell row needs a gateway), `sessions`
   (needs an OpenShell gateway: one session of five calls through plimsolld with the
   `attest` harness signing every record; the page it writes, `docs/examples/sessions/`,
   shows the chain and the verifier refusing a dropped call and a changed byte, with the
-  bundle and public key beside it). The examples that run the daemon build it from source
+  bundle and public key beside it), and `capsule` (its own Go module, because the capsule
+  emitter needs Go 1.27 and dependencies plimsoll does not take on: each call in the
+  sessions bundle, once `attest` has accepted it, stated as an Agent Action Capsule under
+  draft-mih-scitt-agent-action-capsule-05 and checked by that project's Go and Python
+  verifiers; the page it writes is `docs/examples/capsule/`). The examples that run the daemon build it from source
   through [examples/internal/daemonproc](examples/internal/daemonproc/).
 - [docs/trainers/](docs/trainers/) — dependency-free interactive lessons covering
   the execution model, architecture, providers, dependencies, the API broker and

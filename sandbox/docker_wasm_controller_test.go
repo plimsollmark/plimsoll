@@ -96,7 +96,7 @@ func wasmControllerFixtureFile(t *testing.T) wasmControllerFixture {
 
 // wasmShimPath is the one Node shim every C controller runs under
 // (examples/internal/wasmshim). It passes the module whatever observations the judge
-// sends, so it serves every single-output plant.
+// sends, with optional vector-output exports for multiple-command plants.
 const wasmShimPath = "../examples/internal/wasmshim/controller.js"
 
 func readWasmShim(t *testing.T) string {
@@ -116,6 +116,7 @@ type wasmJudged struct {
 	TickS     float64
 	TEndS     float64
 	Width     int
+	Inputs    int
 	Scenarios []wasmScenario
 }
 
@@ -124,15 +125,22 @@ type wasmScenario struct {
 	Params []float64
 }
 
-// step is the judge step that runs controller (a file of the run) on scenario s
-// and writes its trajectory to <id>.bin.
+// step is the judge step that runs controller (a file of the run) on scenario s,
+// read from s.file(), and writes its trajectory to <id>.bin.
 func (j wasmJudged) step(controller string, s wasmScenario) string {
 	num := func(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
-	args := []string{"node --no-warnings /oracle/judge.mjs", controller, j.Plant}
-	for _, p := range s.Params {
-		args = append(args, num(p))
-	}
-	return strings.Join(append(args, num(j.TickS), num(j.TEndS), s.ID+".bin"), " ")
+	return strings.Join([]string{"node --no-warnings /oracle/judge.mjs", controller, j.Plant,
+		s.ID + ".scenario", num(j.TickS), num(j.TEndS), s.ID + ".bin"}, " ")
+}
+
+// file is the scenario file the judge step for s reads and deletes. Every scenario of a
+// run sends its file up front, so an earlier scenario's controller can read a later
+// scenario's parameters: that is fine for these public scenarios, and why a secret
+// scenario gets a run of its own.
+func (s wasmScenario) file() File {
+	f := scenarioFile(s.Params...)
+	f.Path = s.ID + ".scenario"
+	return f
 }
 
 type judgedScenario struct {
@@ -151,7 +159,9 @@ func runWasmJudged(t *testing.T, d *DockerSandbox, j wasmJudged, files []File, b
 		steps, artifacts = []string{build}, []string{"controller.wasm"}
 	}
 	judgeFrom := len(steps)
+	files = append([]File(nil), files...)
 	for _, s := range j.Scenarios {
+		files = append(files, s.file())
 		steps = append(steps, j.step(controller, s))
 		artifacts = append(artifacts, s.ID+".bin")
 	}
@@ -187,6 +197,7 @@ func runWasmJudged(t *testing.T, d *DockerSandbox, j wasmJudged, files []File, b
 			Fingerprint string `json:"fingerprint"`
 			Ticks       int    `json:"ticks"`
 			Width       int    `json:"width"`
+			Nin         int    `json:"nin"`
 		}
 		stdout := res.Steps[judgeFrom+i].Stdout
 		if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &v); err != nil {
@@ -195,7 +206,11 @@ func runWasmJudged(t *testing.T, d *DockerSandbox, j wasmJudged, files []File, b
 		sum := sha256.Sum256(traj)
 		fp := hex.EncodeToString(sum[:])
 		wantTicks := int(math.Round(j.TEndS / j.TickS))
-		if fp != v.Fingerprint || v.Ticks != wantTicks || v.Width != j.Width || len(traj) != wantTicks*(j.Width+1)*8 {
+		inputs := j.Inputs
+		if inputs == 0 {
+			inputs = 1
+		}
+		if v.Nin != inputs || fp != v.Fingerprint || v.Ticks != wantTicks || v.Width != j.Width || len(traj) != wantTicks*(j.Width+inputs)*8 {
 			t.Fatalf("%s: judge said %+v, the %d-byte artifact hashes to %s; want %d ticks of width %d", s.ID, v, len(traj), fp, wantTicks, j.Width)
 		}
 		out[s.ID] = judgedScenario{fingerprint: fp, trajectory: traj}
@@ -332,6 +347,7 @@ func TestDockerWasmControllerShimRefusesImports(t *testing.T) {
 		Files: []File{
 			{Path: "controller.c", Content: readWasmControllerFile(t, "controller/controller.c")},
 			{Path: "controller.js", Content: readWasmShim(t)},
+			wasmScenario{ID: s.ID, Params: s.Params[:]}.file(),
 		},
 		Steps: []string{f.MathCosBuild, f.judged().step("controller.js", wasmScenario{ID: s.ID, Params: s.Params[:]})},
 	})

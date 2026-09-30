@@ -48,7 +48,7 @@ func TestDockerJudgesRefuseNonAnswers(t *testing.T) {
 	requireProjectImage(t, d)
 
 	judges := map[string]string{
-		"judge.mjs": "node --no-warnings /oracle/judge.mjs controller.js /models/shower.wasm 3 60 40 0.1 90 trajectory.bin",
+		"judge.mjs": "node --no-warnings /oracle/judge.mjs controller.js /models/buck.wasm scenario.txt 0.1 90 trajectory.bin",
 		"run.mjs":   "node --no-warnings /oracle/run.mjs controller.js",
 	}
 	refused := map[string]struct{ code, stderr string }{
@@ -58,7 +58,7 @@ func TestDockerJudgesRefuseNonAnswers(t *testing.T) {
 	run := func(t *testing.T, step, code string) ProjectResult {
 		t.Helper()
 		res, err := d.RunProject(context.Background(), ProjectRequest{
-			Files: []File{{Path: "controller.js", Content: code}},
+			Files: []File{{Path: "controller.js", Content: code}, scenarioFile(3, 60, 40)},
 			Steps: []string{step},
 		})
 		if err != nil {

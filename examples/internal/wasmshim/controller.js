@@ -1,11 +1,11 @@
 // The Node side of a WebAssembly controller. The runner (/oracle/judge.mjs) spawns
 // this file as the controller process and speaks its line protocol: one line of
-// observations in, one number out, once per tick. This shim does no control
+// observations in, one or more numbers out, once per tick. This shim does no control
 // arithmetic of its own. It instantiates controller.wasm (compiled from the
 // controller's C by the run's build step) once for the episode, parses each line
 // exactly as a JavaScript controller would, calls the module's exported control
 // function with every observation and then the tick index, and writes the returned
-// double back.
+// output values back.
 //
 // It knows nothing about any plant. A controller for a plant with n observations
 // exports double control(double o1, ..., double on, int k); the cart-pole's is
@@ -38,6 +38,16 @@ if (typeof exports.control !== 'function') {
 // A reactor module (clang -mexec-model=reactor) runs its constructors here.
 if (typeof exports._initialize === 'function') exports._initialize();
 
+// A vector controller returns its first output from control(), then exposes the
+// others through control_output(i). Count is declared by the module, not by a
+// plant-specific branch in this adapter. Existing scalar modules have one output.
+const count = typeof exports.control_count === 'function' ? exports.control_count() : 1;
+if (!Number.isInteger(count) || count < 1 || count > 64 ||
+    (count > 1 && typeof exports.control_output !== 'function')) {
+  console.error('invalid controller output contract');
+  process.exit(1);
+}
+
 let k = 0;
 const rl = createInterface({ input: process.stdin });
 rl.on('line', (line) => {
@@ -45,5 +55,7 @@ rl.on('line', (line) => {
   // appendix), separated by single spaces.
   const obs = line.split('|')[0].trim().split(' ').map(Number);
   const u = exports.control(...obs, k++);
-  process.stdout.write(u + '\n');
+  const values = [u];
+  for (let i = 1; i < count; i++) values.push(exports.control_output(i));
+  process.stdout.write(values.join(' ') + '\n');
 });

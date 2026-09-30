@@ -1,239 +1,128 @@
-// The shower plant (see config.h for the story). The controller is NOT in this
-// model: the hot fraction is an FMI input a host sets before every communication
-// step. No libm calls at all, so the trajectory is plain IEEE arithmetic and does
-// not depend on the host machine or the engine.
+// FMI wrapper around the shared plumbing kernel. The controller receives no
+// scenario parameters; all state is local to this plant instance.
 #include "config.h"
 #include "model.h"
 
-static double clamp01(double v) {
-    if (v < 0) return 0;
-    if (v > 1) return 1;
-    return v;
-}
-
 Status setStartValues(ModelInstance *comp) {
     ASSERT_NOT_NULL2(comp);
-
-    M(T_head) = 12;
-    M(a) = 0;
-    M(T1) = 12; M(T2) = 12; M(T3) = 12; M(T4) = 12; M(T5) = 12; M(T6) = 12;
-    M(u) = 0;
-    M(D) = 3;
-    M(T_hot) = 60;
-    M(t_flush) = 40;
-    M(T_cold) = 12;
-    // 0.15 lifts a settled 38 C shower to about 42 C, under the 43 C scald line,
-    // so the flush costs band time unless the controller compensates; at 0.25 it
-    // reaches 44.5 C, and with a 3 s pipe no controller can cut hot in time, so
-    // every policy would scald and the flush would teach nothing.
-    M(flush_gain) = 0.15;
-    M(flush_len) = 12;
-    M(tau_v) = 0.5;
-    M(tau_h) = 1.0;
-    M(T_mix) = 12;
-
+    M(p) = (ShowerParameters){.hot_volume = 0.3, .hot_temperature = 60, .flush_time = 40,
+        .cold_volume = 0.2, .outlet_volume = 0.12, .cold_temperature = 12,
+        .ambient_temperature = 20, .cooling_time = 600, .hot_pressure = 3,
+        .cold_pressure = 3, .flush_pressure_fraction = 0.8, .flush_length = 12};
+    for (size_t i = 0; i < SHOWER_NX; i++) {
+        M(x)[i] = i >= SHOWER_HOT && i < SHOWER_VOLUME ? 20 : 0;
+        M(dx)[i] = 0;
+    }
+    M(u)[0] = M(u)[1] = 0;
     comp->isDirtyValues = true;
-
     return OK;
 }
 
 Status calculateValues(ModelInstance *comp) {
     ASSERT_NOT_NULL2(comp);
-
-    const double u = clamp01(M(u));
-    const double flushing = (comp->time >= M(t_flush) && comp->time < M(t_flush) + M(flush_len)) ? M(flush_gain) : 0;
-    const double a_eff = clamp01(M(a) * (1 + flushing));
-    M(T_mix) = a_eff * M(T_hot) + (1 - a_eff) * M(T_cold);
-
-    M(der_a) = (u - M(a)) / M(tau_v);
-    const double k = 6.0 / M(D);
-    M(der_T1) = k * (M(T_mix) - M(T1));
-    M(der_T2) = k * (M(T1) - M(T2));
-    M(der_T3) = k * (M(T2) - M(T3));
-    M(der_T4) = k * (M(T3) - M(T4));
-    M(der_T5) = k * (M(T4) - M(T5));
-    M(der_T6) = k * (M(T5) - M(T6));
-    M(der_T_head) = (M(T6) - M(T_head)) / M(tau_h);
-
+    M(flow) = shower_rhs(comp->time, &M(p), M(x), M(u), M(dx));
     comp->isDirtyValues = false;
-
     return OK;
 }
 
-Status getFloat64(ModelInstance* comp, ValueReference vr, double values[], size_t nValues, size_t* index) {
-    ASSERT_NOT_NULL2(comp);
-    ASSERT_NOT_NULL2(values);
-    ASSERT_NOT_NULL2(index);
+static double *parameter(ModelInstance *comp, ValueReference vr) {
+    switch (vr) {
+        case vr_hot_volume: return &M(p).hot_volume;
+        case vr_hot_temperature: return &M(p).hot_temperature;
+        case vr_flush_time: return &M(p).flush_time;
+        case vr_cold_volume: return &M(p).cold_volume;
+        case vr_outlet_volume: return &M(p).outlet_volume;
+        case vr_cold_temperature: return &M(p).cold_temperature;
+        case vr_ambient_temperature: return &M(p).ambient_temperature;
+        case vr_cooling_time: return &M(p).cooling_time;
+        case vr_hot_pressure: return &M(p).hot_pressure;
+        case vr_cold_pressure: return &M(p).cold_pressure;
+        case vr_flush_pressure_fraction: return &M(p).flush_pressure_fraction;
+        case vr_flush_length: return &M(p).flush_length;
+        default: return NULL;
+    }
+}
 
+static int validParameter(ValueReference vr, double v) {
+    if (!isfinite(v)) return 0;
+    switch (vr) {
+        case vr_hot_volume: case vr_cold_volume: case vr_outlet_volume: return v >= 0.05 && v <= 5;
+        case vr_hot_pressure: case vr_cold_pressure: return v >= 0.1 && v <= 10;
+        case vr_hot_temperature: case vr_cold_temperature: return v >= 0 && v <= 95;
+        case vr_ambient_temperature: return v >= -10 && v <= 60;
+        case vr_cooling_time: return v == 0 || v >= 10;
+        case vr_flush_pressure_fraction: return v >= 0 && v <= 1;
+        case vr_flush_time: case vr_flush_length: return v >= 0;
+        default: return 0;
+    }
+}
+
+Status getFloat64(ModelInstance *comp, ValueReference vr, double values[], size_t nValues, size_t *index) {
+    ASSERT_NOT_NULL2(comp); ASSERT_NOT_NULL2(values); ASSERT_NOT_NULL2(index);
+    ASSERT_NVALUES(1);
     calculateValues(comp);
-
-    switch (vr) {
-        case vr_time:       ASSERT_NVALUES(1); values[(*index)++] = comp->time;    return OK;
-        case vr_T_head:     ASSERT_NVALUES(1); values[(*index)++] = M(T_head);     return OK;
-        case vr_der_T_head: ASSERT_NVALUES(1); values[(*index)++] = M(der_T_head); return OK;
-        case vr_a:          ASSERT_NVALUES(1); values[(*index)++] = M(a);          return OK;
-        case vr_der_a:      ASSERT_NVALUES(1); values[(*index)++] = M(der_a);      return OK;
-        case vr_T1:         ASSERT_NVALUES(1); values[(*index)++] = M(T1);         return OK;
-        case vr_der_T1:     ASSERT_NVALUES(1); values[(*index)++] = M(der_T1);     return OK;
-        case vr_T2:         ASSERT_NVALUES(1); values[(*index)++] = M(T2);         return OK;
-        case vr_der_T2:     ASSERT_NVALUES(1); values[(*index)++] = M(der_T2);     return OK;
-        case vr_T3:         ASSERT_NVALUES(1); values[(*index)++] = M(T3);         return OK;
-        case vr_der_T3:     ASSERT_NVALUES(1); values[(*index)++] = M(der_T3);     return OK;
-        case vr_T4:         ASSERT_NVALUES(1); values[(*index)++] = M(T4);         return OK;
-        case vr_der_T4:     ASSERT_NVALUES(1); values[(*index)++] = M(der_T4);     return OK;
-        case vr_T5:         ASSERT_NVALUES(1); values[(*index)++] = M(T5);         return OK;
-        case vr_der_T5:     ASSERT_NVALUES(1); values[(*index)++] = M(der_T5);     return OK;
-        case vr_T6:         ASSERT_NVALUES(1); values[(*index)++] = M(T6);         return OK;
-        case vr_der_T6:     ASSERT_NVALUES(1); values[(*index)++] = M(der_T6);     return OK;
-        case vr_u:          ASSERT_NVALUES(1); values[(*index)++] = M(u);          return OK;
-        case vr_D:          ASSERT_NVALUES(1); values[(*index)++] = M(D);          return OK;
-        case vr_T_hot:      ASSERT_NVALUES(1); values[(*index)++] = M(T_hot);      return OK;
-        case vr_t_flush:    ASSERT_NVALUES(1); values[(*index)++] = M(t_flush);    return OK;
-        case vr_T_cold:     ASSERT_NVALUES(1); values[(*index)++] = M(T_cold);     return OK;
-        case vr_flush_gain: ASSERT_NVALUES(1); values[(*index)++] = M(flush_gain); return OK;
-        case vr_flush_len:  ASSERT_NVALUES(1); values[(*index)++] = M(flush_len);  return OK;
-        case vr_tau_v:      ASSERT_NVALUES(1); values[(*index)++] = M(tau_v);      return OK;
-        case vr_tau_h:      ASSERT_NVALUES(1); values[(*index)++] = M(tau_h);      return OK;
-        case vr_T_mix:      ASSERT_NVALUES(1); values[(*index)++] = M(T_mix);      return OK;
-        default:
-            logError(comp, "Get Float64 is not allowed for value reference %u.", vr);
-            return Error;
+    double v;
+    if (vr > 0 && vr <= 2 * SHOWER_NX) v = vr % 2 ? M(x)[(vr - 1) / 2] : M(dx)[(vr - 2) / 2];
+    else if (vr == vr_time) v = comp->time;
+    else if (vr == vr_u_hot || vr == vr_u_cold) v = M(u)[vr - vr_u_hot];
+    else if (vr == vr_hot_flow) v = M(flow).hot;
+    else if (vr == vr_cold_flow) v = M(flow).cold;
+    else {
+        double *p = parameter(comp, vr);
+        if (!p) { logError(comp, "Unknown Float64 reference %u.", vr); return Error; }
+        v = *p;
     }
-}
-
-Status setFloat64(ModelInstance* comp, ValueReference vr, const double values[], size_t nValues, size_t* index) {
-    ASSERT_NOT_NULL2(comp);
-    ASSERT_NOT_NULL2(values);
-    ASSERT_NOT_NULL2(index);
-
-    switch (vr) {
-        case vr_T_head: ASSERT_NVALUES(1); M(T_head) = values[(*index)++]; break;
-        case vr_a:      ASSERT_NVALUES(1); M(a) = values[(*index)++];      break;
-        case vr_T1:     ASSERT_NVALUES(1); M(T1) = values[(*index)++];     break;
-        case vr_T2:     ASSERT_NVALUES(1); M(T2) = values[(*index)++];     break;
-        case vr_T3:     ASSERT_NVALUES(1); M(T3) = values[(*index)++];     break;
-        case vr_T4:     ASSERT_NVALUES(1); M(T4) = values[(*index)++];     break;
-        case vr_T5:     ASSERT_NVALUES(1); M(T5) = values[(*index)++];     break;
-        case vr_T6:     ASSERT_NVALUES(1); M(T6) = values[(*index)++];     break;
-        case vr_u:      ASSERT_NVALUES(1); M(u) = values[(*index)++];      break;
-        case vr_D:
-        case vr_T_hot:
-        case vr_t_flush:
-        case vr_T_cold:
-        case vr_flush_gain:
-        case vr_flush_len:
-        case vr_tau_v:
-        case vr_tau_h:
-            if (comp->type == ModelExchange &&
-                comp->state != Instantiated &&
-                comp->state != InitializationMode &&
-                comp->state != EventMode) {
-                logError(comp, "Variable %u can only be set after instantiation, in initialization mode or event mode.", vr);
-                return Error;
-            }
-            ASSERT_NVALUES(1);
-            if (vr == vr_D) M(D) = values[(*index)++];
-            else if (vr == vr_T_hot) M(T_hot) = values[(*index)++];
-            else if (vr == vr_t_flush) M(t_flush) = values[(*index)++];
-            else if (vr == vr_T_cold) M(T_cold) = values[(*index)++];
-            else if (vr == vr_flush_gain) M(flush_gain) = values[(*index)++];
-            else if (vr == vr_flush_len) M(flush_len) = values[(*index)++];
-            else if (vr == vr_tau_v) M(tau_v) = values[(*index)++];
-            else M(tau_h) = values[(*index)++];
-            break;
-        default:
-            logError(comp, "Set Float64 is not allowed for value reference %u.", vr);
-            return Error;
-    }
-
-    comp->isDirtyValues = true;
-
+    values[(*index)++] = v;
     return OK;
 }
 
-size_t getNumberOfContinuousStates(ModelInstance* comp) {
-    UNUSED(comp);
-    return MAX_CONTINUOUS_STATES;
+Status setFloat64(ModelInstance *comp, ValueReference vr, const double values[], size_t nValues, size_t *index) {
+    ASSERT_NOT_NULL2(comp); ASSERT_NOT_NULL2(values); ASSERT_NOT_NULL2(index);
+    ASSERT_NVALUES(1);
+    const double v = values[(*index)++];
+    if (!isfinite(v)) { logError(comp, "Nonfinite value for reference %u.", vr); return Error; }
+    if (vr > 0 && vr < 2 * SHOWER_NX && vr % 2) M(x)[(vr - 1) / 2] = v;
+    else if (vr == vr_u_hot || vr == vr_u_cold) {
+        M(u)[vr - vr_u_hot] = v < 0 ? 0 : v > 1 ? 1 : v;
+    } else {
+        double *p = parameter(comp, vr);
+        if (!p || !validParameter(vr, v)) { logError(comp, "Invalid parameter %u.", vr); return Error; }
+        if (comp->type == ModelExchange && comp->state != Instantiated &&
+            comp->state != InitializationMode && comp->state != EventMode) return Error;
+        *p = v;
+    }
+    comp->isDirtyValues = true;
+    return OK;
 }
 
+size_t getNumberOfContinuousStates(ModelInstance *comp) { UNUSED(comp); return SHOWER_NX; }
 Status getContinuousStates(ModelInstance *comp, double x[], size_t nx) {
-    ASSERT_NOT_NULL2(comp);
-    ASSERT_NOT_NULL2(x);
-    ASSERT_SIZE_T(nx, MAX_CONTINUOUS_STATES);
-
-    calculateValues(comp);
-
-    x[0] = M(T_head);
-    x[1] = M(a);
-    x[2] = M(T1);
-    x[3] = M(T2);
-    x[4] = M(T3);
-    x[5] = M(T4);
-    x[6] = M(T5);
-    x[7] = M(T6);
-
+    ASSERT_NOT_NULL2(comp); ASSERT_NOT_NULL2(x); ASSERT_SIZE_T(nx, SHOWER_NX);
+    for (size_t i = 0; i < nx; i++) x[i] = M(x)[i];
     return OK;
 }
-
-Status getNominalsOfContinuousStates(ModelInstance* comp, double nominals[], size_t nx) {
-    ASSERT_NOT_NULL2(comp);
-    ASSERT_NOT_NULL2(nominals);
-    ASSERT_SIZE_T(nx, MAX_CONTINUOUS_STATES);
-
-    calculateValues(comp);
-
-    nominals[0] = 40.0;
-    nominals[1] = 1.0;
-    for (size_t i = 2; i < MAX_CONTINUOUS_STATES; i++) nominals[i] = 40.0;
-
+Status getNominalsOfContinuousStates(ModelInstance *comp, double x[], size_t nx) {
+    ASSERT_NOT_NULL2(comp); ASSERT_NOT_NULL2(x); ASSERT_SIZE_T(nx, SHOWER_NX);
+    for (size_t i = 0; i < nx; i++) x[i] = i >= SHOWER_HOT && i < SHOWER_VOLUME ? 40 : 1;
     return OK;
 }
-
 Status setContinuousStates(ModelInstance *comp, const double x[], size_t nx) {
-    ASSERT_NOT_NULL2(comp);
-    ASSERT_NOT_NULL2(x);
-    ASSERT_SIZE_T(nx, MAX_CONTINUOUS_STATES);
-
-    M(T_head) = x[0];
-    M(a) = x[1];
-    M(T1) = x[2];
-    M(T2) = x[3];
-    M(T3) = x[4];
-    M(T4) = x[5];
-    M(T5) = x[6];
-    M(T6) = x[7];
-
+    ASSERT_NOT_NULL2(comp); ASSERT_NOT_NULL2(x); ASSERT_SIZE_T(nx, SHOWER_NX);
+    for (size_t i = 0; i < nx; i++) { if (!isfinite(x[i])) return Error; M(x)[i] = x[i]; }
     comp->isDirtyValues = true;
-
     return OK;
 }
-
 Status getDerivatives(ModelInstance *comp, double dx[], size_t nx) {
-    ASSERT_NOT_NULL2(comp);
-    ASSERT_NOT_NULL2(dx);
-    ASSERT_SIZE_T(nx, MAX_CONTINUOUS_STATES);
-
+    ASSERT_NOT_NULL2(comp); ASSERT_NOT_NULL2(dx); ASSERT_SIZE_T(nx, SHOWER_NX);
     calculateValues(comp);
-
-    dx[0] = M(der_T_head);
-    dx[1] = M(der_a);
-    dx[2] = M(der_T1);
-    dx[3] = M(der_T2);
-    dx[4] = M(der_T3);
-    dx[5] = M(der_T4);
-    dx[6] = M(der_T5);
-    dx[7] = M(der_T6);
-
+    for (size_t i = 0; i < nx; i++) dx[i] = M(dx)[i];
     return OK;
 }
-
 Status eventUpdate(ModelInstance *comp) {
     ASSERT_NOT_NULL2(comp);
-
-    comp->valuesOfContinuousStatesChanged   = false;
+    comp->valuesOfContinuousStatesChanged = false;
     comp->nominalsOfContinuousStatesChanged = false;
-    comp->terminateSimulation               = false;
-    comp->nextEventTimeDefined              = false;
-
+    comp->terminateSimulation = false;
+    comp->nextEventTimeDefined = false;
     return OK;
 }

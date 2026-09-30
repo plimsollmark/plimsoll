@@ -25,7 +25,7 @@ One project run, two files, five steps:
 | Step | What it is |
 |---|---|
 | `clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -ffp-contract=off -Wall -Werror -o controller.wasm controller.c` | compiles the controller inside the sandbox, with `--network none` like every step |
-| `node /oracle/judge.mjs controller.js /models/cartpole.wasm 3.14159 0.5 1 0.01 20 s1.bin` and three more | one per scenario: the pole starts hanging (about pi rad), the cart mass varies from 0.8 to 1.2 kg |
+| `node /oracle/judge.mjs controller.js /models/cartpole.wasm s1.scenario 0.01 20 s1.bin` and three more (each `.scenario` file holds that scenario's three parameters, here `3.14159 0.5 1`; the runner deletes it before the controller starts) | one per scenario: the pole starts hanging (about pi rad), the cart mass varies from 0.8 to 1.2 kg |
 
 The runner spawns `controller.js`, the shared shim in
 [examples/internal/wasmshim](../internal/wasmshim/controller.js), as the controller

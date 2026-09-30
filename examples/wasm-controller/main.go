@@ -275,9 +275,14 @@ func judge(ctx context.Context, remote *client.Remote, fx fixture, files []sandb
 		artifacts = append(artifacts, "controller.wasm")
 	}
 	judgeFrom := len(steps)
+	files = append([]sandbox.File(nil), files...)
 	for _, s := range fx.Scenarios {
-		steps = append(steps, fmt.Sprintf("node --no-warnings /oracle/judge.mjs %s /models/cartpole.wasm %s %s %s %s %s %s.bin",
-			controller, num(s.Params[0]), num(s.Params[1]), num(s.Params[2]), num(fx.TickS), num(fx.TEndS), s.ID))
+		// The runner reads the scenario from a file and deletes it before the controller
+		// starts; these scenarios are public, so all four files go up front.
+		files = append(files, sandbox.File{Path: s.ID + ".scenario",
+			Content: num(s.Params[0]) + " " + num(s.Params[1]) + " " + num(s.Params[2]) + "\n"})
+		steps = append(steps, fmt.Sprintf("node --no-warnings /oracle/judge.mjs %s /models/cartpole.wasm %s.scenario %s %s %s.bin",
+			controller, s.ID, num(fx.TickS), num(fx.TEndS), s.ID))
 		artifacts = append(artifacts, s.ID+".bin")
 	}
 	res, err := remote.RunProject(ctx, sandbox.ProjectRequest{

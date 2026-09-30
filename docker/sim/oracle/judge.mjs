@@ -4,14 +4,30 @@
 // runs the caller's controller as a SEPARATE process, and closes the loop one tick
 // at a time: the state goes to the controller's stdin as one line, the input
 // comes back on its stdout as one line of numbers. Every tick's state and input
-// are recorded and written to OUT after the controller has exited, so the
-// controller can neither touch the plant's memory nor the record; it sees
-// numbers and answers numbers. The runner knows nothing about any plant: what a
-// good trajectory is belongs to the environment's grader, which runs on the
-// host and first checks that the artifact it received hashes to the fingerprint
-// printed here.
+// are recorded and written to OUT after the controller has exited. The runner
+// knows nothing about any plant: what a good trajectory is belongs to the
+// environment's grader, which runs on the host and first checks that the artifact
+// it received hashes to the fingerprint printed here.
 //
-//   node judge.mjs [--jac] CONTROLLER.js PLANT.wasm p0 p1 p2 h t_end [OUT]
+//   node judge.mjs [--jac] [--answer-ms MS] CONTROLLER.js PLANT.wasm SCENARIO h t_end [OUT]
+//
+// SCENARIO is a file holding the plant's three scenario parameters (whitespace
+// separated). The runner reads it and deletes it before the controller starts.
+//
+// What the controller cannot reach. It runs under this process's uid in the same
+// container, so before doing anything else the runner re-executes itself in place
+// with the image's runner guard preloaded (the library the project runner uses),
+// which makes it non-dumpable: its memory and descriptors are then
+// closed to same-uid processes whatever the host's ptrace (Yama) setting, and a
+// same-uid probe must prove that before the scenario is read. The scenario never
+// appears on a command line, which any process can read from /proc; it arrives in a
+// file that is gone before the controller exists. So the controller sees the
+// scenario only through the plant's behavior, and cannot read or write the plant,
+// the record or the fingerprint in this process. Limits: a scenario file is hidden
+// only from the controller of the run that deletes it, not from anything an earlier
+// step of the same project runs, so a secret scenario needs a run of its own; and a
+// controller that leaves a child behind can still rewrite OUT after it is written,
+// which is why the grader checks the artifact against the printed fingerprint.
 //
 // The plant says how many inputs it takes per tick (sim_nin, 1 if absent); the
 // controller answers that many numbers per line, space separated. OUT is
@@ -29,11 +45,38 @@
 // state exactly after any perturbation, so the trajectory and its fingerprint are
 // the same with and without --jac for the same controller answers; the run summary
 // line names the Jacobian file, its kind and its own SHA-256.
-import { readFileSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { WASI } from 'node:wasi';
+
+const GUARD = '/usr/local/lib/plimsoll-runner-guard.so';
+if (process.env.PLIMSOLL_JUDGE_GUARD !== GUARD) {
+  // Same pid, new image: the guard's constructor runs before any of this code again.
+  process.execve(process.execPath,
+    [process.execPath, ...process.execArgv, fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+    { ...process.env, LD_PRELOAD: GUARD, PLIMSOLL_JUDGE_GUARD: GUARD });
+}
+// The guard stays in this process only; the controller and the probe start without it.
+delete process.env.LD_PRELOAD;
+delete process.env.PLIMSOLL_JUDGE_GUARD;
+{
+  // A loader can ignore a missing preload library, so prove the effect with the project
+  // runner's own probe: a same-uid child must be refused this process's descriptors and
+  // memory. (Its environment holds nothing the controller may not see.)
+  const probe = `const fs=require("node:fs");const p="/proc/"+process.ppid;const out=[];
+for(const [f,m] of [["/fd/0",fs.constants.O_RDONLY],["/fd/1",fs.constants.O_RDONLY],["/fd/1",fs.constants.O_WRONLY],["/mem",fs.constants.O_RDONLY]]){
+try{fs.closeSync(fs.openSync(p+f,m));out.push("open");}catch(e){out.push(e.code||"unknown");}}
+process.stdout.write(out.join(","));`;
+  const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', timeout: 5000, maxBuffer: 4096 });
+  const codes = (r.stdout ?? '').split(',');
+  if (r.error || r.status !== 0 || codes.length !== 4 || codes.some((c) => c !== 'EACCES' && c !== 'EPERM')) {
+    console.error(`the trial runner could not prove it is closed to the controller (${r.stdout || r.error})`);
+    process.exit(1);
+  }
+}
 
 const args = process.argv.slice(2);
 let jac = false, answerMs = 2000;
@@ -42,17 +85,24 @@ for (;;) {
   if (args[0] === '--answer-ms') { answerMs = Number(args[1]); args.splice(0, 2); continue; }
   break;
 }
-if (args.length < 7 || !(answerMs > 0)) {
-  console.error('usage: node judge.mjs [--jac] [--answer-ms MS] CONTROLLER.js PLANT.wasm p0 p1 p2 h t_end [OUT]');
+if (args.length < 5 || !(answerMs > 0)) {
+  console.error('usage: node judge.mjs [--jac] [--answer-ms MS] CONTROLLER.js PLANT.wasm SCENARIO h t_end [OUT]');
   process.exit(2);
 }
-const [controller, plantPath] = args;
-const params = args.slice(2, 5).map(Number);
-const h = Number(args[5]), tEnd = Number(args[6]);
-const outPath = args[7] ?? 'trajectory.bin';
+const [controller, plantPath, scenarioPath] = args;
+let params;
+try {
+  params = readFileSync(scenarioPath, 'utf8').trim().split(/\s+/).map(Number);
+  unlinkSync(scenarioPath);
+} catch (e) {
+  console.error(`scenario file ${scenarioPath}: ${e.code || e.message} (it must be a readable, deletable file)`);
+  process.exit(2);
+}
+const h = Number(args[3]), tEnd = Number(args[4]);
+const outPath = args[5] ?? 'trajectory.bin';
 const jacPath = outPath.replace(/[^/]*$/, 'jacobians.bin');
-if (![...params, h, tEnd].every(Number.isFinite) || h <= 0 || tEnd <= 0) {
-  console.error('parameters, h and t_end must be finite numbers, h and t_end positive');
+if (params.length !== 3 || ![...params, h, tEnd].every(Number.isFinite) || h <= 0 || tEnd <= 0) {
+  console.error('the scenario must hold three finite numbers, and h and t_end must be finite and positive');
   process.exit(2);
 }
 const ticks = Math.round(tEnd / h);

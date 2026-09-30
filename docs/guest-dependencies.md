@@ -219,7 +219,10 @@ file in the image root, named by a step.
   writes replays the recorded runs.
 - Seven more simulators in the same form, each a `.wasm` file under `/models` that
   the generic trial runner (`/oracle/judge.mjs`) steps one <dfn>*tick*</dfn> (one fixed time step) at
-  a time, with the controller in its own process. The sources are under
+  a time, with the controller in its own process. The runner takes each scenario from a
+  file it deletes before the controller starts and closes its own memory and open files to
+  the controller, so a controller can neither read a hidden scenario parameter nor touch
+  the plant or the record. The sources are under
   [docker/sim/models](../docker/sim/models):
   - `shower.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/shower/index.html)): a mixing valve, a pipe modelled as a transport delay (water takes a fixed time
     to travel it), and a shower head; a toilet flush drops the cold pressure mid-run. The
