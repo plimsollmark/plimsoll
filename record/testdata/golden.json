@@ -1,0 +1,302 @@
+{
+  "about": [
+    "The run-record golden vectors: fixed inputs, in the proto3 JSON form a client sends and",
+    "receives, with the digest each must produce under docs/run-records.md. record/record_test.go,",
+    "clients/python/tests/test_record.py and clients/typescript/test/record.test.ts all read this",
+    "one file, so the three implementations cannot drift apart. The cell vectors were computed",
+    "from docs/run-records.md alone by an independent Python implementation (2026-10-01), the",
+    "others were cross-checked the same way on 2026-09-28. Changing a digest here changes the",
+    "encoding for every verifier: change docs/run-records.md first."
+  ],
+  "requests": [
+    {
+      "name": "version 1 javascript request",
+      "kind": "run",
+      "request": {
+        "protocol": 1,
+        "minimumIsolation": "container",
+        "traceId": "t-1",
+        "timeoutMs": 5000,
+        "javascript": {
+          "code": "console.log(1+1)"
+        }
+      },
+      "sha256": "585a1b46c55ebacc1dfdd4336e302328c32ed3e2e7e8a8b460d252d0454be8fc"
+    },
+    {
+      "name": "version 1 project request",
+      "kind": "run",
+      "request": {
+        "protocol": 1,
+        "timeoutMs": 30000,
+        "project": {
+          "files": [
+            {
+              "path": "main.js",
+              "content": "console.log(require('./lib.js'))"
+            },
+            {
+              "path": "lib.js",
+              "content": "module.exports = 42"
+            }
+          ],
+          "steps": [
+            "node main.js > out.txt",
+            "cat out.txt"
+          ],
+          "artifacts": [
+            "out.txt"
+          ]
+        }
+      },
+      "sha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0"
+    },
+    {
+      "name": "version 1 module request",
+      "kind": "run",
+      "request": {
+        "protocol": 1,
+        "module": {
+          "model": "VanDerPol",
+          "rows": [
+            {
+              "values": [
+                1,
+                2
+              ]
+            },
+            {
+              "values": [
+                0.5,
+                -3
+              ]
+            }
+          ],
+          "endTime": 1,
+          "step": 0.1
+        }
+      },
+      "sha256": "3679bdba8fdaa503650e79c970728f869a4cf4882446fbc9742a402195d5b6c1"
+    },
+    {
+      "name": "version 2 javascript request",
+      "kind": "run",
+      "request": {
+        "protocol": 2,
+        "minimumIsolation": "container",
+        "traceId": "t-1",
+        "timeoutMs": 5000,
+        "softwareRule": {
+          "mode": "approved",
+          "identities": [
+            "oci-manifest:linux/amd64@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "oci-manifest:linux/amd64@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        },
+        "javascript": {
+          "code": "console.log(1+1)"
+        }
+      },
+      "sha256": "0b662d4687a062429ab0be85c2445e6c0c9d402922ca223b74e3a1095da7d320"
+    },
+    {
+      "name": "version 2 project request",
+      "kind": "run",
+      "request": {
+        "protocol": 2,
+        "timeoutMs": 30000,
+        "softwareRule": {
+          "mode": "approved",
+          "identities": [
+            "oci-manifest:linux/amd64@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "oci-manifest:linux/amd64@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        },
+        "project": {
+          "files": [
+            {
+              "path": "main.js",
+              "content": "console.log(require('./lib.js'))"
+            },
+            {
+              "path": "lib.js",
+              "content": "module.exports = 42"
+            }
+          ],
+          "steps": [
+            "node main.js > out.txt",
+            "cat out.txt"
+          ],
+          "artifacts": [
+            "out.txt"
+          ]
+        }
+      },
+      "sha256": "abf8235a62b43c4384dc9e7a0f704f1f5f0936ac01a98d7344e50195455d97e1"
+    },
+    {
+      "name": "version 2 module request",
+      "kind": "run",
+      "request": {
+        "protocol": 2,
+        "softwareRule": {
+          "mode": "approved",
+          "identities": [
+            "oci-manifest:linux/amd64@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "oci-manifest:linux/amd64@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        },
+        "module": {
+          "model": "VanDerPol",
+          "rows": [
+            {
+              "values": [
+                1,
+                2
+              ]
+            },
+            {
+              "values": [
+                0.5,
+                -3
+              ]
+            }
+          ],
+          "endTime": 1,
+          "step": 0.1
+        }
+      },
+      "sha256": "f17657df096a7f2fe66fc012a8262bfe03a876e114264d95ce1ac79181c119a5"
+    },
+    {
+      "name": "cell request",
+      "kind": "session",
+      "request": {
+        "protocol": 2,
+        "minimumIsolation": "container",
+        "timeoutMs": 30000,
+        "sessionId": "00112233445566778899aabbccddeeff",
+        "cell": {
+          "language": "python",
+          "code": "import json\njson.loads(open('in.json').read())['n'] + 1",
+          "files": [
+            {
+              "path": "in.json",
+              "content": "{\"n\": 41}"
+            }
+          ]
+        }
+      },
+      "sha256": "a2690050ce63bba09b3646effa24c89d8df7dbbc9efd5c0368d00996c76ba89f"
+    }
+  ],
+  "results": [
+    {
+      "name": "javascript result",
+      "response": {
+        "sandbox": "docker",
+        "isolation": "container",
+        "durationMs": "812",
+        "javascript": {
+          "stdout": "Mgo=",
+          "stderr": "/3g="
+        }
+      },
+      "sha256": "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d"
+    },
+    {
+      "name": "project result",
+      "response": {
+        "sandbox": "openshell",
+        "isolation": "container",
+        "durationMs": "4210",
+        "project": {
+          "steps": [
+            {
+              "command": "node main.js > out.txt",
+              "durationMs": "90"
+            },
+            {
+              "command": "cat out.txt",
+              "stdout": "NDIK",
+              "durationMs": "3"
+            }
+          ],
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "artifacts": [
+            {
+              "path": "out.txt",
+              "content": "NDIK"
+            }
+          ]
+        }
+      },
+      "sha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f"
+    },
+    {
+      "name": "module result",
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "module": {
+          "runs": [
+            {
+              "status": 2,
+              "outputs": [
+                1,
+                1.5
+              ]
+            },
+            {
+              "status": -3
+            }
+          ],
+          "width": 1,
+          "outcome": "PROJECT_OUTCOME_COMPLETED",
+          "stdout": "cm93cz0yCg=="
+        }
+      },
+      "sha256": "7bf330fc9945ab802a68a0da5a53ec0a40344c5212106e159ce77479e687c2ec"
+    },
+    {
+      "name": "cell result",
+      "response": {
+        "sandbox": "docker",
+        "isolation": "kernel",
+        "durationMs": "95",
+        "cell": {
+          "stdout": "NDIK",
+          "interpreterStarted": true
+        }
+      },
+      "sha256": "0ac5e3bdf4e3bc7f4bd2b5b11b44a57c2ac22bf5869825c6d8dc6f56909d1b61"
+    }
+  ],
+  "records": [
+    {
+      "name": "record",
+      "record": {
+        "version": 2,
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001"
+      },
+      "sha256": "a5107eb6b1f726e1b2d7183419502309bfa34d932a65f1494150228ae8349156"
+    }
+  ],
+  "sessionFingerprints": [
+    {
+      "name": "session fingerprint",
+      "sessionId": "00112233445566778899aabbccddeeff",
+      "sha256": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720"
+    }
+  ]
+}

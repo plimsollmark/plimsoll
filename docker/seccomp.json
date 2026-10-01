@@ -308,6 +308,24 @@
       "args": [
         {"index": 0, "value": 4294967295, "op": "SCMP_CMP_EQ"}
       ]
+    },
+    {
+      "//": "mkfifo only: a session's interpreter writes its output to two FIFOs",
+      "//1": "(sandbox/internal/sessionkit). The masked-eq allows the call only when the",
+      "//2": "file-type bits (S_IFMT, 0170000) are S_IFIFO (0010000): no device, no file.",
+      "names": ["mknodat"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 2, "value": 61440, "valueTwo": 4096, "op": "SCMP_CMP_MASKED_EQ"}
+      ]
+    },
+    {
+      "//": "The same for the older mknod, whose mode is its second argument.",
+      "names": ["mknod"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 1, "value": 61440, "valueTwo": 4096, "op": "SCMP_CMP_MASKED_EQ"}
+      ]
     }
   ]
 }

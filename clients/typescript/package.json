@@ -1,0 +1,62 @@
+{
+  "name": "@plimsoll/client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript client for plimsolld, with Trigger.dev and Mastra executeCode add-ons",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./trigger": {
+      "types": "./dist/trigger.d.ts",
+      "default": "./dist/trigger.js"
+    },
+    "./mastra": {
+      "types": "./dist/mastra.d.ts",
+      "default": "./dist/mastra.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "prepare": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "test": "cd ../.. && go test ./clients/typescript/"
+  },
+  "peerDependencies": {
+    "@mastra/core": ">=1.0.0",
+    "@trigger.dev/sdk": ">=4.5.0",
+    "ai": ">=6.0.0",
+    "zod": ">=3.25.0"
+  },
+  "peerDependenciesMeta": {
+    "@mastra/core": {
+      "optional": true
+    },
+    "@trigger.dev/sdk": {
+      "optional": true
+    },
+    "ai": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@mastra/core": "^1.73.0",
+    "@trigger.dev/sdk": "^4.7.0",
+    "@types/node": "^22.20.4",
+    "ai": "^7.0.126",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.5"
+  }
+}

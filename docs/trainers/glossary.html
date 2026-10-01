@@ -518,7 +518,7 @@
       </div>
       <div class="entry" id="session">
         <dt>session</dt>
-        <dd>One sandbox kept open for many calls: files one call writes are there for the next, but no process outlives the call that started it.</dd>
+        <dd>One sandbox kept open for many calls: files one call writes are there for the next, but no process outlives the call that started it, except the interpreter (a Python or Node.js process) the session keeps for its cells.</dd>
       </div>
       <div class="entry" id="shed">
         <dt>shed</dt>
@@ -555,6 +555,10 @@
       <div class="entry" id="trajectory">
         <dt>trajectory</dt>
         <dd>The full record of a simulation run: every state at every tick, in order.</dd>
+      </div>
+      <div class="entry" id="trigger-dev">
+        <dt>Trigger.dev</dt>
+        <dd>A hosted job runner for TypeScript whose durable chat agents can sleep between messages; the trigger-chat example gives one an executeCode tool backed by plimsoll.</dd>
       </div>
       <div class="entry" id="virtual-machine">
         <dt>virtual machine</dt>

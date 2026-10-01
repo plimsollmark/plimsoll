@@ -284,6 +284,14 @@ func (a *admissionSandbox) SupportsSessions() bool {
 	return ok && sp.SupportsSessions()
 }
 
+// SessionEnvironments forwards the wrapped provider's.
+func (a *admissionSandbox) SessionEnvironments() Environments {
+	if sp, ok := a.Sandbox.(SessionProvider); ok {
+		return sp.SessionEnvironments()
+	}
+	return Environments{}
+}
+
 // OpenSession admits a session as it admits a run, and keeps the reservation until
 // the session has ended: its sandbox holds memory between calls as well as during
 // them.

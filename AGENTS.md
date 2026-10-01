@@ -65,6 +65,14 @@ option is intentionally only process-tier.
   the daemon that signs checked records (DSSE around in-toto), verifies bundles and
   session chains, and replays; [cmd/plimsoll-attest](cmd/plimsoll-attest/) is its CLI.
   Spec: [docs/run-records.md](docs/run-records.md).
+- [clients/python/](clients/python/): the Python client (distribution `plimsoll-client`,
+  import `plimsoll_client`; standard library only, Python 3.10 or later). It speaks
+  Connect's JSON protocol and makes the Go client's checks: the protocol number stated
+  and compared, every run record recomputed, the isolation floor sent and the returned
+  evidence checked, a session's chain followed, and the not-dispatched mark and session
+  end restored from the error details; `Session.run_cell` for cells. `client_test.go`
+  beside it serves the real RPC handler and runs the Python suite against it.
+  [README](clients/python/README.md).
 - [cmd/plimsoll-clients/](cmd/plimsoll-clients/) — offline operator CLI over the
   caller registry the daemon loads from `PLIMSOLL_CLIENTS_FILE`; the shared format
   and validation live in [internal/clientconfig/](internal/clientconfig/). Usage:
@@ -141,6 +149,20 @@ option is intentionally only process-tier.
   draft-mih-scitt-agent-action-capsule-05 and checked by that project's Go and Python
   verifiers; the page it writes is `docs/examples/capsule/`). The examples that run the daemon build it from source
   through [examples/internal/daemonproc](examples/internal/daemonproc/).
+- [clients/typescript/](clients/typescript/): `@plimsoll/client`, a dependency-free
+  TypeScript client (Connect JSON over `fetch`) that keeps the Go client's checks: the
+  protocol number, every run record recomputed (golden vectors shared with
+  `record/record_test.go`), the isolation floor, a session's chain; `Session.runCell` for
+  cells. `CodeSandboxes` keeps one sandbox per conversation key (a session where Describe
+  states sessions, every call a cell in its Python or JavaScript interpreter, with the
+  call's files written first; a fresh project per call otherwise, through a runner that
+  prints the last expression the same way; always fresh without a key), and two add-ons
+  give an agent an `executeCode` tool (`code`, `language`, `files`) on it: `/trigger` (Trigger.dev's code-sandbox recipe: warm in
+  `onTurnStart`, dispose in `onChatSuspend`/`onComplete`; `chat.local` holds only the run
+  id, never a session ID) and `/mastra` (keyed by thread and resource).
+  `go test ./clients/typescript/` serves the real RPC handler and runs its node suites.
+  [examples/trigger-chat](examples/trigger-chat/) is the Trigger.dev chat agent, tested
+  through Trigger.dev's `mockChatAgent`.
 - [docs/trainers/](docs/trainers/) — dependency-free interactive lessons covering
   the execution model, architecture, providers, dependencies, the API broker and
   its capacity signal, MCP/agent integration, customer patterns, and the efficiency
@@ -158,12 +180,31 @@ Every provider implements [sandbox/sandbox.go](sandbox/sandbox.go):
 - `Name() string` — the provider id.
 
 **Sessions** (optional `sandbox.SessionProvider`, [docs/sessions.md](docs/sessions.md)):
-one sandbox kept for many calls, files persisting and processes not. `OpenSession`
-returns a `sandbox.Session` (snippet and project calls, serialized; `Suspend`, `Close`,
+one sandbox kept for many calls, files persisting, and of processes only the interpreters a
+session keeps for its cells (Carroll, 2026-10-01: surviving a call is optional). `OpenSession`
+returns a `sandbox.Session` (snippet, project and cell calls, serialized; `Suspend`, `Close`,
 `Done`, `Err`), and a session's end is a typed `SessionEndedError`; a call on an ended
-session is refused not-dispatched. Every implementation runs the conformance suite in
-[sandbox/sessiontest](sandbox/sessiontest/) and states sessions only once it passes;
-openshell is the only one today (its call boundary: [docs/openshell.md](docs/openshell.md#sessions)).
+session is refused not-dispatched. A **cell** (`RunCell`, wire payload `cell`, only in a
+session; `Run` refuses one, which exists there as the stored form a harness replays) runs
+code in a Node or Python interpreter the session keeps alive, so state survives calls as in
+a notebook; its files are written into the work directory first; it carries no grant. The
+interpreters, their launcher and the relay each provider keeps attached beside each
+interpreter (one `docker exec` or one OpenShell exec stream held open, so a warm cell starts
+no process) live in [sandbox/internal/sessionkit](sandbox/internal/sessionkit/) and travel in argv, so an image
+needs only `node` (and `python3` for Python); the sweep keeps each live interpreter by PID,
+start time and command line and kills its children; a deadline kills it. Which languages an
+image runs is proven by each provider's smoke test and stated on `PayloadEnvironment.languages`. Every call of a session runs in one work directory
+(docker `/work`, openshell `/tmp/work`), so a snippet finds what a project wrote. Every
+implementation runs the conformance suite in [sandbox/sessiontest](sandbox/sessiontest/) and
+states sessions only once it passes; openshell and docker do (their call boundaries:
+[docs/openshell.md](docs/openshell.md#sessions), [docs/sessions.md](docs/sessions.md#docker)).
+Both run the same in-sandbox programs between calls, the process lister and the sweep, from
+[sandbox/internal/sessionkit](sandbox/internal/sessionkit/). A docker session is a run's
+locked-down container from the project image kept alive under docker's init, every call a
+`docker exec` into it; its idle suspend is `docker pause`, so `Suspend` reports the memory
+still held and the daemon keeps the session's concurrency slot; its read-back before each
+call compares the security-relevant `docker inspect` fields with open; its broker socket is
+mounted at open and serves only the grant of the call in progress.
 Over RPC the procedures are `OpenSession`, `SessionRun` (its own request message, so a
 daemon that predates sessions refuses it instead of dropping the ID) and `CloseSession`;
 the daemon binds each 128-bit session ID to its principal (an unknown and a foreign ID are

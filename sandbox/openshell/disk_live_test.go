@@ -50,7 +50,7 @@ func TestDiskCapLive(t *testing.T) {
 	if _, err := s.RunJavaScript(ctx, sandbox.Request{Code: `require("fs").writeFileSync("/tmp/keep","kept")`}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Suspend(ctx); err != nil {
+	if _, err := s.Suspend(ctx); err != nil {
 		t.Fatalf("Suspend: %v", err)
 	}
 	res, err = s.RunJavaScript(ctx, sandbox.Request{Code: `console.log(require("fs").readFileSync("/tmp/keep","utf8"))`})

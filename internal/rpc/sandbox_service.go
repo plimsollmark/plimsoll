@@ -254,7 +254,11 @@ func payloadEnvironment(e sandbox.PayloadEnvironment) *plimsollv1.PayloadEnviron
 	if ceiling > maxRunTimeout {
 		ceiling = maxRunTimeout
 	}
-	return &plimsollv1.PayloadEnvironment{Identity: e.Identity, SoftwareIdentity: e.SoftwareIdentity, MaxTimeoutMs: uint32(ceiling / time.Millisecond)}
+	langs := make([]string, 0, len(e.Languages))
+	for _, l := range e.Languages {
+		langs = append(langs, string(l))
+	}
+	return &plimsollv1.PayloadEnvironment{Identity: e.Identity, SoftwareIdentity: e.SoftwareIdentity, MaxTimeoutMs: uint32(ceiling / time.Millisecond), Languages: langs}
 }
 
 func nonNegative(n int) uint32 {
@@ -362,6 +366,9 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 		resp, err = s.runProject(ctx, env, p.Project, s.runTarget())
 	case *plimsollv1.RunRequest_Module:
 		resp, err = s.runModule(ctx, env, p.Module)
+	case *plimsollv1.RunRequest_Cell:
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
+			fmt.Errorf("%w: a cell runs only in a session (SessionRun)", sandbox.ErrInvalidRequest))
 	default:
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
 			errors.New("payload must be exactly one of javascript, project, or module"))

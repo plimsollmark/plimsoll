@@ -190,6 +190,40 @@ func (s *Session) RunProject(ctx context.Context, in sandbox.ProjectRequest) (sa
 	return res, nil
 }
 
+// RunCell runs code in the session's interpreter for in.Language; what earlier
+// cells defined is there, unless the result says a fresh interpreter started.
+func (s *Session) RunCell(ctx context.Context, in sandbox.CellRequest) (sandbox.CellResult, error) {
+	fail := sandbox.CellResult{Sandbox: s.r.Name()}
+	if err := sandbox.ValidateCellRequest(in); err != nil {
+		return fail, err
+	}
+	c := &plimsollv1.CellRun{Language: string(in.Language), Code: in.Code}
+	for _, f := range in.Files {
+		c.Files = append(c.Files, &plimsollv1.ProjectFile{Path: f.Path, Content: f.Content})
+	}
+	software, err := sandbox.MergeSoftwareRules(s.software, in.Software)
+	if err != nil {
+		return fail, err
+	}
+	req := s.envelope(ctx, in.Timeout, in.MinimumIsolation, software)
+	req.Payload = &plimsollv1.SessionRunRequest_Cell{Cell: c}
+	resp, rec, err := s.call(ctx, req)
+	if resp == nil {
+		return fail, err
+	}
+	res, ok := cellResult(resp, rec)
+	if !ok {
+		return fail, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
+	}
+	if err != nil {
+		return res, err
+	}
+	if err := sandbox.CheckResultIsolation(res.Isolation, in.MinimumIsolation); err != nil {
+		return res, connect.NewError(connect.CodeDataLoss, err)
+	}
+	return res, nil
+}
+
 func (s *Session) envelope(ctx context.Context, timeout time.Duration, minimum sandbox.IsolationClass, software sandbox.SoftwareRule) *plimsollv1.SessionRunRequest {
 	return &plimsollv1.SessionRunRequest{
 		Protocol:         Protocol,
@@ -293,8 +327,10 @@ func (s *Session) Exchange(ctx context.Context, req *plimsollv1.RunRequest) (*pl
 		msg.Payload = &plimsollv1.SessionRunRequest_Javascript{Javascript: p.Javascript}
 	case *plimsollv1.RunRequest_Project:
 		msg.Payload = &plimsollv1.SessionRunRequest_Project{Project: p.Project}
+	case *plimsollv1.RunRequest_Cell:
+		msg.Payload = &plimsollv1.SessionRunRequest_Cell{Cell: p.Cell}
 	default:
-		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w: only snippets and projects run in a session", sandbox.ErrInvalidRequest))
+		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w: only snippets, projects and cells run in a session", sandbox.ErrInvalidRequest))
 	}
 	return s.call(ctx, msg)
 }

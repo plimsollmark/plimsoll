@@ -3,6 +3,7 @@ package sandbox
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ func TestWasmStatesItsInterpreterByHash(t *testing.T) {
 	if env.JavaScript.MaxTimeout != wasmMaxTimeout {
 		t.Fatalf("ceiling = %v, want %v", env.JavaScript.MaxTimeout, wasmMaxTimeout)
 	}
-	if env.Project != (PayloadEnvironment{}) || env.Module != (PayloadEnvironment{}) {
+	if !reflect.DeepEqual(env.Project, PayloadEnvironment{}) || !reflect.DeepEqual(env.Module, PayloadEnvironment{}) {
 		t.Fatalf("wasm runs no projects or modules, yet states %+v", env)
 	}
 }
@@ -35,7 +36,7 @@ func TestDockerStatesVerifiedImageIDs(t *testing.T) {
 	if env.JavaScript.MaxTimeout != d.snippetTimeout(time.Hour) || env.Project.MaxTimeout != 90*time.Second {
 		t.Fatalf("ceilings %+v differ from what the clamp applies", env)
 	}
-	if env.Module != (PayloadEnvironment{}) {
+	if !reflect.DeepEqual(env.Module, PayloadEnvironment{}) {
 		t.Fatalf("module stated with no module image: %+v", env.Module)
 	}
 
@@ -51,7 +52,7 @@ func TestDockerStatesVerifiedImageIDs(t *testing.T) {
 
 func TestCloudProvidersStateOnlyContentAddressedIdentity(t *testing.T) {
 	e := &E2B{Template: "base"}
-	if env := e.Environments(); env.JavaScript.Identity != "" || env.JavaScript.MaxTimeout != 120*time.Second || env.Module != (PayloadEnvironment{}) {
+	if env := e.Environments(); env.JavaScript.Identity != "" || env.JavaScript.MaxTimeout != 120*time.Second || !reflect.DeepEqual(env.Module, PayloadEnvironment{}) {
 		t.Fatalf("e2b: %+v (a template name is not an identity)", env)
 	}
 
@@ -73,14 +74,14 @@ func TestAdmissionForwardsEnvironments(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, ok := sb.(Describer)
-	if !ok || d.Environments() != DefaultWasm().Environments() {
+	if !ok || !reflect.DeepEqual(d.Environments(), DefaultWasm().Environments()) {
 		t.Fatal("admission hid the wrapped provider's statement")
 	}
 	disabled, err := WithAdmission(Disabled{}, AdmissionConfig{MaxConcurrent: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env := disabled.(Describer).Environments(); env != (Environments{}) {
+	if env := disabled.(Describer).Environments(); !reflect.DeepEqual(env, Environments{}) {
 		t.Fatalf("a provider that states nothing gained a statement: %+v", env)
 	}
 }

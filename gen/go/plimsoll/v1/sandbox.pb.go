@@ -458,8 +458,13 @@ type PayloadEnvironment struct {
 	// Selected executable image manifest and platform, separate from the outer
 	// index in identity. Empty means the provider cannot establish it.
 	SoftwareIdentity string `protobuf:"bytes,3,opt,name=software_identity,json=softwareIdentity,proto3" json:"software_identity,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The languages this environment's interpreters run, as the provider's startup
+	// checks proved them ("javascript", "python"): the languages a project's steps can
+	// invoke, and on a provider with sessions the languages a cell may use. Empty when
+	// the provider has proved none.
+	Languages     []string `protobuf:"bytes,4,rep,name=languages,proto3" json:"languages,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PayloadEnvironment) Reset() {
@@ -511,6 +516,13 @@ func (x *PayloadEnvironment) GetSoftwareIdentity() string {
 		return x.SoftwareIdentity
 	}
 	return ""
+}
+
+func (x *PayloadEnvironment) GetLanguages() []string {
+	if x != nil {
+		return x.Languages
+	}
+	return nil
 }
 
 // An explicit caller rule for the selected software. Empty mode and identities
@@ -817,6 +829,7 @@ type RunRequest struct {
 	//	*RunRequest_Javascript
 	//	*RunRequest_Project
 	//	*RunRequest_Module
+	//	*RunRequest_Cell
 	Payload       isRunRequest_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -921,6 +934,15 @@ func (x *RunRequest) GetModule() *ModuleRun {
 	return nil
 }
 
+func (x *RunRequest) GetCell() *CellRun {
+	if x != nil {
+		if x, ok := x.Payload.(*RunRequest_Cell); ok {
+			return x.Cell
+		}
+	}
+	return nil
+}
+
 type isRunRequest_Payload interface {
 	isRunRequest_Payload()
 }
@@ -937,11 +959,21 @@ type RunRequest_Module struct {
 	Module *ModuleRun `protobuf:"bytes,12,opt,name=module,proto3,oneof"`
 }
 
+type RunRequest_Cell struct {
+	// A cell runs only in a session, so Run refuses it, marked not dispatched. It
+	// is here as the stored form of a session's cell call (the call without its
+	// session ID, with the same request digest), which a harness signs and replays
+	// into a fresh session in order.
+	Cell *CellRun `protobuf:"bytes,13,opt,name=cell,proto3,oneof"`
+}
+
 func (*RunRequest_Javascript) isRunRequest_Payload() {}
 
 func (*RunRequest_Project) isRunRequest_Payload() {}
 
 func (*RunRequest_Module) isRunRequest_Payload() {}
+
+func (*RunRequest_Cell) isRunRequest_Payload() {}
 
 // JavaScriptRun is a snippet. The engine is provider-dependent (Node on docker
 // and e2b, QuickJS on wasm).
@@ -1031,6 +1063,7 @@ type RunResponse struct {
 	//	*RunResponse_Javascript
 	//	*RunResponse_Project
 	//	*RunResponse_Module
+	//	*RunResponse_Cell
 	Result        isRunResponse_Result `protobuf_oneof:"result"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1142,6 +1175,15 @@ func (x *RunResponse) GetModule() *ModuleResult {
 	return nil
 }
 
+func (x *RunResponse) GetCell() *CellResult {
+	if x != nil {
+		if x, ok := x.Result.(*RunResponse_Cell); ok {
+			return x.Cell
+		}
+	}
+	return nil
+}
+
 type isRunResponse_Result interface {
 	isRunResponse_Result()
 }
@@ -1158,11 +1200,17 @@ type RunResponse_Module struct {
 	Module *ModuleResult `protobuf:"bytes,12,opt,name=module,proto3,oneof"`
 }
 
+type RunResponse_Cell struct {
+	Cell *CellResult `protobuf:"bytes,13,opt,name=cell,proto3,oneof"`
+}
+
 func (*RunResponse_Javascript) isRunResponse_Result() {}
 
 func (*RunResponse_Project) isRunResponse_Result() {}
 
 func (*RunResponse_Module) isRunResponse_Result() {}
+
+func (*RunResponse_Cell) isRunResponse_Result() {}
 
 // RunRecord states what one run was asked, what it answered, the evidence it
 // ran under, and when, as digests a harness outside the daemon can recompute
@@ -2271,7 +2319,9 @@ func (x *OpenSessionResponse) GetSoftwareIdentity() string {
 // SessionRunRequest is a RunRequest with a session ID, for a call in a session.
 // It is a separate message so that a daemon that predates sessions refuses it
 // (Unimplemented) instead of dropping the ID and running the payload alone. A
-// module payload has no session form.
+// module payload has no session form; a cell exists only in a session. A daemon
+// that predates cells drops the cell payload and refuses the request as having
+// none, marked not dispatched, so cells did not move the protocol number.
 type SessionRunRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Protocol         uint32                 `protobuf:"varint,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
@@ -2284,6 +2334,7 @@ type SessionRunRequest struct {
 	//
 	//	*SessionRunRequest_Javascript
 	//	*SessionRunRequest_Project
+	//	*SessionRunRequest_Cell
 	Payload       isSessionRunRequest_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2386,6 +2437,15 @@ func (x *SessionRunRequest) GetProject() *ProjectRun {
 	return nil
 }
 
+func (x *SessionRunRequest) GetCell() *CellRun {
+	if x != nil {
+		if x, ok := x.Payload.(*SessionRunRequest_Cell); ok {
+			return x.Cell
+		}
+	}
+	return nil
+}
+
 type isSessionRunRequest_Payload interface {
 	isSessionRunRequest_Payload()
 }
@@ -2398,9 +2458,187 @@ type SessionRunRequest_Project struct {
 	Project *ProjectRun `protobuf:"bytes,11,opt,name=project,proto3,oneof"`
 }
 
+type SessionRunRequest_Cell struct {
+	Cell *CellRun `protobuf:"bytes,12,opt,name=cell,proto3,oneof"`
+}
+
 func (*SessionRunRequest_Javascript) isSessionRunRequest_Payload() {}
 
 func (*SessionRunRequest_Project) isSessionRunRequest_Payload() {}
+
+func (*SessionRunRequest_Cell) isSessionRunRequest_Payload() {}
+
+// CellRun is one call to the session's interpreter for its language. The session
+// keeps one interpreter per language alive between calls, so what a cell defines is
+// there for the next cell, as in a notebook. The files are written into the
+// session's work directory, the interpreter's working directory, before the code
+// runs. A cell carries no grant: its interpreter outlives the call, and a grant
+// lives for one call.
+type CellRun struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Language      string                 `protobuf:"bytes,1,opt,name=language,proto3" json:"language,omitempty"` // "javascript" or "python"; see PayloadEnvironment.languages
+	Code          string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
+	Files         []*ProjectFile         `protobuf:"bytes,3,rep,name=files,proto3" json:"files,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CellRun) Reset() {
+	*x = CellRun{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CellRun) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CellRun) ProtoMessage() {}
+
+func (x *CellRun) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CellRun.ProtoReflect.Descriptor instead.
+func (*CellRun) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *CellRun) GetLanguage() string {
+	if x != nil {
+		return x.Language
+	}
+	return ""
+}
+
+func (x *CellRun) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *CellRun) GetFiles() []*ProjectFile {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+// CellResult is a cell's outcome. exit_code is 0 when the code ran without raising,
+// 1 when it raised (the error is on stderr), and 124 when the call's deadline ended
+// it. A final expression's value is printed to stdout, as a notebook shows it.
+type CellResult struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Stdout          []byte                 `protobuf:"bytes,1,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr          []byte                 `protobuf:"bytes,2,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	ExitCode        int32                  `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	TimedOut        bool                   `protobuf:"varint,4,opt,name=timed_out,json=timedOut,proto3" json:"timed_out,omitempty"`
+	StdoutTruncated bool                   `protobuf:"varint,5,opt,name=stdout_truncated,json=stdoutTruncated,proto3" json:"stdout_truncated,omitempty"`
+	StderrTruncated bool                   `protobuf:"varint,6,opt,name=stderr_truncated,json=stderrTruncated,proto3" json:"stderr_truncated,omitempty"`
+	// This call started a fresh interpreter: nothing an earlier cell defined exists.
+	InterpreterStarted bool `protobuf:"varint,7,opt,name=interpreter_started,json=interpreterStarted,proto3" json:"interpreter_started,omitempty"`
+	// The interpreter ended during this call (the code exited it, it was killed, or the
+	// deadline passed); the next cell starts a fresh one.
+	InterpreterEnded bool `protobuf:"varint,8,opt,name=interpreter_ended,json=interpreterEnded,proto3" json:"interpreter_ended,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *CellResult) Reset() {
+	*x = CellResult{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CellResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CellResult) ProtoMessage() {}
+
+func (x *CellResult) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CellResult.ProtoReflect.Descriptor instead.
+func (*CellResult) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *CellResult) GetStdout() []byte {
+	if x != nil {
+		return x.Stdout
+	}
+	return nil
+}
+
+func (x *CellResult) GetStderr() []byte {
+	if x != nil {
+		return x.Stderr
+	}
+	return nil
+}
+
+func (x *CellResult) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *CellResult) GetTimedOut() bool {
+	if x != nil {
+		return x.TimedOut
+	}
+	return false
+}
+
+func (x *CellResult) GetStdoutTruncated() bool {
+	if x != nil {
+		return x.StdoutTruncated
+	}
+	return false
+}
+
+func (x *CellResult) GetStderrTruncated() bool {
+	if x != nil {
+		return x.StderrTruncated
+	}
+	return false
+}
+
+func (x *CellResult) GetInterpreterStarted() bool {
+	if x != nil {
+		return x.InterpreterStarted
+	}
+	return false
+}
+
+func (x *CellResult) GetInterpreterEnded() bool {
+	if x != nil {
+		return x.InterpreterEnded
+	}
+	return false
+}
 
 type SessionRunResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2416,7 +2654,7 @@ type SessionRunResponse struct {
 
 func (x *SessionRunResponse) Reset() {
 	*x = SessionRunResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2428,7 +2666,7 @@ func (x *SessionRunResponse) String() string {
 func (*SessionRunResponse) ProtoMessage() {}
 
 func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[23]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2441,7 +2679,7 @@ func (x *SessionRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionRunResponse.ProtoReflect.Descriptor instead.
 func (*SessionRunResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{23}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SessionRunResponse) GetRun() *RunResponse {
@@ -2475,7 +2713,7 @@ type CloseSessionRequest struct {
 
 func (x *CloseSessionRequest) Reset() {
 	*x = CloseSessionRequest{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2487,7 +2725,7 @@ func (x *CloseSessionRequest) String() string {
 func (*CloseSessionRequest) ProtoMessage() {}
 
 func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[24]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2500,7 +2738,7 @@ func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionRequest.ProtoReflect.Descriptor instead.
 func (*CloseSessionRequest) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{24}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *CloseSessionRequest) GetProtocol() uint32 {
@@ -2532,7 +2770,7 @@ type CloseSessionResponse struct {
 
 func (x *CloseSessionResponse) Reset() {
 	*x = CloseSessionResponse{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2544,7 +2782,7 @@ func (x *CloseSessionResponse) String() string {
 func (*CloseSessionResponse) ProtoMessage() {}
 
 func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[25]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2557,7 +2795,7 @@ func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionResponse.ProtoReflect.Descriptor instead.
 func (*CloseSessionResponse) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{25}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *CloseSessionResponse) GetSession() string {
@@ -2600,7 +2838,7 @@ type SessionEnded struct {
 
 func (x *SessionEnded) Reset() {
 	*x = SessionEnded{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2612,7 +2850,7 @@ func (x *SessionEnded) String() string {
 func (*SessionEnded) ProtoMessage() {}
 
 func (x *SessionEnded) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[26]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2625,7 +2863,7 @@ func (x *SessionEnded) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionEnded.ProtoReflect.Descriptor instead.
 func (*SessionEnded) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{26}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *SessionEnded) GetReason() SessionEnd {
@@ -2656,7 +2894,7 @@ type NotDispatched struct {
 
 func (x *NotDispatched) Reset() {
 	*x = NotDispatched{}
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2668,7 +2906,7 @@ func (x *NotDispatched) String() string {
 func (*NotDispatched) ProtoMessage() {}
 
 func (x *NotDispatched) ProtoReflect() protoreflect.Message {
-	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[27]
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2681,7 +2919,7 @@ func (x *NotDispatched) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotDispatched.ProtoReflect.Descriptor instead.
 func (*NotDispatched) Descriptor() ([]byte, []int) {
-	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{27}
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *NotDispatched) GetReason() NotDispatchedReason {
@@ -2713,11 +2951,12 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x06policy\x18\x0e \x01(\tR\x06policy\x12+\n" +
 	"\x11supports_sessions\x18\x0f \x01(\bR\x10supportsSessions\x12.\n" +
 	"\x13session_lifetime_ms\x18\x10 \x01(\rR\x11sessionLifetimeMs\x125\n" +
-	"\x17session_idle_timeout_ms\x18\x11 \x01(\rR\x14sessionIdleTimeoutMsJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\x83\x01\n" +
+	"\x17session_idle_timeout_ms\x18\x11 \x01(\rR\x14sessionIdleTimeoutMsJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
 	"\x12PayloadEnvironment\x12\x1a\n" +
 	"\bidentity\x18\x01 \x01(\tR\bidentity\x12$\n" +
 	"\x0emax_timeout_ms\x18\x02 \x01(\rR\fmaxTimeoutMs\x12+\n" +
-	"\x11software_identity\x18\x03 \x01(\tR\x10softwareIdentity\"B\n" +
+	"\x11software_identity\x18\x03 \x01(\tR\x10softwareIdentity\x12\x1c\n" +
+	"\tlanguages\x18\x04 \x03(\tR\tlanguages\"B\n" +
 	"\fSoftwareRule\x12\x12\n" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x12\x1e\n" +
 	"\n" +
@@ -2742,7 +2981,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x10added_latency_ms\x18\n" +
 	" \x01(\x03R\x0eaddedLatencyMs\x12\x1f\n" +
 	"\vbytes_moved\x18\v \x01(\x03R\n" +
-	"bytesMoved\"\xff\x02\n" +
+	"bytesMoved\"\xab\x03\n" +
 	"\n" +
 	"RunRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
@@ -2756,11 +2995,12 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	" \x01(\v2\x1a.plimsoll.v1.JavaScriptRunH\x00R\n" +
 	"javascript\x123\n" +
 	"\aproject\x18\v \x01(\v2\x17.plimsoll.v1.ProjectRunH\x00R\aproject\x120\n" +
-	"\x06module\x18\f \x01(\v2\x16.plimsoll.v1.ModuleRunH\x00R\x06moduleB\t\n" +
+	"\x06module\x18\f \x01(\v2\x16.plimsoll.v1.ModuleRunH\x00R\x06module\x12*\n" +
+	"\x04cell\x18\r \x01(\v2\x14.plimsoll.v1.CellRunH\x00R\x04cellB\t\n" +
 	"\apayload\"H\n" +
 	"\rJavaScriptRun\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12#\n" +
-	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\x9d\x03\n" +
+	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\xcc\x03\n" +
 	"\vRunResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12\x1f\n" +
@@ -2774,7 +3014,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	" \x01(\v2\x1d.plimsoll.v1.JavaScriptResultH\x00R\n" +
 	"javascript\x126\n" +
 	"\aproject\x18\v \x01(\v2\x1a.plimsoll.v1.ProjectResultH\x00R\aproject\x123\n" +
-	"\x06module\x18\f \x01(\v2\x19.plimsoll.v1.ModuleResultH\x00R\x06moduleB\b\n" +
+	"\x06module\x18\f \x01(\v2\x19.plimsoll.v1.ModuleResultH\x00R\x06module\x12-\n" +
+	"\x04cell\x18\r \x01(\v2\x17.plimsoll.v1.CellResultH\x00R\x04cellB\b\n" +
 	"\x06result\"\x8c\x04\n" +
 	"\tRunRecord\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12%\n" +
@@ -2865,7 +3106,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\tisolation\x18\x04 \x01(\tR\tisolation\x12&\n" +
 	"\x0fexpires_unix_ms\x18\x05 \x01(\x03R\rexpiresUnixMs\x12&\n" +
 	"\x0fidle_timeout_ms\x18\x06 \x01(\rR\ridleTimeoutMs\x12+\n" +
-	"\x11software_identity\x18\a \x01(\tR\x10softwareIdentity\"\xf3\x02\n" +
+	"\x11software_identity\x18\a \x01(\tR\x10softwareIdentity\"\x9f\x03\n" +
 	"\x11SessionRunRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
@@ -2879,8 +3120,23 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1a.plimsoll.v1.JavaScriptRunH\x00R\n" +
 	"javascript\x123\n" +
-	"\aproject\x18\v \x01(\v2\x17.plimsoll.v1.ProjectRunH\x00R\aprojectB\t\n" +
-	"\apayload\"\x8e\x01\n" +
+	"\aproject\x18\v \x01(\v2\x17.plimsoll.v1.ProjectRunH\x00R\aproject\x12*\n" +
+	"\x04cell\x18\f \x01(\v2\x14.plimsoll.v1.CellRunH\x00R\x04cellB\t\n" +
+	"\apayload\"i\n" +
+	"\aCellRun\x12\x1a\n" +
+	"\blanguage\x18\x01 \x01(\tR\blanguage\x12\x12\n" +
+	"\x04code\x18\x02 \x01(\tR\x04code\x12.\n" +
+	"\x05files\x18\x03 \x03(\v2\x18.plimsoll.v1.ProjectFileR\x05files\"\xaa\x02\n" +
+	"\n" +
+	"CellResult\x12\x16\n" +
+	"\x06stdout\x18\x01 \x01(\fR\x06stdout\x12\x16\n" +
+	"\x06stderr\x18\x02 \x01(\fR\x06stderr\x12\x1b\n" +
+	"\texit_code\x18\x03 \x01(\x05R\bexitCode\x12\x1b\n" +
+	"\ttimed_out\x18\x04 \x01(\bR\btimedOut\x12)\n" +
+	"\x10stdout_truncated\x18\x05 \x01(\bR\x0fstdoutTruncated\x12)\n" +
+	"\x10stderr_truncated\x18\x06 \x01(\bR\x0fstderrTruncated\x12/\n" +
+	"\x13interpreter_started\x18\a \x01(\bR\x12interpreterStarted\x12+\n" +
+	"\x11interpreter_ended\x18\b \x01(\bR\x10interpreterEnded\"\x8e\x01\n" +
 	"\x12SessionRunResponse\x12*\n" +
 	"\x03run\x18\x01 \x01(\v2\x18.plimsoll.v1.RunResponseR\x03run\x12-\n" +
 	"\x05ended\x18\x02 \x01(\x0e2\x17.plimsoll.v1.SessionEndR\x05ended\x12\x1d\n" +
@@ -2946,7 +3202,7 @@ func file_plimsoll_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_plimsoll_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_plimsoll_v1_sandbox_proto_goTypes = []any{
 	(ProjectOutcome)(0),          // 0: plimsoll.v1.ProjectOutcome
 	(SessionEnd)(0),              // 1: plimsoll.v1.SessionEnd
@@ -2974,11 +3230,13 @@ var file_plimsoll_v1_sandbox_proto_goTypes = []any{
 	(*OpenSessionRequest)(nil),   // 23: plimsoll.v1.OpenSessionRequest
 	(*OpenSessionResponse)(nil),  // 24: plimsoll.v1.OpenSessionResponse
 	(*SessionRunRequest)(nil),    // 25: plimsoll.v1.SessionRunRequest
-	(*SessionRunResponse)(nil),   // 26: plimsoll.v1.SessionRunResponse
-	(*CloseSessionRequest)(nil),  // 27: plimsoll.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil), // 28: plimsoll.v1.CloseSessionResponse
-	(*SessionEnded)(nil),         // 29: plimsoll.v1.SessionEnded
-	(*NotDispatched)(nil),        // 30: plimsoll.v1.NotDispatched
+	(*CellRun)(nil),              // 26: plimsoll.v1.CellRun
+	(*CellResult)(nil),           // 27: plimsoll.v1.CellResult
+	(*SessionRunResponse)(nil),   // 28: plimsoll.v1.SessionRunResponse
+	(*CloseSessionRequest)(nil),  // 29: plimsoll.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil), // 30: plimsoll.v1.CloseSessionResponse
+	(*SessionEnded)(nil),         // 31: plimsoll.v1.SessionEnded
+	(*NotDispatched)(nil),        // 32: plimsoll.v1.NotDispatched
 }
 var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	5,  // 0: plimsoll.v1.DescribeResponse.javascript_environment:type_name -> plimsoll.v1.PayloadEnvironment
@@ -2989,43 +3247,47 @@ var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	10, // 5: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
 	17, // 6: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
 	20, // 7: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
-	12, // 8: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
-	13, // 9: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
-	18, // 10: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
-	22, // 11: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
-	8,  // 12: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
-	14, // 13: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
-	15, // 14: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
-	0,  // 15: plimsoll.v1.ProjectResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
-	16, // 16: plimsoll.v1.ProjectResult.artifacts:type_name -> plimsoll.v1.Artifact
-	8,  // 17: plimsoll.v1.ProjectResult.advice:type_name -> plimsoll.v1.AdviceFinding
-	19, // 18: plimsoll.v1.ModuleRun.rows:type_name -> plimsoll.v1.ModuleRow
-	21, // 19: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
-	0,  // 20: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
-	6,  // 21: plimsoll.v1.OpenSessionRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	6,  // 22: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	10, // 23: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
-	17, // 24: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
-	11, // 25: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
-	1,  // 26: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 27: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 28: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
-	2,  // 29: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
-	9,  // 30: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
-	3,  // 31: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
-	23, // 32: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
-	25, // 33: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
-	27, // 34: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
-	11, // 35: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
-	4,  // 36: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
-	24, // 37: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
-	26, // 38: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
-	28, // 39: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
-	35, // [35:40] is the sub-list for method output_type
-	30, // [30:35] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	26, // 8: plimsoll.v1.RunRequest.cell:type_name -> plimsoll.v1.CellRun
+	12, // 9: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
+	13, // 10: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
+	18, // 11: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
+	22, // 12: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
+	27, // 13: plimsoll.v1.RunResponse.cell:type_name -> plimsoll.v1.CellResult
+	8,  // 14: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	14, // 15: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
+	15, // 16: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
+	0,  // 17: plimsoll.v1.ProjectResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	16, // 18: plimsoll.v1.ProjectResult.artifacts:type_name -> plimsoll.v1.Artifact
+	8,  // 19: plimsoll.v1.ProjectResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	19, // 20: plimsoll.v1.ModuleRun.rows:type_name -> plimsoll.v1.ModuleRow
+	21, // 21: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
+	0,  // 22: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	6,  // 23: plimsoll.v1.OpenSessionRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	6,  // 24: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	10, // 25: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	17, // 26: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	26, // 27: plimsoll.v1.SessionRunRequest.cell:type_name -> plimsoll.v1.CellRun
+	14, // 28: plimsoll.v1.CellRun.files:type_name -> plimsoll.v1.ProjectFile
+	11, // 29: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
+	1,  // 30: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 31: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 32: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
+	2,  // 33: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
+	9,  // 34: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
+	3,  // 35: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
+	23, // 36: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
+	25, // 37: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
+	29, // 38: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
+	11, // 39: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
+	4,  // 40: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
+	24, // 41: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
+	28, // 42: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
+	30, // 43: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
+	39, // [39:44] is the sub-list for method output_type
+	34, // [34:39] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_plimsoll_v1_sandbox_proto_init() }
@@ -3037,15 +3299,18 @@ func file_plimsoll_v1_sandbox_proto_init() {
 		(*RunRequest_Javascript)(nil),
 		(*RunRequest_Project)(nil),
 		(*RunRequest_Module)(nil),
+		(*RunRequest_Cell)(nil),
 	}
 	file_plimsoll_v1_sandbox_proto_msgTypes[8].OneofWrappers = []any{
 		(*RunResponse_Javascript)(nil),
 		(*RunResponse_Project)(nil),
 		(*RunResponse_Module)(nil),
+		(*RunResponse_Cell)(nil),
 	}
 	file_plimsoll_v1_sandbox_proto_msgTypes[22].OneofWrappers = []any{
 		(*SessionRunRequest_Javascript)(nil),
 		(*SessionRunRequest_Project)(nil),
+		(*SessionRunRequest_Cell)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -3053,7 +3318,7 @@ func file_plimsoll_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plimsoll_v1_sandbox_proto_rawDesc), len(file_plimsoll_v1_sandbox_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   28,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

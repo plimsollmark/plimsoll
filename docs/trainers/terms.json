@@ -496,7 +496,7 @@
       "term": "session",
       "anchor": "session",
       "variants": ["sessions"],
-      "definition": "One sandbox kept open for many calls: files one call writes are there for the next, but no process outlives the call that started it."
+      "definition": "One sandbox kept open for many calls: files one call writes are there for the next, but no process outlives the call that started it, except the interpreter (a Python or Node.js process) the session keeps for its cells."
     },
     {
       "term": "shed",
@@ -551,6 +551,12 @@
       "anchor": "trajectory",
       "variants": ["trajectories"],
       "definition": "The full record of a simulation run: every state at every tick, in order."
+    },
+    {
+      "term": "Trigger.dev",
+      "anchor": "trigger-dev",
+      "variants": [],
+      "definition": "A hosted job runner for TypeScript whose durable chat agents can sleep between messages; the trigger-chat example gives one an executeCode tool backed by plimsoll."
     },
     {
       "term": "virtual machine",

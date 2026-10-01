@@ -2,6 +2,7 @@ package sandboxtest
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,9 @@ type Sessions struct {
 	// BeforeOpen, when set, runs at the start of every OpenSession, which returns
 	// its error: a test holds an open inside the provider, or makes one fail.
 	BeforeOpen func() error
+	// SuspendHoldsMemory is what every session's Suspend reports: true acts like a
+	// paused container, false (the default) like a stopped one.
+	SuspendHoldsMemory bool
 
 	mu     sync.Mutex
 	opened []*FakeSession
@@ -47,6 +51,9 @@ func (*Sessions) RunModule(context.Context, sandbox.ModuleRequest) (sandbox.Modu
 // SupportsSessions is true.
 func (*Sessions) SupportsSessions() bool { return true }
 
+// SessionEnvironments states nothing: the fake runs no image.
+func (*Sessions) SessionEnvironments() sandbox.Environments { return sandbox.Environments{} }
+
 // OpenSession opens a fake session with opts.
 func (p *Sessions) OpenSession(_ context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
 	if p.BeforeOpen != nil {
@@ -54,7 +61,7 @@ func (p *Sessions) OpenSession(_ context.Context, opts sandbox.SessionOptions) (
 			return nil, err
 		}
 	}
-	s := &FakeSession{Options: opts, expires: time.Now().Add(opts.Lifetime), done: make(chan struct{})}
+	s := &FakeSession{Options: opts, expires: time.Now().Add(opts.Lifetime), done: make(chan struct{}), holdsMemory: p.SuspendHoldsMemory}
 	p.mu.Lock()
 	p.opened = append(p.opened, s)
 	p.mu.Unlock()
@@ -70,12 +77,14 @@ func (p *Sessions) Opened() []*FakeSession {
 
 // FakeSession is one session of Sessions.
 type FakeSession struct {
-	Options sandbox.SessionOptions
-	expires time.Time
-	done    chan struct{}
+	Options     sandbox.SessionOptions
+	expires     time.Time
+	done        chan struct{}
+	holdsMemory bool
 
 	mu          sync.Mutex
 	calls       int
+	cells       map[sandbox.Language]int
 	suspended   int
 	lastTimeout time.Duration
 	end         *sandbox.SessionEndedError
@@ -143,12 +152,44 @@ func (s *FakeSession) RunProject(context.Context, sandbox.ProjectRequest) (sandb
 	return sandbox.ProjectResult{Sandbox: "fake-sessions", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted}, nil
 }
 
-// Suspend counts itself.
-func (s *FakeSession) Suspend(context.Context) error {
+// RunCell answers with the language, the number of cells that language's fake
+// interpreter has run (1 for the first, which reports InterpreterStarted), and the
+// code, as "python 2: x = 1". A cell's files are listed on stderr, one path a line.
+func (s *FakeSession) RunCell(_ context.Context, req sandbox.CellRequest) (sandbox.CellResult, error) {
+	if err := sandbox.ValidateCellRequest(req); err != nil {
+		return sandbox.CellResult{}, err
+	}
+	if err := s.Err(); err != nil {
+		return sandbox.CellResult{}, sandbox.RefuseEndedSession(err)
+	}
+	s.mu.Lock()
+	s.calls++
+	if s.cells == nil {
+		s.cells = map[sandbox.Language]int{}
+	}
+	s.cells[req.Language]++
+	n := s.cells[req.Language]
+	s.lastTimeout = req.Timeout
+	s.mu.Unlock()
+	var paths []string
+	for _, f := range req.Files {
+		paths = append(paths, f.Path+"\n")
+	}
+	return sandbox.CellResult{
+		Stdout:             fmt.Sprintf("%s %d: %s", req.Language, n, req.Code),
+		Stderr:             strings.Join(paths, ""),
+		InterpreterStarted: n == 1,
+		Sandbox:            "fake-sessions",
+		Isolation:          sandbox.IsolationContainer,
+	}, nil
+}
+
+// Suspend counts itself and reports the provider's SuspendHoldsMemory.
+func (s *FakeSession) Suspend(context.Context) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.suspended++
-	return nil
+	return s.holdsMemory, nil
 }
 
 // Close ends the session as closed.

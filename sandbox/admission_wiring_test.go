@@ -32,6 +32,7 @@ func (f *fullProvider) Drain(context.Context) error       { f.mark("Drainer"); r
 func (f *fullProvider) EgressGuardPath() string           { f.mark("EgressGuardCapable"); return "/guard" }
 func (f *fullProvider) EgressGuardKnownToken(string) bool { return false }
 func (f *fullProvider) SupportsSessions() bool            { return true }
+func (f *fullProvider) SessionEnvironments() Environments { return Environments{} }
 func (f *fullProvider) ReconcileOrphans(context.Context) (int, error) {
 	f.mark("OrphanReconciler")
 	return 0, nil
@@ -50,12 +51,15 @@ type endingSession struct {
 	done chan struct{}
 }
 
-func (s *endingSession) Isolation() IsolationClass     { return IsolationVM }
-func (s *endingSession) ExpiresAt() time.Time          { return time.Now().Add(time.Minute) }
-func (s *endingSession) Suspend(context.Context) error { return nil }
-func (s *endingSession) Close(context.Context) error   { close(s.done); return nil }
-func (s *endingSession) Done() <-chan struct{}         { return s.done }
-func (s *endingSession) Err() error                    { return nil }
+func (s *endingSession) Isolation() IsolationClass             { return IsolationVM }
+func (s *endingSession) ExpiresAt() time.Time                  { return time.Now().Add(time.Minute) }
+func (s *endingSession) Suspend(context.Context) (bool, error) { return false, nil }
+func (s *endingSession) RunCell(context.Context, CellRequest) (CellResult, error) {
+	return CellResult{}, nil
+}
+func (s *endingSession) Close(context.Context) error { close(s.done); return nil }
+func (s *endingSession) Done() <-chan struct{}       { return s.done }
+func (s *endingSession) Err() error                  { return nil }
 
 // TestAdmissionForwardsEveryOptionalInterface: wrapping a provider for admission must
 // not hide any optional interface the rest of plimsoll finds by type assertion.
@@ -64,7 +68,7 @@ func (s *endingSession) Err() error                    { return nil }
 // package's source, so a new optional interface fails here until it is classified.
 func TestAdmissionForwardsEveryOptionalInterface(t *testing.T) {
 	// Interfaces of the package that are not optional provider capabilities.
-	notOptional := map[string]bool{"Sandbox": true, "Session": true, "TokenMinter": true, "SubjectBoundMinter": true}
+	notOptional := map[string]bool{"Sandbox": true, "Session": true, "CellRunner": true, "TokenMinter": true, "SubjectBoundMinter": true}
 	ctx := context.Background()
 	calls := map[string]func(Sandbox) bool{
 		"ProjectCapable": func(s Sandbox) bool { c, ok := s.(ProjectCapable); return ok && c.SupportsProjects() },

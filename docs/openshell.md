@@ -220,7 +220,8 @@ How plimsoll manages those connections:
 ## Sessions
 
 The provider keeps sessions ([docs/sessions.md](sessions.md)): one sandbox for many
-calls, with files persisting and processes not. A session's sandbox is a run's sandbox
+calls, with files persisting and, of processes, only the interpreters a session keeps for
+its cells ([sessions.md](sessions.md#interpreters-state-between-calls)). A session's sandbox is a run's sandbox
 (the same policy, read back the same way) with three differences, each measured on a
 v0.1.2 gateway with the docker driver:
 
@@ -233,11 +234,14 @@ v0.1.2 gateway with the docker driver:
 - **A sweep after every call.** Left alone, a process a call starts outlives the call:
   cancelling an exec kills only the command's process group, and a normal exit kills
   nothing. So after every call, one exec kills every process except the sandbox's own
-  two, its own ancestors and itself, until a scan finds none. The sandbox's own two are
+  two, the session's live interpreters and their relays, its own ancestors and itself, until a scan finds
+  none. The sandbox's own two are
   OpenShell's supervisor (the process that manages the sandbox from inside) and the
   `sleep`, recorded by process ID and start time when the sandbox became ready. The same
   exec then measures the session's files under `/tmp` against the disk budget
-  (`SANDBOX_SESSION_DISK_MB`).
+  (`SANDBOX_SESSION_DISK_MB`). It runs after the call has answered; the next call, a
+  suspend or a close waits for it, so a session the sweep ends is reported to the next
+  call.
 
   The budget is measured after the call, not enforced during it: `SANDBOX_DISK_MB` sizes
   a run's `/tmp` but never a session's, because docker discards a tmpfs when its
@@ -258,7 +262,8 @@ v0.1.2 gateway with the docker driver:
 
 An idle session is stopped, not deleted: a stopped container holds no memory or CPU and
 keeps its files, and the next call starts it and records its processes again (about
-0.8 s in all). Code that kills the main process puts the sandbox in OpenShell's error
+0.8 s in all). A stop ends the session's interpreters, so the first cell after it starts
+a fresh one and says so. Code that kills the main process puts the sandbox in OpenShell's error
 phase, and the session ends as `main_process_ended`. The check after that call notices
 it; when the gateway marks the sandbox only after that check has run (seen twice on
 v0.1.2), the next call's read-back notices it instead and refuses that call before it

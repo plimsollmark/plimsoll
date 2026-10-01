@@ -1,7 +1,9 @@
 # Sessions
 
 A <dfn>*session*</dfn> keeps one sandbox open for many calls. The files a call writes
-are there for the next call; no process a call starts outlives it. An agent that edits,
+are there for the next call; no process a call starts outlives it, except the
+interpreter a session can keep for code it runs as notebook-style cells
+([below](#interpreters-state-between-calls)). An agent that edits,
 builds and tests in a loop pays for one sandbox instead of one per step, and its later
 steps see what its earlier steps wrote. Each call gets everything a single run gets:
 
@@ -25,7 +27,9 @@ through the optional `sandbox.SessionProvider` interface. It states that it has 
 once it passes the shared test suite in [sandbox/sessiontest](../sandbox/sessiontest/),
 which every implementation runs. The suite checks that:
 
-- files persist across calls, including between a snippet call and a project call;
+- files persist across calls, including between a snippet call and a project call, and
+  every call runs in the same work directory, so a snippet finds a project's files by
+  their relative paths;
 - sessions share nothing;
 - no process outlives its call: not a detached child, not a `setsid` grandchild, not a
   background child;
@@ -41,8 +45,8 @@ which every implementation runs. The suite checks that:
 | Provider | Sessions |
 |---|---|
 | `openshell` | Yes. How it keeps the boundary between calls: [docs/openshell.md](openshell.md#sessions). |
+| `docker` | Yes, with a project image configured, under either runtime: <dfn>*runc*</dfn>, docker's default, which shares the machine's kernel, or <dfn>*gVisor*</dfn>, which puts a kernel of its own between the code and the machine's. How: [Docker](#docker) below. |
 | `e2b`, `dockercloud` | Not yet. Each would need its own live proof, and their live suites spend money. |
-| `docker` | Not yet: a container would need a supervisor process inside it to find and kill leftover processes between calls. |
 | `wasm` | No. The engine runs in the daemon's own process, and keeping hostile code's state there between calls is the wrong direction. |
 
 ## Turning them on
@@ -55,7 +59,7 @@ does not support them.
 |---|---|
 | `SANDBOX_MAX_SESSIONS` | Open sessions at once, daemon-wide. Default 0: sessions off. |
 | `SANDBOX_SESSION_LIFETIME` | Absolute lifetime from open. Default `30m`, at most `12h`. A request may ask for less. |
-| `SANDBOX_SESSION_IDLE` | A session with no call for this long is suspended. Default `5m`; `0` never suspends. A request may ask for less. |
+| `SANDBOX_SESSION_IDLE` | A session with no call for this long is suspended: its sandbox is stopped (`openshell`) or paused (`docker`). Default `5m`; `0` never suspends. A request may ask for less. |
 | `SANDBOX_SESSION_DISK_MB` | A call that leaves more than this in the session's files ends the session. Default 1024; 0 means no bound. It is measured after each call, not enforced during one ([openshell.md](openshell.md#sessions) says why the `openshell` provider's per-run disk cap does not apply to sessions). |
 
 The defaults are starting points, not measurements of real use:
@@ -77,9 +81,10 @@ Three procedures beside `Run`, which is unchanged:
 - `OpenSession` returns a session ID (128 random bits), the session's
   <dfn>*fingerprint*</dfn> (the SHA-256 hash of the ID), the tier measured at open, and
   when the session expires.
-- `SessionRun` is a `Run` request with the session ID: a snippet or a project. A
+- `SessionRun` is a `Run` request with the session ID: a snippet, a project, or a
+  cell, code for the session's interpreter (below). A
   <dfn>*module run*</dfn>, which runs a compiled simulator once per row of a parameter
-  table, has no session form. `SessionRun` answers a `RunResponse` and, when the session
+  table, has no session form, and a cell has no form outside a session. `SessionRun` answers a `RunResponse` and, when the session
   ended during or after the call, why.
 - `CloseSession` ends the session, or collects one that ended by itself. It states how
   many calls ran and the <dfn>*digest*</dfn> (the SHA-256 hash) of the last call's record.
@@ -106,6 +111,75 @@ res, err = s.RunJavaScript(ctx, sandbox.Request{Code: `console.log(require("fs")
 summary, err := s.Close(ctx)
 ```
 
+## Interpreters: state between calls
+
+A snippet or a project starts its programs fresh on every call, so an agent that loads a
+large file has to load it again in its next call. A cell does not: the session keeps one
+interpreter per language, a Python or Node.js process that stays alive between calls, and runs each cell's code in it, the way a notebook runs its cells.
+
+- **The request** names the language (`javascript` or `python`), the code, and optional
+  files. The files are written into the session's work directory, which is also the
+  interpreter's working directory, before the code runs: this is how a caller hands a
+  cell data it got from somewhere else, such as another tool's output. Files follow the
+  project limits (200 files, 4 MiB in all, UTF-8 text).
+- **What a cell sees.** Variables, functions and imports from earlier cells of the same
+  language. The value of the cell's last expression is printed, as a notebook shows it.
+  In JavaScript, top-level `let`, `const` and `class` behave as in a notebook (a later
+  cell may declare the same name again) and top-level `await` works; in Python,
+  top-level `await` works.
+- **The result** is a snippet's (stdout, stderr, the truncation flags) with an exit code
+  of 0 when the code ran, 1 when it raised (the error is on stderr) and 124 when the
+  call's deadline ended it, plus two flags: `interpreter_started` (this call started a
+  fresh interpreter, so nothing an earlier cell defined exists) and `interpreter_ended`
+  (the interpreter ended during this call). A cell's time budget is a project's.
+- **What survives.** Only the interpreter process. A process a cell starts, a child of
+  the interpreter, dies at the end of the call like every other process, and the sweep
+  checks it. Output the interpreter writes between calls (a timer that fires later, a
+  thread) is dropped.
+- **What ends an interpreter.** The call's deadline (the interpreter is killed, since a
+  cell stuck in a loop cannot be trusted to stop), code that exits it or kills it, and
+  anything that stops the sandbox: an `openshell` suspend or recovery. A docker pause
+  keeps it. The next cell then starts a fresh one and says so.
+- **No API access.** A cell carries no <dfn>*grant*</dfn>, the permission that lets a call
+  reach chosen routes of an HTTP API without the credential entering the sandbox: the
+  interpreter outlives the call, and a grant lives for one call. A snippet or project call
+  in the same session can use one.
+- **Which languages.** `Describe` states the languages its startup checks proved, on the
+  project environment (`languages`). JavaScript is always there; Python needs `python3` in
+  the image, as `plimsoll/sandbox-python` has (with NumPy and SciPy). A cell in a language
+  the image lacks is refused, marked not dispatched.
+- **Records.** A cell's record has its own kind ([run-records.md](run-records.md)). A
+  cell's result depends on the cells before it, so a cell is replayed only as part of its
+  session, in order.
+
+What changes for the boundary: while an interpreter lives, code of the session can run
+between its calls (a timer or a thread inside the interpreter), within the session's own
+memory, CPU and process limits. It is the session's own code; it reaches nothing outside
+the sandbox that its calls could not reach, and it cannot forge the sweep's verdict, which
+still kills everything else after every call. A session that never runs a cell keeps no
+process between calls, as before.
+
+The interpreters and the programs that drive them are in
+[sandbox/internal/sessionkit](../sandbox/internal/sessionkit/); every provider with sessions
+runs them. Beside each interpreter the session keeps a relay: a small process attached to
+the daemon through one exec held open (`docker exec` on docker, an exec stream on
+`openshell`), which writes a cell's files, hands its code to the interpreter and streams its
+output back. A warm cell therefore starts no process at all. With the sweep after answering
+too, a warm cell took about 5 ms on `openshell`, 14 ms under runc and 15 ms under gVisor,
+against 73 to 107 ms with a process per cell and the sweep before answering (measured
+2026-10-01). The sweep keeps the relay as it keeps the interpreter. On docker the relay
+loads the same small library as the sweep, so no other process of the session can attach to
+it or open its pipes; on `openshell` it cannot, because the gateway then refuses its
+connection to the interpreter, so there code of the session could forge its own cells'
+output, as it always could forge its own snippets'. A new interpreter gets a new relay; a
+relay lost during a cell takes the interpreter with it, since that cell's outcome is unknown;
+code that kills only the relay between calls costs a new relay, not the interpreter's state.
+The conformance suite checks state surviving calls, an error keeping the state, a deadline ending the interpreter, the interpreter's children dying with the call,
+files landing in the work directory, and a killed interpreter being started again.
+
+A single run with no session can run Python too, when the project image has it: a project
+whose step is `python3 main.py`.
+
 ## What the daemon guarantees
 
 - **One owner.** The session belongs to the <dfn>*principal*</dfn> that opened it: the
@@ -131,15 +205,61 @@ summary, err := s.Close(ctx)
   owner's `CloseSession` still gets it.
 - **Capacity.** A running session holds one of the daemon's concurrency slots (the runs
   allowed at once), and with it its share of the total memory budget,
-  `SANDBOX_TOTAL_MEMORY_MB`. A suspended session holds none; the call that resumes it takes
-  a slot first, and a capacity refusal there ran nothing and is safe to retry. Every call
+  `SANDBOX_TOTAL_MEMORY_MB`. A suspended session whose sandbox was stopped holds none; the
+  call that resumes it takes a slot first, and a capacity refusal there ran nothing and is
+  safe to retry. A paused docker session keeps its slot, because a paused container keeps
+  its memory. Every call
   is charged to the caller's rate limit. Opening a session is charged like a run. A call
   gets the daemon's own five-minute timeout ceiling, exactly as a run does.
 
+## Docker
+
+A docker session is the container a project run gets, kept for the session:
+
+- **The same walls.** The project image, launched by the content ID the startup checks
+  inspected, with the run's flags: a read-only root, no network, every writable directory
+  (`/tmp`, `/dev/shm`, `/work`) a size-capped in-memory filesystem, all capabilities
+  dropped, the process limit, and gVisor when `SANDBOX_DOCKER_RUNTIME=runsc`.
+- **A main process that does nothing.** Docker's own init runs as process 1 and starts
+  `sleep`. The init matters: a process killed between calls whose parent is gone becomes
+  process 1's child, and a process 1 that never collects its dead children would keep
+  them, each counting against the process limit, for the session's whole life.
+- **Every call is a `docker exec`** into the container, in `/work`.
+- **After every call, the sweep** kills every process the call left behind, by the same
+  program the `openshell` provider runs, and measures the session's files against
+  `SANDBOX_SESSION_DISK_MB`. It runs after the answer has gone back: the next call, a
+  suspend or a close waits for it, and an agent's thinking time between tool calls usually
+  hides it (a warm call took about 95 ms under runc instead of about 180 ms, measured
+  2026-10-01). So a session that the sweep ends, over its disk budget for instance, is
+  reported to the next call rather than in the answer of the call that caused it. The sweep loads a small library that makes it a process no
+  other process of the same user can attach to, so its verdict cannot be forged from
+  inside. When it cannot prove the boundary, the session ends: the one
+  recovery that kills everything, a restart, would erase the files.
+- **A suspend is a pause.** `docker pause` freezes every process; the files and the
+  processes' memory stay. That is why a paused session keeps its concurrency slot.
+  Resuming takes about 20 milliseconds (measured 2026-10-01 under runc and gVisor).
+- **A read-back before every call.** Anyone who can reach the docker daemon can change a
+  running container, for example raise its memory limit with `docker update`. Before each
+  call the session compares the container's security settings (image, resource limits,
+  mounts, capabilities, networks, user) with what they were at open, and ends the session
+  on any difference. The call is refused, marked not dispatched.
+- **API access.** A grant reaches its API routes through the <dfn>*broker*</dfn>, a part of plimsoll outside the sandbox that adds the
+  credential, so the credential never enters the sandbox. A running container cannot gain
+  a mount, so the session mounts the broker's socket at open. It serves a call's grant
+  only while that call runs; between calls, and in a call without a grant, the socket
+  answers 503.
+- **Cleanup.** The container is removed when the session ends. A container a crashed
+  daemon left behind carries its lifetime as a label, and a running daemon removes it once
+  that lifetime plus 5 minutes has passed.
+
+A session's snippets run in the project image, not the snippet image, because one
+container runs every call. The answer to `OpenSession` and every call's record state the project image.
+
 ## What sessions do not do
 
-- **Keep a process running between calls.** A development server inside a session is not
-  supported: every call's processes die at its end.
+- **Keep a process running between calls, other than the interpreters.** A development
+  server inside a session is not supported: every process a call starts dies at the end of
+  the call, an interpreter's children included.
 - **Survive a daemon restart.** Session state lives in one daemon's memory. After a
   restart, the cleanup of leftover sandboxes removes the old sessions' sandboxes once their
   declared lifetime plus the 5-minute margin has passed.

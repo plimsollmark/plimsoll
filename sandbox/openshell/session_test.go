@@ -12,10 +12,24 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1"
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // freshListing is what the process lister prints in an untouched session sandbox.
 const freshListing = `{"ptrace":"1","procs":[{"pid":1,"ppid":0,"state":"S","start":"100","cmd":"/.openshell/runtime/openshell-sandbox","cmdHex":"2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800"},{"pid":7,"ppid":1,"state":"S","start":"101","cmd":"sleep 2147483647","cmdHex":"736c656570003231343734383336343700"}]}`
+
+// settled waits until the boundary after the last call has finished, as the next
+// call would: the boundary runs after a call has answered.
+func settled(t *testing.T, s *session) {
+	t.Helper()
+	select {
+	case s.turn <- struct{}{}:
+		<-s.turn
+	case <-s.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the boundary after the call did not finish")
+	}
+}
 
 // sessionScript answers a session's execs: the lister gets listing(), the sweep
 // exits with sweep(), and anything else is a payload that prints "ok". It records
@@ -34,7 +48,7 @@ func (s *sessionScript) run(e *fakeExec) error {
 	cmd := e.start.GetCommand()
 	s.mu.Lock()
 	switch {
-	case len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && cmd[2] == listScript:
+	case len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && cmd[2] == sessionkit.ListScript:
 		s.kinds = append(s.kinds, "list")
 		l := freshListing
 		if s.listing != nil {
@@ -45,10 +59,10 @@ func (s *sessionScript) run(e *fakeExec) error {
 			return err
 		}
 		return e.exit(0)
-	case len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && cmd[2] == sweepScript:
+	case len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && cmd[2] == sessionkit.SweepScript:
 		s.kinds = append(s.kinds, "sweep")
 		s.sweeps = append(s.sweeps, cmd[3:])
-		code := int32(sweepClean)
+		code := int32(sessionkit.SweepClean)
 		if s.sweep != nil {
 			code = s.sweep()
 		}
@@ -156,6 +170,7 @@ func TestSessionCallVerifiesRunsAndSweeps(t *testing.T) {
 	if err != nil || res.Stdout != "ok\n" || res.Sandbox != Name || res.Isolation != sandbox.IsolationContainer {
 		t.Fatalf("call: %+v, %v", res, err)
 	}
+	settled(t, s)
 	if f.called("GetSandboxConfig") != before+1 {
 		t.Fatal("the configuration was not read back before the call")
 	}
@@ -165,7 +180,7 @@ func TestSessionCallVerifiesRunsAndSweeps(t *testing.T) {
 	// Each kept process is named by PID, start time and command line, so one that lands
 	// on a spared PID in the same clock tick is not spared unless it is the same
 	// program (external review of v0.10.0, documentation item 5, 2026-09-28).
-	if want := []string{"5242880", "200000", "1:100:2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800", "7:101:736c656570003231343734383336343700"}; !slices.Equal(sc.sweeps[0], want) {
+	if want := []string{"5242880", "200000", "/tmp", "1:100:2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800", "7:101:736c656570003231343734383336343700"}; !slices.Equal(sc.sweeps[0], want) {
 		t.Fatalf("sweep arguments %v, want %v", sc.sweeps[0], want)
 	}
 	// A project call gets the same verification and sweep.
@@ -173,6 +188,7 @@ func TestSessionCallVerifiesRunsAndSweeps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	settled(t, s)
 	if pr.Outcome != sandbox.ProjectOutcomeProtocolError {
 		t.Fatalf("the fake runner does not report, so the outcome is a protocol error: %+v", pr)
 	}
@@ -183,11 +199,12 @@ func TestSessionCallVerifiesRunsAndSweeps(t *testing.T) {
 
 func TestSessionSweepFailureRestartsTheSandbox(t *testing.T) {
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
-	codes := []int32{1, sweepClean}
+	codes := []int32{1, sessionkit.SweepClean}
 	sc.sweep = func() int32 { c := codes[0]; codes = codes[1:]; return c }
 	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}); err != nil {
 		t.Fatal(err)
 	}
+	settled(t, s)
 	if f.called("StopSandbox") != 1 || f.called("StartSandbox") != 1 {
 		t.Fatalf("stop %d, start %d", f.called("StopSandbox"), f.called("StartSandbox"))
 	}
@@ -201,6 +218,7 @@ func TestSessionSweepFailureRestartsTheSandbox(t *testing.T) {
 	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "2"}); err != nil {
 		t.Fatalf("the call after a recovery: %v", err)
 	}
+	settled(t, s)
 }
 
 func TestSessionEndsWhenTheRestartFails(t *testing.T) {
@@ -213,6 +231,7 @@ func TestSessionEndsWhenTheRestartFails(t *testing.T) {
 	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}); err != nil {
 		t.Fatalf("the call's own result must still come back: %v", err)
 	}
+	settled(t, s)
 	if sandbox.SessionEndReason(s.Err()) != sandbox.SessionBoundaryFailed {
 		t.Fatalf("session: %v", s.Err())
 	}
@@ -224,6 +243,7 @@ func TestSessionEndsWhenTheRestartFails(t *testing.T) {
 	if !errors.Is(err, sandbox.ErrSessionEnded) {
 		t.Fatalf("a call after the end: %v", err)
 	}
+	settled(t, s)
 	if r, ok := sandbox.NotDispatchedReason(err); !ok || r != sandbox.RefusalRequest {
 		t.Fatalf("not marked as not dispatched: %v", err)
 	}
@@ -231,11 +251,12 @@ func TestSessionEndsWhenTheRestartFails(t *testing.T) {
 
 func TestSessionEndsOverItsDiskBudget(t *testing.T) {
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{DiskBytes: 1 << 20})
-	sc.sweep = func() int32 { return sweepOverBudget }
+	sc.sweep = func() int32 { return sessionkit.SweepOverBudget }
 	res, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
 	if err != nil || res.Stdout != "ok\n" {
 		t.Fatalf("the call that filled the disk still returns its result: %+v, %v", res, err)
 	}
+	settled(t, s)
 	if sandbox.SessionEndReason(s.Err()) != sandbox.SessionDiskExceeded {
 		t.Fatalf("session: %v", s.Err())
 	}
@@ -251,6 +272,7 @@ func TestSessionEndsWhenTheMainProcessDies(t *testing.T) {
 	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "kill the main process"}); err != nil {
 		t.Fatal(err)
 	}
+	settled(t, s)
 	if sandbox.SessionEndReason(s.Err()) != sandbox.SessionMainProcessEnded {
 		t.Fatalf("session: %v", s.Err())
 	}
@@ -302,18 +324,19 @@ func TestSessionRefusesACallAfterAnOutOfBandChange(t *testing.T) {
 
 func TestSessionSuspendStopsAndTheNextCallStarts(t *testing.T) {
 	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
-	if err := s.Suspend(context.Background()); err != nil {
+	if _, err := s.Suspend(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if f.called("StopSandbox") != 1 || !f.boxes[s.b.name].stopped {
 		t.Fatal("Suspend did not stop the sandbox")
 	}
-	if err := s.Suspend(context.Background()); err != nil || f.called("StopSandbox") != 1 {
+	if _, err := s.Suspend(context.Background()); err != nil || f.called("StopSandbox") != 1 {
 		t.Fatalf("a second Suspend: %v, stops %d", err, f.called("StopSandbox"))
 	}
 	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}); err != nil {
 		t.Fatal(err)
 	}
+	settled(t, s)
 	if f.called("StartSandbox") != 1 {
 		t.Fatal("the call did not start the sandbox")
 	}

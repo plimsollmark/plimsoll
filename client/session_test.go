@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,8 +64,22 @@ func TestSessionThroughTheClientVerifiesAsABundle(t *testing.T) {
 	if _, err := s.RunProject(context.Background(), sandbox.ProjectRequest{Steps: []string{"true"}}); err != nil {
 		t.Fatal(err)
 	}
+	// Two cells, the second with a file: each is checked and chained like any call.
+	for i, c := range []sandbox.CellRequest{
+		{Language: sandbox.LanguagePython, Code: "x = 1"},
+		{Language: sandbox.LanguagePython, Code: "x + 1", Files: []sandbox.File{{Path: "in/a.csv", Content: "a,b"}}},
+	} {
+		res, err := s.RunCell(context.Background(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := fmt.Sprintf("python %d: %s", i+1, c.Code)
+		if res.Stdout != want || res.InterpreterStarted != (i == 0) || res.Record == nil || res.Record.Sequence != uint64(5+i) {
+			t.Fatalf("cell %d: %+v", i+1, res)
+		}
+	}
 	sum, err := s.Close(context.Background())
-	if err != nil || sum.Calls != 4 || sum.End != sandbox.SessionClosed {
+	if err != nil || sum.Calls != 6 || sum.End != sandbox.SessionClosed {
 		t.Fatalf("close: %+v, %v", sum, err)
 	}
 	entries, err := attest.ReadBundle(&bundle)
@@ -72,7 +87,7 @@ func TestSessionThroughTheClientVerifiesAsABundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	rep, err := attest.VerifyBundle(entries, attest.NewVerifier(key.Public().(ed25519.PublicKey)))
-	if err != nil || len(rep.Sessions) != 1 || rep.Sessions[0].Calls != 4 {
+	if err != nil || len(rep.Sessions) != 1 || rep.Sessions[0].Calls != 6 {
 		t.Fatalf("bundle: %+v, %v", rep, err)
 	}
 }

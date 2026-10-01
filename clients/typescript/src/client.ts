@@ -1,0 +1,695 @@
+// A plimsolld client for TypeScript: Connect's JSON protocol over fetch, no
+// protobuf runtime and no dependencies. It keeps the official Go client's
+// promises (package client): it states the protocol number on every request,
+// checks every run record against what it sent and received, checks the
+// isolation evidence against the caller's floor, and tracks a session's chain of
+// records so a call it did not make is caught.
+
+import {
+  checkRecord,
+  requestDigest,
+  sessionFingerprint,
+  softwareRuleAllows,
+  type DigestPayload,
+  type RunRecord,
+} from "./record.ts";
+import { errorFromWire, PlimsollError, sessionEndFromWire, type SessionEnd } from "./errors.ts";
+import type {
+  WireAdvice,
+  WireCellRun,
+  WireCloseSessionResponse,
+  WireDescribeResponse,
+  WireEnvelope,
+  WireError,
+  WireOpenSessionResponse,
+  WirePayloadEnvironment,
+  WireRunResponse,
+  WireSessionRunResponse,
+  WireSoftwareRule,
+} from "./wire.ts";
+
+/** The wire protocol number this client speaks (protocol.Number in Go). */
+export const PROTOCOL = 2;
+
+const SERVICE = "plimsoll.v1.SandboxService";
+
+// Above the largest legitimate project response, so a misbehaving daemon cannot
+// make the client buffer without bound (the Go client's maxResponseBytes).
+const MAX_RESPONSE_BYTES = 32 << 20;
+
+/** How strong the boundary is, weakest first. */
+export type Isolation = "none" | "process" | "container" | "kernel" | "vm";
+
+const TIERS: Isolation[] = ["none", "process", "container", "kernel", "vm"];
+
+/** Whether a tier the daemon reported meets a floor. An unknown tier meets nothing. */
+export function meets(actual: string, floor: Isolation): boolean {
+  const a = TIERS.indexOf(actual as Isolation);
+  return a >= 0 && a >= TIERS.indexOf(floor);
+}
+
+/** A caller's rule for the selected software: one exact identity, or 1 to 32 approved ones. */
+export type SoftwareRule = { mode: "exact" | "approved"; identities: string[] };
+
+export type ClientOptions = {
+  /** The daemon's absolute http(s) URL. Cleartext to a non-loopback host needs insecureHttp. */
+  baseUrl: string;
+  /** Bearer token with the code:run scope. Omit for an open development daemon. */
+  token?: string;
+  /** Explicitly permits cleartext HTTP to a non-loopback host. Development only. */
+  insecureHttp?: boolean;
+  /** Named server-side grant profile for snippets (PLIMSOLL_GRANTS_FILE). Empty = no network. */
+  javascriptGrantProfile?: string;
+  /** Named server-side grant profile for projects. */
+  projectGrantProfile?: string;
+  /** A fetch implementation; defaults to the global one. */
+  fetch?: typeof fetch;
+};
+
+export type RunOptions = {
+  /** Whole-run budget; defaulted and clamped by the daemon. */
+  timeoutMs?: number;
+  /** The weakest tier this run accepts, checked before dispatch and again on the answer. */
+  minimumIsolation?: Exclude<Isolation, "none">;
+  software?: SoftwareRule;
+  /** An opaque correlation id for the daemon's audit line: [A-Za-z0-9._:-]{1,64}, else dropped. */
+  traceId?: string;
+  signal?: AbortSignal;
+};
+
+/** Evidence every answered run carries: configuration and provider evidence, never attestation. */
+export type Evidence = {
+  sandbox: string;
+  isolation: string;
+  softwareIdentity: string;
+  environment: string;
+  durationMs: number;
+  /** The checked run record. */
+  record: RunRecord;
+};
+
+export type AdviceFinding = {
+  pattern: string;
+  severity: string;
+  remedy: string;
+  method: string;
+  route: string;
+  detail: string;
+  suggestedMethod: string;
+  suggestedRoute: string;
+  extraCalls: number;
+  addedLatencyMs: number;
+  bytesMoved: number;
+};
+
+export type JavaScriptResult = Evidence & {
+  /** Guest output decoded as UTF-8 (invalid sequences replaced); the raw bytes are beside it. */
+  stdout: string;
+  stderr: string;
+  stdoutBytes: Uint8Array;
+  stderrBytes: Uint8Array;
+  /** A non-zero exit code is a normal result: the guest's code failed. */
+  exitCode: number;
+  timedOut: boolean;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  advice: AdviceFinding[];
+};
+
+export type ProjectRequest = {
+  files: { path: string; content: string }[];
+  /** Shell commands run in order; the run stops at the first that fails. */
+  steps: string[];
+  /** Relative paths to capture and return. */
+  artifacts?: string[];
+};
+
+export type ProjectOutcome = "unspecified" | "completed" | "setup_failed" | "timed_out" | "protocol_error";
+
+export type StepResult = {
+  command: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  timedOut: boolean;
+  durationMs: number;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+};
+
+export type ProjectResult = Evidence & {
+  outcome: ProjectOutcome;
+  detail: string;
+  steps: StepResult[];
+  artifacts: { path: string; content: Uint8Array }[];
+  artifactsTruncated: boolean;
+  advice: AdviceFinding[];
+};
+
+/** An interpreter language: a cell's, and one an environment states. */
+export type Language = "javascript" | "python";
+
+/**
+ * Where one payload kind runs. languages are the interpreters the daemon's startup
+ * checks proved: what a project's steps can invoke, and in a session what a cell may use.
+ */
+export type PayloadEnvironment = { identity: string; softwareIdentity: string; maxTimeoutMs: number; languages: Language[] };
+
+/** A cell: code for the session's interpreter, with files written into the work directory first. */
+export type CellRequest = { language: Language; code: string; files?: { path: string; content: string }[] };
+
+export type CellResult = Evidence & {
+  stdout: string;
+  stderr: string;
+  stdoutBytes: Uint8Array;
+  stderrBytes: Uint8Array;
+  /** 0: the code ran; 1: it raised (the error is on stderr); 124: the deadline ended it. */
+  exitCode: number;
+  timedOut: boolean;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  /** This call started a fresh interpreter: nothing an earlier cell defined exists. */
+  interpreterStarted: boolean;
+  /** The interpreter ended during this call; the next cell starts a fresh one. */
+  interpreterEnded: boolean;
+};
+
+export type Info = {
+  sandbox: string;
+  isolation: string;
+  protocol: number;
+  supportsProject: boolean;
+  supportsModule: boolean;
+  supportsJavaScriptGrants: boolean;
+  supportsProjectGrants: boolean;
+  supportsSessions: boolean;
+  sessionLifetimeMs: number;
+  sessionIdleTimeoutMs: number;
+  environments: { javascript: PayloadEnvironment; project: PayloadEnvironment; module: PayloadEnvironment; policy: string };
+  resources: { memoryMb: number; cpus: number; pids: number; diskMb: number };
+};
+
+export type SessionOptions = {
+  minimumIsolation?: Exclude<Isolation, "none">;
+  software?: SoftwareRule;
+  /** Shorter than the daemon's own, or omitted for the daemon's. */
+  lifetimeMs?: number;
+  idleTimeoutMs?: number;
+  traceId?: string;
+  signal?: AbortSignal;
+};
+
+export type SessionSummary = { session: string; calls: bigint; lastRecordSha256: string; end: SessionEnd };
+
+function validateBaseUrl(raw: string, insecureHttp: boolean): string {
+  if (raw === "" || raw !== raw.trim()) throw new PlimsollError("invalid_argument", "plimsoll: base URL must be non-empty with no surrounding whitespace");
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new PlimsollError("invalid_argument", "plimsoll: base URL must be an absolute HTTP or HTTPS URL");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new PlimsollError("invalid_argument", "plimsoll: base URL scheme must be http or https");
+  if (u.username || u.password || u.search || raw.includes("?") || raw.includes("#")) {
+    throw new PlimsollError("invalid_argument", "plimsoll: userinfo, query and fragment are not permitted in the base URL");
+  }
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  const loopback = host === "localhost" || host === "::1" || /^127\./.test(host);
+  if (u.protocol === "http:" && !loopback && !insecureHttp) {
+    throw new PlimsollError("invalid_argument", "plimsoll: cleartext HTTP to a non-loopback daemon requires insecureHttp");
+  }
+  return u.toString().replace(/\/+$/, "");
+}
+
+function timeoutMs(ms: number | undefined): number {
+  if (ms === undefined || !(ms > 0)) return 0;
+  return Math.min(Math.max(1, Math.round(ms)), 2 ** 31 - 1);
+}
+
+function durationMs(ms: number | undefined): number {
+  if (ms === undefined || !(ms > 0)) return 0;
+  return Math.min(Math.round(ms), 2 ** 32 - 1);
+}
+
+function validateRule(rule: SoftwareRule | undefined): WireSoftwareRule | undefined {
+  if (!rule) return undefined;
+  const ids = rule.identities;
+  const ok =
+    (rule.mode === "exact" ? ids.length === 1 : rule.mode === "approved" && ids.length >= 1 && ids.length <= 32) &&
+    new Set(ids).size === ids.length &&
+    ids.every((id) => id.length > 0 && id.length <= 256 && /^[A-Za-z0-9._:/@+-]+$/.test(id));
+  if (!ok) {
+    throw new PlimsollError("invalid_argument", "plimsoll: software rule needs exact with one identity or approved with 1 to 32 identities", {
+      notDispatched: "request",
+    });
+  }
+  return { mode: rule.mode, identities: [...ids] };
+}
+
+// The intersection of a session's rule and a call's: neither can be weakened.
+function mergeRules(a: WireSoftwareRule | undefined, b: WireSoftwareRule | undefined): WireSoftwareRule | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const ids = a.identities.filter((id) => b.identities.includes(id));
+  if (ids.length === 0) {
+    throw new PlimsollError("invalid_argument", "plimsoll: the call's software rule shares no identity with the session's", { notDispatched: "request" });
+  }
+  return { mode: ids.length === 1 ? "exact" : "approved", identities: ids };
+}
+
+const num = (v: string | number | undefined): number => Number(v ?? 0);
+const bytes = (s: string | undefined): Uint8Array => new Uint8Array(Buffer.from(s ?? "", "base64"));
+const text = (b: Uint8Array): string => Buffer.from(b).toString("utf8");
+
+function adviceFromWire(a: WireAdvice[] | undefined): AdviceFinding[] {
+  return (a ?? []).map((f) => ({
+    pattern: f.pattern ?? "",
+    severity: f.severity ?? "",
+    remedy: f.remedy ?? "",
+    method: f.method ?? "",
+    route: f.route ?? "",
+    detail: f.detail ?? "",
+    suggestedMethod: f.suggestedMethod ?? "",
+    suggestedRoute: f.suggestedRoute ?? "",
+    extraCalls: f.extraCalls ?? 0,
+    addedLatencyMs: num(f.addedLatencyMs),
+    bytesMoved: num(f.bytesMoved),
+  }));
+}
+
+function evidence(resp: WireRunResponse, record: RunRecord): Evidence {
+  return {
+    sandbox: resp.sandbox ?? "",
+    isolation: resp.isolation ?? "",
+    softwareIdentity: resp.softwareIdentity ?? "",
+    environment: resp.environment ?? "",
+    durationMs: num(resp.durationMs),
+    record,
+  };
+}
+
+function javascriptResult(resp: WireRunResponse, record: RunRecord): JavaScriptResult {
+  const j = resp.javascript ?? {};
+  const out = bytes(j.stdout);
+  const err = bytes(j.stderr);
+  return {
+    ...evidence(resp, record),
+    stdout: text(out),
+    stderr: text(err),
+    stdoutBytes: out,
+    stderrBytes: err,
+    exitCode: j.exitCode ?? 0,
+    timedOut: j.timedOut ?? false,
+    stdoutTruncated: j.stdoutTruncated ?? false,
+    stderrTruncated: j.stderrTruncated ?? false,
+    advice: adviceFromWire(j.advice),
+  };
+}
+
+function outcomeFromWire(v: string | number | undefined): ProjectOutcome {
+  const names: ProjectOutcome[] = ["unspecified", "completed", "setup_failed", "timed_out", "protocol_error"];
+  if (typeof v === "number") return names[v] ?? "unspecified";
+  const name = (v ?? "").replace(/^PROJECT_OUTCOME_/, "").toLowerCase();
+  return (names as string[]).includes(name) ? (name as ProjectOutcome) : "unspecified";
+}
+
+function projectResult(resp: WireRunResponse, record: RunRecord): ProjectResult {
+  const p = resp.project ?? {};
+  return {
+    ...evidence(resp, record),
+    outcome: outcomeFromWire(p.outcome),
+    detail: p.outcomeDetail ?? "",
+    steps: (p.steps ?? []).map((s) => ({
+      command: s.command ?? "",
+      stdout: text(bytes(s.stdout)),
+      stderr: text(bytes(s.stderr)),
+      exitCode: s.exitCode ?? 0,
+      timedOut: s.timedOut ?? false,
+      durationMs: num(s.durationMs),
+      stdoutTruncated: s.stdoutTruncated ?? false,
+      stderrTruncated: s.stderrTruncated ?? false,
+    })),
+    artifacts: (p.artifacts ?? []).map((a) => ({ path: a.path ?? "", content: bytes(a.content) })),
+    artifactsTruncated: p.artifactsTruncated ?? false,
+    advice: adviceFromWire(p.advice),
+  };
+}
+
+function cellResult(resp: WireRunResponse, record: RunRecord): CellResult {
+  const c = resp.cell ?? {};
+  const out = bytes(c.stdout);
+  const err = bytes(c.stderr);
+  return {
+    ...evidence(resp, record),
+    stdout: text(out),
+    stderr: text(err),
+    stdoutBytes: out,
+    stderrBytes: err,
+    exitCode: c.exitCode ?? 0,
+    timedOut: c.timedOut ?? false,
+    stdoutTruncated: c.stdoutTruncated ?? false,
+    stderrTruncated: c.stderrTruncated ?? false,
+    interpreterStarted: c.interpreterStarted ?? false,
+    interpreterEnded: c.interpreterEnded ?? false,
+  };
+}
+
+type Payload =
+  | { javascript: { code: string; grantProfile?: string } }
+  | { project: { files: ProjectRequest["files"]; steps: string[]; artifacts: string[]; grantProfile?: string } }
+  | { cell: WireCellRun & { files: { path: string; content: string }[] } };
+
+function digestPayload(p: Payload): DigestPayload {
+  if ("javascript" in p) return { kind: "javascript", code: p.javascript.code, grantProfile: p.javascript.grantProfile ?? "" };
+  if ("cell" in p) return { kind: "cell", language: p.cell.language, code: p.cell.code, files: p.cell.files };
+  return { kind: "project", grantProfile: p.project.grantProfile ?? "", files: p.project.files, steps: p.project.steps, artifacts: p.project.artifacts };
+}
+
+export class PlimsollClient {
+  private readonly base: string;
+  private readonly token: string | undefined;
+  private readonly fetchImpl: typeof fetch;
+  /** @internal */ readonly jsGrant: string;
+  /** @internal */ readonly projectGrant: string;
+
+  constructor(opts: ClientOptions) {
+    this.base = validateBaseUrl(opts.baseUrl, opts.insecureHttp ?? false);
+    this.token = opts.token;
+    this.fetchImpl = opts.fetch ?? fetch;
+    this.jsGrant = opts.javascriptGrantProfile ?? "";
+    this.projectGrant = opts.projectGrantProfile ?? "";
+  }
+
+  /** @internal One unary Connect call with the JSON codec. */
+  async call<T>(method: string, body: unknown, signal?: AbortSignal): Promise<T> {
+    const headers: Record<string, string> = { "Content-Type": "application/json", "Connect-Protocol-Version": "1" };
+    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.base}/${SERVICE}/${method}`, { method: "POST", headers, body: JSON.stringify(body), signal });
+    } catch (e) {
+      if (signal?.aborted) throw new PlimsollError("canceled", "plimsoll: the call was canceled", { cause: e });
+      throw new PlimsollError("unavailable", `plimsoll: ${(e as Error).message}`, { cause: e });
+    }
+    const raw = await readCapped(res);
+    let parsed: unknown;
+    try {
+      parsed = raw.length ? JSON.parse(raw) : {};
+    } catch {
+      parsed = undefined;
+    }
+    if (!res.ok) throw errorFromWire(res.status, parsed as WireError | undefined);
+    if (parsed === undefined || typeof parsed !== "object") throw new PlimsollError("internal", "plimsoll: the daemon's answer is not a JSON message");
+    return parsed as T;
+  }
+
+  /** The daemon's own statement of its provider, tier and what it supports. */
+  async describe(signal?: AbortSignal): Promise<Info> {
+    const m = await this.call<WireDescribeResponse>("Describe", {}, signal);
+    const env = (e: WirePayloadEnvironment | undefined): PayloadEnvironment => ({
+      identity: e?.identity ?? "",
+      softwareIdentity: e?.softwareIdentity ?? "",
+      maxTimeoutMs: e?.maxTimeoutMs ?? 0,
+      languages: (e?.languages ?? []).filter((l): l is Language => l === "javascript" || l === "python"),
+    });
+    return {
+      sandbox: m.sandbox ?? "",
+      isolation: m.isolation ?? "",
+      protocol: m.protocol ?? 0,
+      supportsProject: m.supportsProject ?? false,
+      supportsModule: m.supportsModule ?? false,
+      supportsJavaScriptGrants: m.supportsJavascriptGrants ?? false,
+      supportsProjectGrants: m.supportsProjectGrants ?? false,
+      supportsSessions: m.supportsSessions ?? false,
+      sessionLifetimeMs: m.sessionLifetimeMs ?? 0,
+      sessionIdleTimeoutMs: m.sessionIdleTimeoutMs ?? 0,
+      environments: {
+        javascript: env(m.javascriptEnvironment),
+        project: env(m.projectEnvironment),
+        module: env(m.moduleEnvironment),
+        policy: m.policy ?? "",
+      },
+      resources: {
+        memoryMb: m.resources?.memoryMb ?? 0,
+        cpus: m.resources?.cpus ?? 0,
+        pids: m.resources?.pids ?? 0,
+        diskMb: m.resources?.diskMb ?? 0,
+      },
+    };
+  }
+
+  /** Runs a JavaScript snippet in a fresh sandbox. */
+  async runJavaScript(code: string, opts: RunOptions = {}): Promise<JavaScriptResult> {
+    const resp = await this.exchange("Run", this.envelope(opts, validateRule(opts.software)), { javascript: { code, grantProfile: this.jsGrant || undefined } }, opts);
+    return finish(resp.run, resp.record, javascriptResult, "javascript", opts.minimumIsolation);
+  }
+
+  /** Writes a multi-file project into a fresh sandbox and runs its steps in order. */
+  async runProject(req: ProjectRequest, opts: RunOptions = {}): Promise<ProjectResult> {
+    const resp = await this.exchange("Run", this.envelope(opts, validateRule(opts.software)), projectPayload(req, this.projectGrant), opts);
+    return finish(resp.run, resp.record, projectResult, "project", opts.minimumIsolation);
+  }
+
+  /**
+   * Opens a session: one sandbox kept for many calls, files persisting, and of
+   * processes only the interpreters runCell keeps. Only on a daemon whose Describe
+   * states supportsSessions.
+   */
+  async openSession(opts: SessionOptions = {}): Promise<Session> {
+    const rule = validateRule(opts.software);
+    const m = await this.call<WireOpenSessionResponse>(
+      "OpenSession",
+      {
+        protocol: PROTOCOL,
+        minimumIsolation: opts.minimumIsolation,
+        traceId: opts.traceId,
+        lifetimeMs: durationMs(opts.lifetimeMs) || undefined,
+        idleTimeoutMs: durationMs(opts.idleTimeoutMs) || undefined,
+        softwareRule: rule,
+      },
+      opts.signal,
+    );
+    const s = new Session(this, m, rule);
+    if (s.fingerprint !== sessionFingerprint(m.sessionId ?? "")) {
+      throw new PlimsollError("data_loss", "plimsoll: the daemon's session fingerprint does not match its session ID");
+    }
+    if (opts.minimumIsolation && !meets(s.isolation, opts.minimumIsolation)) {
+      await s.close().catch(() => undefined);
+      throw new PlimsollError("data_loss", `plimsoll: the session opened at ${s.isolation}, below the requested ${opts.minimumIsolation}`);
+    }
+    if (!softwareRuleAllows(rule, m.softwareIdentity ?? "")) {
+      await s.close().catch(() => undefined);
+      throw new PlimsollError("data_loss", "plimsoll: the session's selected software is outside the requested rule");
+    }
+    return s;
+  }
+
+  /** @internal */
+  envelope(opts: RunOptions, rule: WireSoftwareRule | undefined): WireEnvelope {
+    return {
+      protocol: PROTOCOL,
+      minimumIsolation: opts.minimumIsolation,
+      traceId: opts.traceId,
+      timeoutMs: timeoutMs(opts.timeoutMs) || undefined,
+      softwareRule: rule,
+    };
+  }
+
+  // Sends one Run and checks its record.
+  private async exchange(method: "Run", env: WireEnvelope, payload: Payload, opts: RunOptions): Promise<{ run: WireRunResponse; record: RunRecord }> {
+    const resp = await this.call<WireRunResponse>(method, { ...env, ...payload }, opts.signal);
+    const checked = checkRecord(
+      requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: env.softwareRule, payload: digestPayload(payload) }),
+      env.protocol,
+      env.softwareRule,
+      resp,
+    );
+    if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: resp });
+    return { run: resp, record: checked.record };
+  }
+}
+
+/** @internal */
+export function projectPayload(req: ProjectRequest, grantProfile: string): Payload {
+  return {
+    project: {
+      files: req.files.map((f) => ({ path: f.path, content: f.content })),
+      steps: [...req.steps],
+      artifacts: [...(req.artifacts ?? [])],
+      grantProfile: grantProfile || undefined,
+    },
+  };
+}
+
+// Maps a checked response and applies the two checks that follow the record:
+// the result is of the request's kind, and the tier meets the floor.
+function finish<T extends Evidence>(
+  resp: WireRunResponse,
+  record: RunRecord,
+  map: (r: WireRunResponse, rec: RunRecord) => T,
+  kind: "javascript" | "project" | "cell",
+  floor: Isolation | undefined,
+): T {
+  if (!resp[kind]) throw new PlimsollError("data_loss", "plimsoll: the daemon's result is not of the request's kind", { result: resp });
+  const out = map(resp, record);
+  if (floor && !meets(out.isolation, floor)) {
+    throw new PlimsollError("data_loss", `plimsoll: result isolation ${out.isolation} is below the requested ${floor}; execution may have occurred`, { result: out });
+  }
+  return out;
+}
+
+/**
+ * An open session. Calls are serialized here as they are on the daemon, so the
+ * chain this client tracks follows the daemon's; a record that does not continue
+ * it means someone else holding the session ID made a call.
+ */
+export class Session {
+  /** The SHA-256 of the session ID, as the session's records carry it. */
+  readonly fingerprint: string;
+  /** The tier the daemon measured when the session opened. */
+  readonly isolation: string;
+  readonly sandbox: string;
+  readonly expiresAtMs: number;
+  readonly idleTimeoutMs: number;
+  // The session ID is a capability: it goes to the daemon and nowhere else.
+  readonly #id: string;
+  readonly #client: PlimsollClient;
+  readonly #rule: WireSoftwareRule | undefined;
+  #calls = 0n;
+  #last = "";
+  #end: { reason: SessionEnd; detail: string } | undefined;
+  #queue: Promise<unknown> = Promise.resolve();
+
+  /** @internal */
+  constructor(client: PlimsollClient, m: WireOpenSessionResponse, rule: WireSoftwareRule | undefined) {
+    this.#client = client;
+    this.#id = m.sessionId ?? "";
+    this.#rule = rule;
+    this.fingerprint = m.session ?? "";
+    this.isolation = m.isolation ?? "";
+    this.sandbox = m.sandbox ?? "";
+    this.expiresAtMs = num(m.expiresUnixMs);
+    this.idleTimeoutMs = m.idleTimeoutMs ?? 0;
+  }
+
+  /** The session's end once a response reported it, else undefined. */
+  get ended(): { reason: SessionEnd; detail: string } | undefined {
+    return this.#end;
+  }
+
+  /** The number of calls this client has seen executed, and the last record's digest. */
+  get chain(): { calls: bigint; lastRecordSha256: string } {
+    return { calls: this.#calls, lastRecordSha256: this.#last };
+  }
+
+  async runJavaScript(code: string, opts: RunOptions = {}): Promise<JavaScriptResult> {
+    const run = await this.#call({ javascript: { code, grantProfile: this.#client.jsGrant || undefined } }, opts);
+    return finish(run.run, run.record, javascriptResult, "javascript", opts.minimumIsolation);
+  }
+
+  /** Runs a project in the session; its files persist for later calls. */
+  async runProject(req: ProjectRequest, opts: RunOptions = {}): Promise<ProjectResult> {
+    const run = await this.#call(projectPayload(req, this.#client.projectGrant), opts);
+    return finish(run.run, run.record, projectResult, "project", opts.minimumIsolation);
+  }
+
+  /**
+   * Runs code in the session's interpreter for req.language, which keeps what
+   * earlier cells defined unless the result says a fresh one started. req.files are
+   * written into the session's work directory, the interpreter's working directory,
+   * before the code runs. A cell carries no grant.
+   */
+  async runCell(req: CellRequest, opts: RunOptions = {}): Promise<CellResult> {
+    if (req.language !== "javascript" && req.language !== "python") {
+      throw new PlimsollError("invalid_argument", `plimsoll: unknown cell language ${JSON.stringify(req.language)}`, { notDispatched: "request" });
+    }
+    const files = (req.files ?? []).map((f) => ({ path: f.path, content: f.content }));
+    const run = await this.#call({ cell: { language: req.language, code: req.code, files } }, opts);
+    return finish(run.run, run.record, cellResult, "cell", opts.minimumIsolation);
+  }
+
+  #serial<T>(f: () => Promise<T>): Promise<T> {
+    const next = this.#queue.then(f, f);
+    this.#queue = next.catch(() => undefined);
+    return next;
+  }
+
+  #call(payload: Payload, opts: RunOptions): Promise<{ run: WireRunResponse; record: RunRecord }> {
+    const rule = mergeRules(this.#rule, validateRule(opts.software));
+    return this.#serial(async () => {
+      const env = this.#client.envelope(opts, rule);
+      let m: WireSessionRunResponse;
+      try {
+        m = await this.#client.call<WireSessionRunResponse>("SessionRun", { ...env, sessionId: this.#id, ...payload }, opts.signal);
+      } catch (e) {
+        if (e instanceof PlimsollError && e.sessionEnded) this.#end = e.sessionEnded;
+        throw e;
+      }
+      const run = m.run;
+      if (!run) throw new PlimsollError("data_loss", "plimsoll: the session call's answer carries no run");
+      const end = sessionEndFromWire(m.ended);
+      if (end !== "open") this.#end = { reason: end, detail: m.endDetail ?? "" };
+      const checked = checkRecord(
+        requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: rule, payload: digestPayload(payload) }),
+        env.protocol,
+        rule,
+        run,
+      );
+      if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: run });
+      const r = checked.record;
+      if (r.session !== this.fingerprint || r.sequence !== this.#calls + 1n || r.previousSha256 !== this.#last) {
+        throw new PlimsollError(
+          "data_loss",
+          `plimsoll: the session's chain is broken: call ${r.sequence} after "${r.previousSha256}", this client's last was call ${this.#calls}, "${this.#last}"`,
+          { result: run },
+        );
+      }
+      this.#calls = r.sequence;
+      this.#last = r.sha256;
+      return { run, record: r };
+    });
+  }
+
+  /**
+   * Ends the session (or collects one that ended by itself) and checks the
+   * daemon's count of executed calls against the chain this client saw.
+   */
+  close(signal?: AbortSignal): Promise<SessionSummary> {
+    return this.#serial(async () => {
+      const m = await this.#client.call<WireCloseSessionResponse>("CloseSession", { protocol: PROTOCOL, sessionId: this.#id }, signal);
+      const sum: SessionSummary = {
+        session: m.session ?? "",
+        calls: BigInt(m.calls ?? 0),
+        lastRecordSha256: m.lastRecordSha256 ?? "",
+        end: sessionEndFromWire(m.ended),
+      };
+      this.#end ??= { reason: sum.end, detail: "" };
+      if (sum.session !== this.fingerprint || sum.calls !== this.#calls || sum.lastRecordSha256 !== this.#last) {
+        throw new PlimsollError(
+          "data_loss",
+          `plimsoll: the daemon counts ${sum.calls} calls ending "${sum.lastRecordSha256}", this client saw ${this.#calls} ending "${this.#last}"`,
+          { result: sum },
+        );
+      }
+      return sum;
+    });
+  }
+}
+
+async function readCapped(res: Response): Promise<string> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new PlimsollError("resource_exhausted", `plimsoll: the daemon's answer exceeds ${MAX_RESPONSE_BYTES} bytes`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}

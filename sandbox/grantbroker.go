@@ -64,8 +64,15 @@ func HostClientModule(grant *HostAPIGrant) string { return hostSDKModule(grant) 
 // target is taken from RequestURI, exactly as it arrived, because r.URL.Path has
 // already lost percent-encoding and cannot prove approve==wire.
 func newBrokerServer(core *brokerSession) *http.Server {
+	return newBrokerServerFor(func() *brokerSession { return core })
+}
+
+// newBrokerServerFor serves whichever core current returns when each request
+// arrives: a docker session's socket outlives its calls, and between them (or in a
+// call without a grant) current returns nil, which the broker answers 503.
+func newBrokerServerFor(current func() *brokerSession) *http.Server {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := core.Call(r.Context(), brokerCall{Method: r.Method, RawTarget: r.RequestURI, Body: r.Body})
+		resp := current().Call(r.Context(), brokerCall{Method: r.Method, RawTarget: r.RequestURI, Body: r.Body})
 		w.Header().Set("Content-Type", resp.ContentType)
 		w.WriteHeader(resp.Status)
 		_, _ = w.Write(resp.Body)

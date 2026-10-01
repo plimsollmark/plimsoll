@@ -124,6 +124,11 @@ type DockerSandbox struct {
 	lastVerified        time.Time
 	preflightNow        func() time.Time // test clock; nil uses time.Now
 	preflightWait       time.Duration    // bounded wait on preflight contention; 0 uses the default
+
+	// projectLanguages are the interpreters the project image ran in SmokeTest.
+	projectLanguages []Language
+	// sessions are the open sessions and their container removals (docker_session.go).
+	sessions dockerSessions
 }
 
 const (
@@ -387,6 +392,13 @@ func (d *DockerSandbox) lockdownArgs(name string, workTmpfs bool, runtime string
 		// must not duplicate hostile output into an unbounded json-file on the host.
 		"--log-driver", "none",
 	}
+	return append(args, d.lockdownFlags(workTmpfs, runtime)...)
+}
+
+// lockdownFlags are the flags that confine a container, shared by a run's container
+// and a session's.
+func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime string) []string {
+	var args []string
 	// gVisor (or any alternate OCI runtime) when configured — a real kernel
 	// boundary around hostile code, not just runc namespaces.
 	if runtime != "" {
@@ -1040,6 +1052,15 @@ func (d *DockerSandbox) SmokeTest(ctx context.Context) error {
 			}
 		}
 	}
+	// The languages the project image runs, which Describe states and a session's
+	// cells use: node is the runner's own interpreter, python3 is optional.
+	langs, err := d.probeLanguages(ctx, state, state.projectImageID)
+	if err != nil {
+		return fmt.Errorf("language probe failed for image %q under runtime %q: %w", d.ProjectImage, state.runtime, err)
+	}
+	d.stateMu.Lock()
+	d.projectLanguages = langs
+	d.stateMu.Unlock()
 	// The process limit is a property of the runtime, not of an image, so under runsc
 	// it is proven once, on the host, where gVisor enforces it (smokeProbe skips the
 	// guest's emulated copy).
@@ -1375,6 +1396,31 @@ for(const [path,flags] of checks){
 		return fmt.Errorf("the runner or its descriptor probe failed: outcome %s (%s), steps %+v", res.Outcome, res.Detail, res.Steps)
 	}
 	return nil
+}
+
+// probeLanguages runs each interpreter once in the image, through the project path,
+// and returns the languages that answered. JavaScript must: the runner is node.
+func (d *DockerSandbox) probeLanguages(ctx context.Context, state dockerExecutionState, imageID string) ([]Language, error) {
+	res, err := d.runPlan(ctx, state, imageID, ProjectRequest{
+		Steps:   []string{`node -e 'console.log("javascript")' && { python3 -c 'print("python")' 2>/dev/null || true; }`},
+		Timeout: 20 * time.Second,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 0 {
+		return nil, fmt.Errorf("the probe failed: outcome %s (%s), steps %+v", res.Outcome, res.Detail, res.Steps)
+	}
+	var langs []Language
+	for _, line := range strings.Fields(res.Steps[0].Stdout) {
+		if l := Language(line); l.Known() && !slices.Contains(langs, l) {
+			langs = append(langs, l)
+		}
+	}
+	if !slices.Contains(langs, LanguageJavaScript) {
+		return nil, errors.New("node did not answer")
+	}
+	return langs, nil
 }
 
 // checkPidsLimit asserts the cgroup that enforces a run's processes carries exactly
@@ -1920,15 +1966,21 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: "could not parse sandbox result"}, nil
 	}
 
+	// Metadata-only evidence of the run's brokered host.* calls; nil unless the run
+	// carried a grant that made calls. Never affects the outcome.
+	return projectResultFromReport(d.Name(), isolation, report, broker.traceSnapshot()), nil
+}
+
+// projectResultFromReport is a project result from the runner's authenticated
+// report, for a run's container and a session's alike.
+func projectResultFromReport(provider string, isolation IsolationClass, report runnerwire.Report, trace *CallTrace) ProjectResult {
 	res := ProjectResult{
-		Sandbox:            d.Name(),
+		Sandbox:            provider,
 		Isolation:          isolation,
 		Steps:              runnerSteps(report.Steps),
 		Artifacts:          runnerArtifacts(report.Artifacts),
 		ArtifactsTruncated: report.ArtifactsTruncated,
-		// Metadata-only evidence of the run's brokered host.* calls; nil unless the
-		// run carried a grant that made calls. Never affects the outcome.
-		CallTrace: broker.traceSnapshot(),
+		CallTrace:          trace,
 	}
 	// A runner-reported failure around step execution (illegal file path,
 	// unwritable file, over-budget result) is request-attributable: setup_failed.
@@ -1943,7 +1995,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	case runnerwire.TimedOut:
 		res.Outcome = ProjectOutcomeTimedOut
 	}
-	return res, nil
+	return res
 }
 
 // SupportsModules reports whether a module image is configured; RunModule

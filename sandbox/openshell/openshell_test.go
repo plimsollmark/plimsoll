@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -888,7 +889,7 @@ func TestDeleteGivesUp(t *testing.T) {
 func TestEnvironments(t *testing.T) {
 	_, p := newFake(t)
 	env := p.Environments()
-	if env.JavaScript.Identity != "" || env.JavaScript.MaxTimeout != snippetMax || env.Project.MaxTimeout != projectMax || env.Module != (sandbox.PayloadEnvironment{}) {
+	if env.JavaScript.Identity != "" || env.JavaScript.MaxTimeout != snippetMax || env.Project.MaxTimeout != projectMax || !reflect.DeepEqual(env.Module, sandbox.PayloadEnvironment{}) {
 		t.Fatalf("tag image: %+v", env)
 	}
 	digest := strings.Repeat("Ab", 32)
@@ -968,6 +969,12 @@ func (s *smokeFake) run(t *testing.T) func(e *fakeExec) error {
 				s.setAlive(0)
 			}
 			return err
+		case len(cmd) == 3 && strings.Contains(cmd[2], `print("python")`):
+			e.readAll()
+			if err := e.stdout([]byte("javascript\n")); err != nil {
+				return err
+			}
+			return e.exit(0)
 		case strings.Join(cmd, "\x00") == strings.Join(runnerCommand, "\x00"):
 			var plan wirePlan
 			if err := json.Unmarshal(e.readAll(), &plan); err != nil {

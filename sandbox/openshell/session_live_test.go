@@ -16,9 +16,19 @@ import (
 // TestOpenShellSessionConformanceLive runs the session conformance suite against a
 // live gateway: the suite every session provider must pass before it states
 // sessions.
+//
+// The smoke test runs first, so its language probe decides which languages the
+// cell cases run in: both with plimsoll/sandbox-python as the image.
 func TestOpenShellSessionConformanceLive(t *testing.T) {
 	p := liveProvider(t, nil)
-	sessiontest.Run(t, p, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := p.SmokeTest(ctx); err != nil {
+		t.Fatalf("SmokeTest: %v", err)
+	}
+	langs := p.SessionEnvironments().Project.Languages
+	t.Logf("cell languages: %v", langs)
+	sessiontest.Run(t, p, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs})
 }
 
 func openLive(t *testing.T, p *Provider, opts sandbox.SessionOptions) *session {
@@ -162,7 +172,7 @@ func TestOpenShellSessionTimingLive(t *testing.T) {
 		t.Fatalf("run: %+v, %v", res, err)
 	}
 	start = time.Now()
-	if err := s.Suspend(context.Background()); err != nil {
+	if _, err := s.Suspend(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	suspend := time.Since(start).Round(time.Millisecond)

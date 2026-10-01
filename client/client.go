@@ -317,10 +317,15 @@ func (r *Remote) Describe(ctx context.Context) (Info, error) {
 }
 
 func payloadEnvironment(e *plimsollv1.PayloadEnvironment) sandbox.PayloadEnvironment {
+	var langs []sandbox.Language
+	for _, l := range e.GetLanguages() {
+		langs = append(langs, sandbox.Language(l))
+	}
 	return sandbox.PayloadEnvironment{
 		Identity:         e.GetIdentity(),
 		SoftwareIdentity: e.GetSoftwareIdentity(),
 		MaxTimeout:       time.Duration(e.GetMaxTimeoutMs()) * time.Millisecond,
+		Languages:        langs,
 	}
 }
 
@@ -406,6 +411,30 @@ func javascriptResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (san
 		SoftwareIdentity:    resp.GetSoftwareIdentity(),
 		EnvironmentIdentity: resp.GetEnvironment(),
 		Advice:              adviceFromWire(m.Javascript.GetAdvice()),
+		Record:              rec,
+	}, true
+}
+
+// cellResult maps a cell's response; false when it holds another kind.
+func cellResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbox.CellResult, bool) {
+	m, ok := resp.GetResult().(*plimsollv1.RunResponse_Cell)
+	if !ok {
+		return sandbox.CellResult{}, false
+	}
+	return sandbox.CellResult{
+		Stdout:              string(m.Cell.GetStdout()),
+		Stderr:              string(m.Cell.GetStderr()),
+		StdoutTruncated:     m.Cell.GetStdoutTruncated(),
+		StderrTruncated:     m.Cell.GetStderrTruncated(),
+		ExitCode:            int(m.Cell.GetExitCode()),
+		TimedOut:            m.Cell.GetTimedOut(),
+		InterpreterStarted:  m.Cell.GetInterpreterStarted(),
+		InterpreterEnded:    m.Cell.GetInterpreterEnded(),
+		Duration:            time.Duration(resp.GetDurationMs()) * time.Millisecond,
+		Sandbox:             resp.GetSandbox(),
+		Isolation:           sandbox.ParseIsolationClass(resp.GetIsolation()),
+		SoftwareIdentity:    resp.GetSoftwareIdentity(),
+		EnvironmentIdentity: resp.GetEnvironment(),
 		Record:              rec,
 	}, true
 }

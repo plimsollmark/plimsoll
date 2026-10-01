@@ -88,7 +88,7 @@ func (e *encoder) sum() string { return hex.EncodeToString(e.h.Sum(nil)) }
 // is the caller's correlation key and changes nothing that runs.
 func RunRequestDigest(m *plimsollv1.RunRequest) string {
 	return requestDigest(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(),
-		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), m.GetModule())
+		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), m.GetModule(), m.GetCell())
 }
 
 // SessionRunRequestDigest is the request digest of a session call: the same
@@ -97,11 +97,12 @@ func RunRequestDigest(m *plimsollv1.RunRequest) string {
 // the session's fingerprint instead.
 func SessionRunRequestDigest(m *plimsollv1.SessionRunRequest) string {
 	return requestDigest(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(),
-		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), nil)
+		m.GetSoftwareRule(), m.GetJavascript(), m.GetProject(), nil, m.GetCell())
 }
 
 // AsRunRequest is a session call's request as the Run request with the same
-// digest, without the session ID: the form a harness stores and replays.
+// digest, without the session ID: the form a harness stores and replays. A cell's
+// stored form is a Run request with a cell payload, which Run itself refuses.
 func AsRunRequest(m *plimsollv1.SessionRunRequest) *plimsollv1.RunRequest {
 	out := &plimsollv1.RunRequest{
 		Protocol: m.GetProtocol(), MinimumIsolation: m.GetMinimumIsolation(),
@@ -112,12 +113,14 @@ func AsRunRequest(m *plimsollv1.SessionRunRequest) *plimsollv1.RunRequest {
 		out.Payload = &plimsollv1.RunRequest_Javascript{Javascript: p.Javascript}
 	case *plimsollv1.SessionRunRequest_Project:
 		out.Payload = &plimsollv1.RunRequest_Project{Project: p.Project}
+	case *plimsollv1.SessionRunRequest_Cell:
+		out.Payload = &plimsollv1.RunRequest_Cell{Cell: p.Cell}
 	}
 	return out
 }
 
 func requestDigest(protocol uint32, floor string, timeoutMs int32, rule *plimsollv1.SoftwareRule,
-	js *plimsollv1.JavaScriptRun, p *plimsollv1.ProjectRun, mod *plimsollv1.ModuleRun) string {
+	js *plimsollv1.JavaScriptRun, p *plimsollv1.ProjectRun, mod *plimsollv1.ModuleRun, cell *plimsollv1.CellRun) string {
 	domain := requestDomain
 	if protocol >= 2 {
 		domain = requestDomainV2
@@ -153,6 +156,15 @@ func requestDigest(protocol uint32, floor string, timeoutMs int32, rule *plimsol
 		e.int("artifacts", int64(len(p.GetArtifacts())))
 		for _, a := range p.GetArtifacts() {
 			e.str("artifact_path", a)
+		}
+	case cell != nil:
+		e.str("kind", "cell")
+		e.str("language", cell.GetLanguage())
+		e.str("code", cell.GetCode())
+		e.int("files", int64(len(cell.GetFiles())))
+		for _, f := range cell.GetFiles() {
+			e.str("file_path", f.GetPath())
+			e.str("file_content", f.GetContent())
 		}
 	case mod != nil:
 		e.str("kind", "module")
@@ -206,6 +218,17 @@ func ResultDigest(m *plimsollv1.RunResponse) string {
 			e.str("artifact_path", a.GetPath())
 			e.bytes("artifact_content", a.GetContent())
 		}
+	case *plimsollv1.RunResponse_Cell:
+		c := r.Cell
+		e.str("kind", "cell")
+		e.int("exit_code", int64(c.GetExitCode()))
+		e.bool("timed_out", c.GetTimedOut())
+		e.bytes("stdout", c.GetStdout())
+		e.bytes("stderr", c.GetStderr())
+		e.bool("stdout_truncated", c.GetStdoutTruncated())
+		e.bool("stderr_truncated", c.GetStderrTruncated())
+		e.bool("interpreter_started", c.GetInterpreterStarted())
+		e.bool("interpreter_ended", c.GetInterpreterEnded())
 	case *plimsollv1.RunResponse_Module:
 		m := r.Module
 		e.str("kind", "module")

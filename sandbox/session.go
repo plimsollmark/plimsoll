@@ -9,11 +9,17 @@ import (
 
 // SessionProvider is the optional interface of a provider that can keep one
 // sandbox alive across calls: files a call writes persist for the next call, and
-// no process a call starts outlives it. Like Drainer, it is optional; a provider
-// that does not implement it has no sessions.
+// no process a call starts outlives it, except the interpreters RunCell keeps. Like
+// Drainer, it is optional; a provider that does not implement it has no sessions.
 type SessionProvider interface {
 	// SupportsSessions reports whether OpenSession can work as configured.
 	SupportsSessions() bool
+	// SessionEnvironments is where a session's calls run, stated before any session
+	// opens: the session layer checks a session's software rule against it, and a
+	// call's response states it. One sandbox runs every call of a session, so a
+	// provider whose runs use a different image per payload kind (docker) states the
+	// session's one image for every kind.
+	SessionEnvironments() Environments
 	// OpenSession creates the session's sandbox and returns once it is ready and
 	// verified. The session belongs to whoever holds the returned value; an RPC
 	// layer binds it to one principal.
@@ -44,10 +50,18 @@ type Session interface {
 	ExpiresAt() time.Time
 	RunJavaScript(ctx context.Context, req Request) (Result, error)
 	RunProject(ctx context.Context, req ProjectRequest) (ProjectResult, error)
-	// Suspend releases the session's compute (memory and CPU) and keeps its files;
-	// the next call resumes it first. A session layer calls it when the session has
-	// been idle. It waits for a call in progress to finish.
-	Suspend(ctx context.Context) error
+	// RunCell runs code in the session's interpreter for its language, starting one
+	// when none is alive. The interpreter is the one process a session keeps between
+	// calls; every other process a call starts, the interpreter's children included,
+	// still dies with the call.
+	CellRunner
+	// Suspend releases the session's CPU and keeps its files; the next call resumes
+	// it first. A session layer calls it when the session has been idle. It waits
+	// for a call in progress to finish. It reports whether the suspended sandbox still
+	// holds its memory: a stopped container does not, a paused one does (with its
+	// files in memory and its live interpreters), and a session layer that accounts
+	// for memory keeps the session's share while it does.
+	Suspend(ctx context.Context) (holdsMemory bool, err error)
 	// Close ends the session and deletes its sandbox (off the caller's path). It is
 	// idempotent, and a no-op on a session that already ended.
 	Close(ctx context.Context) error

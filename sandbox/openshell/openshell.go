@@ -41,6 +41,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -379,9 +380,15 @@ func (p *Provider) Environments() sandbox.Environments {
 	if isDigestPinned(p.cfg.Image) {
 		identity = "openshell-image:" + strings.ToLower(p.cfg.Image[strings.LastIndex(p.cfg.Image, "@")+1:])
 	}
+	var langs []sandbox.Language
+	p.mu.Lock()
+	if p.smoke != nil {
+		langs = slices.Clone(p.smoke.Languages)
+	}
+	p.mu.Unlock()
 	return sandbox.Environments{
-		JavaScript: sandbox.PayloadEnvironment{Identity: identity, MaxTimeout: snippetMax},
-		Project:    sandbox.PayloadEnvironment{Identity: identity, MaxTimeout: projectMax},
+		JavaScript: sandbox.PayloadEnvironment{Identity: identity, MaxTimeout: snippetMax, Languages: langs},
+		Project:    sandbox.PayloadEnvironment{Identity: identity, MaxTimeout: projectMax, Languages: slices.Clone(langs)},
 		Policy:     "openshell-policy:sha256:" + p.policyHash,
 	}
 }

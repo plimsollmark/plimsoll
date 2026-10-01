@@ -32,6 +32,9 @@ type smokeEvidence struct {
 	Sandbox        string
 	PolicyHash     string
 	Node           string
+	// Languages are the interpreters the image answered with (javascript always,
+	// python when python3 runs), which Environments states.
+	Languages []sandbox.Language
 	// Swept paths had a write attempted; Writable are the directories that accepted
 	// one (all at or beneath /tmp), WritableFiles the regular files outside the
 	// sandbox's own /tmp that opened for append (none).
@@ -107,6 +110,9 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	if err := p.smokeKill(ctx, b, &ev); err != nil {
 		return fmt.Errorf("openshell smoke: %w", err)
 	}
+	if err := p.smokeLanguages(ctx, b, &ev); err != nil {
+		return fmt.Errorf("openshell smoke: %w", err)
+	}
 
 	p.mu.Lock()
 	p.smoke = &ev
@@ -116,7 +122,29 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 		"swept", ev.Swept, "writable", ev.Writable, "egress", ev.Egress, "dns", ev.DNS, "interfaces", ev.Interfaces,
 		"memory_max", ev.MemoryMax, "cpu_max", ev.CPUMax, "pids_max", ev.PidsMax, "tmp_mount", ev.TmpMount,
 		"plan_bytes", ev.PlanBytes, "round_trip", ev.RoundTrip,
-		"hung_processes", ev.HungProcesses, "kill_confirmed_after", ev.KillConfirmed)
+		"hung_processes", ev.HungProcesses, "kill_confirmed_after", ev.KillConfirmed, "languages", ev.Languages)
+	return nil
+}
+
+// smokeLanguages runs each interpreter once; node must answer, since the runner is
+// node, and python3 may.
+func (p *Provider) smokeLanguages(ctx context.Context, b box, ev *smokeEvidence) error {
+	argv := []string{"sh", "-c", `node -e 'console.log("javascript")' && { python3 -c 'print("python")' 2>/dev/null || true; }`}
+	out, err := p.exec(ctx, b, argv, nil, nil, 4096, 4096)
+	if err != nil {
+		return fmt.Errorf("language probe: %w", err)
+	}
+	if out.exitCode != 0 {
+		return fmt.Errorf("language probe exited %d", out.exitCode)
+	}
+	for _, f := range strings.Fields(string(out.stdout)) {
+		if l := sandbox.Language(f); l.Known() && !slices.Contains(ev.Languages, l) {
+			ev.Languages = append(ev.Languages, l)
+		}
+	}
+	if !slices.Contains(ev.Languages, sandbox.LanguageJavaScript) {
+		return errors.New("language probe: node did not answer")
+	}
 	return nil
 }
 

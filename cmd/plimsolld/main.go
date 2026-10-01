@@ -148,10 +148,13 @@ const usageLimits = `
                              per-run resource envelope applied to the provider
   SANDBOX_MAX_SESSIONS       open sessions at once (default 0: sessions off). A
                              session keeps one sandbox for many calls: files
-                             persist, processes do not. Needs a provider with
-                             sessions (openshell); startup fails otherwise. A
-                             running session holds one concurrency slot, a
-                             suspended one none.
+                             persist, processes do not, except the interpreters
+                             it keeps for cells. Needs a provider with
+                             sessions (openshell, or docker with a project
+                             image); startup fails otherwise. A running session
+                             holds one concurrency slot; a suspended one holds
+                             none, except on docker, where a suspend is a pause
+                             that keeps the memory.
   SANDBOX_SESSION_LIFETIME   a session's absolute lifetime (default 30m, at most
                              12h); a request may ask for less
   SANDBOX_SESSION_IDLE       suspend a session idle this long (default 5m; 0 =

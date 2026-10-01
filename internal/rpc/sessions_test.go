@@ -33,6 +33,8 @@ func (*softwareSessions) Environments() sandbox.Environments {
 	return sandbox.Environments{JavaScript: e, Project: e}
 }
 
+func (s *softwareSessions) SessionEnvironments() sandbox.Environments { return s.Environments() }
+
 // Both modes: an approved rule with one identity is merged to exact on every call,
 // and must still match the rule the session was opened with.
 func TestSessionSoftwareRuleCannotBeDropped(t *testing.T) {
@@ -271,6 +273,39 @@ func TestSessionSlotsFollowSuspend(t *testing.T) {
 	}
 }
 
+// A session whose suspended sandbox still holds its memory (a paused container)
+// keeps its slot through the suspend: the slot is its share of the memory budget.
+func TestPausedSessionKeepsItsSlot(t *testing.T) {
+	svc, p := sessionService()
+	p.SuspendHoldsMemory = true
+	svc.Limiter = NewCodeLimiter(1, 0, 0, 0)
+	svc.Sessions.IdleTimeout = 50 * time.Millisecond
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for p.Opened()[0].Suspends() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the idle session was never suspended")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := svc.Limiter.Stats().InFlight; got != 1 {
+		t.Fatalf("a paused session holds %d slots, want 1", got)
+	}
+	if _, err := svc.Run(ctx, jsReq("1")); connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("a run while a paused session holds the only slot: %v", err)
+	}
+	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
+		t.Fatalf("the call after a pause: %v", err)
+	}
+	if got := svc.Limiter.Stats().InFlight; got != 1 {
+		t.Fatalf("the resumed session holds %d slots, want 1", got)
+	}
+}
+
 func TestSessionCountIsBounded(t *testing.T) {
 	svc, _ := sessionService()
 	svc.Sessions.MaxSessions = 1
@@ -501,4 +536,37 @@ func TestCloseSessionHonoursItsContext(t *testing.T) {
 	if err != nil || closed.Msg.GetSession() == "" {
 		t.Fatalf("closing again once the session ended: %v", err)
 	}
+}
+
+// A cell runs in the session's interpreter and comes back as a cell result with a
+// record; on Run it is refused before dispatch, since a cell has no Run of its own.
+func TestCellRunsOnlyInASession(t *testing.T) {
+	svc, p := sessionService()
+	ctx := authenticatedContext("alice")
+	cell := &plimsollv1.CellRun{Language: "python", Code: "1 + 1", Files: []*plimsollv1.ProjectFile{{Path: "a.txt", Content: "a"}}}
+	_, err := svc.Run(ctx, connect.NewRequest(&plimsollv1.RunRequest{Protocol: protocol.Number, Payload: &plimsollv1.RunRequest_Cell{Cell: cell}}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("Run with a cell: %v", err)
+	}
+	wantNotDispatched(t, "Run with a cell", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST)
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number,
+		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{Cell: cell}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := resp.Msg.GetRun().GetCell()
+	if string(got.GetStdout()) != "python 1: 1 + 1" || string(got.GetStderr()) != "a.txt\n" || !got.GetInterpreterStarted() {
+		t.Fatalf("cell result: %+v", got)
+	}
+	if resp.Msg.GetRun().GetRecord().GetSequence() != 1 || len(p.Opened()) != 1 {
+		t.Fatalf("record: %+v", resp.Msg.GetRun().GetRecord())
+	}
+	bad := &plimsollv1.CellRun{Language: "cobol", Code: "1"}
+	_, err = svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number,
+		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{Cell: bad}}))
+	wantNotDispatched(t, "an unknown language", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST)
 }

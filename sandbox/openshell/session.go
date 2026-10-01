@@ -2,11 +2,10 @@ package openshell
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -16,24 +15,15 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
-// Sessions keep one sandbox alive across calls (sandbox.SessionProvider). What
-// makes that safe, from the 2026-09-28 measurements on a v0.1.2 gateway
-// (private/openshell-sessions-plan-2026-09-28.md, "Step 1 results"):
+// Sessions keep one sandbox alive across calls (sandbox.SessionProvider). The
+// boundary between calls is the shared sweep (sandbox/internal/sessionkit, which
+// says what makes its verdict trustworthy). What is particular to OpenShell:
 //
-//   - A process a call starts outlives the call: a cancelled exec kills only the
-//     command's process group, and a normal exit kills nothing. So after every call
-//     the provider sweeps: one exec kills every process except the sandbox's own
-//     (PID 1 and the main process, recorded when the sandbox became ready by PID,
-//     start time and command line), its own
-//     ancestors and itself, by PID, until a scan finds none. A process is alive while
-//     any of its threads is, not while its /proc entry says so: a main thread that
-//     called pthread_exit leaves the entry a zombie with its other threads running.
-//     Its verdict is its exit status alone, which code in the sandbox cannot forge
-//     without attaching to it, and OpenSession refuses a host whose Yama ptrace_scope
-//     would allow that. The script travels in argv, not on stdin, so a leftover
-//     process cannot append to it.
+//   - The sweep's verdict stands only where code in the sandbox cannot attach to it,
+//     so OpenSession refuses a host whose Yama ptrace_scope would allow that.
 //   - When the sweep does not prove the boundary, a stop and start (the platform
 //     killing every process) is the recovery, and when that fails the session ends.
 //   - The main process is sleep, not the gateway's default login shell: a spared shell
@@ -47,6 +37,11 @@ var (
 	// sessionCommand is a session sandbox's main process: 2^31-1 seconds, which every
 	// sleep accepts, and far beyond any lifetime.
 	sessionCommand = []string{"sleep", "2147483647"}
+	// sessionDirs are what a session's files may occupy: /tmp is the sandbox's only
+	// writable directory.
+	sessionDirs = []string{"/tmp"}
+	// sessionSnippetCommand runs a session's snippet from stdin in the work directory.
+	sessionSnippetCommand = []string{"sh", "-c", `mkdir -p "$PLIMSOLL_WORK" && cd "$PLIMSOLL_WORK" && exec node -`}
 )
 
 const (
@@ -57,72 +52,13 @@ const (
 	sweepBudget = 20 * time.Second
 	// stopBudget bounds a stop and its wait for the stopped phase.
 	stopBudget = 60 * time.Second
-	// maxDiskEntries bounds the sweep's walk of /tmp: past it the session counts as
-	// over its disk budget, since a walk of every entry must stay bounded.
-	maxDiskEntries = 200000
 )
-
-// Sweep exit statuses; any other status, or no status, means the boundary is unproven.
-const (
-	sweepClean        = 0  // no process but the sandbox's own; disk within budget
-	sweepOverBudget   = 10 // clean, but the session's files exceed the budget
-	sweepUnmeasurable = 11 // clean, but a directory under /tmp could not be read
-)
-
-// listScript lists every process except itself and its ancestors, and reads the
-// host's Yama ptrace_scope, as JSON on stdout. It runs only in a sandbox no call has
-// touched yet (at open and after a start), so its output is trusted.
-const listScript = liveFn + `const fs=require("fs");const self=String(process.pid);const skip=new Set([self]);
-for(let p=self;;){let st;try{st=fs.readFileSync("/proc/"+p+"/stat","latin1")}catch{break}
-const pp=st.slice(st.lastIndexOf(")")+2).split(" ")[1];if(!pp||pp==="0"||skip.has(pp))break;skip.add(pp);p=pp}
-const procs=[];for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d)||(skip.has(d)&&d!=="1")||!live(d))continue;
-try{const st=fs.readFileSync("/proc/"+d+"/stat","latin1");const f=st.slice(st.lastIndexOf(")")+2).split(" ");
-const raw=fs.readFileSync("/proc/"+d+"/cmdline","latin1");const cmd=raw.split("\0").join(" ").trim();
-procs.push({pid:+d,ppid:+f[1],state:f[0],start:f[19],cmd,cmdHex:Buffer.from(raw,"latin1").toString("hex")})}catch{}}
-let ptrace="";try{ptrace=fs.readFileSync("/proc/sys/kernel/yama/ptrace_scope","latin1").trim()}catch{}
-process.stdout.write(JSON.stringify({ptrace,procs}))`
-
-// sweepScript kills every process that is not the sandbox's own (argv after the
-// first two: pid:starttime:cmdline-hex identities, so a process that lands on a spared
-// PID in the same clock tick is spared only if its command line matches too), not an
-// ancestor and not itself, until a scan
-// finds none, then walks /tmp. Arguments: the disk budget in bytes (0 = none), the
-// entry bound, the pairs to keep. Its exit status is the verdict (the sweep*
-// constants); its stdout is a summary for the log only.
-// liveFn is the liveness test both scripts use. A process whose main thread called
-// pthread_exit shows in /proc as a zombie while its other threads run on (measured
-// 2026-09-28 on this image's base), so a state of Z or X on the entry itself proves
-// nothing: every thread under task/ must be dead before the process is. A true
-// zombie (every thread dead) is left alone, because killing one does nothing and the
-// sweep would never converge.
-const liveFn = `function live(d){try{for(const t of fs.readdirSync("/proc/"+d+"/task")){
-const st=fs.readFileSync("/proc/"+d+"/task/"+t+"/stat","latin1");
-const s=st.slice(st.lastIndexOf(")")+2).split(" ")[0];if(s!=="Z"&&s!=="X")return true}}catch{return false}return false}
-`
-
-const sweepScript = liveFn + `const fs=require("fs");const [budget,maxEntries,...keepList]=process.argv.slice(1);
-const keep=new Set(keepList);const self=String(process.pid);const up=new Set([self]);
-for(let p=self;;){let st;try{st=fs.readFileSync("/proc/"+p+"/stat","latin1")}catch{break}
-const pp=st.slice(st.lastIndexOf(")")+2).split(" ")[1];if(!pp||pp==="0"||up.has(pp))break;up.add(pp);p=pp}
-const nap=()=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);
-function others(){const o=[];for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d)||up.has(d))continue;
-let st;try{st=fs.readFileSync("/proc/"+d+"/stat","latin1")}catch{continue}
-const f=st.slice(st.lastIndexOf(")")+2).split(" ");if(!live(d))continue;
-let cmd="";try{cmd=fs.readFileSync("/proc/"+d+"/cmdline").toString("hex")}catch{}
-if(!keep.has(d+":"+f[19]+":"+cmd))o.push(+d)}return o}
-let rounds=0,killed=0;
-for(let o=others();o.length>0;o=others()){if(++rounds>50)process.exit(1);
-for(const p of o){try{process.kill(p,"SIGKILL");killed++}catch{}}nap()}
-let bytes=0,entries=0;const dirs=["/tmp"];
-while(dirs.length>0){const dir=dirs.pop();let names;
-try{names=fs.readdirSync(dir)}catch{try{fs.chmodSync(dir,0o700);names=fs.readdirSync(dir)}catch{process.exit(11)}}
-for(const n of names){const p=dir+"/"+n;let st;try{st=fs.lstatSync(p)}catch{continue}
-if(++entries>+maxEntries)process.exit(10);bytes+=st.blocks*512;if(+budget>0&&bytes>+budget)process.exit(10);
-if(st.isDirectory())dirs.push(p)}}
-process.stdout.write(JSON.stringify({rounds,killed,bytes,entries}))`
 
 // SupportsSessions is true: sessions need nothing beyond what runs need.
 func (*Provider) SupportsSessions() bool { return true }
+
+// SessionEnvironments is the runs' environments: one image runs every payload kind.
+func (p *Provider) SessionEnvironments() sandbox.Environments { return p.Environments() }
 
 // session is one open session.
 type session struct {
@@ -143,6 +79,9 @@ type session struct {
 	stopped  bool
 	baseline []string // pid:starttime:cmdline-hex of the sandbox's own processes
 	life     *time.Timer
+
+	// interps are the session's live interpreters; a stop kills them.
+	interps sessionkit.Interpreters
 }
 
 var _ sandbox.Session = (*session)(nil)
@@ -227,6 +166,7 @@ func (s *session) finish(reason sandbox.SessionEnd, detail string) {
 	}
 	s.mu.Unlock()
 	s.cancel()
+	s.interps.Close()
 	close(s.done)
 	s.p.mu.Lock()
 	delete(s.p.sessions, s)
@@ -268,22 +208,22 @@ func (s *session) Close(context.Context) error {
 
 // Suspend stops the sandbox: a stopped container holds no memory or CPU and keeps its
 // files; the next call starts it again.
-func (s *session) Suspend(ctx context.Context) error {
+func (s *session) Suspend(ctx context.Context) (bool, error) {
 	if err := s.acquire(ctx); err != nil {
-		return err
+		return false, err
 	}
 	defer s.release()
 	s.mu.Lock()
 	stopped := s.stopped
 	s.mu.Unlock()
 	if stopped {
-		return nil
+		return false, nil
 	}
 	if err := s.stop(ctx); err != nil {
 		s.finish(sandbox.SessionBoundaryFailed, "the sandbox could not be stopped: "+err.Error())
-		return s.Err()
+		return false, s.Err()
 	}
-	return nil
+	return false, nil
 }
 
 func (s *session) stop(ctx context.Context) error {
@@ -302,6 +242,7 @@ func (s *session) stop(ctx context.Context) error {
 			s.mu.Lock()
 			s.stopped = true
 			s.mu.Unlock()
+			s.interps.Clear()
 			return nil
 		case openshellv1.SandboxPhase_SANDBOX_PHASE_STOPPING, openshellv1.SandboxPhase_SANDBOX_PHASE_READY:
 		default:
@@ -344,52 +285,21 @@ func (s *session) start(ctx context.Context) error {
 	return s.recordBaseline(ctx)
 }
 
-type listing struct {
-	Ptrace string `json:"ptrace"`
-	Procs  []struct {
-		PID    int    `json:"pid"`
-		PPID   int    `json:"ppid"`
-		State  string `json:"state"`
-		Start  string `json:"start"`
-		Cmd    string `json:"cmd"`
-		CmdHex string `json:"cmdHex"` // the raw command line, NUL separators included
-	} `json:"procs"`
-}
-
 // recordBaseline lists the processes of a sandbox no call has touched (just created,
 // or just started) and keeps them as the sandbox's own. It refuses anything but PID 1
 // and one main process running the session command, and a host whose ptrace_scope is
-// missing or 0: there, code in the sandbox could attach to the sweep and forge its
-// exit status.
+// missing or 0.
 func (s *session) recordBaseline(ctx context.Context) error {
-	out, err := s.p.exec(ctx, s.b, []string{"node", "-e", listScript}, nil, nil, 1<<20, maxOutputBytes)
+	out, err := s.p.exec(ctx, s.b, sessionkit.ListArgv(), nil, nil, 1<<20, maxOutputBytes)
 	if err != nil {
 		return fmt.Errorf("openshell session: list processes: %w", err)
 	}
 	if out.exitCode != 0 {
 		return fmt.Errorf("openshell session: the process list exited %d: %q", out.exitCode, out.stderr)
 	}
-	var l listing
-	if err := json.Unmarshal(out.stdout, &l); err != nil {
-		return fmt.Errorf("openshell session: the process list is not JSON: %w", err)
-	}
-	if scope, err := strconv.Atoi(l.Ptrace); err != nil || scope < 1 {
-		return fmt.Errorf("openshell session: the gateway host's kernel.yama.ptrace_scope reads %q; sessions need 1 or more, since at 0 code in the sandbox could attach to the sweep that ends each call and forge its verdict", l.Ptrace)
-	}
-	var keep []string
-	main := 0
-	for _, pr := range l.Procs {
-		switch {
-		case pr.PID == 1:
-		case pr.PPID == 1 && pr.Cmd == strings.Join(sessionCommand, " "):
-			main++
-		default:
-			return fmt.Errorf("openshell session: an untouched sandbox runs an unexpected process: pid %d ppid %d %q", pr.PID, pr.PPID, pr.Cmd)
-		}
-		keep = append(keep, strconv.Itoa(pr.PID)+":"+pr.Start+":"+pr.CmdHex)
-	}
-	if main != 1 || len(keep) != 2 {
-		return fmt.Errorf("openshell session: an untouched sandbox runs %d processes, %d of them the main process; want PID 1 and one main process", len(keep), main)
+	keep, err := sessionkit.Baseline(out.stdout, sessionCommand, true)
+	if err != nil {
+		return fmt.Errorf("openshell session: %w", err)
 	}
 	s.mu.Lock()
 	s.baseline = keep
@@ -468,7 +378,7 @@ func (s *session) boundary() {
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, sweepBudget)
 	s.mu.Lock()
-	args := append([]string{"node", "-e", sweepScript, strconv.FormatInt(s.disk, 10), strconv.Itoa(maxDiskEntries)}, s.baseline...)
+	args := sessionkit.SweepArgv(s.disk, sessionDirs, s.interps.Keep(s.baseline))
 	s.mu.Unlock()
 	out, err := s.p.exec(ctx, s.b, args, nil, nil, 4096, 4096)
 	cancel()
@@ -476,12 +386,12 @@ func (s *session) boundary() {
 		return
 	}
 	switch {
-	case err == nil && out.exited && out.exitCode == sweepClean:
+	case err == nil && out.exited && out.exitCode == sessionkit.SweepClean:
 		return
-	case err == nil && out.exited && out.exitCode == sweepOverBudget:
-		s.finish(sandbox.SessionDiskExceeded, fmt.Sprintf("the session's files under /tmp exceed %d bytes or %d entries", s.disk, maxDiskEntries))
+	case err == nil && out.exited && out.exitCode == sessionkit.SweepOverBudget:
+		s.finish(sandbox.SessionDiskExceeded, fmt.Sprintf("the session's files under /tmp exceed %d bytes or %d entries", s.disk, sessionkit.MaxDiskEntries))
 		return
-	case err == nil && out.exited && out.exitCode == sweepUnmeasurable:
+	case err == nil && out.exited && out.exitCode == sessionkit.SweepUnmeasurable:
 		s.finish(sandbox.SessionDiskExceeded, "a directory under /tmp could not be read, so the session's disk use cannot be measured")
 		return
 	}
@@ -506,6 +416,26 @@ func (s *session) boundary() {
 	if err := s.start(rctx); err != nil {
 		s.finish(sandbox.SessionBoundaryFailed, sweepErr+"; the recovery start failed: "+err.Error())
 	}
+}
+
+// begin takes the session's turn and prepares the sandbox for one call. The returned
+// end runs the boundary (the sweep, and its recovery) and gives the turn back off the
+// caller's path: the answer goes back first, and the next call, a suspend or a close
+// waits for it. A session the boundary ends is therefore reported to the next call.
+func (s *session) begin(ctx context.Context) (end func(), err error) {
+	if err := s.acquire(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.prepare(ctx); err != nil {
+		s.release()
+		return nil, err
+	}
+	return func() {
+		go func() {
+			s.boundary()
+			s.release()
+		}()
+	}, nil
 }
 
 // callError is what a call returns when its exec did not deliver an exit status: a
@@ -535,14 +465,11 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 	if err := s.admit(ctx, req.Grant, req.MinimumIsolation); err != nil {
 		return fail, err
 	}
-	if err := s.acquire(ctx); err != nil {
+	end, err := s.begin(ctx)
+	if err != nil {
 		return fail, err
 	}
-	defer s.release()
-	if err := s.prepare(ctx); err != nil {
-		return fail, err
-	}
-	defer s.boundary()
+	defer end()
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	stop := context.AfterFunc(s.ctx, cancel)
@@ -559,8 +486,14 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 		defer g.Close()
 		code, env = sandbox.HostClientSnippet(req.Code, req.Grant), g.env()
 	}
+	// A session's snippet runs in the work directory its projects write, so the
+	// next call finds a project's files where the project left them.
+	if env == nil {
+		env = map[string]string{}
+	}
+	env["PLIMSOLL_WORK"] = workDir
 	start := time.Now()
-	out, err := s.p.exec(runCtx, s.b, []string{"node", "-"}, env, []byte(code), maxOutputBytes, maxOutputBytes)
+	out, err := s.p.exec(runCtx, s.b, sessionSnippetCommand, env, []byte(code), maxOutputBytes, maxOutputBytes)
 	res := sandbox.Result{
 		Stdout:          string(out.stdout),
 		Stderr:          string(out.stderr),
@@ -614,14 +547,11 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 	if err := s.admit(ctx, req.Grant, req.MinimumIsolation); err != nil {
 		return fail, err
 	}
-	if err := s.acquire(ctx); err != nil {
+	end, err := s.begin(ctx)
+	if err != nil {
 		return fail, err
 	}
-	defer s.release()
-	if err := s.prepare(ctx); err != nil {
-		return fail, err
-	}
-	defer s.boundary()
+	defer end()
 	runCtx, cancel := context.WithTimeout(ctx, timeout+runnerGrace)
 	defer cancel()
 	stop := context.AfterFunc(s.ctx, cancel)
@@ -647,4 +577,153 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 		return fail, s.Err()
 	}
 	return res, nil
+}
+
+// execFunc is exec in the form the shared interpreter driver calls.
+func (s *session) execFunc(ctx context.Context, argv []string, env map[string]string, stdin []byte, outCap, errCap int) (sessionkit.ExecResult, error) {
+	out, err := s.p.exec(ctx, s.b, argv, env, stdin, outCap, errCap)
+	return sessionkit.ExecResult{
+		Stdout: string(out.stdout), Stderr: string(out.stderr),
+		StdoutTruncated: out.stdoutTruncated, StderrTruncated: out.stderrTruncated,
+		ExitCode: out.exitCode, Exited: out.exited,
+	}, err
+}
+
+// RunCell runs code in the session's interpreter for req.Language, starting one
+// when none is alive (sandbox/internal/sessionkit), through a relay the session keeps
+// attached by one exec stream held open, so a warm cell starts no process. A suspend
+// stops the sandbox and with it every interpreter and relay, so the cell after a
+// suspend starts a fresh one. A cell's budget is a project's.
+func (s *session) RunCell(ctx context.Context, req sandbox.CellRequest) (sandbox.CellResult, error) {
+	fail := sandbox.CellResult{Sandbox: Name, Isolation: s.tier}
+	if err := sandbox.ValidateCellRequest(req); err != nil {
+		return fail, err
+	}
+	if err := req.Software.Check(""); err != nil {
+		return fail, err
+	}
+	timeout := clampTimeout(req.Timeout, projectDefault, projectMax)
+	if err := s.admit(ctx, nil, req.MinimumIsolation); err != nil {
+		return fail, err
+	}
+	end, err := s.begin(ctx)
+	if err != nil {
+		return fail, err
+	}
+	defer end()
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	stop := context.AfterFunc(s.ctx, cancel)
+	defer stop()
+	files := make([]sessionkit.File, 0, len(req.Files))
+	for _, f := range req.Files {
+		files = append(files, sessionkit.File{Path: f.Path, Content: f.Content})
+	}
+	start := time.Now()
+	out, err := s.interps.RunRelayed(runCtx, s.execFunc, s.attach, sessionkit.Cell{
+		Language: string(req.Language), Code: req.Code, Files: files,
+		Work: workDir, OutCap: maxOutputBytes, ErrCap: maxOutputBytes,
+	})
+	if errors.Is(err, sessionkit.ErrLaunch) {
+		return fail, sandbox.NotDispatched(sandbox.RefusalEnvironment, fmt.Errorf("%w: %v", sandbox.ErrUnsupported, err))
+	}
+	if err != nil {
+		return fail, s.callError(runCtx, err)
+	}
+	res := sandbox.CellResult{
+		Stdout:             out.Stdout,
+		Stderr:             out.Stderr,
+		StdoutTruncated:    out.StdoutTruncated,
+		StderrTruncated:    out.StderrTruncated,
+		TimedOut:           out.TimedOut,
+		InterpreterStarted: out.Started,
+		InterpreterEnded:   out.Ended,
+		Duration:           time.Since(start),
+		Sandbox:            Name,
+		Isolation:          s.tier,
+	}
+	switch {
+	case out.TimedOut:
+		res.ExitCode = 124
+	case out.Raised:
+		res.ExitCode = 1
+	}
+	return res, nil
+}
+
+// streamAttached is an exec stream held open for the session: an interpreter's relay.
+// Its stdin goes out as stdin frames; its stdout arrives through a pipe a goroutine
+// fills from the stream's events.
+type streamAttached struct {
+	cancel context.CancelFunc
+	stream *connect.BidiStreamForClient[openshellv1.ExecSandboxInput, openshellv1.ExecSandboxEvent]
+	mu     sync.Mutex // Send is not safe for concurrent use
+	out    *io.PipeReader
+}
+
+func (a *streamAttached) Stdin() io.Writer  { return a }
+func (a *streamAttached) Stdout() io.Reader { return a.out }
+
+func (a *streamAttached) Write(p []byte) (int, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for off := 0; off < len(p); off += stdinFrame {
+		frame := p[off:min(off+stdinFrame, len(p))]
+		if err := a.stream.Send(&openshellv1.ExecSandboxInput{Payload: &openshellv1.ExecSandboxInput_Stdin{Stdin: frame}}); err != nil {
+			return off, err
+		}
+	}
+	return len(p), nil
+}
+
+// Close cancels the stream, which ends the relay's process group.
+func (a *streamAttached) Close() {
+	a.cancel()
+	_ = a.out.Close()
+}
+
+// attach starts argv in the sandbox on a stream that lives as long as the session or
+// until Close. Unlike docker's, the relay is not made non-dumpable: OpenShell's
+// supervisor then refuses its connection to the interpreter's socket with EACCES
+// (measured on v0.1.2, 2026-10-01), presumably because it can no longer identify
+// the process. Code of the session could open the relay's pipes and forge its own
+// cells' output, as it could forge the per-cell client's before; the sweep's verdict
+// stays protected by the ptrace_scope check OpenSession makes.
+func (s *session) attach(argv []string, env map[string]string) (sessionkit.Attached, error) {
+	ctx, cancel := context.WithCancel(s.ctx)
+	stream := s.p.client.ExecSandboxInteractive(ctx)
+	start := &openshellv1.ExecSandboxRequest{
+		WorkspaceScope: ws(),
+		Sandbox:        s.b.name,
+		Command:        argv,
+		Environment:    env,
+		NoLoginShell:   true,
+	}
+	if err := stream.Send(&openshellv1.ExecSandboxInput{Payload: &openshellv1.ExecSandboxInput_Start{Start: start}}); err != nil {
+		cancel()
+		return nil, fmt.Errorf("openshell attach: %w", err)
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		defer func() { _ = stream.CloseResponse() }()
+		for {
+			ev, err := stream.Receive()
+			if err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+			switch pl := ev.GetPayload().(type) {
+			case *openshellv1.ExecSandboxEvent_Stdout:
+				if _, err := pw.Write(pl.Stdout.GetData()); err != nil {
+					cancel()
+					return
+				}
+			case *openshellv1.ExecSandboxEvent_Exit:
+				_ = pw.CloseWithError(io.EOF)
+				cancel()
+				return
+			}
+		}
+	}()
+	return &streamAttached{cancel: cancel, stream: stream, out: pr}, nil
 }

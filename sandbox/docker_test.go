@@ -189,6 +189,24 @@ func TestShippedSeccompProfileIsSaneAndTight(t *testing.T) {
 	if cloneRules == 0 {
 		t.Error("no allow rule for clone; the workload cannot start a thread")
 	}
+	// mknod and mknodat only for FIFOs: every allow rule carries the one filter
+	// (mode & S_IFMT) == S_IFIFO on the mode argument (docs/seccomp.md).
+	for _, s := range prof.Syscalls {
+		if s.Action != "SCMP_ACT_ALLOW" {
+			continue
+		}
+		for _, n := range s.Names {
+			want := map[string]int{"mknod": 1, "mknodat": 2}
+			idx, ok := want[n]
+			if !ok {
+				continue
+			}
+			if len(s.Names) != 1 || len(s.Args) != 1 || s.Args[0].Index != idx || s.Args[0].Op != "SCMP_CMP_MASKED_EQ" ||
+				s.Args[0].Value != 0o170000 || s.Args[0].ValueTwo != 0o010000 {
+				t.Errorf("an allow rule for %s is not limited to FIFOs: %+v", n, s.Args)
+			}
+		}
+	}
 }
 
 // seccompDenialTable reads the first column of the denial table in docs/seccomp.md:

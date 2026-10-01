@@ -26,6 +26,9 @@ type Config struct {
 	// ShortLifetime is the lifetime case's: long enough to open the session and
 	// make one call, short enough to wait out.
 	ShortLifetime time.Duration
+	// Languages are the cell languages the provider's image runs; the cell cases run
+	// for each. Empty means JavaScript only, which every session provider runs.
+	Languages []sandbox.Language
 }
 
 // Run runs every case against p, each in its own session.
@@ -37,7 +40,7 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		name string
 		run  func(*testing.T, sandbox.SessionProvider, Config)
 	}{
-		{"FilesPersistAcrossCallsAndKinds", filesPersist},
+		{"FilesPersistAcrossCallsAndKinds", filesPersist}, // every call runs in one work directory
 		{"SessionsDoNotShareFiles", sessionsIsolated},
 		{"NoProcessOutlivesItsCall", noProcessOutlivesCall},
 		{"DeadlineEndsTheCallNotTheSession", deadlineEndsCall},
@@ -46,8 +49,148 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		{"FloorAboveTheTierIsRefusedBeforeDispatch", floorRefused},
 		{"CloseEndsTheSession", closeEnds},
 		{"LifetimeEndsTheSession", lifetimeEnds},
+		{"CellChildrenDoNotOutliveTheCall", cellChildrenDie},
+		{"CellFilesLandInTheWorkDirectory", cellFiles},
+		{"KilledInterpreterIsStartedAgain", cellInterpreterKilled},
 	} {
 		t.Run(c.name, func(t *testing.T) { c.run(t, p, cfg) })
+	}
+	langs := cfg.Languages
+	if len(langs) == 0 {
+		langs = []sandbox.Language{sandbox.LanguageJavaScript}
+	}
+	for _, lang := range langs {
+		for _, c := range []struct {
+			name string
+			run  func(*testing.T, sandbox.SessionProvider, Config, sandbox.Language)
+		}{
+			{"CellStateSurvivesCalls", cellStateSurvives},
+			{"CellErrorKeepsTheState", cellErrorKeepsState},
+			{"CellDeadlineEndsTheInterpreter", cellDeadline},
+		} {
+			t.Run(c.name+"/"+string(lang), func(t *testing.T) { c.run(t, p, cfg, lang) })
+		}
+	}
+}
+
+func cell(t *testing.T, s sandbox.Session, lang sandbox.Language, code string, timeout time.Duration, files ...sandbox.File) sandbox.CellResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+60*time.Second)
+	defer cancel()
+	res, err := s.RunCell(ctx, sandbox.CellRequest{Language: lang, Code: code, Timeout: timeout, Files: files})
+	if err != nil {
+		t.Fatalf("RunCell(%s, %.60q): %v", lang, code, err)
+	}
+	return res
+}
+
+// cellCode is each case's code per language: what defines state, what reads it,
+// what raises, what never ends.
+var cellCode = map[sandbox.Language]struct{ define, redefine, read, raise, spin string }{
+	sandbox.LanguageJavaScript: {
+		define:   "const base = 40; let count = 1; function add(x) { return x + base; }",
+		redefine: "const base = 41; base",
+		read:     "add(count)",
+		raise:    `throw new Error("cell-error-marker")`,
+		spin:     "for (;;) {}",
+	},
+	sandbox.LanguagePython: {
+		define:   "base = 40\ncount = 1\ndef add(x):\n    return x + base",
+		redefine: "base = 41\nbase",
+		read:     "add(count)",
+		raise:    `raise ValueError("cell-error-marker")`,
+		spin:     "while True:\n    pass",
+	},
+}
+
+func cellStateSurvives(t *testing.T, p sandbox.SessionProvider, cfg Config, lang sandbox.Language) {
+	s := open(t, p, cfg.Lifetime)
+	code := cellCode[lang]
+	first := cell(t, s, lang, code.define, 30*time.Second)
+	if first.ExitCode != 0 || !first.InterpreterStarted {
+		t.Fatalf("the defining cell: %+v", first)
+	}
+	again := cell(t, s, lang, code.redefine, 30*time.Second)
+	if again.ExitCode != 0 || again.InterpreterStarted || strings.TrimSpace(again.Stdout) != "41" {
+		t.Fatalf("a cell that defines a name again: %+v", again)
+	}
+	// A snippet between the cells ends its own processes, not the interpreter.
+	js(t, s, `console.log("between")`, 10*time.Second)
+	got := cell(t, s, lang, code.read, 30*time.Second)
+	if got.ExitCode != 0 || got.InterpreterStarted || strings.TrimSpace(got.Stdout) != "42" {
+		t.Fatalf("a later cell read %+v, want 42 from the same interpreter", got)
+	}
+}
+
+func cellErrorKeepsState(t *testing.T, p sandbox.SessionProvider, cfg Config, lang sandbox.Language) {
+	s := open(t, p, cfg.Lifetime)
+	code := cellCode[lang]
+	cell(t, s, lang, code.define, 30*time.Second)
+	bad := cell(t, s, lang, code.raise, 30*time.Second)
+	if bad.ExitCode != 1 || bad.InterpreterEnded || !strings.Contains(bad.Stderr, "cell-error-marker") {
+		t.Fatalf("a raising cell: %+v", bad)
+	}
+	if got := cell(t, s, lang, code.read, 30*time.Second); strings.TrimSpace(got.Stdout) != "41" || got.InterpreterStarted {
+		t.Fatalf("after the error the interpreter read %+v, want 41", got)
+	}
+}
+
+func cellDeadline(t *testing.T, p sandbox.SessionProvider, cfg Config, lang sandbox.Language) {
+	s := open(t, p, cfg.Lifetime)
+	code := cellCode[lang]
+	cell(t, s, lang, code.define, 30*time.Second)
+	spun := cell(t, s, lang, code.spin, 2*time.Second)
+	if !spun.TimedOut || spun.ExitCode != 124 || !spun.InterpreterEnded {
+		t.Fatalf("an endless cell: %+v", spun)
+	}
+	after := cell(t, s, lang, "1 + 1", 30*time.Second)
+	if !after.InterpreterStarted || strings.TrimSpace(after.Stdout) != "2" {
+		t.Fatalf("the cell after a deadline: %+v, want a fresh interpreter", after)
+	}
+	if s.Err() != nil {
+		t.Fatalf("the session ended: %v", s.Err())
+	}
+}
+
+func cellChildrenDie(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	res := cell(t, s, sandbox.LanguageJavaScript, `const cp = require("child_process");
+cp.spawn("sleep", ["7791"], {detached: true, stdio: "ignore"}).unref();
+globalThis.kept = "yes"; "spawned"`, 30*time.Second)
+	if res.ExitCode != 0 {
+		t.Fatalf("spawn: %+v", res)
+	}
+	if got := strings.TrimSpace(js(t, s, procsRunning("sleep 7791"), 10*time.Second).Stdout); got != "[]" {
+		t.Fatalf("a child of the interpreter outlived its cell: %s", got)
+	}
+	if got := cell(t, s, sandbox.LanguageJavaScript, "kept", 30*time.Second); strings.TrimSpace(got.Stdout) != "'yes'" {
+		t.Fatalf("the interpreter did not survive: %+v", got)
+	}
+}
+
+func cellFiles(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	tok := token(t)
+	res := cell(t, s, sandbox.LanguageJavaScript, `require("fs").readFileSync("in/data.csv", "utf8")`, 30*time.Second,
+		sandbox.File{Path: "in/data.csv", Content: "a,b\n" + tok})
+	if res.ExitCode != 0 || !strings.Contains(res.Stdout, tok) {
+		t.Fatalf("a cell read its file: %+v", res)
+	}
+	if got := js(t, s, `process.stdout.write(require("fs").readFileSync("in/data.csv","utf8"))`, 10*time.Second); !strings.Contains(got.Stdout, tok) {
+		t.Fatalf("a later snippet read %q from the cell's file", got.Stdout)
+	}
+}
+
+func cellInterpreterKilled(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	cell(t, s, sandbox.LanguageJavaScript, "globalThis.marker = 1", 30*time.Second)
+	// A snippet kills the interpreter (its command line names its directory).
+	js(t, s, `const fs=require("fs");for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d))continue;
+let c="";try{c=fs.readFileSync("/proc/"+d+"/cmdline","latin1")}catch{continue}
+if(c.includes("plimsoll-interp/javascript")&&+d!==process.pid)try{process.kill(+d,"SIGKILL")}catch{}}`, 10*time.Second)
+	got := cell(t, s, sandbox.LanguageJavaScript, "typeof marker", 30*time.Second)
+	if !got.InterpreterStarted || strings.TrimSpace(got.Stdout) != "'undefined'" {
+		t.Fatalf("after its interpreter was killed a cell got %+v, want a fresh interpreter", got)
 	}
 }
 
@@ -114,8 +257,9 @@ func filesPersist(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	if pr.Steps[0].Stdout != tok || pr.Steps[1].Stdout != tok+"-b" {
 		t.Fatalf("project steps read %q and %q", pr.Steps[0].Stdout, pr.Steps[1].Stdout)
 	}
-	// The project's own files persist for a later snippet too.
-	if got := js(t, s, `const fs=require("fs");const d=fs.readdirSync("/tmp",{recursive:true}).filter(f=>f.endsWith("b.txt"));process.stdout.write(d.length?fs.readFileSync("/tmp/"+d[0],"utf8"):"none")`, 10*time.Second); got.Stdout != tok+"-b" {
+	// The project's own files persist for a later snippet too, which runs in the
+	// same work directory.
+	if got := js(t, s, `const fs=require("fs");process.stdout.write(fs.existsSync("b.txt")?fs.readFileSync("b.txt","utf8"):"none in "+process.cwd())`, 10*time.Second); got.Stdout != tok+"-b" {
 		t.Fatalf("a snippet after the project read %q", got.Stdout)
 	}
 }
@@ -179,7 +323,7 @@ func suspendKeepsFiles(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	start := time.Now()
-	if err := s.Suspend(ctx); err != nil {
+	if _, err := s.Suspend(ctx); err != nil {
 		t.Fatalf("Suspend: %v", err)
 	}
 	suspended := time.Since(start)

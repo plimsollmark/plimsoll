@@ -81,6 +81,15 @@ SCMP_ACT_ERRNO`, `defaultErrnoRet: 1`).
   the profile withheld it by omission, not decision, and those paths crashed under it
   with an unhandled `EPERM`; `TestDockerJudgesRefuseNonAnswers` exercises them.
 
+- **`mknod` and `mknodat` are allowed for FIFOs only.** A <dfn>*session*</dfn>, one
+  sandbox kept for many calls, can keep an interpreter alive between calls to run
+  notebook-style code ([sessions.md](sessions.md#interpreters-state-between-calls)), and
+  the interpreter writes its output to two FIFOs, named pipes that `mkfifo` creates through `mknodat`. A masked-equal check on the
+  mode argument allows the call only when its file-type bits are those of a FIFO, so a
+  device node and a regular file through `mknod` stay denied (a device node also needs
+  `CAP_MKNOD`, which every run drops). A FIFO is the same kernel object `pipe2` makes,
+  given a name. `TestDockerSeccompAllowsOnlyFIFOs` checks all three from inside a run,
+  and `TestShippedSeccompProfileIsSaneAndTight` the filter itself.
 - **`utime`, `utimes` and `futimesat` are allowed.** They are older forms of `utimensat`,
   which was already allowed: the kernel implements all four through the same code in
   `fs/utimes.c`, with the same ownership and write-permission checks, so they add no

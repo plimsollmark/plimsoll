@@ -1,49 +1,103 @@
 package record
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
-func jsRequest() *plimsollv1.RunRequest {
-	return &plimsollv1.RunRequest{
-		Protocol: 1, MinimumIsolation: "container", TraceId: "t-1", TimeoutMs: 5000,
-		Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "console.log(1+1)"}},
+// golden is record/testdata/golden.json: the vectors' inputs in the proto3 JSON form a
+// client sends and receives, with the digests they must produce. The Python and
+// TypeScript clients' tests read the same file.
+type golden struct {
+	Requests []struct {
+		Name    string          `json:"name"`
+		Kind    string          `json:"kind"` // "run" or "session"
+		Request json.RawMessage `json:"request"`
+		SHA256  string          `json:"sha256"`
+	} `json:"requests"`
+	Results []struct {
+		Name     string          `json:"name"`
+		Response json.RawMessage `json:"response"`
+		SHA256   string          `json:"sha256"`
+	} `json:"results"`
+	Records []struct {
+		Name   string          `json:"name"`
+		Record json.RawMessage `json:"record"`
+		SHA256 string          `json:"sha256"`
+	} `json:"records"`
+	SessionFingerprints []struct {
+		Name      string `json:"name"`
+		SessionID string `json:"sessionId"`
+		SHA256    string `json:"sha256"`
+	} `json:"sessionFingerprints"`
+}
+
+var loadGolden = sync.OnceValue(func() golden {
+	b, err := os.ReadFile("testdata/golden.json")
+	if err != nil {
+		panic(err)
 	}
+	var g golden
+	if err := json.Unmarshal(b, &g); err != nil {
+		panic(err)
+	}
+	return g
+})
+
+// fixture decodes one named input of the golden file into m.
+func fixture[M proto.Message](name string, m M) M {
+	g := loadGolden()
+	var raw json.RawMessage
+	for _, r := range g.Requests {
+		if r.Name == name {
+			raw = r.Request
+		}
+	}
+	for _, r := range g.Results {
+		if r.Name == name {
+			raw = r.Response
+		}
+	}
+	for _, r := range g.Records {
+		if r.Name == name {
+			raw = r.Record
+		}
+	}
+	if raw == nil {
+		panic("no golden input named " + name)
+	}
+	if err := protojson.Unmarshal(raw, m); err != nil {
+		panic(name + ": " + err.Error())
+	}
+	return m
+}
+
+func jsRequest() *plimsollv1.RunRequest {
+	return fixture("version 1 javascript request", &plimsollv1.RunRequest{})
 }
 
 func projectRequest() *plimsollv1.RunRequest {
-	return &plimsollv1.RunRequest{
-		Protocol: 1, TimeoutMs: 30000,
-		Payload: &plimsollv1.RunRequest_Project{Project: &plimsollv1.ProjectRun{
-			Files: []*plimsollv1.ProjectFile{
-				{Path: "main.js", Content: "console.log(require('./lib.js'))"},
-				{Path: "lib.js", Content: "module.exports = 42"},
-			},
-			Steps:     []string{"node main.js > out.txt", "cat out.txt"},
-			Artifacts: []string{"out.txt"},
-		}},
-	}
+	return fixture("version 1 project request", &plimsollv1.RunRequest{})
 }
 
 func moduleRequest() *plimsollv1.RunRequest {
-	return &plimsollv1.RunRequest{
-		Protocol: 1,
-		Payload: &plimsollv1.RunRequest_Module{Module: &plimsollv1.ModuleRun{
-			Model: "VanDerPol", EndTime: 1, Step: 0.1,
-			Rows: []*plimsollv1.ModuleRow{{Values: []float64{1, 2}}, {Values: []float64{0.5, -3}}},
-		}},
-	}
+	return fixture("version 1 module request", &plimsollv1.RunRequest{})
 }
 
+// versionTwoRequest is base under protocol 2 with an approved rule of two identities,
+// as the golden file's version 2 requests are.
 func versionTwoRequest(base *plimsollv1.RunRequest) *plimsollv1.RunRequest {
 	out := proto.Clone(base).(*plimsollv1.RunRequest)
 	out.Protocol = 2
@@ -55,79 +109,84 @@ func versionTwoRequest(base *plimsollv1.RunRequest) *plimsollv1.RunRequest {
 }
 
 func jsResponse() *plimsollv1.RunResponse {
-	return &plimsollv1.RunResponse{
-		Sandbox: "docker", Isolation: "container", DurationMs: 812,
-		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{
-			Stdout: []byte("2\n"), Stderr: []byte{0xff, 'x'}, ExitCode: 0,
-		}},
-	}
+	return fixture("javascript result", &plimsollv1.RunResponse{})
 }
 
 func projectResponse() *plimsollv1.RunResponse {
-	return &plimsollv1.RunResponse{
-		Sandbox: "openshell", Isolation: "container", DurationMs: 4210,
-		Result: &plimsollv1.RunResponse_Project{Project: &plimsollv1.ProjectResult{
-			Outcome: plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED,
-			Steps: []*plimsollv1.StepResult{
-				{Command: "node main.js > out.txt", DurationMs: 90},
-				{Command: "cat out.txt", Stdout: []byte("42\n"), DurationMs: 3},
-			},
-			Artifacts: []*plimsollv1.Artifact{{Path: "out.txt", Content: []byte("42\n")}},
-		}},
-	}
+	return fixture("project result", &plimsollv1.RunResponse{})
 }
 
 func moduleResponse() *plimsollv1.RunResponse {
-	return &plimsollv1.RunResponse{
-		Sandbox: "docker", Isolation: "kernel",
-		Result: &plimsollv1.RunResponse_Module{Module: &plimsollv1.ModuleResult{
-			Outcome: plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED, Width: 1,
-			Stdout: []byte("rows=2\n"),
-			Runs: []*plimsollv1.ModuleRowResult{
-				{Status: 2, Outputs: []float64{1, 1.5}},
-				{Status: -3},
-			},
-		}},
-	}
+	return fixture("module result", &plimsollv1.RunResponse{})
+}
+
+func cellRequest() *plimsollv1.SessionRunRequest {
+	return fixture("cell request", &plimsollv1.SessionRunRequest{})
+}
+
+func cellResponse() *plimsollv1.RunResponse {
+	return fixture("cell result", &plimsollv1.RunResponse{})
 }
 
 func goldenRecord() sandbox.RunRecord {
-	return sandbox.RunRecord{
-		Version:        Version,
-		RequestSHA256:  RunRequestDigest(projectRequest()),
-		ResultSHA256:   ResultDigest(projectResponse()),
-		Provider:       "openshell",
-		Isolation:      "container",
-		Environment:    "openshell-image:sha256:" + "ab",
-		Policy:         "openshell-policy:sha256:" + "cd",
-		Started:        time.UnixMilli(1790000000000),
-		Ended:          time.UnixMilli(1790000004210),
-		Session:        SessionFingerprint("00112233445566778899aabbccddeeff"),
-		Sequence:       2,
-		PreviousSHA256: "0000000000000000000000000000000000000000000000000000000000000001",
-	}
+	return FromWire(fixture("record", &plimsollv1.RunRecord{}))
 }
 
 // The golden vectors pin the encoding: a change to any of these digests is a
 // change to docs/run-records.md, whose reference implementation computes all of
-// them (checked against an independent Python implementation on 2026-09-28), and
-// to every verifier written against it.
+// them (checked against an independent Python implementation on 2026-09-28, the
+// cell vectors on 2026-10-01 before this code ran), and to every verifier written
+// against it.
 func TestGoldenVectors(t *testing.T) {
-	for _, c := range []struct{ name, got, want string }{
-		{"version 1 javascript request", RunRequestDigest(jsRequest()), "585a1b46c55ebacc1dfdd4336e302328c32ed3e2e7e8a8b460d252d0454be8fc"},
-		{"version 1 project request", RunRequestDigest(projectRequest()), "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0"},
-		{"version 1 module request", RunRequestDigest(moduleRequest()), "3679bdba8fdaa503650e79c970728f869a4cf4882446fbc9742a402195d5b6c1"},
-		{"version 2 javascript request", RunRequestDigest(versionTwoRequest(jsRequest())), "0b662d4687a062429ab0be85c2445e6c0c9d402922ca223b74e3a1095da7d320"},
-		{"version 2 project request", RunRequestDigest(versionTwoRequest(projectRequest())), "abf8235a62b43c4384dc9e7a0f704f1f5f0936ac01a98d7344e50195455d97e1"},
-		{"version 2 module request", RunRequestDigest(versionTwoRequest(moduleRequest())), "f17657df096a7f2fe66fc012a8262bfe03a876e114264d95ce1ac79181c119a5"},
-		{"javascript result", ResultDigest(jsResponse()), "3a57590f560a5de29d491595bfb264ff072e06d4d0fcccc5ab2d4b3de410d37d"},
-		{"project result", ResultDigest(projectResponse()), "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f"},
-		{"module result", ResultDigest(moduleResponse()), "7bf330fc9945ab802a68a0da5a53ec0a40344c5212106e159ce77479e687c2ec"},
-		{"record", Digest(goldenRecord()), "a5107eb6b1f726e1b2d7183419502309bfa34d932a65f1494150228ae8349156"},
-		{"session fingerprint", SessionFingerprint("00112233445566778899aabbccddeeff"), "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720"},
+	g := loadGolden()
+	n := 0
+	for _, r := range g.Requests {
+		var got string
+		switch r.Kind {
+		case "run":
+			got = RunRequestDigest(fixture(r.Name, &plimsollv1.RunRequest{}))
+		case "session":
+			got = SessionRunRequestDigest(fixture(r.Name, &plimsollv1.SessionRunRequest{}))
+		default:
+			t.Fatalf("%s: unknown kind %q", r.Name, r.Kind)
+		}
+		if got != r.SHA256 {
+			t.Errorf("%s: got %s, want %s", r.Name, got, r.SHA256)
+		}
+		n++
+	}
+	for _, r := range g.Results {
+		if got := ResultDigest(fixture(r.Name, &plimsollv1.RunResponse{})); got != r.SHA256 {
+			t.Errorf("%s: got %s, want %s", r.Name, got, r.SHA256)
+		}
+		n++
+	}
+	for _, r := range g.Records {
+		if got := Digest(FromWire(fixture(r.Name, &plimsollv1.RunRecord{}))); got != r.SHA256 {
+			t.Errorf("%s: got %s, want %s", r.Name, got, r.SHA256)
+		}
+		n++
+	}
+	for _, f := range g.SessionFingerprints {
+		if got := SessionFingerprint(f.SessionID); got != f.SHA256 {
+			t.Errorf("%s: got %s, want %s", f.Name, got, f.SHA256)
+		}
+		n++
+	}
+	// 13 vectors on 2026-10-01; fewer means one was dropped from the file.
+	if n < 13 {
+		t.Fatalf("the golden file holds %d vectors, fewer than the 13 it had", n)
+	}
+	// The version 2 requests are the version 1 ones under versionTwoRequest, which
+	// other tests use, so the two cannot drift apart.
+	for _, pair := range [][2]string{
+		{"version 1 javascript request", "version 2 javascript request"},
+		{"version 1 project request", "version 2 project request"},
+		{"version 1 module request", "version 2 module request"},
 	} {
-		if c.got != c.want {
-			t.Errorf("%s: got %s, want %s", c.name, c.got, c.want)
+		v1, v2 := fixture(pair[0], &plimsollv1.RunRequest{}), fixture(pair[1], &plimsollv1.RunRequest{})
+		if !proto.Equal(versionTwoRequest(v1), v2) {
+			t.Errorf("%s is not %s under versionTwoRequest", pair[1], pair[0])
 		}
 	}
 }

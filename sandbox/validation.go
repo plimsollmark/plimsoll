@@ -41,6 +41,56 @@ func validateRequest(req Request) error {
 	return nil
 }
 
+// validateFiles is the rule for files a request writes into the work directory, a
+// project's or a cell's.
+func validateFiles(files []File) error {
+	if len(files) > MaxProjectFiles {
+		return fmt.Errorf("%w: too many files (max %d)", ErrInvalidRequest, MaxProjectFiles)
+	}
+	total := 0
+	seenFiles := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		if err := validateProjectPath("file", file.Path); err != nil {
+			return err
+		}
+		if !utf8.ValidString(file.Content) {
+			return fmt.Errorf("%w: file %q content must be valid UTF-8", ErrInvalidRequest, file.Path)
+		}
+		if _, duplicate := seenFiles[file.Path]; duplicate {
+			return fmt.Errorf("%w: duplicate file path %q", ErrInvalidRequest, file.Path)
+		}
+		seenFiles[file.Path] = struct{}{}
+		if len(file.Content) > MaxProjectBytes-total {
+			return fmt.Errorf("%w: files exceed %d bytes", ErrInvalidRequest, MaxProjectBytes)
+		}
+		total += len(file.Content)
+	}
+	return nil
+}
+
+// ValidateCellRequest refuses a cell that must not run. Its error is marked
+// NotDispatched: validation runs before any code.
+func ValidateCellRequest(req CellRequest) error { return refused(validateCellRequest(req)) }
+
+func validateCellRequest(req CellRequest) error {
+	if err := validateMinimumIsolation(req.MinimumIsolation); err != nil {
+		return err
+	}
+	if !req.Language.Known() {
+		return fmt.Errorf("%w: unknown cell language %q (want javascript or python)", ErrInvalidRequest, req.Language)
+	}
+	if req.Code == "" {
+		return fmt.Errorf("%w: code is required", ErrInvalidRequest)
+	}
+	if !utf8.ValidString(req.Code) || strings.ContainsRune(req.Code, '\x00') {
+		return fmt.Errorf("%w: code must be valid UTF-8 without NUL bytes", ErrInvalidRequest)
+	}
+	if len(req.Code) > MaxCodeBytes {
+		return fmt.Errorf("%w: code exceeds %d bytes", ErrInvalidRequest, MaxCodeBytes)
+	}
+	return validateFiles(req.Files)
+}
+
 // ValidateProjectRequest refuses a project request that must not run. Its error is
 // marked NotDispatched: validation runs before any code.
 func ValidateProjectRequest(req ProjectRequest) error {
@@ -65,26 +115,8 @@ func validateProjectRequest(req ProjectRequest) error {
 			return fmt.Errorf("%w: step %d exceeds %d bytes", ErrInvalidRequest, i, MaxProjectStepBytes)
 		}
 	}
-	if len(req.Files) > MaxProjectFiles {
-		return fmt.Errorf("%w: too many files (max %d)", ErrInvalidRequest, MaxProjectFiles)
-	}
-	total := 0
-	seenFiles := make(map[string]struct{}, len(req.Files))
-	for _, file := range req.Files {
-		if err := validateProjectPath("file", file.Path); err != nil {
-			return err
-		}
-		if !utf8.ValidString(file.Content) {
-			return fmt.Errorf("%w: file %q content must be valid UTF-8", ErrInvalidRequest, file.Path)
-		}
-		if _, duplicate := seenFiles[file.Path]; duplicate {
-			return fmt.Errorf("%w: duplicate file path %q", ErrInvalidRequest, file.Path)
-		}
-		seenFiles[file.Path] = struct{}{}
-		if len(file.Content) > MaxProjectBytes-total {
-			return fmt.Errorf("%w: project exceeds %d bytes", ErrInvalidRequest, MaxProjectBytes)
-		}
-		total += len(file.Content)
+	if err := validateFiles(req.Files); err != nil {
+		return err
 	}
 	if len(req.Artifacts) > MaxProjectArtifacts {
 		return fmt.Errorf("%w: too many artifacts (max %d)", ErrInvalidRequest, MaxProjectArtifacts)

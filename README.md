@@ -159,11 +159,11 @@ reaches the network directly. A run with no grant has no network at all.
 | Provider | Boundary | Tier reported | Use |
 |---|---|---|---|
 | `wasm` | QuickJS on <dfn>*wazero*</dfn> (a WebAssembly runtime written in Go), inside `plimsolld` itself | `process` | Fast local development. An <dfn>*escape*</dfn> (a bug that lets code out of its sandbox) in the engine lands inside your daemon. |
-| `docker` with <dfn>*runc*</dfn>, docker's default runtime | a container sharing your machine's kernel | `container` | Self-hosting when a kernel bug is not one of the attacks you plan for. |
-| `docker` with `runsc` | gVisor, once the startup checks confirm docker has `runsc` registered | `kernel` | Hostile code on your own machines. |
+| `docker` with <dfn>*runc*</dfn>, docker's default runtime | a container sharing your machine's kernel | `container` | Self-hosting when a kernel bug is not one of the attacks you plan for. With a project image it keeps a <dfn>*session*</dfn>: one container for many calls, with Python and JavaScript interpreters whose variables survive between calls. |
+| `docker` with `runsc` | gVisor, once the startup checks confirm docker has `runsc` registered | `kernel` | Hostile code on your own machines. Keeps sessions too. |
 | `e2b` | a <dfn>*microVM*</dfn> (a small virtual machine made for one run, then destroyed) from <dfn>*E2B*</dfn>, a hosted service that runs them on <dfn>*Firecracker*</dfn>, AWS's open-source VM monitor | `vm` | Hostile code, on E2B's machines rather than yours; billed per run. |
 | `dockercloud` | a microVM from <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted sandbox service | `vm` | Hostile code, on Docker's machines; billed per run. Built against Docker's published API and tested against the live service on 2026-09-24. The account's network policy must be <dfn>*deny-all*</dfn> (no connection unless a rule allows it), and every run checks that. Grants work through the same <dfn>*guard*</dfn> as E2B (an address on the plimsoll server, the only place the microVM may connect to) when `SANDBOX_DOCKERCLOUD_GUARD_URL` is set. Unlike E2B, the guest holds its own run's short-lived credential for the guard, and the one network rule is set through a Docker call outside its published API. |
-| `openshell` | a sandbox from <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, created by its gateway server on docker | `container` | Agent platforms that already run an OpenShell gateway. Each run gets its own sandbox with no network; plimsoll reads its settings back, refuses to run on any difference, and deletes it afterwards. Tested against a v0.1.2 gateway on 2026-09-28. Grants reach the broker through a relay inside the sandbox that plimsoll connects to from outside, so the sandbox needs no network rules. A <dfn>*session*</dfn> keeps one sandbox for many calls. |
+| `openshell` | a sandbox from <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, created by its gateway server on docker | `container` | Agent platforms that already run an OpenShell gateway. Each run gets its own sandbox with no network; plimsoll reads its settings back, refuses to run on any difference, and deletes it afterwards. Tested against a v0.1.2 gateway on 2026-09-28. Grants reach the broker through a relay inside the sandbox that plimsoll connects to from outside, so the sandbox needs no network rules. Keeps sessions too. |
 | unset | nothing runs | n/a | The default. |
 
 Each tier rests on the daemon's configuration, what the provider reports, and a real test
@@ -226,12 +226,14 @@ Each of these answers one question, end to end.
 | Document | Answers |
 |---|---|
 | [docs/getting-started.md](docs/getting-started.md) | How do I build it, embed it, start it as a service with authentication, and watch a floor refuse a run? |
-| [docs/example-programs.md](docs/example-programs.md) | What do the nine runnable examples prove, and which should I read first? |
+| [docs/example-programs.md](docs/example-programs.md) | What do the runnable examples prove, and which should I read first? |
 | [docs/isolation-tiers.md](docs/isolation-tiers.md) | What does each tier rest on, and how do I demand one per request? |
 | [docs/capability-grants.md](docs/capability-grants.md) | How does agent code call my API without ever holding my credential? |
 | [docs/run-results.md](docs/run-results.md) | What comes back, and when is a failure an error rather than a result? |
 | [docs/run-records.md](docs/run-records.md) | What does each run's record state, how do I recompute it in another language, and how do I sign, verify and replay records outside the daemon? |
-| [docs/sessions.md](docs/sessions.md) | How do I keep one sandbox for many calls, and what holds between the calls? |
+| [docs/sessions.md](docs/sessions.md) | How do I keep one sandbox for many calls, and what holds between the calls, an interpreter's variables included? |
+| [clients/python](clients/python/README.md) | How do I call plimsolld from Python? |
+| [clients/typescript](clients/typescript/README.md) | How do I call it from TypeScript, and give a <dfn>*Trigger.dev*</dfn> (a hosted job runner for TypeScript) or Mastra agent a code tool that keeps its state? |
 | [docs/placement.md](docs/placement.md) | I run several daemons: how do I pick one per request, and when is a refusal safe to retry elsewhere? |
 | [docs/inner-loop-workflow.md](docs/inner-loop-workflow.md) | How do I iterate fast locally without shipping a weak sandbox to production? |
 | [docs/efficiency-advisor.md](docs/efficiency-advisor.md) | What does the advisor see, why can what it records never include the data the code sent or received, and how do I choose what it emits? |

@@ -99,13 +99,15 @@ Protocol 1 uses the `.v1` domain and the original fields. Protocol 2 uses the
 `.v2` domain and adds, after `timeout_ms`, `software_mode` (`""`, `exact` or
 `approved`), `software_identities` (count) and each `software_identity` in the
 order sent. Then both versions encode `kind`
-(`javascript`, `project` or `module`), then by kind:
+(`javascript`, `project`, `module` or `cell`), then by kind:
 
 - javascript: `code`, `grant_profile`
 - project: `grant_profile`; `files` (count), then per file `file_path`,
   `file_content`; `steps` (count), then per step `step_command`; `artifacts`
   (count), then per path `artifact_path`
 - module: `model`, `end_time`, `step`, `rows` (count), then per row `row_values`
+- cell (a session call to the session's interpreter, [sessions.md](sessions.md)):
+  `language`, `code`; `files` (count), then per file `file_path`, `file_content`
 
 ### Result: domain `plimsoll.run-result.v1`
 
@@ -120,6 +122,11 @@ order sent. Then both versions encode `kind`
   artifact `artifact_path`, `artifact_content`
 - module: `outcome`, `outcome_detail`, `width`, `stdout`, `stderr`; `runs` (count),
   then per row `run_status`, `run_outputs`
+- cell: `exit_code`, `timed_out`, `stdout`, `stderr`, `stdout_truncated`,
+  `stderr_truncated`, `interpreter_started`, `interpreter_ended`
+
+A cell's result depends on what earlier cells of its session left in the interpreter,
+so a cell is replayed only as part of its session's chain, in order, never alone.
 
 ### Record: domains `plimsoll.run-record.v1` and `.v2`
 

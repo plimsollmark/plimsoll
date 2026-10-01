@@ -24,8 +24,8 @@ service SandboxService {
   // daemon serves exactly one: a request that omits it is InvalidArgument and a
   // request on any other number is Unimplemented, in both cases before the
   // payload is read. The number is bumped when such a field is added; an
-  // informational field does not bump it. Current number: 1 (the Go constant
-  // rpc.Protocol, which Describe reports).
+  // informational field does not bump it. Current number: 2 (the Go constant
+  // protocol.Number, which Describe reports).
   rpc Run(RunRequest) returns (RunResponse);
   // Describe reports the protocol number, the active provider, current isolation
   // evidence, and static operation support. Project and module support are
@@ -107,6 +107,11 @@ message PayloadEnvironment {
   // Selected executable image manifest and platform, separate from the outer
   // index in identity. Empty means the provider cannot establish it.
   string software_identity = 3;
+  // The languages this environment's interpreters run, as the provider's startup
+  // checks proved them ("javascript", "python"): the languages a project's steps can
+  // invoke, and on a provider with sessions the languages a cell may use. Empty when
+  // the provider has proved none.
+  repeated string languages = 4;
 }
 
 // An explicit caller rule for the selected software. Empty mode and identities
@@ -192,6 +197,11 @@ message RunRequest {
     JavaScriptRun javascript = 10;
     ProjectRun project = 11;
     ModuleRun module = 12;
+    // A cell runs only in a session, so Run refuses it, marked not dispatched. It
+    // is here as the stored form of a session's cell call (the call without its
+    // session ID, with the same request digest), which a harness signs and replays
+    // into a fresh session in order.
+    CellRun cell = 13;
   }
 }
 
@@ -233,6 +243,7 @@ message RunResponse {
     JavaScriptResult javascript = 10;
     ProjectResult project = 11;
     ModuleResult module = 12;
+    CellResult cell = 13;
   }
 }
 
@@ -444,7 +455,9 @@ message OpenSessionResponse {
 // SessionRunRequest is a RunRequest with a session ID, for a call in a session.
 // It is a separate message so that a daemon that predates sessions refuses it
 // (Unimplemented) instead of dropping the ID and running the payload alone. A
-// module payload has no session form.
+// module payload has no session form; a cell exists only in a session. A daemon
+// that predates cells drops the cell payload and refuses the request as having
+// none, marked not dispatched, so cells did not move the protocol number.
 message SessionRunRequest {
   uint32 protocol = 1;
   string minimum_isolation = 2;
@@ -455,7 +468,37 @@ message SessionRunRequest {
   oneof payload {
     JavaScriptRun javascript = 10;
     ProjectRun project = 11;
+    CellRun cell = 12;
   }
+}
+
+// CellRun is one call to the session's interpreter for its language. The session
+// keeps one interpreter per language alive between calls, so what a cell defines is
+// there for the next cell, as in a notebook. The files are written into the
+// session's work directory, the interpreter's working directory, before the code
+// runs. A cell carries no grant: its interpreter outlives the call, and a grant
+// lives for one call.
+message CellRun {
+  string language = 1; // "javascript" or "python"; see PayloadEnvironment.languages
+  string code = 2;
+  repeated ProjectFile files = 3;
+}
+
+// CellResult is a cell's outcome. exit_code is 0 when the code ran without raising,
+// 1 when it raised (the error is on stderr), and 124 when the call's deadline ended
+// it. A final expression's value is printed to stdout, as a notebook shows it.
+message CellResult {
+  bytes stdout = 1;
+  bytes stderr = 2;
+  int32 exit_code = 3;
+  bool timed_out = 4;
+  bool stdout_truncated = 5;
+  bool stderr_truncated = 6;
+  // This call started a fresh interpreter: nothing an earlier cell defined exists.
+  bool interpreter_started = 7;
+  // The interpreter ended during this call (the code exited it, it was killed, or the
+  // deadline passed); the next cell starts a fresh one.
+  bool interpreter_ended = 8;
 }
 
 message SessionRunResponse {

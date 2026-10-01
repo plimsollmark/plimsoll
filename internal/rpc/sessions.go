@@ -169,17 +169,14 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	if err := sandbox.CheckMinimumIsolation(s.Sandbox.IsolationClass(), env.minimum); err != nil {
 		return nil, mapSandboxErr(err)
 	}
-	var software sandbox.Environments
-	if d, ok := s.Sandbox.(sandbox.Describer); ok {
-		software = d.Environments()
-	}
+	// Every call of a session runs where the provider says sessions run, which on
+	// docker is not where a single snippet runs.
+	software := sp.SessionEnvironments()
 	if err := env.software.Check(software.JavaScript.SoftwareIdentity); err != nil {
 		return nil, mapSandboxErr(err)
 	}
-	if pc, ok := s.Sandbox.(sandbox.ProjectCapable); ok && pc.SupportsProjects() {
-		if err := env.software.Check(software.Project.SoftwareIdentity); err != nil {
-			return nil, mapSandboxErr(err)
-		}
+	if err := env.software.Check(software.Project.SoftwareIdentity); err != nil {
+		return nil, mapSandboxErr(err)
 	}
 	if !s.sessions.reserve(s.Sessions.MaxSessions) {
 		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
@@ -279,7 +276,9 @@ func (e *sessionEntry) armIdle(s *SandboxService) {
 }
 
 // suspend suspends an idle session and gives back its slot, unless a call has
-// taken the turn in the meantime.
+// taken the turn in the meantime. A session whose suspended sandbox still holds its
+// memory (a paused container) keeps its slot: the slot is its share of the host's
+// memory budget, and that memory is still in use.
 func (s *SandboxService) suspend(e *sessionEntry) {
 	select {
 	case e.turn <- struct{}{}:
@@ -295,19 +294,22 @@ func (s *SandboxService) suspend(e *sessionEntry) {
 	e.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), sessionSuspendBudget)
 	defer cancel()
-	if err := e.sess.Suspend(ctx); err != nil {
+	holdsMemory, err := e.sess.Suspend(ctx)
+	if err != nil {
 		if e.sess.Err() == nil {
 			s.logger().Warn("session suspend failed", "session", e.fingerprint, "error", err.Error())
 		}
 		return
 	}
-	e.mu.Lock()
-	if e.release != nil {
-		e.release()
-		e.release = nil
+	if !holdsMemory {
+		e.mu.Lock()
+		if e.release != nil {
+			e.release()
+			e.release = nil
+		}
+		e.mu.Unlock()
 	}
-	e.mu.Unlock()
-	s.logger().Info("session suspended", "session", e.fingerprint, "idle_ms", e.idleTimeout.Milliseconds())
+	s.logger().Info("session suspended", "session", e.fingerprint, "idle_ms", e.idleTimeout.Milliseconds(), "holds_memory", holdsMemory)
 }
 
 // SessionRun runs one call in the caller's session.
@@ -323,7 +325,7 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 		return nil, errSessionNotFound()
 	}
 	if m.GetPayload() == nil {
-		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("payload must be exactly one of javascript or project"))
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("payload must be exactly one of javascript, project or cell"))
 	}
 	// The open's rule cannot be silently dropped by a raw session caller. The
 	// request must carry the effective rule so its digest and record bind it.
@@ -375,6 +377,8 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 		resp, err = s.runJavaScript(ctx, env, p.Javascript, t)
 	case *plimsollv1.SessionRunRequest_Project:
 		resp, err = s.runProject(ctx, env, p.Project, t)
+	case *plimsollv1.SessionRunRequest_Cell:
+		resp, err = s.runCell(ctx, env, p.Cell, e.sess, t)
 	}
 	if err != nil {
 		return nil, err
@@ -396,6 +400,85 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	default:
 	}
 	return connect.NewResponse(out), nil
+}
+
+// runCell is the cell kind: code handed to the session's interpreter for its
+// language, after the cell's files are written. A cell carries no grant.
+func (s *SandboxService) runCell(ctx context.Context, env envelope, p *plimsollv1.CellRun, runner sandbox.CellRunner, t target) (*plimsollv1.RunResponse, error) {
+	files := make([]sandbox.File, 0, len(p.GetFiles()))
+	for _, f := range p.GetFiles() {
+		files = append(files, sandbox.File{Path: f.GetPath(), Content: f.GetContent()})
+	}
+	sbReq := sandbox.CellRequest{
+		Language: sandbox.Language(p.GetLanguage()), Code: p.GetCode(), Files: files,
+		Timeout: env.timeout, MinimumIsolation: env.minimum, Software: env.software,
+	}
+	if err := sandbox.ValidateCellRequest(sbReq); err != nil {
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
+	}
+	if err := sandbox.CheckMinimumIsolation(t.tier, sbReq.MinimumIsolation); err != nil {
+		return nil, mapSandboxErr(err)
+	}
+	if err := sbReq.Software.Check(t.software.Project.SoftwareIdentity); err != nil {
+		return nil, mapSandboxErr(err)
+	}
+	release, err := t.admit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	s.runsTotal.Add(1)
+	runCtx, cancel := runContext(ctx)
+	defer cancel()
+	started := time.Now()
+	res, err := runner.RunCell(runCtx, sbReq)
+	attrs := []slog.Attr{
+		slog.String("op", "cell"),
+		slog.String("caller", auditCaller(ctx)),
+		slog.String("language", string(sbReq.Language)),
+		slog.Int("code_bytes", len(sbReq.Code)),
+		slog.Int("files", len(files)),
+	}
+	if err != nil {
+		if isInfraErr(err) {
+			s.runsFailed.Add(1)
+		}
+		attrs = append(attrs,
+			slog.String("sandbox", t.provider),
+			slog.String("isolation", t.tier.String()),
+			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
+			slog.String("error", err.Error()))
+		attrs = append(append(attrs, traceAttrs(env.traceID)...), t.attrs...)
+		s.logger().LogAttrs(ctx, slog.LevelError, "code run failed", attrs...)
+		return nil, mapSandboxErr(err)
+	}
+	attrs = append(attrs,
+		slog.String("sandbox", res.Sandbox),
+		slog.String("isolation", res.Isolation.String()),
+		slog.Int("exit_code", res.ExitCode),
+		slog.Bool("timed_out", res.TimedOut),
+		slog.Bool("interpreter_started", res.InterpreterStarted),
+		slog.Bool("interpreter_ended", res.InterpreterEnded),
+		slog.Int64("duration_ms", res.Duration.Milliseconds()))
+	attrs = append(append(attrs, traceAttrs(env.traceID)...), t.attrs...)
+	s.logger().LogAttrs(ctx, slog.LevelInfo, "code run", attrs...)
+	return &plimsollv1.RunResponse{
+		Sandbox:          wireString(res.Sandbox),
+		Isolation:        res.Isolation.String(),
+		DurationMs:       res.Duration.Milliseconds(),
+		SoftwareIdentity: t.ranSoftware(res.SoftwareIdentity, t.software.Project.SoftwareIdentity),
+		Environment:      describedEnvironment(res.EnvironmentIdentity, t.software.Project.Identity),
+		Result: &plimsollv1.RunResponse_Cell{Cell: &plimsollv1.CellResult{
+			Stdout:             []byte(res.Stdout),
+			Stderr:             []byte(res.Stderr),
+			ExitCode:           int32(res.ExitCode),
+			TimedOut:           res.TimedOut,
+			StdoutTruncated:    res.StdoutTruncated,
+			StderrTruncated:    res.StderrTruncated,
+			InterpreterStarted: res.InterpreterStarted,
+			InterpreterEnded:   res.InterpreterEnded,
+		}},
+	}, nil
 }
 
 // admitCall is a session call's admission: a slot first when the session is

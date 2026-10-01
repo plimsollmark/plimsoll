@@ -1,0 +1,23 @@
+{
+  "name": "plimsoll-trigger-chat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "trigger dev",
+    "deploy": "trigger deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.0",
+    "@plimsoll/client": "file:../../clients/typescript",
+    "@trigger.dev/sdk": "^4.7.0",
+    "ai": "^7.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "trigger.dev": "^4.7.0",
+    "typescript": "^7.0.2"
+  }
+}

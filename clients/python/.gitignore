@@ -1,0 +1,7 @@
+# What building, installing or testing this package leaves behind.
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+.venv/

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -210,7 +211,7 @@ func TestDescribeReportsEnvironmentsAndResources(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := sandboxtest.Wasm().Environments()
-	if info.Environments != want || !strings.HasPrefix(want.JavaScript.Identity, "quickjs-wasm:sha256:") {
+	if !reflect.DeepEqual(info.Environments, want) || !strings.HasPrefix(want.JavaScript.Identity, "quickjs-wasm:sha256:") {
 		t.Fatalf("Environments = %+v, want %+v", info.Environments, want)
 	}
 	if info.Resources != (sandbox.Resources{MemoryMB: 128}) {

@@ -3,6 +3,7 @@ package sandbox
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,10 @@ type PayloadEnvironment struct {
 	// requested timeout is cut to it. 0 means the kind is unsupported or the
 	// provider does not state a ceiling.
 	MaxTimeout time.Duration
+	// Languages are the interpreters this environment runs, as the provider's startup
+	// checks proved them: the languages a project's steps can invoke, and on a
+	// provider with sessions the languages a cell may use. Empty when none is proved.
+	Languages []Language
 }
 
 // Environments is a provider's statement for each payload kind. A kind the
@@ -80,6 +85,9 @@ func (d *DockerSandbox) Environments() Environments {
 		env.Project.SoftwareIdentity = state.projectManifest
 		env.Module.SoftwareIdentity = state.moduleManifest
 	}
+	d.stateMu.RLock()
+	env.Project.Languages = slices.Clone(d.projectLanguages)
+	d.stateMu.RUnlock()
 	return env
 }
 
