@@ -200,16 +200,20 @@ may make ([docs/seccomp.md](docs/seccomp.md)).
   self-review ledgers are not published either. [SECURITY.md](SECURITY.md) says what
   exists, what it is worth, and what you can check yourself instead.
 - **CI runs the gate, in the open, and each check means what it ran.** The
-  [audit workflow](.github/workflows/audit.yml) has two jobs. `audit` runs plain
+  [audit workflow](.github/workflows/audit.yml) has three jobs. `audit` runs plain
   `make audit` on every push to `main` and every pull request: build, vet, race tests, lint,
-  `buf lint`, a generated-code drift check, and `govulncheck`. `audit-docker` then
+  `buf lint`, a generated-code drift check, and `govulncheck`. After `audit`, `clients`
+  runs `make clients-suite`: `npm ci` in `clients/typescript` and
+  `examples/trigger-chat`, then the Python and TypeScript Go test packages in
+  required mode. A missing runtime, dependency or skipped Go test fails that job.
+  `audit-docker` also follows `audit` and
   runs `make docker-suite` with the images prepared, in required mode: a missing
   daemon, a missing image or a skipped test fails the job. A green `audit-docker`
   therefore means the docker suite ran under runc with the shipped seccomp profile
   and proved a read-only root, sized `noexec` writable mounts, and the broker's
   refusals. The [gvisor workflow](.github/workflows/gvisor.yml) runs the same suite
   under runsc, the kernel tier, from the pinned installer. The race detector runs in
-  the plain audit job; the two provider jobs run their isolation tests without it.
+  the plain audit job; the client and two provider jobs run without it.
   No check exercises E2B or Docker Cloud Sandboxes: those suites drive live paid services and are
   deliberately never wired to a runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
 

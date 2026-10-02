@@ -350,3 +350,70 @@ func TestReportedIdentityMustBeTheProgramStarted(t *testing.T) {
 		t.Fatalf("the sweep would keep %v", keep)
 	}
 }
+
+// A warmed interpreter serves the first cell without a launch or a relay of its own,
+// and that cell still reports the interpreter as new, since no cell defined anything
+// in it; the next cell does not.
+func TestWarmServesTheFirstCellAsNew(t *testing.T) {
+	var in Interpreters
+	var launches, relays atomic.Int64
+	exec := func(ctx context.Context, argv []string, env map[string]string, stdin []byte, outCap, errCap int) (ExecResult, error) {
+		launches.Add(1)
+		return launched(ctx, argv, env, stdin, outCap, errCap)
+	}
+	honestRelay := scriptedRelay(nil, honest)
+	attach := func(argv []string, env map[string]string) (Attached, error) {
+		relays.Add(1)
+		return honestRelay(argv, env)
+	}
+	if err := in.Warm(context.Background(), exec, attach, "python", "/work"); err != nil {
+		t.Fatal(err)
+	}
+	if !in.Attached("python") || in.Attached("javascript") {
+		t.Fatalf("attached: python %v, javascript %v; want only python", in.Attached("python"), in.Attached("javascript"))
+	}
+	out, err := in.RunRelayed(context.Background(), exec, attach, plainCell)
+	if err != nil || !out.Started || out.Stdout != "2\n" {
+		t.Fatalf("first cell: %+v, %v; want 2, reported as a new interpreter", out, err)
+	}
+	if launches.Load() != 1 || relays.Load() != 1 {
+		t.Fatalf("%d launches and %d relays; want the warmed one of each", launches.Load(), relays.Load())
+	}
+	if out, err = in.RunRelayed(context.Background(), exec, attach, plainCell); err != nil || out.Started {
+		t.Fatalf("second cell: %+v, %v; want the same interpreter, not reported again", out, err)
+	}
+}
+
+// Warm keeps nothing it cannot confirm: a relay reporting another program leaves no
+// interpreter or relay behind, and a relay whose stream ends is no longer attached.
+func TestWarmKeepsOnlyWhatItConfirms(t *testing.T) {
+	var in Interpreters
+	impostor := func(_ []string, env map[string]string) (Attached, error) {
+		return scriptedRelay(nil, honest)(RelayArgv("javascript", "/work"), env)
+	}
+	if err := in.Warm(context.Background(), launched, impostor, "python", "/work"); !errors.Is(err, ErrLaunch) {
+		t.Fatalf("err %v; want ErrLaunch for a relay that is not the python relay", err)
+	}
+	if in.Attached("python") || len(in.Keep(nil)) != 0 {
+		t.Fatalf("after a refused warm: attached %v, keep %v; want nothing kept", in.Attached("python"), in.Keep(nil))
+	}
+	if err := in.Warm(context.Background(), launched, scriptedRelay(nil, honest), "cobol", "/work"); err == nil {
+		t.Fatal("an unknown language was warmed")
+	}
+	var a *stuckRelay
+	ending := func(argv []string, _ map[string]string) (Attached, error) {
+		a = newStuckRelay()
+		go func() { _, _ = fmt.Fprintln(a.outW, readyFrame(argv)) }()
+		return a, nil
+	}
+	if err := in.Warm(context.Background(), launched, ending, "python", "/work"); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.outW.Close()
+	for i := 0; in.Attached("python"); i++ {
+		if i == 200 {
+			t.Fatal("a relay whose stream ended still counts as attached")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

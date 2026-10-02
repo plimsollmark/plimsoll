@@ -156,3 +156,14 @@ class Requests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LanguageHint(unittest.TestCase):
+    def test_kept_in_order_without_repeats(self) -> None:
+        self.assertEqual(v.languages(None), [])
+        self.assertEqual(v.languages(["python", "javascript", "python"]), ["python", "javascript"])
+
+    def test_refused(self) -> None:
+        for bad in ("python", ["cobol"], [1], {"python": 1}):
+            with self.subTest(bad), self.assertRaises(InvalidRequestError):
+                v.languages(bad)

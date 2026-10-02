@@ -240,19 +240,33 @@ func newBrokerSession(grant *HostAPIGrant, token string, transport http.RoundTri
 // brokerSessionForGrant validates and mints a per-run credential before creating
 // the shared core. The downstream token is retained only by the Go session and is
 // never returned to a provider adapter or guest SDK.
+//
+// Every provider calls it before any of the run's code is dispatched, so its errors
+// are marked not dispatched here, at the source: reason permission (the run's
+// authority could not be issued), or capacity when the run's context ended first.
 func brokerSessionForGrant(ctx context.Context, grant *HostAPIGrant, timeout time.Duration) (*brokerSession, error) {
 	if grant == nil {
 		return nil, nil
 	}
+	refuse := func(err error) error {
+		if ctx.Err() != nil {
+			return NotDispatched(RefusalCapacity, err)
+		}
+		return NotDispatched(RefusalPermission, err)
+	}
 	grant = grant.Clone()
 	if err := grant.Validate(); err != nil {
-		return nil, err
+		return nil, refuse(err)
 	}
 	token, err := grant.credential(ctx, timeout)
 	if err != nil {
-		return nil, err
+		return nil, refuse(err)
 	}
-	return newBrokerSession(grant, token, nil)
+	core, err := newBrokerSession(grant, token, nil)
+	if err != nil {
+		return nil, refuse(err)
+	}
+	return core, nil
 }
 
 func (b *brokerSession) traceSnapshot() *CallTrace {

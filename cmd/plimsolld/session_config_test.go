@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/internal/rpc"
 )
 
 func TestLoadSessionConfig(t *testing.T) {
@@ -34,6 +36,26 @@ func TestLoadSessionConfig(t *testing.T) {
 	} {
 		if _, err := loadSessionConfig(env(bad)); err == nil {
 			t.Errorf("%v was accepted", bad)
+		}
+	}
+}
+
+// The pool is off by default, needs sessions on, and holds at most what sessions may.
+func TestLoadSessionPool(t *testing.T) {
+	env := func(kv map[string]string) func(string) string { return func(k string) string { return kv[k] } }
+	on := rpc.SessionConfig{MaxSessions: 4}
+	if n, err := loadSessionPool(env(nil), on); err != nil || n != 0 {
+		t.Fatalf("default: %d, %v; want 0", n, err)
+	}
+	if n, err := loadSessionPool(env(map[string]string{"SANDBOX_SESSION_POOL": "4"}), on); err != nil || n != 4 {
+		t.Fatalf("set: %d, %v; want 4", n, err)
+	}
+	for _, c := range []struct {
+		pool string
+		sc   rpc.SessionConfig
+	}{{"-1", on}, {"two", on}, {"5", on}, {"1", rpc.SessionConfig{}}} {
+		if _, err := loadSessionPool(env(map[string]string{"SANDBOX_SESSION_POOL": c.pool}), c.sc); err == nil {
+			t.Errorf("SANDBOX_SESSION_POOL=%s with %d sessions was accepted", c.pool, c.sc.MaxSessions)
 		}
 	}
 }

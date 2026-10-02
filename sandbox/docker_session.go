@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,12 +107,29 @@ func (d *DockerSandbox) SessionEnvironments() Environments {
 	}
 }
 
-// dockerSessions is the provider's registry of open sessions and of the container
-// removals still in flight, for Drain.
+// dockerSessions is the provider's registry of open sessions, of the opens and
+// container removals still in flight, and whether Drain has begun, for Drain.
 type dockerSessions struct {
-	mu      sync.Mutex
-	open    map[*dockerSession]struct{}
-	deletes sync.WaitGroup
+	mu       sync.Mutex
+	open     map[*dockerSession]struct{}
+	deletes  sync.WaitGroup
+	opening  sync.WaitGroup // added to only under mu while not draining
+	draining bool
+}
+
+// errDraining is an open refused because Drain has begun.
+var errDraining = fmt.Errorf("%w: the docker provider is shutting down", ErrAtCapacity)
+
+// enter counts an open in flight, which Drain waits for; leave ends it. It refuses
+// once Drain has begun.
+func (r *dockerSessions) enter() (leave func(), err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.draining {
+		return nil, NotDispatched(RefusalCapacity, errDraining)
+	}
+	r.opening.Add(1)
+	return r.opening.Done, nil
 }
 
 // dockerSession is one open session.
@@ -118,6 +137,7 @@ type dockerSession struct {
 	d        *DockerSandbox
 	host     string
 	name     string
+	id       string // the full container ID docker run printed
 	imageID  string
 	manifest string
 	tier     IsolationClass
@@ -125,6 +145,14 @@ type dockerSession struct {
 	disk     int64
 	snapshot string // the security-relevant read-back at open
 	broker   *dockerSessionBroker
+	// label is the end of the lifetime the container declares, fixed at creation;
+	// key is the execution state it was created under (dockerPoolKey). A pool member
+	// is claimed only while both allow it; born and warm are when the pool made it and
+	// the languages it started.
+	label time.Time
+	key   string
+	born  time.Time
+	warm  []string
 
 	ctx    context.Context // cancelled when the session ends, which stops a call in flight
 	cancel context.CancelFunc
@@ -143,10 +171,10 @@ type dockerSession struct {
 
 var _ Session = (*dockerSession)(nil)
 
-// OpenSession creates a session's container from the Preflight-verified project
-// image under the run lockdown, with docker's init as PID 1, sleep as its main
-// process and the session's lifetime as a label; reads it back; and records its own
-// processes, which every sweep spares.
+// OpenSession hands over a ready member of the session pool (docker_pool.go) when one
+// matches, preferring one warming the hinted languages (every stated one without a
+// hint), and otherwise creates a session container; either way the session's
+// lifetime runs from now.
 func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (Session, error) {
 	if opts.Lifetime <= 0 {
 		return nil, NotDispatched(RefusalRequest, fmt.Errorf("%w: a session needs a positive lifetime", ErrInvalidRequest))
@@ -156,6 +184,41 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 	}
 	if err := validateDockerImage(d.ProjectImage); err != nil {
 		return nil, err
+	}
+	leave, err := d.sessions.enter()
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+	d.stateMu.RLock()
+	stated := slices.Clone(d.projectLanguages)
+	d.stateMu.RUnlock()
+	want, err := SessionLanguages(opts.Languages, stated)
+	if err != nil {
+		return nil, err
+	}
+	if len(want) == 0 {
+		want = stated
+	}
+	expires := time.Now().Add(opts.Lifetime)
+	// A pool member was verified when the pool made it and is read back before every
+	// call, as any session is for its whole life, so a claim needs no new Preflight
+	// (which re-runs once its result is 5 seconds old): it must match the execution
+	// state the last Preflight verified, which a failed Preflight withdraws.
+	if pool := d.pool.Load(); pool != nil {
+		pool.observe(want)
+		if state, err := d.executionState(); err == nil {
+			if err := CheckMinimumIsolation(state.isolation, opts.MinimumIsolation); err != nil {
+				return nil, err
+			}
+			if s := pool.claim(state, expires, want); s != nil {
+				if err := d.activate(s, expires, opts.DiskBytes); err != nil {
+					s.abandon()
+					return nil, err
+				}
+				return s, nil
+			}
+		}
 	}
 	if err := d.ensurePreflight(ctx); err != nil {
 		return nil, err
@@ -167,22 +230,38 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 	if err := CheckMinimumIsolation(state.isolation, opts.MinimumIsolation); err != nil {
 		return nil, err
 	}
+	s, err := d.newSessionContainer(ctx, state, expires)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.activate(s, expires, opts.DiskBytes); err != nil {
+		s.abandon()
+		return nil, err
+	}
+	return s, nil
+}
+
+// newSessionContainer creates a session container from the Preflight-verified project
+// image under the run lockdown, with docker's init as PID 1, sleep as its main process
+// and label as the end of its declared lifetime (which ReconcileOrphans reads); reads
+// it back; and records its own processes, which every sweep spares. No caller holds it
+// until activate.
+func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExecutionState, label time.Time) (*dockerSession, error) {
 	broker, err := startDockerSessionBroker()
 	if err != nil {
 		return nil, err
 	}
-	expires := time.Now().Add(opts.Lifetime)
 	s := &dockerSession{
 		d: d, host: state.host, name: "plsm-session-" + randID(),
 		imageID: state.projectImageID, manifest: state.projectManifest, tier: state.isolation,
-		expires: expires, disk: opts.DiskBytes, broker: broker,
+		key: dockerPoolKey(state), label: label, broker: broker,
 		turn: make(chan struct{}, 1), done: make(chan struct{}),
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.interps.Checker = s.checkFunc
 	args := []string{"run", "-d", "--name", s.name, "--log-driver", "none", "--init",
 		"--label", dockerSessionLabel + "=1",
-		"--label", dockerExpiresLabel + "=" + strconv.FormatInt(expires.Unix(), 10)}
+		"--label", dockerExpiresLabel + "=" + strconv.FormatInt(label.Unix(), 10)}
 	args = append(args, d.lockdownFlags(true, state.runtime)...)
 	args = append(args, "-v", broker.sock+":"+containerSocketPath)
 	if state.platform != "" {
@@ -190,9 +269,14 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 	}
 	args = append(args, "--entrypoint", dockerSessionCommand[0], state.projectImageID)
 	args = append(args, dockerSessionCommand[1:]...)
-	if err := s.control(ctx, args...); err != nil {
+	out, err := s.controlOutput(ctx, args...)
+	if err != nil {
 		s.abandon()
 		return nil, err
+	}
+	if s.id = strings.TrimSpace(string(out)); !dockerContainerID.MatchString(s.id) {
+		s.abandon()
+		return nil, fmt.Errorf("docker run: unreadable container ID %q", truncateForError(s.id))
 	}
 	insp, err := s.inspect(ctx)
 	if err != nil {
@@ -208,7 +292,20 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 		s.abandon()
 		return nil, err
 	}
+	return s, nil
+}
+
+// activate gives s to a caller: its lifetime ends at expires and its disk budget is
+// disk, and Drain and ReconcileOrphans count it as open. s is not yet shared, so its
+// fields are set without the lock. Once Drain has begun it refuses, and the caller
+// removes s.
+func (d *DockerSandbox) activate(s *dockerSession, expires time.Time, disk int64) error {
+	s.expires, s.disk = expires, disk
 	d.sessions.mu.Lock()
+	if d.sessions.draining {
+		d.sessions.mu.Unlock()
+		return NotDispatched(RefusalCapacity, errDraining)
+	}
 	if d.sessions.open == nil {
 		d.sessions.open = map[*dockerSession]struct{}{}
 	}
@@ -217,12 +314,14 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 	s.mu.Lock()
 	s.life = time.AfterFunc(time.Until(expires), func() { s.finish(SessionExpired, "") })
 	s.mu.Unlock()
-	return s, nil
+	return nil
 }
 
-// abandon removes a session container that never opened, and its broker.
+// abandon removes a session container no caller ever held (one that failed to open,
+// or a pool member), its relays and its broker.
 func (s *dockerSession) abandon() {
 	s.cancel()
+	s.interps.Close()
 	s.broker.Close()
 	s.d.forceRemove(s.host, s.name)
 }
@@ -240,17 +339,14 @@ func (s *dockerSession) controlOutput(ctx context.Context, args ...string) ([]by
 	if err != nil {
 		return nil, err
 	}
-	var stdout, stderr cappedBuffer
-	stdout.limit, stderr.limit = 4<<20, 64<<10
-	cmd := exec.CommandContext(ctx, "docker", full...)
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	out, err := dockerOutput(ctx, full...)
+	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("docker %s: %w", args[0], ctx.Err())
 		}
-		return nil, fmt.Errorf("docker %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("docker %s: %w", args[0], err)
 	}
-	return []byte(stdout.String()), nil
+	return out, nil
 }
 
 // dockerExecResult is one docker exec's outcome.
@@ -281,7 +377,11 @@ func (s *dockerSession) execAs(ctx context.Context, user string, argv, env []str
 		args = append(args, "--user", user)
 	}
 	for _, e := range env {
-		args = append(args, "-e", e)
+		flag, err := dockerEnvFlagPair(e)
+		if err != nil {
+			return dockerExecResult{}, err
+		}
+		args = append(args, flag...)
 	}
 	args = append(args, s.name)
 	args = append(args, argv...)
@@ -291,7 +391,7 @@ func (s *dockerSession) execAs(ctx context.Context, user string, argv, env []str
 	}
 	var stdout, stderr cappedBuffer
 	stdout.limit, stderr.limit = outCap, errCap
-	cmd := exec.CommandContext(ctx, "docker", full...)
+	cmd := dockerCommand(ctx, full...)
 	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()
@@ -346,10 +446,16 @@ type dockerHostConfig struct {
 // errContainerGone is inspect's answer for a container that no longer exists.
 var errContainerGone = errors.New("the session container no longer exists")
 
+// dockerContainerID is the full ID docker run -d prints.
+var dockerContainerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// inspect reads the container back. When docker cannot, the container is gone only
+// if a listing filtered by its ID answers empty: docker's wording for a missing
+// container is not a contract, and a daemon that did not answer is not a removal.
 func (s *dockerSession) inspect(ctx context.Context) (dockerInspect, error) {
 	out, err := s.controlOutput(ctx, "inspect", "--type", "container", s.name)
 	if err != nil {
-		if strings.Contains(err.Error(), "No such container") || strings.Contains(err.Error(), "No such object") {
+		if listed, lerr := s.controlOutput(ctx, "ps", "-a", "-q", "--no-trunc", "--filter", "id="+s.id); lerr == nil && strings.TrimSpace(string(listed)) == "" {
 			return dockerInspect{}, errContainerGone
 		}
 		return dockerInspect{}, err
@@ -423,7 +529,11 @@ func (i dockerInspect) securitySnapshot() string {
 // recordBaseline lists the processes of a container no call has touched and keeps
 // them as its own: docker's init and the main process.
 func (s *dockerSession) recordBaseline(ctx context.Context) error {
-	out, err := s.exec(ctx, sessionkit.ListArgv(), nil, nil, 1<<20, 64<<10)
+	argv, err := controlArgv(nil, sessionkit.ListArgv()...)
+	if err != nil {
+		return err
+	}
+	out, err := s.exec(ctx, argv, nil, nil, 1<<20, 64<<10)
 	if err != nil {
 		return fmt.Errorf("docker session: list processes: %w", err)
 	}
@@ -564,7 +674,9 @@ func (s *dockerSession) prepare(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return RefuseGaveUp(ctx)
 		}
-		return err
+		// Nothing ran, and the container could not be shown to be the one opened.
+		// The session goes on: the next call reads it back again.
+		return NotDispatched(RefusalEnvironment, fmt.Errorf("the session's container could not be read back: %w", err))
 	}
 	switch {
 	case insp.State.Paused:
@@ -580,12 +692,26 @@ func (s *dockerSession) prepare(ctx context.Context) error {
 	return nil
 }
 
-// running reports whether the container still runs; a failed inspect counts as no.
-func (s *dockerSession) running() bool {
+// containerEnd reads the container back after a call or a sweep whose exit status
+// may be docker's, not its command's, and says how the session ends when the
+// container no longer runs as opened: gone or stopped; paused, which the session does
+// only between calls with its turn held, so someone else did; or unreadable, which
+// leaves the call's outcome unknown. ended is false while it still runs.
+func (s *dockerSession) containerEnd() (reason SessionEnd, detail string, ended bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), dockerControlBudget)
 	defer cancel()
 	insp, err := s.inspect(ctx)
-	return err == nil && insp.State.Running
+	switch {
+	case errors.Is(err, errContainerGone):
+		return SessionMainProcessEnded, "the container no longer exists", true
+	case err != nil:
+		return SessionBoundaryFailed, "the container could not be read back: " + err.Error(), true
+	case insp.State.Paused:
+		return SessionSandboxChanged, "the container was paused by someone else", true
+	case !insp.State.Running:
+		return SessionMainProcessEnded, "the container is " + insp.State.Status, true
+	}
+	return 0, "", false
 }
 
 // keep is what every sweep spares: the container's own processes and the live
@@ -606,7 +732,15 @@ func (s *dockerSession) boundary() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, dockerSweepBudget)
-	out, err := s.exec(ctx, guarded(sessionkit.SweepArgv(s.disk, sessionkit.MeasureStatfs, dockerSessionDirs, s.keep())), nil, nil, 4096, 4096)
+	// The sweep's exit status is the session's boundary: it starts under controlArgv,
+	// so no variable of the image can load code into it (docker_cli.go).
+	argv, err := controlArgv(nil, guarded(sessionkit.SweepArgv(s.disk, sessionkit.MeasureStatfs, dockerSessionDirs, s.keep()))...)
+	if err != nil {
+		cancel()
+		s.finish(SessionBoundaryFailed, err.Error())
+		return
+	}
+	out, err := s.exec(ctx, argv, nil, nil, 4096, 4096)
 	cancel()
 	if s.Err() != nil {
 		return
@@ -621,8 +755,8 @@ func (s *dockerSession) boundary() {
 		s.finish(SessionDiskExceeded, "the session's disk use could not be read")
 		return
 	}
-	if !s.running() {
-		s.finish(SessionMainProcessEnded, "the container stopped")
+	if reason, detail, ended := s.containerEnd(); ended {
+		s.finish(reason, detail)
 		return
 	}
 	s.finish(SessionBoundaryFailed, fmt.Sprintf("the sweep exited %d (err %v)", out.exitCode, err))
@@ -662,14 +796,15 @@ func (s *dockerSession) callError(runCtx context.Context, err error) error {
 	return err
 }
 
-// stopped is the check after a call that exited non-zero: when the container has
-// stopped, the exit status is docker's, not the call's, and the session has ended.
+// stopped is the check after a call that exited non-zero: when the container no
+// longer runs as opened (containerEnd), the exit status is docker's, not the call's,
+// and the session has ended.
 func (s *dockerSession) stopped() bool {
-	if s.running() {
-		return false
+	reason, detail, ended := s.containerEnd()
+	if ended {
+		s.finish(reason, detail)
 	}
-	s.finish(SessionMainProcessEnded, "the container stopped during the call")
-	return true
+	return ended
 }
 
 // admit is the checks a call makes before it takes its turn: the floor against the
@@ -722,12 +857,20 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 		return fail, err
 	}
 	defer unlend()
+	// As in a single run, node reads the script from stdin after a preload writes
+	// started to stderr, so a non-zero exit without it can be docker's (125 to 127: the
+	// exec never started node). Session code can write into the new node's stderr
+	// before the preload does, but cannot learn started before node exists, so it can
+	// make its own call read as docker's failure and never docker's failure as a result.
+	started := "plimsoll-started:" + randID() + "\n"
+	argv := []string{"node", "--import", "data:text/javascript,process.stderr.write(" + strconv.Quote(started) + ")", "-"}
 	start := time.Now()
-	out, err := s.exec(runCtx, []string{"node", "-"}, env, []byte(withHostSDK(req.Code, req.Grant)), s.d.maxOutput(), s.d.maxOutput())
+	out, err := s.exec(runCtx, argv, env, []byte(withHostSDK(req.Code, req.Grant)), s.d.maxOutput(), s.d.maxOutput()+len(started))
 	unlend()
+	guestStarted := strings.HasPrefix(out.stderr, started)
 	res := Result{
 		Stdout:              out.stdout,
-		Stderr:              out.stderr,
+		Stderr:              strings.TrimPrefix(out.stderr, started),
 		StdoutTruncated:     out.stdoutTruncated,
 		StderrTruncated:     out.stderrTruncated,
 		Duration:            time.Since(start),
@@ -750,6 +893,11 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 	if out.exitCode != 0 && s.stopped() {
 		fail.CallTrace = res.CallTrace
 		return fail, s.Err()
+	}
+	if !guestStarted && out.exitCode >= 125 && out.exitCode <= 127 {
+		// Unmarked: the preload not leading stderr does not prove node never ran.
+		fail.CallTrace = res.CallTrace
+		return fail, fmt.Errorf("docker could not run the call in the session's container (exit %d): %s", out.exitCode, truncateForError(strings.TrimSpace(out.stderr)))
 	}
 	res.ExitCode = out.exitCode
 	return res, nil
@@ -833,6 +981,10 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 
 // checkFunc runs the interpreter driver's identity check as dockerCheckerUser.
 func (s *dockerSession) checkFunc(ctx context.Context, argv []string, _ map[string]string, stdin []byte, outCap, errCap int) (sessionkit.ExecResult, error) {
+	argv, err := controlArgv(nil, argv...)
+	if err != nil {
+		return sessionkit.ExecResult{}, err
+	}
 	out, err := s.execAs(ctx, dockerCheckerUser, argv, nil, stdin, outCap, errCap)
 	return sessionkit.ExecResult{Stdout: out.stdout, Stderr: out.stderr, ExitCode: out.exitCode, Exited: out.exited}, err
 }
@@ -870,18 +1022,20 @@ func (a *dockerAttached) Close() {
 
 // attach starts argv in the container, non-dumpable under the runner guard so no
 // other process of the session can open its stdin or stdout, and keeps its pipes.
+//
+// A relay is one of plimsoll's own programs: its frames carry every cell's result. It
+// starts under controlArgv, with env as its only variables (docker_cli.go).
 func (s *dockerSession) attach(argv []string, env map[string]string) (sessionkit.Attached, error) {
-	args := []string{"exec", "-i", "-w", dockerSessionWork}
-	for k, v := range env {
-		args = append(args, "-e", k+"="+v)
+	inner, err := controlArgv(env, guarded(argv)...)
+	if err != nil {
+		return nil, err
 	}
-	args = append(args, s.name)
-	args = append(args, guarded(argv)...)
+	args := append([]string{"exec", "-i", "-w", dockerSessionWork, s.name}, inner...)
 	full, err := dockerArgs(s.host, args...)
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("docker", full...)
+	cmd := dockerCommand(context.Background(), full...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -933,9 +1087,26 @@ func (s *dockerSession) RunCell(ctx context.Context, req CellRequest) (CellResul
 	}, func(err error) error { return s.callError(runCtx, err) })
 }
 
-// Drain ends every open session (SessionShutdown) and waits, within ctx, for their
-// containers to be removed.
+// Drain stops the session pool and removes its members, refuses every open from
+// then on (waiting for those already in flight), ends every open session
+// (SessionShutdown), and waits, within ctx, for their containers to be removed.
 func (d *DockerSandbox) Drain(ctx context.Context) error {
+	// From here an open is refused, and one already in flight is waited for: it ends
+	// registered, and so ended below, or refused with its container removed.
+	d.sessions.mu.Lock()
+	d.sessions.draining = true
+	d.sessions.mu.Unlock()
+	d.pool.Load().close()
+	opened := make(chan struct{})
+	go func() {
+		d.sessions.opening.Wait()
+		close(opened)
+	}()
+	select {
+	case <-opened:
+	case <-ctx.Done():
+		return fmt.Errorf("docker: sessions still opening: %w", ctx.Err())
+	}
 	d.sessions.mu.Lock()
 	open := make([]*dockerSession, 0, len(d.sessions.open))
 	for s := range d.sessions.open {
@@ -963,6 +1134,9 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 // left behind. A session container's lifetime is its label, so a live session of
 // another daemon on the same docker host is never touched.
 func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
+	if n := reapDeadHostDirs(os.TempDir(), time.Now()); n > 0 {
+		slog.Info("docker: removed host directories that stopped processes left", "count", n)
+	}
 	state, err := d.executionState()
 	if err != nil || state.host == "" {
 		return 0, nil // not preflighted yet: nothing is known to reap
@@ -972,7 +1146,7 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	out, err := dockerOutput(ctx, args...)
 	if err != nil {
 		return 0, fmt.Errorf("docker ps: %w", err)
 	}
@@ -982,6 +1156,9 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 		held[s.name] = true
 	}
 	d.sessions.mu.Unlock()
+	for _, name := range d.pool.Load().members() {
+		held[name] = true
+	}
 	reaped := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		name, exp, ok := strings.Cut(line, "\t")

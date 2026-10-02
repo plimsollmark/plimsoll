@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
@@ -28,6 +29,15 @@ type SessionProvider interface {
 	OpenSession(ctx context.Context, opts SessionOptions) (Session, error)
 }
 
+// SessionPool is a SessionProvider that can keep sandboxes ready for OpenSession:
+// never-used, with their interpreters already running, each handed to one session and
+// removed when it closes, never reused. StartSessionPool keeps size of them, for
+// sessions given a lifetime of at most lifetime, and fails when it cannot make the
+// first; Drain stops it.
+type SessionPool interface {
+	StartSessionPool(ctx context.Context, size int, lifetime time.Duration) error
+}
+
 // SessionOptions is what a session is opened with.
 type SessionOptions struct {
 	// MinimumIsolation is checked at open, against the evidence the provider
@@ -40,6 +50,41 @@ type SessionOptions struct {
 	// DiskBytes bounds what the session's calls may leave behind: after a call that
 	// leaves more, the session ends. 0 means no bound beyond the provider's own.
 	DiskBytes int64
+	// Languages are the languages the caller expects its cells to use: a hint, checked
+	// by SessionLanguages. It changes latency, never behavior: a provider with a pool
+	// hands over a sandbox whose interpreters for them are already running, and a cell
+	// in any stated language runs whatever the hint said. Empty means no hint.
+	Languages []Language
+}
+
+// SessionLanguages checks a session's language hint and returns the languages in it
+// that its environment states, without repeats, in the stated order. A language
+// plimsoll keeps no interpreter for is refused as a malformed request. One it knows
+// but the environment does not state is dropped, not refused: a hint changes latency,
+// never behavior, and a cell in that language is refused when it is sent, as without
+// the hint. When the environment states no languages (its smoke test has not run),
+// the hint keeps its own order.
+func SessionLanguages(hint, stated []Language) ([]Language, error) {
+	for _, l := range hint {
+		if !l.Known() {
+			return nil, NotDispatched(RefusalRequest, fmt.Errorf("%w: the language hint names %q, which plimsoll keeps no interpreter for", ErrInvalidRequest, l))
+		}
+	}
+	var out []Language
+	if len(stated) == 0 {
+		for _, l := range hint {
+			if !slices.Contains(out, l) {
+				out = append(out, l)
+			}
+		}
+		return out, nil
+	}
+	for _, l := range stated {
+		if slices.Contains(hint, l) {
+			out = append(out, l)
+		}
+	}
+	return out, nil
 }
 
 // Session is one open session. Calls are serialized: a call waits (bounded by

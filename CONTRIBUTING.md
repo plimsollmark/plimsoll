@@ -11,6 +11,12 @@ gate is the project's full check, `make audit`. In CI:
 - The [audit workflow](.github/workflows/audit.yml) runs `make audit`: build, vet,
   race tests, golangci-lint, `buf lint` plus a check that the generated code still
   matches its source, and <dfn>*govulncheck*</dfn>, Go's vulnerability scanner.
+- Its `clients` job runs `make clients-suite` after `audit`: `npm ci` in
+  `clients/typescript` and `examples/trigger-chat`, then the Python and TypeScript
+  Go test packages in required mode. A green check means the Python client, the
+  TypeScript client, its add-ons and the <dfn>*Trigger.dev*</dfn> example (a chat
+  agent on a hosted TypeScript job runner) ran, and none of the selected Go
+  tests skipped; a missing runtime or dependency fails the job.
 - It then runs `make docker-suite` with the images prepared, so the docker,
   <dfn>*seccomp*</dfn>, <dfn>*broker*</dfn> and smoke tests, which need a real docker
   daemon, run on every push to `main` and every pull request under
@@ -25,7 +31,7 @@ gate is the project's full check, `make audit`. In CI:
   [gvisor workflow](.github/workflows/gvisor.yml).
 
 Race tests run in the plain audit job; the two docker-suite jobs run their isolation
-tests without the race detector.
+tests without the race detector. The `clients` job also runs without the race detector.
 
 Both docker-suite jobs run on the hosted runners' classic image store, where docker
 states no software identity, so there the identity tests check only that a required
@@ -56,6 +62,9 @@ make audit
 That runs build, vet, race tests, golangci-lint, `buf lint` plus a check that the
 generated code still matches its source, and `govulncheck`. Run it before you open a
 pull request and paste the result into the description.
+
+Run `make clients-suite` to install both npm dependency sets and require the Python,
+TypeScript client, add-on and Trigger.dev suites locally, as CI does.
 
 It refuses to start unless buf, golangci-lint and govulncheck are the exact versions
 in [gate-tools.versions](gate-tools.versions), because those three are not Go

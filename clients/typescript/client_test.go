@@ -85,15 +85,16 @@ func serve(t *testing.T, svc *rpc.SandboxService, extra func(*http.ServeMux)) st
 // the client's own, which needs nothing but node; the add-ons', which need the
 // client's dev dependencies (npm install in clients/typescript); and the
 // Trigger.dev example's, which needs the example's (npm install in
-// examples/trigger-chat). A suite whose dependencies are absent is skipped.
+// examples/trigger-chat). A suite whose dependencies are absent is skipped unless
+// PLIMSOLL_REQUIRE_CLIENTS=1, which makes missing prerequisites fail.
 // Files run one at a time because the end-sessions endpoint reaches every session.
 func TestTypeScript(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node is not installed")
+		clientSkipOrFail(t, "node is not installed")
 	}
 	if out, err := exec.Command(node, "-e", "process.exit(process.features.typescript ? 0 : 1)").CombinedOutput(); err != nil {
-		t.Skipf("this node cannot run TypeScript directly (needs >= 22.18): %v %s", err, out)
+		clientSkipOrFail(t, "this node cannot run TypeScript directly (needs >= 22.18): %v %s", err, out)
 	}
 
 	wasmURL := serve(t, rpc.NewSandboxService(sandboxtest.Wasm()), nil)
@@ -128,7 +129,7 @@ func TestTypeScript(t *testing.T) {
 		t.Run(s.name, func(t *testing.T) {
 			if s.needs != "" {
 				if _, err := os.Stat(filepath.Join(s.dir, s.needs)); err != nil {
-					t.Skipf("run npm install in %s first", s.dir)
+					clientSkipOrFail(t, "run npm install in %s first", s.dir)
 				}
 			}
 			files, err := filepath.Glob(filepath.Join(s.dir, s.glob))
@@ -148,6 +149,14 @@ func TestTypeScript(t *testing.T) {
 			}
 		})
 	}
+}
+
+func clientSkipOrFail(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("PLIMSOLL_REQUIRE_CLIENTS") == "1" {
+		t.Fatalf(format, args...)
+	}
+	t.Skipf(format, args...)
 }
 
 // The package ships its own copy of the license, because a published package carries

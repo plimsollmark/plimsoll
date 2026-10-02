@@ -131,6 +131,7 @@ startup check proves its runs; this one proves what only a session does, on this
 |---|---|
 | `SANDBOX_MAX_SESSIONS` | Open sessions at once, daemon-wide. Default 0: sessions off. |
 | `SANDBOX_MAX_SESSIONS_PER_CALLER` | Open sessions one caller may hold, suspended ones included. Default 0: no cap beyond `SANDBOX_MAX_SESSIONS`. `PLIMSOLL_HARDENED=1` requires it with sessions on: a suspended session holds no concurrency slot, so without it one caller with a short idle timeout could hold every place. With docker, keep `SANDBOX_MAX_SESSIONS` below `SANDBOX_MAX_CONCURRENT` (the daemon warns otherwise): a paused docker session keeps its slot. |
+| `SANDBOX_SESSION_POOL` | Docker only: containers kept ready for sessions, each never used and with its interpreters already running ([Docker](#docker), "A warm pool"). Default 0: none. At most `SANDBOX_MAX_SESSIONS`. |
 | `SANDBOX_SESSION_LIFETIME` | Absolute lifetime from open. Default `30m`, at most `12h`. A request may ask for less. |
 | `SANDBOX_SESSION_IDLE` | A session with no call for this long is suspended: its sandbox is stopped (`openshell`) or paused (`docker`). Default `5m`; `0` never suspends. A request may ask for less. |
 | `SANDBOX_SESSION_DISK_MB` | A call that leaves more than this in the session's files ends the session. Default 1024; 0 means no bound, and nothing is measured. It is measured after each call, not enforced during one ([openshell.md](openshell.md#sessions) says why the `openshell` provider's per-run disk cap does not apply to sessions). On docker it is the used space of the session's three size-capped in-memory filesystems, a file deleted while a process holds it open included. On `openshell` it is a walk of the session's files, which stops at 200,000 entries (counted as over the budget) and which code of the session can hide files from (a deleted file still held open, a directory swapped for a link during the walk), so there it is an estimate, not a bound. |
@@ -153,7 +154,13 @@ Three procedures beside `Run`, which is unchanged:
 
 - `OpenSession` returns a session ID (128 random bits), the session's
   <dfn>*fingerprint*</dfn> (the SHA-256 hash of the ID), the tier measured at open, and
-  when the session expires. A session that finishes opening after its caller gave up
+  when the session expires. The request may name the languages the session's cells will
+  use (`languages`), as a hint: a daemon with a warm pool then hands over a
+  container with those interpreters already running ([Docker](#docker), "A warm pool"). A
+  hint changes how fast the first cell answers, never what runs: a cell in any language
+  the daemon states still runs, a language the session's image does not run is dropped
+  from the hint, and only a name plimsoll does not know (a typo) is refused, marked not
+  dispatched. A session that finishes opening after its caller gave up
   is closed at once, since nobody holds its ID. An answer already on its way when the
   caller gives up is still lost, and that session holds its place until it expires; the
   per-caller session cap bounds how many such places one caller can leave behind.
@@ -376,7 +383,10 @@ A docker session is the container a project run gets, kept for the session:
   running container, for example raise its memory limit with `docker update`. Before each
   call the session compares the container's security settings (image, resource limits,
   mounts, capabilities, networks, user) with what they were at open, and ends the session
-  on any difference. The call is refused, marked not dispatched.
+  on any difference. The call is refused, marked not dispatched. A read-back docker does
+  not answer refuses the call too (reason `environment`), and the session goes on. After a
+  call whose exit status may be docker's rather than the code's, a container found paused,
+  stopped or gone ends the session; docker's exit status is never reported as the call's.
 - **API access.** A grant reaches its API routes through the <dfn>*broker*</dfn>, a part of plimsoll outside the sandbox that adds the
   credential, so the credential never enters the sandbox. A running container cannot gain
   a mount, so the session mounts the broker's socket at open. It serves a call's grant
@@ -384,10 +394,57 @@ A docker session is the container a project run gets, kept for the session:
   answers 503. While it serves a grant it serves anything in the container, so code an
   earlier call left running (a timer in an interpreter, a process started after the
   sweep) can use a later call's grant. That is why a granted call needs a grant that
-  allows sessions ([What a session gives up](#what-a-session-gives-up)).
+  allows sessions ([What a session gives up](#what-a-session-gives-up)). The socket
+  takes at most 32 connections at once, so code left running can also hold them all and
+  delay or block a later call's API requests. Only the session's own calls are affected:
+  everything in the container is the same caller, and no socket can tell one of its
+  processes from another.
 - **Cleanup.** The container is removed when the session ends. A container a crashed
   daemon left behind carries its lifetime as a label, and a running daemon removes it once
-  that lifetime plus 5 minutes has passed.
+  that lifetime plus 5 minutes has passed. The broker's socket directory on the host is
+  removed with its session; one a crashed daemon left is removed by a running daemon once
+  it is a minute old and its socket has no listener. At shutdown the daemon refuses new
+  sessions, waits for the ones still opening, and ends them all.
+- **A warm pool, when `SANDBOX_SESSION_POOL` is set.** The daemon keeps that many
+  containers ready. Each is created and read back exactly as a session's container is, with
+  an interpreter already started and its relay attached for a set of the languages the
+  image runs: every language, until language hints say otherwise (below). `OpenSession`
+  hands one over instead of creating a container, so the first cell sends its code at
+  once. On a laptop (measured 2026-10-02), opening a session and running its first
+  cell took 22 ms (JavaScript) and 18 ms (Python) under runc instead of 740 and 789 ms, and
+  51 and 32 ms under gVisor instead of 817 and 891 ms.
+  - A waiting container has run only plimsoll's own programs: init, `sleep`, and the
+    interpreters with their relays. It goes to one session, and its first cell in each
+    language still says its interpreter is new. Closing that session removes the
+    container. Nothing goes back into the pool or is reused, so
+    [Who may share a session](#who-may-share-a-session) holds unchanged.
+  - A container is handed over only while it matches the image, runtime and isolation the
+    daemon last verified, and while its relays are still attached. Any other is removed and
+    replaced, and so is one that has waited 30 minutes. Its lifetime label covers those 30
+    minutes plus `SANDBOX_SESSION_LIFETIME`, which bounds how long a crashed daemon's waiting
+    containers outlive it.
+  - A claim skips the check of the docker daemon, runtime and images that creating a
+    container repeats once its result is 5 seconds old. The container was checked when it
+    was made, and it is read back before every call like any session.
+  - The cost is memory. A waiting container held 39 MiB under runc and 66 MiB under gVisor
+    with both interpreters running, against 0.5 and 18 MiB for a bare one. That memory counts
+    inside its session's limit, including the interpreter of a language the session never
+    uses. A waiting container holds no concurrency slot until it is claimed.
+  - **Language hints decide which interpreters wait.** A session opened with a hint is
+    handed the waiting container that runs the most of its hinted languages, then the one
+    running the fewest others, then the oldest; any waiting container beats creating one,
+    since the container is most of the cold cost. A session without a hint counts as
+    wanting every language. The pool also divides its size across language sets by what
+    sessions ask for: each open adds 1/16 to the weight of its set and every other set keeps
+    15/16 of its own, so the split follows roughly the last 16 to 32 sessions, and a set
+    whose weight falls below a quarter of one container's share is forgotten. When the pool
+    is full but one set has more containers than its share and another fewer, it removes
+    one surplus container and makes one of the missing set, one at a time. Hints move
+    containers between sets and never add any: `SANDBOX_SESSION_POOL` still bounds how many
+    wait, and so the memory. Callers that send no hints see every container warm every
+    language, as before hints existed.
+  - At startup, the session check runs on a container from the pool, so the warm path is
+    the one startup proves.
 
 A session's snippets run in the project image, not the snippet image, because one
 container runs every call. The answer to `OpenSession` and every call's record state the project image.

@@ -304,6 +304,61 @@ func (in *Interpreters) Close() {
 	}
 }
 
+// attachRelay starts lang's relay, keeps it only once it is confirmed to be the relay
+// plimsoll started, and records it.
+func (in *Interpreters) attachRelay(ctx context.Context, attach AttachFunc, lang, work string) (*relay, error) {
+	r, err := startRelay(ctx, attach, lang, work)
+	if err != nil {
+		return nil, err
+	}
+	if reportedCmd(r.id) != argvHex(RelayArgv(lang, work)) {
+		err = fmt.Errorf("%w: the relay reported a process that is not the %s relay", ErrLaunch, lang)
+	} else {
+		err = in.check(ctx, "relay:"+r.id)
+	}
+	if err != nil {
+		r.close()
+		return nil, err
+	}
+	in.mu.Lock()
+	if in.relays == nil {
+		in.relays = map[string]*relay{}
+	}
+	in.relays[lang] = r
+	in.mu.Unlock()
+	return r, nil
+}
+
+// Warm starts lang's interpreter and attaches its relay before any cell, in a sandbox
+// no code has run in yet (a pool member waiting for its session): what the first cell
+// of lang would otherwise do before sending its code. That cell still reports its
+// interpreter as new, since no cell has defined anything in it.
+func (in *Interpreters) Warm(ctx context.Context, exec ExecFunc, attach AttachFunc, lang, work string) error {
+	if _, ok := command[lang]; !ok {
+		return fmt.Errorf("unknown interpreter language %q", lang)
+	}
+	if err := in.launch(ctx, exec, lang, work); err != nil {
+		return err
+	}
+	if _, err := in.attachRelay(ctx, attach, lang, work); err != nil {
+		in.drop(lang)
+		return err
+	}
+	in.markUnreported(lang)
+	return nil
+}
+
+// Attached reports whether lang has a live interpreter and a relay still attached to
+// it. A relay whose stream ended (its container stopped, or something killed it) is
+// not attached.
+func (in *Interpreters) Attached(lang string) bool {
+	in.mu.Lock()
+	r, ok := in.relays[lang]
+	_, live := in.live[lang]
+	in.mu.Unlock()
+	return ok && live && !r.gone()
+}
+
 // RunRelayed runs one cell through the language's relay, starting the interpreter
 // and then its relay when either is missing. A cell is two steps. The prepare writes
 // the cell's files and connects to the interpreter; whatever it answers, no code has
@@ -365,29 +420,13 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 		}
 		if r == nil {
 			var err error
-			if r, err = startRelay(ctx, attach, c.Language, c.Work); err == nil {
-				if reportedCmd(r.id) != argvHex(RelayArgv(c.Language, c.Work)) {
-					err = fmt.Errorf("%w: the relay reported a process that is not the %s relay", ErrLaunch, c.Language)
-				} else {
-					err = in.check(ctx, "relay:"+r.id)
-				}
-				if err != nil {
-					r.close()
-				}
-			}
-			if err != nil {
+			if r, err = in.attachRelay(ctx, attach, c.Language, c.Work); err != nil {
 				if deadline.Expired(ctx) == context.DeadlineExceeded {
 					return unsent()
 				}
 				lose()
 				return CellOutcome{}, err
 			}
-			in.mu.Lock()
-			if in.relays == nil {
-				in.relays = map[string]*relay{}
-			}
-			in.relays[c.Language] = r
-			in.mu.Unlock()
 		}
 		f, err := r.prepare(ctx, nonce, c.Files)
 		if deadline.Expired(ctx) == context.DeadlineExceeded {

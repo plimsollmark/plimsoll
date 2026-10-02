@@ -438,6 +438,7 @@ class Client:
         lifetime: Optional[float] = None,
         idle_timeout: Optional[float] = None,
         trace_id: Optional[str] = None,
+        languages: Optional[Sequence[str]] = None,
     ) -> "Session":
         """Opens a session: one sandbox kept for many calls, in which the files a
         call writes persist for later calls and no process a call starts outlives
@@ -445,10 +446,16 @@ class Client:
 
         ``minimum_isolation`` and ``software`` apply to the whole session and are
         checked again on the session the daemon opened. ``lifetime`` and
-        ``idle_timeout`` (seconds) may only shorten the daemon's own. Use it as a
-        context manager, or call :meth:`Session.close`."""
+        ``idle_timeout`` (seconds) may only shorten the daemon's own.
+        ``languages`` names the languages the session's cells will use: a hint, so
+        a daemon with a warm pool hands over a sandbox with those interpreters
+        already running; a cell in any language the daemon states still runs. Use
+        it as a context manager, or call :meth:`Session.close`."""
         rule = v.software_rule(software)
+        hint = v.languages(languages)
         req: Dict[str, Any] = {"protocol": PROTOCOL}
+        if hint:
+            req["languages"] = hint
         floor = v.floor(minimum_isolation)
         if floor:
             req["minimumIsolation"] = floor

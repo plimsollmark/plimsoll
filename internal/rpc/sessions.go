@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -240,6 +241,14 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	if err := env.software.Check(software.Project.SoftwareIdentity); err != nil {
 		return nil, mapSandboxErr(err)
 	}
+	hint := make([]sandbox.Language, len(m.GetLanguages()))
+	for i, l := range m.GetLanguages() {
+		hint[i] = sandbox.Language(l)
+	}
+	languages, err := sandbox.SessionLanguages(hint, software.Project.Languages)
+	if err != nil {
+		return nil, mapSandboxErr(err)
+	}
 	principal := auditCaller(ctx)
 	if ok, callerFull := s.sessions.reserve(s.Sessions.MaxSessions, s.Sessions.MaxPerCaller, principal); callerFull {
 		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
@@ -259,7 +268,7 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		idle = minSessionIdle
 	}
 	started := time.Now()
-	sess, err := sp.OpenSession(ctx, sandbox.SessionOptions{MinimumIsolation: env.minimum, Lifetime: lifetime, DiskBytes: s.Sessions.DiskBytes})
+	sess, err := sp.OpenSession(ctx, sandbox.SessionOptions{MinimumIsolation: env.minimum, Lifetime: lifetime, DiskBytes: s.Sessions.DiskBytes, Languages: languages})
 	if err != nil {
 		release()
 		s.sessions.unreserve(principal)
@@ -316,6 +325,13 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		slog.Int64("lifetime_ms", lifetime.Milliseconds()),
 		slog.Int64("idle_timeout_ms", idle.Milliseconds()),
 		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
+	}
+	if len(languages) > 0 {
+		names := make([]string, len(languages))
+		for i, l := range languages {
+			names[i] = string(l)
+		}
+		attrs = append(attrs, slog.String("languages", strings.Join(names, ",")))
 	}
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "session opened", append(attrs, traceAttrs(env.traceID)...)...)
 	return connect.NewResponse(&plimsollv1.OpenSessionResponse{

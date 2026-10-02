@@ -121,7 +121,7 @@ func TestLockdownStatesUlimitsAndIPC(t *testing.T) {
 	d := DefaultDocker("")
 	for _, runtime := range []string{"runc", "runsc"} {
 		args := strings.Join(d.lockdownArgs("c", true, runtime), " ")
-		for _, want := range []string{"--ulimit core=0", "--ulimit nofile=4096:4096", "--ipc private"} {
+		for _, want := range []string{"--ulimit core=0", "--ulimit nofile=4096:4096", "--ipc private", "--no-healthcheck"} {
 			if !strings.Contains(args, want) {
 				t.Errorf("%s: lockdown lacks %q: %s", runtime, want, args)
 			}

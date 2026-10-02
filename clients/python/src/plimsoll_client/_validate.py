@@ -282,6 +282,18 @@ def _file_list(files: FilesArg) -> List[dict]:
     return [{"path": p, "content": c} for p, c in pairs]
 
 
+def languages(hint: Any) -> List[str]:
+    """A session's language hint: languages plimsoll keeps an interpreter for."""
+    if hint is None:
+        return []
+    if isinstance(hint, str) or not isinstance(hint, (list, tuple)):
+        raise invalid("languages must be a list of language names")
+    for language in hint:
+        if language not in LANGUAGES:
+            raise invalid(f"unknown language {language!r} in the hint (want javascript or python)")
+    return list(dict.fromkeys(hint))
+
+
 def cell(language: Any, c: Any, files: FilesArg) -> dict:
     """ValidateCellRequest, returning the payload's wire form."""
     if language not in LANGUAGES:

@@ -448,6 +448,15 @@ message OpenSessionRequest {
   uint32 lifetime_ms = 4;
   uint32 idle_timeout_ms = 5;
   SoftwareRule software_rule = 6;
+  // The languages the caller expects its cells to use ("javascript", "python"): a
+  // hint. A daemon with a warm pool hands over a sandbox whose interpreters for them
+  // are already running, and keeps more of those ready as callers ask for them. It
+  // changes latency, never behavior: a cell in any language Describe states still
+  // runs, and a language the session environment does not state is dropped from the
+  // hint. A language plimsoll does not know is InvalidArgument, not dispatched.
+  // Informational, so it did not move the protocol number: a daemon that predates it
+  // drops it.
+  repeated string languages = 7;
 }
 
 message OpenSessionResponse {
@@ -576,8 +585,8 @@ enum NotDispatchedReason {
   NOT_DISPATCHED_REASON_UNSPECIFIED = 0;
   // Malformed or out of bounds. Every daemon refuses it the same way.
   NOT_DISPATCHED_REASON_REQUEST = 1;
-  // Authentication, scope, or a grant profile's caller list. The caller's
-  // identity is the problem, not this daemon.
+  // Authentication, scope, or a grant profile's caller list; or the run's grant
+  // could not be issued (an invalid grant, a failed mint). Do not reselect.
   NOT_DISPATCHED_REASON_PERMISSION = 2;
   // The daemon serves another protocol number.
   NOT_DISPATCHED_REASON_PROTOCOL = 3;
@@ -587,5 +596,8 @@ enum NotDispatchedReason {
   NOT_DISPATCHED_REASON_ISOLATION = 5;
   // Shed by admission or a rate limit; retry later or elsewhere.
   NOT_DISPATCHED_REASON_CAPACITY = 6;
+  // The selected software cannot meet the caller's rule, or the sandbox a call
+  // was to run in could not be shown to be the one stated (an interpreter that
+  // could not start, a session's read-back that failed).
   NOT_DISPATCHED_REASON_ENVIRONMENT = 7;
 }

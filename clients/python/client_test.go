@@ -57,10 +57,10 @@ import (
 func TestPython(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
-		t.Skip("python3 is not installed")
+		clientSkipOrFail(t, "python3 is not installed")
 	}
 	if out, err := exec.Command(python, "-c", "import sys; sys.exit(sys.version_info < (3, 10))").CombinedOutput(); err != nil {
-		t.Skipf("the client needs Python 3.10 or later: %v %s", err, out)
+		clientSkipOrFail(t, "the client needs Python 3.10 or later: %v %s", err, out)
 	}
 
 	sessions := &sandboxtest.Sessions{}
@@ -110,6 +110,14 @@ func TestPython(t *testing.T) {
 	if pythonSkip.Match(out) {
 		t.Fatal("the Python suite skipped a case; under this test every case must run")
 	}
+}
+
+func clientSkipOrFail(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("PLIMSOLL_REQUIRE_CLIENTS") == "1" {
+		t.Fatalf(format, args...)
+	}
+	t.Skipf(format, args...)
 }
 
 var pythonSkip = regexp.MustCompile(`(?m)\.\.\. skipped|skipped=[0-9]+`)

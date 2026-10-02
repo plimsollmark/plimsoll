@@ -287,6 +287,15 @@ class Sessions(unittest.TestCase):
             s.run_javascript("after the close")
         self.assertEqual((cm.exception.reason, cm.exception.not_dispatched), ("closed", "request"))
 
+    def test_a_language_hint_is_sent_and_checked(self) -> None:
+        # The daemon parses the field (an unknown one would fail the open) and passes
+        # it on; the fake states no languages, so only the client's check refuses.
+        with self.c.open_session(languages=["python", "javascript", "python"]) as s:
+            self.assertEqual(s.run_cell("1").stdout, b"python 1: 1")
+        with self.assertRaises(InvalidRequestError) as cm:
+            self.c.open_session(languages=["cobol"])
+        self.assertEqual(cm.exception.not_dispatched, "request")
+
     def test_cells_chain_with_the_other_calls(self) -> None:
         with self.c.open_session() as s:
             s.run_javascript("1")

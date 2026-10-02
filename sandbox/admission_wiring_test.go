@@ -40,6 +40,10 @@ func (f *fullProvider) ReconcileOrphans(context.Context) (int, error) {
 func (f *fullProvider) EgressGuardCall(context.Context, string, string, string, []byte) EgressGuardResponse {
 	return EgressGuardResponse{}
 }
+func (f *fullProvider) StartSessionPool(context.Context, int, time.Duration) error {
+	f.mark("SessionPool")
+	return nil
+}
 func (f *fullProvider) OpenSession(context.Context, SessionOptions) (Session, error) {
 	f.mark("SessionProvider")
 	return &endingSession{done: make(chan struct{})}, nil
@@ -93,6 +97,10 @@ func TestAdmissionForwardsEveryOptionalInterface(t *testing.T) {
 			return err == nil
 		},
 		"EgressGuardCapable": func(s Sandbox) bool { c, ok := s.(EgressGuardCapable); return ok && c.EgressGuardPath() == "/guard" },
+		"SessionPool": func(s Sandbox) bool {
+			c, ok := s.(SessionPool)
+			return ok && c.StartSessionPool(ctx, 1, time.Minute) == nil
+		},
 		"SessionProvider": func(s Sandbox) bool {
 			c, ok := s.(SessionProvider)
 			if !ok || !c.SupportsSessions() {
@@ -142,6 +150,9 @@ func TestAdmissionDoesNotClaimWhatTheProviderLacks(t *testing.T) {
 	}
 	if _, err := sp.OpenSession(context.Background(), SessionOptions{Lifetime: time.Minute}); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("OpenSession: %v, want ErrUnsupported", err)
+	}
+	if err := wrapped.(SessionPool).StartSessionPool(context.Background(), 1, time.Minute); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("StartSessionPool: %v, want ErrUnsupported", err)
 	}
 }
 

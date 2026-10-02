@@ -303,7 +303,7 @@ func TestDockerHostIsRemote(t *testing.T) {
 func TestDockerRejectsRemoteActiveContext(t *testing.T) {
 	bin := t.TempDir()
 	docker := filepath.Join(bin, "docker")
-	if err := os.WriteFile(docker, []byte("#!/bin/sh\necho tcp://10.0.0.9:2375\n"), 0o755); err != nil {
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\n[ \"$1\" = --config ] && shift 2\necho tcp://10.0.0.9:2375\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
@@ -317,7 +317,7 @@ func TestDockerRejectsRemoteActiveContext(t *testing.T) {
 func TestDockerPreflightVerifiesRegisteredRuntime(t *testing.T) {
 	bin := t.TempDir()
 	docker := filepath.Join(bin, "docker")
-	script := "#!/bin/sh\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runc\":{\"path\":\"runc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
+	script := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runc\":{\"path\":\"runc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
 	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestDockerPreflightVerifiesRegisteredRuntime(t *testing.T) {
 
 	// A runtime key named runsc is not enough: it must resolve to a runsc
 	// executable, or the kernel-isolation claim is just trusting a label.
-	badRunsc := "#!/bin/sh\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runsc\":{\"path\":\"runc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
+	badRunsc := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runsc\":{\"path\":\"runc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
 	if err := os.WriteFile(docker, []byte(badRunsc), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestDockerPreflightVerifiesRegisteredRuntime(t *testing.T) {
 		t.Fatalf("unverified runsc isolation = %v, want conservative container", got)
 	}
 
-	goodRunsc := "#!/bin/sh\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runsc\":{\"path\":\"/usr/local/bin/runsc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
+	goodRunsc := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo '{\"runsc\":{\"path\":\"/usr/local/bin/runsc\"}}'; exit 0; fi\nif [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
 	if err := os.WriteFile(docker, []byte(goodRunsc), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -375,9 +375,11 @@ func TestDockerPreflightKeepsPinnedEndpointAndFailsClosed(t *testing.T) {
 	contextFile := filepath.Join(bin, "context")
 	failFile := filepath.Join(bin, "fail")
 	logFile := filepath.Join(bin, "hosts")
-	script := "#!/bin/sh\n" +
-		"if [ \"$1\" = context ]; then IFS= read -r endpoint < \"$CR_CONTEXT_FILE\"; echo \"$endpoint\"; exit 0; fi\n" +
-		"if [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo \"$2\" >> \"$CR_HOST_LOG\"; if [ -f \"$CR_FAIL_FILE\" ]; then exit 1; fi; echo '{\"runsc\":{\"path\":\"runsc\"}}'; exit 0; fi\n" +
+	// The paths are written into the script: the docker CLI gets PATH and nothing
+	// else from plimsoll (docker_cli.go), so a variable set here would not reach it.
+	script := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\n" +
+		"if [ \"$1\" = context ]; then IFS= read -r endpoint < '" + contextFile + "'; echo \"$endpoint\"; exit 0; fi\n" +
+		"if [ \"$1\" = --host ] && [ \"$3\" = info ]; then echo \"$2\" >> '" + logFile + "'; if [ -f '" + failFile + "' ]; then exit 1; fi; echo '{\"runsc\":{\"path\":\"runsc\"}}'; exit 0; fi\n" +
 		"if [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\n" +
 		"exit 1\n"
 	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
@@ -389,9 +391,6 @@ func TestDockerPreflightKeepsPinnedEndpointAndFailsClosed(t *testing.T) {
 	t.Setenv("PATH", bin)
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("CR_CONTEXT_FILE", contextFile)
-	t.Setenv("CR_FAIL_FILE", failFile)
-	t.Setenv("CR_HOST_LOG", logFile)
 
 	d := DefaultDocker("")
 	d.Runtime = "runsc"
@@ -873,8 +872,8 @@ func TestDockerPreflightIgnoresTheCallersCancellation(t *testing.T) {
 	bin := t.TempDir()
 	docker := filepath.Join(bin, "docker")
 	slow := filepath.Join(bin, "slow")
-	script := "#!/bin/sh\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\n" +
-		"if [ \"$1\" = --host ] && [ \"$3\" = info ]; then if [ -f \"$CR_SLOW\" ]; then /bin/sleep 1; fi; echo '{\"runsc\":{\"path\":\"/usr/local/bin/runsc\"}}'; exit 0; fi\n" +
+	script := "#!/bin/sh\n[ \"$1\" = --config ] && shift 2\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\n" +
+		"if [ \"$1\" = --host ] && [ \"$3\" = info ]; then if [ -f '" + slow + "' ]; then /bin/sleep 1; fi; echo '{\"runsc\":{\"path\":\"/usr/local/bin/runsc\"}}'; exit 0; fi\n" +
 		"if [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
 	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -882,7 +881,6 @@ func TestDockerPreflightIgnoresTheCallersCancellation(t *testing.T) {
 	t.Setenv("PATH", bin)
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv("DOCKER_CONTEXT", "")
-	t.Setenv("CR_SLOW", slow)
 	d := DefaultDocker("")
 	d.Runtime = "runsc"
 	now := time.Unix(1_700_000_000, 0)

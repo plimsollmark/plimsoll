@@ -131,6 +131,7 @@ class AsyncClient:
         lifetime: Optional[float] = None,
         idle_timeout: Optional[float] = None,
         trace_id: Optional[str] = None,
+        languages: Optional[Sequence[str]] = None,
     ) -> "AsyncSession":
         # Cancelling the await does not stop the open in its thread, and a session
         # the daemon opens after the cancel would reach nobody and hold its slot
@@ -147,6 +148,7 @@ class AsyncClient:
                 lifetime=lifetime,
                 idle_timeout=idle_timeout,
                 trace_id=trace_id,
+                languages=languages,
             )
             with lock:
                 if not abandoned:

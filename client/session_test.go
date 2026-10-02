@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -109,6 +110,28 @@ func TestClientOpenSessionRestoresSoftwareMismatch(t *testing.T) {
 	}
 	if len(p.Opened()) != 0 {
 		t.Fatal("a mismatched OpenSession reached the provider")
+	}
+}
+
+// A language hint travels to the provider without repeats, and a hint naming a
+// language plimsoll does not know is refused before anything is sent.
+func TestClientOpenSessionSendsTheLanguageHint(t *testing.T) {
+	url, p := sessionServer(t)
+	r := newRemote(t, url)
+	s, err := r.OpenSession(context.Background(), SessionOptions{Languages: []sandbox.Language{sandbox.LanguagePython, sandbox.LanguagePython}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	if got := p.Opened()[0].Options.Languages; !slices.Equal(got, []sandbox.Language{sandbox.LanguagePython}) {
+		t.Fatalf("the provider was asked for languages %v; want python", got)
+	}
+	_, err = r.OpenSession(context.Background(), SessionOptions{Languages: []sandbox.Language{"cobol"}})
+	if reason, ok := sandbox.NotDispatchedReason(err); !errors.Is(err, sandbox.ErrInvalidRequest) || !ok || reason != sandbox.RefusalRequest {
+		t.Fatalf("an unknown language: %v; want a request refusal", err)
+	}
+	if len(p.Opened()) != 1 {
+		t.Fatal("a hint naming an unknown language reached the daemon")
 	}
 }
 

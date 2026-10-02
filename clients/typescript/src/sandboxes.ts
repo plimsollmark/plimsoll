@@ -413,10 +413,13 @@ export class CodeSandboxes {
     if (!entry) {
       const session = this.persistent().then((ok) => {
         if (!ok) throw new PlimsollError("unimplemented", "plimsoll: the daemon does not keep sessions", { notDispatched: "unsupported" });
+        // The tool's languages are the hint: a daemon with a warm pool hands over a
+        // sandbox with their interpreters running, and drops any it does not run.
         return this.client.openSession({
           minimumIsolation: this.#opts.minimumIsolation,
           lifetimeMs: this.#opts.sessionLifetimeMs,
           idleTimeoutMs: this.#opts.sessionIdleTimeoutMs,
+          languages: [...this.languages],
         });
       });
       const e: Entry = { session, answered: false, busy: 0 };

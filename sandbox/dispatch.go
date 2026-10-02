@@ -14,8 +14,9 @@ const (
 	// RefusalRequest: the request is malformed or out of bounds. Every backend
 	// would refuse it the same way; do not reselect.
 	RefusalRequest
-	// RefusalPermission: authentication, scope, or a grant profile's caller ACL.
-	// The caller's identity is the problem; do not reselect.
+	// RefusalPermission: authentication, scope, or a grant profile's caller ACL; or
+	// the run's grant could not be issued (an invalid grant, a failed mint). Do not
+	// reselect.
 	RefusalPermission
 	// RefusalProtocol: the backend serves another wire protocol number.
 	RefusalProtocol
@@ -27,8 +28,10 @@ const (
 	RefusalIsolation
 	// RefusalCapacity: shed by admission or a rate limit. Retry later or elsewhere.
 	RefusalCapacity
-	// RefusalEnvironment: the selected software cannot meet the caller's rule.
-	// Another backend may have an approved image.
+	// RefusalEnvironment: the selected software cannot meet the caller's rule
+	// (another backend may have an approved image), or the sandbox a call was to run
+	// in could not be shown to be the one stated: an interpreter that could not start,
+	// a session's read-back that failed.
 	RefusalEnvironment
 )
 

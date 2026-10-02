@@ -200,7 +200,9 @@ project with the plan it received, for the project a fresh call sends) and runs 
 suites against them: the
 client's (needs only node), the add-ons' (needs `npm install` here), and the Trigger.dev
 example's (needs `npm install` in `examples/trigger-chat`; it waits out Trigger.dev's
-30-second idle window to prove the suspend closes the sandbox). A suite whose
-dependencies are absent is skipped. The client's digests are also checked against the
+30-second idle window to prove the suspend closes the sandbox). An ordinary Go test
+skips a suite whose runtime or dependencies are absent. CI runs `make clients-suite`,
+which installs both npm lockfiles and sets `PLIMSOLL_REQUIRE_CLIENTS=1`, so a missing
+prerequisite or skipped Go test fails. The client's digests are also checked against the
 golden vectors of `record/record_test.go`, and the fresh-run runners are run on this
 machine's `node` and `python3` to check they print the last expression.

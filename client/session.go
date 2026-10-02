@@ -22,6 +22,10 @@ type SessionOptions struct {
 	Software         sandbox.SoftwareRule
 	Lifetime         time.Duration
 	IdleTimeout      time.Duration
+	// Languages are the languages the session's cells will use: a hint, so a daemon
+	// with a warm pool hands over a sandbox with those interpreters already running.
+	// A cell in any language the daemon states still runs.
+	Languages []sandbox.Language
 }
 
 // Session is an open session on a remote daemon: one sandbox for many calls, in
@@ -106,6 +110,14 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 			return nil, sandbox.NotDispatched(sandbox.RefusalRequest, ErrRecorderCannotKeepSessions)
 		}
 	}
+	languages, err := sandbox.SessionLanguages(opts.Languages, nil)
+	if err != nil {
+		return nil, err
+	}
+	wireLanguages := make([]string, len(languages))
+	for i, l := range languages {
+		wireLanguages[i] = string(l)
+	}
 	req := connect.NewRequest(&plimsollv1.OpenSessionRequest{
 		Protocol:         Protocol,
 		MinimumIsolation: minimumIsolationWire(opts.MinimumIsolation),
@@ -113,6 +125,7 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 		LifetimeMs:       durationMs(opts.Lifetime),
 		IdleTimeoutMs:    durationMs(opts.IdleTimeout),
 		SoftwareRule:     softwarewire.ToWire(opts.Software),
+		Languages:        wireLanguages,
 	})
 	r.auth(req)
 	resp, err := r.client.OpenSession(ctx, req)

@@ -23,7 +23,7 @@ SECCOMP := $(CURDIR)/docker/seccomp.json
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
+.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite clients-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
@@ -115,6 +115,22 @@ docker-suite:
 	   echo "docker-suite: required coverage was skipped:" >&2; \
 	   grep -E '^ *--- SKIP' tmp/docker-suite.log >&2; exit 1; fi
 	@exit "$$(cat tmp/docker-suite.status)"
+
+# Install both lockfiles, then require the Python, TypeScript client, add-on and
+# Trigger.dev suites. Keep the go test exit status despite tee, and fail on any
+# Go test skip in case a future test bypasses PLIMSOLL_REQUIRE_CLIENTS.
+## clients-suite: install both npm dependency sets and run the Python, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS
+clients-suite:
+	@mkdir -p tmp
+	@[ -w tmp ] || { echo "clients-suite: tmp/ is not writable" >&2; exit 1; }
+	@{ (cd clients/typescript && $(NO_PAID_KEYS) npm ci --userconfig=/dev/null) && \
+	   (cd examples/trigger-chat && $(NO_PAID_KEYS) npm ci --userconfig=/dev/null) && \
+	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) go test ./clients/python/ ./clients/typescript/ -count=1 -v; \
+	   echo $$? > tmp/clients-suite.status; } 2>&1 | tee tmp/clients-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/clients-suite.log; then \
+	   echo "clients-suite: required coverage was skipped:" >&2; \
+	   grep -E '^ *--- SKIP' tmp/clients-suite.log >&2; exit 1; fi
+	@exit "$$(cat tmp/clients-suite.status)"
 
 ## e2b-suite: the live E2B tests (needs E2B_API_KEY)
 e2b-suite:

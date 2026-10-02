@@ -211,6 +211,12 @@ export type SessionOptions = {
   lifetimeMs?: number;
   idleTimeoutMs?: number;
   traceId?: string;
+  /**
+   * The languages the session's cells will use: a hint, so a daemon with a warm pool
+   * hands over a sandbox with those interpreters already running. A cell in any
+   * language the daemon states still runs.
+   */
+  languages?: Language[];
   signal?: AbortSignal;
 };
 
@@ -504,6 +510,11 @@ export class PlimsollClient {
    */
   async openSession(opts: SessionOptions = {}): Promise<Session> {
     const rule = validateRule(opts.software);
+    for (const l of opts.languages ?? []) {
+      if (l !== "javascript" && l !== "python") {
+        throw new PlimsollError("invalid_argument", `plimsoll: unknown language ${JSON.stringify(l)} in the hint`, { notDispatched: "request" });
+      }
+    }
     const m = await this.call<WireOpenSessionResponse>(
       "OpenSession",
       {
@@ -513,6 +524,7 @@ export class PlimsollClient {
         lifetimeMs: durationMs(opts.lifetimeMs) || undefined,
         idleTimeoutMs: durationMs(opts.idleTimeoutMs) || undefined,
         softwareRule: rule,
+        languages: opts.languages?.length ? [...new Set(opts.languages)] : undefined,
       },
       opts.signal,
     );

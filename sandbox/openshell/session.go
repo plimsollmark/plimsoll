@@ -100,6 +100,11 @@ func (p *Provider) OpenSession(ctx context.Context, opts sandbox.SessionOptions)
 	if err != nil {
 		return nil, err
 	}
+	// OpenShell has no pool, so a language hint changes nothing here; it is still
+	// checked, so a hint is refused alike on every provider.
+	if _, err := sandbox.SessionLanguages(opts.Languages, p.SessionEnvironments().Project.Languages); err != nil {
+		return nil, err
+	}
 	// No sized /tmp, whatever DiskMB says: docker discards a tmpfs when its container
 	// stops, and a session is stopped to suspend it and to recover from a failed sweep,
 	// so its files would vanish (measured on v0.1.2, 2026-09-29). Its disk budget is

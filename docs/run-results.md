@@ -34,11 +34,11 @@ if reason, ok := sandbox.NotDispatchedReason(err); ok {
 | Reason | Raised when | Worth retrying elsewhere |
 |---|---|---|
 | `request` | the request is malformed or out of bounds | no, every daemon refuses it |
-| `permission` | missing or unknown token, missing scope, or the caller is not allowed the <dfn>*grant*</dfn> it named (permission to call listed routes of one API, stored on the server as a <dfn>*grant profile*</dfn>) | no, the caller's identity is the problem |
+| `permission` | missing or unknown token, missing scope, or the caller is not allowed the <dfn>*grant*</dfn> it named (permission to call listed routes of one API, stored on the server as a <dfn>*grant profile*</dfn>); or the run's grant could not be issued (an invalid grant, or its credential could not be made) | no, the caller's identity or the daemon's grant setup is the problem |
 | `protocol` | the daemon serves another <dfn>*protocol number*</dfn>, the protocol version every request states | only on a daemon that speaks yours |
 | `unsupported` | this provider cannot do the operation, or execution is disabled | yes |
 | `isolation` | the provider's current isolation is below the request's <dfn>*floor*</dfn>, the weakest isolation it accepts | yes, on a stronger provider |
-| `environment` | the selected software identity (the exact hash of the image the run would use) is unknown or outside the caller's required set | yes, on a backend with an approved image |
+| `environment` | the selected software identity (the exact hash of the image the run would use) is unknown or outside the caller's required set; or, in a [session (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#session), the sandbox could not be confirmed (an interpreter could not start, or docker did not answer the read-back before the call) | yes, on a backend with an approved image; a session call can be sent to the same session again |
 | `capacity` | <dfn>*admission*</dfn> (the daemon's capacity check just before a run starts) or the rate limit <dfn>*shed*</dfn> the run: refused it at once instead of queueing it | yes, later or elsewhere |
 
 **No mark means the run may have executed**, whatever the error code, so it is never a

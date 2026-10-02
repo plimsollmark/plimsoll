@@ -147,6 +147,7 @@ export type WireOpenSessionRequest = {
   lifetimeMs?: number;
   idleTimeoutMs?: number;
   softwareRule?: WireSoftwareRule;
+  languages?: string[];
 };
 
 export type WireOpenSessionResponse = {

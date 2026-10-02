@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -923,5 +924,50 @@ func TestAPanickingSessionCallIsInTheChain(t *testing.T) {
 	sum, err := svc.CloseSession(ctx, closeReq(id))
 	if err != nil || sum.Msg.GetCalls() != 1 {
 		t.Fatalf("close: %+v, %v; want the panicked call counted", sum, err)
+	}
+}
+
+type languageSessions struct {
+	*sandboxtest.Sessions
+	stated []sandbox.Language
+}
+
+func (s *languageSessions) SessionEnvironments() sandbox.Environments {
+	return sandbox.Environments{Project: sandbox.PayloadEnvironment{Languages: s.stated}}
+}
+
+// A language hint reaches the provider in the environment's order without repeats,
+// less any language the environment does not run, and a hint naming a language
+// plimsoll does not know is refused before the provider is asked.
+func TestSessionLanguageHint(t *testing.T) {
+	svc, p := sessionService()
+	lp := &languageSessions{Sessions: p, stated: []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython}}
+	svc.Sandbox = lp
+	ctx := authenticatedContext("alice")
+	for i, c := range []struct {
+		stated []sandbox.Language
+		want   []sandbox.Language
+	}{
+		{lp.stated, lp.stated},
+		{[]sandbox.Language{sandbox.LanguageJavaScript}, []sandbox.Language{sandbox.LanguageJavaScript}},
+	} {
+		lp.stated = c.stated
+		req := openReq()
+		req.Msg.Languages = []string{"python", "javascript", "python"}
+		if _, err := svc.OpenSession(ctx, req); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.Opened()[i].Options.Languages; !slices.Equal(got, c.want) {
+			t.Fatalf("stating %v, the provider was asked for languages %v; want %v", c.stated, got, c.want)
+		}
+	}
+	req := openReq()
+	req.Msg.Languages = []string{"cobol"}
+	_, err := svc.OpenSession(ctx, req)
+	if reason, ok := sandbox.NotDispatchedReason(err); connect.CodeOf(err) != connect.CodeInvalidArgument || !ok || reason != sandbox.RefusalRequest {
+		t.Fatalf("an unknown language: %v (reason %v, %v); want InvalidArgument, request", err, reason, ok)
+	}
+	if len(p.Opened()) != 2 {
+		t.Fatal("a hint naming an unknown language reached the provider")
 	}
 }

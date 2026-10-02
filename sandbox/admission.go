@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // ErrAtCapacity is returned when an admission budget sheds a run rather than
@@ -247,6 +248,7 @@ var (
 	_ OrphanReconciler   = (*admissionSandbox)(nil)
 	_ Drainer            = (*admissionSandbox)(nil)
 	_ SessionProvider    = (*admissionSandbox)(nil)
+	_ SessionPool        = (*admissionSandbox)(nil)
 	_ EgressGuardCapable = (*admissionGuardSandbox)(nil)
 )
 
@@ -290,6 +292,16 @@ func (a *admissionSandbox) SessionEnvironments() Environments {
 		return sp.SessionEnvironments()
 	}
 	return Environments{}
+}
+
+// StartSessionPool forwards to the wrapped provider; one without a pool refuses
+// (ErrUnsupported), so a daemon configured for a pool fails at startup. A waiting
+// member holds no admission reservation: OpenSession reserves when it is claimed.
+func (a *admissionSandbox) StartSessionPool(ctx context.Context, size int, lifetime time.Duration) error {
+	if p, ok := a.Sandbox.(SessionPool); ok {
+		return p.StartSessionPool(ctx, size, lifetime)
+	}
+	return fmt.Errorf("%w: provider %s keeps no session pool", ErrUnsupported, a.Name())
 }
 
 // OpenSession admits a session as it admits a run, and keeps the reservation until

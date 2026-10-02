@@ -230,6 +230,20 @@ the daemon binds each 128-bit session ID to its principal (an unknown and a fore
 the same NotFound), never logs it, serializes calls, chains their records, suspends an idle
 session and gives back its concurrency slot, and keeps an ended session's final count
 collectable for 10 minutes. Sessions are off unless `SANDBOX_MAX_SESSIONS` is positive.
+On docker, `SANDBOX_SESSION_POOL` keeps never-used session containers ready
+([sandbox/docker_pool.go](sandbox/docker_pool.go), the `sandbox.SessionPool` interface): a
+member is created and read back as a session's container is, gets an interpreter and its
+relay for a set of the stated languages (`sessionkit.Interpreters.Warm`, so the first cell
+still reports its interpreter as new), and is handed to `OpenSession` only while it matches
+the verified execution state and its relays are attached; it is never returned or reused.
+`SessionOptions.Languages` (wire `languages`) is a latency hint, checked by
+`sandbox.SessionLanguages` (an unknown name refused, an unstated one dropped): a claim takes
+the member warming the most hinted languages, and the pool divides its size across language
+sets by a decaying weight of the hints it sees (no hint = every language), rebalancing one
+member at a time; hints never add members. A
+member's lifetime label covers 30 minutes of waiting plus `SANDBOX_SESSION_LIFETIME`, and a
+member idle 30 minutes is replaced. With the pool on, the startup session smoke test runs
+on a claimed member.
 
 Result semantics: a non-zero `ExitCode` is a **normal result** (the user's code
 failed), not a Go `error`. Returned errors cover typed pre-dispatch failures
@@ -238,7 +252,8 @@ cancellation/deadline, and unmatched infrastructure failures. **Whether anything
 is a mark, not a code:** a refusal raised before any code was dispatched is a
 `sandbox.NotDispatchedError` carrying a `Refusal` reason (`request`, `permission`,
 `protocol`, `unsupported`, `isolation`, `environment`, `capacity`; `sandbox.NotDispatchedReason(err)`
-reads it). The sandbox package marks its validators, isolation checks, admission and
+reads it). The sandbox package marks its validators, isolation checks, admission,
+grant issuance (an invalid grant or a failed mint, reason `permission`) and
 every `ErrUnsupported`/`ErrDisabled` site at the source; the RPC layer builds every
 handler-side refusal through `refuse` (a test fails on a Connect error built anywhere
 else) and sends the mark as the `plimsoll.v1.NotDispatched` error detail, which the
@@ -259,10 +274,14 @@ stdout/stderr are protobuf `bytes`, so arbitrary guest bytes survive verbatim
 instead of being lossily repaired into UTF-8. An E2B guest that floods its
 output stream past the transfer budget is classified as a failed user run
 (exit 153, both streams marked truncated), not an infrastructure error. Nor can guest
-code pass its own exit for docker's: a docker snippet's node writes a per-run start
-marker to stderr from an `--import` preload before the script runs (stripped from the
-result), and a run whose stderr starts with it is a result whatever its exit code; only
-one without it can be docker's 125, 126 or 127. A project's runner keeps only artifacts
+code pass its own exit for docker's: a docker snippet's node, in a run or a session
+call, writes a per-call start marker to stderr from an `--import` preload before the
+script runs (stripped from the result), and a call whose stderr starts with it is a
+result whatever its exit code; only one without it can be docker's 125, 126 or 127. A
+session call whose exit may be docker's is also checked against the container: paused,
+stopped, gone or unreadable ends the session. A docker session finds its container gone
+by an ID-filtered listing, never by docker's wording, and a read-back docker cannot
+answer refuses the call (not dispatched, reason `environment`). A project's runner keeps only artifacts
 the kernel says it opened inside the work directory (`/proc/self/fd`), so a step left
 running cannot swap a parent directory for a link between the check and the open.
 
@@ -317,7 +336,10 @@ which needs the gateway's `allow_driver_config = true`; never a session's),
 set for a provider without sessions), `SANDBOX_MAX_SESSIONS_PER_CALLER` (open sessions one
 principal may hold, suspended ones included; default 0, no cap beyond the daemon's; a
 suspended session holds no concurrency slot, so the per-caller concurrency cap does not bound
-them), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
+them), `SANDBOX_SESSION_POOL` (docker only: never-used session containers kept ready,
+each with an interpreter and relay already attached for every language the image runs;
+default 0, at most `SANDBOX_MAX_SESSIONS`; one goes to one session and is removed at its
+close, never reused; [docs/sessions.md](docs/sessions.md#docker)), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
 12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends; otherwise 1s to 12h, and a
 request may ask for less but not under 1s), `SANDBOX_SESSION_DISK_MB`
 (default 1024; 0 disables the check and measures nothing; disk use is measured after each call,
@@ -815,10 +837,13 @@ claim this gate makes. `make tools` installs the pinned set; the codegen plugins
 pinned separately by go.mod `tool` directives.
 
 **CI** ([.github/workflows/](.github/workflows/)) runs plain `make audit`, then
-`make docker-suite` under runc, and the same suite under runsc (a separate workflow,
-so a runsc failure cannot mask the runc result); what each green check proves is in
-[CONTRIBUTING.md](CONTRIBUTING.md). The provider jobs run the required suite without
-repeating the build, race tests, lint, generated-code check or vulnerability scan.
+`make clients-suite` (both `npm ci` installs and the Python, TypeScript client,
+add-on and Trigger.dev tests in required mode) and `make docker-suite` under runc.
+The docker suite also runs under runsc in a separate workflow, so a runsc failure
+cannot mask the runc result; what each green check proves is in
+[CONTRIBUTING.md](CONTRIBUTING.md). The client and provider jobs run their required
+suites without repeating the build, race tests, lint, generated-code check or
+vulnerability scan.
 `make docker-suite` is a request for proof: a missing daemon or image, or any
 `--- SKIP` line, fails it. No CI run exercises E2B or Docker Cloud
 Sandboxes, deliberately, because they spend: **never add an E2B key or a Docker token
@@ -856,6 +881,20 @@ a specific gVisor release and checksum rather than tracking `latest`.
 - No new third-party deps without cause; never reintroduce `fastschema/qjs`.
 - Treat all executed code as hostile; preserve the network/filesystem/capability
   restrictions on every provider.
+- **Environment variables are a channel into the sandbox; keep it closed.** The docker
+  provider starts the CLI only through `dockerCommand` ([sandbox/docker_cli.go](sandbox/docker_cli.go)):
+  PATH as its whole environment and an empty client config of its own (a fresh private
+  temp directory, never a fixed path another local user could make first with a `proxies`
+  entry; it holds a socket the process listens on, so `ReconcileOrphans` removes one a dead
+  process left, as it does dead broker socket directories), so neither a daemon
+  secret nor the host's client settings (a `proxies` entry puts proxy URLs, credentials
+  included, into every container `docker run` starts) reach a container. An `-e` flag is
+  built only by `dockerEnvFlag`, always `NAME=value`. plimsoll's own programs in a session
+  (sweep, process lister, identity check, relays) start under `env -i` with a fixed PATH,
+  and Preflight refuses an image whose ENV can load code (`NODE_OPTIONS`, any `LD_`
+  variable, a search path into a writable mount): such a variable made node run a file
+  guest code wrote inside plimsoll's own processes. `TestDockerCLIIsStartedOnlyThroughDockerCommand`
+  fails the build on a new direct call.
 - **Advisory-as-evidence (non-authoritative).** Advice is computed post-dispatch over
   the already-final `Result`, so a run with advice is **byte-identical in execution** to
   one without. A finding is evidence attached to a run, like the isolation tier: it must

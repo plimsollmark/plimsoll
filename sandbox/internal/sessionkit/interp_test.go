@@ -246,3 +246,54 @@ func TestKernelJSRunsACellOnceWhateverTheChunks(t *testing.T) {
 		t.Fatalf("the cell ran %s times", got)
 	}
 }
+
+// A FIFO in place of the ready file, which any process of the session can put there,
+// fails the launch at once (exit 3, before the cell's code is sent). A launcher that
+// opened it for reading blocked until the cell's deadline, so one line of a cell's code
+// cost every later cell that started an interpreter its whole budget.
+func TestLaunchRefusesAReadyFileThatIsNotARegularFile(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the launcher reads /proc")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "interp")
+	interp := `mkfifo "$1/ready"; while :; do sleep 1; done`
+	cmd := exec.Command("sh", "-c", launchScript, "sh", "sh", "-c", interp, "plimsoll-fifo-test")
+	cmd.Env = append(os.Environ(), "PLIMSOLL_INTERP_DIR="+dir, "PLIMSOLL_WORK="+filepath.Join(root, "work"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { killInterpreterIn(dir) })
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 3 {
+			t.Fatalf("launcher: %v (%s), want exit 3", err, stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		t.Fatal("the launcher still waited 5 seconds after a FIFO took the ready file's place")
+	}
+}
+
+// killInterpreterIn kills the process session of the interpreter a launcher started
+// with dir as its last argument (setsid makes it the session's leader).
+func killInterpreterIn(dir string) {
+	entries, _ := os.ReadDir("/proc")
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		cmdline, err := os.ReadFile("/proc/" + e.Name() + "/cmdline")
+		if err == nil && strings.HasSuffix(string(cmdline), "\x00"+dir+"\x00") {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+		}
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/netutil"
@@ -129,6 +130,8 @@ type DockerSandbox struct {
 	projectLanguages []Language
 	// sessions are the open sessions and their container removals (docker_session.go).
 	sessions dockerSessions
+	// pool is the session pool, when StartSessionPool started one (docker_pool.go).
+	pool atomic.Pointer[dockerPool]
 }
 
 const (
@@ -307,10 +310,12 @@ func (d *DockerSandbox) brokerForRun(ctx context.Context, grant *HostAPIGrant, t
 		core.Close()
 		return nil, nil, err
 	}
-	return b, []string{
-		"-v", b.sock + ":" + containerSocketPath,
-		"-e", "HOST_API_SOCKET=" + containerSocketPath,
-	}, nil
+	envFlag, err := dockerEnvFlag("HOST_API_SOCKET", containerSocketPath)
+	if err != nil {
+		b.Close()
+		return nil, nil, err
+	}
+	return b, append([]string{"-v", b.sock + ":" + containerSocketPath}, envFlag...), nil
 }
 
 // DefaultDocker returns a DockerSandbox with conservative limits.
@@ -435,6 +440,11 @@ func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime string) []string {
 		"--ulimit", "core=0",
 		"--ulimit", "nofile=4096:4096",
 		"--ipc", "private",
+		// WARNING: an image's HEALTHCHECK makes dockerd run the image's command inside
+		// this container on an interval, as the sandbox user, with the image's
+		// environment: a process plimsoll did not start, beside guest code (measured
+		// 2026-10-02: a 1-second check ran in a lockdown container until this flag).
+		"--no-healthcheck",
 	)
 	// Pin an EXPLICIT seccomp policy when one is configured, so kernel attack surface
 	// is reduced by an audited profile rather than whatever the daemon defaults to
@@ -757,7 +767,7 @@ func dockerHostIsRemote(host string) bool {
 // environment variable is insufficient: a saved SSH/TCP context can otherwise run
 // hostile code on a remote daemon where local broker and teardown assumptions fail.
 func effectiveDockerHost(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", "context", "inspect", "--format", `{{(index .Endpoints "docker").Host}}`)
+	cmd := dockerResolveCommand(ctx, "context", "inspect", "--format", `{{(index .Endpoints "docker").Host}}`)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("resolve effective Docker context: %w: %s", err, strings.TrimSpace(string(out)))
@@ -770,7 +780,7 @@ func effectiveDockerHost(ctx context.Context) (string, error) {
 }
 
 func verifyDockerDaemon(ctx context.Context, host, runtime string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "docker", "--host", host, "info", "--format", `{{json .Runtimes}}`)
+	cmd := dockerCommand(ctx, "--host", host, "info", "--format", `{{json .Runtimes}}`)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("docker daemon is not ready: %w: %s", err, strings.TrimSpace(string(out)))
@@ -810,7 +820,7 @@ func verifyImageForRun(ctx context.Context, host, image string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	out, err := dockerCommand(ctx, args...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("docker image %q is not inspectable on the pinned daemon (build or pull it before serving): %w: %s", image, err, strings.TrimSpace(string(out)))
 	}
@@ -836,7 +846,7 @@ func dockerSelectedPlatform(ctx context.Context, host string) string {
 	if err != nil {
 		return ""
 	}
-	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	out, err := dockerOutput(ctx, args...)
 	if err != nil {
 		return ""
 	}
@@ -854,7 +864,7 @@ func inspectPlatformImage(ctx context.Context, host, imageID, platform string) (
 	if err != nil {
 		return "", false, err
 	}
-	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	out, err := dockerOutput(ctx, args...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", false, ctx.Err()
@@ -880,7 +890,7 @@ func dockerUsesContainerdStore(ctx context.Context, host string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	out, err := dockerOutput(ctx, args...)
 	if err != nil {
 		return false, fmt.Errorf("docker info: %w", err)
 	}
@@ -984,12 +994,15 @@ func parseDockerSelectedManifest(out []byte, platform string) string {
 // output into the content-addressed ID and the declared volume paths (daemons
 // omit the Volumes key entirely when none are declared). Anything malformed
 // fails closed — an image whose identity or volume config cannot be read is not
-// runnable evidence.
+// runnable evidence. It also refuses an image whose environment could load code
+// guest code wrote (checkImageEnv; the warning in docker_cli.go): every process
+// docker starts in the image begins with that environment.
 func parseImageIDAndVolumes(out []byte) (string, []string, error) {
 	var inspect struct {
 		ID     string `json:"Id"`
 		Config struct {
 			Volumes map[string]json.RawMessage `json:"Volumes"`
+			Env     []string                   `json:"Env"`
 		} `json:"Config"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(out), &inspect); err != nil {
@@ -997,6 +1010,9 @@ func parseImageIDAndVolumes(out []byte) (string, []string, error) {
 	}
 	if !strings.HasPrefix(inspect.ID, "sha256:") {
 		return "", nil, fmt.Errorf("returned no content-addressed image ID (got %q)", inspect.ID)
+	}
+	if err := checkImageEnv(inspect.Config.Env); err != nil {
+		return "", nil, err
 	}
 	paths := make([]string, 0, len(inspect.Config.Volumes))
 	for p := range inspect.Config.Volumes {
@@ -1273,7 +1289,7 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := dockerCommand(ctx, args...)
 	cmd.Stdin = strings.NewReader(probe)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -1484,12 +1500,9 @@ func (d *DockerSandbox) proveSandboxPidsLimit(ctx context.Context, state dockerE
 		if err != nil {
 			return "", err
 		}
-		var stderr bytes.Buffer
-		cmd := exec.CommandContext(ctx, "docker", full...)
-		cmd.Stderr = &stderr
-		out, err := cmd.Output()
+		out, err := dockerOutput(ctx, full...)
 		if err != nil {
-			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+			return "", err
 		}
 		return strings.TrimSpace(string(out)), nil
 	}
@@ -1500,7 +1513,7 @@ func (d *DockerSandbox) proveSandboxPidsLimit(ctx context.Context, state dockerE
 	if state.platform != "" {
 		runArgs = append(runArgs, "--platform", state.platform)
 	}
-	runArgs = append(runArgs, "--entrypoint", "node", image, "-e", "setTimeout(() => {}, 30000)")
+	runArgs = append(runArgs, "--entrypoint", "node", image, "--eval", "setTimeout(() => {}, 30000)")
 	defer d.forceRemove(state.host, name)
 	id, err := docker(runArgs...)
 	if err != nil {
@@ -1777,7 +1790,7 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 		return Result{Sandbox: d.Name(), Isolation: isolation}, err
 	}
 
-	cmd := exec.CommandContext(runCtx, "docker", args...)
+	cmd := dockerCommand(runCtx, args...)
 	cmd.Stdin = bytes.NewReader([]byte(withHostSDK(req.Code, req.Grant)))
 	var stdout, stderr cappedBuffer
 	stdout.limit = d.maxOutput()
@@ -1942,7 +1955,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	if err != nil {
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, err
 	}
-	cmd := exec.CommandContext(runCtx, "docker", args...)
+	cmd := dockerCommand(runCtx, args...)
 	cmd.Stdin = bytes.NewReader(planJSON)
 	var stdout, stderr cappedBuffer
 	stdout.limit = runnerwire.StdoutCap
@@ -2170,7 +2183,7 @@ func (d *DockerSandbox) forceRemove(host, name string) {
 			slog.Error("docker: cannot force-remove container without a pinned daemon endpoint", "container", name, "error", argErr)
 			return
 		}
-		out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+		out, err := dockerCommand(ctx, args...).CombinedOutput()
 		cancel()
 		if err == nil {
 			return

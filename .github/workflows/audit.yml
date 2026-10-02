@@ -1,6 +1,6 @@
 # The gate, run where a reader can see it.
 #
-# Two jobs, each using Makefile targets, so what a check claims and what the
+# Three jobs, each using Makefile targets, so what a check claims and what the
 # Makefile does cannot drift:
 #
 #   audit         `make audit`: build, vet, race tests, golangci-lint, buf lint plus a
@@ -13,6 +13,9 @@
 #                 read-only, every writable mount was a sized
 #                 noexec tmpfs, the seccomp profile loaded, and the broker refused
 #                 what it was meant to refuse.
+#   clients       `make clients-suite`: install both npm lockfiles, then require
+#                 the Python, TypeScript client, add-on and Trigger.dev suites.
+#                 Missing prerequisites or any skipped Go test fails the job.
 #
 # The runsc (gVisor, kernel tier) run lives in gvisor.yml, separately, so its result
 # is attributable on its own and cannot mask this one.
@@ -101,3 +104,24 @@ jobs:
 
       - name: make docker-suite
         run: make docker-suite
+
+  clients:
+    needs: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.18.0'
+
+      - name: make clients-suite
+        run: make clients-suite

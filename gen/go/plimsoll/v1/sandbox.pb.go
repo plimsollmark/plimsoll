@@ -166,8 +166,8 @@ const (
 	NotDispatchedReason_NOT_DISPATCHED_REASON_UNSPECIFIED NotDispatchedReason = 0
 	// Malformed or out of bounds. Every daemon refuses it the same way.
 	NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST NotDispatchedReason = 1
-	// Authentication, scope, or a grant profile's caller list. The caller's
-	// identity is the problem, not this daemon.
+	// Authentication, scope, or a grant profile's caller list; or the run's grant
+	// could not be issued (an invalid grant, a failed mint). Do not reselect.
 	NotDispatchedReason_NOT_DISPATCHED_REASON_PERMISSION NotDispatchedReason = 2
 	// The daemon serves another protocol number.
 	NotDispatchedReason_NOT_DISPATCHED_REASON_PROTOCOL NotDispatchedReason = 3
@@ -176,7 +176,10 @@ const (
 	// The provider's current isolation evidence is below the request's floor.
 	NotDispatchedReason_NOT_DISPATCHED_REASON_ISOLATION NotDispatchedReason = 5
 	// Shed by admission or a rate limit; retry later or elsewhere.
-	NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY    NotDispatchedReason = 6
+	NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY NotDispatchedReason = 6
+	// The selected software cannot meet the caller's rule, or the sandbox a call
+	// was to run in could not be shown to be the one stated (an interpreter that
+	// could not start, a session's read-back that failed).
 	NotDispatchedReason_NOT_DISPATCHED_REASON_ENVIRONMENT NotDispatchedReason = 7
 )
 
@@ -2170,6 +2173,15 @@ type OpenSessionRequest struct {
 	LifetimeMs    uint32        `protobuf:"varint,4,opt,name=lifetime_ms,json=lifetimeMs,proto3" json:"lifetime_ms,omitempty"`
 	IdleTimeoutMs uint32        `protobuf:"varint,5,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3" json:"idle_timeout_ms,omitempty"`
 	SoftwareRule  *SoftwareRule `protobuf:"bytes,6,opt,name=software_rule,json=softwareRule,proto3" json:"software_rule,omitempty"`
+	// The languages the caller expects its cells to use ("javascript", "python"): a
+	// hint. A daemon with a warm pool hands over a sandbox whose interpreters for them
+	// are already running, and keeps more of those ready as callers ask for them. It
+	// changes latency, never behavior: a cell in any language Describe states still
+	// runs, and a language the session environment does not state is dropped from the
+	// hint. A language plimsoll does not know is InvalidArgument, not dispatched.
+	// Informational, so it did not move the protocol number: a daemon that predates it
+	// drops it.
+	Languages     []string `protobuf:"bytes,7,rep,name=languages,proto3" json:"languages,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2242,6 +2254,13 @@ func (x *OpenSessionRequest) GetIdleTimeoutMs() uint32 {
 func (x *OpenSessionRequest) GetSoftwareRule() *SoftwareRule {
 	if x != nil {
 		return x.SoftwareRule
+	}
+	return nil
+}
+
+func (x *OpenSessionRequest) GetLanguages() []string {
+	if x != nil {
+		return x.Languages
 	}
 	return nil
 }
@@ -3164,7 +3183,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\aoutcome\x18\x05 \x01(\x0e2\x1b.plimsoll.v1.ProjectOutcomeR\aoutcome\x12%\n" +
 	"\x0eoutcome_detail\x18\x06 \x01(\tR\routcomeDetail\x12\x16\n" +
 	"\x06stdout\x18\a \x01(\fR\x06stdout\x12\x16\n" +
-	"\x06stderr\x18\b \x01(\fR\x06stderr\"\x81\x02\n" +
+	"\x06stderr\x18\b \x01(\fR\x06stderr\"\x9f\x02\n" +
 	"\x12OpenSessionRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
@@ -3172,7 +3191,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\vlifetime_ms\x18\x04 \x01(\rR\n" +
 	"lifetimeMs\x12&\n" +
 	"\x0fidle_timeout_ms\x18\x05 \x01(\rR\ridleTimeoutMs\x12>\n" +
-	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\"\x83\x02\n" +
+	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12\x1c\n" +
+	"\tlanguages\x18\a \x03(\tR\tlanguages\"\x83\x02\n" +
 	"\x13OpenSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +

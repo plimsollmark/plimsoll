@@ -165,6 +165,11 @@ const usageLimits = `
                              included (default 0: no cap beyond
                              SANDBOX_MAX_SESSIONS; required in hardened mode
                              with sessions on)
+  SANDBOX_SESSION_POOL       sandboxes kept ready for sessions (default 0: none;
+                             at most SANDBOX_MAX_SESSIONS; docker only). Each is
+                             never used, has its interpreters already running,
+                             goes to one session and is removed when it closes,
+                             never reused; an idle one is replaced after 30m.
   SANDBOX_SESSION_LIFETIME   a session's absolute lifetime (default 30m, at most
                              12h); a request may ask for less
   SANDBOX_SESSION_IDLE       suspend a session idle this long (default 5m; 0 =
@@ -266,7 +271,11 @@ func main() {
 	maxConcurrent, perKey, ratePerMin, burst := lc.MaxConcurrent, lc.PerKey, lc.RatePerMin, lc.Burst
 	svc.Limiter = rpc.NewCodeLimiter(maxConcurrent, perKey, ratePerMin, burst)
 
+	var poolSize int
 	sc, err := loadSessionConfig(os.Getenv)
+	if err == nil {
+		poolSize, err = loadSessionPool(os.Getenv, sc)
+	}
 	if err != nil {
 		slog.Error("invalid session configuration", "error", err)
 		os.Exit(1)
@@ -276,6 +285,24 @@ func main() {
 		if !ok || !sp.SupportsSessions() {
 			slog.Error("SANDBOX_MAX_SESSIONS is set but the provider keeps no sessions", "provider", sb.Name())
 			os.Exit(1)
+		}
+		// The pool starts first, so the session the smoke test opens is a claimed
+		// member: the warm path is the one startup proves.
+		if poolSize > 0 {
+			// The admission wrapper always has the method; a provider without a pool
+			// answers ErrUnsupported through it.
+			pool, ok := sb.(sandbox.SessionPool)
+			if !ok {
+				slog.Error("SANDBOX_SESSION_POOL is set but the provider keeps no session pool", "provider", sb.Name())
+				os.Exit(1)
+			}
+			poolCtx, cancelPool := context.WithTimeout(context.Background(), 3*time.Minute)
+			err := pool.StartSessionPool(poolCtx, poolSize, sc.Lifetime)
+			cancelPool()
+			if err != nil {
+				slog.Error("the session pool could not start; refusing to serve", "provider", sb.Name(), "error", err)
+				os.Exit(1)
+			}
 		}
 		// What only a session does (the sweep between calls, a suspend and its resume,
 		// an interpreter kept across calls, a close) is proven here, by one real
@@ -287,7 +314,7 @@ func main() {
 			slog.Error("sessions are not ready; refusing to serve", "provider", sb.Name(), "error", err)
 			os.Exit(1)
 		}
-		slog.Info("sessions enabled", "max_sessions", sc.MaxSessions, "max_sessions_per_caller", sc.MaxPerCaller,
+		slog.Info("sessions enabled", "max_sessions", sc.MaxSessions, "max_sessions_per_caller", sc.MaxPerCaller, "pool", poolSize,
 			"lifetime", sc.Lifetime.String(), "idle", sc.IdleTimeout.String(), "disk_mb", sc.DiskBytes>>20)
 		if sb.Name() == "docker" && sc.MaxSessions >= maxConcurrent {
 			slog.Warn("SANDBOX_MAX_SESSIONS is at least SANDBOX_MAX_CONCURRENT: a paused docker session keeps its slot, so open sessions can leave no slot for single runs",

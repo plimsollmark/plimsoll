@@ -105,7 +105,9 @@ func sessionJS(t *testing.T, s sandbox.Session, code string) (sandbox.Result, er
 	return s.RunJavaScript(ctx, sandbox.Request{Code: code, Timeout: 10 * time.Second})
 }
 
-// sessionContainer names the one session container whose files hold marker.
+// sessionContainer names the one session container whose files hold marker. The
+// sweep after a call runs off the caller's path and kills every process it does not
+// keep, a probe exec'd from the host included (exit 137), so a killed probe is retried.
 func sessionContainer(t *testing.T, s sandbox.Session, marker string) string {
 	t.Helper()
 	if _, err := sessionJS(t, s, `require("fs").writeFileSync("/tmp/`+marker+`","1")`); err != nil {
@@ -116,8 +118,16 @@ func sessionContainer(t *testing.T, s sandbox.Session, marker string) string {
 		t.Fatal(err)
 	}
 	for _, name := range strings.Fields(string(out)) {
-		if exec.Command("docker", "exec", name, "test", "-e", "/tmp/"+marker).Run() == nil {
-			return name
+		for try := 0; ; try++ {
+			err := exec.Command("docker", "exec", name, "test", "-e", "/tmp/"+marker).Run()
+			if err == nil {
+				return name
+			}
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 137 || try == 20 {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 	t.Fatal("no session container holds the marker")

@@ -236,6 +236,15 @@ test("cells run in the session's interpreter and chain with its other calls", { 
   assert.equal((await s.close()).calls, 3n);
 });
 
+test("a language hint is sent and checked", { skip }, async () => {
+  // The daemon parses the field (an unknown one would fail the open); the fake states
+  // no languages, so only the client's check refuses.
+  const s = await sessions.openSession({ languages: ["python", "javascript", "python"] });
+  assert.equal((await s.runCell({ language: "python", code: "1" })).stdout, "python 1: 1");
+  await s.close();
+  await assert.rejects(sessions.openSession({ languages: ["cobol" as never] }), { code: "invalid_argument", notDispatched: "request" });
+});
+
 test("concurrent calls on one session are serialized and keep the chain", { skip }, async () => {
   const s = await sessions.openSession();
   const results = await Promise.all([1, 2, 3, 4].map((n) => s.runJavaScript(String(n))));

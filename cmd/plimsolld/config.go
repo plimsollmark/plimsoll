@@ -389,6 +389,25 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 	return rpc.SessionConfig{MaxSessions: max, MaxPerCaller: perCaller, Lifetime: lifetime, IdleTimeout: idle, DiskBytes: int64(diskMB) << 20}, nil
 }
 
+// loadSessionPool reads SANDBOX_SESSION_POOL, the sandboxes kept ready for sessions:
+// default 0, off, because each one is a running container holding host memory. It
+// cannot exceed SANDBOX_MAX_SESSIONS (more could never all be claimed at once) and
+// needs sessions on.
+func loadSessionPool(getenv func(string) string, sc rpc.SessionConfig) (int, error) {
+	n, err := envIntWith(getenv, "SANDBOX_SESSION_POOL", 0)
+	switch {
+	case err != nil:
+		return 0, err
+	case n < 0:
+		return 0, fmt.Errorf("SANDBOX_SESSION_POOL=%d must not be negative", n)
+	case n > 0 && sc.MaxSessions == 0:
+		return 0, fmt.Errorf("SANDBOX_SESSION_POOL=%d needs sessions on (SANDBOX_MAX_SESSIONS)", n)
+	case n > sc.MaxSessions:
+		return 0, fmt.Errorf("SANDBOX_SESSION_POOL=%d must not exceed SANDBOX_MAX_SESSIONS=%d", n, sc.MaxSessions)
+	}
+	return n, nil
+}
+
 // envDurationWith reads a Go duration ("30m", "90s") the way envIntWith reads an int.
 func envDurationWith(getenv func(string) string, key string, def time.Duration) (time.Duration, error) {
 	v := strings.TrimSpace(getenv(key))
