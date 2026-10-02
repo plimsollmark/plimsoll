@@ -45,7 +45,9 @@ func TestAFailedSessionCallKeepsTheCallsItBrokered(t *testing.T) {
 	fw := withForwarding(t, f)
 	up, calls := liveUpstream(t)
 	sc.payload = brokeredThenLost(fw)
-	res, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1", Grant: grantFor(up.URL)})
+	grant := grantFor(up.URL)
+	grant.AllowInSessions = true // a session call needs a grant that allows sessions
+	res, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1", Grant: grant})
 	if err == nil {
 		t.Fatal("a session call whose stream ended without an exit status succeeded")
 	}

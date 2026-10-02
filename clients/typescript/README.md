@@ -70,6 +70,12 @@ the code runs, so the model can hand the code another tool's output by path inst
 pasting it into the source. The value of the code's last expression is printed, as in a
 notebook.
 
+Every call of a conversation runs in the same sandbox, so code one call ran can change what
+later calls see: a call's output is only as trustworthy as the calls before it in that
+conversation
+([what a session gives up](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#what-a-session-gives-up)).
+The tool's calls are cells, which carry no grant, so no API access is shared between them.
+
 `CodeSandboxes` keeps one sandbox per conversation key. With `sessions: "auto"` (the
 default) it asks the daemon once whether it keeps sessions:
 

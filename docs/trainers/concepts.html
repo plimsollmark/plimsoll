@@ -607,6 +607,10 @@
       <div><p>The caller that opened it, and nobody else. The session ID is treated as a secret: an unknown ID and another caller's ID get the same refusal, and the ID is never logged. Calls run one at a time, in order.</p></div>
     </details>
     <details>
+      <summary>What a session gives up <span class="what">calls share a sandbox</span></summary>
+      <div><p>The wall around the code is a run's. What changes is how separate one call is from the next. Code a call runs can change the interpreter, leave a timer running or rewrite files, so a call's result is only as trustworthy as every call before it in the session; after a call that ran code you do not trust, open a new session. While a call with API access runs, anything an earlier call left running can use that access too, so a session refuses such a call before anything runs unless its profile sets <code>allow_in_sessions</code>. Code also gets the whole session lifetime, not one run's timeout, to probe the sandbox.</p></div>
+    </details>
+    <details>
       <summary>When it ends, and when it sleeps <span class="what">typed, like a refusal</span></summary>
       <div><p>At its lifetime (<code>SANDBOX_SESSION_LIFETIME</code>), past its disk budget, when code kills the sandbox's main process, when the sandbox changed under it, when the cleanup between calls cannot prove it clean, when the daemon shuts down, or when its owner closes it. A call on an ended session is refused before dispatch with <code>ErrSessionEnded</code>, and <code>SessionEndedError</code> says why. An idle session (<code>SANDBOX_SESSION_IDLE</code>) is suspended, not deleted. On <code>openshell</code> its sandbox is stopped: the files stay, the interpreters end, and the session gives back its admission slot. On <code>docker</code> the container is paused (<code>docker pause</code>): files, interpreters and memory stay, so the session keeps its slot.</p></div>
     </details>

@@ -265,6 +265,11 @@ type profileConfig struct {
 	// workload that is a loop by design, such as a controller stepping a plant one
 	// call per tick; the sandbox package caps it at its ceiling (100,000).
 	MaxCalls int `json:"max_calls"`
+	// AllowInSessions lets a call inside a session use this profile. Off by default:
+	// in a session, code an earlier call left running can use the grant while a later
+	// call that selected it runs, so an operator turns it on only for a profile whose
+	// API access may be shared that way.
+	AllowInSessions bool `json:"allow_in_sessions"`
 
 	// PreambleFile points at a .js file (relative to the grants file) to use as the
 	// preamble, for SDKs too large to inline. Mutually exclusive with Preamble.
@@ -419,14 +424,15 @@ func Load(path string) (*Registry, error) {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
 		}
 		grant := &sandbox.HostAPIGrant{
-			BaseURL:     pc.BaseURL,
-			Allow:       allow,
-			Scopes:      pc.Scopes,
-			Global:      pc.Global,
-			Preamble:    preamble,
-			Minter:      minter,
-			HealthCheck: health,
-			MaxCalls:    pc.MaxCalls,
+			BaseURL:         pc.BaseURL,
+			Allow:           allow,
+			Scopes:          pc.Scopes,
+			Global:          pc.Global,
+			Preamble:        preamble,
+			Minter:          minter,
+			HealthCheck:     health,
+			MaxCalls:        pc.MaxCalls,
+			AllowInSessions: pc.AllowInSessions,
 		}
 		if err := grant.Validate(); err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)

@@ -151,7 +151,7 @@
       </div>
     </div>
     <div class="card warn">
-      <h3>Inside a docker session, the line serves the call in progress</h3>
+      <h3>Inside a session, a grant needs the profile's permission</h3>
       <p>A <dfn>session</dfn> keeps one sandbox open for many calls. A <dfn>cell</dfn>, code
       the session runs in an interpreter it keeps alive between calls, carries no grant at
       all: the interpreter outlives the call, and its code with it. A snippet or project call
@@ -160,9 +160,11 @@
       opens. The socket serves a call's grant only while that call runs, and answers 503
       between calls and to a call without a grant. While it serves a grant, it serves
       anything in the container, so code an earlier call left running (a timer inside an
-      interpreter, a process it started between calls) can use a later call's grant. Every
-      call of a session comes from one caller, so the grant is lent only to that caller's
-      own earlier code; a call that must not lend its grant runs outside a session.</p>
+      interpreter, a process it started between calls) can use a later call's grant. On
+      <code>openshell</code> the relay a granted call starts inside the sandbox can be
+      reached the same way. So a session refuses a granted call before anything runs unless
+      its profile sets <code>allow_in_sessions</code>; turn that on only for an API whose
+      access may be shared with every call of the session.</p>
     </div>
   </section>
 

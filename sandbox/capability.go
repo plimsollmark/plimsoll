@@ -81,6 +81,26 @@ type HostAPIGrant struct {
 	// broker, one call per tick), never above MaxHostCallsCeiling, so a run can
 	// still not make an unbounded number of upstream requests.
 	MaxCalls int
+	// AllowInSessions permits the grant on a call inside a session. It is off by
+	// default because a grant is a per-call permission and a session keeps code alive
+	// between calls: while the call runs, anything an earlier call of the session left
+	// running can use the grant too. A session refuses a granted call without it before
+	// anything runs (CheckSessionGrant).
+	AllowInSessions bool
+}
+
+// ErrGrantNotForSessions is a granted call inside a session whose grant does not set
+// AllowInSessions. It is refused before anything runs.
+var ErrGrantNotForSessions = errors.New("sandbox: the grant does not allow calls in a session")
+
+// CheckSessionGrant is the check every session provider makes before a call that may
+// carry a grant: nil without a grant or when the grant allows sessions, otherwise a
+// refusal marked not dispatched, reason permission.
+func CheckSessionGrant(g *HostAPIGrant) error {
+	if g == nil || g.AllowInSessions {
+		return nil
+	}
+	return NotDispatched(RefusalPermission, fmt.Errorf("%w: code an earlier call of the session left running could use it while this call runs; allow_in_sessions on the grant's profile accepts that, or make the call outside a session", ErrGrantNotForSessions))
 }
 
 // DefaultMaxHostCalls is a run's brokered-call budget when its grant sets none.

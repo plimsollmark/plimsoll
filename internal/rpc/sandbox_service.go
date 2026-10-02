@@ -881,6 +881,8 @@ func sandboxErrCode(err error) connect.Code {
 		return connect.CodeDeadlineExceeded
 	case errors.Is(err, sandbox.ErrDisabled), errors.Is(err, sandbox.ErrInsufficientIsolation), errors.Is(err, sandbox.ErrSoftwareMismatch), errors.Is(err, sandbox.ErrSessionEnded):
 		return connect.CodeFailedPrecondition
+	case errors.Is(err, sandbox.ErrGrantNotForSessions):
+		return connect.CodePermissionDenied
 	case errors.Is(err, sandbox.ErrUnsupported):
 		return connect.CodeUnimplemented
 	case errors.Is(err, sandbox.ErrAtCapacity):

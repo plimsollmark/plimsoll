@@ -49,6 +49,14 @@ never as a placeholder, and the daemon logs a warning naming each such profile a
 startup. No caller can present `*` as its own ID: the daemon's caller check refuses that
 ID.
 
+A profile is off limits to calls inside a
+[session (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#session),
+one sandbox kept for many calls, unless it sets `"allow_in_sessions":
+true`. In a session, code an earlier call left running can use the grant while a later
+call that selected it runs, so a session refuses such a call before anything runs
+([sessions.md](sessions.md#what-a-session-gives-up)). Set it only for an API whose access
+may be shared with every call of a session.
+
 ### The policy and the tool description are generated from one source
 
 Three things describe the same set of API routes, and in every setup where they are kept

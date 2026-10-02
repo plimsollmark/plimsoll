@@ -132,9 +132,11 @@ func TestOpenShellGrantSessionLive(t *testing.T) {
 	p := liveProvider(t, nil)
 	up, _ := liveUpstream(t)
 	s := openLive(t, p, sandbox.SessionOptions{Lifetime: 2 * time.Minute})
+	grant := liveGrant(up.URL)
+	grant.AllowInSessions = true // a session call needs a grant that allows sessions
 	res, err := s.RunJavaScript(context.Background(), sandbox.Request{
 		Code:  `(async () => { console.log(JSON.stringify(await host.get("/items/9"))); })()`,
-		Grant: liveGrant(up.URL),
+		Grant: grant,
 	})
 	if err != nil || !strings.Contains(res.Stdout, `"authorized":true`) {
 		t.Fatalf("a granted session call: %+v, %v", res, err)

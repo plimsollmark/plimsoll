@@ -54,6 +54,7 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		{"CellFilesLandInTheWorkDirectory", cellFiles},
 		{"CellFilesThatCannotBeWrittenAreRefused", cellFilesRefused},
 		{"KilledInterpreterIsStartedAgain", cellInterpreterKilled},
+		{"GrantedCallNeedsAGrantThatAllowsSessions", grantNeedsSessionOptIn},
 	} {
 		t.Run(c.name, func(t *testing.T) { c.run(t, p, cfg) })
 	}
@@ -262,6 +263,30 @@ if(c.includes("plimsoll-interp/javascript")&&+d!==process.pid)try{process.kill(+
 	got := cell(t, s, sandbox.LanguageJavaScript, "typeof marker", 30*time.Second)
 	if !got.InterpreterStarted || strings.TrimSpace(got.Stdout) != "'undefined'" {
 		t.Fatalf("after its interpreter was killed a cell got %+v, want a fresh interpreter", got)
+	}
+}
+
+// A granted call inside a session is refused before anything runs unless its grant
+// allows sessions, since code an earlier call left running could use the grant while
+// the call runs; the session goes on.
+func grantNeedsSessionOptIn(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	grant := &sandbox.HostAPIGrant{BaseURL: "https://api.example.com", Allow: []sandbox.HostRoute{{Method: "GET", Path: "/v1/items"}},
+		Minter: sandbox.StaticToken("plimsoll-conformance")}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	_, jsErr := s.RunJavaScript(ctx, sandbox.Request{Code: `require("fs").writeFileSync("granted-snippet-ran", "1")`, Timeout: 10 * time.Second, Grant: grant})
+	_, projectErr := s.RunProject(ctx, sandbox.ProjectRequest{Files: []sandbox.File{{Path: "a.js", Content: `require("fs").writeFileSync("granted-project-ran", "1")`}},
+		Steps: []string{"node a.js"}, Timeout: 30 * time.Second, Grant: grant})
+	for name, err := range map[string]error{"snippet": jsErr, "project": projectErr} {
+		reason, ok := sandbox.NotDispatchedReason(err)
+		if !errors.Is(err, sandbox.ErrGrantNotForSessions) || !ok || reason != sandbox.RefusalPermission {
+			t.Fatalf("a granted %s whose grant does not allow sessions: %v (reason %v, marked %v); want refused, permission", name, err, reason, ok)
+		}
+	}
+	got := strings.TrimSpace(js(t, s, `const fs = require("fs"); console.log(fs.existsSync("granted-snippet-ran") || fs.existsSync("granted-project-ran"))`, 10*time.Second).Stdout)
+	if got != "false" {
+		t.Fatalf("a refused granted call ran (a file it writes exists: %s)", got)
 	}
 }
 

@@ -315,8 +315,10 @@ func (s *session) admit(ctx context.Context, grant *sandbox.HostAPIGrant, floor 
 	if err := sandbox.CheckMinimumIsolation(s.tier, floor); err != nil {
 		return err
 	}
-	_, err := s.p.ready(ctx, grant, floor)
-	return err
+	if _, err := s.p.ready(ctx, grant, floor); err != nil {
+		return err
+	}
+	return sandbox.CheckSessionGrant(grant)
 }
 
 // prepare runs with the turn held, before a call: it starts a stopped sandbox, then

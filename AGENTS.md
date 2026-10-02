@@ -211,7 +211,12 @@ locked-down container from the project image kept alive under docker's init, eve
 still held and the daemon keeps the session's concurrency slot; its read-back before each
 call compares the security-relevant `docker inspect` fields with open; its broker socket is
 mounted at open and serves only the grant of the call in progress, to anything in the
-container, code an earlier call left running included (one caller per session).
+container, code an earlier call left running included; an OpenShell session's granted call
+starts its relay in the sandbox, reachable the same way. So a granted session call needs a
+grant that allows sessions (`HostAPIGrant.AllowInSessions`, a profile's
+`allow_in_sessions`; Carroll, 2026-10-01), or both providers refuse it before dispatch
+(`ErrGrantNotForSessions`, reason `permission`, `PermissionDenied` over RPC).
+[docs/sessions.md](docs/sessions.md#what-a-session-gives-up) says what a session gives up.
 Over RPC the procedures are `OpenSession`, `SessionRun` (its own request message, so a
 daemon that predates sessions refuses it instead of dropping the ID) and `CloseSession`;
 the daemon binds each 128-bit session ID to its principal (an unknown and a foreign ID are
@@ -589,7 +594,8 @@ mutate a loaded profile for later runs. The caller can only *select* a profile â
 BaseURL, allowed routes, and the token all live server-side. A raw caller-supplied
 grant is intentionally **not** accepted over the wire. Every profile also requires
 an `allowed_callers` ACL of authenticated principal IDs; `code:run` alone does not
-grant downstream capabilities. Each profile's `token` config
+grant downstream capabilities. A profile serves calls inside a session only with
+`allow_in_sessions: true`. Each profile's `token` config
 chooses how the credential is produced: `static` (one shared bearer from an env var)
 or `jwt` (a fresh short-lived HS256 JWT minted per run with the calling principal as
 `sub` and the profile's scopes as a `scope` claim â€” the per-session model; the RPC

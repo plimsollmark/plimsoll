@@ -379,8 +379,13 @@ func TestSessionFloorAndInvalidGrantAreRefusedBeforeTheTurn(t *testing.T) {
 	if !errors.Is(err, sandbox.ErrInvalidRequest) {
 		t.Fatalf("an invalid grant: %v", err)
 	}
+	valid := &sandbox.HostAPIGrant{BaseURL: "https://api.example.com", Allow: []sandbox.HostRoute{{Method: "GET", Path: "/v1/items"}}, Minter: sandbox.StaticToken("t")}
+	_, err = s.RunJavaScript(context.Background(), sandbox.Request{Code: "1", Grant: valid})
+	if reason, _ := sandbox.NotDispatchedReason(err); !errors.Is(err, sandbox.ErrGrantNotForSessions) || reason != sandbox.RefusalPermission {
+		t.Fatalf("a grant that does not allow sessions: %v", err)
+	}
 	if got := sc.seen(); !slices.Equal(got, []string{"list"}) {
-		t.Fatalf("execs after two refusals: %v", got)
+		t.Fatalf("execs after three refusals: %v", got)
 	}
 }
 

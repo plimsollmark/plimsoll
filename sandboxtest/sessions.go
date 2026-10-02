@@ -136,6 +136,9 @@ func (s *FakeSession) RunJavaScript(_ context.Context, req sandbox.Request) (san
 	if err := s.Err(); err != nil {
 		return sandbox.Result{}, sandbox.RefuseEndedSession(err)
 	}
+	if err := sandbox.CheckSessionGrant(req.Grant); err != nil {
+		return sandbox.Result{}, err
+	}
 	s.mu.Lock()
 	s.calls++
 	n := s.calls
@@ -145,9 +148,12 @@ func (s *FakeSession) RunJavaScript(_ context.Context, req sandbox.Request) (san
 }
 
 // RunProject completes every project with no steps.
-func (s *FakeSession) RunProject(context.Context, sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
+func (s *FakeSession) RunProject(_ context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
 	if err := s.Err(); err != nil {
 		return sandbox.ProjectResult{}, sandbox.RefuseEndedSession(err)
+	}
+	if err := sandbox.CheckSessionGrant(req.Grant); err != nil {
+		return sandbox.ProjectResult{}, err
 	}
 	return sandbox.ProjectResult{Sandbox: "fake-sessions", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted}, nil
 }

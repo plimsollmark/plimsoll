@@ -287,6 +287,8 @@ func TestDockerSessionGrantLivesForItsCall(t *testing.T) {
 		BaseURL: upstream.URL,
 		Allow:   []sandbox.HostRoute{{Method: "GET", Path: "/items/*"}},
 		Minter:  sandbox.StaticToken("session-grant-token"),
+		// A session call needs a grant that allows sessions.
+		AllowInSessions: true,
 	}
 	s := openDockerSession(t, d)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

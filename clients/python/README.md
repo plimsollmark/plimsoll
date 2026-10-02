@@ -81,6 +81,9 @@ Terms used below:
 - A *session* is one sandbox kept open for many calls: files persist between calls, and
   no process does except the interpreter the session keeps for its cells
   ([docs/sessions.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md)).
+  Code an earlier call ran can change what later calls see, and a call that names a
+  `grant_profile` needs a profile that allows sessions
+  ([what a session gives up](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#what-a-session-gives-up)).
 
 Results are frozen dataclasses. Guest output (`stdout`, `stderr`, artifact contents) is
 `bytes`, because a guest can print any byte sequence and the record covers the exact

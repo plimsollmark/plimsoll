@@ -21,6 +21,35 @@ A working example with a signed chain of records:
 [One sandbox, five calls ↗](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html),
 written by `go run ./examples/sessions`.
 
+## What a session gives up
+
+A session trades the fresh sandbox of every run for speed and kept state. The wall around
+the code does not change: the same isolation, no network, the same resource limits, all
+enforced from outside the sandbox. What changes is how separate one call is from the next.
+
+- **Earlier calls shape later ones.** Code a call runs can change the interpreter (replace
+  a function, patch a library), leave a timer running, or rewrite files, and every later
+  call of the session runs with those changes. A call's result is only as trustworthy as
+  every call before it in the session. If one call ran code you do not trust, such as code
+  an agent wrote after reading an untrusted web page, treat the rest of the session the same
+  way, or open a new one. A run record proves what was sent and what came back, not that
+  the interpreter was untouched.
+- **API access is shared with what is already running.** A <dfn>*grant*</dfn>, the
+  permission that lets a call reach chosen routes of an HTTP API without the credential
+  entering the sandbox, can be used while its call runs by anything an earlier call of the
+  session left running. So a session refuses a call with a grant, before anything runs,
+  unless the grant allows sessions: `allow_in_sessions` on its profile
+  ([capability-grants.md](capability-grants.md)), `HostAPIGrant.AllowInSessions` in Go.
+  The refusal is `PermissionDenied`, marked not dispatched with reason `permission`
+  (`sandbox.ErrGrantNotForSessions`). Turn it on only for an API whose access may be shared
+  with every call of the session.
+- **A longer foothold.** Code has the session's lifetime (30 minutes by default, 12 hours
+  at most) to probe the sandbox, instead of one run's timeout, so for code you do not trust
+  choose the strongest sandbox you can run.
+- **The cleanup between calls is housekeeping.** It runs inside the sandbox, where the
+  session's own code can interfere with it, and the interpreters it keeps run between calls
+  by design. It keeps a session tidy; it is not part of the isolation.
+
 ## Which providers
 
 A <dfn>*provider*</dfn>, the backend that actually runs the code, offers sessions
@@ -153,10 +182,9 @@ interpreter per language, a Python or Node.js process that stays alive between c
   cell stuck in a loop cannot be trusted to stop), code that exits it or kills it, and
   anything that stops the sandbox: an `openshell` suspend or recovery. A docker pause
   keeps it. The next cell then starts a fresh one and says so.
-- **No API access.** A cell carries no <dfn>*grant*</dfn>, the permission that lets a call
-  reach chosen routes of an HTTP API without the credential entering the sandbox: the
-  interpreter outlives the call, and its code with it. A snippet or project call in the
-  same session can use one, with the limit under **API access** below.
+- **No API access.** A cell carries no grant: the interpreter outlives the call, and its
+  code with it. A snippet or project call in the same session can carry one if the grant
+  allows sessions ([above](#what-a-session-gives-up)).
 - **Which languages.** `Describe` states the languages its startup checks proved, on the
   project environment (`languages`). JavaScript is always there; Python needs `python3` in
   the image, as `plimsoll/sandbox-python` has (with NumPy and SciPy). A cell in a language
@@ -262,9 +290,8 @@ A docker session is the container a project run gets, kept for the session:
   only while that call runs; between calls, and in a call without a grant, the socket
   answers 503. While it serves a grant it serves anything in the container, so code an
   earlier call left running (a timer in an interpreter, a process started after the
-  sweep) can use a later call's grant. Every call of a session comes from one caller under
-  one software rule, so this lends a grant to that caller's own earlier code and to no
-  one else; a call that must not lend its grant runs outside a session.
+  sweep) can use a later call's grant. That is why a granted call needs a grant that
+  allows sessions ([What a session gives up](#what-a-session-gives-up)).
 - **Cleanup.** The container is removed when the session ends. A container a crashed
   daemon left behind carries its lifetime as a label, and a running daemon removes it once
   that lifetime plus 5 minutes has passed.

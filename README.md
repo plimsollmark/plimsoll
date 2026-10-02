@@ -168,7 +168,10 @@ reaches the network directly. A run with no grant has no network at all.
 
 Each tier rests on the daemon's configuration, what the provider reports, and a real test
 run at startup; none is attestation. [docs/isolation-tiers.md](docs/isolation-tiers.md)
-lists the evidence for each tier and shows how a request sets its floor. The docker
+lists the evidence for each tier and shows how a request sets its floor. A session trades
+the fresh sandbox of every call for speed and kept state: code an earlier call ran can
+change what later calls see, and a call with API access needs a grant that allows sessions
+([docs/sessions.md](docs/sessions.md#what-a-session-gives-up)). The docker
 provider can also apply the shipped <dfn>*seccomp*</dfn> profile, a list of the only
 <dfn>*system calls*</dfn> (requests to the kernel, such as opening a file) its containers
 may make ([docs/seccomp.md](docs/seccomp.md)).

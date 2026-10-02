@@ -487,3 +487,34 @@ func TestOpenToEveryCallerNamesWildcardProfiles(t *testing.T) {
 		t.Fatalf("OpenToEveryCaller = %v, want [shared]", got)
 	}
 }
+
+// A profile is off limits to calls inside a session unless it says otherwise, and the
+// setting reaches the grant every dispatch gets.
+func TestLoadAllowInSessions(t *testing.T) {
+	t.Setenv("HUE_TOKEN", "tok-123")
+	body := func(extra string) string {
+		return `{
+	  "profiles": {
+	    "lights": {
+	      "base_url": "https://hue.internal",
+	      "allow": ["GET /v1/lights"],
+	      "allowed_callers": ["mcp-a"],
+	      "token": {"type": "static", "env": "HUE_TOKEN"}` + extra + `
+	    }
+	  }
+	}`
+	}
+	for _, c := range []struct {
+		extra string
+		want  bool
+	}{{"", false}, {`, "allow_in_sessions": false`, false}, {`, "allow_in_sessions": true`, true}} {
+		r, err := Load(writeGrants(t, body(c.extra)))
+		if err != nil {
+			t.Fatalf("load %q: %v", c.extra, err)
+		}
+		p, _ := r.Get("lights")
+		if got := p.Grant().AllowInSessions; got != c.want {
+			t.Errorf("%q: AllowInSessions = %v, want %v", c.extra, got, c.want)
+		}
+	}
+}

@@ -244,6 +244,12 @@ v0.1.2 gateway with the docker driver:
   does not wait: it ends the session and deletes the sandbox, which stops the sweep with
   everything else in it.
 
+- **Grants in a session.** A granted session call starts its relay, the in-sandbox end of
+  the grant's connection, as one of the call's processes, and the sweep after the call
+  ends it. While the call runs, anything an earlier call left running can connect to the
+  relay too, as on docker, so a granted call needs a grant that allows sessions
+  ([sessions.md](sessions.md#what-a-session-gives-up)).
+
   The budget is measured after the call, not enforced during it: `SANDBOX_DISK_MB` sizes
   a run's `/tmp` but never a session's, because docker discards a tmpfs when its
   container stops, and suspending a session stops it (measured on v0.1.2: a file written

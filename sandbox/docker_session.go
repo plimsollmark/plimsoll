@@ -690,6 +690,9 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 	if err := s.admit(req.MinimumIsolation, req.Software); err != nil {
 		return fail, err
 	}
+	if err := CheckSessionGrant(req.Grant); err != nil {
+		return fail, err
+	}
 	timeout := s.d.snippetTimeout(req.Timeout)
 	end, err := s.begin(ctx)
 	if err != nil {
@@ -746,6 +749,9 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 		return fail, err
 	}
 	if err := s.admit(req.MinimumIsolation, req.Software); err != nil {
+		return fail, err
+	}
+	if err := CheckSessionGrant(req.Grant); err != nil {
 		return fail, err
 	}
 	timeout := s.d.projectTimeout(req.Timeout)
