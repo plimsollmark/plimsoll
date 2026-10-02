@@ -25,6 +25,18 @@ test("a thread keeps one sandbox; another thread or user gets its own", { skip }
   await sandboxes.disposeAll();
 });
 
+// The key holds both IDs unambiguously: joined with a separator, a resource ending in
+// it and a thread starting with it would name another user's sandbox.
+test("IDs holding the key's separator do not reach another user's sandbox", { skip }, async () => {
+  const { executeCode, sandboxes } = plimsollExecuteCode({ client: new PlimsollClient({ baseUrl: url! }) });
+  const nul = String.fromCharCode(0);
+  const run = (code: string, threadId: string, resourceId: string) =>
+    executeCode.execute!({ code, language: "python" }, { agent: { threadId, resourceId, toolCallId: "c", messages: [], agentId: "a", suspend: async () => {} } } as any);
+  assert.equal((await run("1", "c", `a${nul}b`)).stdout, "python 1: 1");
+  assert.equal((await run("2", `b${nul}c`, "a")).stdout, "python 1: 2", "another user's thread");
+  await sandboxes.disposeAll();
+});
+
 test("a call outside a thread never shares a sandbox", { skip }, async () => {
   const { executeCode } = plimsollExecuteCode({ client: new PlimsollClient({ baseUrl: url! }) });
   // The session fake refuses single runs: proof that no session was used.

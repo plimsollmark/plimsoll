@@ -13,9 +13,10 @@ export type PlimsollExecuteCodeOptions = CodeSandboxesOptions;
 // A thread id is unique only within its resource (the user), so the key is both, and a
 // call without either has no key and runs fresh. An empty resource would put every user
 // without one whose thread id collided into one sandbox, with each other's files and
-// variables.
+// variables. The pair is encoded as JSON, not joined with a separator: a resource ending
+// in the separator and a thread starting with it would name another user's key.
 const threadKey = (threadId: string | undefined, resourceId: string | undefined) =>
-  threadId && resourceId ? `${resourceId}\u0000${threadId}` : undefined;
+  threadId && resourceId ? JSON.stringify([resourceId, threadId]) : undefined;
 
 export function plimsollExecuteCode(opts: PlimsollExecuteCodeOptions) {
   const sandboxes = new CodeSandboxes(opts);

@@ -195,6 +195,44 @@ test("an answer holding two results is data loss", { skip }, async () => {
   });
 });
 
+// Whatever shape a broken or hostile daemon answers in, the caller gets a PlimsollError
+// saying the call may have run, never a TypeError from deep in the decoder.
+test("a malformed answer is data loss, not a raw error", { skip }, async () => {
+  const edits: [string, (b: any) => void][] = [
+    ["a number for output bytes", (b) => (b.javascript.stdout = 5)],
+    ["an object for a record time", (b) => (b.record.startedUnixMs = {})],
+    ["a string for the record", (b) => (b.record = "x")],
+    ["a number for the result", (b) => (b.javascript = 7)],
+    ["a list for the exit code", (b) => (b.javascript.exitCode = [1])],
+    ["an object for the provider", (b) => (b.record.provider = {})],
+  ];
+  const isDataLoss = (e: unknown) => e instanceof PlimsollError && e.code === "data_loss" && e.notDispatched === undefined;
+  for (const [name, edit] of edits) {
+    await assert.rejects(tampering(wasmUrl!, edit).runJavaScript("console.log(1)"), isDataLoss, name);
+  }
+  const s = await tampering(sessionsUrl!, (b) => {
+    if ("lastRecordSha256" in b) b.calls = "x";
+  }).openSession();
+  await s.runJavaScript("1");
+  await assert.rejects(s.close(), isDataLoss, "a close whose count is not a number");
+});
+
+test("an error answer in any shape is a PlimsollError with a known code", async () => {
+  const codes = ["canceled", "unknown", "invalid_argument", "deadline_exceeded", "not_found", "already_exists", "permission_denied", "resource_exhausted", "failed_precondition", "aborted", "out_of_range", "unimplemented", "internal", "unavailable", "data_loss", "unauthenticated"];
+  const bodies: unknown[] = [{ code: "internal", details: 5 }, { code: 7, message: {} }, { code: "bogus" }, { details: [null, 3, "x"] }, [1], "s"];
+  for (const body of bodies) {
+    const c = new PlimsollClient({
+      baseUrl: "http://127.0.0.1:9",
+      fetch: async () => new Response(JSON.stringify(body), { status: 500, headers: { "Content-Type": "application/json" } }),
+    });
+    await assert.rejects(
+      c.runJavaScript("1"),
+      (e: unknown) => e instanceof PlimsollError && codes.includes(e.code) && typeof e.message === "string" && e.notDispatched === undefined,
+      JSON.stringify(body),
+    );
+  }
+});
+
 test("a tier the record does not state is data loss", { skip }, async () => {
   const c = tampering(wasmUrl!, (b) => (b.isolation = "vm"));
   await assert.rejects(c.runJavaScript("console.log(1)"), { code: "data_loss" });
@@ -360,4 +398,37 @@ test("a queued call aborted before it is sent leaves the session usable", { skip
   await s.runJavaScript("3");
   await s.close();
   assert.equal(meets("vm", "bogus" as never), false);
+});
+
+// JSON can carry a lone surrogate as an escape, but no protobuf string can hold one, so
+// the daemon would refuse the request after it arrived, with no not-dispatched mark. The
+// client refuses it before anything is sent, marked, on every path.
+const refusedAsText = (e: unknown) => e instanceof PlimsollError && e.code === "invalid_argument" && e.notDispatched === "request";
+
+test("text that is not well-formed is refused before anything is sent", async () => {
+  const lone = String.fromCharCode(0xd800);
+  let sent = 0;
+  const c = new PlimsollClient({
+    baseUrl: "http://127.0.0.1:9",
+    fetch: async () => {
+      sent++;
+      return new Response("{}", { status: 500 });
+    },
+  });
+  await assert.rejects(c.runJavaScript("x" + lone), refusedAsText);
+  await assert.rejects(c.runProject({ files: [{ path: "a.js", content: lone }], steps: ["node a.js"] }), refusedAsText);
+  await assert.rejects(c.runProject({ files: [], steps: [lone] }), refusedAsText);
+  await assert.rejects(c.runJavaScript("1", { traceId: lone }), refusedAsText);
+  assert.equal(sent, 0);
+});
+
+test("a session refuses text that is not well-formed and goes on", { skip }, async () => {
+  const lone = String.fromCharCode(0xdfff);
+  const s = await sessions.openSession();
+  await assert.rejects(s.runJavaScript(lone), refusedAsText);
+  await assert.rejects(s.runCell({ language: "python", code: "1", files: [{ path: lone, content: "" }] }), refusedAsText);
+  assert.equal(s.stopped, undefined);
+  await s.runJavaScript("1");
+  assert.equal(s.chain.calls, 1n);
+  await s.close();
 });

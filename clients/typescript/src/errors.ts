@@ -207,12 +207,21 @@ function decodeRecord(b: Uint8Array): WireRecord {
 }
 
 /** The error a Connect error body describes, with its plimsoll details restored. */
+const CODES: ReadonlySet<string> = new Set<Code>([
+  "canceled", "unknown", "invalid_argument", "deadline_exceeded", "not_found", "already_exists", "permission_denied", "resource_exhausted",
+  "failed_precondition", "aborted", "out_of_range", "unimplemented", "internal", "unavailable", "data_loss", "unauthenticated",
+]);
+
+// The body is whatever the daemon sent, so each field is used only in the shape Connect
+// gives it, and a code outside Connect's set is "unknown".
 export function errorFromWire(httpStatus: number, body: WireError | undefined): PlimsollError {
-  const code = (body?.code as Code | undefined) ?? httpStatusCode(httpStatus);
+  const wire = body !== null && typeof body === "object" && !Array.isArray(body) ? body : undefined;
+  const code: Code = wire?.code === undefined ? httpStatusCode(httpStatus) : CODES.has(wire.code) ? (wire.code as Code) : "unknown";
+  const message = typeof wire?.message === "string" ? wire.message : `HTTP ${httpStatus}`;
   let notDispatched: Refusal | undefined;
   let sessionEnded: { reason: SessionEnd; detail: string } | undefined;
   let unanswered: WireRecord | undefined;
-  for (const d of body?.details ?? []) {
+  for (const d of Array.isArray(wire?.details) ? wire.details : []) {
     try {
       const bytes = Buffer.from(d.value ?? "", "base64");
       if (d.type === "plimsoll.v1.NotDispatched") {
@@ -227,7 +236,7 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined): 
       // An undecodable detail states nothing; in particular not that nothing ran.
     }
   }
-  return new PlimsollError(code, body?.message ?? `HTTP ${httpStatus}`, { notDispatched, sessionEnded, unanswered: notDispatched ? undefined : unanswered });
+  return new PlimsollError(code, message, { notDispatched, sessionEnded, unanswered: notDispatched ? undefined : unanswered });
 }
 
 // Connect's mapping for a response without a Connect error body.

@@ -382,6 +382,33 @@ type Payload =
   | { project: { files: ProjectRequest["files"]; steps: string[]; artifacts: string[]; grantProfile?: string } }
   | { cell: WireCellRun & { files: { path: string; content: string }[] } };
 
+// A lone surrogate has no UTF-8 form, so no protobuf string can hold one, though JSON
+// carries it as an escape: the daemon would refuse the request after it arrived, with
+// no not-dispatched mark. Every request is checked here before it is sent instead.
+function refuseIllFormed(v: unknown, at: string): void {
+  if (typeof v === "string") {
+    if (!v.isWellFormed()) {
+      throw new PlimsollError("invalid_argument", `plimsoll: ${at} is not well-formed text (a lone surrogate)`, { notDispatched: "request" });
+    }
+  } else if (Array.isArray(v)) {
+    v.forEach((x, i) => refuseIllFormed(x, `${at}[${i}]`));
+  } else if (v !== null && typeof v === "object") {
+    for (const [k, x] of Object.entries(v)) refuseIllFormed(x, `${at}.${k}`);
+  }
+}
+
+// Reads an answer the daemon gave. A broken or hostile daemon can answer in any shape, so
+// anything but a PlimsollError thrown while it is checked or decoded (a TypeError from a
+// number where bytes belong, say) is data loss: the call may have run.
+function decoded<T>(read: () => T): T {
+  try {
+    return read();
+  } catch (e) {
+    if (e instanceof PlimsollError) throw e;
+    throw new PlimsollError("data_loss", `plimsoll: the daemon's answer is malformed (${e instanceof Error ? e.message : String(e)})`, { cause: e });
+  }
+}
+
 function digestPayload(p: Payload): DigestPayload {
   if ("javascript" in p) return { kind: "javascript", code: p.javascript.code, grantProfile: p.javascript.grantProfile ?? "" };
   if ("cell" in p) return { kind: "cell", language: p.cell.language, code: p.cell.code, files: p.cell.files };
@@ -414,6 +441,7 @@ export class PlimsollClient {
     // Aborted before it was sent (a session call waiting its turn, say): nothing left
     // this process, so it is a refusal, not a call that may have run.
     if (signal?.aborted) throw new PlimsollError("canceled", `plimsoll: ${method} was canceled before it was sent`, { notDispatched: "request", cause: signal.reason });
+    refuseIllFormed(body, "the request");
     const headers: Record<string, string> = { "Content-Type": "application/json", "Connect-Protocol-Version": "1" };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
     const deadline = AbortSignal.timeout(this.requestTimeoutMs);
@@ -458,6 +486,10 @@ export class PlimsollClient {
   /** The daemon's own statement of its provider, tier and what it supports. */
   async describe(signal?: AbortSignal): Promise<Info> {
     const m = await this.call<WireDescribeResponse>("Describe", {}, signal);
+    return decoded(() => this.info(m));
+  }
+
+  private info(m: WireDescribeResponse): Info {
     const env = (e: WirePayloadEnvironment | undefined): PayloadEnvironment => ({
       identity: e?.identity ?? "",
       softwareIdentity: e?.softwareIdentity ?? "",
@@ -494,13 +526,13 @@ export class PlimsollClient {
   /** Runs a JavaScript snippet in a fresh sandbox. */
   async runJavaScript(code: string, opts: RunOptions = {}): Promise<JavaScriptResult> {
     const resp = await this.exchange("Run", this.envelope(opts, validateRule(opts.software)), { javascript: { code, grantProfile: this.jsGrant || undefined } }, opts);
-    return finish(resp.run, resp.record, javascriptResult, "javascript", opts.minimumIsolation);
+    return decoded(() => finish(resp.run, resp.record, javascriptResult, "javascript", opts.minimumIsolation));
   }
 
   /** Writes a multi-file project into a fresh sandbox and runs its steps in order. */
   async runProject(req: ProjectRequest, opts: RunOptions = {}): Promise<ProjectResult> {
     const resp = await this.exchange("Run", this.envelope(opts, validateRule(opts.software)), projectPayload(req, this.projectGrant), opts);
-    return finish(resp.run, resp.record, projectResult, "project", opts.minimumIsolation);
+    return decoded(() => finish(resp.run, resp.record, projectResult, "project", opts.minimumIsolation));
   }
 
   /**
@@ -528,8 +560,8 @@ export class PlimsollClient {
       },
       opts.signal,
     );
-    const s = new Session(this, m, rule, opts.minimumIsolation);
-    if (s.fingerprint !== sessionFingerprint(m.sessionId ?? "")) {
+    const s = decoded(() => new Session(this, m, rule, opts.minimumIsolation));
+    if (decoded(() => s.fingerprint !== sessionFingerprint(m.sessionId ?? ""))) {
       // The session exists on the daemon either way, and nothing else holds its ID.
       await s.close().catch(() => undefined);
       throw new PlimsollError("data_loss", "plimsoll: the daemon's session fingerprint does not match its session ID; the session was closed");
@@ -559,6 +591,10 @@ export class PlimsollClient {
   // Sends one Run and checks its record.
   private async exchange(method: "Run", env: WireEnvelope, payload: Payload, opts: RunOptions): Promise<{ run: WireRunResponse; record: RunRecord }> {
     const resp = await this.call<WireRunResponse>(method, { ...env, ...payload }, opts.signal);
+    return decoded(() => this.checked(env, payload, resp));
+  }
+
+  private checked(env: WireEnvelope, payload: Payload, resp: WireRunResponse): { run: WireRunResponse; record: RunRecord } {
     const checked = checkRecord(
       requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: env.softwareRule, payload: digestPayload(payload) }),
       env.protocol,
@@ -672,14 +708,14 @@ export class Session {
   async runJavaScript(code: string, opts: RunOptions = {}): Promise<JavaScriptResult> {
     opts = this.#withFloor(opts);
     const run = await this.#call({ javascript: { code, grantProfile: this.#client.jsGrant || undefined } }, opts);
-    return finish(run.run, run.record, javascriptResult, "javascript", opts.minimumIsolation);
+    return decoded(() => finish(run.run, run.record, javascriptResult, "javascript", opts.minimumIsolation));
   }
 
   /** Runs a project in the session; its files persist for later calls. */
   async runProject(req: ProjectRequest, opts: RunOptions = {}): Promise<ProjectResult> {
     opts = this.#withFloor(opts);
     const run = await this.#call(projectPayload(req, this.#client.projectGrant), opts);
-    return finish(run.run, run.record, projectResult, "project", opts.minimumIsolation);
+    return decoded(() => finish(run.run, run.record, projectResult, "project", opts.minimumIsolation));
   }
 
   /**
@@ -695,7 +731,7 @@ export class Session {
     opts = this.#withFloor(opts);
     const files = (req.files ?? []).map((f) => ({ path: f.path, content: f.content }));
     const run = await this.#call({ cell: { language: req.language, code: req.code, files } }, opts);
-    return finish(run.run, run.record, cellResult, "cell", opts.minimumIsolation);
+    return decoded(() => finish(run.run, run.record, cellResult, "cell", opts.minimumIsolation));
   }
 
   // The call's options with the session's floor, unless the call asks for more.
@@ -723,6 +759,8 @@ export class Session {
         );
       }
       const env = this.#client.envelope(opts, rule);
+      // Before the digest, which cannot encode such text either.
+      refuseIllFormed({ ...env, ...payload }, "the request");
       const digest = requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: rule, payload: digestPayload(payload) });
       try {
         return await this.#exchange(payload, opts, rule, env, digest);
@@ -764,32 +802,34 @@ export class Session {
     env: ReturnType<PlimsollClient["envelope"]>,
     digest: string,
   ): Promise<{ run: WireRunResponse; record: RunRecord }> {
-    {
-      let m: WireSessionRunResponse;
-      try {
-        m = await this.#client.call<WireSessionRunResponse>("SessionRun", { ...env, sessionId: this.#id, ...payload }, opts.signal);
-      } catch (e) {
-        if (e instanceof PlimsollError && e.sessionEnded) this.#end = e.sessionEnded;
-        throw e;
-      }
-      const run = m.run;
-      if (!run) throw new PlimsollError("data_loss", "plimsoll: the session call's answer carries no run");
-      const end = sessionEndFromWire(m.ended);
-      if (end !== "open") this.#end = { reason: end, detail: m.endDetail ?? "" };
-      const checked = checkRecord(digest, env.protocol, rule, run);
-      if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: run });
-      const r = checked.record;
-      if (r.session !== this.fingerprint || r.sequence !== this.#calls + 1n || r.previousSha256 !== this.#last) {
-        throw new PlimsollError(
-          "data_loss",
-          `plimsoll: the session's chain is broken: call ${r.sequence} after "${r.previousSha256}", this client's last was call ${this.#calls}, "${this.#last}"`,
-          { result: run },
-        );
-      }
-      this.#calls = r.sequence;
-      this.#last = r.sha256;
-      return { run, record: r };
+    let m: WireSessionRunResponse;
+    try {
+      m = await this.#client.call<WireSessionRunResponse>("SessionRun", { ...env, sessionId: this.#id, ...payload }, opts.signal);
+    } catch (e) {
+      if (e instanceof PlimsollError && e.sessionEnded) this.#end = e.sessionEnded;
+      throw e;
     }
+    return decoded(() => this.#chained(m, env, rule, digest));
+  }
+
+  #chained(m: WireSessionRunResponse, env: ReturnType<PlimsollClient["envelope"]>, rule: WireSoftwareRule | undefined, digest: string): { run: WireRunResponse; record: RunRecord } {
+    const run = m.run;
+    if (!run) throw new PlimsollError("data_loss", "plimsoll: the session call's answer carries no run");
+    const end = sessionEndFromWire(m.ended);
+    if (end !== "open") this.#end = { reason: end, detail: m.endDetail ?? "" };
+    const checked = checkRecord(digest, env.protocol, rule, run);
+    if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: run });
+    const r = checked.record;
+    if (r.session !== this.fingerprint || r.sequence !== this.#calls + 1n || r.previousSha256 !== this.#last) {
+      throw new PlimsollError(
+        "data_loss",
+        `plimsoll: the session's chain is broken: call ${r.sequence} after "${r.previousSha256}", this client's last was call ${this.#calls}, "${this.#last}"`,
+        { result: run },
+      );
+    }
+    this.#calls = r.sequence;
+    this.#last = r.sha256;
+    return { run, record: r };
   }
 
   /**
@@ -799,12 +839,12 @@ export class Session {
   close(signal?: AbortSignal): Promise<SessionSummary> {
     return this.#serial(async () => {
       const m = await this.#client.call<WireCloseSessionResponse>("CloseSession", { protocol: PROTOCOL, sessionId: this.#id }, signal);
-      const sum: SessionSummary = {
+      const sum: SessionSummary = decoded(() => ({
         session: m.session ?? "",
         calls: BigInt(m.calls ?? 0),
         lastRecordSha256: m.lastRecordSha256 ?? "",
         end: sessionEndFromWire(m.ended),
-      };
+      }));
       this.#end ??= { reason: sum.end, detail: "" };
       if (sum.session !== this.fingerprint || sum.calls !== this.#calls || sum.lastRecordSha256 !== this.#last) {
         throw new PlimsollError(

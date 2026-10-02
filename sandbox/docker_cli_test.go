@@ -148,7 +148,8 @@ func TestDockerCLIIsStartedOnlyThroughDockerCommand(t *testing.T) {
 // A proxy in the host's docker client config, and a secret in the daemon's
 // environment, never reach guest code (reproduced as a leak before docker_cli.go).
 func TestDockerHostSettingsNeverReachGuestCode(t *testing.T) {
-	requireDocker(t)
+	d := testDocker()
+	requireSnippetImage(t, d)
 	cfg := t.TempDir()
 	if err := os.WriteFile(filepath.Join(cfg, "config.json"),
 		[]byte(`{"proxies":{"default":{"httpProxy":"http://user:canary@proxy.example:3128","noProxy":"canary.example"}}}`), 0o600); err != nil {
@@ -156,7 +157,6 @@ func TestDockerHostSettingsNeverReachGuestCode(t *testing.T) {
 	}
 	t.Setenv("DOCKER_CONFIG", cfg)
 	t.Setenv("PLIMSOLL_TOKEN", "canary-daemon-secret")
-	d := testDocker()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	res, err := d.RunJavaScript(ctx, Request{Code: `console.log(JSON.stringify(process.env))`, Timeout: 10 * time.Second})
