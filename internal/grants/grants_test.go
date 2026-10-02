@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -107,6 +108,19 @@ func TestLoadCatalog(t *testing.T) {
 	// Catalog grants nothing: it is not part of the grant's Allow surface.
 	if len(profile.Grant().Allow) != 1 {
 		t.Errorf("catalog must not widen Allow: %+v", profile.Grant().Allow)
+	}
+}
+
+// A catalog route is named to an operator as the route to add, so one a grant could
+// never hold is refused at load (v0.15.0 review, M2).
+func TestLoadRejectsCatalogRoutesAGrantCannotHold(t *testing.T) {
+	t.Setenv("HUE_TOKEN", "tok-123")
+	for _, route := range []string{"GET /v1/../admin", "GET /v1/..;/admin", "HEAD /v1/lights", "GET /v1/light*"} {
+		p := writeGrants(t, `{"profiles": {"hue-control": {"base_url": "https://hue.internal", "allow": ["GET /v1/lights/*"],
+		  "catalog": [`+strconv.Quote(route)+`], "allowed_callers": ["mcp-a"], "token": {"type": "static", "env": "HUE_TOKEN"}}}}`)
+		if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "catalog") {
+			t.Errorf("catalog %q loaded: %v", route, err)
+		}
 	}
 }
 

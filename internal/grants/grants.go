@@ -373,6 +373,13 @@ func Load(path string) (*Registry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("grants: profile %q: catalog %w", name, err)
 		}
+		// A catalog route is never callable, but it is named to an operator as the route
+		// to add, so it must be one a grant could hold.
+		for _, route := range catalog {
+			if err := sandbox.ValidateHostRoute(route); err != nil {
+				return nil, fmt.Errorf("grants: profile %q: catalog %w", name, err)
+			}
+		}
 		callers, err := parseAllowedCallers(pc.AllowedCallers)
 		if err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)

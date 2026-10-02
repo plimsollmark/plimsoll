@@ -246,3 +246,39 @@ func TestBrokerQuotaTripSuppressesProbingForTheWholeWindow(t *testing.T) {
 		t.Fatalf("gate = (%v, %v), want shedding with an elected prober", shedding, elected)
 	}
 }
+
+// A hung upstream fails the call at hostCallTimeout instead of holding one of the
+// run's slots (and a guard slot) until the run ends (v0.15.0 review, M3b).
+func TestBrokerUpstreamCallHasADeadline(t *testing.T) {
+	old := hostCallTimeout
+	hostCallTimeout = 200 * time.Millisecond
+	defer func() { hostCallTimeout = old }()
+	core, err := newBrokerSession(&HostAPIGrant{
+		BaseURL: "https://api.internal",
+		Allow:   []HostRoute{{Method: "GET", Path: "/work"}},
+	}, "", brokerRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done() // never answers on its own
+		return nil, r.Context().Err()
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer core.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	got := core.Call(ctx, brokerCall{Method: "GET", RawTarget: "/work"})
+	if got.Status != http.StatusBadGateway || time.Since(started) > 2*time.Second {
+		t.Fatalf("a hung upstream: %+v after %v; want 502 at the call deadline", got, time.Since(started))
+	}
+}
+
+// A Retry-After too large for a time.Duration is the cap, not a wrapped value that
+// lands on the one-second floor (v0.15.0 review, L15).
+func TestHugeRetryAfterIsTheCap(t *testing.T) {
+	for _, h := range []string{"9300000000", "99999999999999999", "31"} {
+		if got := retryAfterCooldown(h); got != breakerMaxCooldown {
+			t.Errorf("Retry-After %s: cooldown %v, want %v", h, got, breakerMaxCooldown)
+		}
+	}
+}

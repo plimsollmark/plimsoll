@@ -545,3 +545,27 @@ func TestUnansweredEntryVerifiesInItsChain(t *testing.T) {
 		t.Error("a record naming no Connect code was signed")
 	}
 }
+
+// A record whose isolation is below its request's floor is neither signed nor, if a
+// signed one is put in a bundle, verified (v0.15.0 review, M5.1).
+func TestFloorViolationIsNotSignedOrVerified(t *testing.T) {
+	key := newKey(t)
+	s, v := NewSigner(key), NewVerifier(key.Public().(ed25519.PublicKey))
+	req := &plimsollv1.RunRequest{Protocol: 1, MinimumIsolation: "vm", Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "x"}}}
+	resp := &plimsollv1.RunResponse{Sandbox: "fake", Isolation: "container",
+		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{}}}
+	r := sandbox.RunRecord{Version: record.Version, RequestSHA256: record.RunRequestDigest(req), ResultSHA256: record.ResultDigest(resp),
+		Provider: "fake", Isolation: "container", Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000100)}
+	r.SHA256 = record.Digest(r)
+	resp.Record = record.ToWire(r)
+	if _, err := s.Call(req, resp); !errors.Is(err, sandbox.ErrIsolationEvidenceMismatch) {
+		t.Fatalf("Call signed a container answer to a vm floor: %v", err)
+	}
+	forged, err := s.entry(req, resp, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyBundle([]Entry{forged}, v); !errors.Is(err, sandbox.ErrIsolationEvidenceMismatch) {
+		t.Fatalf("VerifyBundle accepted a container answer to a vm floor: %v", err)
+	}
+}

@@ -76,6 +76,15 @@ conversation
 ([what a session gives up](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#what-a-session-gives-up)).
 The tool's calls are cells, which carry no grant, so no API access is shared between them.
 
+**The key decides who shares a sandbox, so derive it from identities you verified.** A
+sandbox holds one trust domain: everything one call leaves there, later calls with the same
+key see. plimsoll ties a session to the credential that opened it, not to the users behind
+that credential, so if your service runs many users' code through one plimsoll credential,
+two users with the same key share one sandbox, files and variables included. Build the key
+from your own authenticated user and conversation (or job) IDs, never from a string a user
+or the model supplies, or give each customer a plimsoll credential of their own
+([who may share a session](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#who-may-share-a-session)).
+
 `CodeSandboxes` keeps one sandbox per conversation key. With `sessions: "auto"` (the
 default) it asks the daemon once whether it keeps sessions:
 
@@ -111,10 +120,14 @@ mismatch means the daemon counted a call the client has no answer for (one that 
 abort, a timeout, a dropped connection or a proxy's error), or, if none did, that someone
 else held the session ID. It goes to `onCloseError` (by default a warning) rather than being
 dropped at teardown. A call that may have run but ended in an error comes with its record
-(`PlimsollError.unanswered`, a version 3 record); the session checks it, keeps it in its
-chain and goes on. A call whose answer never arrived carries none, so the client sends
-nothing more on that session, and the conversation's next call opens a new sandbox and
-reports `freshSandbox: true`.
+(`PlimsollError.unanswered`, a version 3 record); the session checks it, hands it back as
+`PlimsollError.record`, keeps it in its chain and goes on, and so does the conversation's
+sandbox. A call whose answer never arrived carries none, so the client sends nothing more
+on that session (`Session.stopped` says why), and the conversation's next call opens a new
+sandbox and reports `freshSandbox: true`. A session call aborted while it waits its turn
+was never sent: it is refused, marked not dispatched, and the session goes on. The
+`.plimsoll/` directory is the runner's: a file under it is refused before anything is
+sent.
 
 The session ID is a capability. It lives in the client's memory and nowhere else: not in
 a log line, not in a record, not in Trigger.dev's `chat.local` (which is serialized into
@@ -150,6 +163,12 @@ export const codeChat = chat.agent({
 The full example, with a test that drives real turns through Trigger.dev's `mockChatAgent`:
 [examples/trigger-chat](https://github.com/plimsollmark/plimsoll/tree/main/examples/trigger-chat/).
 
+What the hooks cannot cover: a run that dies without reaching `onChatSuspend` or
+`onComplete` (its process killed, a crash) leaves its sandbox open until the add-on's idle
+close (`idleCloseMs`, default 10 minutes) or, if the process is gone too, the daemon's own
+idle suspend and session lifetime (`SANDBOX_SESSION_IDLE`, `SANDBOX_SESSION_LIFETIME`). A
+worker shutting down can close every sandbox it holds with `sandbox.sandboxes.disposeAll()`.
+
 ## Mastra
 
 ```ts
@@ -166,8 +185,12 @@ export const analyst = new Agent({ id: "analyst", name: "analyst", instructions:
 ```
 
 The sandbox is keyed by Mastra's thread and resource (a thread ID is unique only within
-its user). Mastra has no hook for "this conversation is going to sleep", so a thread's
-sandbox closes on `dispose`, or after `idleCloseMs` (default 10 minutes) without a call.
+its user). A call without a `resourceId` runs in a fresh sandbox every time: under an empty
+resource, every user without one would share a sandbox with anyone whose thread ID
+collided. Set the resource from your authenticated user, not from anything the user
+typed. Mastra has no hook for "this conversation is going to sleep", so a thread's
+sandbox closes on `dispose(threadId, resourceId)`, or after `idleCloseMs` (default 10
+minutes) without a call.
 
 ## Tests
 

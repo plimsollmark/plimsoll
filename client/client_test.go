@@ -699,3 +699,47 @@ func redirectNotFollowed(t *testing.T, opts []Option) {
 		t.Fatalf("the redirect target received %d requests; want none", elsewhere)
 	}
 }
+
+// A recorder that fails must not hide evidence below the floor: the answer is
+// DataLoss wrapping ErrIsolationEvidenceMismatch, and the recorder never sees it.
+func TestRecorderFailureKeepsTheIsolationCheck(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(weakEvidenceServer{}))
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	var recorded int
+	failing := recorderFunc(func(*plimsollv1.RunRequest, *plimsollv1.RunResponse) error { recorded++; return errors.New("disk full") })
+	res, err := newRemote(t, server.URL, WithRecorder(failing)).RunJavaScript(context.Background(), sandbox.Request{
+		Code: "mutate()", MinimumIsolation: sandbox.IsolationVM,
+	})
+	if connect.CodeOf(err) != connect.CodeDataLoss || !errors.Is(err, sandbox.ErrIsolationEvidenceMismatch) || res.Stdout != "already executed" {
+		t.Fatalf("result %+v, err %v; want the result with DataLoss wrapping ErrIsolationEvidenceMismatch", res, err)
+	}
+	if recorded != 0 {
+		t.Fatalf("the recorder was handed %d exchanges below the floor; want none", recorded)
+	}
+}
+
+// unansweredV2Server answers with a version 2 record that also names an unanswered
+// code, a field version 2's digest does not cover.
+type unansweredV2Server struct {
+	plimsollv1connect.UnimplementedSandboxServiceHandler
+}
+
+func (unansweredV2Server) Run(_ context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	resp := stamped(req, &plimsollv1.RunResponse{Sandbox: "forged", Isolation: "vm",
+		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("ran")}}})
+	resp.Msg.Record.Unanswered = "unknown"
+	return resp, nil
+}
+
+func TestVersion2RecordStatingUnansweredIsDataLoss(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(unansweredV2Server{}))
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	_, err := newRemote(t, server.URL).RunJavaScript(context.Background(), sandbox.Request{Code: "x"})
+	if connect.CodeOf(err) != connect.CodeDataLoss || !errors.Is(err, record.ErrMismatch) {
+		t.Fatalf("err = %v, want DataLoss wrapping record.ErrMismatch", err)
+	}
+}

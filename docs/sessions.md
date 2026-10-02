@@ -22,6 +22,35 @@ A working example with a signed chain of records:
 [One sandbox, five calls ↗](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html),
 written by `go run ./examples/sessions`.
 
+## Who may share a session
+
+A session is one trust domain. Everything a call does is there for every later call of
+the session: the files it wrote, the functions it redefined, the data it loaded into the
+interpreter, a timer it left running. Use a session only where every call in it may see
+and change what every earlier call did, because they all act for the same person or job.
+
+- **plimsoll ties a session to the authenticated caller, not to that caller's own
+  customers.** Only the credential that opened a session can call it or close it, and an
+  unknown session ID and another caller's get the same refusal. If your service sends many
+  customers' code through one plimsoll credential, plimsoll cannot tell those customers
+  apart: keeping each customer in a session of their own is your service's job.
+- **Key sessions by identities you verified, never by a string your users or a model
+  choose.** Derive the key from the customer and the conversation (or job) your own
+  authentication established. A key built from user or model input lets one user's call
+  land in another user's sandbox, with that user's files and variables. The TypeScript
+  client's `CodeSandboxes` takes the key it is given; its Mastra add-on runs a call that
+  has no `resourceId` (Mastra's user) in a fresh sandbox rather than in one shared by every
+  user without one.
+- **The strongest setup is one plimsoll credential per customer** ([callers.md](callers.md)),
+  with `SANDBOX_MAX_SESSIONS_PER_CALLER` bounding each, and one session per conversation or
+  job inside it.
+- **A sandbox that has run code is never used for anyone else.** Closing a session, or its
+  end, deletes its sandbox. plimsoll keeps no pool that hands a used sandbox to another
+  session, and the cleanup between calls is not a way to make a used sandbox clean.
+- **Do not use a session** for code from different customers or users, for code you grade
+  whose result must not depend on earlier code (run each check fresh), or before a call
+  whose API access the earlier calls must not share ([below](#what-a-session-gives-up)).
+
 ## What a session gives up
 
 A session trades the fresh sandbox of every run for speed and kept state. The wall around
@@ -48,7 +77,9 @@ separate one call is from the next.
   ([capability-grants.md](capability-grants.md)), `HostAPIGrant.AllowInSessions` in Go.
   The refusal is `PermissionDenied`, marked not dispatched with reason `permission`
   (`sandbox.ErrGrantNotForSessions`). Turn it on only for an API whose access may be shared
-  with every call of the session.
+  with every call of the session. The grant ends with its call; a request plimsoll had
+  already checked when the call ended can still reach the API, and it is in that call's
+  trace.
 - **A longer foothold.** Code has the session's lifetime (30 minutes by default, 12 hours
   at most) to probe the sandbox, instead of one run's timeout, so for code you do not trust
   choose the strongest sandbox you can run.
@@ -211,9 +242,11 @@ the sandbox that its calls could not reach, and it cannot forge the sweep's verd
 exit status, which still kills everything else after every call. What the sweep keeps it
 takes from the identities the interpreters and their relays print as they start. On docker,
 where code of the session can write into a process's output while it starts (below), an
-identity is kept only once a check run as a second user confirms it: a relay must be a
-process `docker exec` started, which nothing in the sandbox can make, and an interpreter
-must be the only live process with its command line. Otherwise the cell is refused before
+identity is kept only once its command line is the very program plimsoll started and a
+check run as a second user confirms it: a relay must be a process with no parent in the
+container, which only `docker exec` and the container's own init have (the command line
+rules out the init), and an interpreter must be the only live process with its command
+line. Otherwise the cell is refused before
 its code is sent, marked not dispatched. A session that never runs a cell keeps no
 process between calls, as before.
 
@@ -238,10 +271,15 @@ and write their answers. The interpreters' own pipes and control socket, under
 reach them at any time. On `openshell` the relay cannot load the library (the gateway then
 refuses its connection to the interpreter), but the `openshell` sandbox walls each exec's processes off
 from the others': a cell could not open its relay's output, nor any process outside its own
-exec (measured on v0.1.2, 2026-10-01). Against all of this, a cell is two steps. The relay
+exec (measured on v0.1.2, 2026-10-01). The daemon's startup check of sessions tries exactly
+that and refuses sessions on a gateway or provider where a call can open a running relay. Against all of this, a cell is two steps. The relay
 first writes the cell's files and connects to the interpreter, and only then is the code
-sent; a refusal (files that could not be written, an interpreter that cannot be reached)
-can come only from the first step, so a call refused as not run never ran. After the code
+sent; a refusal (files that could not be written, an interpreter that cannot be reached,
+or the call's deadline passing before the code was sent, which is `DeadlineExceeded`
+marked not dispatched) can come only from the first step, so a call refused as not run
+never ran. Code of the session can also forge the first step's "no interpreter" answer,
+which makes plimsoll start the interpreter again: the cell then runs in a fresh one and
+says so (`interpreter_started`), the state earlier cells left gone. After the code
 is sent, nothing the relay writes can turn the call into a refusal or send the code again.
 Every line the relay writes carries the cell's random nonce, and one that does not belong
 to the cell ends the interpreter, with the cell's result unknown. So code of the session can
@@ -270,7 +308,10 @@ whose step is `python3 main.py`.
   records carry the fingerprint instead. With no auth configured (open dev mode, which the
   daemon warns about at startup) every caller is the same anonymous principal, so there a
   session is protected by its ID alone.
-- **One call at a time, in order.** Calls run one after another, never at once. Each
+- **One call at a time, in order.** Calls run one after another, never at once. While
+  one runs, one more call (or the close) may wait for its turn; any further one is refused
+  at once, `ResourceExhausted` marked not dispatched (reason `capacity`), since a client
+  makes one call at a time and a parked request holds a handler and a connection. Each
   call's record names the digest of the previous call's record and its own number,
   counting from 1. The Go, Python and TypeScript clients check every record against the
   chain they have seen, so a call made by anyone else holding the ID shows as a gap at the

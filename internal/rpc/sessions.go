@@ -59,6 +59,7 @@ type sessionEntry struct {
 	rule        sandbox.SoftwareRule
 	idleTimeout time.Duration
 	turn        chan struct{} // one call at a time, in order
+	waiting     chan struct{} // the one call (or close) allowed to wait for turn
 
 	mu      sync.Mutex
 	calls   uint64
@@ -161,6 +162,31 @@ func errSessionNotFound() error {
 	return refuse(connect.CodeNotFound, sandbox.RefusalRequest, errors.New("no such session for this caller"))
 }
 
+// takeTurn waits for the session's turn, refusing at once, not dispatched, when
+// another call already waits for it. A client makes one call at a time; without the
+// bound, one caller could park any number of requests on its own session, each holding
+// a handler and a connection. The returned function gives the turn back.
+func (e *sessionEntry) takeTurn(ctx context.Context) (func(), error) {
+	select {
+	case e.turn <- struct{}{}:
+		return func() { <-e.turn }, nil
+	default:
+	}
+	select {
+	case e.waiting <- struct{}{}:
+	default:
+		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+			errors.New("another call is already waiting for this session's turn"))
+	}
+	defer func() { <-e.waiting }()
+	select {
+	case e.turn <- struct{}{}:
+		return func() { <-e.turn }, nil
+	case <-ctx.Done():
+		return nil, busy(ctx)
+	}
+}
+
 // busy is the refusal of a call that gave up waiting for its session's turn: the
 // session was busy with an earlier call, and nothing of this one ran.
 func busy(ctx context.Context) error {
@@ -176,6 +202,11 @@ func (s *SandboxService) sessionProvider() (sandbox.SessionProvider, bool) {
 	}
 	return sp, true
 }
+
+// minSessionIdle is the shortest idle timeout a caller may ask for. An idle suspend
+// that finds a call running tries again one idle timeout later, so a millisecond
+// would re-arm a timer a thousand times a second for the length of a long call.
+const minSessionIdle = time.Second
 
 // shorter is the operator's duration, or the request's when it asks for less.
 func shorter(configured time.Duration, requestedMs uint32) time.Duration {
@@ -224,6 +255,9 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	}
 	lifetime := shorter(s.Sessions.Lifetime, m.GetLifetimeMs())
 	idle := shorter(s.Sessions.IdleTimeout, m.GetIdleTimeoutMs())
+	if idle > 0 && idle < minSessionIdle {
+		idle = minSessionIdle
+	}
 	started := time.Now()
 	sess, err := sp.OpenSession(ctx, sandbox.SessionOptions{MinimumIsolation: env.minimum, Lifetime: lifetime, DiskBytes: s.Sessions.DiskBytes})
 	if err != nil {
@@ -252,7 +286,9 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	if _, err := rand.Read(id); err != nil {
 		release()
 		s.sessions.unreserve(principal)
-		_ = sess.Close(context.Background())
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
+		_ = sess.Close(closeCtx)
+		cancel()
 		return nil, mapSandboxErr(err)
 	}
 	e := &sessionEntry{
@@ -263,6 +299,7 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		rule:        env.software,
 		idleTimeout: idle,
 		turn:        make(chan struct{}, 1),
+		waiting:     make(chan struct{}, 1),
 		release:     release,
 	}
 	e.fingerprint = record.SessionFingerprint(e.id)
@@ -389,12 +426,11 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 			fmt.Errorf("%w: session call omitted the software rule established at open", sandbox.ErrInvalidRequest))
 	}
 	// One call at a time, in arrival order, so the chain numbers calls as they ran.
-	select {
-	case e.turn <- struct{}{}:
-	case <-ctx.Done():
-		return nil, busy(ctx)
+	give, err := e.takeTurn(ctx)
+	if err != nil {
+		return nil, err
 	}
-	defer func() { <-e.turn }()
+	defer give()
 	if err := e.sess.Err(); err != nil {
 		return nil, refuseEnded(err)
 	}
@@ -422,15 +458,26 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 		session:  true,
 		attrs:    []slog.Attr{slog.String("session", e.fingerprint), slog.Uint64("session_call", seq)},
 	}
-	var resp *plimsollv1.RunResponse
-	switch p := m.GetPayload().(type) {
-	case *plimsollv1.SessionRunRequest_Javascript:
-		resp, err = s.runJavaScript(ctx, env, p.Javascript, t)
-	case *plimsollv1.SessionRunRequest_Project:
-		resp, err = s.runProject(ctx, env, p.Project, t)
-	case *plimsollv1.SessionRunRequest_Cell:
-		resp, err = s.runCell(ctx, env, p.Cell, e.sess, t)
-	}
+	resp, err := func() (resp *plimsollv1.RunResponse, err error) {
+		// A provider that panics may already have run the call. Recovered here, the
+		// panic is an unmarked error, so the call is chained as unanswered like any
+		// other that may have run, instead of unwinding past the chain.
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger().LogAttrs(ctx, slog.LevelError, "session call panicked", slog.String("session", e.fingerprint), slog.Any("panic", r))
+				resp, err = nil, mapSandboxErr(errors.New("the provider failed during the call")) // unmarked: it may have run
+			}
+		}()
+		switch p := m.GetPayload().(type) {
+		case *plimsollv1.SessionRunRequest_Javascript:
+			return s.runJavaScript(ctx, env, p.Javascript, t)
+		case *plimsollv1.SessionRunRequest_Project:
+			return s.runProject(ctx, env, p.Project, t)
+		case *plimsollv1.SessionRunRequest_Cell:
+			return s.runCell(ctx, env, p.Cell, e.sess, t)
+		}
+		return nil, nil
+	}()
 	if err != nil {
 		if _, marked := sandbox.NotDispatchedReason(err); marked {
 			return nil, err // nothing ran, so the chain does not count it
@@ -588,12 +635,11 @@ func (s *SandboxService) CloseSession(ctx context.Context, req *connect.Request[
 		return nil, errSessionNotFound()
 	}
 	// Wait for a call in flight, so the count covers it.
-	select {
-	case e.turn <- struct{}{}:
-	case <-ctx.Done():
-		return nil, busy(ctx)
+	give, err := e.takeTurn(ctx)
+	if err != nil {
+		return nil, err
 	}
-	defer func() { <-e.turn }()
+	defer give()
 	e.mu.Lock()
 	if e.idle != nil {
 		e.idle.Stop()

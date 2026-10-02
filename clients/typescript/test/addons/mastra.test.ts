@@ -31,6 +31,17 @@ test("a call outside a thread never shares a sandbox", { skip }, async () => {
   await assert.rejects(executeCode.execute!({ code: "1", language: "python" }, {} as any), { notDispatched: "unsupported" });
 });
 
+// Without a resource there is no user to scope the thread by, so the call runs fresh
+// rather than in a sandbox every resource-less user with that thread id would share
+// (v0.15.0 review, L24; warm-sandbox plan, item 2).
+test("a call without a resource never shares a sandbox", { skip }, async () => {
+  const { executeCode } = plimsollExecuteCode({ client: new PlimsollClient({ baseUrl: url! }) });
+  const agent = { threadId: "t1", toolCallId: "c", messages: [], agentId: "a", suspend: async () => {} };
+  // The session fake refuses single runs: proof that no session was used.
+  await assert.rejects(executeCode.execute!({ code: "1", language: "python" }, { agent } as any), { notDispatched: "unsupported" });
+  await assert.rejects(executeCode.execute!({ code: "1", language: "python" }, { agent: { ...agent, resourceId: "" } } as any), { notDispatched: "unsupported" });
+});
+
 test("the tool declares the shared description and schemas", () => {
   const { executeCode } = plimsollExecuteCode({ client: () => new PlimsollClient({ baseUrl: "http://127.0.0.1:1" }) });
   assert.equal(executeCode.id, "executeCode");

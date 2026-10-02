@@ -299,6 +299,25 @@ for (const language of ["javascript", "python"] as const) {
     const out = execFileSync(cmd === "node" ? process.execPath : cmd!, args, { cwd: dir, encoding: "utf8" });
     assert.equal(out, "6\n");
   });
+
+  // Code a session cell runs, a fresh run runs too: Python's asyncio.run (a fresh run
+  // used to run the whole cell inside a running loop, where it raises), and Node's
+  // CommonJS names, which a cell in the session's node -e interpreter sees as globals
+  // (v0.15.0 review, M8).
+  test(`the ${language} runner runs what a session cell runs`, { skip: available ? false : `${bin} is not installed` }, () => {
+    const dir = mkdtempSync(join(tmpdir(), "plimsoll-runner-"));
+    mkdirSync(join(dir, ".plimsoll"));
+    writeFileSync(join(dir, runner.path), runner.source);
+    writeFileSync(
+      join(dir, runner.file),
+      language === "python"
+        ? "import asyncio\nasync def f():\n    return 41\nif __name__ == '__main__':\n    x = asyncio.run(f())\nx + 1"
+        : "[typeof module, typeof exports, typeof require, __dirname, __filename].join(' ')",
+    );
+    const [cmd, ...args] = runner.step.split(" ");
+    const out = execFileSync(cmd === "node" ? process.execPath : cmd!, args, { cwd: dir, encoding: "utf8" });
+    assert.equal(out, language === "python" ? "42\n" : "'object object function . [eval]'\n");
+  });
 }
 
 // A call whose answer is lost after it ran: the conversation's next call opens a new
@@ -324,4 +343,33 @@ test("after a call that ended without an answer, the next call gets a new sandbo
   assert.equal(r.exitCode, 0, r.stderr);
   assert.equal(r.freshSandbox, true, "the next call says its sandbox is new");
   await s.disposeAll();
+});
+
+// A call that may have run but whose record the Session checked and chained leaves the
+// session usable: the conversation's next call runs in the same sandbox (v0.15.0
+// review, L22).
+test("after an unanswered call the Session checked, the conversation keeps its sandbox", { skip: !process.env.PLIMSOLL_BREAKING_URL && "run through `go test ./clients/typescript`" }, async () => {
+  const s = new CodeSandboxes({ client: new PlimsollClient({ baseUrl: process.env.PLIMSOLL_BREAKING_URL! }), languages: ["javascript"] });
+  const first = await s.run("k", { code: "1", language: "javascript" });
+  assert.equal(first.freshSandbox, true);
+  await assert.rejects(s.run("k", { code: "2", language: "javascript" }), (e: unknown) => e instanceof PlimsollError && e.record?.sequence === 2n);
+  const third = await s.run("k", { code: "3", language: "javascript" });
+  assert.equal(third.freshSandbox, undefined, "the sandbox is the same one");
+  await s.disposeAll();
+});
+
+// Two calls made at once on a new conversation: only the first to answer says its
+// sandbox is new (v0.15.0 review, L24).
+test("of calls made at once, only the first to answer finds the sandbox new", { skip }, async () => {
+  const s = new CodeSandboxes({ client: new PlimsollClient({ baseUrl: sessionsUrl! }) });
+  const [a, b] = await Promise.all([s.run("k", { code: "1" }), s.run("k", { code: "2" })]);
+  assert.equal([a.freshSandbox, b.freshSandbox].filter(Boolean).length, 1, JSON.stringify([a, b]));
+  await s.disposeAll();
+});
+
+// A file under .plimsoll/ is refused before anything is sent: a fresh run's runner
+// lives there (v0.15.0 review, L24).
+test("the .plimsoll/ directory is reserved", async () => {
+  const s = new CodeSandboxes({ client: new PlimsollClient({ baseUrl: "http://127.0.0.1:1" }), sessions: "never" });
+  await assert.rejects(s.run(undefined, { code: "1", files: [{ path: ".plimsoll/run.py", content: "x" }] }), (e: unknown) => e instanceof PlimsollError && e.notDispatched === "request");
 });

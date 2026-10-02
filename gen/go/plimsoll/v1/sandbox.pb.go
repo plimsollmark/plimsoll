@@ -304,8 +304,12 @@ type DescribeResponse struct {
 	SupportsSessions     bool   `protobuf:"varint,15,opt,name=supports_sessions,json=supportsSessions,proto3" json:"supports_sessions,omitempty"`
 	SessionLifetimeMs    uint32 `protobuf:"varint,16,opt,name=session_lifetime_ms,json=sessionLifetimeMs,proto3" json:"session_lifetime_ms,omitempty"`
 	SessionIdleTimeoutMs uint32 `protobuf:"varint,17,opt,name=session_idle_timeout_ms,json=sessionIdleTimeoutMs,proto3" json:"session_idle_timeout_ms,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Where a session's calls run, every kind in the session's one sandbox (on docker
+	// the project image, not the snippet image). Stated when supports_sessions is;
+	// informational, like the other environments, and what a router filters sessions on.
+	SessionEnvironment *PayloadEnvironment `protobuf:"bytes,18,opt,name=session_environment,json=sessionEnvironment,proto3" json:"session_environment,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *DescribeResponse) Reset() {
@@ -441,6 +445,13 @@ func (x *DescribeResponse) GetSessionIdleTimeoutMs() uint32 {
 		return x.SessionIdleTimeoutMs
 	}
 	return 0
+}
+
+func (x *DescribeResponse) GetSessionEnvironment() *PayloadEnvironment {
+	if x != nil {
+		return x.SessionEnvironment
+	}
+	return nil
 }
 
 // PayloadEnvironment is one payload kind's environment as the daemon states it.
@@ -2994,7 +3005,7 @@ var File_plimsoll_v1_sandbox_proto protoreflect.FileDescriptor
 const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"\x19plimsoll/v1/sandbox.proto\x12\vplimsoll.v1\"\x11\n" +
-	"\x0fDescribeRequest\"\x9b\x06\n" +
+	"\x0fDescribeRequest\"\xed\x06\n" +
 	"\x10DescribeResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12)\n" +
@@ -3011,7 +3022,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x06policy\x18\x0e \x01(\tR\x06policy\x12+\n" +
 	"\x11supports_sessions\x18\x0f \x01(\bR\x10supportsSessions\x12.\n" +
 	"\x13session_lifetime_ms\x18\x10 \x01(\rR\x11sessionLifetimeMs\x125\n" +
-	"\x17session_idle_timeout_ms\x18\x11 \x01(\rR\x14sessionIdleTimeoutMsJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
+	"\x17session_idle_timeout_ms\x18\x11 \x01(\rR\x14sessionIdleTimeoutMs\x12P\n" +
+	"\x13session_environment\x18\x12 \x01(\v2\x1f.plimsoll.v1.PayloadEnvironmentR\x12sessionEnvironmentJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
 	"\x12PayloadEnvironment\x12\x1a\n" +
 	"\bidentity\x18\x01 \x01(\tR\bidentity\x12$\n" +
 	"\x0emax_timeout_ms\x18\x02 \x01(\rR\fmaxTimeoutMs\x12+\n" +
@@ -3309,52 +3321,53 @@ var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	5,  // 1: plimsoll.v1.DescribeResponse.project_environment:type_name -> plimsoll.v1.PayloadEnvironment
 	5,  // 2: plimsoll.v1.DescribeResponse.module_environment:type_name -> plimsoll.v1.PayloadEnvironment
 	7,  // 3: plimsoll.v1.DescribeResponse.resources:type_name -> plimsoll.v1.RunResources
-	6,  // 4: plimsoll.v1.RunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	10, // 5: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
-	17, // 6: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
-	20, // 7: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
-	26, // 8: plimsoll.v1.RunRequest.cell:type_name -> plimsoll.v1.CellRun
-	12, // 9: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
-	13, // 10: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
-	18, // 11: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
-	22, // 12: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
-	27, // 13: plimsoll.v1.RunResponse.cell:type_name -> plimsoll.v1.CellResult
-	8,  // 14: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
-	14, // 15: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
-	15, // 16: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
-	0,  // 17: plimsoll.v1.ProjectResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
-	16, // 18: plimsoll.v1.ProjectResult.artifacts:type_name -> plimsoll.v1.Artifact
-	8,  // 19: plimsoll.v1.ProjectResult.advice:type_name -> plimsoll.v1.AdviceFinding
-	19, // 20: plimsoll.v1.ModuleRun.rows:type_name -> plimsoll.v1.ModuleRow
-	21, // 21: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
-	0,  // 22: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
-	6,  // 23: plimsoll.v1.OpenSessionRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	6,  // 24: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
-	10, // 25: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
-	17, // 26: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
-	26, // 27: plimsoll.v1.SessionRunRequest.cell:type_name -> plimsoll.v1.CellRun
-	14, // 28: plimsoll.v1.CellRun.files:type_name -> plimsoll.v1.ProjectFile
-	11, // 29: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
-	1,  // 30: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 31: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
-	1,  // 32: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
-	2,  // 33: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
-	12, // 34: plimsoll.v1.UnansweredCall.record:type_name -> plimsoll.v1.RunRecord
-	9,  // 35: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
-	3,  // 36: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
-	23, // 37: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
-	25, // 38: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
-	29, // 39: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
-	11, // 40: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
-	4,  // 41: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
-	24, // 42: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
-	28, // 43: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
-	30, // 44: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
-	40, // [40:45] is the sub-list for method output_type
-	35, // [35:40] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	5,  // 4: plimsoll.v1.DescribeResponse.session_environment:type_name -> plimsoll.v1.PayloadEnvironment
+	6,  // 5: plimsoll.v1.RunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	10, // 6: plimsoll.v1.RunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	17, // 7: plimsoll.v1.RunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	20, // 8: plimsoll.v1.RunRequest.module:type_name -> plimsoll.v1.ModuleRun
+	26, // 9: plimsoll.v1.RunRequest.cell:type_name -> plimsoll.v1.CellRun
+	12, // 10: plimsoll.v1.RunResponse.record:type_name -> plimsoll.v1.RunRecord
+	13, // 11: plimsoll.v1.RunResponse.javascript:type_name -> plimsoll.v1.JavaScriptResult
+	18, // 12: plimsoll.v1.RunResponse.project:type_name -> plimsoll.v1.ProjectResult
+	22, // 13: plimsoll.v1.RunResponse.module:type_name -> plimsoll.v1.ModuleResult
+	27, // 14: plimsoll.v1.RunResponse.cell:type_name -> plimsoll.v1.CellResult
+	8,  // 15: plimsoll.v1.JavaScriptResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	14, // 16: plimsoll.v1.ProjectRun.files:type_name -> plimsoll.v1.ProjectFile
+	15, // 17: plimsoll.v1.ProjectResult.steps:type_name -> plimsoll.v1.StepResult
+	0,  // 18: plimsoll.v1.ProjectResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	16, // 19: plimsoll.v1.ProjectResult.artifacts:type_name -> plimsoll.v1.Artifact
+	8,  // 20: plimsoll.v1.ProjectResult.advice:type_name -> plimsoll.v1.AdviceFinding
+	19, // 21: plimsoll.v1.ModuleRun.rows:type_name -> plimsoll.v1.ModuleRow
+	21, // 22: plimsoll.v1.ModuleResult.runs:type_name -> plimsoll.v1.ModuleRowResult
+	0,  // 23: plimsoll.v1.ModuleResult.outcome:type_name -> plimsoll.v1.ProjectOutcome
+	6,  // 24: plimsoll.v1.OpenSessionRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	6,  // 25: plimsoll.v1.SessionRunRequest.software_rule:type_name -> plimsoll.v1.SoftwareRule
+	10, // 26: plimsoll.v1.SessionRunRequest.javascript:type_name -> plimsoll.v1.JavaScriptRun
+	17, // 27: plimsoll.v1.SessionRunRequest.project:type_name -> plimsoll.v1.ProjectRun
+	26, // 28: plimsoll.v1.SessionRunRequest.cell:type_name -> plimsoll.v1.CellRun
+	14, // 29: plimsoll.v1.CellRun.files:type_name -> plimsoll.v1.ProjectFile
+	11, // 30: plimsoll.v1.SessionRunResponse.run:type_name -> plimsoll.v1.RunResponse
+	1,  // 31: plimsoll.v1.SessionRunResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 32: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
+	1,  // 33: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
+	2,  // 34: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
+	12, // 35: plimsoll.v1.UnansweredCall.record:type_name -> plimsoll.v1.RunRecord
+	9,  // 36: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
+	3,  // 37: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
+	23, // 38: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
+	25, // 39: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
+	29, // 40: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
+	11, // 41: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
+	4,  // 42: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
+	24, // 43: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
+	28, // 44: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
+	30, // 45: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
+	41, // [41:46] is the sub-list for method output_type
+	36, // [36:41] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_plimsoll_v1_sandbox_proto_init() }

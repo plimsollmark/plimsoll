@@ -105,14 +105,17 @@ process.stdout.write(JSON.stringify({rounds,killed,bytes,entries}))`
 // kind:pid:starttime:cmdline-hex, and exits 0 when every one holds and 1 otherwise,
 // saying why on stderr (for a log; only the status counts):
 //   - relay: the process is live with that start time and command line, and its
-//     parent is 0, which only a process the provider started has (docker exec gives
-//     its process no parent in the container; code in it cannot make one);
+//     parent is 0 (docker exec gives its process no parent in the container, and
+//     code in it cannot make one; the container's init has parent 0 too, which the
+//     command line, checked against the relay's own on the host first, rules out);
 //   - interp: the process is live with that start time and command line, and no
 //     other live process has the same command line.
 //
 // A launcher and a relay print their identities on stdout, and on docker code of the
 // session can write into a new process's stdout while it starts, so it could name a
-// process of its own for the sweep to keep. The provider runs this check as a user
+// process of its own for the sweep to keep. The host first requires the reported
+// command line to be the one plimsoll started (argvHex), so only a process running
+// that very program can be named. The provider runs this check as a user
 // the session's code is not, so nothing in the sandbox can write into the check or
 // change how it exits.
 const CheckScript = liveFn + `const fs=require("fs");const procs=[];

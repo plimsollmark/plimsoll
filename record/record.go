@@ -393,7 +393,7 @@ func CheckUnanswered(req *plimsollv1.SessionRunRequest, m *plimsollv1.RunRecord,
 		return nil, ErrNoRecord
 	}
 	r := FromWire(m)
-	if err := checkUnanswered(SessionRunRequestDigest(req), softwarewire.FromWire(req.GetSoftwareRule()), r); err != nil {
+	if err := checkUnanswered(SessionRunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r); err != nil {
 		return nil, err
 	}
 	switch {
@@ -409,12 +409,17 @@ func CheckUnanswered(req *plimsollv1.SessionRunRequest, m *plimsollv1.RunRecord,
 // request it came with (the call as a Run request, record.AsRunRequest), as
 // CheckExchange does for an answered call: everything but its place in the chain.
 func CheckUnansweredExchange(req *plimsollv1.RunRequest, r sandbox.RunRecord) error {
-	return checkUnanswered(RunRequestDigest(req), softwarewire.FromWire(req.GetSoftwareRule()), r)
+	return checkUnanswered(RunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r)
 }
 
 // checkUnanswered is what an unanswered record states that a caller can recompute
-// from the request it sent.
-func checkUnanswered(requestDigest string, rule sandbox.SoftwareRule, r sandbox.RunRecord) error {
+// from the request it sent, and that its evidence meets the request's floor and
+// software rule, as check requires of an answered record.
+func checkUnanswered(requestDigest, floor string, rule sandbox.SoftwareRule, r sandbox.RunRecord) error {
+	minimum, err := floorOf(floor)
+	if err != nil {
+		return err
+	}
 	switch {
 	case r.Version != UnansweredVersion:
 		return fmt.Errorf("%w: an unanswered call's record is version %d, not %d", ErrVersion, r.Version, UnansweredVersion)
@@ -422,12 +427,12 @@ func checkUnanswered(requestDigest string, rule sandbox.SoftwareRule, r sandbox.
 		return fmt.Errorf("%w: an unanswered call's record states a result or no error code", ErrMismatch)
 	case r.RequestSHA256 != requestDigest:
 		return fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
-	case r.SoftwareRuleID != rule.ID():
-		return fmt.Errorf("%w: the record's software rule is not the request's", ErrMismatch)
+	case r.SoftwareRuleID != rule.ID() || !rule.Allows(r.SoftwareIdentity):
+		return fmt.Errorf("%w: the record's software rule is not the request's, or its software is not in it", ErrMismatch)
 	case r.SHA256 != Digest(r):
 		return fmt.Errorf("%w: record digest %s, its fields digest to %s", ErrMismatch, r.SHA256, Digest(r))
 	}
-	return nil
+	return sandbox.CheckResultIsolation(sandbox.ParseIsolationClass(r.Isolation), minimum)
 }
 
 // ErrVersion means a record uses an encoding this package does not know.
@@ -442,7 +447,7 @@ var ErrNoRecord = errors.New("record: the response carries no run record")
 // caller sent and the response it received, and returns it. A response with no
 // record is ErrNoRecord.
 func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	r, err := check(RunRequestDigest(req), req.GetProtocol(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
+	r, err := check(RunRequestDigest(req), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +462,7 @@ func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.R
 // call's place in its chain needs the chain around it, which CheckSessionCall
 // (live) and attest.VerifyBundle (stored) check.
 func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	return check(RunRequestDigest(req), req.GetProtocol(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
+	return check(RunRequestDigest(req), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
 }
 
 // CheckSessionCall verifies a session call's record against the request sent and
@@ -467,7 +472,7 @@ func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*s
 // daemon executed a call this caller did not make: someone else holds the
 // session ID.
 func CheckSessionCall(req *plimsollv1.SessionRunRequest, resp *plimsollv1.RunResponse, fingerprint string, prevSeq uint64, prev string) (*sandbox.RunRecord, error) {
-	r, err := check(SessionRunRequestDigest(req), req.GetProtocol(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
+	r, err := check(SessionRunRequestDigest(req), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
 	if err != nil {
 		return nil, err
 	}
@@ -486,10 +491,16 @@ func CheckSessionCall(req *plimsollv1.SessionRunRequest, resp *plimsollv1.RunRes
 var ErrChain = errors.New("record: the session's chain of records is broken")
 
 // check verifies everything a record states that the caller can recompute, given
-// the request digest of what it sent.
-func check(requestDigest string, protocol uint32, rule sandbox.SoftwareRule, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
+// the request digest of what it sent, and that the evidence it states meets the
+// request's isolation floor and software rule. A record below the floor is refused
+// here, before anything signs or keeps it, as sandbox.ErrIsolationEvidenceMismatch.
+func check(requestDigest string, protocol uint32, floor string, rule sandbox.SoftwareRule, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
 	if err := rule.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: invalid software rule: %v", ErrMismatch, err)
+	}
+	minimum, err := floorOf(floor)
+	if err != nil {
+		return nil, err
 	}
 	if resp.GetRecord() == nil {
 		return nil, ErrNoRecord
@@ -502,6 +513,8 @@ func check(requestDigest string, protocol uint32, rule sandbox.SoftwareRule, res
 		return nil, fmt.Errorf("%w: protocol %d requires record version %d", ErrVersion, protocol, Version)
 	case r.Version == 1 && (r.SoftwareIdentity != "" || r.SoftwareRuleID != ""):
 		return nil, fmt.Errorf("%w: version 1 cannot carry software admission fields", ErrMismatch)
+	case r.Unanswered != "":
+		return nil, fmt.Errorf("%w: an answered call's record states an unanswered code, which version %d does not cover", ErrMismatch, r.Version)
 	case r.RequestSHA256 != requestDigest:
 		return nil, fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
 	case r.ResultSHA256 != ResultDigest(resp):
@@ -515,5 +528,21 @@ func check(requestDigest string, protocol uint32, rule sandbox.SoftwareRule, res
 	case r.SHA256 != Digest(r):
 		return nil, fmt.Errorf("%w: record digest %s, its fields digest to %s", ErrMismatch, r.SHA256, Digest(r))
 	}
+	if err := sandbox.CheckResultIsolation(sandbox.ParseIsolationClass(r.Isolation), minimum); err != nil {
+		return nil, err
+	}
 	return &r, nil
+}
+
+// floorOf reads a request's isolation floor as the daemon does: empty is none, and
+// anything but process, container, kernel or vm is a request no daemon runs, so a
+// record for it is refused.
+func floorOf(floor string) (sandbox.IsolationClass, error) {
+	if floor == "" {
+		return sandbox.IsolationUnknown, nil
+	}
+	if c := sandbox.ParseIsolationClass(floor); c >= sandbox.IsolationProcess {
+		return c, nil
+	}
+	return sandbox.IsolationUnknown, fmt.Errorf("%w: the request's isolation floor %q is not one a daemon accepts", ErrMismatch, floor)
 }

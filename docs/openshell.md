@@ -95,8 +95,12 @@ gateway with the docker driver.
    `/tmp` is a <dfn>*tmpfs*</dfn> (a filesystem held in memory, with a size limit) of that
    size, mounted `noexec`, so no file there can be run as a program.
 3. Reads the sandbox back and refuses to run on any difference: its labels, image,
-   limits, driver config and policy, the policy's hash and source, and no credential
-   providers attached.
+   limits, driver config and policy, the policy's hash and source, no credential
+   providers attached, and none of the settings plimsoll never makes: an agent socket,
+   injected environment variables, a runtime class, remapped user IDs, or platform labels
+   and annotations. Not compared: the terminal the gateway gives the idle main process
+   (v0.1.2 sets one on every sandbox), the log level, and the gateway's own reading of
+   the resources sent.
 4. Runs the code through the gateway's streamed exec call (one command, its output
    streamed back while it runs), with the plan on stdin for a project. The run's deadline
    is enforced by cancelling the stream, which kills the command and its process group
@@ -267,7 +271,9 @@ v0.1.2 gateway with the docker driver:
   launcher or a project's runner, which on docker it can for the moment each starts
   ([sessions.md](sessions.md#interpreters-state-between-calls)). This is OpenShell's
   behavior as measured, not something plimsoll sets: the relay protocol and the cell's two
-  steps assume it does not hold.
+  steps assume it does not hold. plimsoll checks it at startup all the same: with sessions
+  on, the session smoke test has a call try to open a running relay's input and output, and
+  a gateway where that succeeds gets no sessions (the daemon refuses to start).
 - **Grants in a session.** A granted session call starts its relay, the in-sandbox end of
   the grant's connection, as one of the call's processes, and the sweep after the call
   ends it. While the call runs, anything an earlier call left running can connect to the

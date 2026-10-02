@@ -209,6 +209,8 @@ class Msg:
             return ""
         if not isinstance(v, str):
             raise self._bad(name, "a string")
+        if not _utf8_ok(v):
+            raise self._bad(name, "text without lone surrogates (valid UTF-8)")
         return v
 
     def get_bool(self, name: str) -> bool:
@@ -260,8 +262,8 @@ class Msg:
 
     def get_strs(self, name: str) -> List[str]:
         out = self._list(name)
-        if not all(isinstance(v, str) for v in out):
-            raise self._bad(name, "a list of strings")
+        if not all(isinstance(v, str) and _utf8_ok(v) for v in out):
+            raise self._bad(name, "a list of strings without lone surrogates")
         return out
 
     def _list(self, name: str) -> List[Any]:
@@ -317,7 +319,20 @@ def parse_response(data: bytes, path: str) -> Msg:
         value = loads(data)
     except (UnicodeDecodeError, ValueError) as e:
         raise MalformedResponseError(f"the daemon's answer is not valid JSON: {e}") from None
+    except RecursionError:
+        raise MalformedResponseError("the daemon's answer nests deeper than a Run answer can") from None
     return Msg(value, path)
+
+
+def _utf8_ok(s: str) -> bool:
+    """JSON can escape a lone surrogate ("\\ud800"), which Python decodes into a str
+    UTF-8 cannot encode: refused where it is read, rather than failing later as a
+    UnicodeEncodeError when the record is digested."""
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 # --- the two error details, decoded by hand --------------------------------------
@@ -403,15 +418,38 @@ def decode_unanswered(b: bytes) -> Optional[Dict[str, Any]]:
     while i < len(b):
         tag, i = _varint(b, i)
         field, wire = tag >> 3, tag & 7
-        if wire != 2:
-            raise ValueError("UnansweredCall holds only length-delimited fields")
+        if field == 0:
+            raise ValueError("field number 0")
+        if field == 1:
+            if wire != 2:
+                raise ValueError("UnansweredCall.record is not length-delimited")
+            n, i = _varint(b, i)
+            if i + n > len(b):
+                raise ValueError("length-delimited field overruns the message")
+            rec = _decode_record(b[i : i + n])
+            i += n
+        else:
+            i = _skip(b, i, wire)
+    return rec
+
+
+def _skip(b: bytes, i: int, wire: int) -> int:
+    """Skips an unknown field's value of any wire type a proto3 message can carry, as
+    a protobuf decoder does, so a field a newer daemon adds is not an error."""
+    if wire == 0:
+        _, i = _varint(b, i)
+        return i
+    if wire == 2:
         n, i = _varint(b, i)
         if i + n > len(b):
             raise ValueError("length-delimited field overruns the message")
-        if field == 1:
-            rec = _decode_record(b[i : i + n])
-        i += n
-    return rec
+        return i + n
+    if wire in (1, 5):
+        i += 8 if wire == 1 else 4
+        if i > len(b):
+            raise ValueError("fixed-width field overruns the message")
+        return i
+    raise ValueError(f"unsupported wire type {wire}")
 
 
 def _decode_record(b: bytes) -> Dict[str, Any]:

@@ -25,9 +25,12 @@ unless all of the following are verifiably in force:
 - an explicit per-run resource envelope (the memory, CPU and other limits each run
   gets), and for docker, whose runs share the daemon's machine, an aggregate memory
   budget, the total memory all runs at once may use;
-- per-caller rate limiting;
-- a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive). A rate limit
-  bounds what a caller starts, not the slots its long runs or open
-  <dfn>*sessions*</dfn> hold; a session is one sandbox kept open for many calls.
+- per-caller rate limiting, with `SANDBOX_RATE_BURST` no larger than
+  `SANDBOX_RATE_PER_MIN`: a burst past one minute's allowance lets a caller start more
+  at once than the limit allows in a minute;
+- a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive and below
+  `SANDBOX_MAX_CONCURRENT`, since a cap equal to the global one lets one caller hold
+  every slot). A rate limit bounds what a caller starts, not the slots its long runs or
+  open <dfn>*sessions*</dfn> hold; a session is one sandbox kept open for many calls.
 
 Every violation is reported at once, so it is one fix pass rather than a startup loop.

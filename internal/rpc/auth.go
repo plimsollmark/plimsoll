@@ -7,9 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -106,9 +109,11 @@ func AuthenticateHTTP(verifier TokenVerifier, next http.Handler) http.Handler {
 		return next
 	}
 	errorWriter := connect.NewErrorWriter()
+	failures := &authFailureLog{}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := authenticatePrincipal(r.Context(), r.Header.Get("Authorization"), verifier)
 		if err != nil {
+			failures.note()
 			_ = r.Body.Close() // do not drain attacker-controlled slow/large bodies
 			_ = errorWriter.Write(w, r, err)
 			return
@@ -125,25 +130,99 @@ func AuthenticateHTTP(verifier TokenVerifier, next http.Handler) http.Handler {
 	})
 }
 
-// LimitHTTPConcurrency bounds authenticated requests while Connect is still
-// reading/decoding them, before the run limiter can be acquired.
-func LimitHTTPConcurrency(max int, next http.Handler) http.Handler {
-	if max < 1 {
-		max = 1
+// authFailureLog counts refused credentials and logs the count at most once per
+// authFailureLogEvery, so an operator sees guessing without the log becoming the
+// attacker's to fill. Nothing about the attempt is logged: not the token, not a
+// fingerprint of it.
+type authFailureLog struct {
+	mu     sync.Mutex
+	count  int
+	logged time.Time
+}
+
+const authFailureLogEvery = 30 * time.Second
+
+func (a *authFailureLog) note() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.count++
+	if time.Since(a.logged) < authFailureLogEvery {
+		return
 	}
-	sem := make(chan struct{}, max)
+	slog.Warn("refused requests with an unknown or malformed credential", "count", a.count, "window", authFailureLogEvery.String())
+	a.count, a.logged = 0, time.Now()
+}
+
+// LimitHTTPConcurrency bounds authenticated requests while Connect is still
+// reading/decoding them, before the run limiter can be acquired. A slot covers the
+// body only: it is given back once the body has been read to its end (or closed),
+// so a long run or a session call waiting for its turn does not hold decode
+// capacity. One caller may hold at most half the slots at once, so one caller's
+// bodies, however slowly they arrive, always leave the other half for everyone else.
+func LimitHTTPConcurrency(n int, next http.Handler) http.Handler {
+	if n < 1 {
+		n = 1
+	}
+	perCaller := max(1, n/2)
+	sem := make(chan struct{}, n)
+	var mu sync.Mutex
+	held := map[string]int{}
 	errorWriter := connect.NewErrorWriter()
+	refuseFull := func(w http.ResponseWriter, r *http.Request) {
+		_ = r.Body.Close()
+		_ = errorWriter.Write(w, r, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+			errors.New("RPC decode capacity exhausted, retry shortly")))
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		caller := auditCaller(r.Context())
+		mu.Lock()
+		if held[caller] >= perCaller {
+			mu.Unlock()
+			refuseFull(w, r)
+			return
+		}
+		held[caller]++
+		mu.Unlock()
+		leave := func() {
+			mu.Lock()
+			if held[caller]--; held[caller] == 0 {
+				delete(held, caller)
+			}
+			mu.Unlock()
+		}
 		select {
 		case sem <- struct{}{}:
-			defer func() { <-sem }()
-			next.ServeHTTP(w, r)
 		default:
-			_ = r.Body.Close()
-			_ = errorWriter.Write(w, r, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
-				errors.New("RPC decode capacity exhausted, retry shortly")))
+			leave()
+			refuseFull(w, r)
+			return
 		}
+		var once sync.Once
+		release := func() { once.Do(func() { <-sem; leave() }) }
+		defer release()
+		r.Body = &decodeSlotBody{ReadCloser: r.Body, release: release}
+		next.ServeHTTP(w, r)
 	})
+}
+
+// decodeSlotBody gives its request's decode slot back when the body ends: at EOF, on
+// a read error, or when it is closed.
+type decodeSlotBody struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b *decodeSlotBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.release()
+	}
+	return n, err
+}
+
+func (b *decodeSlotBody) Close() error {
+	b.release()
+	return b.ReadCloser.Close()
 }
 
 func bearerToken(header string) string {

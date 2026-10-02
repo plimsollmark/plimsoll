@@ -38,7 +38,8 @@ Part of the [plimsoll README](../README.md).
   guard can be reached. The proof of behaviour is the startup `SmokeTest`, which runs once
   and creates a real microVM that costs money, so it deliberately does not run on
   `/readyz`, which anyone can poll without logging in. A green `/readyz` on `e2b` means
-  "configured", not "working".
+  "configured", not "working". A red one says only `not ready`; why is in the daemon's
+  log, since a poller without a login has no business reading host or image names.
 - **The <dfn>*isolation tiers*</dfn> are evidence, not <dfn>*attestation*</dfn>.** A tier
   is how strong the wall around a run is; attestation is cryptographic proof from the
   hardware of what software is running. `kernel` and `vm` rest on which provider it is,

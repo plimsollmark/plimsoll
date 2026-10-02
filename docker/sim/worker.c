@@ -79,6 +79,8 @@ static int32_t run_one(WasmEdge_ExecutorContext *exec, const WasmEdge_ASTModuleC
                            WasmEdge_ValueGenF64(sw->t_end), WasmEdge_ValueGenF64(sw->h), WasmEdge_ValueGenI32(ptr), WasmEdge_ValueGenI32(sw->max_steps)};
     if (!WasmEdge_ResultOK(WasmEdge_ExecutorInvoke(exec, frun, p, 7, ret, 1))) return -104;
     int32_t n = WasmEdge_ValueGetI32(ret[0]);
+    // n is the module's word: more steps than out_data holds would overflow it.
+    if (n > sw->max_steps) return -110;
     if (n > 0) {
         WasmEdge_MemoryInstanceContext *mem = WasmEdge_ModuleInstanceFindMemory(mod, s_mem);
         uint8_t *src = WasmEdge_MemoryInstanceGetPointer(mem, (uint64_t)ptr, (uint64_t)16 * n);
@@ -109,6 +111,11 @@ static void *thread_main(void *arg) {
 
 typedef struct { int32_t nparams, width; } ModuleShape;
 
+// MAX_WIDTH bounds sim_width(): a row wider than 1,048,576 doubles cannot fit one
+// step in the 8 MiB result budget, and the bound keeps every size computed from it
+// far from overflow.
+#define MAX_WIDTH (1 << 20)
+
 // Instantiate once to read the module's contract: sim_run's parameter count and
 // sim_width(). Returns 0 or a negative code.
 static int module_shape(WasmEdge_ExecutorContext *exec, const WasmEdge_ASTModuleContext *ast, ModuleShape *shape) {
@@ -132,7 +139,7 @@ static int module_shape(WasmEdge_ExecutorContext *exec, const WasmEdge_ASTModule
         WasmEdge_Value ret[1];
         if (np < 5 || WasmEdge_FunctionTypeGetReturnsLength(ft) != 1) rc = -107;
         else if (!WasmEdge_ResultOK(WasmEdge_ExecutorInvoke(exec, fwidth, NULL, 0, ret, 1))) rc = -108;
-        else { shape->nparams = (int32_t)np - 4; shape->width = WasmEdge_ValueGetI32(ret[0]); if (shape->width < 1) rc = -109; }
+        else { shape->nparams = (int32_t)np - 4; shape->width = WasmEdge_ValueGetI32(ret[0]); if (shape->width < 1 || shape->width > MAX_WIDTH) rc = -109; }
     }
     WasmEdge_StringDelete(s_init); WasmEdge_StringDelete(s_run); WasmEdge_StringDelete(s_width);
 done:
@@ -175,6 +182,9 @@ static int32_t run_row(WasmEdge_ExecutorContext *exec, const WasmEdge_ASTModuleC
             if (!WasmEdge_ResultOK(WasmEdge_ExecutorInvoke(exec, frun, p, (uint32_t)(shape->nparams + 4), ret, 1))) n = -104;
             else n = WasmEdge_ValueGetI32(ret[0]);
             free(p);
+            // n is the module's word: a row claiming more steps than out holds
+            // (width * max_steps doubles) fails instead of overflowing it.
+            if (n > max_steps) n = -110;
             if (n > 0) {
                 WasmEdge_MemoryInstanceContext *mem = WasmEdge_ModuleInstanceFindMemory(mod, s_mem);
                 uint8_t *src = mem ? WasmEdge_MemoryInstanceGetPointer(mem, (uint64_t)ptr, (uint64_t)8 * shape->width * n) : NULL;

@@ -77,7 +77,7 @@ func TestCredentialLifecycleAndActivation(t *testing.T) {
 	if status, _ := authenticate(old, "unregistered"); status != http.StatusUnauthorized {
 		t.Fatal("unknown token was accepted")
 	}
-	invoke(t, "other-synthetic-token\n", "import", "-file", path, "-id", "client-b", "-scope", "other:permission")
+	invoke(t, "other-synthetic-token-of-32-chars-min\n", "import", "-file", path, "-id", "client-b", "-scope", "other:permission")
 	listed, _ := invoke(t, "", "list", "-file", path, "-json")
 	var callers []map[string]any
 	if err := json.Unmarshal([]byte(listed), &callers); err != nil || len(callers) != 2 {
@@ -88,7 +88,7 @@ func TestCredentialLifecycleAndActivation(t *testing.T) {
 			t.Fatal("list exposed fields beyond caller ID and scopes")
 		}
 	}
-	if status, _ := authenticate(loadVerifier(t, path), "other-synthetic-token"); status != http.StatusForbidden {
+	if status, _ := authenticate(loadVerifier(t, path), "other-synthetic-token-of-32-chars-min"); status != http.StatusForbidden {
 		t.Fatal("a recognized token without code:run could execute an RPC")
 	}
 	out, _ = invoke(t, "", "rotate", "-file", path, "-id", "client-a", "-token-stdout")
@@ -103,12 +103,12 @@ func TestCredentialLifecycleAndActivation(t *testing.T) {
 	if status, _ := authenticate(old, token); status != http.StatusNoContent {
 		t.Fatal("editing the file unexpectedly altered an already loaded verifier")
 	}
-	invoke(t, "imported-replacement\r\n", "rotate", "-file", path, "-id", "client-a", "-token-stdin")
+	invoke(t, "imported-replacement-token-32-chars\r\n", "rotate", "-file", path, "-id", "client-a", "-token-stdin")
 	if status, _ := authenticate(loadVerifier(t, path), replacement); status != http.StatusUnauthorized {
 		t.Fatal("imported rotation left the previous credential active")
 	}
 	invoke(t, "", "revoke", "-file", path, "-id", "client-a")
-	if status, _ := authenticate(loadVerifier(t, path), "imported-replacement"); status != http.StatusUnauthorized {
+	if status, _ := authenticate(loadVerifier(t, path), "imported-replacement-token-32-chars"); status != http.StatusUnauthorized {
 		t.Fatal("revoked caller is still authorized in the updated configuration")
 	}
 	_, diagnostic = invoke(t, "", "revoke", "-file", path, "-id", "client-b")
@@ -129,7 +129,7 @@ func TestCredentialLifecycleAndActivation(t *testing.T) {
 }
 
 func TestFailuresDoNotChangeRegistryOrExposeInput(t *testing.T) {
-	const secret = "synthetic-existing-secret"
+	const secret = "synthetic-existing-secret-32-chars-x"
 	path := filepath.Join(t.TempDir(), "clients.json")
 	invoke(t, secret, "import", "-file", path, "-id", "existing")
 	before, err := os.ReadFile(path)
@@ -237,4 +237,14 @@ func TestCLIProcess(t *testing.T) {
 	os.Args = append([]string{"plimsoll-clients"}, os.Args[separator+1:]...)
 	main()
 	os.Exit(0)
+}
+
+// A token shorter than 32 characters is refused on import (v0.15.0 review, L13).
+func TestShortTokensAreRefused(t *testing.T) {
+	if _, err := readToken(strings.NewReader("abc\n")); err == nil || !strings.Contains(err.Error(), "at least 32") {
+		t.Fatalf("a 3-character token: %v", err)
+	}
+	if _, err := readToken(strings.NewReader(strings.Repeat("a", 32) + "\n")); err != nil {
+		t.Fatalf("a 32-character token: %v", err)
+	}
 }

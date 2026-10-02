@@ -319,6 +319,9 @@ class Info:
     supports_sessions: bool
     session_lifetime_ms: int
     session_idle_timeout_ms: int
+    session_environment: PayloadEnvironment
+    """Where a session's calls run (on docker the project image), stated with
+    ``supports_sessions``; informational, like the other environments."""
     javascript_environment: PayloadEnvironment
     project_environment: PayloadEnvironment
     module_environment: PayloadEnvironment

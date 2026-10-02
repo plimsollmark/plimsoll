@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -862,5 +863,59 @@ func TestRunProjectRejectsTraversalBeforeContainerStart(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("err = %v, want ErrInvalidRequest", err)
+	}
+}
+
+// A caller that gives up on a Preflight (an unauthenticated /readyz poll that hangs
+// up) must not take the kernel tier away: the probe runs detached from the caller's
+// cancellation, so only a real failure invalidates the evidence (v0.15.0 review, M1).
+func TestDockerPreflightIgnoresTheCallersCancellation(t *testing.T) {
+	bin := t.TempDir()
+	docker := filepath.Join(bin, "docker")
+	slow := filepath.Join(bin, "slow")
+	script := "#!/bin/sh\nif [ \"$1\" = context ]; then echo unix:///var/run/docker.sock; exit 0; fi\n" +
+		"if [ \"$1\" = --host ] && [ \"$3\" = info ]; then if [ -f \"$CR_SLOW\" ]; then /bin/sleep 1; fi; echo '{\"runsc\":{\"path\":\"/usr/local/bin/runsc\"}}'; exit 0; fi\n" +
+		"if [ \"$1\" = --host ] && [ \"$3\" = image ]; then echo '{\"Id\":\"sha256:d0cafe\",\"Config\":{}}'; exit 0; fi\nexit 1\n"
+	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("DOCKER_HOST", "")
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("CR_SLOW", slow)
+	d := DefaultDocker("")
+	d.Runtime = "runsc"
+	now := time.Unix(1_700_000_000, 0)
+	d.preflightNow = func() time.Time { return now }
+	if err := d.Preflight(context.Background()); err != nil || d.IsolationClass() != IsolationKernel {
+		t.Fatalf("Preflight = %v, isolation %v; want kernel", err, d.IsolationClass())
+	}
+	now = now.Add(time.Minute) // past the readiness cache
+	if err := os.WriteFile(slow, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	perr := d.Preflight(ctx)
+	if got := d.IsolationClass(); got != IsolationKernel {
+		t.Fatalf("a caller's cancellation dropped the tier to %v (Preflight: %v); want kernel", got, perr)
+	}
+}
+
+// Guest code cannot pass its own exit for docker's: a snippet that prints docker's
+// diagnostic and exits 125, 126 or 127 ran, so it is a result with that exit code,
+// not an infrastructure error, and its stderr is exactly what it wrote (v0.15.0
+// review, L7).
+func TestDockerGuestCannotFakeAnInfrastructureExit(t *testing.T) {
+	d := testDocker()
+	requireSnippetImage(t, d)
+	for _, code := range []int{125, 126, 127} {
+		res, err := d.RunJavaScript(context.Background(), Request{Code: fmt.Sprintf(`process.stderr.write("docker: Error response from daemon: OCI runtime create failed\n"); process.exit(%d)`, code)})
+		if err != nil {
+			t.Fatalf("exit %d: an infrastructure error from guest code: %v", code, err)
+		}
+		if res.ExitCode != code || res.Stderr != "docker: Error response from daemon: OCI runtime create failed\n" {
+			t.Fatalf("exit %d: result %+v", code, res)
+		}
 	}
 }

@@ -26,12 +26,14 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"connectrpc.com/connect"
 
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/internal/clientconfig"
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -65,6 +67,7 @@ The daemon takes no arguments. Configuration is by environment variable:
                              caller its own principal; managed by plimsoll-clients);
                              takes precedence over PLIMSOLL_TOKEN
   PLIMSOLL_TOKEN             one shared bearer granting code:run to every caller
+                             (at least 32 characters)
   PLIMSOLL_INSECURE          =1 explicitly permits a real provider with auth
                              disabled (development only; never expose that listener)
   PLIMSOLL_TLS_CERT / PLIMSOLL_TLS_KEY
@@ -165,10 +168,12 @@ const usageLimits = `
   SANDBOX_SESSION_LIFETIME   a session's absolute lifetime (default 30m, at most
                              12h); a request may ask for less
   SANDBOX_SESSION_IDLE       suspend a session idle this long (default 5m; 0 =
-                             never); its files are kept and the next call resumes it
+                             never; otherwise 1s to 12h); its files are kept and
+                             the next call resumes it; a request may ask for less,
+                             not under 1s
   SANDBOX_SESSION_DISK_MB    end a session whose files exceed this after a call
-                             (default 1024; 0 = no bound); measured after each
-                             call, not enforced during it
+                             (default 1024; 0 = no bound; at most 1048576);
+                             measured after each call, not enforced during it
 
 Endpoints outside auth: GET /healthz (liveness) and GET /readyz (provider
 readiness) on PLIMSOLL_ADDR, and GET /metrics (Prometheus text: run, shed-load,
@@ -222,6 +227,9 @@ func main() {
 	}
 	cancelReady()
 	slog.Info("sandbox provider ready", "provider", sb.Name())
+	// The tier startup proved: the background loop below re-checks whenever the
+	// current evidence falls below it.
+	proven := sb.IsolationClass()
 
 	// Fail closed if the operator required a minimum isolation tier the selected
 	// provider cannot meet (e.g. SANDBOX_MIN_ISOLATION=vm but SANDBOX_PROVIDER=wasm):
@@ -326,6 +334,10 @@ func main() {
 		multiClientAuth = true
 		slog.Info("multi-client auth enabled", "clients", fv.Len())
 	case os.Getenv("PLIMSOLL_TOKEN") != "":
+		if err := clientconfig.CheckToken(os.Getenv("PLIMSOLL_TOKEN")); err != nil {
+			slog.Error("PLIMSOLL_TOKEN is too short; refusing to serve", "error", err)
+			os.Exit(1)
+		}
 		verifier = staticVerifier{token: os.Getenv("PLIMSOLL_TOKEN"), scopes: []string{rpc.ScopeCodeRun}}
 	default:
 		// Open dev mode. Harmless when the provider is Disabled (no code runs), but
@@ -373,7 +385,9 @@ func main() {
 			TLS:             tlsConf != nil,
 			Addr:            addr,
 			MetricsAddr:     metricsAddr,
+			MaxConcurrent:   maxConcurrent,
 			RatePerMin:      ratePerMin,
+			Burst:           burst,
 			PerCaller:       perKey,
 			Sessions:        sc,
 		}); err != nil {
@@ -407,7 +421,7 @@ func main() {
 	// granted runs, since a guest awaits each host.* call rather than pipelining.
 	if guard, ok := sb.(sandbox.EgressGuardCapable); ok {
 		if guardPath := guard.EgressGuardPath(); guardPath != "" {
-			mux.Handle(guardPath, sandbox.EgressGuardHTTPHandler(guard, guardPath, maxConcurrent*2))
+			mux.Handle(guardPath, sandbox.EgressGuardHTTPHandler(guard, guardPath, maxConcurrent*2, 2))
 		}
 	}
 
@@ -420,16 +434,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if pf, ok := sb.(sandbox.Preflighter); ok {
-			if err := pf.Preflight(r.Context()); err != nil {
-				http.Error(w, "not ready: "+err.Error(), http.StatusServiceUnavailable)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready\n"))
-	})
+	mux.HandleFunc("/readyz", readyzHandler(sb))
 
 	// Bind both listeners before serving either, so a taken port is a startup
 	// error rather than a goroutine exiting later, and so the log can name the bound
@@ -465,10 +470,12 @@ func main() {
 	//     microVMs whose create response was malformed or whose teardown retries all
 	//     failed). The provider guarantees it never destroys a resource another run
 	//     may still be using, so the loop is safe alongside in-flight runs.
-	//   - Re-check isolation evidence that has lapsed. A provider whose tier fell to
-	//     unknown (openshell after a failed gateway check) has every request that
-	//     states a minimum isolation refused before the provider is asked, so without
-	//     this only a /readyz poll or a run with no floor would ever check again.
+	//   - Re-check isolation evidence that has lapsed below what startup proved. A
+	//     provider whose tier fell (openshell to unknown after a failed gateway check,
+	//     docker from kernel to container after a failed refresh) has every request
+	//     whose floor is above the current tier refused before the provider is asked,
+	//     so without this only a /readyz poll or a run with no floor would ever check
+	//     again.
 	rec, reconciles := sb.(sandbox.OrphanReconciler)
 	pf, preflights := sb.(sandbox.Preflighter)
 	if reconciles || preflights {
@@ -480,10 +487,11 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if preflights && sb.IsolationClass() == sandbox.IsolationUnknown {
+					if c := sb.IsolationClass(); preflights && (c == sandbox.IsolationUnknown || c < proven) {
 						pctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 						if err := pf.Preflight(pctx); err != nil {
-							slog.Warn("isolation evidence is still unknown; requests that state a minimum isolation are refused", "provider", sb.Name(), "error", err)
+							slog.Warn("isolation evidence is below what startup proved; requests whose minimum isolation is above it are refused",
+								"provider", sb.Name(), "isolation", sb.IsolationClass().String(), "proven", proven.String(), "error", err)
 						}
 						cancel()
 					}
@@ -619,6 +627,33 @@ func newMetricsServer(addr string, handler http.Handler, tlsConf *tls.Config) *h
 	srv.WriteTimeout = 10 * time.Second
 	return srv
 }
+
+// readyzHandler re-runs the provider's bounded Preflight. Anyone can poll it, so it
+// answers with a fixed body: a Preflight error can name DOCKER_HOST, image references
+// or a gateway's own error text. The detail goes to the log, at most once per
+// readyzLogEvery, so a poller cannot flood the log either.
+func readyzHandler(sb sandbox.Sandbox) http.HandlerFunc {
+	var mu sync.Mutex
+	var logged time.Time
+	return func(w http.ResponseWriter, r *http.Request) {
+		if pf, ok := sb.(sandbox.Preflighter); ok {
+			if err := pf.Preflight(r.Context()); err != nil {
+				mu.Lock()
+				if time.Since(logged) >= readyzLogEvery {
+					logged = time.Now()
+					slog.Warn("readiness check failed", "provider", sb.Name(), "error", err)
+				}
+				mu.Unlock()
+				http.Error(w, "not ready", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready\n"))
+	}
+}
+
+const readyzLogEvery = 30 * time.Second
 
 // newHTTPServer configures the daemon's HTTP server. With a TLS config it serves
 // HTTPS with HTTP/1.1 + HTTP/2 negotiated via ALPN; without one it enables Go's

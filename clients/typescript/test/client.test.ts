@@ -6,7 +6,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { before, test } from "node:test";
 
-import { PlimsollClient, PlimsollError, PROTOCOL } from "../src/index.ts";
+import { meets, PlimsollClient, PlimsollError, PROTOCOL } from "../src/index.ts";
 import { recordDigest, recordFromWire } from "../src/record.ts";
 
 const wasmUrl = process.env.PLIMSOLL_WASM_URL;
@@ -322,4 +322,33 @@ test("an unanswered session call is in the chain and the session goes on", { ski
   assert.equal(r.record.sequence, 3n);
   const sum = await s.close();
   assert.equal(sum.calls, 3n);
+});
+
+// An unanswered call's record must meet the session's floor, which every call carries,
+// and repeat what the session stated at open; otherwise it is data loss and the session
+// sends nothing more (v0.15.0 review, M5.3 and L24).
+test("an unanswered record must state the session's evidence", { skip: !process.env.PLIMSOLL_LIAR_URL && "run through `go test ./clients/typescript`" }, async () => {
+  const c = new PlimsollClient({ baseUrl: process.env.PLIMSOLL_LIAR_URL! });
+  const s = await c.openSession({ minimumIsolation: "container" });
+  await assert.rejects(s.runJavaScript("weaker"), (e: unknown) => e instanceof PlimsollError && e.code === "data_loss" && /below the call's minimum container/.test(e.message));
+  await assert.rejects(s.runJavaScript("next"), (e: unknown) => e instanceof PlimsollError && e.notDispatched === "request");
+  const other = await c.openSession();
+  await assert.rejects(other.runJavaScript("other-provider"), (e: unknown) => e instanceof PlimsollError && e.code === "data_loss" && /the session opened as liar/.test(e.message));
+});
+
+// A session call aborted while it waits its turn was never sent: a refusal, and the
+// session stays usable (v0.15.0 review, L21). A floor outside the four tiers meets
+// nothing (L24).
+test("a queued call aborted before it is sent leaves the session usable", { skip }, async () => {
+  const s = await sessions.openSession();
+  const ac = new AbortController();
+  const a = s.runJavaScript("1");
+  const b = s.runJavaScript("2", { signal: ac.signal });
+  ac.abort();
+  await a;
+  await assert.rejects(b, (e: unknown) => e instanceof PlimsollError && e.notDispatched === "request");
+  assert.equal(s.stopped, undefined);
+  await s.runJavaScript("3");
+  await s.close();
+  assert.equal(meets("vm", "bogus" as never), false);
 });

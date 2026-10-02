@@ -1,9 +1,9 @@
 # Starts a session's interpreter (argv: its command; it gets the directory as its last
 # argument), with its stdout and stderr on two FIFOs it holds open read-write, in its
 # own session, in the work directory. Prints the identity the sweep keeps it by:
-# pid:starttime:cmdline-hex. Runs only where no call's code can have run since the
-# last clean sweep, except other interpreters of the session, whose code can write
-# anything here. So the identity is the process this launcher started, $child (setsid
+# pid:starttime:cmdline-hex. Runs before the cell's code is sent, but not always
+# right after a sweep (a cell that finds its interpreter gone starts it again), so the
+# session's other interpreters, and what they started, can have written anything here. So the identity is the process this launcher started, $child (setsid
 # execs without forking, as a background job is not a process group leader), and
 # never a PID read from a file: the ready file says only that the interpreter
 # listens, and only once it names $child.

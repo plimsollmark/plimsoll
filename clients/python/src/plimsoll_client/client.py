@@ -9,6 +9,7 @@ chain of records so a call it did not make is caught.
 
 from __future__ import annotations
 
+import math
 import ssl
 import threading
 from dataclasses import replace
@@ -32,9 +33,11 @@ from .errors import (
     ChainError,
     DataLossError,
     PlimsollError,
+    InvalidOptionError,
     IsolationEvidenceMismatchError,
     MalformedResponseError,
     ProtocolMismatchError,
+    RecordMismatchError,
     ResultKindMismatchError,
     SessionEndedError,
     SoftwareEvidenceMismatchError,
@@ -55,6 +58,7 @@ from .types import (
     SessionSummary,
     SoftwareRule,
     StepResult,
+    TIERS,
     meets,
 )
 
@@ -228,6 +232,14 @@ def _payload_environment(m: Optional[Msg]) -> PayloadEnvironment:
     )
 
 
+def _stronger(a: str, b: str) -> str:
+    """The stronger of two validated floors ("" is none): a session's calls carry the
+    floor given at open unless the call asks for more."""
+    if not a or not b:
+        return a or b
+    return a if TIERS.index(a) >= TIERS.index(b) else b
+
+
 def _envelope(
     timeout: Optional[float],
     minimum_isolation: Optional[str],
@@ -294,10 +306,13 @@ class Client:
         ssl_context: Optional[ssl.SSLContext] = None,
     ) -> None:
         url = v.validate_base_url(base_url, insecure_http)
-        if token is not None and (not isinstance(token, str) or any(c in token for c in "\r\n\x00")):
-            raise ValueError("plimsoll: the token must be a str without line breaks or NUL")
-        if isinstance(request_timeout, bool) or not isinstance(request_timeout, (int, float)) or not request_timeout > 0:
-            raise ValueError("plimsoll: request_timeout must be a positive number of seconds")
+        # Visible ASCII only, as an HTTP bearer value: a token http.client cannot encode
+        # would surface as a UnicodeEncodeError carrying the whole header, token
+        # included. The message never repeats the token.
+        if token is not None and (not isinstance(token, str) or not all(0x21 <= ord(c) <= 0x7E for c in token)):
+            raise InvalidOptionError("plimsoll: the token must be a str of visible ASCII characters")
+        if isinstance(request_timeout, bool) or not isinstance(request_timeout, (int, float)) or not 0 < request_timeout < math.inf:
+            raise InvalidOptionError("plimsoll: request_timeout must be a positive, finite number of seconds")
         self.base_url = url
         self._transport = Transport(url, token or None, float(request_timeout), ssl_context)
 
@@ -321,6 +336,7 @@ class Client:
             supports_sessions=m.get_bool("supportsSessions"),
             session_lifetime_ms=m.get_int("sessionLifetimeMs", UINT32),
             session_idle_timeout_ms=m.get_int("sessionIdleTimeoutMs", UINT32),
+            session_environment=_payload_environment(m.get_msg("sessionEnvironment")),
             javascript_environment=_payload_environment(m.get_msg("javascriptEnvironment")),
             project_environment=_payload_environment(m.get_msg("projectEnvironment")),
             module_environment=_payload_environment(m.get_msg("moduleEnvironment")),
@@ -450,9 +466,10 @@ class Client:
             req["softwareRule"] = wire_rule
         m = self._transport.call("OpenSession", req, "OpenSessionResponse")
         session_id = m.get_str("sessionId")
-        s = Session(self._transport, session_id, m, rule)
+        s = Session(self._transport, session_id, m, rule, floor)
         if s.fingerprint != session_fingerprint(session_id):
-            raise ChainError("plimsoll: the daemon's session fingerprint does not match its session ID")
+            s._close_quietly()  # the session exists on the daemon either way; nothing else holds its ID
+            raise ChainError("plimsoll: the daemon's session fingerprint does not match its session ID; the session was closed")
         if floor and not meets(s.isolation, floor):
             s._close_quietly()
             raise IsolationEvidenceMismatchError(
@@ -473,10 +490,11 @@ class Session:
     (ChainError). The session ID is a capability: it is sent to the daemon and
     appears nowhere else, not in ``repr`` and not in errors."""
 
-    def __init__(self, transport: Transport, session_id: str, m: Msg, rule: Optional[SoftwareRule]) -> None:
+    def __init__(self, transport: Transport, session_id: str, m: Msg, rule: Optional[SoftwareRule], floor: str = "") -> None:
         self._transport = transport
         self._id = session_id
         self._rule = rule
+        self._floor = floor  # the floor given at open, sent with every call
         self.fingerprint: str = m.get_str("session")
         """The SHA-256 of the session ID, as the session's records carry it."""
         self.provider: str = m.get_str("sandbox")
@@ -503,8 +521,17 @@ class Session:
     def __enter__(self) -> "Session":
         return self
 
-    def __exit__(self, *exc: Any) -> None:
-        self.close()
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if exc is None:
+            self.close()
+            return
+        # The body's exception is the one to see: a close that fails too (its count
+        # differs once a call was lost) is attached to it, not raised over it.
+        try:
+            self.close()
+        except Exception as close_error:
+            if hasattr(exc, "add_note"):
+                exc.add_note(f"closing the session also failed: {close_error}")
 
     @property
     def ended(self) -> Optional[SessionEnded]:
@@ -534,7 +561,7 @@ class Session:
         """Runs a snippet in the session. Arguments as for :meth:`Client.run_javascript`;
         ``software`` narrows the session's rule."""
         rule = v.merge_rules(self._rule, v.software_rule(software))
-        req = _envelope(timeout, minimum_isolation, rule, trace_id)
+        req = _envelope(timeout, _stronger(self._floor, v.floor(minimum_isolation)), rule, trace_id)
         req["javascript"] = _javascript_payload(code, grant_profile)
         return self._call("javascript", req, rule)
 
@@ -552,7 +579,7 @@ class Session:
     ) -> ProjectResult:
         """Runs a project in the session; its files persist for later calls."""
         rule = v.merge_rules(self._rule, v.software_rule(software))
-        req = _envelope(timeout, minimum_isolation, rule, trace_id)
+        req = _envelope(timeout, _stronger(self._floor, v.floor(minimum_isolation)), rule, trace_id)
         req["project"] = _project_payload(files, steps, artifacts, grant_profile)
         return self._call("project", req, rule)
 
@@ -574,7 +601,7 @@ class Session:
         directory, the interpreter's working directory, before the code runs. A
         cell carries no grant profile."""
         rule = v.merge_rules(self._rule, v.software_rule(software))
-        req = _envelope(timeout, minimum_isolation, rule, trace_id)
+        req = _envelope(timeout, _stronger(self._floor, v.floor(minimum_isolation)), rule, trace_id)
         req["cell"] = v.cell(language, code, files)
         return self._call("cell", req, rule)
 
@@ -596,53 +623,74 @@ class Session:
                     code="failed_precondition",
                     not_dispatched="request",
                 )
+            calls_before = self._calls
             try:
-                m = self._transport.call("SessionRun", req, "SessionRunResponse")
-            except PlimsollError as e:
-                if isinstance(e, SessionEndedError):
-                    self._ended = SessionEnded(reason=e.reason, detail=e.detail)
-                if e.not_dispatched is not None:
-                    raise
-                if e.unanswered is None:
-                    self._unanswered = e.message
-                    raise
-                # The call may have run, and the daemon chained its record: check it and
-                # keep it, so the session goes on and the call is not hidden.
-                try:
-                    r = check_unanswered(digest, rule, Msg(e.unanswered, "unanswered"))
-                    if r.session != self.fingerprint or r.sequence != self._calls + 1 or r.previous_sha256 != self._last:
-                        raise ChainError(
-                            f"plimsoll: the session's chain is broken: call {r.sequence} after {r.previous_sha256!r}, "
-                            f"this client's last was call {self._calls}, {self._last!r}"
-                        )
-                except PlimsollError as ce:
-                    self._unanswered = ce.message
-                    raise ce from e
-                self._calls, self._last = r.sequence, r.sha256
+                return self._exchange(kind, req, rule, digest, floor)
+            except BaseException as e:
+                # Whatever ended the exchange (an error of the daemon's or the
+                # transport's, an answer this client could not read, a
+                # KeyboardInterrupt), the call may have run: unless the error says
+                # nothing ran, or the chain moved past this call, this client can no
+                # longer follow the daemon's chain, so it sends nothing more.
+                marked = isinstance(e, PlimsollError) and e.not_dispatched is not None
+                if not marked and self._calls == calls_before and self._unanswered is None:
+                    self._unanswered = e.message if isinstance(e, PlimsollError) else type(e).__name__
                 raise
-            except Exception as e:
-                self._unanswered = str(e)
-                raise
-            run = m.get_msg("run")
-            if run is None:
-                self._unanswered = "the answer carried no run"
-                raise ResultKindMismatchError("plimsoll: the session call's answer carries no run")
-            end = m.get_enum("ended", SESSION_ENDS)
-            if end != 0:
-                name = SESSION_END_NAMES[end] if 0 < end < len(SESSION_END_NAMES) else "open"
-                self._ended = SessionEnded(reason=name, detail=m.get_str("endDetail"))
-            return _finish(kind, run, lambda: self._checked_chain(digest, rule, run), floor)
 
-    def _checked_chain(self, digest: str, rule: Optional[SoftwareRule], run: Msg) -> RunRecord:
+    def _exchange(self, kind: str, req: Dict[str, Any], rule: Optional[SoftwareRule], digest: str, floor: str) -> Any:
         try:
-            return self._check_chain(digest, rule, run)
+            m = self._transport.call("SessionRun", req, "SessionRunResponse")
+        except PlimsollError as e:
+            if isinstance(e, SessionEndedError):
+                self._ended = SessionEnded(reason=e.reason, detail=e.detail)
+            if e.not_dispatched is not None or e.unanswered is None:
+                raise
+            # The call may have run, and the daemon chained its record: check it and
+            # keep it, so the session goes on and the call is not hidden.
+            try:
+                r = check_unanswered(digest, floor, rule, Msg(e.unanswered, "unanswered"))
+                # With no response to compare it with, the record's evidence must be
+                # what the session stated at open.
+                if (r.provider, r.isolation, r.software_identity) != (self.provider, self.isolation, self.software_identity):
+                    raise RecordMismatchError(
+                        f"plimsoll: the unanswered call's record names {r.provider} at {r.isolation!r} running {r.software_identity!r}, "
+                        f"the session opened as {self.provider} at {self.isolation!r} running {self.software_identity!r}"
+                    )
+                if r.session != self.fingerprint or r.sequence != self._calls + 1 or r.previous_sha256 != self._last:
+                    raise ChainError(
+                        f"plimsoll: the session's chain is broken: call {r.sequence} after {r.previous_sha256!r}, "
+                        f"this client's last was call {self._calls}, {self._last!r}"
+                    )
+            except PlimsollError as ce:
+                raise ce from e
+            self._calls, self._last = r.sequence, r.sha256
+            e.record = r  # the checked record, as Go's UnansweredCallError carries it
+            raise
+        run = m.get_msg("run")
+        if run is None:
+            raise ResultKindMismatchError("plimsoll: the session call's answer carries no run")
+        end = m.get_enum("ended", SESSION_ENDS)
+        if end != 0:
+            name = SESSION_END_NAMES[end] if 0 < end < len(SESSION_END_NAMES) else "open"
+            self._ended = SessionEnded(reason=name, detail=m.get_str("endDetail"))
+        return _finish(kind, run, lambda: self._checked_chain(digest, rule, run, floor), floor)
+
+    def _checked_chain(self, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str) -> RunRecord:
+        try:
+            return self._check_chain(digest, rule, run, floor)
         except PlimsollError as e:
             self._unanswered = e.message
             raise
 
-    def _check_chain(self, digest: str, rule: Optional[SoftwareRule], run: Msg) -> RunRecord:
-        # record.CheckSessionCall, then the chain this client tracks moves on.
+    def _check_chain(self, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str) -> RunRecord:
+        # record.CheckSessionCall, then the chain this client tracks moves on. A tier
+        # below the call's floor fails it before the chain moves, as in Go's
+        # record.check, so the session sends nothing more.
         r = check(digest, PROTOCOL, rule, run)
+        if floor and not meets(r.isolation, floor):
+            raise IsolationEvidenceMismatchError(
+                f"plimsoll: result isolation {r.isolation or 'unknown'} is below the requested minimum {floor}; execution may have occurred"
+            )
         if r.session != self.fingerprint:
             raise ChainError(f"plimsoll: the record names session {r.session}, the call was sent to {self.fingerprint}")
         if r.sequence != self._calls + 1 or r.previous_sha256 != self._last:

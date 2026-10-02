@@ -40,7 +40,9 @@ func hardenedDockerFacts() hardenedFacts {
 		TLS:             true,
 		Addr:            ":8746",
 		MetricsAddr:     defaultMetricsAddr,
+		MaxConcurrent:   8,
 		RatePerMin:      30,
+		Burst:           30,
 		PerCaller:       4,
 	}
 }
@@ -111,6 +113,10 @@ func TestHardenedPolicyFailsClosedPerViolation(t *testing.T) {
 		{"missing pids budget", func(e map[string]string) { delete(e, "SANDBOX_PIDS") }, nil, "SANDBOX_PIDS"},
 		{"missing aggregate budget", func(e map[string]string) { delete(e, "SANDBOX_TOTAL_MEMORY_MB") }, nil, "SANDBOX_TOTAL_MEMORY_MB"},
 		{"rate limiting disabled", nil, func(f *hardenedFacts) { f.RatePerMin = 0 }, "SANDBOX_RATE_PER_MIN"},
+		// A cap one caller can fill, or a burst past a minute's allowance, is no limit
+		// (v0.15.0 review, L11).
+		{"per-caller cap equal to the global one", nil, func(f *hardenedFacts) { f.PerCaller = f.MaxConcurrent }, "below SANDBOX_MAX_CONCURRENT"},
+		{"burst past the rate", nil, func(f *hardenedFacts) { f.Burst = f.RatePerMin + 1 }, "SANDBOX_RATE_BURST"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

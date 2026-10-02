@@ -120,7 +120,9 @@ receiving requests that need a stronger one.
 
 A [session](sessions.md) lives on one daemon, so `OpenSession` places it once and
 every call on the returned session goes to that daemon. The pool keeps only backends
-whose `Describe` states session support.
+whose `Describe` states session support, and matches a required environment and software
+rule against the session environment `Describe` states (`session_environment`), not the
+snippet one: on docker every call of a session runs in the project image.
 
 ## What this does not do
 

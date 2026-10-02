@@ -33,7 +33,9 @@ type Session struct {
 	r           *Remote
 	id          string
 	fingerprint string
+	provider    string // the provider, tier and software the daemon stated at open,
 	isolation   sandbox.IsolationClass
+	identity    string // which an unanswered call's record must repeat
 	software    sandbox.SoftwareRule
 	floor       sandbox.IsolationClass // the floor given at open, sent with every call
 	expires     time.Time
@@ -87,9 +89,23 @@ type SessionRecorder interface {
 	RecordClose(session string, calls uint64, lastRecordSHA256 string) error
 }
 
+// ErrRecorderCannotKeepSessions refuses a session, before anything is sent, on a
+// Remote whose Recorder cannot keep a whole chain: a session's chain also holds the
+// records of calls that may have run without an answer and the daemon's close, and a
+// Recorder that is not also an UnansweredRecorder and a SessionRecorder would drop
+// them, leaving a bundle that does not verify.
+var ErrRecorderCannotKeepSessions = errors.New("client: the Recorder cannot keep a session's chain; it must also implement UnansweredRecorder and SessionRecorder")
+
 // OpenSession opens a session. The session ID it holds is a capability: it is sent
 // only to the daemon, and never appears in a record, a log line or an error.
 func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session, error) {
+	if r.recorder != nil {
+		_, unanswered := r.recorder.(UnansweredRecorder)
+		_, closes := r.recorder.(SessionRecorder)
+		if !unanswered || !closes {
+			return nil, sandbox.NotDispatched(sandbox.RefusalRequest, ErrRecorderCannotKeepSessions)
+		}
+	}
 	req := connect.NewRequest(&plimsollv1.OpenSessionRequest{
 		Protocol:         Protocol,
 		MinimumIsolation: minimumIsolationWire(opts.MinimumIsolation),
@@ -108,22 +124,27 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 		r:           r,
 		id:          m.GetSessionId(),
 		fingerprint: m.GetSession(),
+		provider:    m.GetSandbox(),
 		isolation:   sandbox.ParseIsolationClass(m.GetIsolation()),
+		identity:    m.GetSoftwareIdentity(),
 		software:    opts.Software,
 		floor:       opts.MinimumIsolation,
 		expires:     time.UnixMilli(m.GetExpiresUnixMs()),
 		idle:        time.Duration(m.GetIdleTimeoutMs()) * time.Millisecond,
 	}
+	// A session refused here is closed (it exists on the daemon either way, and nothing
+	// else holds its ID), but its close is not signed: it names whatever fingerprint the
+	// daemon chose.
 	if s.fingerprint != record.SessionFingerprint(s.id) {
-		_, _ = s.Close(context.WithoutCancel(ctx)) // the session exists either way; nothing else holds its ID
+		_, _ = s.close(context.WithoutCancel(ctx), false)
 		return nil, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: the daemon's session fingerprint does not match its session ID", record.ErrChain))
 	}
 	if err := sandbox.CheckResultIsolation(s.isolation, opts.MinimumIsolation); err != nil {
-		_, _ = s.Close(context.WithoutCancel(ctx))
+		_, _ = s.close(context.WithoutCancel(ctx), false)
 		return nil, connect.NewError(connect.CodeDataLoss, err)
 	}
 	if !opts.Software.Allows(m.GetSoftwareIdentity()) {
-		_, _ = s.Close(context.WithoutCancel(ctx))
+		_, _ = s.close(context.WithoutCancel(ctx), false)
 		return nil, connect.NewError(connect.CodeDataLoss, sandbox.ErrSoftwareMismatch)
 	}
 	return s, nil
@@ -183,13 +204,7 @@ func (s *Session) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbo
 	if !ok {
 		return fail, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
-	if err != nil {
-		return res, err
-	}
-	if err := sandbox.CheckResultIsolation(res.Isolation, floor); err != nil {
-		return res, connect.NewError(connect.CodeDataLoss, err)
-	}
-	return res, nil
+	return res, err
 }
 
 // RunProject runs a project in the session; its files persist for later calls.
@@ -220,13 +235,7 @@ func (s *Session) RunProject(ctx context.Context, in sandbox.ProjectRequest) (sa
 	if !ok {
 		return fail, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
-	if err != nil {
-		return res, err
-	}
-	if err := sandbox.CheckResultIsolation(res.Isolation, floor); err != nil {
-		return res, connect.NewError(connect.CodeDataLoss, err)
-	}
-	return res, nil
+	return res, err
 }
 
 // RunCell runs code in the session's interpreter for in.Language; what earlier
@@ -255,13 +264,7 @@ func (s *Session) RunCell(ctx context.Context, in sandbox.CellRequest) (sandbox.
 	if !ok {
 		return fail, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
-	if err != nil {
-		return res, err
-	}
-	if err := sandbox.CheckResultIsolation(res.Isolation, floor); err != nil {
-		return res, connect.NewError(connect.CodeDataLoss, err)
-	}
-	return res, nil
+	return res, err
 }
 
 func (s *Session) envelope(ctx context.Context, timeout time.Duration, minimum sandbox.IsolationClass, software sandbox.SoftwareRule) *plimsollv1.SessionRunRequest {
@@ -303,6 +306,12 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 			return nil, nil, err
 		}
 		r, cerr := record.CheckUnanswered(msg, rec, s.fingerprint, s.calls, s.last)
+		if cerr == nil && (r.Provider != s.provider || r.Isolation != s.isolation.String() || r.SoftwareIdentity != s.identity) {
+			// With no response to compare it with, the record's evidence must be what
+			// the session stated at open.
+			cerr = fmt.Errorf("%w: the unanswered call's record names %s at %q running %q, the session opened as %s at %q running %q",
+				record.ErrMismatch, r.Provider, r.Isolation, r.SoftwareIdentity, s.provider, s.isolation, s.identity)
+		}
 		if cerr != nil {
 			s.unanswered = cerr
 			return nil, nil, connect.NewError(connect.CodeDataLoss, cerr)
@@ -348,9 +357,12 @@ type SessionSummary struct {
 // Close ends the session (or collects one that ended by itself) and returns the
 // daemon's count of executed calls and last record. When the count or the last
 // record differs from the chain this client has seen, some call it did not make
-// ran in the session: that is DataLoss wrapping record.ErrChain, with the summary.
-// A SessionRecorder signs the daemon's statement either way.
-func (s *Session) Close(ctx context.Context) (SessionSummary, error) {
+// ran in the session: that is DataLoss wrapping record.ErrChain, with the summary,
+// and nothing is signed. A SessionRecorder signs the daemon's statement only when it
+// matches the chain this client has seen.
+func (s *Session) Close(ctx context.Context) (SessionSummary, error) { return s.close(ctx, true) }
+
+func (s *Session) close(ctx context.Context, sign bool) (SessionSummary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	req := connect.NewRequest(&plimsollv1.CloseSessionRequest{Protocol: Protocol, SessionId: s.id})
@@ -361,14 +373,14 @@ func (s *Session) Close(ctx context.Context) (SessionSummary, error) {
 	}
 	m := resp.Msg
 	sum := SessionSummary{Session: m.GetSession(), Calls: m.GetCalls(), LastRecordSHA256: m.GetLastRecordSha256(), End: sessionEndFromWire(m.GetEnded())}
-	if sr, ok := s.r.recorder.(SessionRecorder); ok {
-		if err := sr.RecordClose(sum.Session, sum.Calls, sum.LastRecordSHA256); err != nil {
-			return sum, fmt.Errorf("%w: the close: %w", ErrNotRecorded, err)
-		}
-	}
 	if sum.Session != s.fingerprint || sum.Calls != s.calls || sum.LastRecordSHA256 != s.last {
 		return sum, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: the daemon counts %d calls ending %q, this client saw %d ending %q",
 			record.ErrChain, sum.Calls, sum.LastRecordSHA256, s.calls, s.last))
+	}
+	if sr, ok := s.r.recorder.(SessionRecorder); ok && sign {
+		if err := sr.RecordClose(sum.Session, sum.Calls, sum.LastRecordSHA256); err != nil {
+			return sum, fmt.Errorf("%w: the close: %w", ErrNotRecorded, err)
+		}
 	}
 	return sum, nil
 }

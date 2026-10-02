@@ -48,7 +48,9 @@ const TIERS: Isolation[] = ["none", "process", "container", "kernel", "vm"];
 /** Whether a tier the daemon reported meets a floor. An unknown tier meets nothing. */
 export function meets(actual: string, floor: Isolation): boolean {
   const a = TIERS.indexOf(actual as Isolation);
-  return a >= 0 && a >= TIERS.indexOf(floor);
+  const f = TIERS.indexOf(floor);
+  // A floor is process, container, kernel or vm; anything else is met by nothing.
+  return a >= 0 && f >= 1 && a >= f;
 }
 
 /** A caller's rule for the selected software: one exact identity, or 1 to 32 approved ones. */
@@ -196,6 +198,8 @@ export type Info = {
   supportsSessions: boolean;
   sessionLifetimeMs: number;
   sessionIdleTimeoutMs: number;
+  /** Where a session's calls run (on docker the project image), stated with supportsSessions. */
+  sessionEnvironment: PayloadEnvironment;
   environments: { javascript: PayloadEnvironment; project: PayloadEnvironment; module: PayloadEnvironment; policy: string };
   resources: { memoryMb: number; cpus: number; pids: number; diskMb: number };
 };
@@ -401,6 +405,9 @@ export class PlimsollClient {
 
   /** @internal One unary Connect call with the JSON codec. */
   async call<T>(method: string, body: unknown, signal?: AbortSignal): Promise<T> {
+    // Aborted before it was sent (a session call waiting its turn, say): nothing left
+    // this process, so it is a refusal, not a call that may have run.
+    if (signal?.aborted) throw new PlimsollError("canceled", `plimsoll: ${method} was canceled before it was sent`, { notDispatched: "request", cause: signal.reason });
     const headers: Record<string, string> = { "Content-Type": "application/json", "Connect-Protocol-Version": "1" };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
     const deadline = AbortSignal.timeout(this.requestTimeoutMs);
@@ -462,6 +469,7 @@ export class PlimsollClient {
       supportsSessions: m.supportsSessions ?? false,
       sessionLifetimeMs: m.sessionLifetimeMs ?? 0,
       sessionIdleTimeoutMs: m.sessionIdleTimeoutMs ?? 0,
+      sessionEnvironment: env(m.sessionEnvironment),
       environments: {
         javascript: env(m.javascriptEnvironment),
         project: env(m.projectEnvironment),
@@ -508,9 +516,11 @@ export class PlimsollClient {
       },
       opts.signal,
     );
-    const s = new Session(this, m, rule);
+    const s = new Session(this, m, rule, opts.minimumIsolation);
     if (s.fingerprint !== sessionFingerprint(m.sessionId ?? "")) {
-      throw new PlimsollError("data_loss", "plimsoll: the daemon's session fingerprint does not match its session ID");
+      // The session exists on the daemon either way, and nothing else holds its ID.
+      await s.close().catch(() => undefined);
+      throw new PlimsollError("data_loss", "plimsoll: the daemon's session fingerprint does not match its session ID; the session was closed");
     }
     if (opts.minimumIsolation && !meets(s.isolation, opts.minimumIsolation)) {
       await s.close().catch(() => undefined);
@@ -596,12 +606,16 @@ export class Session {
   /** The tier the daemon measured when the session opened. */
   readonly isolation: string;
   readonly sandbox: string;
+  /** The selected software the daemon stated at open. */
+  readonly softwareIdentity: string;
   readonly expiresAtMs: number;
   readonly idleTimeoutMs: number;
   // The session ID is a capability: it goes to the daemon and nowhere else.
   readonly #id: string;
   readonly #client: PlimsollClient;
   readonly #rule: WireSoftwareRule | undefined;
+  // The floor given at open: every call carries it unless the call asks for more.
+  readonly #floor: Exclude<Isolation, "none"> | undefined;
   #calls = 0n;
   #last = "";
   #end: { reason: SessionEnd; detail: string } | undefined;
@@ -612,15 +626,25 @@ export class Session {
   #queue: Promise<unknown> = Promise.resolve();
 
   /** @internal */
-  constructor(client: PlimsollClient, m: WireOpenSessionResponse, rule: WireSoftwareRule | undefined) {
+  constructor(client: PlimsollClient, m: WireOpenSessionResponse, rule: WireSoftwareRule | undefined, floor?: Exclude<Isolation, "none">) {
     this.#client = client;
     this.#id = m.sessionId ?? "";
     this.#rule = rule;
+    this.#floor = floor;
     this.fingerprint = m.session ?? "";
     this.isolation = m.isolation ?? "";
     this.sandbox = m.sandbox ?? "";
+    this.softwareIdentity = m.softwareIdentity ?? "";
     this.expiresAtMs = num(m.expiresUnixMs);
     this.idleTimeoutMs = m.idleTimeoutMs ?? 0;
+  }
+
+  /**
+   * Why this client sends nothing more on the session, once a call ended without an
+   * answer it could check (the call may have run); undefined while it is usable.
+   */
+  get stopped(): string | undefined {
+    return this.#unknown;
   }
 
   /** The session's end once a response reported it, else undefined. */
@@ -634,12 +658,14 @@ export class Session {
   }
 
   async runJavaScript(code: string, opts: RunOptions = {}): Promise<JavaScriptResult> {
+    opts = this.#withFloor(opts);
     const run = await this.#call({ javascript: { code, grantProfile: this.#client.jsGrant || undefined } }, opts);
     return finish(run.run, run.record, javascriptResult, "javascript", opts.minimumIsolation);
   }
 
   /** Runs a project in the session; its files persist for later calls. */
   async runProject(req: ProjectRequest, opts: RunOptions = {}): Promise<ProjectResult> {
+    opts = this.#withFloor(opts);
     const run = await this.#call(projectPayload(req, this.#client.projectGrant), opts);
     return finish(run.run, run.record, projectResult, "project", opts.minimumIsolation);
   }
@@ -654,9 +680,18 @@ export class Session {
     if (req.language !== "javascript" && req.language !== "python") {
       throw new PlimsollError("invalid_argument", `plimsoll: unknown cell language ${JSON.stringify(req.language)}`, { notDispatched: "request" });
     }
+    opts = this.#withFloor(opts);
     const files = (req.files ?? []).map((f) => ({ path: f.path, content: f.content }));
     const run = await this.#call({ cell: { language: req.language, code: req.code, files } }, opts);
     return finish(run.run, run.record, cellResult, "cell", opts.minimumIsolation);
+  }
+
+  // The call's options with the session's floor, unless the call asks for more.
+  #withFloor(opts: RunOptions): RunOptions {
+    const a = this.#floor;
+    const b = opts.minimumIsolation;
+    if (!a || (b && TIERS.indexOf(b) >= TIERS.indexOf(a))) return opts;
+    return { ...opts, minimumIsolation: a };
   }
 
   #serial<T>(f: () => Promise<T>): Promise<T> {
@@ -684,13 +719,24 @@ export class Session {
         if (e instanceof PlimsollError && e.unanswered) {
           // The call may have run, and the daemon chained its record: check it and keep
           // it in the chain, so the session goes on and the call is not hidden.
-          const checked = checkUnanswered(digest, rule, e.unanswered, this.fingerprint, this.#calls, this.#last);
+          let checked = checkUnanswered(digest, env.minimumIsolation ?? "", rule, e.unanswered, this.fingerprint, this.#calls, this.#last);
+          if ("record" in checked) {
+            // With no response to compare it with, the record's evidence must be what the
+            // session stated at open.
+            const r = checked.record;
+            if (r.provider !== this.sandbox || r.isolation !== this.isolation || r.softwareIdentity !== this.softwareIdentity) {
+              checked = {
+                problem: `the unanswered call's record names ${r.provider} at "${r.isolation}" running "${r.softwareIdentity}", the session opened as ${this.sandbox} at "${this.isolation}" running "${this.softwareIdentity}"`,
+              };
+            }
+          }
           if ("problem" in checked) {
             this.#unknown = checked.problem;
             throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { cause: e });
           }
           this.#calls = checked.record.sequence;
           this.#last = checked.record.sha256;
+          e.record = checked.record; // the checked record, as Go's UnansweredCallError carries it
           throw e;
         }
         this.#unknown = e instanceof Error ? e.message : String(e);

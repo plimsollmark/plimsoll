@@ -22,7 +22,10 @@ redundant and can conflict.
 
 ## Why ship one over docker's built-in default
 
-The containers already run with `--cap-drop ALL --security-opt no-new-privileges`.
+The containers already run with `--cap-drop ALL --security-opt no-new-privileges`
+(and state their own `--ulimit core=0`, `--ulimit nofile=4096:4096` and `--ipc private`
+rather than inherit the docker daemon's: no core file, so code that crashes in the container never runs the
+host's core-dump handler, and a fixed descriptor limit).
 That removes every **capability-gated** syscall, one the kernel allows only to a
 process holding a Linux capability (a slice of root's privileges): `mount`, `bpf`,
 most of `ptrace`'s privileged modes, module loading, and so on. So what a custom

@@ -36,7 +36,12 @@ doubled slashes or dot segments), and byte-identical to an approved route. Queri
 traversal (`..` segments that climb out of a route), and percent-encoding tricks are
 refused before anything is sent to the API, and so are `;` parameters inside a path
 segment and segments made only of dots, because some servers reinterpret them after the
-match: Tomcat and Spring read `/orgs/..;/repos/x` as `/repos/x`.
+match: Tomcat and Spring read `/orgs/..;/repos/x` as `/repos/x`. A `*` never matches a
+segment containing `:` either: on APIs that follow Google's
+[custom-method convention (EXTERNAL · official docs ↗)](https://google.aip.dev/136) and on
+gRPC-JSON transcoders, `POST /v1/items/a:setIamPolicy` is a different operation on item
+`a`, so a grant of `POST /v1/items/*` must not reach it. An ID that contains a colon (a
+timestamp, say) cannot be passed through a wildcard.
 
 Over RPC, a caller selects a <dfn>*grant profile*</dfn>, a grant stored on the server
 under a name, by that name. Raw grants supplied by the caller are intentionally not

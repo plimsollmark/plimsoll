@@ -28,7 +28,7 @@ func TestOpenShellSessionConformanceLive(t *testing.T) {
 	}
 	langs := p.SessionEnvironments().Project.Languages
 	t.Logf("cell languages: %v", langs)
-	sessiontest.Run(t, p, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs})
+	sessiontest.Run(t, p, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs, ExecsWalledOff: true})
 }
 
 // The startup check plimsolld runs when sessions are enabled passes on this gateway,

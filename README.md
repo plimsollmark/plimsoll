@@ -171,7 +171,11 @@ run at startup; none is attestation. [docs/isolation-tiers.md](docs/isolation-ti
 lists the evidence for each tier and shows how a request sets its floor. A session trades
 the fresh sandbox of every call for speed and kept state: code an earlier call ran can
 change what later calls see, and a call with API access needs a grant that allows sessions
-([docs/sessions.md](docs/sessions.md#what-a-session-gives-up)). The docker
+([docs/sessions.md](docs/sessions.md#what-a-session-gives-up)). A session is one trust
+domain, and plimsoll ties it to the authenticated caller, not to that caller's customers:
+a service that runs many customers' code through one credential must keep each customer
+in a session of their own
+([who may share a session](docs/sessions.md#who-may-share-a-session)). The docker
 provider can also apply the shipped <dfn>*seccomp*</dfn> profile, a list of the only
 <dfn>*system calls*</dfn> (requests to the kernel, such as opening a file) its containers
 may make ([docs/seccomp.md](docs/seccomp.md)).

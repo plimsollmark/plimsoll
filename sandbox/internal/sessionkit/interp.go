@@ -3,9 +3,11 @@ package sessionkit
 import (
 	"context"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -15,8 +17,10 @@ import (
 //
 //   - launch.sh starts an interpreter in its own process session, with its stdout and
 //     stderr on two FIFOs it holds open, and prints the identity the sweep keeps it
-//     by. It runs right after a clean sweep, so the only code that can have run since
-//     is another interpreter of the same session.
+//     by. It runs before any of the cell's code is sent, but not always right after a
+//     sweep (a cell that finds its interpreter gone starts it again in the same call),
+//     so code of the session's other interpreters, and anything they started since
+//     the last sweep, can have run and can write anything in the sandbox.
 //   - kernel.js and kernel.py are the interpreters: one cell per connection to a Unix
 //     socket, in one global namespace, the final expression's value printed.
 //   - relay.js (relay.go) runs beside each interpreter, attached to the provider: for
@@ -54,6 +58,11 @@ var ErrLaunch = errors.New("the interpreter could not start")
 // (a directory in the way, a full disk). Its code did not run and its interpreter is
 // as the previous cell left it; files written before the failing one stay.
 var ErrFiles = errors.New("the cell's files could not be written")
+
+// ErrUnsent is a cell whose deadline passed before its code was sent: while its
+// interpreter or relay was starting, or its files were being written. None of its
+// code ran, so it is a refusal, not a timed-out cell.
+var ErrUnsent = errors.New("the deadline passed before the cell's code was sent")
 
 // filesError states which file failed and why, from the relay's done frame. The
 // relay is the session's on OpenShell, so it states only an index into the request
@@ -137,7 +146,8 @@ type Interpreters struct {
 	// code is not; identities reported from inside the sandbox are kept only once
 	// CheckScript confirms them through it. Docker has one (a second uid). OpenShell
 	// has none: its exec takes no user, and it walls each exec's processes off from
-	// the others' (a cell could not open its relay's stdout, measured 2026-10-01).
+	// the others' (a cell could not open its relay's stdout, measured 2026-10-01;
+	// sandbox.SessionSmokeTest refuses sessions where a call can).
 	Checker ExecFunc
 
 	mu     sync.Mutex
@@ -228,11 +238,42 @@ func (in *Interpreters) launch(ctx context.Context, exec ExecFunc, lang, work st
 	if !identityPattern.MatchString(out.Stdout) {
 		return fmt.Errorf("%w: the launcher printed no identity", ErrLaunch)
 	}
+	if reportedCmd(out.Stdout) != argvHex(interpArgv(lang)) {
+		return fmt.Errorf("%w: the launcher reported a process that is not the %s interpreter", ErrLaunch, lang)
+	}
 	if err := in.check(ctx, "interp:"+out.Stdout); err != nil {
 		return err
 	}
 	in.set(lang, out.Stdout)
 	return nil
+}
+
+// interpArgv is lang's interpreter as the launcher starts it: its command, then its
+// directory.
+func interpArgv(lang string) []string {
+	return append(append([]string(nil), command[lang]...), interpRoot+lang)
+}
+
+// argvHex is a command line as /proc/<pid>/cmdline holds it, in hex: each argument
+// followed by a zero byte. A reported identity's command line must be the one
+// plimsoll started, so an identity naming another live process (the container's
+// init, which also has parent 0; the other language's relay; a decoy with a unique
+// command line) is refused before the check that it is live.
+func argvHex(argv []string) string {
+	var b []byte
+	for _, a := range argv {
+		b = append(append(b, a...), 0)
+	}
+	return hex.EncodeToString(b)
+}
+
+// reportedCmd is the command-line part of an identity (pid:starttime:cmdline-hex).
+func reportedCmd(id string) string {
+	parts := strings.SplitN(id, ":", 3)
+	if len(parts) != 3 {
+		return ""
+	}
+	return parts[2]
 }
 
 // check confirms identities a launcher or relay reported (kind:identity, see

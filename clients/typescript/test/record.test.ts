@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { recordDigest, recordFromWire, requestDigest, resultDigest, sessionFingerprint, softwareRuleId, type DigestPayload } from "../src/record.ts";
+import { checkRecord, recordDigest, recordFromWire, requestDigest, resultDigest, sessionFingerprint, softwareRuleId, type DigestPayload } from "../src/record.ts";
 import type { WireRecord, WireRunResponse, WireSoftwareRule } from "../src/wire.ts";
 
 type Files = { path: string; content: string }[];
@@ -79,4 +79,20 @@ test("software rule ids", () => {
   assert.equal(softwareRuleId({ mode: "approved", identities: ["x"] }), "exact:x");
   // Order-independent.
   assert.equal(softwareRuleId(approved), softwareRuleId({ mode: "approved", identities: [...approved.identities].reverse() }));
+});
+
+// An answered call's record (version 2) that also states an unanswered code, a field
+// outside its digest, is refused (v0.15.0 review, H1).
+test("an answered record stating an unanswered code is refused", () => {
+  const resp: WireRunResponse = { sandbox: "docker", isolation: "container", javascript: { stdout: "" } };
+  const record: WireRecord = {
+    version: 2, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
+    startedUnixMs: 1, endedUnixMs: 2,
+  };
+  record.recordSha256 = recordDigest(recordFromWire(record));
+  resp.record = record;
+  assert.ok("record" in checkRecord("r", 2, undefined, resp));
+  resp.record = { ...record, unanswered: "unknown" };
+  const got = checkRecord("r", 2, undefined, resp);
+  assert.ok("problem" in got && got.problem.includes("unanswered"), JSON.stringify(got));
 });

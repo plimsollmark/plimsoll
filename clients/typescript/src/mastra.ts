@@ -10,8 +10,12 @@ import { executeCodeDescription, executeCodeInput, executeCodeOutput } from "./t
 
 export type PlimsollExecuteCodeOptions = CodeSandboxesOptions;
 
-// A thread id is unique only within its resource (the user), so the key is both.
-const threadKey = (threadId: string, resourceId = "") => `${resourceId}\u0000${threadId}`;
+// A thread id is unique only within its resource (the user), so the key is both, and a
+// call without either has no key and runs fresh. An empty resource would put every user
+// without one whose thread id collided into one sandbox, with each other's files and
+// variables.
+const threadKey = (threadId: string | undefined, resourceId: string | undefined) =>
+  threadId && resourceId ? `${resourceId}\u0000${threadId}` : undefined;
 
 export function plimsollExecuteCode(opts: PlimsollExecuteCodeOptions) {
   const sandboxes = new CodeSandboxes(opts);
@@ -21,18 +25,19 @@ export function plimsollExecuteCode(opts: PlimsollExecuteCodeOptions) {
     description: executeCodeDescription(sandboxes.languages),
     inputSchema: executeCodeInput(sandboxes.languages),
     outputSchema: executeCodeOutput,
-    // The thread scopes the sandbox. A call outside a thread runs fresh: one
-    // sandbox shared across conversations would show one user another's files.
-    execute: async (input, ctx) => {
-      const thread = ctx?.agent?.threadId;
-      return sandboxes.run(thread ? threadKey(thread, ctx?.agent?.resourceId) : undefined, input, ctx?.abortSignal);
-    },
+    // The user's thread scopes the sandbox. A call outside a thread, or without a
+    // resource, runs fresh: one sandbox shared across conversations would show one user
+    // another's files.
+    execute: async (input, ctx) => sandboxes.run(threadKey(ctx?.agent?.threadId, ctx?.agent?.resourceId), input, ctx?.abortSignal),
   });
 
   return {
     executeCode,
-    /** Closes a thread's sandbox, e.g. when the conversation ends. */
-    dispose: (threadId: string, resourceId?: string) => sandboxes.dispose(threadKey(threadId, resourceId)),
+    /** Closes a user's thread's sandbox, e.g. when the conversation ends. */
+    dispose: async (threadId: string, resourceId: string) => {
+      const key = threadKey(threadId, resourceId);
+      if (key !== undefined) await sandboxes.dispose(key);
+    },
     sandboxes,
   };
 }

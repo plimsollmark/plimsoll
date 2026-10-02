@@ -21,6 +21,11 @@ import (
 //     cell before it defined (cellChecks has one check per language, and a stated
 //     language without one fails the test, so no language is stated that startup did
 //     not run);
+//   - once the relays beside the interpreters are running, a call of the session cannot
+//     open their input or output (docker makes a relay unreadable once it has started;
+//     openshell walls each exec's processes off from the others'). A relay that a call
+//     can reach can be fed forged answers, so a provider or gateway where the open
+//     succeeds gets no sessions;
 //   - after a suspend, the call that resumes the session finds the file, and a cell's
 //     interpreter is either the one that holds the definition or one that says it is
 //     new;
@@ -105,6 +110,14 @@ console.log(state + " " + fs.readFileSync("plimsoll-session-smoke.txt", "utf8"))
 		}
 	}
 
+	out, err = js("a call that reaches for the relays", relayReachCode)
+	if err != nil {
+		return err
+	}
+	if found, opened, _ := strings.Cut(out, " "); found == "0" || opened != "" {
+		return fmt.Errorf("session smoke: a call of the session found %s relays and opened %q of their pipes; want relays found and none opened", found, opened)
+	}
+
 	if _, err := s.Suspend(ctx); err != nil {
 		return fmt.Errorf("session smoke: suspend: %w", err)
 	}
@@ -136,6 +149,22 @@ console.log(state + " " + fs.readFileSync("plimsoll-session-smoke.txt", "utf8"))
 	}
 	return nil
 }
+
+// relayReachCode counts the session's relays and tries to open each one's input and
+// output, closing at once whatever opens (nothing is read or written). It prints the
+// count and the pipes it opened: "2 " is the answer a sound provider gives.
+const relayReachCode = `const fs = require("fs");
+let found = 0; const opened = [];
+for (const d of fs.readdirSync("/proc")) {
+  if (!/^[0-9]+$/.test(d)) continue;
+  let c = ""; try { c = fs.readFileSync("/proc/" + d + "/cmdline", "latin1"); } catch { continue; }
+  if (!c.includes("A session interpreter's relay")) continue;
+  found++;
+  for (const [n, mode] of [["0", "r"], ["1", "w"]]) {
+    try { fs.closeSync(fs.openSync("/proc/" + d + "/fd/" + n, mode)); opened.push(d + "/" + n); } catch {}
+  }
+}
+console.log(found + " " + opened.join(","));`
 
 // cellChecks are the two cells SessionSmokeTest runs in each cell language: one that
 // defines a value and one that reads it back, printing 42, from the same interpreter.

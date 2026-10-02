@@ -427,6 +427,14 @@ func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime string) []string {
 		"--user", "1000:1000",
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",
+		// Limits the run states rather than inherits from the docker daemon: no core
+		// files (a crashing guest would otherwise run the host's core_pattern
+		// handler), 4096 descriptors (well above what a build or test step holds open
+		// at once, against the daemon's default that is often 1048576), and an IPC
+		// namespace of its own, said explicitly.
+		"--ulimit", "core=0",
+		"--ulimit", "nofile=4096:4096",
+		"--ipc", "private",
 	)
 	// Pin an EXPLICIT seccomp policy when one is configured, so kernel attack surface
 	// is reduced by an audited profile rather than whatever the daemon defaults to
@@ -584,7 +592,11 @@ func (d *DockerSandbox) Preflight(ctx context.Context) (retErr error) {
 		d.stateMu.Unlock()
 	}()
 
-	ctx, cancel := context.WithTimeout(ctx, dockerPreflightTimeout)
+	// The probe runs detached from the caller's cancellation, under its own bound: a
+	// caller that gives up (an unauthenticated /readyz request that hangs up) would
+	// otherwise kill the docker CLI mid-probe, and the deferred invalidation above
+	// would take the verified runtime, and with it the kernel tier, away.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerPreflightTimeout)
 	defer cancel()
 
 	// A failed refresh makes the provider not-ready, but never changes the pinned
@@ -1755,8 +1767,11 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 	if execState.platform != "" {
 		args = append(args, "--platform", execState.platform)
 	}
-	// Launch the Preflight-verified content ID, not the mutable tag.
-	args = append(args, execState.imageID, "node", "-") // read the script from stdin
+	// Launch the Preflight-verified content ID, not the mutable tag. Node reads the
+	// script from stdin, after a preload writes started to stderr: what the guest's
+	// code prints comes after it, so it cannot pass its own exit for docker's.
+	started := "plimsoll-started:" + randID() + "\n"
+	args = append(args, execState.imageID, "node", "--import", "data:text/javascript,process.stderr.write("+strconv.Quote(started)+")", "-")
 	args, err = dockerArgs(execState.host, args...)
 	if err != nil {
 		return Result{Sandbox: d.Name(), Isolation: isolation}, err
@@ -1766,7 +1781,7 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 	cmd.Stdin = bytes.NewReader([]byte(withHostSDK(req.Code, req.Grant)))
 	var stdout, stderr cappedBuffer
 	stdout.limit = d.maxOutput()
-	stderr.limit = d.maxOutput()
+	stderr.limit = d.maxOutput() + len(started) // the marker is not the guest's output
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -1777,9 +1792,11 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 		d.forceRemove(execState.host, name)
 	}
 
+	// The marker leads stderr exactly when node started, and is never the guest's.
+	guestStarted := strings.HasPrefix(stderr.String(), started)
 	res := Result{
 		Stdout:              stdout.String(),
-		Stderr:              stderr.String(),
+		Stderr:              strings.TrimPrefix(stderr.String(), started),
 		StdoutTruncated:     stdout.Truncated(),
 		StderrTruncated:     stderr.Truncated(),
 		Duration:            duration,
@@ -1809,7 +1826,7 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 			// the container (bad image, rejected lockdown flag, entrypoint missing). A
 			// run that never launched never enforced isolation, so it is an
 			// infrastructure error — NOT a benign "your code exited non-zero".
-			if dockerInfraExit(code, stderr.String()) {
+			if !guestStarted && dockerInfraExit(code, stderr.String()) {
 				return Result{Sandbox: d.Name()}, fmt.Errorf("docker failed to run the container (exit %d): %s", code, strings.TrimSpace(stderr.String()))
 			}
 			// User code (or node) exited non-zero: a normal result, not an error.

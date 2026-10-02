@@ -166,7 +166,9 @@ type hardenedFacts struct {
 	TLS             bool                   // serving TLS
 	Addr            string                 // listen address
 	MetricsAddr     string                 // metrics listen address; "" = metrics off
+	MaxConcurrent   int                    // effective global concurrency cap
 	RatePerMin      int                    // effective per-caller rate limit
+	Burst           int                    // effective per-caller rate burst
 	PerCaller       int                    // effective per-caller concurrency cap; 0 = none
 	Sessions        rpc.SessionConfig      // the session settings in force
 }
@@ -288,6 +290,10 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	}
 	if f.RatePerMin <= 0 {
 		fail("hardened mode requires per-caller rate limiting: SANDBOX_RATE_PER_MIN must be positive")
+	} else if f.Burst > f.RatePerMin {
+		// A burst larger than a minute's allowance lets one caller start more runs at
+		// once than the rate admits in a minute, which is what the limit is for.
+		fail("hardened mode requires SANDBOX_RATE_BURST (%d) to be at most SANDBOX_RATE_PER_MIN (%d), one minute's allowance", f.Burst, f.RatePerMin)
 	}
 	// A rate limit bounds what a caller starts, not what it holds: without a
 	// concurrency cap one caller can hold every slot with long runs or running
@@ -295,6 +301,9 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	// those.
 	if f.PerCaller <= 0 {
 		fail("hardened mode requires a per-caller concurrency cap: SANDBOX_PER_KEY_CONCURRENT must be positive")
+	} else if f.PerCaller >= f.MaxConcurrent {
+		// A cap equal to the global one lets one caller hold every slot.
+		fail("hardened mode requires SANDBOX_PER_KEY_CONCURRENT (%d) to be below SANDBOX_MAX_CONCURRENT (%d), so one caller cannot hold every slot", f.PerCaller, f.MaxConcurrent)
 	}
 	// A suspended session holds no concurrency slot, so the cap above does not bound
 	// how many sessions one caller keeps open.
@@ -337,6 +346,11 @@ const maxSessionLifetime = 12 * time.Hour
 // a 5-minute idle timeout, 1 GiB of files (sessions plan, assumptions to revise from
 // use: room for a node_modules tree and a build's output, and an abandoned session
 // frees its slot within minutes).
+// maxSessionDiskMB bounds SANDBOX_SESSION_DISK_MB at 1 TiB: far beyond any disk a
+// session's sandbox holds, and well inside the int64 the byte count is kept in (the
+// shift to bytes wrapped to 0, "no bound", at 2^44).
+const maxSessionDiskMB = 1 << 20
+
 func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 	max, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS", 0)
 	if err != nil {
@@ -367,8 +381,10 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_DISK_MB=%d must not be negative", diskMB)
 	case lifetime < time.Second || lifetime > maxSessionLifetime:
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_LIFETIME=%v must be between 1s and %v", lifetime, maxSessionLifetime)
-	case idle < 0:
-		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_IDLE=%v must not be negative", idle)
+	case diskMB > maxSessionDiskMB:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_DISK_MB=%d must be at most %d (1 TiB)", diskMB, maxSessionDiskMB)
+	case idle < 0 || (idle > 0 && idle < time.Second) || idle > maxSessionLifetime:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_IDLE=%v must be 0 (never suspend) or between 1s and %v", idle, maxSessionLifetime)
 	}
 	return rpc.SessionConfig{MaxSessions: max, MaxPerCaller: perCaller, Lifetime: lifetime, IdleTimeout: idle, DiskBytes: int64(diskMB) << 20}, nil
 }

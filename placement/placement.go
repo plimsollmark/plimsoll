@@ -208,6 +208,7 @@ const (
 	kindJavaScript kind = iota
 	kindProject
 	kindModule
+	kindSession // OpenSession: filtered on the session environment Describe states
 )
 
 // candidates are the backends that can take a request, in the order to try them.
@@ -256,6 +257,16 @@ func unfit(info client.Info, k kind, req Requirement) string {
 	}
 	env := info.Environments.JavaScript
 	switch k {
+	case kindSession:
+		if !info.SupportsSessions {
+			return "no sessions"
+		}
+		// A session runs every call in its one sandbox, which is not where a single
+		// snippet runs on docker: filter on what the daemon states for sessions.
+		env = info.SessionEnvironment
+		if req.GrantProfile && !info.SupportsJavaScriptGrants && !info.SupportsProjectGrants {
+			return "no grants"
+		}
 	case kindProject:
 		if !info.SupportsProject {
 			return "no project support"
@@ -351,6 +362,19 @@ func ranIn(rec *sandbox.RunRecord, want string) error {
 	return nil
 }
 
+// ranAs adds ranIn's verdict to a run's error. It applies to a run that succeeded and
+// to one that executed but whose Recorder failed (client.ErrNotRecorded), which still
+// carries its checked record: a failing recorder must not hide where the run went.
+func ranAs(rec *sandbox.RunRecord, want string, err error) error {
+	if err != nil && !errors.Is(err, client.ErrNotRecorded) {
+		return err
+	}
+	if e := ranIn(rec, want); e != nil {
+		return errors.Join(e, err)
+	}
+	return err
+}
+
 // send tries each candidate in turn, and returns the first answer that is not a
 // refusal proving nothing ran. run reports whether its own error is retryable in
 // the same way, so a caller-side check (an isolation evidence mismatch) is never
@@ -393,10 +417,7 @@ func (p *Pool) RunJavaScript(ctx context.Context, in sandbox.Request, req Requir
 	}
 	return send(ctx, backends, func(ctx context.Context, b Backend) (sandbox.Result, error) {
 		res, err := b.Client.RunJavaScript(ctx, in)
-		if err == nil {
-			err = ranIn(res.Record, req.Environment)
-		}
-		return res, err
+		return res, ranAs(res.Record, req.Environment, err)
 	})
 }
 
@@ -417,10 +438,7 @@ func (p *Pool) RunProject(ctx context.Context, in sandbox.ProjectRequest, req Re
 	}
 	return send(ctx, backends, func(ctx context.Context, b Backend) (sandbox.ProjectResult, error) {
 		res, err := b.Client.RunProject(ctx, in)
-		if err == nil {
-			err = ranIn(res.Record, req.Environment)
-		}
-		return res, err
+		return res, ranAs(res.Record, req.Environment, err)
 	})
 }
 
@@ -441,10 +459,7 @@ func (p *Pool) RunModule(ctx context.Context, in sandbox.ModuleRequest, req Requ
 	}
 	return send(ctx, backends, func(ctx context.Context, b Backend) (sandbox.ModuleResult, error) {
 		res, err := b.Client.RunModule(ctx, in)
-		if err == nil {
-			err = ranIn(res.Record, req.Environment)
-		}
-		return res, err
+		return res, ranAs(res.Record, req.Environment, err)
 	})
 }
 
@@ -460,24 +475,11 @@ func (p *Pool) OpenSession(ctx context.Context, opts client.SessionOptions, req 
 		return nil, Choice{}, err
 	}
 	opts.Software = req.Software
-	backends, err := p.candidates(ctx, kindJavaScript, req)
+	backends, err := p.candidates(ctx, kindSession, req)
 	if err != nil {
 		return nil, Choice{}, err
 	}
-	var usable []Backend
-	var why []string
-	for _, b := range backends {
-		info, err := p.Describe(ctx, b.Name)
-		if err != nil || !info.SupportsSessions {
-			why = append(why, b.Name+": no sessions")
-			continue
-		}
-		usable = append(usable, b)
-	}
-	if len(usable) == 0 {
-		return nil, Choice{}, notDispatched(fmt.Errorf("%w: %w (%s)", ErrNoBackend, sandbox.ErrUnsupported, strings.Join(why, "; ")))
-	}
-	return send(ctx, usable, func(ctx context.Context, b Backend) (*client.Session, error) {
+	return send(ctx, backends, func(ctx context.Context, b Backend) (*client.Session, error) {
 		return b.Client.OpenSession(ctx, opts)
 	})
 }

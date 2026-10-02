@@ -35,17 +35,20 @@ type Remote struct {
 	recorder     Recorder
 }
 
-// Recorder receives every run exchange whose record checked: the request as
-// sent and the response as received. A harness outside the daemon signs and
-// stores them (attest.Harness is one). It is called on the calling goroutine
-// before the result returns. An error it returns comes back with the result,
-// wrapped in ErrNotRecorded: the run executed, and only keeping its record failed.
+// Recorder receives every run exchange whose record checked (record.Check: the
+// digests, and evidence meeting the request's isolation floor and software rule):
+// the request as sent and the response as received. A harness outside the daemon
+// signs and stores them (attest.Harness is one). It is called on the calling
+// goroutine before the result returns. An error it returns comes back with the
+// result, wrapped in ErrNotRecorded: the run executed behind the evidence the caller
+// required, and only keeping its record failed. An exchange that fails the check
+// never reaches the Recorder.
 type Recorder interface {
 	Record(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) error
 }
 
-// ErrNotRecorded means a run executed and returned its result, but the
-// Recorder failed to keep it.
+// ErrNotRecorded means a run executed and returned its result, whose record and
+// evidence checked, but the Recorder failed to keep it.
 var ErrNotRecorded = errors.New("client: the run executed but was not recorded")
 
 // ErrRawGrantUnsupported prevents a capability-bearing in-process request from
@@ -284,6 +287,10 @@ type Info struct {
 	SupportsSessions   bool
 	SessionLifetime    time.Duration
 	SessionIdleTimeout time.Duration
+	// SessionEnvironment is where a session's calls run (every kind in one sandbox;
+	// on docker the project image), stated with SupportsSessions. Informational, like
+	// Environments.
+	SessionEnvironment sandbox.PayloadEnvironment
 	// Environments and Resources are the daemon's informational statements (see
 	// sandbox.PayloadEnvironment): configuration, never attestation, and enforced
 	// by nothing. Equal identities mean the same software; an empty one claims nothing.
@@ -316,6 +323,7 @@ func (r *Remote) Describe(ctx context.Context) (Info, error) {
 		SupportsSessions:         resp.Msg.GetSupportsSessions(),
 		SessionLifetime:          time.Duration(resp.Msg.GetSessionLifetimeMs()) * time.Millisecond,
 		SessionIdleTimeout:       time.Duration(resp.Msg.GetSessionIdleTimeoutMs()) * time.Millisecond,
+		SessionEnvironment:       payloadEnvironment(resp.Msg.GetSessionEnvironment()),
 		Environments: sandbox.Environments{
 			JavaScript: payloadEnvironment(resp.Msg.GetJavascriptEnvironment()),
 			Project:    payloadEnvironment(resp.Msg.GetProjectEnvironment()),
@@ -364,13 +372,7 @@ func (r *Remote) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbox
 	if !ok {
 		return sandbox.Result{Sandbox: r.Name()}, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
-	if err != nil {
-		return result, err
-	}
-	if err := sandbox.CheckResultIsolation(result.Isolation, in.MinimumIsolation); err != nil {
-		return result, connect.NewError(connect.CodeDataLoss, err)
-	}
-	return result, nil
+	return result, err
 }
 
 func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
@@ -398,13 +400,7 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 	if !ok {
 		return sandbox.ProjectResult{Sandbox: r.Name()}, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
-	if err != nil {
-		return out, err
-	}
-	if err := sandbox.CheckResultIsolation(out.Isolation, in.MinimumIsolation); err != nil {
-		return out, connect.NewError(connect.CodeDataLoss, err)
-	}
-	return out, nil
+	return out, err
 }
 
 // javascriptResult maps a snippet's response; false when it holds another kind.
@@ -533,13 +529,7 @@ func (r *Remote) RunModule(ctx context.Context, in sandbox.ModuleRequest) (sandb
 	for _, run := range m.GetRuns() {
 		out.Runs = append(out.Runs, sandbox.ModuleRun{Status: run.GetStatus(), Outputs: run.GetOutputs()})
 	}
-	if err != nil {
-		return out, err
-	}
-	if err := sandbox.CheckResultIsolation(out.Isolation, in.MinimumIsolation); err != nil {
-		return out, connect.NewError(connect.CodeDataLoss, err)
-	}
-	return out, nil
+	return out, err
 }
 
 // envelope builds the shared part of every request: the protocol number this
@@ -567,9 +557,11 @@ func (r *Remote) Exchange(ctx context.Context, msg *plimsollv1.RunRequest) (*pli
 // run sends one envelope and returns the response envelope with its run record
 // checked against what was sent and received; a response without one is DataLoss
 // wrapping record.ErrNoRecord. A transport or server error is restored to the sandbox package's
-// sentinels where one applies. A record that does not match is DataLoss, since
-// the run may have executed; the response still comes back with it, so the
-// caller keeps the result it was given, as with an isolation mismatch.
+// sentinels where one applies. A record that does not match, or whose isolation is
+// below the request's floor (sandbox.ErrIsolationEvidenceMismatch), is DataLoss,
+// since the run may have executed; the response still comes back with it, so the
+// caller keeps the result it was given. Only an exchange that checked reaches the
+// Recorder.
 func (r *Remote) run(ctx context.Context, msg *plimsollv1.RunRequest) (*plimsollv1.RunResponse, *sandbox.RunRecord, error) {
 	req := connect.NewRequest(msg)
 	r.auth(req)

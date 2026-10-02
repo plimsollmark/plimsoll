@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	pathpkg "path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +47,7 @@ type E2B struct {
 	APIBase  string
 	EnvdHost func(sandboxID string) string
 
-	HTTP           *http.Client
+	HTTP           *http.Client // nil = a default client; redirects are never followed either way
 	DefaultTimeout time.Duration
 	MaxTimeout     time.Duration
 	MaxOutputBytes int
@@ -272,12 +273,27 @@ func (e *E2B) envdHost(id string) string {
 	return "https://49983-" + id + ".e2b.app"
 }
 
-func (e *E2B) httpClient() *http.Client {
-	if e.HTTP != nil {
-		return e.HTTP
+func (e *E2B) httpClient() *http.Client { return withoutRedirects(e.HTTP) }
+
+// withoutRedirects is c (nil: a default client) refusing to follow any redirect, so
+// a 3xx comes back as the response and every caller's status check treats it as a
+// failure. Go follows up to 10 redirects by default, https to http included, and
+// keeps headers such as envd's X-Access-Token, E2B's traffic token and X-API-Key on
+// them: a guest able to answer on envd's port could otherwise send a run's request,
+// and its credentials, anywhere the daemon can reach, and an artifact read would
+// return that target's body as the run's output.
+func withoutRedirects(c *http.Client) *http.Client {
+	if c == nil {
+		return noRedirectClient
 	}
-	return http.DefaultClient
+	copied := *c
+	copied.CheckRedirect = refuseRedirect
+	return &copied
 }
+
+func refuseRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+var noRedirectClient = &http.Client{CheckRedirect: refuseRedirect}
 
 func (e *E2B) template() string {
 	if strings.TrimSpace(e.Template) != "" {
@@ -346,6 +362,10 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (Result, error) {
 		return Result{Sandbox: "e2b"}, err
 	}
 	defer e.kill(vm.id) // cleanup is part of the run lifecycle and graceful drain
+	// Runs before the kill: the grant ends with the run's code, not with a teardown
+	// that can take half a minute, during which a process the guest detached could
+	// keep calling the API, unseen by the trace already returned.
+	defer endGuard(guard)
 	if err := e.verifyResources(runCtx, vm); err != nil {
 		return Result{Sandbox: "e2b", Isolation: IsolationVM}, err
 	}
@@ -379,9 +399,7 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (Result, error) {
 		Sandbox:         "e2b",
 		Isolation:       IsolationVM,
 	}
-	if guard != nil {
-		res.CallTrace = guard.Core.traceSnapshot()
-	}
+	res.CallTrace = endGuard(guard)
 	if err != nil {
 		if deadline.Expired(runCtx) == context.DeadlineExceeded {
 			res.TimedOut = true
@@ -438,6 +456,10 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult
 		return ProjectResult{Sandbox: "e2b"}, err
 	}
 	defer e.kill(vm.id) // cleanup is part of the run lifecycle and graceful drain
+	// Runs before the kill: the grant ends with the run's code, not with a teardown
+	// that can take half a minute, during which a process the guest detached could
+	// keep calling the API, unseen by the trace already returned.
+	defer endGuard(guard)
 	if err := e.verifyResources(runCtx, vm); err != nil {
 		return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, err
 	}
@@ -462,9 +484,6 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult
 	}
 
 	res := ProjectResult{Sandbox: "e2b", Isolation: IsolationVM, Outcome: ProjectOutcomeCompleted}
-	if guard != nil {
-		res.CallTrace = guard.Core.traceSnapshot()
-	}
 	envs := map[string]string(nil)
 	if req.Grant != nil {
 		// NODE_OPTIONS preloads the host SDK; NODE_EXTRA_CA_CERTS lets the step's
@@ -490,6 +509,7 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult
 			if deadline.Expired(runCtx) == context.DeadlineExceeded {
 				res.Steps = append(res.Steps, StepResult{Command: step, ExitCode: 124, TimedOut: true, Duration: time.Since(start)})
 				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
+				res.CallTrace = endGuard(guard)
 				return res, nil
 			}
 			return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, err
@@ -503,13 +523,12 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult
 			ExitCode:        out.exitCode,
 			Duration:        time.Since(start),
 		})
-		if guard != nil {
-			res.CallTrace = guard.Core.traceSnapshot()
-		}
 		if out.exitCode != 0 {
 			break
 		}
 	}
+	// The steps are done: the grant ends before its trace is read.
+	res.CallTrace = endGuard(guard)
 
 	// Capture requested artifacts (those that exist), even after a failed step.
 	var total int64
@@ -534,6 +553,21 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult
 	}
 	return res, nil
 }
+
+// endGuard ends a run's grant (a guard call after it is refused) and returns its
+// trace, which then holds every call the grant served. Nil-safe and repeatable.
+func endGuard(guard *e2bGuardConfig) *CallTrace {
+	if guard == nil {
+		return nil
+	}
+	guard.Core.End()
+	return guard.Core.traceSnapshot()
+}
+
+// e2bSandboxID is what a sandbox ID may be before it goes into envd's host name
+// (https://49983-<id>.e2b.app) and the control plane's paths: E2B's IDs are letters,
+// digits and dashes, and a dot or a slash would change the host or the path.
+var e2bSandboxID = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
 
 // maxArtifactBytesTotal bounds the total captured-artifact bytes per run.
 const maxArtifactBytesTotal = 8 << 20
@@ -573,7 +607,7 @@ func (e *E2B) readFile(ctx context.Context, vm e2bVM, path string) ([]byte, bool
 	}
 	if resp.StatusCode/100 != 2 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, false, fmt.Errorf("envd files: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, false, fmt.Errorf("envd files: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxArtifactBytesTotal+1))
 	if err != nil {
@@ -660,7 +694,7 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGu
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		// Non-2xx: no billable microVM was created, so there is nothing to reap.
-		return e2bVM{}, fmt.Errorf("e2b create sandbox: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return e2bVM{}, fmt.Errorf("e2b create sandbox: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
 	}
 	// Past this point the API returned success, so a microVM almost certainly EXISTS
 	// and is billing. Every failure below must reap whatever we can identify (the
@@ -691,6 +725,13 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGu
 			}
 		}()
 		return e2bVM{}, errors.New("e2b create sandbox: unexpected response (no sandbox ID)")
+	}
+	if !e2bSandboxID.MatchString(out.SandboxID) {
+		// The ID goes into envd's host name and the delete path: one that is not plain
+		// letters, digits and dashes is never put in a URL, so this sandbox is left to
+		// its own timeout (which is the run's budget) rather than killed by ID.
+		slog.Error("e2b create sandbox: the control plane named a sandbox ID with other characters; not using it", "instance", e.instance())
+		return e2bVM{}, errors.New("e2b create sandbox: the control plane's sandbox ID is not letters, digits and dashes; refused")
 	}
 	e.trackVM(out.SandboxID)
 	// We have an ID, so any remaining problem is recoverable: reap the VM before
@@ -736,7 +777,7 @@ func (e *E2B) verifyResources(ctx context.Context, vm e2bVM) error {
 		return fmt.Errorf("e2b verify resources: %w", readErr)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("e2b verify resources: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("e2b verify resources: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
 	}
 	var got struct {
 		MemoryMB   int  `json:"memoryMB"`
@@ -892,7 +933,7 @@ func (e *E2B) listInstanceSandboxes(ctx context.Context) ([]e2bListedSandbox, er
 		return nil, fmt.Errorf("e2b list sandboxes: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("e2b list sandboxes: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, fmt.Errorf("e2b list sandboxes: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
 	}
 	var out []struct {
 		SandboxID string            `json:"sandboxID"`
@@ -904,7 +945,7 @@ func (e *E2B) listInstanceSandboxes(ctx context.Context) ([]e2bListedSandbox, er
 	}
 	listed := make([]e2bListedSandbox, 0, len(out))
 	for _, sb := range out {
-		if sb.SandboxID == "" || sb.Metadata["instance"] != instance {
+		if !e2bSandboxID.MatchString(sb.SandboxID) || sb.Metadata["instance"] != instance {
 			continue
 		}
 		listed = append(listed, e2bListedSandbox{id: sb.SandboxID, startedAt: sb.StartedAt})
@@ -981,7 +1022,7 @@ func (e *E2B) writeFiles(ctx context.Context, vm e2bVM, files []File) error {
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
 	}
 	return nil
 }
@@ -1045,7 +1086,7 @@ func (e *E2B) runProcessWithEnv(ctx context.Context, vm e2bVM, cmd string, args 
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return procOutput{}, fmt.Errorf("envd start: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return procOutput{}, fmt.Errorf("envd start: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
 	}
 
 	var out procOutput

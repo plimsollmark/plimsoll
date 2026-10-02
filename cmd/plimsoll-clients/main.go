@@ -200,6 +200,9 @@ func readToken(input io.Reader) (string, error) {
 	if len(token) == 0 || len(token) > maxTokenBytes || strings.ContainsFunc(token, func(r rune) bool { return r < 0x21 || r > 0x7e }) {
 		return "", errors.New("stdin must contain one nonempty token of at most 4096 visible ASCII bytes, optionally followed by one line ending")
 	}
+	if err := clientconfig.CheckToken(token); err != nil {
+		return "", err
+	}
 	return token, nil
 }
 

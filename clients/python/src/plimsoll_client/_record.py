@@ -13,8 +13,8 @@ import struct
 from typing import Iterable, Optional
 
 from ._wire import INT32, INT64, OUTCOMES, UINT32, UINT64, Msg
-from .errors import NoRecordError, RecordMismatchError, RecordVersionError
-from .types import RunRecord, SoftwareRule
+from .errors import IsolationEvidenceMismatchError, NoRecordError, RecordMismatchError, RecordVersionError
+from .types import RunRecord, SoftwareRule, meets
 
 VERSION = 2
 """The record encoding version this client computes and checks (record.Version)."""
@@ -245,6 +245,8 @@ def check(req_digest: str, protocol: int, rule: Optional[SoftwareRule], resp: Ms
         raise RecordVersionError(f"plimsoll: protocol {protocol} requires record version {VERSION}, the record is version {r.version}")
     if r.version == 1 and (r.software_identity or r.software_rule_id):
         raise RecordMismatchError("plimsoll: a version 1 record cannot carry software admission fields")
+    if r.unanswered:
+        raise RecordMismatchError(f"plimsoll: an answered call's record states an unanswered code, which version {r.version} does not cover")
     if r.request_sha256 != req_digest:
         raise RecordMismatchError(f"plimsoll: request digest {r.request_sha256}, the request sent digests to {req_digest}")
     if r.result_sha256 != result:
@@ -266,11 +268,11 @@ def check(req_digest: str, protocol: int, rule: Optional[SoftwareRule], resp: Ms
     return r
 
 
-def check_unanswered(req_digest: str, rule: Optional[SoftwareRule], m: Msg) -> RunRecord:
+def check_unanswered(req_digest: str, floor: str, rule: Optional[SoftwareRule], m: Msg) -> RunRecord:
     """The record an unanswered session call's error carries (record.CheckUnanswered,
     without the chain, which the Session checks): version 3, no result digest, a
-    Connect code, the digest of the request sent, its software rule and the record's
-    own digest."""
+    Connect code, the digest of the request sent, its software rule and that its
+    software is in it, the record's own digest, and its tier against the call's floor."""
     r = record_from_wire(m)
     if r.version != UNANSWERED_VERSION:
         raise RecordVersionError(f"plimsoll: an unanswered call's record is version {r.version}, not {UNANSWERED_VERSION}")
@@ -278,11 +280,15 @@ def check_unanswered(req_digest: str, rule: Optional[SoftwareRule], m: Msg) -> R
         raise RecordMismatchError("plimsoll: an unanswered call's record states a result or no error code")
     if r.request_sha256 != req_digest:
         raise RecordMismatchError(f"plimsoll: request digest {r.request_sha256}, the request sent digests to {req_digest}")
-    if r.software_rule_id != (rule.rule_id() if rule is not None else ""):
-        raise RecordMismatchError("plimsoll: the record's software rule is not the request's")
+    if r.software_rule_id != (rule.rule_id() if rule is not None else "") or (rule is not None and not rule.allows(r.software_identity)):
+        raise RecordMismatchError("plimsoll: the record's software rule is not the request's, or its software is not in it")
     own = record_digest(r)
     if r.sha256 != own:
         raise RecordMismatchError(f"plimsoll: record digest {r.sha256}, its fields digest to {own}")
+    if floor and not meets(r.isolation, floor):
+        raise IsolationEvidenceMismatchError(
+            f"plimsoll: the unanswered call's record states {r.isolation or 'unknown'}, below the call's minimum {floor}; execution may have occurred"
+        )
     return r
 
 

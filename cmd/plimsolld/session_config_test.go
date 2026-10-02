@@ -24,6 +24,13 @@ func TestLoadSessionConfig(t *testing.T) {
 		{"SANDBOX_SESSION_LIFETIME": "500ms"},
 		{"SANDBOX_SESSION_IDLE": "-1s"},
 		{"SANDBOX_SESSION_DISK_MB": "-5"},
+		// Values that wrapped: 2^44 MiB shifted to bytes was 0, no bound, and an idle
+		// past 49 days wrapped Describe's uint32 milliseconds (v0.15.0 review, L12).
+		{"SANDBOX_SESSION_DISK_MB": "17592186044416"},
+		{"SANDBOX_SESSION_DISK_MB": "1048577"},
+		{"SANDBOX_SESSION_IDLE": "1200h"},
+		{"SANDBOX_SESSION_IDLE": "13h"},
+		{"SANDBOX_SESSION_IDLE": "500ms"}, // below the 1 s floor (L2)
 	} {
 		if _, err := loadSessionConfig(env(bad)); err == nil {
 			t.Errorf("%v was accepted", bad)

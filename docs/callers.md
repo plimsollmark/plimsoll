@@ -177,13 +177,17 @@ never lands in shell history or a process listing:
 printf %s "$EXISTING_TOKEN" | go run ./cmd/plimsoll-clients import -file clients.json -id ci-runner
 ```
 
-One trailing line ending is tolerated. Two separate rules apply to the token. It must
+One trailing line ending is tolerated. Three separate rules apply to the token. It must
 be one non-empty run of visible ASCII characters, with no spaces or control
-characters, because it has to travel as one HTTP bearer value. And it may be at most
-4096 bytes long: that is a bound plimsoll chose on how much input the command reads,
-so that a wrong file piped in by mistake is refused instead of stored, not a limit
-HTTP imposes. Neither rule checks entropy: a token you import is as strong as you
-made it. `rotate -token-stdin` takes the same input to replace an existing
+characters, because it has to travel as one HTTP bearer value. It must be at least 32
+characters: 128 bits when they are hex, as strong as the random IDs plimsoll generates, since a shorter
+token falls to guessing against an endpoint anyone can reach (`PLIMSOLL_TOKEN` has the
+same minimum, checked at startup). And it may be at most 4096 bytes long: that is a
+bound plimsoll chose on how much input the command reads, so that a wrong file piped in
+by mistake is refused instead of stored, not a limit HTTP imposes. None of the rules
+checks entropy: a token you import is as strong as you made it. Refused requests are
+counted, never logged one by one: the daemon logs how many it refused at most every 30
+seconds, without the tokens. `rotate -token-stdin` takes the same input to replace an existing
 caller's token with one created elsewhere.
 
 ## What the file enforces

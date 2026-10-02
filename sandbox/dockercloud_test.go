@@ -53,6 +53,7 @@ type dcFake struct {
 	exec           func(argv []string) (exit int, stdout, stderr string)
 	execHandler    func(w http.ResponseWriter, r *http.Request) // overrides exec entirely
 	execBlock      bool                                         // Exec blocks until the request is cancelled
+	onDelete       func()                                       // runs as the sandbox is deleted, before it is recorded
 
 	// the undocumented per-sandbox network-policy REST call
 	policyPuts      []map[string]any
@@ -354,6 +355,9 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"mode": f.policyMode, "allowNetworks": allow})
 	case dcProcDeleteSandbox:
+		if f.onDelete != nil {
+			f.onDelete()
+		}
 		f.mu.Lock()
 		f.deletes = append(f.deletes, in)
 		f.mu.Unlock()
@@ -1317,7 +1321,7 @@ func TestDockerCloudGrantSnippetOpensOnlyTheGuard(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, d.EgressGuardPath(), strings.NewReader(`{"method":"GET","path":"/items/1"}`))
 		req.Header.Set(EgressGuardHeader, token)
 		rec := httptest.NewRecorder()
-		EgressGuardHTTPHandler(d, d.EgressGuardPath(), 4).ServeHTTP(rec, req)
+		EgressGuardHTTPHandler(d, d.EgressGuardPath(), 4, 0).ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("guard call during the run: %d %s", rec.Code, rec.Body.String())
 		}
@@ -1438,7 +1442,7 @@ func TestDockerCloudGuardEnforcesTheGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := EgressGuardHTTPHandler(d, d.EgressGuardPath(), 4)
+	h := EgressGuardHTTPHandler(d, d.EgressGuardPath(), 4, 0)
 	call := func(token, method, path string) (int, string) {
 		body := `{"method":"` + method + `","path":"` + path + `"}`
 		req := httptest.NewRequest(http.MethodPost, "/v1/dockercloud/guard", strings.NewReader(body))
@@ -1553,5 +1557,41 @@ func TestDockerCloudErrorsNeverCarryCredentials(t *testing.T) {
 	}
 	if got := truncateForError("x dckr_pat_AbC-123 y crg_" + strings.Repeat("a", 64)); strings.Contains(got, "dckr_pat_") || strings.Contains(got, "crg_") {
 		t.Fatalf("personal token or guard credential survived: %q", got)
+	}
+}
+
+// The grant ends with the run's code, before the teardown: a guard call a process the
+// guest detached makes while the sandbox is being deleted is refused, not served
+// after the trace was returned (v0.15.0 review, L16).
+func TestDockerCloudGrantEndsBeforeTheTeardown(t *testing.T) {
+	f := newDCFake(t)
+	d := f.provider()
+	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
+	grant, _ := dcGrant(t)
+	var token string
+	f.exec = func(argv []string) (int, string, string) {
+		body := string(f.uploads[len(f.uploads)-1][0].content)
+		i := strings.Index(body, `"X-Plimsoll-Guard":"`)
+		token = body[i+len(`"X-Plimsoll-Guard":"`):]
+		token = token[:strings.Index(token, `"`)]
+		return 0, "ok\n", ""
+	}
+	late := -1
+	f.onDelete = func() {
+		req := httptest.NewRequest(http.MethodPost, d.EgressGuardPath(), strings.NewReader(`{"method":"GET","path":"/items/1"}`))
+		req.Header.Set(EgressGuardHeader, token)
+		rec := httptest.NewRecorder()
+		EgressGuardHTTPHandler(d, d.EgressGuardPath(), 4, 0).ServeHTTP(rec, req)
+		late = rec.Code
+	}
+	res, err := d.RunJavaScript(context.Background(), Request{Code: `console.log("ok")`, Grant: grant})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("res = %+v err = %v", res, err)
+	}
+	if late == http.StatusOK {
+		t.Fatal("a guard call during the teardown was served after the run's trace was taken")
+	}
+	if late == -1 {
+		t.Fatal("the teardown made no guard call; the test proves nothing")
 	}
 }

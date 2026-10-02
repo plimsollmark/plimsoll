@@ -110,6 +110,10 @@ func TestLaunchIdentityIsTheProcessItStarted(t *testing.T) {
 }
 
 // procIdentity is pid:starttime:cmdline-hex of a live process, as a launcher reports it.
+// exec.Cmd.Start returns once the exec has begun, which can be before the kernel has
+// set the new program's arguments: the command line reads empty for that moment (the
+// test failed about 1 run in 20 on it), so it is read until it is not. A launcher reads
+// it only after its interpreter says it is ready, so it never sees that moment.
 func procIdentity(t *testing.T, pid int) string {
 	t.Helper()
 	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
@@ -118,9 +122,14 @@ func procIdentity(t *testing.T, pid int) string {
 	}
 	s := string(stat)
 	f := strings.Fields(s[strings.LastIndex(s, ")")+2:])
-	cmd, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
-	if err != nil {
-		t.Fatal(err)
+	var cmd []byte
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if cmd, err = os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline"); err != nil {
+			t.Fatal(err)
+		}
+		if len(cmd) > 0 || time.Now().After(deadline) {
+			break
+		}
 	}
 	return strconv.Itoa(pid) + ":" + f[19] + ":" + hex.EncodeToString(cmd)
 }

@@ -603,8 +603,9 @@
       <div><p>On <code>docker</code> a session is one locked-down container from the project image, with a run's walls: a read-only root, no network, size-capped writable directories held in memory, every capability dropped. Every call is a <code>docker exec</code> into it, in <code>/work</code>, and before each call the session compares the container's security settings with what they were at open and ends on any difference. On <code>openshell</code> it is one gateway sandbox whose main process does nothing, read back from the gateway before every call. Both run the same cleanup between calls. <code>e2b</code>, <code>dockercloud</code> and <code>wasm</code> keep no sessions.</p></div>
     </details>
     <details>
-      <summary>Who can use a session <span class="what">one owner</span></summary>
-      <div><p>The caller that opened it, and nobody else. The session ID is treated as a secret: an unknown ID and another caller's ID get the same refusal, and the ID is never logged. Calls run one at a time, in order.</p></div>
+      <summary>Who can use a session <span class="what">one owner, one trust domain</span></summary>
+      <div><p>The caller that opened it, and nobody else. The session ID is treated as a secret: an unknown ID and another caller's ID get the same refusal, and the ID is never logged. Calls run one at a time, in order.</p>
+      <p>The caller is the credential that authenticated, not the customers behind it. Everything a call leaves in a session is there for every later call, so a session must hold one trust domain: one person or one job. A service that runs many customers' code through one plimsoll credential has to keep each customer in a session of their own, keyed by identities it verified rather than by anything a user or a model typed; the strongest setup is one credential per customer. A sandbox that has run code is never used for anyone else: it is deleted when its session ends. The rules are in the <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#who-may-share-a-session" target="_blank" rel="noopener">sessions guide (EXTERNAL · source repo ↗)</a>.</p></div>
     </details>
     <details>
       <summary>What a session gives up <span class="what">calls share a sandbox</span></summary>

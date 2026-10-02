@@ -91,6 +91,10 @@ message DescribeResponse {
   bool supports_sessions = 15;
   uint32 session_lifetime_ms = 16;
   uint32 session_idle_timeout_ms = 17;
+  // Where a session's calls run, every kind in the session's one sandbox (on docker
+  // the project image, not the snippet image). Stated when supports_sessions is;
+  // informational, like the other environments, and what a router filters sessions on.
+  PayloadEnvironment session_environment = 18;
 }
 
 // PayloadEnvironment is one payload kind's environment as the daemon states it.

@@ -154,25 +154,25 @@ export const RUNNERS: Record<Language, { path: string; file: string; step: strin
     path: ".plimsoll/run.py",
     file: ".plimsoll/cell.py",
     step: "python3 -I .plimsoll/run.py",
+    // As the session kernel runs a cell: at module level, an event loop only for code
+    // that awaits at the top level, so the cell's own asyncio.run works.
     source: [
-      "import ast, asyncio, inspect, sys",
+      "import ast, asyncio, inspect, linecache, sys",
       "sys.path.insert(0, '')",
       "src = open('.plimsoll/cell.py').read()",
+      "linecache.cache['cell'] = (len(src), None, src.splitlines(True), 'cell')",
       "tree = ast.parse(src, 'cell', 'exec')",
       "last = ast.Expression(tree.body.pop().value) if tree.body and isinstance(tree.body[-1], ast.Expr) else None",
-      "ns = {'__name__': '__main__'}",
+      "ns = {'__name__': '__main__', '__builtins__': __builtins__}",
       "flags = ast.PyCF_ALLOW_TOP_LEVEL_AWAIT",
-      "async def main():",
-      "    r = eval(compile(tree, 'cell', 'exec', flags=flags), ns)",
-      "    if inspect.iscoroutine(r):",
-      "        await r",
-      "    if last is not None:",
-      "        value = eval(compile(last, 'cell', 'eval', flags=flags), ns)",
-      "        if inspect.iscoroutine(value):",
-      "            value = await value",
-      "        if value is not None:",
-      "            print(repr(value))",
-      "asyncio.run(main())",
+      "loop = asyncio.new_event_loop()",
+      "def settle(r):",
+      "    return loop.run_until_complete(r) if inspect.isawaitable(r) else r",
+      "settle(eval(compile(tree, 'cell', 'exec', flags=flags), ns))",
+      "if last is not None:",
+      "    value = settle(eval(compile(last, 'cell', 'eval', flags=flags), ns))",
+      "    if value is not None:",
+      "        print(repr(value))",
       "",
     ].join("\n"),
   },
@@ -182,7 +182,10 @@ export const RUNNERS: Record<Language, { path: string; file: string; step: strin
     step: "node --expose-internals .plimsoll/run.cjs",
     source: [
       "const fs = require('node:fs'), util = require('node:util'), vm = require('node:vm');",
+      // The names a cell in the session's `node -e` interpreter sees as globals.
       "globalThis.require = require('node:module').createRequire(process.cwd() + '/');",
+      "globalThis.module = { exports: {} }; globalThis.exports = globalThis.module.exports;",
+      "globalThis.__dirname = '.'; globalThis.__filename = '[eval]';",
       "let tla = null;",
       "try { tla = require('internal/repl/await').processTopLevelAwait; } catch {}",
       "const src = fs.readFileSync('.plimsoll/cell.js', 'utf8');",
@@ -253,6 +256,14 @@ export class CodeSandboxes {
 
   /** Runs one call of the tool under the key. */
   async run(key: string | undefined, input: ExecuteCodeInput, signal?: AbortSignal): Promise<ExecuteCodeOutput> {
+    // A fresh run's runner and cell file live under .plimsoll/; a file of the call's own
+    // there would replace them.
+    const reserved = (input.files ?? []).find((f) => f.path === ".plimsoll" || f.path.startsWith(".plimsoll/"));
+    if (reserved) {
+      throw new PlimsollError("invalid_argument", `plimsoll: ${JSON.stringify(reserved.path)} is under .plimsoll/, which the sandbox's runner reserves`, {
+        notDispatched: "request",
+      });
+    }
     const language = input.language ?? this.languages[0];
     if (!this.languages.includes(language)) {
       throw new PlimsollError("invalid_argument", `plimsoll: this tool runs ${this.languages.join(" or ")}, not ${language}`, { notDispatched: "request" });
@@ -281,8 +292,10 @@ export class CodeSandboxes {
       let session: Session | undefined;
       try {
         session = await entry.session;
-        const first = !entry.answered;
         const r = await session.runCell({ language, code: input.code, files }, opts);
+        // Read once the call has answered: the session runs its calls in order, so of
+        // calls made at once only the first to answer finds the sandbox new.
+        const first = !entry.answered;
         entry.answered = true;
         // What the call defined, and the files it wrote, can be there for the next call
         // only if its interpreter, and the sandbox, outlived it; the next call's fresh
@@ -305,10 +318,11 @@ export class CodeSandboxes {
           this.#drop(key, session);
           continue;
         }
-        // A call that may have run without an answer leaves the session unusable
-        // (the Session refuses its later calls), so the next call opens a new
-        // sandbox and says so with freshSandbox.
-        if (session && !(e instanceof PlimsollError && e.notDispatched)) this.#drop(key, session);
+        // A call that may have run without an answer this client could check leaves
+        // the session unusable (the Session refuses its later calls), so the next call
+        // opens a new sandbox and says so with freshSandbox. One whose record the
+        // Session checked and chained (e.record) leaves it usable, and so does a refusal.
+        if (session && (session.stopped !== undefined || session.ended !== undefined)) this.#drop(key, session);
         throw e;
       } finally {
         entry.busy--;

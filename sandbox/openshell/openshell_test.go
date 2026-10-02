@@ -606,6 +606,25 @@ func TestReadBackRefusals(t *testing.T) {
 		{"providers", func(f *fakeGateway) {
 			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Providers = []string{"github"} }
 		}, "credential providers"},
+		// Fields plimsoll never sets must read back empty (v0.15.0 review, L17).
+		{"agent socket", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Template.AgentSocket = "/run/agent.sock" }
+		}, "template.agent_socket"},
+		{"template environment", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Template.Environment = map[string]string{"LD_PRELOAD": "/x.so"} }
+		}, "template.environment"},
+		{"spec environment", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Environment = map[string]string{"NODE_OPTIONS": "--require=/x"} }
+		}, "environment"},
+		{"runtime class", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Template.RuntimeClassName = "runc-privileged" }
+		}, "runtime_class_name"},
+		{"user namespaces", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) { off := false; sb.Spec.Template.UserNamespaces = &off }
+		}, "user_namespaces"},
+		{"template annotations", func(f *fakeGateway) {
+			f.mutateSpec = func(sb *openshellv1.Sandbox) { sb.Spec.Template.Annotations = map[string]string{"a": "b"} }
+		}, "template.annotations"},
 		{"error phase", func(f *fakeGateway) { f.failPhase = openshellv1.SandboxPhase_SANDBOX_PHASE_ERROR }, "ImagePullFailed"},
 	} {
 		f, p := newFake(t)

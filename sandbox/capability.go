@@ -304,6 +304,26 @@ func (g *HostAPIGrant) Validate() error {
 	return nil
 }
 
+// ValidateHostRoute checks one route as a grant's Validate does: one of the five
+// verbs a grant enforces, and a path the broker would accept as a pattern (absolute,
+// decoded, canonical, no dot, traversal or ";" segments, whole-segment wildcards). A
+// tool that produces routes (the spec generator, a profile's catalog) checks with it,
+// so a route the broker would refuse is refused where it is made.
+func ValidateHostRoute(route HostRoute) error {
+	switch route.Method {
+	case "GET", "PUT", "POST", "DELETE", "PATCH":
+	default:
+		return fmt.Errorf("route method %q is not one of GET, PUT, POST, DELETE, PATCH", route.Method)
+	}
+	if !utf8.ValidString(route.Path) {
+		return errors.New("route path must be valid UTF-8")
+	}
+	if err := validateRoutePattern(route.Path); err != nil {
+		return fmt.Errorf("route %s %q: %w", route.Method, route.Path, err)
+	}
+	return nil
+}
+
 func validateRoutePattern(pattern string) error {
 	if pattern == "" || !strings.HasPrefix(pattern, "/") {
 		return errors.New("path must be absolute")
@@ -444,7 +464,11 @@ func pathMatches(pattern string, segs []string) bool {
 	}
 	for i := range ps {
 		if ps[i] == "*" {
-			if segs[i] == "" { // a wildcard must bind a non-empty segment
+			// A wildcard binds a non-empty segment, and never one with a ":": on APIs
+			// that follow Google's AIP-136 and on gRPC-JSON transcoders, "items/a:verb"
+			// is a custom method on item a, another operation than the route grants.
+			// It is refused for the same reason as ";" (upstreamNeutralSegments).
+			if segs[i] == "" || strings.Contains(segs[i], ":") {
 				return false
 			}
 			continue

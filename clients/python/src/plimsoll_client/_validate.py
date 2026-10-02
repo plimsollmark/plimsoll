@@ -79,6 +79,9 @@ def validate_base_url(raw: Any, insecure_http: bool) -> str:
         raise InvalidBaseURLError("plimsoll: userinfo, query, and fragment are not permitted in the base URL")
     if any(c.isspace() or ord(c) < 0x20 or ord(c) == 0x7F for c in raw):
         raise InvalidBaseURLError("plimsoll: base URL must not contain whitespace or control characters")
+    if not raw.isascii():
+        # http.client sends the path as ASCII; anything else must be percent-encoded.
+        raise InvalidBaseURLError("plimsoll: base URL must be ASCII (percent-encode the rest)")
     if scheme == "http" and not _is_loopback(hostname) and not insecure_http:
         raise InsecureHTTPError("plimsoll: cleartext HTTP to a non-loopback plimsoll requires insecure_http=True")
     return urlunsplit((scheme, u.netloc, u.path.rstrip("/"), "", ""))

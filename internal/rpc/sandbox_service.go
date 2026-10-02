@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -218,11 +220,15 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 		supportsJavaScriptGrants = gc.SupportsJavaScriptGrants()
 		supportsProjectGrants = gc.SupportsProjectGrants()
 	}
-	_, supportsSessions := s.sessionProvider()
+	sp, supportsSessions := s.sessionProvider()
 	var sessionLifetime, sessionIdle uint32
+	var sessionEnv *plimsollv1.PayloadEnvironment
 	if supportsSessions {
 		sessionLifetime = uint32(s.Sessions.Lifetime / time.Millisecond)
 		sessionIdle = uint32(s.Sessions.IdleTimeout / time.Millisecond)
+		// Every call of a session runs in its one sandbox; the provider states where
+		// (docker: the project image), as OpenSession checks a software rule against.
+		sessionEnv = payloadEnvironment(sp.SessionEnvironments().JavaScript)
 	}
 	return connect.NewResponse(&plimsollv1.DescribeResponse{
 		Sandbox:                  s.Sandbox.Name(),
@@ -245,6 +251,7 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 		SupportsSessions:     supportsSessions,
 		SessionLifetimeMs:    sessionLifetime,
 		SessionIdleTimeoutMs: sessionIdle,
+		SessionEnvironment:   sessionEnv,
 	}), nil
 }
 
@@ -876,9 +883,23 @@ func isInfraErr(err error) bool {
 // configured provider structurally cannot do is Unimplemented; admission shedding
 // is ResourceExhausted; anything else is an internal fault. When the provider
 // marked the error as refused before dispatch, the NotDispatched detail is
-// attached; an unmarked error carries none, whatever its code.
+// attached; an unmarked error carries none, whatever its code. An internal fault's
+// text can carry a vendor's response body, envd's or docker's stderr, or host
+// configuration, so the caller gets a generic message with an ID and the text goes to
+// the log under that ID, cut to internalErrorLogBytes.
 func mapSandboxErr(err error) error {
-	ce := connect.NewError(sandboxErrCode(err), err)
+	code := sandboxErrCode(err)
+	shown := err
+	if code == connect.CodeInternal {
+		id := internalErrorID()
+		text := err.Error()
+		if len(text) > internalErrorLogBytes {
+			text = text[:internalErrorLogBytes] + "...(cut)"
+		}
+		slog.Warn("internal error answered to a caller", "error_id", id, "error", wireString(text))
+		shown = fmt.Errorf("internal error %s; the daemon's log holds its detail", id)
+	}
+	ce := connect.NewError(code, shown)
 	// A session's end travels as a typed detail, so a caller learns why without
 	// parsing the message.
 	var se *sandbox.SessionEndedError
@@ -891,6 +912,17 @@ func mapSandboxErr(err error) error {
 		return withNotDispatched(ce, reason)
 	}
 	return ce
+}
+
+// internalErrorLogBytes bounds an internal error's text in the log: enough for any
+// message plimsoll writes, short of the megabyte a vendor's error body can be.
+const internalErrorLogBytes = 4096
+
+// internalErrorID joins a caller's generic error to its log line.
+func internalErrorID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 func sandboxErrCode(err error) connect.Code {

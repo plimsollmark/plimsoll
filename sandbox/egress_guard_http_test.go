@@ -1,13 +1,16 @@
 package sandbox
 
 import (
+	"bufio"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type fakeE2BGuard struct {
@@ -50,7 +53,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 }
 
 func TestEgressGuardHTTPHandlerFramesBrokerCall(t *testing.T) {
-	h := EgressGuardHTTPHandler(&fakeE2BGuard{token: "run-token"}, "/v1/e2b/guard", 0)
+	h := EgressGuardHTTPHandler(&fakeE2BGuard{token: "run-token"}, "/v1/e2b/guard", 0, 0)
 	req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", strings.NewReader(`{"method":"GET","path":"/v1/items","body":{"x":1}}`))
 	req.Header.Set(EgressGuardHeader, "run-token")
 	rec := httptest.NewRecorder()
@@ -69,7 +72,7 @@ func TestEgressGuardHTTPHandlerFramesBrokerCall(t *testing.T) {
 // memory and parsing work without holding a per-run credential.
 func TestEgressGuardHTTPHandlerRejectsUnknownTokenBeforeReadingBody(t *testing.T) {
 	guard := &fakeE2BGuard{token: "run-token"}
-	h := EgressGuardHTTPHandler(guard, "/v1/e2b/guard", 0)
+	h := EgressGuardHTTPHandler(guard, "/v1/e2b/guard", 0, 0)
 	for _, token := range []string{"", "wrong-token"} {
 		body := &countingReader{r: strings.NewReader(`{"method":"GET","path":"/v1/items","body":{"x":1}}`)}
 		req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", body)
@@ -94,7 +97,7 @@ func TestEgressGuardHTTPHandlerRejectsUnknownTokenBeforeReadingBody(t *testing.T
 // instead of queueing, so concurrent callers cannot stack up buffered envelopes.
 func TestEgressGuardHTTPHandlerShedsPastInFlightCap(t *testing.T) {
 	guard := &fakeE2BGuard{token: "run-token", block: make(chan struct{}), entered: make(chan struct{})}
-	h := EgressGuardHTTPHandler(guard, "/v1/e2b/guard", 1)
+	h := EgressGuardHTTPHandler(guard, "/v1/e2b/guard", 1, 0)
 	newReq := func() *http.Request {
 		req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", strings.NewReader(`{"method":"GET","path":"/v1/items","body":{"x":1}}`))
 		req.Header.Set(EgressGuardHeader, "run-token")
@@ -119,4 +122,78 @@ func TestEgressGuardHTTPHandlerShedsPastInFlightCap(t *testing.T) {
 
 	close(guard.block)
 	<-held
+}
+
+// twoTokenGuard knows two live runs' credentials and answers every call.
+type twoTokenGuard struct{ calls atomic.Int64 }
+
+func (g *twoTokenGuard) EgressGuardPath() string { return "/v1/e2b/guard" }
+func (g *twoTokenGuard) EgressGuardKnownToken(token string) bool {
+	return token == "run-a" || token == "run-b"
+}
+func (g *twoTokenGuard) EgressGuardCall(context.Context, string, string, string, []byte) EgressGuardResponse {
+	g.calls.Add(1)
+	return EgressGuardResponse{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{"ok":true}`)}
+}
+
+// One run that opens more guard requests than its share and dribbles their bodies
+// must not leave another run without a slot (v0.15.0 review, M3).
+func TestEgressGuardOneRunCannotTakeEverySlot(t *testing.T) {
+	guard := &twoTokenGuard{}
+	h := EgressGuardHTTPHandler(guard, "/v1/e2b/guard", 2, 1)
+	var stalled []*io.PipeWriter
+	done := make(chan struct{}, 4)
+	for range 4 {
+		pr, pw := io.Pipe()
+		stalled = append(stalled, pw)
+		req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", pr)
+		req.Header.Set(EgressGuardHeader, "run-a")
+		go func() { h.ServeHTTP(httptest.NewRecorder(), req); done <- struct{}{} }()
+	}
+	defer func() {
+		for _, pw := range stalled {
+			_ = pw.CloseWithError(io.ErrUnexpectedEOF)
+		}
+		for range 4 {
+			<-done
+		}
+	}()
+	time.Sleep(100 * time.Millisecond) // let run-a's requests take what they can
+	req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", strings.NewReader(`{"method":"GET","path":"/v1/items"}`))
+	req.Header.Set(EgressGuardHeader, "run-b")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("run-b: status %d (%s); want 200 while run-a stalls its own requests", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// An admitted request that dribbles its body loses its slot at the body deadline, not
+// at the server's 30 s read timeout (v0.15.0 review, M3).
+func TestEgressGuardBodyDeadline(t *testing.T) {
+	old := egressGuardBodyDeadline
+	egressGuardBodyDeadline = 200 * time.Millisecond
+	defer func() { egressGuardBodyDeadline = old }()
+	srv := httptest.NewServer(EgressGuardHTTPHandler(&twoTokenGuard{}, "/v1/e2b/guard", 1, 1))
+	defer srv.Close()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = io.WriteString(conn, "POST /v1/e2b/guard HTTP/1.1\r\nHost: guard\r\n"+EgressGuardHeader+": run-a\r\nContent-Length: 100\r\n\r\n{\"method\":")
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	started := time.Now()
+	status, _ := bufio.NewReader(conn).ReadString('\n')
+	if !strings.Contains(status, "413") || time.Since(started) > 3*time.Second {
+		t.Fatalf("a stalled body: %q after %v; want 413 at the body deadline", status, time.Since(started))
+	}
+	// The slot is free again: the other run gets through.
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/e2b/guard", strings.NewReader(`{"method":"GET","path":"/v1/items"}`))
+	req.Header.Set(EgressGuardHeader, "run-b")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("after the deadline: %v %v", resp, err)
+	}
+	resp.Body.Close()
 }

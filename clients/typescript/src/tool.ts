@@ -12,7 +12,7 @@ const NAMES: Record<Language, string> = { python: "Python", javascript: "JavaScr
 export function executeCodeDescription(languages: ToolLanguages = DEFAULT_LANGUAGES): string {
   const names = languages.map((l) => NAMES[l]).join(" or ");
   return (
-    `Run ${names} in an isolated sandbox with no network access and return its exit code, stdout and stderr. ` +
+    `Run ${names} in an isolated sandbox with no network access (beyond any API the operator granted it) and return its exit code, stdout and stderr. ` +
     "The value of the code's last expression is printed, as in a notebook, so the last line can simply name what you want to see. " +
     "Within one conversation the sandbox usually keeps an interpreter per language between calls, so variables, functions, imports and loaded data " +
     "from earlier calls are still defined: the result's stateKept says whether this call's interpreter was still running when it answered, so what it defined can still be there " +

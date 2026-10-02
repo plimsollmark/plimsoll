@@ -43,16 +43,24 @@ func (a *stuckRelay) Close() {
 	})
 }
 
-func launched(context.Context, []string, map[string]string, []byte, int, int) (ExecResult, error) {
-	return ExecResult{Stdout: "7:1:00", Exited: true}, nil
+// launched is a launcher that reports the interpreter it was asked to start.
+func launched(_ context.Context, _ []string, env map[string]string, _ []byte, _, _ int) (ExecResult, error) {
+	return ExecResult{Stdout: launchedID(strings.TrimPrefix(env["PLIMSOLL_INTERP_DIR"], interpRoot)), Exited: true}, nil
 }
 
+func launchedID(lang string) string { return "7:1:" + argvHex(interpArgv(lang)) }
+
+// readyFrame is the line a relay started as argv prints first.
+func readyFrame(argv []string) string { return `{"ready":"8:1:` + argvHex(argv) + `"}` }
+
 // A relay that stops reading must not hold a cell past its deadline: the request
-// write blocks, and only the deadline can end the call.
+// write blocks, and only the deadline can end the call. The write that blocks is the
+// prepare's, so the code was never sent: ErrUnsent, a refusal, not a timed-out cell
+// (v0.15.0 review, L3).
 func TestRelayedCellBlockedWriteTimesOut(t *testing.T) {
 	att := newStuckRelay()
-	attach := func([]string, map[string]string) (Attached, error) {
-		go func() { _, _ = fmt.Fprintln(att.outW, `{"ready":"8:1:00"}`) }()
+	attach := func(argv []string, _ map[string]string) (Attached, error) {
+		go func() { _, _ = fmt.Fprintln(att.outW, readyFrame(argv)) }()
 		return att, nil
 	}
 	var in Interpreters
@@ -63,8 +71,8 @@ func TestRelayedCellBlockedWriteTimesOut(t *testing.T) {
 	if took := time.Since(start); took > 2*time.Second {
 		t.Fatalf("the cell took %v against a 200ms deadline", took)
 	}
-	if err != nil || !out.TimedOut || !out.Ended {
-		t.Fatalf("outcome %+v, err %v: want a timed-out cell that ended its interpreter", out, err)
+	if !errors.Is(err, ErrUnsent) || out.TimedOut {
+		t.Fatalf("outcome %+v, err %v: want ErrUnsent, the code never sent", out, err)
 	}
 	select {
 	case <-att.closed:
@@ -81,9 +89,9 @@ func TestRelayedCellBlockedWriteTimesOut(t *testing.T) {
 func TestRelayReaderExitsAfterClose(t *testing.T) {
 	before := runtime.NumGoroutine()
 	att := newStuckRelay()
-	attach := func([]string, map[string]string) (Attached, error) {
+	attach := func(argv []string, _ map[string]string) (Attached, error) {
 		go func() {
-			_, _ = fmt.Fprintln(att.outW, `{"ready":"8:1:00"}`)
+			_, _ = fmt.Fprintln(att.outW, readyFrame(argv))
 			sc := bufio.NewScanner(att.inR)
 			for sc.Scan() {
 				var req relayRequest
@@ -130,10 +138,10 @@ type relayRequest struct {
 // frames answer gives it; "%N" in a frame is replaced by the request's nonce. Every
 // relay it starts counts its run requests in runs.
 func scriptedRelay(runs *atomic.Int64, answer func(n int, run bool) []string) AttachFunc {
-	return func([]string, map[string]string) (Attached, error) {
+	return func(argv []string, _ map[string]string) (Attached, error) {
 		a := newStuckRelay()
 		go func() {
-			_, _ = fmt.Fprintln(a.outW, `{"ready":"8:1:00"}`)
+			_, _ = fmt.Fprintln(a.outW, readyFrame(argv))
 			sc := bufio.NewScanner(a.inR)
 			sc.Buffer(make([]byte, 1<<16), 1<<20)
 			for n := 0; sc.Scan(); n++ {
@@ -303,8 +311,42 @@ func TestRelayedCellUnconfirmedIdentitySendsNoCode(t *testing.T) {
 		if keep := in.Keep(nil); len(keep) != 0 {
 			t.Fatalf("%s refused: the sweep would keep %v", refuse, keep)
 		}
-		if want := []string{"interp:7:1:00", "relay:8:1:00"}; refuse == "relay:" && strings.Join(checked, ",") != strings.Join(want, ",") {
+		if want := []string{"interp:" + launchedID(plainCell.Language), "relay:8:1:" + argvHex(RelayArgv(plainCell.Language, plainCell.Work))}; refuse == "relay:" && strings.Join(checked, ",") != strings.Join(want, ",") {
 			t.Fatalf("checked %v, want %v", checked, want)
 		}
+	}
+}
+
+// A reported identity must be the program plimsoll started, whatever the provider's
+// check says about it being live: a launcher naming a decoy and a relay naming the
+// container's init (which also has parent 0) refuse the cell before any code is sent
+// (v0.15.0 review, L1).
+func TestReportedIdentityMustBeTheProgramStarted(t *testing.T) {
+	confirmAll := func(context.Context, []string, map[string]string, []byte, int, int) (ExecResult, error) {
+		return ExecResult{Exited: true}, nil
+	}
+	decoy := func(context.Context, []string, map[string]string, []byte, int, int) (ExecResult, error) {
+		return ExecResult{Stdout: "7:1:" + argvHex([]string{"sleep", "600"}), Exited: true}, nil
+	}
+	var runs atomic.Int64
+	in := Interpreters{Checker: confirmAll}
+	if _, err := in.RunRelayed(context.Background(), decoy, scriptedRelay(&runs, honest), plainCell); !errors.Is(err, ErrLaunch) || runs.Load() != 0 {
+		t.Fatalf("a launcher naming a decoy: err %v, runs %d; want ErrLaunch and no code sent", err, runs.Load())
+	}
+	initRelay := func([]string, map[string]string) (Attached, error) {
+		a := newStuckRelay()
+		go func() {
+			_, _ = fmt.Fprintln(a.outW, `{"ready":"1:1:`+argvHex([]string{"/sbin/docker-init", "--", "sleep", "infinity"})+`"}`)
+		}()
+		return a, nil
+	}
+	in = Interpreters{Checker: confirmAll}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := in.RunRelayed(ctx, launched, initRelay, plainCell); !errors.Is(err, ErrLaunch) {
+		t.Fatalf("a relay naming the container's init: err %v; want ErrLaunch", err)
+	}
+	if keep := in.Keep(nil); len(keep) != 0 {
+		t.Fatalf("the sweep would keep %v", keep)
 	}
 }

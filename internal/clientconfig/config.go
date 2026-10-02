@@ -25,6 +25,22 @@ type File struct {
 	Clients []Caller `json:"clients"`
 }
 
+// MinTokenBytes is the shortest caller token plimsoll accepts: 32 visible ASCII
+// characters, 128 bits when they are hex, the strength of a session ID. A shorter
+// token falls to guessing against an endpoint anyone can reach. Generated tokens are
+// 64 hex characters.
+const MinTokenBytes = 32
+
+// CheckToken refuses a token shorter than MinTokenBytes. The registry holds only
+// fingerprints, so a token's length can be checked only where its text is in hand:
+// the CLI that imports it and the daemon reading PLIMSOLL_TOKEN.
+func CheckToken(token string) error {
+	if len(token) < MinTokenBytes {
+		return fmt.Errorf("a caller token must be at least %d characters (this one is %d)", MinTokenBytes, len(token))
+	}
+	return nil
+}
+
 // Fingerprint hashes the exact token text sent in the Authorization header.
 func Fingerprint(token string) string {
 	sum := sha256.Sum256([]byte(token))

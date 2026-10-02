@@ -695,9 +695,11 @@ func (a *streamAttached) Close() {
 // until Close. Unlike docker's, the relay is not made non-dumpable: OpenShell's
 // supervisor then refuses its connection to the interpreter's socket with EACCES
 // (measured on v0.1.2, 2026-10-01), presumably because it can no longer identify
-// the process. Code of the session could open the relay's pipes and forge its own
-// cells' output, as it could forge the per-cell client's before; the sweep's verdict
-// stays protected by the ptrace_scope check OpenSession makes.
+// the process. What keeps the session's code from opening the relay's pipes is the
+// gateway walling each exec's processes off from the others' (measured on v0.1.2,
+// 2026-10-01), which sandbox.SessionSmokeTest checks at startup, refusing sessions on
+// a gateway where a call can open a running relay's pipes; the sweep's verdict stays
+// protected by the ptrace_scope check OpenSession makes.
 func (s *session) attach(argv []string, env map[string]string) (sessionkit.Attached, error) {
 	ctx, cancel := context.WithCancel(s.ctx)
 	stream := s.p.client.ExecSandboxInteractive(ctx)

@@ -144,7 +144,9 @@ The approved-set rule ID is SHA-256 over its unique identities sorted in byte
 order and joined with a zero byte. Identity syntax excludes zero bytes. The
 `RunResponse` repeats the outer environment and selected software identities,
 and the official client checks that both agree with the record. It also checks
-that the selected software is in the rule the request sent.
+that the selected software is in the rule the request sent, that the record's tier
+meets the request's `minimum_isolation`, and that a version 1 or 2 record names no
+`unanswered` code (a field those versions' digests do not cover).
 
 ## Reference implementation
 
@@ -190,13 +192,17 @@ response to read it from), and sends that record with the error as the
 gets no record and is not counted.
 
 The official clients check that record (version 3, no result, a status code, the digest
-of the request they sent, its software rule, its own digest, its place in the chain),
-keep it in their chain, and return the error: the session goes on, and the call's outcome
+of the request they sent, its software rule and that its software is in it, its tier
+against the call's floor, its own digest, its place in the chain, and that its provider,
+tier and software are what the session stated at open), keep it in their chain, and
+return the error: the session goes on, and the call's outcome
 stays unknown. A call whose answer never arrived (a dropped connection) carries no
 record, so the client cannot follow the daemon's chain any more, and it refuses every
 later call of that session before sending it, marked not dispatched. The Go client's
 recorder signs a version 3 record like any other; a bundle stores it as the request
-alone, with no response.
+alone, with no response. A Go client whose Recorder cannot keep a whole chain (one that
+is not also an `UnansweredRecorder` and a `SessionRecorder`) refuses to open a session,
+before anything is sent, rather than drop those records.
 
 Before 2026-10, such a call returned no record: the next call chained cleanly, the close
 count matched the client's, and a verified chain could hide a call that ran.
@@ -208,7 +214,9 @@ uses the standard library only (Ed25519, SHA-256, JSON).
 
 - **Sign.** The harness checks the record against its own copy of the request and the
   response (`record.Check`), then signs it. A record whose digest does not match its
-  fields is never signed. The signed form is a <dfn>*DSSE*</dfn> envelope (Dead Simple
+  fields is never signed, and neither is one whose isolation is below the request's
+  `minimum_isolation`, or an answered call's record (version 1 or 2) that names an
+  unanswered code, a field its version's digest does not cover. The signed form is a <dfn>*DSSE*</dfn> envelope (Dead Simple
   Signing Envelope, a small standard format that wraps a payload together with its
   signatures:
   [DSSE envelope (EXTERNAL · official docs ↗)](https://github.com/secure-systems-lab/dsse/blob/master/envelope.md))
@@ -226,8 +234,11 @@ uses the standard library only (Ed25519, SHA-256, JSON).
   The key ID is the hex SHA-256 of the public key's PKIX encoding (the standard DER
   encoding of a public key).
 - **Close.** When a session ends, the daemon states how many calls it executed and the
-  last record's digest; the harness signs that as a statement with predicate type
-  `https://plimsollmark.github.io/plimsoll/session-close/v1`.
+  last record's digest; once the client has compared that with the chain it saw, the
+  harness signs it as a statement with predicate type
+  `https://plimsollmark.github.io/plimsoll/session-close/v1`. A close that does not
+  match (some call ran that this client did not make) is `DataLoss` and is not signed,
+  and neither is the close of a session the client refused at open.
 - **Verify.** A bundle is the file of signed records the harness keeps, in JSON Lines
   (one JSON object per line). A call's line is its stored request and response (their
   binary protobuf encodings, in base64) and its envelope; a close's line is an envelope
@@ -239,7 +250,8 @@ uses the standard library only (Ed25519, SHA-256, JSON).
   - checks every signature;
   - checks each stored exchange exactly as the client checked it live: both content
     digests recomputed from the stored messages, the provider, tier, environment and
-    selected software the stored response states, and the request's software rule;
+    selected software the stored response states, the request's software rule, and
+    that the tier meets the request's floor;
   - requires the record the stored response carries to equal the signed one in every
     field;
   - checks each session's chain: one record version throughout (one daemon served it),
@@ -263,7 +275,9 @@ remote, err := client.New(url, client.WithRecorder(attest.NewHarness(signer, bun
 ```
 
 If the harness fails to keep a record, the client returns the executed result together
-with `client.ErrNotRecorded`.
+with `client.ErrNotRecorded`. The record and the evidence are checked before the harness
+sees the exchange, so a failing harness never hides evidence below the floor: that is
+`DataLoss` wrapping `sandbox.ErrIsolationEvidenceMismatch`, and the harness is not called.
 The command-line harness does the same from files:
 
 ```sh

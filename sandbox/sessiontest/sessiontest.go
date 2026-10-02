@@ -30,6 +30,11 @@ type Config struct {
 	// Languages are the cell languages the provider's image runs; the cell cases run
 	// for each. Empty means JavaScript only, which every session provider runs.
 	Languages []sandbox.Language
+	// ExecsWalledOff says the provider keeps each exec's processes from opening another
+	// exec's, so a relay is out of a cell's reach even in the moment it starts (openshell).
+	// The forged-identity case then requires its open to be refused; on a provider
+	// without the wall (docker) that case races the relay's start and only logs.
+	ExecsWalledOff bool
 }
 
 // Run runs every case against p, each in its own session.
@@ -53,6 +58,7 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		{"CellChildrenDoNotOutliveTheCall", cellChildrenDie},
 		{"CellFilesLandInTheWorkDirectory", cellFiles},
 		{"CellFilesThatCannotBeWrittenAreRefused", cellFilesRefused},
+		{"CellFilesDoNotFollowLinksOutOfTheWorkDirectory", cellFilesStayInWork},
 		{"KilledInterpreterIsStartedAgain", cellInterpreterKilled},
 		{"GrantedCallNeedsAGrantThatAllowsSessions", grantNeedsSessionOptIn},
 		{"ForgedRelayFramesNeitherMarkNorRepeatACell", forgedRelayFrames},
@@ -164,6 +170,11 @@ forged`
 		if runs != "x" {
 			t.Fatalf("forged %s: the cell's code ran %d times", frame, len(runs))
 		}
+		// The relay started before this cell (the warm-up's), so on every provider it is
+		// out of reach by now: unreadable once started on docker, walled off on openshell.
+		if strings.TrimSpace(res.Stdout) == "'written'" || strings.TrimSpace(res.Stdout) == "written" {
+			t.Fatalf("forged %s: a cell opened its running relay's output and wrote to it", frame)
+		}
 		t.Logf("forged %s: the cell's write into its relay: %s (result %+v, err %v)", frame, strings.TrimSpace(res.Stdout), res.InterpreterEnded, err)
 	}
 }
@@ -221,6 +232,9 @@ const poll = setInterval(() => {
 	}
 	if again := cell(t, s, sandbox.LanguagePython, "1 + 1", 60*time.Second); strings.TrimSpace(again.Stdout) != "2" {
 		t.Fatalf("a Python cell after the forgery: %+v", again)
+	}
+	if cfg.ExecsWalledOff && strings.Contains(forged, "written") {
+		t.Fatalf("on a provider that walls execs off, a cell opened a starting relay's output and wrote to it (forgery: %s)", forged)
 	}
 	t.Logf("forgery: %s; the Python cell under it: err %v", forged, err)
 }
@@ -371,6 +385,30 @@ func cellFilesRefused(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	got := cell(t, s, sandbox.LanguageJavaScript, `kept + ":" + typeof ran + ":" + require("fs").readFileSync("first.txt", "utf8")`, 30*time.Second)
 	if got.InterpreterStarted || !strings.Contains(got.Stdout, "7:undefined:written") {
 		t.Fatalf("after the refused cell: %+v; want the same interpreter, its state, no trace of the refused code, the first file", got)
+	}
+}
+
+// A link an earlier call left in the work directory, to a directory or a file outside
+// it, is not followed when a cell's files are written: the cell is refused before its
+// code is sent, and nothing is written outside (v0.15.0 review, L4).
+func cellFilesStayInWork(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	js(t, s, `const fs = require("fs");
+fs.mkdirSync("/tmp/plimsoll-outside", { recursive: true });
+fs.symlinkSync("/tmp/plimsoll-outside", "out");
+fs.symlinkSync("/tmp/plimsoll-outside/f.txt", "link.txt");`, 10*time.Second)
+	for _, path := range []string{"out/x.txt", "link.txt"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		_, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript, Code: "globalThis.ran = 1", Timeout: 30 * time.Second,
+			Files: []sandbox.File{{Path: path, Content: "x"}}})
+		cancel()
+		if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalRequest {
+			t.Fatalf("a cell file through the link %s: %v; want refused, reason request", path, err)
+		}
+	}
+	got := js(t, s, `process.stdout.write(String(require("fs").readdirSync("/tmp/plimsoll-outside").length))`, 10*time.Second)
+	if strings.TrimSpace(got.Stdout) != "0" {
+		t.Fatalf("files were written outside the work directory: %q", got.Stdout)
 	}
 }
 

@@ -121,6 +121,18 @@ a probe. Only a `503` — the upstream reporting itself degraded — is probed f
   plimsoll-specgen: skipped GET /search (requires query "q", which a brokered call cannot send: …)
   ```
 
+- **A route the broker would refuse is refused here.** Every derived route is checked
+  as a grant checks it (no `..`, `.` or `;` segments, decoded and canonical), so
+  `/a/../b` fails at generation rather than at `grants.Load`. A profile's `catalog` is
+  checked the same way when it loads.
+- **Spec text cannot become code or extra lines.** The title and version go into a
+  comment in the preamble and into the model-facing description, so a control character
+  or a line terminator in either (including U+2028 and U+2029, which end a JavaScript
+  line) is an error; a version written to end the comment line would otherwise run in
+  every granted run. A path with one is refused too, and each summary is folded to one
+  line. An `operationId` naming something every object inherits (`__proto__`,
+  `constructor`, `toString` and the rest of `Object.prototype`) is refused, since the
+  method would be assigned onto the client object.
 - **`$ref` is not resolved.** A `$ref` path item or parameter is an error, not a silent
   omission — bundle or dereference the spec first. Before 2026-09-17 a `$ref` path item
   parsed to an empty entry and vanished from the generated surface without a word.

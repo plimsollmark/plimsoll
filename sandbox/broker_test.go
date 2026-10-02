@@ -159,20 +159,21 @@ func TestHostAPIRouteAllowlist(t *testing.T) {
 		{"get", "/v1/lights"}, // method match is case-insensitive
 	}
 	deny := []struct{ m, p string }{
-		{http.MethodPost, "/v1/code/run"},          // not in the allowlist
-		{http.MethodGet, "/v1/audit-events"},       // outside the allowed surface
-		{http.MethodPut, "/v1/lights/abc/color"},   // path not allowed
-		{http.MethodPut, "/v1/lights/abc/../../x"}, // traversal
-		{http.MethodGet, "/v2/lights"},             // wrong prefix
-		{http.MethodDelete, "/v1/lights/abc/on"},   // wrong method
-		{http.MethodGet, "/v1/lights/abc"},         // GET on a non-listed path
-		{http.MethodPut, "/v1/lights/on"},          // wildcard needs a segment
-		{http.MethodPut, "/v1/lights/a/b/on"},      // too many segments
-		{http.MethodPut, "/v1/lights/a\\b/on"},     // target-dependent path separator
-		{http.MethodPut, "/v1/lights/a\nb/on"},     // control character in wildcard
-		{http.MethodPut, "/v1/lights/..;/on"},      // Tomcat/Spring read "..;" as ".."
-		{http.MethodPut, "/v1/lights/abc;x=1/on"},  // path parameter an upstream strips
-		{http.MethodPut, "/v1/lights/.../on"},      // all-dot segment
+		{http.MethodPost, "/v1/code/run"},                // not in the allowlist
+		{http.MethodGet, "/v1/audit-events"},             // outside the allowed surface
+		{http.MethodPut, "/v1/lights/abc/color"},         // path not allowed
+		{http.MethodPut, "/v1/lights/abc/../../x"},       // traversal
+		{http.MethodGet, "/v2/lights"},                   // wrong prefix
+		{http.MethodDelete, "/v1/lights/abc/on"},         // wrong method
+		{http.MethodGet, "/v1/lights/abc"},               // GET on a non-listed path
+		{http.MethodPut, "/v1/lights/on"},                // wildcard needs a segment
+		{http.MethodPut, "/v1/lights/a/b/on"},            // too many segments
+		{http.MethodPut, "/v1/lights/a\\b/on"},           // target-dependent path separator
+		{http.MethodPut, "/v1/lights/a\nb/on"},           // control character in wildcard
+		{http.MethodPut, "/v1/lights/..;/on"},            // Tomcat/Spring read "..;" as ".."
+		{http.MethodPut, "/v1/lights/abc;x=1/on"},        // path parameter an upstream strips
+		{http.MethodPut, "/v1/lights/.../on"},            // all-dot segment
+		{http.MethodPut, "/v1/lights/a:setIamPolicy/on"}, // a custom method (AIP-136) in a wildcard
 	}
 	for _, c := range allow {
 		if !g.routeAllowed(c.m, c.p) {

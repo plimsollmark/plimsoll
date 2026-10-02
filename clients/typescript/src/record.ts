@@ -4,6 +4,8 @@
 
 import { createHash, type Hash } from "node:crypto";
 
+import { PlimsollError } from "./errors.ts";
+
 import type { WireRecord, WireRunResponse, WireSoftwareRule } from "./wire.ts";
 
 /** The record encoding version of an answered call, which this client computes and checks. */
@@ -38,6 +40,9 @@ class Encoder {
   }
 
   str(name: string, v: string): void {
+    // A lone surrogate (JSON can escape one) has no UTF-8 form: Buffer would put
+    // U+FFFD in its place and digest other bytes than the daemon did.
+    if (!v.isWellFormed()) throw new PlimsollError("data_loss", `plimsoll: ${name} is not well-formed text (a lone surrogate)`);
     this.bytes(name, Buffer.from(v, "utf8"));
   }
 
@@ -214,6 +219,15 @@ export type RunRecord = {
   sha256: string;
 };
 
+// big reads a 64-bit integer field the JSON codec sends as a decimal string (or a
+// number). Anything else is an answer this client cannot read, a PlimsollError,
+// never BigInt's own SyntaxError or RangeError.
+function big(v: string | number | undefined, name: string): bigint {
+  if (v === undefined) return 0n;
+  if ((typeof v === "string" && /^-?[0-9]{1,20}$/.test(v)) || (typeof v === "number" && Number.isSafeInteger(v))) return BigInt(v);
+  throw new PlimsollError("data_loss", `plimsoll: the record's ${name} is not an integer`);
+}
+
 export function recordFromWire(m: WireRecord): RunRecord {
   return {
     version: m.version ?? 0,
@@ -225,10 +239,10 @@ export function recordFromWire(m: WireRecord): RunRecord {
     policy: m.policy ?? "",
     softwareIdentity: m.softwareIdentity ?? "",
     softwareRuleId: m.softwareRuleId ?? "",
-    startedUnixMs: BigInt(m.startedUnixMs ?? 0),
-    endedUnixMs: BigInt(m.endedUnixMs ?? 0),
+    startedUnixMs: big(m.startedUnixMs, "startedUnixMs"),
+    endedUnixMs: big(m.endedUnixMs, "endedUnixMs"),
     session: m.session ?? "",
-    sequence: BigInt(m.sequence ?? 0),
+    sequence: big(m.sequence, "sequence"),
     previousSha256: m.previousSha256 ?? "",
     unanswered: m.unanswered ?? "",
     sha256: m.recordSha256 ?? "",
@@ -279,14 +293,19 @@ export function softwareRuleAllows(rule: WireSoftwareRule | undefined, identity:
   return identity !== "" && rule.identities.includes(identity);
 }
 
+// The tiers, weakest first, as client.ts's TIERS (which imports this module).
+const TIER_ORDER = ["none", "process", "container", "kernel", "vm"];
+
 /**
  * Checks the record the daemon sends with an unanswered session call's error
  * (record.CheckUnanswered): version 3, no result digest, a Connect code, the digest of
- * the request sent, its software rule, its own digest, and its place in the chain.
+ * the request sent, its software rule and that its software is in it, its own digest,
+ * its tier against the call's floor, and its place in the chain.
  * Returns the reason it does not check, or the record.
  */
 export function checkUnanswered(
   reqDigest: string,
+  floor: string,
   rule: WireSoftwareRule | undefined,
   m: WireRecord,
   fingerprint: string,
@@ -297,8 +316,13 @@ export function checkUnanswered(
   if (r.version !== UNANSWERED_RECORD_VERSION) return { problem: `an unanswered call's record is version ${r.version}` };
   if (r.resultSha256 !== "" || !UNANSWERED_CODES.has(r.unanswered)) return { problem: "an unanswered call's record states a result or no error code" };
   if (r.requestSha256 !== reqDigest) return { problem: `request digest ${r.requestSha256}, the request sent digests to ${reqDigest}` };
-  if (r.softwareRuleId !== softwareRuleId(rule)) return { problem: "the record's software rule is not the request's" };
+  if (r.softwareRuleId !== softwareRuleId(rule) || !softwareRuleAllows(rule, r.softwareIdentity)) {
+    return { problem: "the record's software rule is not the request's, or its software is not in it" };
+  }
   if (r.sha256 !== recordDigest(r)) return { problem: `record digest ${r.sha256}, its fields digest to ${recordDigest(r)}` };
+  if (floor !== "" && !(TIER_ORDER.indexOf(r.isolation) >= TIER_ORDER.indexOf(floor) && TIER_ORDER.indexOf(r.isolation) >= 0)) {
+    return { problem: `the unanswered call's record states ${r.isolation || "unknown"}, below the call's minimum ${floor}; execution may have occurred` };
+  }
   if (r.session !== fingerprint || r.sequence !== prevSeq + 1n || r.previousSha256 !== prev) {
     return { problem: `the session's chain is broken: call ${r.sequence} after "${r.previousSha256}", this client's last was call ${prevSeq}, "${prev}"` };
   }
@@ -322,6 +346,7 @@ export function checkRecord(
   if (r.version !== 1 && r.version !== RECORD_VERSION) return { problem: `unknown run record version ${r.version}` };
   if (protocol >= 2 && r.version !== RECORD_VERSION) return { problem: `protocol ${protocol} requires record version ${RECORD_VERSION}` };
   if (r.version === 1 && (r.softwareIdentity !== "" || r.softwareRuleId !== "")) return { problem: "a version 1 record cannot carry software fields" };
+  if (r.unanswered !== "") return { problem: `an answered call's record states an unanswered code, which version ${r.version} does not cover` };
   if (r.requestSha256 !== reqDigest) return { problem: `request digest ${r.requestSha256}, the request sent digests to ${reqDigest}` };
   if (r.resultSha256 !== result) return { problem: `result digest ${r.resultSha256}, the result received digests to ${result}` };
   if (r.provider !== (resp.sandbox ?? "") || r.isolation !== (resp.isolation ?? "")) return { problem: "the record's provider or tier differs from the response's" };

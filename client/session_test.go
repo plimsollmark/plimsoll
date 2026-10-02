@@ -354,3 +354,145 @@ func TestUnansweredCallIsSignedAndTheSessionGoesOn(t *testing.T) {
 		t.Fatalf("bundle: %+v, %v; want one session of 3 calls", rep, err)
 	}
 }
+
+// fullRecorder records which kinds of entries it was handed.
+type fullRecorder struct {
+	runs, unanswered, closes atomic.Int32
+}
+
+func (f *fullRecorder) Record(*plimsollv1.RunRequest, *plimsollv1.RunResponse) error {
+	f.runs.Add(1)
+	return nil
+}
+func (f *fullRecorder) RecordUnanswered(*plimsollv1.RunRequest, *plimsollv1.RunRecord) error {
+	f.unanswered.Add(1)
+	return nil
+}
+func (f *fullRecorder) RecordClose(string, uint64, string) error { f.closes.Add(1); return nil }
+
+// sessionLiar opens one session honestly and then lies: its CloseSession reports
+// closeCalls calls, and its SessionRun fails with an unanswered record whose evidence
+// is the given provider, tier and software identity.
+type sessionLiar struct {
+	plimsollv1connect.UnimplementedSandboxServiceHandler
+	closeCalls                   uint64
+	provider, isolation, softwar string
+}
+
+const liarID = "00112233445566778899aabbccddeeff"
+
+func (l *sessionLiar) OpenSession(context.Context, *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
+	return connect.NewResponse(&plimsollv1.OpenSessionResponse{SessionId: liarID, Session: record.SessionFingerprint(liarID),
+		Sandbox: "fake", Isolation: "vm", ExpiresUnixMs: time.Now().Add(time.Minute).UnixMilli()}), nil
+}
+
+func (l *sessionLiar) SessionRun(_ context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {
+	rec := record.StampUnanswered(sandbox.RunRecord{
+		RequestSHA256: record.SessionRunRequestDigest(req.Msg), Provider: l.provider, Isolation: l.isolation,
+		SoftwareIdentity: l.softwar, SoftwareRuleID: softwareRuleOf(req.Msg).ID(),
+		Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000100),
+		Session: record.SessionFingerprint(liarID), Sequence: 1,
+	}, "unknown")
+	ce := connect.NewError(connect.CodeUnknown, errors.New("the stream broke"))
+	if d, err := connect.NewErrorDetail(&plimsollv1.UnansweredCall{Record: rec}); err == nil {
+		ce.AddDetail(d)
+	}
+	return nil, ce
+}
+
+func softwareRuleOf(m *plimsollv1.SessionRunRequest) sandbox.SoftwareRule {
+	r := m.GetSoftwareRule()
+	return sandbox.SoftwareRule{Mode: sandbox.SoftwareMode(r.GetMode()), Identities: r.GetIdentities()}
+}
+
+func (l *sessionLiar) CloseSession(context.Context, *connect.Request[plimsollv1.CloseSessionRequest]) (*connect.Response[plimsollv1.CloseSessionResponse], error) {
+	return connect.NewResponse(&plimsollv1.CloseSessionResponse{Session: record.SessionFingerprint(liarID), Calls: l.closeCalls}), nil
+}
+
+func liarRemote(t *testing.T, l *sessionLiar, rec Recorder) *Remote {
+	t.Helper()
+	mux := http.NewServeMux()
+	path, h := plimsollv1connect.NewSandboxServiceHandler(l)
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return newRemote(t, srv.URL, WithRecorder(rec))
+}
+
+// A close whose count differs from the client's chain is DataLoss and is never signed;
+// nor is the close of a session refused at open (v0.15.0 review, M5.2).
+func TestAMismatchedCloseIsNotSigned(t *testing.T) {
+	rec := &fullRecorder{}
+	s, err := liarRemote(t, &sessionLiar{closeCalls: 7}, rec).OpenSession(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Close(context.Background()); connect.CodeOf(err) != connect.CodeDataLoss || !errors.Is(err, record.ErrChain) {
+		t.Fatalf("a close counting 7 calls of none: %v; want DataLoss wrapping record.ErrChain", err)
+	}
+	if n := rec.closes.Load(); n != 0 {
+		t.Fatalf("the mismatched close was signed %d times", n)
+	}
+	liar := &fingerprintLiar{}
+	mux := http.NewServeMux()
+	path, h := plimsollv1connect.NewSandboxServiceHandler(liar)
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	if _, err := newRemote(t, srv.URL, WithRecorder(rec)).OpenSession(context.Background(), SessionOptions{}); err == nil {
+		t.Fatal("a mismatched fingerprint opened")
+	}
+	if n := rec.closes.Load(); n != 0 || liar.closes.Load() != 1 {
+		t.Fatalf("the refused open's close was signed %d times (closed %d)", n, liar.closes.Load())
+	}
+}
+
+// An unanswered call's record must state the evidence the session stated at open and
+// meet the call's floor and software rule, or it is DataLoss and never signed
+// (v0.15.0 review, M5.3).
+func TestAnUnansweredRecordIsCheckedAgainstTheSession(t *testing.T) {
+	for name, l := range map[string]*sessionLiar{
+		"below the floor":      {provider: "fake", isolation: "process"},
+		"another provider":     {provider: "other", isolation: "vm"},
+		"another tier":         {provider: "fake", isolation: "kernel"},
+		"software not allowed": {provider: "fake", isolation: "vm", softwar: "oci-manifest:linux/amd64@sha256:" + strings.Repeat("b", 64)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &fullRecorder{}
+			rule := sandbox.SoftwareRule{Mode: sandbox.SoftwareApproved, Identities: []string{"oci-manifest:linux/amd64@sha256:" + strings.Repeat("a", 64)}}
+			if name != "software not allowed" {
+				rule = sandbox.SoftwareRule{}
+			}
+			s, err := liarRemote(t, l, rec).OpenSession(context.Background(), SessionOptions{MinimumIsolation: sandbox.IsolationKernel})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.RunJavaScript(context.Background(), sandbox.Request{Code: "1", Software: rule})
+			var ue *UnansweredCallError
+			if connect.CodeOf(err) != connect.CodeDataLoss || errors.As(err, &ue) {
+				t.Fatalf("err = %v; want DataLoss, not an accepted unanswered call", err)
+			}
+			if n := rec.unanswered.Load(); n != 0 {
+				t.Fatalf("the record was signed %d times", n)
+			}
+		})
+	}
+}
+
+// recordOnly is a Recorder that cannot keep a session's unanswered calls or close.
+type recordOnly struct{}
+
+func (recordOnly) Record(*plimsollv1.RunRequest, *plimsollv1.RunResponse) error { return nil }
+
+// A Recorder that cannot keep a whole chain is refused at open, before anything is
+// sent, instead of silently dropping records (v0.15.0 review, M5.4).
+func TestARecorderThatCannotKeepAChainIsRefusedAtOpen(t *testing.T) {
+	url, p := sessionServer(t)
+	_, err := newRemote(t, url, WithRecorder(recordOnly{})).OpenSession(context.Background(), SessionOptions{})
+	if _, marked := sandbox.NotDispatchedReason(err); err == nil || !marked {
+		t.Fatalf("open with a recorder that cannot keep a chain: %v; want a not-dispatched refusal", err)
+	}
+	if n := len(p.Opened()); n != 0 {
+		t.Fatalf("%d sessions were opened", n)
+	}
+}

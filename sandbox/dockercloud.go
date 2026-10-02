@@ -101,7 +101,7 @@ type DockerCloud struct {
 	// a change on Docker's side fails closed, never open.
 	PolicyURL string
 
-	HTTP *http.Client // nil = a client that never follows redirects
+	HTTP *http.Client // nil = a default client; redirects are never followed either way
 
 	authMu         sync.Mutex
 	access         string
@@ -285,18 +285,10 @@ func parseDockerCloudURL(raw, what string) (*url.URL, error) {
 
 func (d *DockerCloud) apiBase() string { return strings.TrimRight(strings.TrimSpace(d.APIURL), "/") }
 
-func (d *DockerCloud) httpClient() *http.Client {
-	if d.HTTP != nil {
-		return d.HTTP
-	}
-	return dcDefaultClient
-}
-
-// dcDefaultClient never follows a redirect: a redirected request would carry the
-// bearer token (or lose it) somewhere the operator did not configure.
-var dcDefaultClient = &http.Client{
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-}
+// httpClient never follows a redirect, whoever supplied the client: a redirected
+// request would carry the bearer token (or lose it) somewhere the operator did not
+// configure.
+func (d *DockerCloud) httpClient() *http.Client { return withoutRedirects(d.HTTP) }
 
 func (d *DockerCloud) projectDir() string {
 	if d.ProjectDir != "" {
@@ -350,6 +342,10 @@ func (d *DockerCloud) RunJavaScript(ctx context.Context, req Request) (Result, e
 		return fail, d.deadlineAware(runCtx, err)
 	}
 	defer d.destroy(vm) // every exit path, including cancellation and panics
+	// Runs before the destroy: the grant ends with the run's code, not with a
+	// teardown during which a process the guest detached could keep calling the API,
+	// unseen by the trace already returned.
+	defer endDCGuard(guard)
 	if err := d.sealNetwork(runCtx, vm, guard); err != nil {
 		return fail, d.deadlineAware(runCtx, err)
 	}
@@ -380,9 +376,7 @@ func (d *DockerCloud) RunJavaScript(ctx context.Context, req Request) (Result, e
 		Sandbox:         d.Name(),
 		Isolation:       IsolationVM,
 	}
-	if guard != nil {
-		res.CallTrace = guard.core.traceSnapshot()
-	}
+	res.CallTrace = endDCGuard(guard)
 	if err != nil {
 		if deadline.Expired(runCtx) == context.DeadlineExceeded {
 			res.TimedOut, res.ExitCode = true, 124
@@ -464,6 +458,10 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (Proje
 		return fail, d.deadlineAware(runCtx, err)
 	}
 	defer d.destroy(vm)
+	// Runs before the destroy: the grant ends with the run's code, not with a
+	// teardown during which a process the guest detached could keep calling the API,
+	// unseen by the trace already returned.
+	defer endDCGuard(guard)
 	if err := d.sealNetwork(runCtx, vm, guard); err != nil {
 		return fail, d.deadlineAware(runCtx, err)
 	}
@@ -492,6 +490,7 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (Proje
 			if deadline.Expired(runCtx) == context.DeadlineExceeded {
 				res.Steps = append(res.Steps, StepResult{Command: step, ExitCode: 124, TimedOut: true, Duration: time.Since(start)})
 				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
+				res.CallTrace = endDCGuard(guard)
 				return res, nil
 			}
 			return fail, err
@@ -506,17 +505,17 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (Proje
 			TimedOut:        out.timedOut,
 			Duration:        time.Since(start),
 		})
-		if guard != nil {
-			res.CallTrace = guard.core.traceSnapshot()
-		}
 		if out.timedOut {
 			res.Outcome, res.Detail = ProjectOutcomeTimedOut, "step exceeded the time budget"
+			res.CallTrace = endDCGuard(guard)
 			return res, nil
 		}
 		if out.exitCode != 0 {
 			break
 		}
 	}
+	// The steps are done: the grant ends before its trace is read.
+	res.CallTrace = endDCGuard(guard)
 
 	// Capture requested artifacts (those that exist), even after a failed step.
 	var wanted []string
@@ -912,7 +911,7 @@ func dcErrorFrom(procedure string, status int, raw []byte) error {
 // dcCredentialPattern matches anything credential-shaped a vendor message could
 // echo: a bearer header value, a JWT (the exchanged bearer is one), a Docker
 // personal access token, a plimsoll guard credential.
-var dcCredentialPattern = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]+|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*|dckr_pat_[A-Za-z0-9_-]+|crg_[0-9a-f]{16,}`)
+var dcCredentialPattern = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]+|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*|dckr_pat_[A-Za-z0-9_-]+|crg_[0-9a-f]{16,}|e2b_[A-Za-z0-9]{8,}`)
 
 // truncateForError bounds and scrubs vendor-controlled text before it enters an
 // error or a log line: every such string in this file passes through here, so no
@@ -983,6 +982,16 @@ type dcGuard struct {
 	endpoint *guardEndpoint
 	token    string
 	core     *brokerSession
+}
+
+// endDCGuard ends a run's grant (a guard call after it is refused) and returns its
+// trace, which then holds every call the grant served. Nil-safe and repeatable.
+func endDCGuard(guard *dcGuard) *CallTrace {
+	if guard == nil {
+		return nil
+	}
+	guard.core.End()
+	return guard.core.traceSnapshot()
 }
 
 // allowRule is the single network rule a grant run's sandbox gets: the guard host

@@ -11,11 +11,12 @@ time cannot hold the caller past it.
 from __future__ import annotations
 
 import http.client
+import re
 import socket
 import ssl
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ._version import __version__
@@ -30,6 +31,8 @@ aggregate artifact cap), so a misbehaving daemon cannot make the client buffer
 without bound: the Go client's maxResponseBytes."""
 
 _CHUNK = 1 << 16
+
+_DIGITS = re.compile(r"[0-9]+")
 
 
 class Transport:
@@ -73,11 +76,20 @@ class Transport:
                 timer = threading.Timer(max(deadline - time.monotonic(), 0.0), _abort, (conn, fired))
                 timer.daemon = True
                 timer.start()
-                conn.request("POST", f"{self._prefix}/{SERVICE}/{method}", body=data, headers=headers)
+                try:
+                    conn.request("POST", f"{self._prefix}/{SERVICE}/{method}", body=data, headers=headers)
+                except (BrokenPipeError, ConnectionResetError):
+                    # The daemon can answer before the whole body is sent (a refusal
+                    # needs no payload) and close its end; its answer, which may say
+                    # nothing ran, is read below instead of being lost to the write.
+                    if fired.is_set():
+                        raise
                 _settimeout(conn, deadline)
                 resp = conn.getresponse()
-                raw = _read_capped(conn, resp, deadline)
-                if fired.is_set():
+                raw, complete = _read_capped(conn, resp, deadline)
+                # The timer shuts the socket down, which ends a read early: an answer
+                # cut short is a timeout, but one read to its stated end is the answer.
+                if fired.is_set() and not complete:
                     raise socket.timeout("deadline passed")
             except (socket.timeout, TimeoutError):
                 raise RequestTimeoutError(f"plimsoll: {method} did not finish within {self._timeout} s") from None
@@ -115,10 +127,14 @@ def _settimeout(conn: http.client.HTTPConnection, deadline: float) -> None:
         conn.sock.settimeout(remaining)
 
 
-def _read_capped(conn: http.client.HTTPConnection, resp: http.client.HTTPResponse, deadline: float) -> bytes:
-    length = resp.getheader("Content-Length")
-    if length is not None and length.strip().isdigit() and int(length) > MAX_RESPONSE_BYTES:
-        raise ResponseTooLargeError(f"plimsoll: the daemon's answer is {int(length)} bytes, over the {MAX_RESPONSE_BYTES} byte limit")
+def _read_capped(conn: http.client.HTTPConnection, resp: http.client.HTTPResponse, deadline: float) -> Tuple[bytes, bool]:
+    """The answer's body, and whether it is known complete: read to the length its
+    Content-Length states."""
+    header = (resp.getheader("Content-Length") or "").strip()
+    # ASCII digits only: str.isdigit() also accepts "²", which int() refuses.
+    length = int(header) if _DIGITS.fullmatch(header) else None
+    if length is not None and length > MAX_RESPONSE_BYTES:
+        raise ResponseTooLargeError(f"plimsoll: the daemon's answer is {length} bytes, over the {MAX_RESPONSE_BYTES} byte limit")
     chunks: List[bytes] = []
     n = 0
     while True:
@@ -130,4 +146,4 @@ def _read_capped(conn: http.client.HTTPConnection, resp: http.client.HTTPRespons
         if n > MAX_RESPONSE_BYTES:
             raise ResponseTooLargeError(f"plimsoll: the daemon's answer exceeds {MAX_RESPONSE_BYTES} bytes")
         chunks.append(chunk)
-    return b"".join(chunks)
+    return b"".join(chunks), length is not None and n == length

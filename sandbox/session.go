@@ -167,6 +167,8 @@ func RefuseGaveUp(ctx context.Context) error {
 //     cannot run the language.
 //   - Files that could not be written (sessionkit.ErrFiles): a request this session's
 //     work directory cannot take. The interpreter and the session go on.
+//   - A deadline before the code was sent (sessionkit.ErrUnsent): DeadlineExceeded,
+//     marked; the next cell starts a fresh interpreter and says so.
 func RefuseCell(err, end error) (refusal error, ok bool) {
 	switch {
 	case errors.Is(err, sessionkit.ErrLaunch) && end != nil:
@@ -175,6 +177,10 @@ func RefuseCell(err, end error) (refusal error, ok bool) {
 		return NotDispatched(RefusalEnvironment, fmt.Errorf("%w: %v", ErrUnsupported, err)), true
 	case errors.Is(err, sessionkit.ErrFiles):
 		return NotDispatched(RefusalRequest, fmt.Errorf("%w: %v", ErrInvalidRequest, err)), true
+	case errors.Is(err, sessionkit.ErrUnsent):
+		// DeadlineExceeded, so the caller reads it as its timeout; the mark says no
+		// code of the cell ran.
+		return NotDispatched(RefusalCapacity, fmt.Errorf("%w: %v", context.DeadlineExceeded, err)), true
 	}
 	return nil, false
 }

@@ -573,3 +573,31 @@ func TestCheckUnanswered(t *testing.T) {
 		}
 	}
 }
+
+// An answered record (version 1 or 2) stating an unanswered code, a field outside
+// its digest, is refused, and so is evidence below the request's floor or a floor no
+// daemon accepts (v0.15.0 review, H1 and M5.1).
+func TestCheckRefusesUncoveredFieldsAndFloorViolations(t *testing.T) {
+	for name, tc := range map[string]struct {
+		floor, isolation, unanswered string
+		want                         error
+	}{
+		"v2 unanswered":    {"", "vm", "unknown", ErrMismatch},
+		"below the floor":  {"vm", "container", "", sandbox.ErrIsolationEvidenceMismatch},
+		"unknown evidence": {"process", "", "", sandbox.ErrIsolationEvidenceMismatch},
+		"bad floor":        {"none", "vm", "", ErrMismatch},
+		"meets the floor":  {"kernel", "vm", "", nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := &plimsollv1.RunRequest{Protocol: 2, MinimumIsolation: tc.floor, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "x"}}}
+			resp := &plimsollv1.RunResponse{Sandbox: "fake", Isolation: tc.isolation,
+				Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{}}}
+			resp.Record = Stamp(sandbox.RunRecord{RequestSHA256: RunRequestDigest(req)}, resp)
+			resp.Record.Unanswered = tc.unanswered
+			_, err := Check(req, resp)
+			if tc.want == nil && err != nil || tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("Check = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}

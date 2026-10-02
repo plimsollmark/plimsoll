@@ -2,10 +2,14 @@ package sandbox
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // smokeScript is a session whose calls answer from a script: what each snippet
@@ -70,7 +74,7 @@ func (s *smokeScript) Err() error {
 func TestSessionSmokeTestChecks(t *testing.T) {
 	good := func() *smokeScript {
 		return &smokeScript{
-			js: []string{"4242", "gone kept", "kept"},
+			js: []string{"4242", "gone kept", "1 ", "kept"},
 			cells: []CellResult{
 				{},
 				{Stdout: "42\n"},
@@ -88,7 +92,9 @@ func TestSessionSmokeTestChecks(t *testing.T) {
 		{"a process outlives the sweep", func(s *smokeScript) { s.js[1] = "alive kept" }, "want the process gone"},
 		{"a file is lost between calls", func(s *smokeScript) { s.js[1] = "gone " }, "want the process gone and the file kept"},
 		{"the interpreter forgets", func(s *smokeScript) { s.cells[1] = CellResult{Stdout: "NaN\n"} }, "want 42"},
-		{"a suspend loses the file", func(s *smokeScript) { s.js[2] = "" }, "want it kept"},
+		{"a call opens a relay's pipes", func(s *smokeScript) { s.js[2] = "1 31/0,31/1" }, "want relays found and none opened"},
+		{"no relay to check", func(s *smokeScript) { s.js[2] = "0 " }, "want relays found and none opened"},
+		{"a suspend loses the file", func(s *smokeScript) { s.js[3] = "" }, "want it kept"},
 		{"a fresh interpreter not said", func(s *smokeScript) { s.cells[2] = CellResult{Stdout: "'undefined'\n"} }, "saying its interpreter is fresh: false"},
 		{"a fresh interpreter said", func(s *smokeScript) { s.cells[2] = CellResult{Stdout: "'undefined'\n", InterpreterStarted: true} }, ""},
 	} {
@@ -110,7 +116,7 @@ func TestSessionSmokeTestChecks(t *testing.T) {
 // and refuses a stated language it has no check for.
 func TestSessionSmokeTestRunsEveryStatedLanguage(t *testing.T) {
 	script := func(langs []Language, cells ...CellResult) *smokeScript {
-		return &smokeScript{langs: langs, js: []string{"4242", "gone kept", "kept"}, cells: cells, done: make(chan struct{})}
+		return &smokeScript{langs: langs, js: []string{"4242", "gone kept", "2 ", "kept"}, cells: cells, done: make(chan struct{})}
 	}
 	both := []Language{LanguageJavaScript, LanguagePython}
 	for _, c := range []struct {
@@ -131,5 +137,17 @@ func TestSessionSmokeTestRunsEveryStatedLanguage(t *testing.T) {
 				t.Fatalf("got %v, want an error saying %q", err, c.want)
 			}
 		})
+	}
+}
+
+// A deadline before a cell's code was sent is a refusal marked not dispatched, read
+// as DeadlineExceeded (v0.15.0 review, L3).
+func TestUnsentCellIsARefusal(t *testing.T) {
+	err, ok := RefuseCell(fmt.Errorf("x: %w", sessionkit.ErrUnsent), nil)
+	if !ok || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RefuseCell = %v, %v", err, ok)
+	}
+	if reason, marked := NotDispatchedReason(err); !marked || reason != RefusalCapacity {
+		t.Fatalf("not marked: %v %v", reason, marked)
 	}
 }

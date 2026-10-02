@@ -15,7 +15,7 @@
 // work dir even within the sandbox.
 import { spawnSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { mkdirSync, writeFileSync, readFileSync, realpathSync, openSync, fstatSync, closeSync, constants } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, readlinkSync, realpathSync, openSync, fstatSync, closeSync, constants } from "node:fs";
 import { resolve, dirname } from "node:path";
 
 const WORK = resolve(process.env.PLIMSOLL_WORK || "/work");
@@ -127,6 +127,12 @@ function captureArtifacts(paths) {
     let fd;
     try { fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { continue; }
     try {
+      // O_NOFOLLOW guards only the last component: a step left running can swap a
+      // parent directory for a link between realpathSync and openSync. The kernel
+      // knows what was opened, so ask it, and keep only a file inside WORK.
+      let opened;
+      try { opened = readlinkSync("/proc/self/fd/" + fd); } catch { continue; }
+      if (!opened.startsWith(workReal + "/")) continue;
       const info = fstatSync(fd);
       if (!info.isFile()) continue; // skip dirs, devices, fifos
       if (total + info.size > MAX_ARTIFACT_BYTES) return { artifacts: out, truncated: true };

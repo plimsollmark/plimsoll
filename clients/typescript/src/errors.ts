@@ -3,6 +3,7 @@
 // and comes back with notDispatched set; anything else may have followed
 // execution and is never a safe automatic retry (docs/run-results.md).
 
+import type { RunRecord } from "./record.ts";
 import type { WireError, WireRecord } from "./wire.ts";
 
 /** Why a request was refused before any code ran (plimsoll.v1.NotDispatchedReason). */
@@ -63,6 +64,11 @@ export class PlimsollError extends Error {
    * and keeps it in its chain, so the session goes on; the call's outcome is unknown.
    */
   readonly unanswered: WireRecord | undefined;
+  /**
+   * That record once the Session has checked it against the call and its chain (Go:
+   * UnansweredCallError.Record); undefined otherwise.
+   */
+  record: RunRecord | undefined;
 
   constructor(
     code: Code,

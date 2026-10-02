@@ -802,3 +802,126 @@ func TestUnansweredSessionCallIsInTheChain(t *testing.T) {
 		t.Fatalf("the close counts %d calls, the session ran %d", sum.Msg.GetCalls(), ran)
 	}
 }
+
+// A session holds one call waiting for its turn; any more are refused at once, not
+// dispatched, instead of parking requests on the session (v0.15.0 review, M4).
+func TestOnlyOneCallWaitsForASessionsTurn(t *testing.T) {
+	svc, _ := sessionService()
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := open.Msg.GetSessionId()
+	e, _ := svc.sessions.get(id, auditCaller(ctx))
+	e.turn <- struct{}{} // a long call holds the turn
+	waitCtx, cancel := context.WithCancel(ctx)
+	waited := make(chan error, 1)
+	go func() { _, err := svc.SessionRun(waitCtx, callReq(id, "1")); waited <- err }()
+	deadline := time.Now().Add(3 * time.Second)
+	for len(e.waiting) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the first waiter never queued")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, err = svc.SessionRun(ctx, callReq(id, "2"))
+	if connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("a second waiter: %v; want ResourceExhausted", err)
+	}
+	wantNotDispatched(t, "a second waiter", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY)
+	if _, err := svc.CloseSession(ctx, closeReq(id)); connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("a close behind a waiter: %v; want ResourceExhausted", err)
+	}
+	cancel()
+	<-waited
+	<-e.turn
+	if _, err := svc.SessionRun(ctx, callReq(id, "3")); err != nil {
+		t.Fatalf("a call once the turn is free: %v", err)
+	}
+}
+
+// A caller may not ask for an idle timeout below a second: an idle suspend that finds
+// a call running tries again one idle timeout later (v0.15.0 review, L2).
+func TestRequestedIdleTimeoutHasAFloor(t *testing.T) {
+	svc, _ := sessionService()
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, connect.NewRequest(&plimsollv1.OpenSessionRequest{Protocol: protocol.Number, IdleTimeoutMs: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := open.Msg.GetIdleTimeoutMs(); got != 1000 {
+		t.Fatalf("idle timeout %d ms, want the 1000 ms floor", got)
+	}
+}
+
+// Describe states where a session runs, from the provider's SessionEnvironments, and
+// nothing when sessions are off (v0.15.0 review, L19).
+func TestDescribeStatesTheSessionEnvironment(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sandbox = &softwareSessions{p}
+	d, err := svc.Describe(context.Background(), connect.NewRequest(&plimsollv1.DescribeRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Msg.GetSessionEnvironment(); got.GetIdentity() != "outer:test" || got.GetSoftwareIdentity() != "oci-manifest:linux/amd64@sha256:aaaa" {
+		t.Fatalf("session environment %+v", got)
+	}
+	svc.Sessions.MaxSessions = 0
+	if d, _ := svc.Describe(context.Background(), connect.NewRequest(&plimsollv1.DescribeRequest{})); d.Msg.GetSessionEnvironment() != nil {
+		t.Fatalf("sessions off, but Describe states a session environment: %+v", d.Msg.GetSessionEnvironment())
+	}
+}
+
+type panickingSessions struct{ *sandboxtest.Sessions }
+
+func (p *panickingSessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	s, err := p.Sessions.OpenSession(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &panickingSession{Session: s}, nil
+}
+
+type panickingSession struct{ sandbox.Session }
+
+func (s *panickingSession) RunJavaScript(ctx context.Context, req sandbox.Request) (sandbox.Result, error) {
+	if _, err := s.Session.RunJavaScript(ctx, req); err != nil {
+		return sandbox.Result{}, err
+	}
+	panic("the provider broke after the code ran")
+}
+
+// A provider that panics during a session call may have run it: the call is chained
+// as unanswered, so the next call follows it and the close counts it, and the turn is
+// free again (v0.15.0 review, L4).
+func TestAPanickingSessionCallIsInTheChain(t *testing.T) {
+	svc := NewSandboxService(&panickingSessions{Sessions: &sandboxtest.Sessions{}})
+	svc.Sessions = SessionConfig{MaxSessions: 4, Lifetime: time.Minute, IdleTimeout: time.Minute, DiskBytes: 1 << 20}
+	svc.Logger = slog.New(slog.DiscardHandler)
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := open.Msg.GetSessionId()
+	_, err = svc.SessionRun(ctx, callReq(id, "1"))
+	var ce *connect.Error
+	found := false
+	if errors.As(err, &ce) {
+		for _, d := range ce.Details() {
+			if v, derr := d.Value(); derr == nil {
+				if _, ok := v.(*plimsollv1.UnansweredCall); ok {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("a panicking call: %v; want an error carrying its unanswered record", err)
+	}
+	sum, err := svc.CloseSession(ctx, closeReq(id))
+	if err != nil || sum.Msg.GetCalls() != 1 {
+		t.Fatalf("close: %+v, %v; want the panicked call counted", sum, err)
+	}
+}

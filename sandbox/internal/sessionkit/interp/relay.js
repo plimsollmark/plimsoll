@@ -137,12 +137,26 @@ function prepare(req) {
     if (dest === work || !dest.startsWith(work + "/")) return refuse(req.nonce, i, "EPATH");
     dests.push(dest);
   }
+  // A link an earlier call left in the work directory is not followed out of it:
+  // the parent must resolve inside, the file itself is opened without following a
+  // link, and the kernel's name for what was opened must be inside too, before
+  // anything is truncated or written.
+  let workReal;
+  try { workReal = fs.realpathSync(work); } catch (e) { return refuse(req.nonce, 0, "EIO"); }
+  const inside = (p) => p.startsWith(workReal + "/");
   for (const [i, f] of files.entries()) {
+    let fd = -1;
     try {
       fs.mkdirSync(path.dirname(dests[i]), { recursive: true });
-      fs.writeFileSync(dests[i], f.content);
+      if (!inside(fs.realpathSync(path.dirname(dests[i])) + "/")) return refuse(req.nonce, i, "EPATH");
+      fd = fs.openSync(dests[i], fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o644);
+      if (!inside(fs.readlinkSync("/proc/self/fd/" + fd))) return refuse(req.nonce, i, "EPATH");
+      fs.ftruncateSync(fd, 0);
+      fs.writeFileSync(fd, f.content);
     } catch (e) {
       return refuse(req.nonce, i, typeof e?.code === "string" ? e.code : "EIO");
+    } finally {
+      if (fd >= 0) fs.closeSync(fd);
     }
   }
   const conn = net.connect(path.join(dir, "ctl.sock"));

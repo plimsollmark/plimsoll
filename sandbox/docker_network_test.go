@@ -113,3 +113,18 @@ func TestDockerRunHasNoEgress(t *testing.T) {
 	}
 	checkEgressProbe(t, d, "project step", pres.Steps[0].Stdout)
 }
+
+// Every run states its own resource limits instead of inheriting the docker daemon's:
+// no core files (a crashing guest would otherwise invoke the host's core_pattern
+// handler), a fixed descriptor limit, and a private IPC namespace (v0.15.0 review, L6).
+func TestLockdownStatesUlimitsAndIPC(t *testing.T) {
+	d := DefaultDocker("")
+	for _, runtime := range []string{"runc", "runsc"} {
+		args := strings.Join(d.lockdownArgs("c", true, runtime), " ")
+		for _, want := range []string{"--ulimit core=0", "--ulimit nofile=4096:4096", "--ipc private"} {
+			if !strings.Contains(args, want) {
+				t.Errorf("%s: lockdown lacks %q: %s", runtime, want, args)
+			}
+		}
+	}
+}

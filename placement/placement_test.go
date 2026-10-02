@@ -528,3 +528,58 @@ func TestSoftwareRequirementIsCheckedAgainstTheRun(t *testing.T) {
 		t.Fatalf("a run reporting the required identity: %v", err)
 	}
 }
+
+type failingRecorder struct{}
+
+func (failingRecorder) Record(*plimsollv1.RunRequest, *plimsollv1.RunResponse) error {
+	return errors.New("disk full")
+}
+
+// A recorder that fails must not hide that the run went to another environment:
+// the error carries both ErrEnvironmentMismatch and client.ErrNotRecorded.
+func TestEnvironmentIsCheckedWhenTheRecorderFails(t *testing.T) {
+	moved := &stub{name: "moved", describe: describeAs("docker", "kernel"), answer: ok("x"), ranIn: "docker-image:2"}
+	b := serve(t, moved)
+	mux := http.NewServeMux()
+	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(moved))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c, err := client.New(srv.URL, client.WithToken("token-moved"), client.WithRecorder(failingRecorder{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Client = c
+	p, err := New([]Backend{b}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}, Requirement{Environment: "docker-image:1"})
+	if !errors.Is(err, ErrEnvironmentMismatch) || !errors.Is(err, client.ErrNotRecorded) {
+		t.Fatalf("err = %v, want ErrEnvironmentMismatch joined with client.ErrNotRecorded", err)
+	}
+}
+
+// A session is filtered on where sessions run, which Describe states, not on where a
+// single snippet runs: on docker a session runs in the project image, so a requirement
+// naming that image places it, and one naming the snippet image does not (v0.15.0
+// review, L19).
+func TestSessionsAreFilteredOnTheSessionEnvironment(t *testing.T) {
+	project := "oci-manifest:linux/amd64@sha256:" + strings.Repeat("b", 64)
+	docker := &stub{name: "docker", describe: describeAs("docker", "kernel", func(d *plimsollv1.DescribeResponse) {
+		d.SupportsSessions = true
+		d.JavascriptEnvironment = &plimsollv1.PayloadEnvironment{Identity: "docker-image:snippet"}
+		d.SessionEnvironment = &plimsollv1.PayloadEnvironment{Identity: "docker-image:project", SoftwareIdentity: project}
+	}), answer: ok("")}
+	p := pool(t, docker)
+	ctx := context.Background()
+	if _, choice, err := p.OpenSession(ctx, client.SessionOptions{}, Requirement{Environment: "docker-image:project"}); err != nil || choice.Backend != "docker" {
+		t.Fatalf("a requirement naming the session's environment: choice %+v, err %v", choice, err)
+	}
+	if _, _, err := p.OpenSession(ctx, client.SessionOptions{}, Requirement{Environment: "docker-image:snippet"}); !errors.Is(err, ErrNoBackend) {
+		t.Fatalf("a requirement naming the snippet environment placed a session: %v", err)
+	}
+	rule := sandbox.SoftwareRule{Mode: sandbox.SoftwareExact, Identities: []string{project}}
+	if _, _, err := p.OpenSession(ctx, client.SessionOptions{}, Requirement{Software: rule}); errors.Is(err, ErrNoBackend) {
+		t.Fatalf("a software rule naming the project image excluded the backend: %v", err)
+	}
+}

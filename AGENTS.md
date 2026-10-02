@@ -54,7 +54,8 @@ option is intentionally only process-tier.
     pinned inputs with [sandbox/wasm/build.sh](sandbox/wasm/build.sh).
 - [placement/](placement/): the routing library for a caller with several daemons.
   It filters backends by what `Describe` states (payload
-  kind, floor, grant capability, selected software identity), ranks them by the caller's own
+  kind, floor, grant capability, selected software identity; a session by the
+  `session_environment` Describe states, since on docker it runs in the project image), ranks them by the caller's own
   comparison, sends with each backend's own credential, and retries on another backend
   only after a refusal marked not-dispatched with reason unsupported, isolation,
   environment or capacity. The daemon enforces software rules before dispatch;
@@ -257,7 +258,13 @@ retained output is never annotated with in-band markers. On the wire,
 stdout/stderr are protobuf `bytes`, so arbitrary guest bytes survive verbatim
 instead of being lossily repaired into UTF-8. An E2B guest that floods its
 output stream past the transfer budget is classified as a failed user run
-(exit 153, both streams marked truncated), not an infrastructure error.
+(exit 153, both streams marked truncated), not an infrastructure error. Nor can guest
+code pass its own exit for docker's: a docker snippet's node writes a per-run start
+marker to stderr from an `--import` preload before the script runs (stripped from the
+result), and a run whose stderr starts with it is a result whatever its exit code; only
+one without it can be docker's 125, 126 or 127. A project's runner keeps only artifacts
+the kernel says it opened inside the work directory (`/proc/self/fd`), so a step left
+running cannot swap a parent directory for a link between the check and the open.
 
 ## Providers (`SANDBOX_PROVIDER`)
 `Build(getenv)` selects one and fails closed: malformed safety configuration and
@@ -272,7 +279,7 @@ and its hardened-mode envelope.
 |-----------|----------|-----------|-------|
 | `wasm`    | in-process QuickJS via wazero | process tier, lowest latency | JS snippets and snippet grants through a direct host function; no projects. An engine escape lands in plimsolld. |
 | `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. |
-| `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. Sandboxes are stamped with a per-instance metadata ID; `ReconcileOrphans` (run periodically by the daemon) reaps stamped, untracked microVMs that leaked past a malformed create response or failed teardown. |
+| `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. No redirect from envd or the control plane is followed (a followed one would carry the envd and traffic tokens, or the API key, wherever a guest answering on envd's port pointed it), with the default HTTP client or an embedder's. A sandbox ID that is not letters, digits and dashes is never put in envd's host name or a path, and a vendor's error body is cut to 512 bytes with credentials scrubbed before it enters an error. Sandboxes are stamped with a per-instance metadata ID; `ReconcileOrphans` (run periodically by the daemon) reaps stamped, untracked microVMs that leaked past a malformed create response or failed teardown. |
 | `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | written against Docker's published API contract; live suite passed 2026-09-24. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
 | `openshell` | NVIDIA OpenShell sandbox through a gateway | container (the gateway's docker driver; any other driver is refused) | built by plimsolld, not `Build`. Keeps sessions (a sweep of every non-own process after each call, `sleep` as the main process, a read-back before each call). Each run creates a sandbox with no network rules (the gateway's deny-all default) and `/tmp` as the only writable directory (a `noexec` tmpfs of `SANDBOX_DISK_MB` when that is set), reads it back and refuses any difference, runs the payload over the streamed exec (the deadline cancels the stream, which kills the command's process group; a `setsid` descendant lives until the delete), and deletes the sandbox off the result path; `Drain` waits for those deletes at shutdown. Every sandbox declares its lifetime, so `ReconcileOrphans` also reaps what a crashed instance left behind, once that lifetime plus 5 minutes has passed. Grants keep the no-grant policy: a relay in the sandbox pairs the guest's socket connections with connections plimsoll dials in through `ForwardTcp` (session tokens revoked at the run's end), and plimsoll serves the shared broker on them. Module runs: `ErrUnsupported`. Operator setup, grants and the smoke test: [docs/openshell.md](docs/openshell.md). |
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
@@ -311,7 +318,8 @@ set for a provider without sessions), `SANDBOX_MAX_SESSIONS_PER_CALLER` (open se
 principal may hold, suspended ones included; default 0, no cap beyond the daemon's; a
 suspended session holds no concurrency slot, so the per-caller concurrency cap does not bound
 them), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
-12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends), `SANDBOX_SESSION_DISK_MB`
+12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends; otherwise 1s to 12h, and a
+request may ask for less but not under 1s), `SANDBOX_SESSION_DISK_MB`
 (default 1024; 0 disables the check and measures nothing; disk use is measured after each call,
 on docker as the used space of the session's tmpfs mounts (`statfs`), on openshell by a walk
 the session's code can hide files from;
@@ -387,14 +395,17 @@ port has no business reading. `/readyz` re-runs the provider's bounded `Prefligh
 that probes the pinned daemon and runtime, but for e2b and dockercloud it validates **configuration only**
 and proves nothing about API reachability, token or key validity, or guard routability — the
 behavioral proof is the one-shot startup `SmokeTest`, which creates a real billable
-microVM and so must never run on an unauthenticated poll path. `Describe` reports current isolation evidence but only
+microVM and so must never run on an unauthenticated poll path. A failing `/readyz` answers `not ready` and nothing
+else (the error goes to the log, at most every 30 s), and a poll that hangs up cannot change the evidence: docker's
+`Preflight` runs detached from its caller's cancellation, so only a real failure drops the tier, and plimsolld
+re-runs `Preflight` every minute while the tier is below what startup proved. `Describe` reports current isolation evidence but only
 structural/static operation support. Every provider whose boundary depends on the
 host or a remote service (docker, e2b, dockercloud, openshell) runs a startup
 **`SmokeTest`** (behavior, not just configuration) via `EnsureReady`, and none
 serves if it fails. With sessions enabled, plimsolld then runs `sandbox.SessionSmokeTest`
 on one real session (the sweep kills a process a call left, files survive calls and a
 suspend, a cell's interpreter keeps state in every stated language and after a suspend keeps
-it or says it is fresh, close ends it), and a
+it or says it is fresh, a call cannot open a running relay's pipes, close ends it), and a
 failure refuses startup too. wasm has none, and its startup check is configuration only: its
 boundary is wazero library code compiled into plimsolld (the per-run memory cap, no
 network API), the same on every host, so the gate's tests (`TestWasmMemoryLimitEnforced`,
@@ -451,7 +462,7 @@ rejected), TLS on any non-loopback listener (the metrics listener included), an 
 (docker: `SANDBOX_REQUIRE_PINNED_IMAGES=1`, no `unconfined` seccomp; e2b: an
 explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1`), an explicit
 per-run resource envelope (memory and CPU only for dockercloud, which has no disk
-control) plus, for docker, whose runners share the daemon's host, the aggregate memory budget, per-caller rate limiting, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive: a rate limit bounds what a caller starts, not the slots its long runs or running sessions hold), and with sessions on a per-caller session cap (`SANDBOX_MAX_SESSIONS_PER_CALLER` positive). Every violation is reported at once
+control) plus, for docker, whose runners share the daemon's host, the aggregate memory budget, per-caller rate limiting with a burst no larger than a minute's rate, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive and below `SANDBOX_MAX_CONCURRENT`: a rate limit bounds what a caller starts, not the slots its long runs or running sessions hold), and with sessions on a per-caller session cap (`SANDBOX_MAX_SESSIONS_PER_CALLER` positive). Every violation is reported at once
 (one fix pass, not a startup loop). TLS itself is configured with
 `PLIMSOLL_TLS_CERT`/`PLIMSOLL_TLS_KEY` (both-or-neither; loaded and validated
 at startup); with them the daemon serves HTTP/1.1 + HTTP/2 over TLS instead of
@@ -488,7 +499,9 @@ version, rows, width, params; then per row an int32 status and status × width
 float64 outputs) that `sandbox.DecodeModuleResults` bounds-checks before anything
 is trusted. The row width must equal the simulator's own `sim_run` parameter count and
 the output width is the module's exported `sim_width()`; the worker reads both from
-the module, so the daemon assumes no layout. Over RPC every NaN of an output is sent as the quiet NaN with
+the module, so the daemon assumes no layout. It trusts neither beyond its buffers: a
+width past 1,048,576 refuses the module, and a row whose `sim_run` claims more steps than
+the worker allotted fails (status -110) instead of being copied. Over RPC every NaN of an output is sent as the quiet NaN with
 no sign or payload (`0x7ff8000000000000`), the one Python's and JavaScript's NaN encode to,
 so a JSON client's record check agrees whatever NaN the simulator produced. `ModuleResult.Outcome` reuses the
 project outcome type: `completed` (every row has a status; a failed row is a
@@ -529,7 +542,8 @@ decoded, canonical paths whose Go HTTP request target is byte-identical to the
 approved string; queries, traversal, percent encodings, and characters that would
 be wire-encoded are rejected before upstream dispatch, and so are `;` and all-dot
 segments, which some upstream servers reinterpret after the match (`/a/..;/b`
-reads as `/b` on Tomcat and Spring). An optional `Preamble` lets
+reads as `/b` on Tomcat and Spring), and a `*` never binds a segment containing `:`
+(`/items/a:setIamPolicy` is another operation on AIP-136 APIs). An optional `Preamble` lets
 an embedder layer a domain SDK on top of the generic client.
 
 The `allow` list, the `Preamble`, and the model-facing tool description a gateway
@@ -547,7 +561,12 @@ warns when optional ones are dropped, and errors on a `$ref` path item or parame
 than letting it vanish from the surface. Generated argument names are sanitized and
 deconflicted against the client binding and JS reserved words, a body argument is emitted
 only when the operation declares a request body, and an `operationId` naming one of the
-injected client's own methods (`get`/`put`/`post`/`patch`/`del`/`call`) is refused. The
+injected client's own methods (`get`/`put`/`post`/`patch`/`del`/`call`) or an `Object.prototype`
+name (`__proto__`, `constructor`, ...) is refused. Each derived route is checked as a grant
+checks it (`sandbox.ValidateHostRoute`, which `grants.Load` also applies to a profile's
+`catalog`); a control character or line terminator in the title, version or a path is
+refused, since they reach the preamble's comment and the description; a summary is folded
+to one line. The
 generated SDK is **executed in QuickJS by the tests**, so a preamble that does not parse or
 throws on its first call fails the build. `-emit catalog` gives the full route list for a
 profile's `catalog` (see the advisory channel). It emits an optional concrete `health_check`
@@ -586,7 +605,8 @@ per-run grant, minted token, exact approve==wire check, proxy-free/no-redirect
 upstream request, traffic budgets (256 calls by default, 1 MiB request, 4 MiB
 response; a profile's `max_calls` raises the call budget for a workload that is a
 loop by design, never past `MaxHostCallsCeiling` of 100,000, and the metadata trace
-stays capped at the default 256 rows either way, counting the rest as `Dropped`),
+stays capped at the default 256 rows either way, counting the rest as `Dropped`;
+16 calls in flight; 60 s per upstream call, headers and body),
 and metadata-only trace. Docker JavaScript keeps `--network none` and frames calls
 over a per-run Unix socket. WASM JavaScript uses a direct, quota-bounded wazero
 host function; only `{method,path,body}` and the bounded response cross WASM linear
@@ -601,6 +621,12 @@ grants **are supported when `E2B_GUARD_URL` is configured** and rejected
 keeps both the credential and route enforcement outside the hostile VM, and it
 delegates to the same shared broker. `SupportsJavaScriptGrants` reports exactly that
 condition rather than a constant. No-grant E2B runs deny egress and public traffic.
+The guard endpoint (E2B and dockercloud) admits per run before it reads a body: at most
+16 of a run's requests in the handler and 2 holding one of the shared decode slots
+(plimsolld sizes the pool at twice `SANDBOX_MAX_CONCURRENT`, so every live run keeps its
+share), and an admitted body must arrive within 10 s. A run's grant ends with its code,
+before the VM is killed or deleted: a call a detached guest process makes during the
+teardown is refused, so the trace a run returns holds every call its grant served.
 
 **Over RPC:** a caller selects a **named, server-side profile** via the
 `grant_profile` request field; profiles are loaded from `PLIMSOLL_GRANTS_FILE`
@@ -651,7 +677,14 @@ RunProject with the caller (principal UserID, never the token), code/file sizes,
 `grant_profile`, provider, exit code, timed-out, and duration — never the code
 contents. Raw HTTP bodies and decompressed Connect messages are independently
 capped. HTTP middleware authenticates before Connect reads the body, bounds
-concurrent decode work, and the server applies a whole-body read deadline. Go's
+concurrent decode work (a slot covers the body only, given back once it has been read,
+and one caller holds at most half the slots), and the server applies a whole-body read
+deadline. A session holds one call waiting for its turn; a further one is refused, not
+dispatched, reason `capacity`. An internal fault reaches the caller as `internal error
+<id>` only; its text (which can carry a vendor's response body or docker's stderr) goes
+to the log under that ID, cut to 4 KiB. Refused credentials are counted and logged at
+most every 30 s, never the token; a caller token (imported, or `PLIMSOLL_TOKEN`) is at
+least 32 characters. Go's
 native unencrypted HTTP/2 supports prior-knowledge h2c; HTTP/1.1 Upgrade h2c is not
 supported.
 

@@ -14,12 +14,16 @@ package ``sandbox``); the comment on each names its Go counterpart.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+if TYPE_CHECKING:
+    from .types import RunRecord
 
 __all__ = [
     "PlimsollError",
     "InvalidBaseURLError",
     "InsecureHTTPError",
+    "InvalidOptionError",
     "InvalidRequestError",
     "InsufficientIsolationError",
     "SoftwareMismatchError",
@@ -53,7 +57,9 @@ class PlimsollError(Exception):
     is the HTTP status of the daemon's answer, ``None`` when there was none.
     ``unanswered`` is the record the daemon sends with a session call that may have
     run but ended in an error (a version 3 record, in its proto3 JSON form): the
-    Session checks it and keeps it in its chain, so the session goes on.
+    Session checks it and keeps it in its chain, so the session goes on. ``record``
+    is that record once the Session has checked it (Go: ``UnansweredCallError.Record``),
+    else ``None``.
     """
 
     default_code = "unknown"
@@ -73,6 +79,7 @@ class PlimsollError(Exception):
         self.not_dispatched: Optional[str] = not_dispatched
         self.http_status: Optional[int] = http_status
         self.unanswered: Optional[Dict[str, Any]] = unanswered
+        self.record: Optional["RunRecord"] = None
 
 
 # --- refused before anything was sent ----------------------------------------
@@ -81,6 +88,13 @@ class PlimsollError(Exception):
 class InvalidBaseURLError(PlimsollError, ValueError):
     """The base URL is not an absolute http or https URL without userinfo,
     query or fragment (Go: ``client.ErrInvalidBaseURL``)."""
+
+    default_code = "invalid_argument"
+
+
+class InvalidOptionError(PlimsollError, ValueError):
+    """A client option is unusable: a token that is not visible ASCII, a request
+    timeout that is not a positive finite number of seconds."""
 
     default_code = "invalid_argument"
 

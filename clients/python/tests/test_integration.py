@@ -389,6 +389,22 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class UnansweredEvidence(unittest.TestCase):
+    def test_an_unanswered_record_must_state_the_sessions_evidence(self) -> None:
+        # With no response to compare it with, an unanswered call's record must meet the
+        # call's floor and repeat what the session stated at open; otherwise it is data
+        # loss and the session sends nothing more (v0.15.0 review, M5.3).
+        c = Client(setting("PLIMSOLL_LIAR_URL"))
+        s = c.open_session(minimum_isolation="container")
+        with self.assertRaises(IsolationEvidenceMismatchError):
+            s.run_javascript("weaker")
+        with self.assertRaises(PlimsollError) as cm:
+            s.run_javascript("next")
+        self.assertEqual(cm.exception.not_dispatched, "request")
+        with self.assertRaises(RecordMismatchError):
+            c.open_session().run_javascript("other-provider")
+
+
 class UnansweredCalls(unittest.TestCase):
     def test_an_unanswered_call_is_in_the_chain(self) -> None:
         # The daemon sends the record of a call that may have run but ended in an
@@ -401,6 +417,9 @@ class UnansweredCalls(unittest.TestCase):
         self.assertIsNone(cm.exception.not_dispatched)
         self.assertIsNotNone(cm.exception.unanswered)
         self.assertEqual(cm.exception.unanswered["version"], 3)
+        # The checked record is handed back too, as Go's UnansweredCallError.Record.
+        self.assertIsNotNone(cm.exception.record)
+        self.assertEqual(cm.exception.record.sequence, 2)
         r = s.run_javascript("3")
         self.assertEqual(r.record.sequence, 3)
         self.assertEqual(s.close().calls, 3)

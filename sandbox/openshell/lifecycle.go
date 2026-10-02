@@ -260,8 +260,8 @@ func conditionSummary(sb *openshellv1.Sandbox) string {
 
 // verifySandbox checks the sandbox record against the request: every label sent, the
 // configured image, the requested limits, the driver config as sent (none when disk is
-// nil), the policy as sent, no credential providers attached, and, when command is not
-// nil, the main process.
+// nil), the policy as sent, no credential providers attached, none of the fields
+// plimsoll never sets (unsetFields), and, when command is not nil, the main process.
 func (p *Provider) verifySandbox(sb *openshellv1.Sandbox, labels map[string]string, command []string, disk *structpb.Struct) error {
 	meta, spec := sb.GetMetadata(), sb.GetSpec()
 	for key, want := range labels {
@@ -282,10 +282,41 @@ func (p *Provider) verifySandbox(sb *openshellv1.Sandbox, labels map[string]stri
 		return errors.New("openshell verify sandbox: the sandbox spec's policy differs from the policy sent")
 	case len(spec.GetProviders()) > 0:
 		return fmt.Errorf("openshell verify sandbox: credential providers %v are attached; plimsoll attaches none", spec.GetProviders())
+	case unsetFields(spec) != "":
+		// Fields plimsoll never sets must read back empty: an agent socket, injected
+		// environment, another runtime class, user namespaces, or platform labels or
+		// annotations would each change the sandbox from the one asked for.
+		return fmt.Errorf("openshell verify sandbox: %s reads back set; plimsoll sets none", unsetFields(spec))
 	case command != nil && !slices.Equal(spec.GetCommand(), command):
 		return fmt.Errorf("openshell verify sandbox: the main process reads back as %q, requested %q", spec.GetCommand(), command)
 	}
 	return nil
+}
+
+// unsetFields names the first field of spec that plimsoll never sets but that reads
+// back set, or "".
+func unsetFields(spec *openshellv1.SandboxSpec) string {
+	t := spec.GetTemplate()
+	switch {
+	case t.GetAgentSocket() != "":
+		return "template.agent_socket"
+	case len(t.GetEnvironment()) > 0:
+		return "template.environment"
+	case len(spec.GetEnvironment()) > 0:
+		return "environment"
+	case t.GetRuntimeClassName() != "":
+		return "template.runtime_class_name"
+	case t.UserNamespaces != nil:
+		return "template.user_namespaces"
+	case len(t.GetLabels()) > 0:
+		return "template.labels"
+	case len(t.GetAnnotations()) > 0:
+		return "template.annotations"
+	}
+	// Not checked: tty (the v0.1.2 gateway sets it on every sandbox; a terminal on the
+	// idle main process reaches nothing), log_level and resource_requirements (the
+	// gateway's own defaults and its reading of the resources sent, which are checked).
+	return ""
 }
 
 // verifyConfig reads the sandbox's effective configuration back and refuses the run

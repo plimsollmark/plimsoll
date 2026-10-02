@@ -1,6 +1,6 @@
 {
   "name": "@plimsollmark/client",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "TypeScript client for plimsolld, with Trigger.dev and Mastra executeCode add-ons",
   "license": "Apache-2.0",
   "homepage": "https://github.com/plimsollmark/plimsoll/tree/main/clients/typescript#readme",
@@ -36,6 +36,9 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.18"
   },
@@ -46,10 +49,10 @@
     "test": "cd ../.. && go test ./clients/typescript/"
   },
   "peerDependencies": {
-    "@mastra/core": ">=1.0.0",
-    "@trigger.dev/sdk": ">=4.5.0",
-    "ai": ">=6.0.0",
-    "zod": ">=3.25.0"
+    "@mastra/core": ">=1.0.0 <2",
+    "@trigger.dev/sdk": ">=4.5.0 <5",
+    "ai": ">=6.0.0 <8",
+    "zod": ">=3.25.0 <5"
   },
   "peerDependenciesMeta": {
     "@mastra/core": {

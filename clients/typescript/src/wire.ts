@@ -137,6 +137,7 @@ export type WireDescribeResponse = {
   supportsSessions?: boolean;
   sessionLifetimeMs?: number;
   sessionIdleTimeoutMs?: number;
+  sessionEnvironment?: WirePayloadEnvironment;
 };
 
 export type WireOpenSessionRequest = {

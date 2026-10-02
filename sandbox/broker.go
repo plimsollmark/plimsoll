@@ -26,6 +26,13 @@ const (
 	maxHostConcurrent    = 16
 )
 
+// hostCallTimeout bounds one upstream call, headers and body. Without it a hung
+// upstream holds one of the run's 16 call slots (and, on E2B and Docker Cloud, a
+// shared guard slot) until the run's own deadline; a JSON API call that has not
+// finished in a minute is treated as failed, and the run's deadline still bounds the
+// run. A variable so a test can shorten it.
+var hostCallTimeout = 60 * time.Second
+
 // Per-run backpressure. When the upstream signals overload (HTTP 429/503), the broker's
 // circuit breaker opens and SHEDS further calls (fails fast) rather than piling more
 // load onto a struggling API. Shedding, not artificial delay, is deliberate: a delay
@@ -161,6 +168,11 @@ func retryAfterCooldown(header string) time.Duration {
 		return breakerDefaultCooldown
 	}
 	if secs, err := strconv.Atoi(header); err == nil {
+		// Clamp before multiplying: a value past about 9.2e9 seconds would wrap the
+		// Duration negative and land on the floor instead of the cap.
+		if secs > int(breakerMaxCooldown/time.Second) {
+			return breakerMaxCooldown
+		}
 		return clampCooldown(time.Duration(secs) * time.Second)
 	}
 	if t, err := http.ParseTime(header); err == nil {
@@ -208,6 +220,7 @@ func newBrokerSession(grant *HostAPIGrant, token string, transport http.RoundTri
 		}
 		tr := defaultTransport.Clone()
 		tr.Proxy = nil
+		tr.ResponseHeaderTimeout = hostCallTimeout
 		transport = tr
 	}
 	life, end := context.WithCancel(context.Background())
@@ -384,6 +397,9 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 		return brokerError(http.StatusForbidden, "forbidden by sandbox capability allowlist")
 	}
 
+	// The deadline covers the response body too, which is read under the same context.
+	ctx, cancelCall := context.WithTimeout(ctx, hostCallTimeout)
+	defer cancelCall()
 	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), bytes.NewReader(body))
 	if err != nil || req.URL.RequestURI() != call.RawTarget {
 		b.trace.recordDenied()

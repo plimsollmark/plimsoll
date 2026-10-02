@@ -19,8 +19,10 @@ import (
 
 	"connectrpc.com/connect"
 
+	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandboxtest"
 )
@@ -109,8 +111,13 @@ func TestTypeScript(t *testing.T) {
 	breaking := rpc.NewSandboxService(&breakingSessions{Sessions: &sandboxtest.Sessions{}})
 	breaking.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
 	breakingURL := serve(t, breaking, nil)
+	liarMux := http.NewServeMux()
+	liarPath, liarHandler := plimsollv1connect.NewSandboxServiceHandler(unansweredLiar{})
+	liarMux.Handle(liarPath, liarHandler)
+	liarSrv := httptest.NewServer(liarMux)
+	t.Cleanup(liarSrv.Close)
 	env := append(os.Environ(), "PLIMSOLL_WASM_URL="+wasmURL, "PLIMSOLL_SESSIONS_URL="+sessionsURL, "PLIMSOLL_URL="+sessionsURL,
-		"PLIMSOLL_ECHO_URL="+echoURL, "PLIMSOLL_BREAKING_URL="+breakingURL)
+		"PLIMSOLL_ECHO_URL="+echoURL, "PLIMSOLL_BREAKING_URL="+breakingURL, "PLIMSOLL_LIAR_URL="+liarSrv.URL)
 
 	suites := []struct{ name, dir, glob, needs string }{
 		{"client", ".", "test/*.test.ts", ""},
@@ -227,4 +234,49 @@ func (s *breakingSession) RunJavaScript(ctx context.Context, req sandbox.Request
 		return res, errors.New("the exec stream broke after the code ran")
 	}
 	return res, err
+}
+
+// RunCell breaks the same way: the session's second call, of either kind.
+func (s *breakingSession) RunCell(ctx context.Context, req sandbox.CellRequest) (sandbox.CellResult, error) {
+	res, err := s.Session.RunCell(ctx, req)
+	if s.n++; s.n == 2 {
+		return res, errors.New("the relay was lost after the code ran")
+	}
+	return res, err
+}
+
+// unansweredLiar opens a session as provider "liar" at container, and answers every
+// call with the record of a call that may have run, stating evidence the session did
+// not state at open: "weaker" names the tier process, anything else another provider.
+type unansweredLiar struct {
+	plimsollv1connect.UnimplementedSandboxServiceHandler
+}
+
+const liarSessionID = "00112233445566778899aabbccddeeff"
+
+func (unansweredLiar) OpenSession(context.Context, *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
+	return connect.NewResponse(&plimsollv1.OpenSessionResponse{SessionId: liarSessionID, Session: record.SessionFingerprint(liarSessionID),
+		Sandbox: "liar", Isolation: "container", ExpiresUnixMs: time.Now().Add(time.Minute).UnixMilli()}), nil
+}
+
+func (unansweredLiar) SessionRun(_ context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {
+	provider, isolation := "liar", "container"
+	if req.Msg.GetJavascript().GetCode() == "weaker" {
+		isolation = "process"
+	} else {
+		provider = "other"
+	}
+	rec := record.StampUnanswered(sandbox.RunRecord{
+		RequestSHA256: record.SessionRunRequestDigest(req.Msg), Provider: provider, Isolation: isolation,
+		Started: time.UnixMilli(1), Ended: time.UnixMilli(2), Session: record.SessionFingerprint(liarSessionID), Sequence: 1,
+	}, "unknown")
+	err := connect.NewError(connect.CodeUnknown, errors.New("the stream broke after the code ran"))
+	if d, derr := connect.NewErrorDetail(&plimsollv1.UnansweredCall{Record: rec}); derr == nil {
+		err.AddDetail(d)
+	}
+	return nil, err
+}
+
+func (unansweredLiar) CloseSession(context.Context, *connect.Request[plimsollv1.CloseSessionRequest]) (*connect.Response[plimsollv1.CloseSessionResponse], error) {
+	return connect.NewResponse(&plimsollv1.CloseSessionResponse{Session: record.SessionFingerprint(liarSessionID)}), nil
 }

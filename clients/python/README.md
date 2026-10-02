@@ -84,6 +84,11 @@ Terms used below:
   Code an earlier call ran can change what later calls see, and a call that names a
   `grant_profile` needs a profile that allows sessions
   ([what a session gives up](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#what-a-session-gives-up)).
+  A session is one trust domain: plimsoll ties it to the credential that opened it, not
+  to the users behind that credential, so a service running many users' code through one
+  credential must give each user (and each conversation or job) a session of their own,
+  chosen by identities it verified
+  ([who may share a session](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md#who-may-share-a-session)).
 
 Results are frozen dataclasses. Guest output (`stdout`, `stderr`, artifact contents) is
 `bytes`, because a guest can print any byte sequence and the record covers the exact
@@ -122,9 +127,13 @@ pass in (`timeout`, `request_timeout`, a session's `lifetime`) are seconds.
   close, the daemon's count of executed calls and its last record must match what the
   client saw. A gap means someone else holding the session ID made a call. A call that may
   have run but ended in an error comes with its record (`PlimsollError.unanswered`, a
-  version 3 record); the session checks it, keeps it in its chain and goes on. A call whose
-  answer never arrived carries none, so the session refuses every later call before sending
-  it, marked not dispatched: open a new one.
+  version 3 record); the session checks it (its tier against the call's floor, and its
+  provider, tier and software against what the session stated at open), hands it back as
+  `PlimsollError.record`, keeps it in its chain and goes on. A call whose answer never
+  arrived carries none, and neither does one cut short any other way (an answer this
+  client cannot read, a `KeyboardInterrupt`), so the session refuses every later call
+  before sending it, marked not dispatched: open a new one. Leaving a `with` block on an
+  exception closes the session without hiding that exception behind the close's.
 - **The response size and the time.** An answer over 32 MiB is refused, and
   `request_timeout` (default 360 seconds, above the daemon's five-minute ceiling on a run)
   bounds the whole HTTP exchange, not each socket read. Redirects are never followed and
@@ -148,7 +157,8 @@ a procedure (sessions, for one) answers it `unimplemented` without the mark:
 
 | Class | Meaning |
 |---|---|
-| `InvalidBaseURLError`, `InsecureHTTPError` | The base URL failed the check above. Raised by the constructor. |
+| `InvalidBaseURLError`, `InsecureHTTPError` | The base URL failed the check above (it must also be ASCII). Raised by the constructor. |
+| `InvalidOptionError` | A token that is not visible ASCII, or a `request_timeout` that is not a positive finite number. Raised by the constructor; the message never repeats the token. |
 | `InvalidRequestError` | The request is malformed or out of bounds; the client or the daemon refused it. |
 | `InsufficientIsolationError` | The daemon's tier is below the floor. |
 | `SoftwareMismatchError` | The software the daemon would run is outside the request's software rule. |

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"mime"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -628,5 +630,104 @@ func TestHostNetPreambleBakesAllowlist(t *testing.T) {
 	}
 	if strings.Contains(out, "__ALLOW_JSON__") || strings.Contains(empty, "__ALLOW_JSON__") {
 		t.Error("placeholder __ALLOW_JSON__ was not substituted")
+	}
+}
+
+// A redirect from envd or the control plane is never followed, with the default
+// client or an embedder's: the request would carry the envd and traffic tokens or the
+// API key to wherever a guest that can answer on envd's port points it, and an
+// artifact read would return that target's body (v0.15.0 review, H2).
+func TestE2BNeverFollowsARedirect(t *testing.T) {
+	var elsewhere atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		elsewhere.Add(1)
+		_, _ = w.Write([]byte("metadata"))
+	}))
+	defer target.Close()
+	envd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/latest/meta-data", http.StatusFound)
+	}))
+	defer envd.Close()
+	for name, client := range map[string]*http.Client{"default": nil, "embedder's": {Timeout: time.Minute}} {
+		e := &E2B{EnvdHost: func(string) string { return envd.URL }, HTTP: client}
+		data, _, err := e.readFile(context.Background(), e2bVM{id: "sb", accessToken: "tok"}, "/work/out.txt")
+		if err == nil || len(data) != 0 {
+			t.Errorf("%s client: an artifact read answered with a redirect returned %q, err %v; want an error", name, data, err)
+		}
+	}
+
+	// The whole startup path: envd redirects the file upload with a 307, which keeps
+	// the method, the body and the access token.
+	srv, _ := e2bSmokeFake(t, `{"node":"v22.0.0","cwd":"/home/user/project","egressOpen":[]}`, 0)
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/files" {
+			http.Redirect(w, r, target.URL+"/files", http.StatusTemporaryRedirect)
+			return
+		}
+		proxied, _ := http.NewRequestWithContext(r.Context(), r.Method, srv.URL+r.URL.RequestURI(), r.Body)
+		proxied.Header = r.Header
+		resp, err := http.DefaultTransport.RoundTrip(proxied)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	defer redirecting.Close()
+	e := &E2B{APIKey: "k", APIBase: srv.URL, EnvdHost: func(string) string { return redirecting.URL }}
+	if err := e.SmokeTest(context.Background()); err == nil {
+		t.Error("SmokeTest passed with envd redirecting its upload")
+	}
+	if n := elsewhere.Load(); n != 0 {
+		t.Fatalf("the redirect target received %d requests; want none", n)
+	}
+}
+
+// The control plane's sandbox ID goes into envd's host name and the delete path, so
+// one that is not plain letters, digits and dashes is refused, never put in a URL; and
+// a vendor's error body reaches an error cut and with credentials scrubbed (v0.15.0
+// review, L18).
+func TestE2BSandboxIDAndErrorBodiesAreChecked(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodPost && r.URL.Path == "/sandboxes" {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sandboxID":"x.attacker.example/a","envdAccessToken":"envd","trafficAccessToken":"traffic"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	var hosts []string
+	e := &E2B{APIKey: "k", APIBase: srv.URL, EnvdHost: func(id string) string { hosts = append(hosts, id); return srv.URL }}
+	if _, err := e.RunJavaScript(context.Background(), Request{Code: "1"}); err == nil || !strings.Contains(err.Error(), "sandbox ID") {
+		t.Fatalf("a sandbox ID with a dot and a slash: %v", err)
+	}
+	if len(hosts) != 0 {
+		t.Fatalf("the ID reached envd's host name: %v", hosts)
+	}
+	for _, p := range paths {
+		if strings.Contains(p, "attacker") {
+			t.Fatalf("the ID reached a request path: %v", paths)
+		}
+	}
+
+	// Built at run time: a literal shaped like an E2B key would trip the export's scan.
+	key := "e2b_" + strings.Repeat("0a1b", 8)
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"bad key ` + key + `"}` + strings.Repeat("x", 3000)))
+	}))
+	defer failing.Close()
+	e = &E2B{APIKey: "k", APIBase: failing.URL}
+	_, err := e.RunJavaScript(context.Background(), Request{Code: "1"})
+	if err == nil || strings.Contains(err.Error(), key) || len(err.Error()) > 700 {
+		t.Fatalf("a vendor error body: %d bytes: %.200v", len(fmt.Sprint(err)), err)
 	}
 }

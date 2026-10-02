@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -194,5 +196,53 @@ func TestEveryProcedureHasAScope(t *testing.T) {
 		if _, ok := requiredScopes[proc]; !ok {
 			t.Errorf("%s has no required scope, so every caller is refused", proc)
 		}
+	}
+}
+
+func withPrincipal(r *http.Request, id string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{UserID: id, Scopes: []string{ScopeCodeRun}}))
+}
+
+// One caller must not be able to hold every decode slot: neither with requests whose
+// handlers run long after their bodies were read (a long run, a queued session call),
+// nor with bodies it never finishes sending (v0.15.0 review, M4).
+func TestLimitHTTPConcurrencyLeavesRoomForOtherCallers(t *testing.T) {
+	release := make(chan struct{})
+	h := LimitHTTPConcurrency(4, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		if r.Header.Get("X-Hold") != "" {
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	done := make(chan struct{}, 8)
+	var stalled []*io.PipeWriter
+	defer func() {
+		close(release)
+		for _, pw := range stalled {
+			_ = pw.Close()
+		}
+		for range 8 {
+			<-done
+		}
+	}()
+	// Four long handlers whose bodies were read, and four bodies never finished.
+	for i := range 8 {
+		var req *http.Request
+		if i < 4 {
+			req = httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("{}"))
+			req.Header.Set("X-Hold", "1")
+		} else {
+			pr, pw := io.Pipe()
+			stalled = append(stalled, pw)
+			req = httptest.NewRequest(http.MethodPost, "/x", pr)
+		}
+		go func() { h.ServeHTTP(httptest.NewRecorder(), withPrincipal(req, "greedy")); done <- struct{}{} }()
+	}
+	time.Sleep(100 * time.Millisecond)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("{}")), "other"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("another caller: status %d (%s); want 200", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 }

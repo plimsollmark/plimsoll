@@ -175,3 +175,21 @@ func TestConnectErrorsAreBuiltOnlyWhereTheMarkIsDecided(t *testing.T) {
 		}
 	}
 }
+
+// An internal error reaches the caller as a generic message with an ID; its text,
+// which can carry a vendor's response body or docker's stderr, stays in the log
+// (v0.15.0 review, L10).
+func TestInternalErrorTextStaysInTheLog(t *testing.T) {
+	err := mapSandboxErr(errors.New("e2b create sandbox: HTTP 500: {\"apiKey\":\"e2b_secret\"} DOCKER_HOST=unix:///run/x.sock"))
+	if connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("code %v, want internal", connect.CodeOf(err))
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "e2b_secret") || strings.Contains(msg, "DOCKER_HOST") || !strings.Contains(msg, "internal error") {
+		t.Fatalf("the caller sees %q", msg)
+	}
+	// Errors with their own code keep their text: it is the caller's own request.
+	if err := mapSandboxErr(fmt.Errorf("%w: bad path", sandbox.ErrInvalidRequest)); !strings.Contains(err.Error(), "bad path") {
+		t.Fatalf("an invalid request lost its reason: %v", err)
+	}
+}

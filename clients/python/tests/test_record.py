@@ -274,7 +274,10 @@ class Check(unittest.TestCase):
         def digest_changed(_, s):
             s["record"]["recordSha256"] = "00"
 
-        for tamper in (code_changed, output_changed, provider_changed, tier_changed, environment_changed, time_changed, digest_changed):
+        def unanswered_stated(_, s):
+            s["record"]["unanswered"] = "unknown"  # outside version 2's digest
+
+        for tamper in (code_changed, output_changed, provider_changed, tier_changed, environment_changed, time_changed, digest_changed, unanswered_stated):
             with self.subTest(tamper.__name__):
                 q, s = copy.deepcopy(req), copy.deepcopy(good)
                 tamper(q, s)

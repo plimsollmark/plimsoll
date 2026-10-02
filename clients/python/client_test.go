@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -104,10 +105,14 @@ func TestPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("python3 -m unittest: %v", err)
 	}
-	if strings.Contains(string(out), "skipped") {
+	// unittest -v marks a skip "... skipped 'reason'" and counts them "(skipped=N)"; a
+	// test whose name contains the word must not read as one.
+	if pythonSkip.Match(out) {
 		t.Fatal("the Python suite skipped a case; under this test every case must run")
 	}
 }
+
+var pythonSkip = regexp.MustCompile(`(?m)\.\.\. skipped|skipped=[0-9]+`)
 
 // quiet is svc without its audit log, which would only fill the test output.
 func quiet(svc *rpc.SandboxService) *rpc.SandboxService {
@@ -279,6 +284,28 @@ func (liar) OpenSession(_ context.Context, req *connect.Request[plimsollv1.OpenS
 		fingerprint = record.SessionFingerprint("another session")
 	}
 	return connect.NewResponse(&plimsollv1.OpenSessionResponse{SessionId: id, Session: fingerprint, Sandbox: "liar", Isolation: "container"}), nil
+}
+
+// SessionRun answers every call with the record of a call that may have run, stating
+// evidence the session did not state at open: "weaker" names the tier process,
+// anything else names another provider.
+func (liar) SessionRun(_ context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {
+	provider, isolation := "liar", "container"
+	if req.Msg.GetJavascript().GetCode() == "weaker" {
+		isolation = "process"
+	} else {
+		provider = "other"
+	}
+	rec := record.StampUnanswered(sandbox.RunRecord{
+		RequestSHA256: record.SessionRunRequestDigest(req.Msg), Provider: provider, Isolation: isolation,
+		Started: time.UnixMilli(1), Ended: time.UnixMilli(2),
+		Session: record.SessionFingerprint("00112233445566778899aabbccddeeff"), Sequence: 1,
+	}, "unknown")
+	err := connect.NewError(connect.CodeUnknown, errors.New("the stream broke after the code ran"))
+	if d, derr := connect.NewErrorDetail(&plimsollv1.UnansweredCall{Record: rec}); derr == nil {
+		err.AddDetail(d)
+	}
+	return nil, err
 }
 
 func (liar) CloseSession(context.Context, *connect.Request[plimsollv1.CloseSessionRequest]) (*connect.Response[plimsollv1.CloseSessionResponse], error) {

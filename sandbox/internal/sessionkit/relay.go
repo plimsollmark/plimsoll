@@ -334,9 +334,12 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 		in.dropRelay(c.Language)
 		in.drop(c.Language)
 	}
-	timedOut := func() (CellOutcome, error) {
+	// unsent is a deadline before the code was sent. The interpreter and relay are
+	// dropped all the same (a relay stuck in a prepare holds the cell's files half
+	// written), so the next cell starts both and says so.
+	unsent := func() (CellOutcome, error) {
 		lose()
-		return CellOutcome{TimedOut: true, Raised: true, Started: outcome.Started, Ended: true}, nil
+		return CellOutcome{}, ErrUnsent
 	}
 	var r *relay
 	for attempt := 0; ; attempt++ {
@@ -347,7 +350,7 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 			in.dropRelay(c.Language)
 			if err := in.launch(ctx, exec, c.Language, c.Work); err != nil {
 				if deadline.Expired(ctx) == context.DeadlineExceeded {
-					return CellOutcome{TimedOut: true, Raised: true, Started: true, Ended: true}, nil
+					return unsent()
 				}
 				return CellOutcome{}, err
 			}
@@ -363,13 +366,18 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 		if r == nil {
 			var err error
 			if r, err = startRelay(ctx, attach, c.Language, c.Work); err == nil {
-				if err = in.check(ctx, "relay:"+r.id); err != nil {
+				if reportedCmd(r.id) != argvHex(RelayArgv(c.Language, c.Work)) {
+					err = fmt.Errorf("%w: the relay reported a process that is not the %s relay", ErrLaunch, c.Language)
+				} else {
+					err = in.check(ctx, "relay:"+r.id)
+				}
+				if err != nil {
 					r.close()
 				}
 			}
 			if err != nil {
 				if deadline.Expired(ctx) == context.DeadlineExceeded {
-					return timedOut()
+					return unsent()
 				}
 				lose()
 				return CellOutcome{}, err
@@ -383,7 +391,7 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 		}
 		f, err := r.prepare(ctx, nonce, c.Files)
 		if deadline.Expired(ctx) == context.DeadlineExceeded {
-			return timedOut()
+			return unsent()
 		}
 		if err != nil {
 			lose()
