@@ -74,8 +74,9 @@ default) it asks the daemon once whether it keeps sessions:
   and nothing persists. `wasm` runs no projects, so there a call is a JavaScript snippet
   printing its last value; Python and files are refused before anything is sent.
 
-The tool's output says which: `stateKept` (this call ran in an interpreter that keeps
-variables) and `filesPersist`. It also says what is new, rather than what was lost, because
+The tool's output says which: `stateKept` (what this call defined is still there for the
+next call; false when no interpreter is kept, and when the call's deadline or the sandbox's
+end ended its interpreter) and `filesPersist` (the same for its files). It also says what is new, rather than what was lost, because
 only the sandbox knows: `freshInterpreter` whenever the call's interpreter had just started
 (the first call in a language, a deadline, a crash), so nothing earlier calls defined
 exists, and `freshSandbox` whenever the call is the first answered one in a newly opened

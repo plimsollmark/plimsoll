@@ -24,6 +24,7 @@ from plimsoll_client import (
     ResponseTooLargeError,
     TransportError,
 )
+from plimsoll_client._record import session_fingerprint
 
 Reply = Callable[[BaseHTTPRequestHandler], None]
 
@@ -222,6 +223,58 @@ class Transport(unittest.TestCase):
         self.stub.reply = lambda h: send(h, 200, describe_answer())
         info = asyncio.run(AsyncClient(self.stub.url).describe())
         self.assertEqual(info.provider, "stub")
+
+    def sessions(self, open_delay: float) -> threading.Event:
+        """Answers OpenSession after open_delay with one session, and CloseSession
+        for it; the event is set when the session is closed."""
+        sid = "ab" * 16
+        closed = threading.Event()
+
+        def reply(h: BaseHTTPRequestHandler) -> None:
+            if h.path.endswith("/OpenSession"):
+                time.sleep(open_delay)
+                body = {"sessionId": sid, "session": session_fingerprint(sid), "sandbox": "stub", "isolation": "container"}
+                send(h, 200, json.dumps(body).encode())
+            elif h.path.endswith("/CloseSession"):
+                if json.loads(self.stub.seen[-1]["body"]).get("sessionId") == sid:
+                    closed.set()
+                send(h, 200, json.dumps({"session": session_fingerprint(sid), "ended": "SESSION_END_CLOSED"}).encode())
+
+        self.stub.reply = reply
+        return closed
+
+    def test_a_session_opened_after_its_await_was_cancelled_is_closed(self) -> None:
+        # The daemon answers after the cancel: nobody waits for the session.
+        closed = self.sessions(open_delay=0.3)
+
+        async def main() -> None:
+            t = asyncio.create_task(AsyncClient(self.stub.url).open_session())
+            await asyncio.sleep(0.1)
+            t.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await t
+
+        asyncio.run(main())
+        self.assertTrue(closed.wait(5), "the abandoned session was never closed")
+
+    def test_a_session_handed_over_as_the_cancel_came_is_closed(self) -> None:
+        # The open finishes in its thread while the event loop is busy, so the
+        # cancel lands before the task can take the session.
+        closed = self.sessions(open_delay=0)
+
+        async def main() -> None:
+            t = asyncio.create_task(AsyncClient(self.stub.url).open_session())
+            await asyncio.sleep(0)
+            deadline = time.monotonic() + 5
+            while not any(s["path"].endswith("/OpenSession") for s in self.stub.seen) and time.monotonic() < deadline:
+                time.sleep(0.01)  # blocks the loop on purpose
+            time.sleep(0.3)
+            t.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await t
+
+        asyncio.run(main())
+        self.assertTrue(closed.wait(5), "the session handed over as the cancel came was never closed")
 
 
 if __name__ == "__main__":

@@ -203,6 +203,14 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		s.logger().LogAttrs(ctx, slog.LevelError, "session open failed", append(attrs, traceAttrs(env.traceID)...)...)
 		return nil, mapSandboxErr(err)
 	}
+	// A caller that gave up while the sandbox opened never learns the session's ID,
+	// so the session would hold its place until it expired.
+	if ctx.Err() != nil {
+		_ = sess.Close(context.WithoutCancel(ctx))
+		release()
+		s.sessions.unreserve()
+		return nil, mapSandboxErr(sandbox.RefuseGaveUp(ctx))
+	}
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
 		release()

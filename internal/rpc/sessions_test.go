@@ -372,6 +372,27 @@ func TestSessionCapHoldsForSimultaneousOpens(t *testing.T) {
 	}
 }
 
+// A caller that gives up while its sandbox opens never gets the session's ID, so
+// the session is closed at once and its place given back, not held until it expires.
+func TestSessionOpenedAfterTheCallerGaveUpIsClosed(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sessions.MaxSessions = 1
+	ctx, cancel := context.WithCancel(authenticatedContext("alice"))
+	p.BeforeOpen = func() error { cancel(); return nil }
+	_, err := svc.OpenSession(ctx, openReq())
+	if err == nil {
+		t.Fatal("an open whose caller gave up answered with a session")
+	}
+	opened := p.Opened()
+	if len(opened) != 1 || opened[0].Err() == nil {
+		t.Fatalf("the abandoned session is still open (%d opened)", len(opened))
+	}
+	p.BeforeOpen = nil
+	if _, err := svc.OpenSession(authenticatedContext("alice"), openReq()); err != nil {
+		t.Fatalf("the abandoned session kept its place: %v", err)
+	}
+}
+
 func TestSessionAuditLinesCarryTheFingerprintNeverTheID(t *testing.T) {
 	svc, _ := sessionService()
 	var buf bytes.Buffer

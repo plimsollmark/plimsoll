@@ -86,14 +86,18 @@ export type ExecuteCodeOutput = {
   stderr: string;
   /** Output was cut, by the daemon's cap or by maxOutputChars. */
   truncated: boolean;
-  /** This call ran in an interpreter that keeps variables for the conversation's later calls. */
+  /**
+   * What this call defined is still there for the conversation's next call in this
+   * language: false without a kept interpreter, and when this call's interpreter or
+   * sandbox ended (a deadline, the sandbox's end).
+   */
   stateKept: boolean;
   /**
    * This call's interpreter had just started: nothing earlier calls defined in this
    * language exists (the first call, a deadline, a crash, a new sandbox).
    */
   freshInterpreter?: true;
-  /** Whether the files of this call are there for the next call. */
+  /** The files of this call are there for the next call: false without a kept sandbox, and when it ended. */
   filesPersist: boolean;
   /**
    * This call ran in a newly opened sandbox: no file an earlier call wrote or was
@@ -244,12 +248,15 @@ export class CodeSandboxes {
         const first = !entry.answered;
         const r = await session.runCell({ language, code: input.code, files }, opts);
         entry.answered = true;
-        if (session.ended) this.#drop(key, session); // the next call opens a new one
+        // What the call defined, and the files it wrote, are there for the next call
+        // only if its interpreter, and the sandbox, outlived it.
+        const ended = session.ended !== undefined;
+        if (ended) this.#drop(key, session); // the next call opens a new one
         return {
           ...this.#cut(language, r.exitCode, r.timedOut, r.stdout, r.stderr, r.stdoutTruncated || r.stderrTruncated),
-          stateKept: true,
+          stateKept: !r.interpreterEnded && !ended,
           ...(r.interpreterStarted ? { freshInterpreter: true as const } : {}),
-          filesPersist: true,
+          filesPersist: !ended,
           ...(first ? { freshSandbox: true as const } : {}),
           isolation: r.isolation,
         };

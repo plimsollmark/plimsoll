@@ -112,6 +112,27 @@ test("an ended sandbox is replaced once, and the output says what is new", { ski
   await s.disposeAll();
 });
 
+// stateKept and filesPersist promise the next call what this one left, so a call
+// whose interpreter or sandbox ended during it promises nothing.
+test("a call whose interpreter or sandbox ended does not say its state is kept", { skip }, async () => {
+  const s = new CodeSandboxes({ client: new PlimsollClient({ baseUrl: sessionsUrl! }) });
+  await s.run("k", { code: "x = 1" });
+  const spun = await s.run("k", { code: "plimsoll-fake:past-deadline" });
+  assert.equal(spun.timedOut, true);
+  assert.equal(spun.stateKept, false, "the deadline ended the interpreter");
+  assert.equal(spun.filesPersist, true, "the sandbox is still there");
+  const after = await s.run("k", { code: "x" });
+  assert.equal(after.freshInterpreter, true);
+  assert.equal(after.stateKept, true);
+  const last = await s.run("k", { code: "plimsoll-fake:ends-session" });
+  assert.equal(last.exitCode, 0);
+  assert.equal(last.stateKept, false, "the sandbox ended after the call");
+  assert.equal(last.filesPersist, false);
+  const next = await s.run("k", { code: "y = 1" });
+  assert.equal(next.freshSandbox, true);
+  await s.disposeAll();
+});
+
 // The Trigger.dev recipe disposes when a chat suspends; the resumed turn's first
 // call runs in a new sandbox and must not claim the old one's state.
 test("the first call after a dispose says its sandbox and interpreter are new", { skip }, async () => {

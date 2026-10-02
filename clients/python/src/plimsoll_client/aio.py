@@ -4,14 +4,17 @@ Each call runs the blocking client in a worker thread (``asyncio.to_thread``), s
 the checks, the errors and the results are exactly the synchronous client's.
 Cancelling an awaiting task stops the wait, not the request: the HTTP exchange
 runs on in its thread until it finishes or reaches the client's
-``request_timeout``, and a run it carried may execute.
+``request_timeout``, and a run it carried may execute. A session that
+``open_session`` opens after its await was cancelled is closed, not left
+holding a slot on the daemon until it expires.
 """
 
 from __future__ import annotations
 
 import asyncio
 import ssl
-from typing import Any, Optional, Sequence
+import threading
+from typing import Any, List, Optional, Sequence
 
 from . import _validate as v
 from .client import DEFAULT_REQUEST_TIMEOUT, Client, Session
@@ -129,14 +132,40 @@ class AsyncClient:
         idle_timeout: Optional[float] = None,
         trace_id: Optional[str] = None,
     ) -> "AsyncSession":
-        s = await asyncio.to_thread(
-            self.sync.open_session,
-            minimum_isolation=minimum_isolation,
-            software=software,
-            lifetime=lifetime,
-            idle_timeout=idle_timeout,
-            trace_id=trace_id,
-        )
+        # Cancelling the await does not stop the open in its thread, and a session
+        # the daemon opens after the cancel would reach nobody and hold its slot
+        # until it expired. So the thread closes a session nobody waits for any
+        # more, and one it handed over just as the cancel came is closed here.
+        lock = threading.Lock()
+        handed: List[Session] = []
+        abandoned = False
+
+        def open_in_thread() -> Optional[Session]:
+            s = self.sync.open_session(
+                minimum_isolation=minimum_isolation,
+                software=software,
+                lifetime=lifetime,
+                idle_timeout=idle_timeout,
+                trace_id=trace_id,
+            )
+            with lock:
+                if not abandoned:
+                    handed.append(s)
+                    return s
+            s._close_quietly()
+            return None
+
+        try:
+            s = await asyncio.to_thread(open_in_thread)
+        except asyncio.CancelledError:
+            with lock:
+                abandoned = True
+                orphans = list(handed)
+            for o in orphans:
+                threading.Thread(target=o._close_quietly, name="plimsoll-close-abandoned-session").start()
+            raise
+        if s is None:  # unreachable: only a cancel abandons the open
+            raise asyncio.CancelledError()
         return AsyncSession(s)
 
 

@@ -65,7 +65,8 @@ languages its startup checks proved on `project_environment.languages`.
 each call in a worker thread (`asyncio.to_thread`), for async agent frameworks.
 Cancelling an awaiting task stops the wait, not the request: the HTTP exchange goes on
 in its thread until it ends or reaches the client's `request_timeout`, so a run it
-carried may still execute.
+carried may still execute. A session `open_session` opens after its await was cancelled
+is closed, not left holding a place on the daemon until it expires.
 
 Terms used below:
 

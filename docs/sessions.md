@@ -84,7 +84,9 @@ Three procedures beside `Run`, which is unchanged:
 
 - `OpenSession` returns a session ID (128 random bits), the session's
   <dfn>*fingerprint*</dfn> (the SHA-256 hash of the ID), the tier measured at open, and
-  when the session expires.
+  when the session expires. A session that finishes opening after its caller gave up
+  is closed at once, since nobody holds its ID. An answer already on its way when the
+  caller gives up is still lost, and that session holds its place until it expires.
 - `SessionRun` is a `Run` request with the session ID: a snippet, a project, or a
   cell, code for the session's interpreter (below). A
   <dfn>*module run*</dfn>, which runs a compiled simulator once per row of a parameter

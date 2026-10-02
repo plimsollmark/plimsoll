@@ -155,6 +155,7 @@ func (s *FakeSession) RunProject(context.Context, sandbox.ProjectRequest) (sandb
 // RunCell answers with the language, the number of cells that language's fake
 // interpreter has run (1 for the first, which reports InterpreterStarted), and the
 // code, as "python 2: x = 1". A cell's files are listed on stderr, one path a line.
+// CellPastDeadline and CellEndsSession end the interpreter and the session.
 func (s *FakeSession) RunCell(_ context.Context, req sandbox.CellRequest) (sandbox.CellResult, error) {
 	if err := sandbox.ValidateCellRequest(req); err != nil {
 		return sandbox.CellResult{}, err
@@ -169,20 +170,40 @@ func (s *FakeSession) RunCell(_ context.Context, req sandbox.CellRequest) (sandb
 	}
 	s.cells[req.Language]++
 	n := s.cells[req.Language]
+	if req.Code == CellPastDeadline {
+		s.cells[req.Language] = 0
+	}
 	s.lastTimeout = req.Timeout
 	s.mu.Unlock()
 	var paths []string
 	for _, f := range req.Files {
 		paths = append(paths, f.Path+"\n")
 	}
-	return sandbox.CellResult{
+	res := sandbox.CellResult{
 		Stdout:             fmt.Sprintf("%s %d: %s", req.Language, n, req.Code),
 		Stderr:             strings.Join(paths, ""),
 		InterpreterStarted: n == 1,
 		Sandbox:            "fake-sessions",
 		Isolation:          sandbox.IsolationContainer,
-	}, nil
+	}
+	switch req.Code {
+	case CellPastDeadline:
+		res.ExitCode, res.TimedOut, res.InterpreterEnded = 124, true, true
+	case CellEndsSession:
+		s.End(sandbox.SessionDiskExceeded)
+	}
+	return res, nil
 }
+
+// Cells the fake answers as a provider answers code it cannot run here.
+const (
+	// CellPastDeadline runs past its deadline: it times out (exit 124) and ends its
+	// interpreter, so the language's next cell starts a fresh one.
+	CellPastDeadline = "plimsoll-fake:past-deadline"
+	// CellEndsSession answers, and then the session ends, as one does when a call
+	// leaves more on disk than the session's budget.
+	CellEndsSession = "plimsoll-fake:ends-session"
+)
 
 // Suspend counts itself and reports the provider's SuspendHoldsMemory.
 func (s *FakeSession) Suspend(context.Context) (bool, error) {
