@@ -97,21 +97,29 @@ function finish(status) {
   next();
 }
 
-// A cell whose files cannot be written never reaches the interpreter.
-function refuse() {
-  send({ done: 3, ot: false, et: false });
+// A cell whose files cannot be written never reaches the interpreter. The relay
+// says which file (its index in the request) and the system's error code.
+function refuse(file, errno) {
+  send({ done: 3, ot: false, et: false, file, errno });
   next();
 }
 
 function run(req) {
-  for (const f of req.files || []) {
+  const files = req.files || [];
+  // Every destination is checked before any is written, so a refused path writes
+  // nothing; a write that fails leaves the files before it written.
+  const dests = [];
+  for (const [i, f] of files.entries()) {
     const dest = path.resolve(work, f.path);
-    if (dest === work || !dest.startsWith(work + "/")) return refuse();
+    if (dest === work || !dest.startsWith(work + "/")) return refuse(i, "EPATH");
+    dests.push(dest);
+  }
+  for (const [i, f] of files.entries()) {
     try {
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.writeFileSync(dest, f.content);
-    } catch {
-      return refuse();
+      fs.mkdirSync(path.dirname(dests[i]), { recursive: true });
+      fs.writeFileSync(dests[i], f.content);
+    } catch (e) {
+      return refuse(i, typeof e?.code === "string" ? e.code : "EIO");
     }
   }
   cell = {

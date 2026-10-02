@@ -479,7 +479,7 @@ func (s *dockerSession) acquire(ctx context.Context) error {
 	case <-s.done:
 		return RefuseEndedSession(s.Err())
 	case <-ctx.Done():
-		return ctx.Err()
+		return RefuseGaveUp(ctx)
 	}
 	if err := s.Err(); err != nil {
 		<-s.turn
@@ -510,7 +510,10 @@ func (s *dockerSession) Suspend(ctx context.Context) (bool, error) {
 	if paused {
 		return true, nil
 	}
-	if err := s.control(ctx, "pause", s.name); err != nil {
+	// The caller cannot cut the pause short, only its budget can: a pause cancelled
+	// after docker took it would leave the container paused and this session thinking
+	// it runs, and the next call would end the session as paused by someone else.
+	if err := s.control(context.WithoutCancel(ctx), "pause", s.name); err != nil {
 		s.finish(SessionBoundaryFailed, "the container could not be paused: "+err.Error())
 		return false, s.Err()
 	}
@@ -528,10 +531,8 @@ func (s *dockerSession) prepare(ctx context.Context) error {
 	paused := s.paused
 	s.mu.Unlock()
 	if paused {
-		if err := s.control(ctx, "unpause", s.name); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
+		// Not cancellable by the caller either, for the same reason as the pause.
+		if err := s.control(context.WithoutCancel(ctx), "unpause", s.name); err != nil {
 			s.finish(SessionBoundaryFailed, "the container could not be unpaused: "+err.Error())
 			return RefuseEndedSession(s.Err())
 		}
@@ -546,7 +547,7 @@ func (s *dockerSession) prepare(ctx context.Context) error {
 		return RefuseEndedSession(s.Err())
 	case err != nil:
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return RefuseGaveUp(ctx)
 		}
 		return err
 	}
@@ -896,7 +897,7 @@ func (s *dockerSession) RunCell(ctx context.Context, req CellRequest) (CellResul
 		Language: string(req.Language), Code: req.Code, Files: cellFiles(req.Files),
 		Work: dockerSessionWork, OutCap: s.d.maxOutput(), ErrCap: s.d.maxOutput(),
 	})
-	return cellResult(fail, out, err, time.Since(start), s.manifest, dockerImageIdentity(s.imageID), func() error {
+	return cellResult(fail, out, err, time.Since(start), s.manifest, dockerImageIdentity(s.imageID), s.Err, func() error {
 		if s.stopped() {
 			return s.Err()
 		}
@@ -1039,9 +1040,9 @@ func cellFiles(files []File) []sessionkit.File {
 // (stopped), since a container that stopped ends the session and its exit status is
 // not the cell's.
 func cellResult(fail CellResult, out sessionkit.CellOutcome, err error, took time.Duration, software, environment string,
-	stopped func() error, callError func(error) error) (CellResult, error) {
-	if errors.Is(err, sessionkit.ErrLaunch) {
-		return fail, NotDispatched(RefusalEnvironment, fmt.Errorf("%w: %v", ErrUnsupported, err))
+	ended, stopped func() error, callError func(error) error) (CellResult, error) {
+	if refusal, ok := RefuseCell(err, ended()); ok {
+		return fail, refusal
 	}
 	if err != nil {
 		return fail, callError(err)

@@ -149,7 +149,7 @@ option is intentionally only process-tier.
   draft-mih-scitt-agent-action-capsule-05 and checked by that project's Go and Python
   verifiers; the page it writes is `docs/examples/capsule/`). The examples that run the daemon build it from source
   through [examples/internal/daemonproc](examples/internal/daemonproc/).
-- [clients/typescript/](clients/typescript/): `@plimsoll/client`, a dependency-free
+- [clients/typescript/](clients/typescript/): `@plimsollmark/client`, a dependency-free
   TypeScript client (Connect JSON over `fetch`) that keeps the Go client's checks: the
   protocol number, every run record recomputed (golden vectors shared with
   `record/record_test.go`), the isolation floor, a session's chain; `Session.runCell` for
@@ -181,13 +181,17 @@ Every provider implements [sandbox/sandbox.go](sandbox/sandbox.go):
 
 **Sessions** (optional `sandbox.SessionProvider`, [docs/sessions.md](docs/sessions.md)):
 one sandbox kept for many calls, files persisting, and of processes only the interpreters a
-session keeps for its cells (Carroll, 2026-10-01: surviving a call is optional). `OpenSession`
+session keeps for its cells, as of the sweep after each call (an interpreter runs between
+calls, so it can start a process the next sweep kills) (Carroll, 2026-10-01: surviving a
+call is optional). `OpenSession`
 returns a `sandbox.Session` (snippet, project and cell calls, serialized; `Suspend`, `Close`,
 `Done`, `Err`), and a session's end is a typed `SessionEndedError`; a call on an ended
 session is refused not-dispatched. A **cell** (`RunCell`, wire payload `cell`, only in a
 session; `Run` refuses one, which exists there as the stored form a harness replays) runs
 code in a Node or Python interpreter the session keeps alive, so state survives calls as in
-a notebook; its files are written into the work directory first; it carries no grant. The
+a notebook; its files are written into the work directory first (a cell whose files cannot
+all be written is refused not-dispatched, reason `request`, its interpreter untouched); it
+carries no grant. The
 interpreters, their launcher and the relay each provider keeps attached beside each
 interpreter (one `docker exec` or one OpenShell exec stream held open, so a warm cell starts
 no process) live in [sandbox/internal/sessionkit](sandbox/internal/sessionkit/) and travel in argv, so an image
@@ -204,7 +208,8 @@ locked-down container from the project image kept alive under docker's init, eve
 `docker exec` into it; its idle suspend is `docker pause`, so `Suspend` reports the memory
 still held and the daemon keeps the session's concurrency slot; its read-back before each
 call compares the security-relevant `docker inspect` fields with open; its broker socket is
-mounted at open and serves only the grant of the call in progress.
+mounted at open and serves only the grant of the call in progress, to anything in the
+container, code an earlier call left running included (one caller per session).
 Over RPC the procedures are `OpenSession`, `SessionRun` (its own request message, so a
 daemon that predates sessions refuses it instead of dropping the ID) and `CloseSession`;
 the daemon binds each 128-bit session ID to its principal (an unknown and a foreign ID are
@@ -365,7 +370,10 @@ microVM and so must never run on an unauthenticated poll path. `Describe` report
 structural/static operation support. Every provider whose boundary depends on the
 host or a remote service (docker, e2b, dockercloud, openshell) runs a startup
 **`SmokeTest`** (behavior, not just configuration) via `EnsureReady`, and none
-serves if it fails. wasm has none, and its startup check is configuration only: its
+serves if it fails. With sessions enabled, plimsolld then runs `sandbox.SessionSmokeTest`
+on one real session (the sweep kills a process a call left, files survive calls and a
+suspend, a cell's interpreter keeps state or says it is fresh, close ends it), and a
+failure refuses startup too. wasm has none, and its startup check is configuration only: its
 boundary is wazero library code compiled into plimsolld (the per-run memory cap, no
 network API), the same on every host, so the gate's tests (`TestWasmMemoryLimitEnforced`,
 `TestWasmHasNoNetworkOrFS`) are its proof. For docker: one throwaway lockdown container per configured

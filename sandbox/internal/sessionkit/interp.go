@@ -50,6 +50,38 @@ const (
 // image, or it exited at once. No code of the cell ran.
 var ErrLaunch = errors.New("the interpreter could not start")
 
+// ErrFiles is a cell whose files could not all be written into the work directory
+// (a directory in the way, a full disk). Its code did not run and its interpreter is
+// as the previous cell left it; files written before the failing one stay.
+var ErrFiles = errors.New("the cell's files could not be written")
+
+// filesError states which file failed and why, from the relay's done frame. The
+// relay is the session's on OpenShell, so it states only an index into the request
+// and a name shaped like an errno, never text of its own.
+func filesError(f frame, n int) error {
+	which := "a file"
+	if f.File != nil && *f.File >= 0 && *f.File < n {
+		which = fmt.Sprintf("file %d of %d", *f.File+1, n)
+	}
+	why := "an unnamed error"
+	if errnoShaped(f.Errno) {
+		why = f.Errno
+	}
+	return fmt.Errorf("%w: %s: %s; the code did not run", ErrFiles, which, why)
+}
+
+func errnoShaped(s string) bool {
+	if len(s) < 2 || len(s) > 16 || s[0] != 'E' {
+		return false
+	}
+	for _, c := range s[1:] {
+		if (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
 // interpRoot holds one directory per language: the control socket and the FIFOs.
 const interpRoot = "/tmp/.plimsoll-interp/"
 
@@ -104,6 +136,26 @@ type Interpreters struct {
 	mu     sync.Mutex
 	live   map[string]string
 	relays map[string]*relay // only for a provider that relays (RunRelayed)
+	// unreported: languages whose interpreter was started for a cell that answered
+	// with an error (its files failed), so no result has said it is new.
+	unreported map[string]bool
+}
+
+func (in *Interpreters) markUnreported(lang string) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.unreported == nil {
+		in.unreported = map[string]bool{}
+	}
+	in.unreported[lang] = true
+}
+
+func (in *Interpreters) takeUnreported(lang string) bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	was := in.unreported[lang]
+	delete(in.unreported, lang)
+	return was
 }
 
 // Keep is baseline plus every live interpreter and relay: what the sweep spares.

@@ -53,7 +53,11 @@ which every implementation runs. The suite checks that:
 
 Sessions are off unless the operator enables them, because a session holds a sandbox
 between calls. The daemon refuses to start when they are enabled for a provider that
-does not support them.
+does not support them, and when one real session, opened at startup, does not keep what a
+session promises: a process its first call leaves running is gone by the next call (the
+sweep killed it), a file survives calls and a suspend, a cell's interpreter keeps what an
+earlier cell defined or says it is new, and closing ends the session. The provider's own
+startup check proves its runs; this one proves what only a session does, on this host.
 
 | Setting | Meaning |
 |---|---|
@@ -121,7 +125,10 @@ interpreter per language, a Python or Node.js process that stays alive between c
   files. The files are written into the session's work directory, which is also the
   interpreter's working directory, before the code runs: this is how a caller hands a
   cell data it got from somewhere else, such as another tool's output. Files follow the
-  project limits (200 files, 4 MiB in all, UTF-8 text).
+  project limits (200 files, 4 MiB in all, UTF-8 text). A cell whose files cannot all be
+  written (a directory in the way, a full disk) is refused, marked not dispatched with
+  reason `request` and naming the file and the system's error code: its code does not
+  run and its interpreter keeps its state. Files written before the failing one stay.
 - **What a cell sees.** Variables, functions and imports from earlier cells of the same
   language. The value of the cell's last expression is printed, as a notebook shows it.
   In JavaScript, top-level `let`, `const` and `class` behave as in a notebook (a later
@@ -132,18 +139,21 @@ interpreter per language, a Python or Node.js process that stays alive between c
   call's deadline ended it, plus two flags: `interpreter_started` (this call started a
   fresh interpreter, so nothing an earlier cell defined exists) and `interpreter_ended`
   (the interpreter ended during this call). A cell's time budget is a project's.
-- **What survives.** Only the interpreter process. A process a cell starts, a child of
-  the interpreter, dies at the end of the call like every other process, and the sweep
-  checks it. Output the interpreter writes between calls (a timer that fires later, a
-  thread) is dropped.
+- **What survives.** Only the interpreter process, as of the sweep after each call. A
+  process a cell starts, a child of the interpreter, dies at the end of the call like
+  every other process, and the sweep checks it. The interpreter itself runs between calls
+  (a timer that fires later, a thread), so it can start a process after the sweep; that
+  process lives until the sweep after the next call, inside the session's limits, and can
+  do nothing the interpreter could not. Output the interpreter writes between calls is
+  dropped.
 - **What ends an interpreter.** The call's deadline (the interpreter is killed, since a
   cell stuck in a loop cannot be trusted to stop), code that exits it or kills it, and
   anything that stops the sandbox: an `openshell` suspend or recovery. A docker pause
   keeps it. The next cell then starts a fresh one and says so.
 - **No API access.** A cell carries no <dfn>*grant*</dfn>, the permission that lets a call
   reach chosen routes of an HTTP API without the credential entering the sandbox: the
-  interpreter outlives the call, and a grant lives for one call. A snippet or project call
-  in the same session can use one.
+  interpreter outlives the call, and its code with it. A snippet or project call in the
+  same session can use one, with the limit under **API access** below.
 - **Which languages.** `Describe` states the languages its startup checks proved, on the
   project environment (`languages`). JavaScript is always there; Python needs `python3` in
   the image, as `plimsoll/sandbox-python` has (with NumPy and SciPy). A cell in a language
@@ -227,8 +237,8 @@ A docker session is the container a project run gets, kept for the session:
 - **Every call is a `docker exec`** into the container, in `/work`.
 - **After every call, the sweep** kills every process the call left behind, by the same
   program the `openshell` provider runs, and measures the session's files against
-  `SANDBOX_SESSION_DISK_MB`. It runs after the answer has gone back: the next call, a
-  suspend or a close waits for it, and an agent's thinking time between tool calls usually
+  `SANDBOX_SESSION_DISK_MB`. It runs after the answer has gone back: the next call or a
+  suspend waits for it (a close does not: it removes the container, sweep and all), and an agent's thinking time between tool calls usually
   hides it (a warm call took about 95 ms under runc instead of about 180 ms, measured
   2026-10-01). So a session that the sweep ends, over its disk budget for instance, is
   reported to the next call rather than in the answer of the call that caused it. The sweep loads a small library that makes it a process no
@@ -247,7 +257,11 @@ A docker session is the container a project run gets, kept for the session:
   credential, so the credential never enters the sandbox. A running container cannot gain
   a mount, so the session mounts the broker's socket at open. It serves a call's grant
   only while that call runs; between calls, and in a call without a grant, the socket
-  answers 503.
+  answers 503. While it serves a grant it serves anything in the container, so code an
+  earlier call left running (a timer in an interpreter, a process started after the
+  sweep) can use a later call's grant. Every call of a session comes from one caller under
+  one software rule, so this lends a grant to that caller's own earlier code and to no
+  one else; a call that must not lend its grant runs outside a session.
 - **Cleanup.** The container is removed when the session ends. A container a crashed
   daemon left behind carries its lifetime as a label, and a running daemon removes it once
   that lifetime plus 5 minutes has passed.

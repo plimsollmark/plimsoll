@@ -5,6 +5,8 @@
 // isolation evidence against the caller's floor, and tracks a session's chain of
 // records so a call it did not make is caught.
 
+import { isIP } from "node:net";
+
 import {
   checkRecord,
   requestDigest,
@@ -64,7 +66,15 @@ export type ClientOptions = {
   projectGrantProfile?: string;
   /** A fetch implementation; defaults to the global one. */
   fetch?: typeof fetch;
+  /**
+   * Bounds each HTTP exchange, sending and reading the answer, in milliseconds.
+   * Default 6 minutes, as the Go and Python clients. A run's timeoutMs bounds what
+   * the daemon executes, not a stalled connection; a call cut off here may have run.
+   */
+  requestTimeoutMs?: number;
 };
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 6 * 60_000;
 
 export type RunOptions = {
   /** Whole-run budget; defaulted and clamped by the daemon. */
@@ -214,7 +224,9 @@ function validateBaseUrl(raw: string, insecureHttp: boolean): string {
     throw new PlimsollError("invalid_argument", "plimsoll: userinfo, query and fragment are not permitted in the base URL");
   }
   const host = u.hostname.replace(/^\[|\]$/g, "");
-  const loopback = host === "localhost" || host === "::1" || /^127\./.test(host);
+  // A host is loopback by name or as an address, never by a prefix: 127.evil.example is a
+  // domain name, and the token must not go to it in cleartext.
+  const loopback = host === "localhost" || host === "::1" || (isIP(host) === 4 && host.startsWith("127."));
   if (u.protocol === "http:" && !loopback && !insecureHttp) {
     throw new PlimsollError("invalid_argument", "plimsoll: cleartext HTTP to a non-loopback daemon requires insecureHttp");
   }
@@ -369,6 +381,7 @@ export class PlimsollClient {
   private readonly base: string;
   private readonly token: string | undefined;
   private readonly fetchImpl: typeof fetch;
+  private readonly requestTimeoutMs: number;
   /** @internal */ readonly jsGrant: string;
   /** @internal */ readonly projectGrant: string;
 
@@ -376,6 +389,11 @@ export class PlimsollClient {
     this.base = validateBaseUrl(opts.baseUrl, opts.insecureHttp ?? false);
     this.token = opts.token;
     this.fetchImpl = opts.fetch ?? fetch;
+    const rt = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    if (typeof rt !== "number" || !(rt > 0) || rt > 2 ** 31 - 1) {
+      throw new PlimsollError("invalid_argument", "plimsoll: requestTimeoutMs must be a positive number of milliseconds");
+    }
+    this.requestTimeoutMs = rt;
     this.jsGrant = opts.javascriptGrantProfile ?? "";
     this.projectGrant = opts.projectGrantProfile ?? "";
   }
@@ -384,14 +402,34 @@ export class PlimsollClient {
   async call<T>(method: string, body: unknown, signal?: AbortSignal): Promise<T> {
     const headers: Record<string, string> = { "Content-Type": "application/json", "Connect-Protocol-Version": "1" };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    const deadline = AbortSignal.timeout(this.requestTimeoutMs);
+    const both = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    // Neither error is marked not-dispatched: the request may have reached the daemon.
+    const cut = (e: unknown): PlimsollError | undefined => {
+      if (signal?.aborted) return new PlimsollError("canceled", "plimsoll: the call was canceled", { cause: e });
+      if (deadline.aborted) return new PlimsollError("deadline_exceeded", `plimsoll: ${method} did not finish within ${this.requestTimeoutMs} ms`, { cause: e });
+      return undefined;
+    };
     let res: Response;
     try {
-      res = await this.fetchImpl(`${this.base}/${SERVICE}/${method}`, { method: "POST", headers, body: JSON.stringify(body), signal });
+      // A Connect call is never redirected, and fetch's default follows a 307 or 308 by
+      // sending the request again, the code in it included, wherever it points (it
+      // drops the token only across origins). So a redirect is the answer, an error.
+      res = await this.fetchImpl(`${this.base}/${SERVICE}/${method}`, { method: "POST", headers, body: JSON.stringify(body), signal: both, redirect: "manual" });
     } catch (e) {
-      if (signal?.aborted) throw new PlimsollError("canceled", "plimsoll: the call was canceled", { cause: e });
-      throw new PlimsollError("unavailable", `plimsoll: ${(e as Error).message}`, { cause: e });
+      throw cut(e) ?? new PlimsollError("unavailable", `plimsoll: ${(e as Error).message}`, { cause: e });
     }
-    const raw = await readCapped(res);
+    if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
+      void res.body?.cancel().catch(() => undefined);
+      throw new PlimsollError("unknown", `plimsoll: ${method} was answered with a redirect (HTTP ${res.status}), which this client never follows`);
+    }
+    let raw: string;
+    try {
+      raw = await readCapped(res, both);
+    } catch (e) {
+      if (e instanceof PlimsollError) throw e;
+      throw cut(e) ?? new PlimsollError("unavailable", `plimsoll: reading the answer to ${method}: ${(e as Error).message}`, { cause: e });
+    }
     let parsed: unknown;
     try {
       parsed = raw.length ? JSON.parse(raw) : {};
@@ -505,7 +543,11 @@ export class PlimsollClient {
       resp,
     );
     if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: resp });
-    return { run: resp, record: checked.record };
+    const r = checked.record;
+    if (r.session !== "" || r.sequence !== 0n || r.previousSha256 !== "") {
+      throw new PlimsollError("data_loss", "plimsoll: a single run's record carries session fields", { result: resp });
+    }
+    return { run: resp, record: r };
   }
 }
 
@@ -530,6 +572,8 @@ function finish<T extends Evidence>(
   kind: "javascript" | "project" | "cell",
   floor: Isolation | undefined,
 ): T {
+  const kinds = (["javascript", "project", "module", "cell"] as const).filter((k) => resp[k] !== undefined && resp[k] !== null);
+  if (kinds.length > 1) throw new PlimsollError("data_loss", `plimsoll: the answer holds ${kinds.length} results; a run has one`, { result: resp });
   if (!resp[kind]) throw new PlimsollError("data_loss", "plimsoll: the daemon's result is not of the request's kind", { result: resp });
   const out = map(resp, record);
   if (floor && !meets(out.isolation, floor)) {
@@ -676,20 +720,34 @@ export class Session {
   }
 }
 
-async function readCapped(res: Response): Promise<string> {
+// Reads the answer under the call's signal itself, since a fetch implementation
+// need not tie its body to the signal it was given.
+async function readCapped(res: Response, signal: AbortSignal): Promise<string> {
   if (!res.body) return "";
   const reader = res.body.getReader();
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
   const chunks: Uint8Array[] = [];
   let n = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    n += value.length;
-    if (n > MAX_RESPONSE_BYTES) {
-      await reader.cancel();
-      throw new PlimsollError("resource_exhausted", `plimsoll: the daemon's answer exceeds ${MAX_RESPONSE_BYTES} bytes`);
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), aborted]);
+      if (done) break;
+      n += value.length;
+      if (n > MAX_RESPONSE_BYTES) {
+        throw new PlimsollError("resource_exhausted", `plimsoll: the daemon's answer exceeds ${MAX_RESPONSE_BYTES} bytes`);
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (e) {
+    void reader.cancel().catch(() => undefined);
+    throw e;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
   return Buffer.concat(chunks).toString("utf8");
 }

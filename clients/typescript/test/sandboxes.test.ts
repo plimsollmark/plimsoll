@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { CodeSandboxes, PlimsollClient, PlimsollError } from "../src/index.ts";
-import { RUNNERS } from "../src/sandboxes.ts";
+import { RUNNERS, snippetRunner } from "../src/sandboxes.ts";
 
 const wasmUrl = process.env.PLIMSOLL_WASM_URL;
 const sessionsUrl = process.env.PLIMSOLL_SESSIONS_URL;
@@ -41,13 +41,17 @@ test("on a daemon with sessions, a key keeps one interpreter", { skip }, async (
   assert.equal(a.stdout, "python 1: x = 1");
   assert.equal(b.stdout, "python 2: x + 1", "the second call ran in the same interpreter");
   assert.equal(b.stderr, "in/data.csv\n", "the cell carried its files");
+  assert.equal(a.freshInterpreter, true, "the first call starts from nothing");
+  assert.equal(a.freshSandbox, true);
   assert.equal(b.stateKept, true);
   assert.equal(b.filesPersist, true);
-  assert.equal(b.interpreterRestarted, undefined);
+  assert.equal(b.freshInterpreter, undefined);
+  assert.equal(b.freshSandbox, undefined);
   assert.equal(b.isolation, "container");
   const js = await s.run("run-a", { code: "1", language: "javascript" });
   assert.equal(js.stdout, "javascript 1: 1");
-  assert.equal(js.interpreterRestarted, undefined, "a language's first cell is not a restart");
+  assert.equal(js.freshInterpreter, true, "a language's first cell has no earlier state");
+  assert.equal(js.freshSandbox, undefined, "but the sandbox's files are there");
   assert.equal(calls.filter((c) => c === "OpenSession").length, 1);
   await s.dispose("run-a");
   await s.dispose("run-a"); // twice is fine
@@ -92,19 +96,106 @@ test("sessions: always fails on a daemon without them", { skip }, async () => {
   await assert.rejects(s.run("k", { code: "1" }), (e: unknown) => e instanceof PlimsollError && e.notDispatched === "unsupported");
 });
 
-test("an ended sandbox is replaced once, and the output says what was lost", { skip }, async () => {
+test("an ended sandbox is replaced once, and the output says what is new", { skip }, async () => {
   const s = new CodeSandboxes({ client: new PlimsollClient({ baseUrl: sessionsUrl! }) });
   assert.equal((await s.run("k", { code: "1" })).stdout, "python 1: 1");
+  await s.run("k", { code: "x = 1" });
   await fetch(`${sessionsUrl}/test/end-sessions`, { method: "POST" });
   const r = await s.run("k", { code: "2" });
   assert.equal(r.stdout, "python 1: 2", "a new sandbox answered");
-  assert.equal(r.sandboxReplaced, true);
-  assert.equal(r.interpreterRestarted, true, "the python state of the old sandbox is gone");
+  assert.equal(r.freshSandbox, true);
+  assert.equal(r.freshInterpreter, true, "the python state of the old sandbox is gone");
   const next = await s.run("k", { code: "3" });
   assert.equal(next.stdout, "python 2: 3");
-  assert.equal(next.sandboxReplaced, undefined);
-  assert.equal(next.interpreterRestarted, undefined);
+  assert.equal(next.freshSandbox, undefined);
+  assert.equal(next.freshInterpreter, undefined);
   await s.disposeAll();
+});
+
+// The Trigger.dev recipe disposes when a chat suspends; the resumed turn's first
+// call runs in a new sandbox and must not claim the old one's state.
+test("the first call after a dispose says its sandbox and interpreter are new", { skip }, async () => {
+  const s = new CodeSandboxes({ client: new PlimsollClient({ baseUrl: sessionsUrl! }) });
+  await s.run("k", { code: "x = 1" });
+  await s.run("k", { code: "x" });
+  await s.dispose("k");
+  const r = await s.run("k", { code: "x + 1" });
+  assert.equal(r.stdout, "python 1: x + 1", "a new interpreter answered");
+  assert.equal(r.freshSandbox, true);
+  assert.equal(r.freshInterpreter, true);
+  // So does one let go by the idle close.
+  const idle = new CodeSandboxes({ client: new PlimsollClient({ baseUrl: sessionsUrl! }), idleCloseMs: 20 });
+  await idle.run("k", { code: "x = 1" });
+  await new Promise((r) => setTimeout(r, 100));
+  const after = await idle.run("k", { code: "x" });
+  assert.equal(after.stdout, "python 1: x");
+  assert.equal(after.freshSandbox, true);
+  assert.equal(after.freshInterpreter, true);
+  await s.disposeAll();
+  await idle.disposeAll();
+});
+
+test("the idle close waits for a call in flight", { skip }, async () => {
+  const calls: string[] = [];
+  const slow = new PlimsollClient({
+    baseUrl: sessionsUrl!,
+    fetch: async (input, init) => {
+      calls.push(String(input).split("/").pop()!);
+      const res = await fetch(input, init);
+      if (String(input).endsWith("/SessionRun")) await new Promise((r) => setTimeout(r, 150));
+      return res;
+    },
+  });
+  const s = new CodeSandboxes({ client: slow, idleCloseMs: 50 });
+  await s.run("k", { code: "x = 1" }); // longer than the idle close
+  const r = await s.run("k", { code: "x" });
+  assert.equal(r.stdout, "python 2: x", "the same interpreter answered");
+  assert.equal(r.freshSandbox, undefined);
+  assert.equal(calls.filter((c) => c === "OpenSession").length, 1);
+  await s.disposeAll();
+});
+
+// An open slower than the idle close is not idle: the call that waits for it gets
+// its answer, and the idle close counts from when the sandbox is open.
+test("a session that opens slower than the idle close still answers", { skip }, async () => {
+  const slowOpen = new PlimsollClient({
+    baseUrl: sessionsUrl!,
+    fetch: async (input, init) => {
+      const res = await fetch(input, init);
+      if (String(input).endsWith("/OpenSession")) await new Promise((r) => setTimeout(r, 150));
+      return res;
+    },
+  });
+  const s = new CodeSandboxes({ client: slowOpen, idleCloseMs: 20 });
+  const r = await s.run("k", { code: "x = 1" });
+  assert.equal(r.exitCode, 0, r.stderr);
+  assert.equal(r.stateKept, true);
+  s.warm("w"); // a warm whose open outlasts the idle close
+  await new Promise((r) => setTimeout(r, 400));
+  const w = await s.run("w", { code: "y = 1" });
+  assert.equal(w.exitCode, 0, w.stderr);
+  await s.disposeAll();
+});
+
+test("on a daemon without projects a JavaScript call runs as a snippet; Python and files are refused before dispatch", { skip }, async () => {
+  const { client, calls } = counting(wasmUrl!);
+  const s = new CodeSandboxes({ client });
+  const r = await s.run("k", { code: "var rows = [1, 2, 3];\nconsole.log('printed');\nrows.reduce((a, b) => a + b, 0)", language: "javascript" });
+  assert.equal(r.exitCode, 0, r.stderr);
+  assert.equal(r.stdout, "printed\n6\n");
+  assert.equal(r.stateKept, false);
+  assert.equal(r.filesPersist, false);
+  assert.equal(r.isolation, "process");
+  const failed = await s.run(undefined, { code: "throw new Error('boom')", language: "javascript" });
+  assert.notEqual(failed.exitCode, 0);
+  assert.match(failed.stderr, /boom/);
+  const sent = calls.filter((c) => c === "Run").length;
+  await assert.rejects(s.run("k", { code: "1" }), { notDispatched: "unsupported", message: /JavaScript snippets only, not python/ });
+  await assert.rejects(s.run("k", { code: "1", language: "javascript", files: [{ path: "a.txt", content: "a" }] }), {
+    notDispatched: "unsupported",
+    message: /take no files/,
+  });
+  assert.equal(calls.filter((c) => c === "Run").length, sent, "nothing was sent for the refused calls");
 });
 
 test("output beyond maxOutputChars is cut and marked", { skip }, async () => {
@@ -138,6 +229,13 @@ test("a close that finds calls this client did not make is reported, not swallow
   await s.dispose("k");
   assert.equal(errors.length, 1);
   assert.equal((errors[0] as PlimsollError).code, "data_loss");
+});
+
+test("the snippet runner prints the last value on node too", () => {
+  const out = execFileSync(process.execPath, ["-e", snippetRunner("const rows = [1, 2, 3];\nconsole.log('printed');\nrows.reduce((a, b) => a + b, 0)")], {
+    encoding: "utf8",
+  });
+  assert.equal(out, "printed\n6\n");
 });
 
 // The runners a fresh call sends print the last expression as a cell does. They are

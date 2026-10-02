@@ -17,8 +17,8 @@
 
 import { chat } from "@trigger.dev/sdk/ai";
 import { stepCountIs } from "ai";
-import { PlimsollClient } from "@plimsoll/client";
-import { plimsollCodeSandbox } from "@plimsoll/client/trigger";
+import { PlimsollClient } from "@plimsollmark/client";
+import { plimsollCodeSandbox } from "@plimsollmark/client/trigger";
 
 import { models } from "./models.ts";
 
@@ -52,7 +52,8 @@ export const codeChat = chat.agent({
       system:
         "You are a careful analyst. When a question needs arithmetic, parsing or data analysis, " +
         "write Python and run it with executeCode instead of computing in your head. Load data once: " +
-        "variables you define stay defined in later calls while stateKept is true.",
+        "variables you define stay defined in later calls while stateKept is true, until a result says " +
+        "freshInterpreter (rebuild them) or freshSandbox (earlier files are gone too).",
       messages,
       tools,
       stopWhen: stepCountIs(10),

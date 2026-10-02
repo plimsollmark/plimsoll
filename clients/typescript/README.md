@@ -1,4 +1,4 @@
-# @plimsoll/client
+# @plimsollmark/client
 
 A TypeScript client for `plimsolld`, plus two add-ons that give a chat agent an
 `executeCode` tool backed by plimsoll: one for [Trigger.dev](https://trigger.dev) chat
@@ -10,7 +10,7 @@ protocol over `fetch` and keeps the promises the Go client keeps:
 
 - it states the protocol number on every request;
 - it checks every answer's **run record**: it recomputes the request and result digests
-  from what it sent and received ([run-records.md](../../docs/run-records.md)), and an
+  from what it sent and received ([run-records.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/run-records.md)), and an
   answer that does not check, or has no record, is a `data_loss` error with the result
   attached, because the code may have run;
 - it checks the reported isolation tier against the caller's floor the same way;
@@ -25,7 +25,7 @@ The tier it reports is configuration and provider evidence, never runtime attest
 ## The client
 
 ```ts
-import { PlimsollClient } from "@plimsoll/client";
+import { PlimsollClient } from "@plimsollmark/client";
 
 const plimsoll = new PlimsollClient({ baseUrl: "https://plimsoll.internal:8443", token: process.env.PLIMSOLL_TOKEN });
 
@@ -71,16 +71,20 @@ default) it asks the daemon once whether it keeps sessions:
   under gVisor (medians), against 939 ms and 714 ms for a fresh sandbox that rebuilt it.
 - **It does not** (`e2b`, `dockercloud`, `wasm`, or `sessions: "never"`): every call runs in
   a fresh sandbox, as a small project whose runner prints the last expression the same way,
-  and nothing persists.
+  and nothing persists. `wasm` runs no projects, so there a call is a JavaScript snippet
+  printing its last value; Python and files are refused before anything is sent.
 
 The tool's output says which: `stateKept` (this call ran in an interpreter that keeps
-variables), `filesPersist`, and `interpreterRestarted` when variables from earlier calls in
-that language are gone (a deadline, a crash, a replaced sandbox), so the model knows to
-rebuild them. A session that ends by itself (its lifetime, its disk budget) is replaced on
-the next call, which then reports `sandboxReplaced: true`. A call without a key (no thread,
-no run) always runs fresh: one sandbox shared across conversations would show one user
-another's files. A language the daemon's image cannot run is refused before anything is
-sent.
+variables) and `filesPersist`. It also says what is new, rather than what was lost, because
+only the sandbox knows: `freshInterpreter` whenever the call's interpreter had just started
+(the first call in a language, a deadline, a crash), so nothing earlier calls defined
+exists, and `freshSandbox` whenever the call is the first answered one in a newly opened
+sandbox, so no earlier file is there either. That covers a sandbox that `dispose` or the
+idle close let go, one that ended by itself (its lifetime, its disk budget), and a
+conversation resumed in another process, which this instance cannot tell from a first
+call. A call without a key (no thread, no run) always runs fresh: one sandbox shared
+across conversations would show one user another's files. A language the daemon's image
+cannot run is refused before anything is sent.
 
 Closing a sandbox checks the daemon's count of calls against the chain the client saw; a
 mismatch means someone else held the session ID, and it goes to `onCloseError` (by default
@@ -99,8 +103,8 @@ sleeps) and in `onComplete`.
 
 ```ts
 import { chat } from "@trigger.dev/sdk/ai";
-import { PlimsollClient } from "@plimsoll/client";
-import { plimsollCodeSandbox } from "@plimsoll/client/trigger";
+import { PlimsollClient } from "@plimsollmark/client";
+import { plimsollCodeSandbox } from "@plimsollmark/client/trigger";
 
 const sandbox = plimsollCodeSandbox({
   client: () => new PlimsollClient({ baseUrl: process.env.PLIMSOLL_URL!, token: process.env.PLIMSOLL_TOKEN }),
@@ -118,14 +122,14 @@ export const codeChat = chat.agent({
 ```
 
 The full example, with a test that drives real turns through Trigger.dev's `mockChatAgent`:
-[examples/trigger-chat](../../examples/trigger-chat/).
+[examples/trigger-chat](https://github.com/plimsollmark/plimsoll/tree/main/examples/trigger-chat/).
 
 ## Mastra
 
 ```ts
 import { Agent } from "@mastra/core/agent";
-import { PlimsollClient } from "@plimsoll/client";
-import { plimsollExecuteCode } from "@plimsoll/client/mastra";
+import { PlimsollClient } from "@plimsollmark/client";
+import { plimsollExecuteCode } from "@plimsollmark/client/mastra";
 
 const { executeCode, dispose } = plimsollExecuteCode({
   client: new PlimsollClient({ baseUrl: process.env.PLIMSOLL_URL!, token: process.env.PLIMSOLL_TOKEN }),

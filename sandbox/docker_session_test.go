@@ -137,6 +137,42 @@ func TestDockerSessionSuspendPausesAndHoldsMemory(t *testing.T) {
 	}
 }
 
+// The startup check plimsolld runs when sessions are enabled passes on this host.
+func TestDockerSessionSmokeTest(t *testing.T) {
+	d := sessionDocker(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if err := sandbox.SessionSmokeTest(ctx, d, sandbox.SessionOptions{Lifetime: 5 * time.Minute, DiskBytes: 64 << 20}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A suspend or a resume the caller gives up on is not cut short: docker finishes the
+// pause or unpause, the session's view of the container stays true, and the session
+// goes on. Cut short, a pause docker had taken left the session thinking the
+// container ran, and the next call ended it as paused by someone else.
+func TestDockerSessionGivingUpOnPauseOrResumeKeepsTheSession(t *testing.T) {
+	d := sessionDocker(t)
+	s := openDockerSession(t, d)
+	if _, err := sessionJS(t, s, `1`); err != nil {
+		t.Fatal(err)
+	}
+	// The docker CLI takes tens of milliseconds to start, so the window in which a
+	// cancel lands after docker took the request moves with the host: try every 5 ms.
+	for delay := time.Duration(0); delay <= 120*time.Millisecond; delay += 5 * time.Millisecond {
+		ctx, cancel := context.WithTimeout(context.Background(), delay)
+		_, _ = s.Suspend(ctx)
+		cancel()
+		ctx, cancel = context.WithTimeout(context.Background(), delay)
+		_, _ = s.RunJavaScript(ctx, sandbox.Request{Code: "1", Timeout: 10 * time.Second})
+		cancel()
+		res, err := sessionJS(t, s, `console.log("alive")`)
+		if err != nil || strings.TrimSpace(res.Stdout) != "alive" {
+			t.Fatalf("after giving up at %v: %+v, %v (session %v)", delay, res, err, s.Err())
+		}
+	}
+}
+
 // Anyone who can reach the docker daemon can connect a running container to a
 // network. The read-back before the next call refuses it and ends the session.
 func TestDockerSessionRefusesAContainerGivenANetwork(t *testing.T) {

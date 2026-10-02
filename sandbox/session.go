@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // SessionProvider is the optional interface of a provider that can keep one
@@ -147,4 +149,32 @@ func SessionEndReason(err error) SessionEnd {
 // marked as refused before dispatch, since nothing ran.
 func RefuseEndedSession(end error) error {
 	return NotDispatched(RefusalRequest, end)
+}
+
+// RefuseGaveUp is the error a session call returns when its context ends before any
+// of it ran: while it waited for the session's turn (held by a call in flight, or by
+// the sweep after the previous one), or while the sandbox was made ready for it. It
+// is marked as refused before dispatch, reason capacity: the session was busy.
+func RefuseGaveUp(ctx context.Context) error {
+	return NotDispatched(RefusalCapacity, ctx.Err())
+}
+
+// RefuseCell is the refusal for a cell none of whose code ran, from the error the
+// session's interpreters returned (end is the session's Err); ok is false for any
+// other error, which means the code may have run.
+//   - An interpreter that could not start (sessionkit.ErrLaunch): on a session that
+//     has ended the end is why, and is what the caller is told; otherwise the image
+//     cannot run the language.
+//   - Files that could not be written (sessionkit.ErrFiles): a request this session's
+//     work directory cannot take. The interpreter and the session go on.
+func RefuseCell(err, end error) (refusal error, ok bool) {
+	switch {
+	case errors.Is(err, sessionkit.ErrLaunch) && end != nil:
+		return RefuseEndedSession(end), true
+	case errors.Is(err, sessionkit.ErrLaunch):
+		return NotDispatched(RefusalEnvironment, fmt.Errorf("%w: %v", ErrUnsupported, err)), true
+	case errors.Is(err, sessionkit.ErrFiles):
+		return NotDispatched(RefusalRequest, fmt.Errorf("%w: %v", ErrInvalidRequest, err)), true
+	}
+	return nil, false
 }

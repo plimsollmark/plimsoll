@@ -151,7 +151,9 @@ const usageLimits = `
                              persist, processes do not, except the interpreters
                              it keeps for cells. Needs a provider with
                              sessions (openshell, or docker with a project
-                             image); startup fails otherwise. A running session
+                             image); startup fails otherwise, and when one real
+                             session opened at startup does not keep what a
+                             session promises. A running session
                              holds one concurrency slot; a suspended one holds
                              none, except on docker, where a suspend is a pause
                              that keeps the memory.
@@ -257,8 +259,19 @@ func main() {
 		os.Exit(1)
 	}
 	if sc.MaxSessions > 0 {
-		if sp, ok := sb.(sandbox.SessionProvider); !ok || !sp.SupportsSessions() {
+		sp, ok := sb.(sandbox.SessionProvider)
+		if !ok || !sp.SupportsSessions() {
 			slog.Error("SANDBOX_MAX_SESSIONS is set but the provider keeps no sessions", "provider", sb.Name())
+			os.Exit(1)
+		}
+		// What only a session does (the sweep between calls, a suspend and its resume,
+		// an interpreter kept across calls, a close) is proven here, by one real
+		// session, as EnsureReady proved the provider's runs. Startup-only, like it.
+		smokeCtx, cancelSmoke := context.WithTimeout(context.Background(), 2*time.Minute)
+		err := sandbox.SessionSmokeTest(smokeCtx, sp, sandbox.SessionOptions{Lifetime: min(sc.Lifetime, 5*time.Minute), DiskBytes: sc.DiskBytes})
+		cancelSmoke()
+		if err != nil {
+			slog.Error("sessions are not ready; refusing to serve", "provider", sb.Name(), "error", err)
 			os.Exit(1)
 		}
 		slog.Info("sessions enabled", "max_sessions", sc.MaxSessions, "lifetime", sc.Lifetime.String(),

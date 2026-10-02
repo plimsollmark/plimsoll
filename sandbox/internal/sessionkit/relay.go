@@ -55,6 +55,10 @@ type frame struct {
 	Done  *int   `json:"done"`
 	OT    bool   `json:"ot"`
 	ET    bool   `json:"et"`
+	// On a done of cellFilesFailed: the failing file's index in the request and the
+	// system's error code. On OpenShell the session's own code can forge them.
+	File  *int   `json:"file"`
+	Errno string `json:"errno"`
 }
 
 type relay struct {
@@ -62,10 +66,16 @@ type relay struct {
 	id     string
 	frames chan frame
 	errc   chan error
+	done   chan struct{} // closed by close: the reader stops waiting to deliver
 	once   sync.Once
 }
 
-func (r *relay) close() { r.once.Do(r.att.Close) }
+func (r *relay) close() {
+	r.once.Do(func() {
+		close(r.done)
+		r.att.Close()
+	})
+}
 
 // gone reports whether the relay already stopped, between cells (code of an
 // earlier call can kill it): no request reached it, so a new one is safe to start.
@@ -84,7 +94,7 @@ func startRelay(ctx context.Context, attach AttachFunc, lang, work string) (*rel
 	if err != nil {
 		return nil, fmt.Errorf("%w: the relay could not start: %v", ErrLaunch, err)
 	}
-	r := &relay{att: att, frames: make(chan frame, 64), errc: make(chan error, 1)}
+	r := &relay{att: att, frames: make(chan frame, 64), errc: make(chan error, 1), done: make(chan struct{})}
 	go func() {
 		sc := bufio.NewScanner(att.Stdout())
 		sc.Buffer(make([]byte, 64<<10), maxFrame)
@@ -94,7 +104,13 @@ func startRelay(ctx context.Context, attach AttachFunc, lang, work string) (*rel
 				r.errc <- fmt.Errorf("the relay wrote a line that is not a frame: %w", err)
 				return
 			}
-			r.frames <- f
+			// Once the relay is let go, nobody reads frames again: a cell that timed
+			// out under a chatty interpreter would otherwise strand this goroutine.
+			select {
+			case r.frames <- f:
+			case <-r.done:
+				return
+			}
 		}
 		if err := sc.Err(); err != nil {
 			r.errc <- err
@@ -123,12 +139,17 @@ func startRelay(ctx context.Context, attach AttachFunc, lang, work string) (*rel
 var errRelayLost = errors.New("the relay stopped answering")
 
 // cell sends one request and reads its frames until the relay says it is done,
-// keeping at most the caps of output.
-func (r *relay) cell(ctx context.Context, req []byte, outCap, errCap int) (ExecResult, int, error) {
+// keeping at most the caps of output. The request is written under the deadline
+// too: a relay that stops reading would otherwise block the write, and with it the
+// session's turn, past the cell's budget. Ending the call lets go of the relay,
+// which unblocks the write.
+func (r *relay) cell(ctx context.Context, req []byte, outCap, errCap int) (ExecResult, frame, error) {
 	var res ExecResult
-	if _, err := r.att.Stdin().Write(append(req, '\n')); err != nil {
-		return res, 0, fmt.Errorf("%w: %v", errRelayLost, err)
-	}
+	wrote := make(chan error, 1)
+	go func() {
+		_, err := r.att.Stdin().Write(append(req, '\n'))
+		wrote <- err
+	}()
 	var out, errb []byte
 	add := func(dst []byte, cap int, b64 string, cut *bool) []byte {
 		b, err := base64.StdEncoding.DecodeString(b64)
@@ -143,13 +164,18 @@ func (r *relay) cell(ctx context.Context, req []byte, outCap, errCap int) (ExecR
 	}
 	for {
 		select {
+		case err := <-wrote:
+			if err != nil {
+				return res, frame{}, fmt.Errorf("%w: %v", errRelayLost, err)
+			}
+			wrote = nil
 		case f := <-r.frames:
 			switch {
 			case f.Done != nil:
 				res.Stdout, res.Stderr = string(out), string(errb)
 				res.StdoutTruncated = res.StdoutTruncated || f.OT
 				res.StderrTruncated = res.StderrTruncated || f.ET
-				return res, *f.Done, nil
+				return res, f, nil
 			case f.O != "":
 				out = add(out, outCap, f.O, &res.StdoutTruncated)
 			case f.E != "":
@@ -157,10 +183,11 @@ func (r *relay) cell(ctx context.Context, req []byte, outCap, errCap int) (ExecR
 			}
 		case err := <-r.errc:
 			res.Stdout, res.Stderr = string(out), string(errb)
-			return res, 0, fmt.Errorf("%w: %v", errRelayLost, err)
+			return res, frame{}, fmt.Errorf("%w: %v", errRelayLost, err)
 		case <-ctx.Done():
+			r.close()
 			res.Stdout, res.Stderr = string(out), string(errb)
-			return res, 0, ctx.Err()
+			return res, frame{}, ctx.Err()
 		}
 	}
 }
@@ -221,6 +248,9 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 		return CellOutcome{}, err
 	}
 	var outcome CellOutcome
+	// An interpreter started for a cell whose files failed was never reported;
+	// this cell reports it, or nothing would say the earlier state is gone.
+	outcome.Started = in.takeUnreported(c.Language)
 	lose := func() {
 		in.dropRelay(c.Language)
 		in.drop(c.Language)
@@ -259,7 +289,11 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 			in.relays[c.Language] = r
 			in.mu.Unlock()
 		}
-		out, status, err := r.cell(ctx, req, c.OutCap, c.ErrCap)
+		out, done, err := r.cell(ctx, req, c.OutCap, c.ErrCap)
+		status := 0
+		if done.Done != nil {
+			status = *done.Done
+		}
 		outcome.ExecResult = out
 		outcome.ExitCode, outcome.Exited = status, err == nil
 		if deadline.Expired(ctx) == context.DeadlineExceeded {
@@ -280,9 +314,16 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 		switch status {
 		case cellRan:
 			return outcome, nil
-		case cellRaised, cellFilesFailed:
+		case cellRaised:
 			outcome.Raised = true
 			return outcome, nil
+		case cellFilesFailed:
+			// Nothing of the cell ran, and its interpreter is as the last cell left it,
+			// or new, which the next answered cell reports.
+			if outcome.Started {
+				in.markUnreported(c.Language)
+			}
+			return CellOutcome{}, filesError(done, len(c.Files))
 		case cellNoInterpreter:
 			lose()
 			continue

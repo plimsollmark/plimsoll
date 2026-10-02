@@ -385,6 +385,15 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 // as it will be sent, the evidence, and the times. link carries a session call's
 // chain fields and is zero for a single run. The daemon holds no key, so this is
 // hashing only.
+// recordEnd is the end a record states: its start on the wall clock plus the time
+// that passed on the monotonic clock, never a second wall-clock reading. The wall
+// clock can be stepped during a run (NTP, a virtual machine resyncing its time), and
+// two readings would then put the end before the start. A reading without a
+// monotonic clock that still lands before the start is held at the start.
+func recordEnd(started, ended time.Time) time.Time {
+	return started.Add(max(ended.Sub(started), 0))
+}
+
 func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunResponse, started, ended time.Time, link sandbox.RunRecord, rule sandbox.SoftwareRule) *plimsollv1.RunRecord {
 	var env sandbox.Environments
 	if d, ok := s.Sandbox.(sandbox.Describer); ok {
@@ -395,7 +404,7 @@ func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunRes
 		SoftwareRuleID: rule.ID(),
 		Policy:         env.Policy,
 		Started:        started,
-		Ended:          ended,
+		Ended:          recordEnd(started, ended),
 		Session:        link.Session,
 		Sequence:       link.Sequence,
 		PreviousSHA256: link.PreviousSHA256,

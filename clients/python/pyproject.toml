@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,8 @@ name = "plimsoll-client"
 version = "0.1.0"
 description = "Client for plimsolld, the plimsoll sandbox daemon, that checks every run record it receives"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = []
 classifiers = [
@@ -16,7 +18,9 @@ classifiers = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python"
 Source = "https://github.com/plimsollmark/plimsoll"
+Issues = "https://github.com/plimsollmark/plimsoll/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

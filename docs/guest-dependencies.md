@@ -133,7 +133,7 @@ variable: a derived image that puts `python3` on `PATH`, and a step that names i
 ```dockerfile
 FROM plimsoll/sandbox:latest
 USER root
-RUN apk add --no-cache "python3~=3.14.7" "py3-numpy~=2.4.6" "py3-scipy~=1.17.1"
+RUN apk add --no-cache "python3~3.14" "py3-numpy~2.4" "py3-scipy~1.17"
 ENV OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 USER node
 ```
@@ -171,11 +171,14 @@ Three things in that file matter:
   "No module named pip" rather than reaching for a network the run does not have.
   The test runs that step and requires it to fail.
 
-One caveat on the three version <dfn>*pins*</dfn> on the `apk add` line: `~=` fixes
-each package's upstream version (3.14.7, 2.4.6, 1.17.1) and leaves only Alpine's
-packaging revision free. The `node:22-alpine` base tag moves with Alpine's current
-release, and `make docker-images` pulls it every time, so the three pins track whichever
-Alpine that tag currently carries. An `apk add` failure reading
+One caveat on the three version <dfn>*pins*</dfn> on the `apk add` line: `~3.14` fixes
+each package's upstream minor version (3.14, 2.4, 1.17) and leaves patch releases and
+Alpine's packaging revision free. A patch pin is not an option here, because Alpine keeps
+only a package's current build in its index: pinned to 3.14.7, the image stopped building
+the day Alpine shipped 3.14.8 (2026-10-01). What a run used is still exact, because the
+image's identity is stated on every run. The `node:22-alpine` base tag moves with Alpine's
+current release, and `make docker-images` pulls it every time, so the three pins track
+whichever Alpine that tag currently carries. An `apk add` failure reading
 "unable to select packages ... breaks: world[python3~3.x]" means the base moved;
 the fix is a deliberate bump of the pins to what
 `apk search -x python3 py3-numpy py3-scipy` reports inside `plimsoll/sandbox`. It

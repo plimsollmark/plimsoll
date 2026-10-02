@@ -2,9 +2,12 @@
 // single runs, the in-memory session provider for sessions.
 
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { before, test } from "node:test";
 
 import { PlimsollClient, PlimsollError, PROTOCOL } from "../src/index.ts";
+import { recordDigest, recordFromWire } from "../src/record.ts";
 
 const wasmUrl = process.env.PLIMSOLL_WASM_URL;
 const sessionsUrl = process.env.PLIMSOLL_SESSIONS_URL;
@@ -38,6 +41,81 @@ test("base URLs are checked before anything is sent", () => {
   assert.throws(() => new PlimsollClient({ baseUrl: "https://u:p@sandbox.example" }), /userinfo/);
   new PlimsollClient({ baseUrl: "https://sandbox.example" });
   new PlimsollClient({ baseUrl: "http://sandbox.example", insecureHttp: true });
+  // Loopback is an address, not a name that starts like one.
+  assert.throws(() => new PlimsollClient({ baseUrl: "http://127.evil.example:8080" }), /insecureHttp/);
+  assert.throws(() => new PlimsollClient({ baseUrl: "http://localhost.evil.example" }), /insecureHttp/);
+  new PlimsollClient({ baseUrl: "http://127.0.0.2:8080" });
+  new PlimsollClient({ baseUrl: "http://[::1]:8080" });
+  new PlimsollClient({ baseUrl: "http://localhost:8080" });
+});
+
+// A redirect is never followed: fetch's default would send the code to wherever it
+// points. The client refuses it and the redirect's target hears nothing.
+test("a redirect is not followed", async () => {
+  let elsewhere = 0;
+  const other = createServer((_req, res) => {
+    elsewhere++;
+    res.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+  });
+  await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", resolve));
+  const target = `http://127.0.0.1:${(other.address() as AddressInfo).port}`;
+  const redirecting = createServer((req, res) => {
+    res.writeHead(307, { Location: target + req.url }).end();
+  });
+  await new Promise<void>((resolve) => redirecting.listen(0, "127.0.0.1", resolve));
+  try {
+    const c = new PlimsollClient({ baseUrl: `http://127.0.0.1:${(redirecting.address() as AddressInfo).port}`, token: "tok" });
+    await assert.rejects(c.runJavaScript("secret()"), (e: unknown) => {
+      assert.ok(e instanceof PlimsollError);
+      assert.equal(e.code, "unknown");
+      assert.equal(e.notDispatched, undefined);
+      assert.match(e.message, /redirect \(HTTP 307\)/);
+      return true;
+    });
+    assert.equal(elsewhere, 0);
+  } finally {
+    redirecting.close();
+    other.close();
+  }
+});
+
+// A daemon that accepts the request and then stalls: before its headers, or after
+// them in the middle of its body.
+async function stalling(afterHeaders: boolean): Promise<{ url: string; server: Server }> {
+  const server = createServer((req, res) => {
+    req.resume();
+    if (afterHeaders) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.write('{"protocol":');
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, server };
+}
+
+for (const afterHeaders of [false, true]) {
+  test(`a daemon that stalls ${afterHeaders ? "in its body" : "before answering"} fails the call by the request deadline`, async () => {
+    const { url, server } = await stalling(afterHeaders);
+    try {
+      const c = new PlimsollClient({ baseUrl: url, requestTimeoutMs: 200 });
+      const start = Date.now();
+      await assert.rejects(c.describe(), (e: unknown) => e instanceof PlimsollError && e.code === "deadline_exceeded" && e.notDispatched === undefined);
+      assert.ok(Date.now() - start < 5_000, `took ${Date.now() - start} ms against a 200 ms deadline`);
+      // The caller's own signal still wins, as canceled.
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(), 50);
+      await assert.rejects(new PlimsollClient({ baseUrl: url }).describe(ac.signal), { code: "canceled" });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+}
+
+test("requestTimeoutMs must be a positive number", () => {
+  for (const bad of [0, -1, Number.NaN, 2 ** 31]) {
+    assert.throws(() => new PlimsollClient({ baseUrl: "http://127.0.0.1:1", requestTimeoutMs: bad }), /requestTimeoutMs/);
+  }
 });
 
 test("describe states the daemon's protocol and provider", { skip }, async () => {
@@ -91,6 +169,30 @@ test("a changed output byte is data loss, with the result attached", { skip }, a
 test("an answer without a record is data loss", { skip }, async () => {
   const c = tampering(wasmUrl!, (b) => delete b.record);
   await assert.rejects(c.runJavaScript("console.log(1)"), { code: "data_loss" });
+});
+
+test("a single run's record with session fields is data loss, though its digest checks", { skip }, async () => {
+  const c = tampering(wasmUrl!, (b) => {
+    b.record.session = "f".repeat(64);
+    b.record.sequence = "1";
+    b.record.recordSha256 = recordDigest(recordFromWire(b.record));
+  });
+  await assert.rejects(c.runJavaScript("console.log(1)"), (e: unknown) => {
+    assert.ok(e instanceof PlimsollError);
+    assert.equal(e.code, "data_loss");
+    assert.match(e.message, /session fields/);
+    return true;
+  });
+});
+
+test("an answer holding two results is data loss", { skip }, async () => {
+  const c = tampering(wasmUrl!, (b) => (b.project = { outcome: "OUTCOME_COMPLETED" }));
+  await assert.rejects(c.runJavaScript("console.log(1)"), (e: unknown) => {
+    assert.ok(e instanceof PlimsollError);
+    assert.equal(e.code, "data_loss");
+    assert.match(e.message, /holds 2 results/);
+    return true;
+  });
 });
 
 test("a tier the record does not state is data loss", { skip }, async () => {

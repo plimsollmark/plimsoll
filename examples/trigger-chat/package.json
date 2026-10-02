@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.0",
-    "@plimsoll/client": "file:../../clients/typescript",
+    "@plimsollmark/client": "file:../../clients/typescript",
     "@trigger.dev/sdk": "^4.7.0",
     "ai": "^7.0.0",
     "zod": "^4.0.0"

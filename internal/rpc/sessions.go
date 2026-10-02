@@ -133,7 +133,7 @@ func errSessionNotFound() error {
 // busy is the refusal of a call that gave up waiting for its session's turn: the
 // session was busy with an earlier call, and nothing of this one ran.
 func busy(ctx context.Context) error {
-	return mapSandboxErr(sandbox.NotDispatched(sandbox.RefusalCapacity, ctx.Err()))
+	return mapSandboxErr(sandbox.RefuseGaveUp(ctx))
 }
 
 // sessionProvider is the provider's sessions, when it has them and the operator

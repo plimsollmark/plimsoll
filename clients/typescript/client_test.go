@@ -137,3 +137,19 @@ func TestTypeScript(t *testing.T) {
 		})
 	}
 }
+
+// The package ships its own copy of the license, because a published package carries
+// nothing from outside its directory; it must stay the repository's license.
+func TestLicenseMatchesRepository(t *testing.T) {
+	own, err := os.ReadFile("LICENSE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.ReadFile(filepath.Join("..", "..", "LICENSE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(own) != string(root) {
+		t.Fatal("LICENSE differs from the repository's LICENSE; copy it again")
+	}
+}

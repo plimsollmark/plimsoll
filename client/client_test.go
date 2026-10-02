@@ -662,3 +662,30 @@ func TestRemoteRecorder(t *testing.T) {
 		t.Fatalf("no record: result %+v, err %v, recorded %v", res, err, seen)
 	}
 }
+
+// A redirect is never followed: the code would go to wherever it points.
+func TestRedirectIsNotFollowed(t *testing.T) {
+	var elsewhere int
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	r, err := New(srv.URL, WithToken("tok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = r.RunJavaScript(ctx, sandbox.Request{Code: "secret()", Timeout: 5 * time.Second})
+	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+		t.Fatalf("a run answered with a redirect: %v (code %v); want an error, unknown", err, connect.CodeOf(err))
+	}
+	if elsewhere != 0 {
+		t.Fatalf("the redirect target received %d requests; want none", elsewhere)
+	}
+}

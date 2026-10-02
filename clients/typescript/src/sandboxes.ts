@@ -11,7 +11,16 @@
 // is given or writes stay in the work directory. On any other daemon, and for a
 // call without a key, each call runs in a fresh sandbox through a small runner that
 // prints the last expression the same way; nothing persists. The tool's output says
-// which, so the model is never told state survived when it did not.
+// which, so the model is never told state survived when it did not. A daemon without
+// projects (wasm) runs a fresh call as a JavaScript snippet, and refuses Python and
+// files before sending anything.
+//
+// Whether earlier state exists is something only the sandbox knows: this instance
+// forgets a key when it is disposed or idles out, and a conversation that resumes
+// in another process starts with a new instance. So a call says what is new rather
+// than what was lost: freshInterpreter whenever its interpreter just started,
+// freshSandbox whenever it is the first answered call in a newly opened sandbox,
+// the conversation's first call included.
 
 import { PlimsollClient, type Info, type Isolation, type Language, type ProjectResult, type Session } from "./client.ts";
 import { PlimsollError } from "./errors.ts";
@@ -77,14 +86,20 @@ export type ExecuteCodeOutput = {
   stderr: string;
   /** Output was cut, by the daemon's cap or by maxOutputChars. */
   truncated: boolean;
-  /** This call ran in an interpreter that keeps variables between the conversation's calls. */
+  /** This call ran in an interpreter that keeps variables for the conversation's later calls. */
   stateKept: boolean;
-  /** Variables from earlier calls in this language are gone (a deadline, a crash, a new sandbox). */
-  interpreterRestarted?: true;
+  /**
+   * This call's interpreter had just started: nothing earlier calls defined in this
+   * language exists (the first call, a deadline, a crash, a new sandbox).
+   */
+  freshInterpreter?: true;
   /** Whether the files of this call are there for the next call. */
   filesPersist: boolean;
-  /** Set when the previous sandbox had ended and this call ran in a new one, without its files. */
-  sandboxReplaced?: true;
+  /**
+   * This call ran in a newly opened sandbox: no file an earlier call wrote or was
+   * given is there (the first call, a disposed or idle sandbox, one that ended).
+   */
+  freshSandbox?: true;
   /** The tier the code ran behind: configuration and provider evidence, not attestation. */
   isolation: string;
 };
@@ -93,9 +108,27 @@ type Entry = {
   session: Promise<Session>;
   opened?: Session;
   timer?: ReturnType<typeof setTimeout>;
-  /** The languages whose interpreter has run a cell in this sandbox. */
-  ran: Set<Language>;
+  /** A call in this sandbox has been answered: the next one is not its first. */
+  answered: boolean;
+  /** Calls in flight, which the idle close waits for. */
+  busy: number;
 };
+
+/** @internal A fresh call on a daemon without projects: the code as a snippet, its last value printed. Node and QuickJS alike. */
+export function snippetRunner(code: string): string {
+  return [
+    "(() => {",
+    "  const show = (v) => {",
+    '    if (typeof require === "function") { try { return require("node:util").inspect(v, { depth: 4 }); } catch (_) {} }',
+    "    try { const s = JSON.stringify(v); if (s !== undefined) return s; } catch (_) {}",
+    "    return String(v);",
+    "  };",
+    `  const v = (0, eval)(${JSON.stringify(code)});`,
+    "  Promise.resolve(v).then((v) => { if (v !== undefined) console.log(show(v)); });",
+    "})();",
+    "",
+  ].join("\n");
+}
 
 /** @internal A fresh run prints its last expression as a cell does, through these runners. */
 export const RUNNERS: Record<Language, { path: string; file: string; step: string; source: string }> = {
@@ -197,37 +230,41 @@ export class CodeSandboxes {
     // Without a key there is no conversation to scope a sandbox to, and sharing
     // one across conversations would hand one user's files to another.
     if (key === undefined || !(await this.persistent())) {
-      return this.#fresh(language, input.code, files, opts);
+      return this.#fresh(info, language, input.code, files, opts);
     }
-    let replaced = false;
-    let lost = false; // a replaced sandbox had run this language: its state is gone
+    let retried = false;
     for (;;) {
-      const entry = await this.#entry(key);
-      const session = await entry.session;
+      // The call holds its entry from here, the open included, so the idle close
+      // cannot let the sandbox go while the call waits for it to open.
+      const entry = this.#entryFor(key);
+      entry.busy++;
+      let session: Session | undefined;
       try {
+        session = await entry.session;
+        const first = !entry.answered;
         const r = await session.runCell({ language, code: input.code, files }, opts);
-        this.#touch(key);
-        const restarted = r.interpreterStarted && (entry.ran.has(language) || lost);
-        entry.ran.add(language);
+        entry.answered = true;
         if (session.ended) this.#drop(key, session); // the next call opens a new one
         return {
           ...this.#cut(language, r.exitCode, r.timedOut, r.stdout, r.stderr, r.stdoutTruncated || r.stderrTruncated),
           stateKept: true,
-          ...(restarted ? { interpreterRestarted: true as const } : {}),
+          ...(r.interpreterStarted ? { freshInterpreter: true as const } : {}),
           filesPersist: true,
-          ...(replaced ? { sandboxReplaced: true as const } : {}),
+          ...(first ? { freshSandbox: true as const } : {}),
           isolation: r.isolation,
         };
       } catch (e) {
         // A call refused because its session had ended ran nothing, so it is
         // safe to run once more in a new sandbox; anything else is not.
-        if (!replaced && e instanceof PlimsollError && e.sessionEnded && e.notDispatched) {
-          replaced = true;
-          lost = entry.ran.has(language);
+        if (!retried && session && e instanceof PlimsollError && e.sessionEnded && e.notDispatched) {
+          retried = true;
           this.#drop(key, session);
           continue;
         }
         throw e;
+      } finally {
+        entry.busy--;
+        this.#touch(key);
       }
     }
   }
@@ -251,11 +288,32 @@ export class CodeSandboxes {
   // A fresh sandbox for one call: the files, the code and a runner that prints the
   // last expression, as one project.
   async #fresh(
+    info: Info,
     language: Language,
     code: string,
     files: { path: string; content: string }[],
     opts: { timeoutMs?: number; minimumIsolation?: Exclude<Isolation, "none">; signal?: AbortSignal },
   ): Promise<ExecuteCodeOutput> {
+    if (!info.supportsProject) {
+      // A snippet is all this daemon runs (wasm): JavaScript, without files.
+      if (language !== "javascript") {
+        throw new PlimsollError("unimplemented", `plimsoll: the daemon (${info.sandbox}) runs JavaScript snippets only, not ${language}`, {
+          notDispatched: "unsupported",
+        });
+      }
+      if (files.length > 0) {
+        throw new PlimsollError("unimplemented", `plimsoll: the daemon (${info.sandbox}) runs JavaScript snippets only, which take no files`, {
+          notDispatched: "unsupported",
+        });
+      }
+      const r = await this.client.runJavaScript(snippetRunner(code), opts);
+      return {
+        ...this.#cut(language, r.exitCode, r.timedOut, r.stdout, r.stderr, r.stdoutTruncated || r.stderrTruncated),
+        stateKept: false,
+        filesPersist: false,
+        isolation: r.isolation,
+      };
+    }
     const runner = RUNNERS[language];
     const r: ProjectResult = await this.client.runProject(
       {
@@ -282,11 +340,13 @@ export class CodeSandboxes {
     };
   }
 
-  #entry(key: string): Promise<Entry> {
-    return this.#session(key).then(() => this.#entries.get(key)!);
+  #session(key: string): Promise<Session> {
+    return this.#entryFor(key).session;
   }
 
-  #session(key: string): Promise<Session> {
+  // The key's entry, opening a session for it when it has none. The idle close is
+  // armed once the session is open: an open slower than the idle interval is not idle.
+  #entryFor(key: string): Entry {
     let entry = this.#entries.get(key);
     if (!entry) {
       const session = this.persistent().then((ok) => {
@@ -297,19 +357,21 @@ export class CodeSandboxes {
           idleTimeoutMs: this.#opts.sessionIdleTimeoutMs,
         });
       });
-      const e: Entry = { session, ran: new Set() };
+      const e: Entry = { session, answered: false, busy: 0 };
       entry = e;
       this.#entries.set(key, e);
       // A failed open leaves no entry behind, so the next call tries again.
       session.then(
-        (s) => (e.opened = s),
+        (s) => {
+          e.opened = s;
+          if (this.#entries.get(key) === e) this.#touch(key);
+        },
         () => {
           if (this.#entries.get(key) === e) this.#entries.delete(key);
         },
       );
-      this.#touch(key);
     }
-    return entry.session;
+    return entry;
   }
 
   // Forgets an ended session at once, so the next call under the key opens a
@@ -333,7 +395,10 @@ export class CodeSandboxes {
     const ms = this.#opts.idleCloseMs ?? 10 * 60_000;
     if (!entry || ms <= 0) return;
     if (entry.timer) clearTimeout(entry.timer);
-    entry.timer = setTimeout(() => void this.dispose(key), ms);
+    // A call in flight keeps its sandbox; the call's end arms the timer again.
+    entry.timer = setTimeout(() => {
+      if (this.#entries.get(key) === entry && entry.busy === 0) void this.dispose(key);
+    }, ms);
     entry.timer.unref?.();
   }
 

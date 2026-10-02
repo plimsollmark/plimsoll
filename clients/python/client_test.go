@@ -346,7 +346,7 @@ func writeFixture(t *testing.T, path string) {
 		}}}},
 		{"project", &plimsollv1.RunResponse{Result: &plimsollv1.RunResponse_Project{Project: &plimsollv1.ProjectResult{
 			Outcome: plimsollv1.ProjectOutcome_PROJECT_OUTCOME_SETUP_FAILED, OutcomeDetail: "détail", ArtifactsTruncated: true,
-			Steps: []*plimsollv1.StepResult{{Command: "a", Stdout: []byte{0}, ExitCode: math.MinInt32, DurationMs: 1 << 40, StderrTruncated: true}, {}},
+			Steps:     []*plimsollv1.StepResult{{Command: "a", Stdout: []byte{0}, ExitCode: math.MinInt32, DurationMs: 1 << 40, StderrTruncated: true}, {}},
 			Artifacts: []*plimsollv1.Artifact{{Path: "out.txt", Content: []byte{0xfe}}, {Path: "empty"}},
 		}}}},
 		{"project with an outcome this client does not name", &plimsollv1.RunResponse{Result: &plimsollv1.RunResponse_Project{Project: &plimsollv1.ProjectResult{Outcome: 9}}}},
@@ -386,5 +386,21 @@ func writeFixture(t *testing.T, path string) {
 	}
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The package ships its own copy of the license, because a published package carries
+// nothing from outside its directory; it must stay the repository's license.
+func TestLicenseMatchesRepository(t *testing.T) {
+	own, err := os.ReadFile("LICENSE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.ReadFile(filepath.Join("..", "..", "LICENSE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(own) != string(root) {
+		t.Fatal("LICENSE differs from the repository's LICENSE; copy it again")
 	}
 }

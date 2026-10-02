@@ -15,8 +15,9 @@ export function executeCodeDescription(languages: ToolLanguages = DEFAULT_LANGUA
     `Run ${names} in an isolated sandbox with no network access and return its exit code, stdout and stderr. ` +
     "The value of the code's last expression is printed, as in a notebook, so the last line can simply name what you want to see. " +
     "Within one conversation the sandbox usually keeps an interpreter per language between calls, so variables, functions, imports and loaded data " +
-    "from earlier calls are still defined: the result's stateKept says whether this call ran in such an interpreter, and interpreterRestarted that " +
-    "earlier state is gone and has to be rebuilt. " +
+    "from earlier calls are still defined: the result's stateKept says whether this call ran in such an interpreter. freshInterpreter means " +
+    "this call's interpreter had just started, so nothing earlier calls defined exists and has to be rebuilt; freshSandbox means no file from " +
+    "earlier calls is there either. " +
     "To give the code data, such as another tool's output, pass it in files rather than pasting it into the code; the code reads each file by its relative path. " +
     "Files written to the working directory are still there on the next call when filesPersist is true."
   );
@@ -54,8 +55,8 @@ export const executeCodeOutput = z.object({
   stderr: z.string(),
   truncated: z.boolean(),
   stateKept: z.boolean(),
-  interpreterRestarted: z.literal(true).optional(),
+  freshInterpreter: z.literal(true).optional(),
   filesPersist: z.boolean(),
-  sandboxReplaced: z.literal(true).optional(),
+  freshSandbox: z.literal(true).optional(),
   isolation: z.string(),
 });

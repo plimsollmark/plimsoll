@@ -221,7 +221,7 @@ How plimsoll manages those connections:
 
 The provider keeps sessions ([docs/sessions.md](sessions.md)): one sandbox for many
 calls, with files persisting and, of processes, only the interpreters a session keeps for
-its cells ([sessions.md](sessions.md#interpreters-state-between-calls)). A session's sandbox is a run's sandbox
+its cells, as of the sweep after each call ([sessions.md](sessions.md#interpreters-state-between-calls)). A session's sandbox is a run's sandbox
 (the same policy, read back the same way) with three differences, each measured on a
 v0.1.2 gateway with the docker driver:
 
@@ -239,9 +239,10 @@ v0.1.2 gateway with the docker driver:
   OpenShell's supervisor (the process that manages the sandbox from inside) and the
   `sleep`, recorded by process ID and start time when the sandbox became ready. The same
   exec then measures the session's files under `/tmp` against the disk budget
-  (`SANDBOX_SESSION_DISK_MB`). It runs after the call has answered; the next call, a
-  suspend or a close waits for it, so a session the sweep ends is reported to the next
-  call.
+  (`SANDBOX_SESSION_DISK_MB`). It runs after the call has answered; the next call or a
+  suspend waits for it, so a session the sweep ends is reported to the next call. A close
+  does not wait: it ends the session and deletes the sandbox, which stops the sweep with
+  everything else in it.
 
   The budget is measured after the call, not enforced during it: `SANDBOX_DISK_MB` sizes
   a run's `/tmp` but never a session's, because docker discards a tmpfs when its

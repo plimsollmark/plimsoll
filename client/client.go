@@ -82,7 +82,8 @@ type config struct {
 // response.
 const maxResponseBytes = 32 << 20
 
-// WithHTTPClient overrides the HTTP client (default: 6-minute timeout client).
+// WithHTTPClient overrides the HTTP client (default: a 6-minute timeout client that
+// never follows a redirect; a replacement should not follow one either).
 func WithHTTPClient(c connect.HTTPClient) Option { return func(cfg *config) { cfg.httpClient = c } }
 
 // WithToken sends "Authorization: Bearer <token>" on every call. Omit it for a
@@ -160,11 +161,17 @@ var (
 	ErrInsecureHTTP = errors.New("client: cleartext HTTP to a non-loopback plimsoll requires WithInsecureHTTP")
 )
 
+// refuseRedirect keeps the default client from following a redirect. A Connect call
+// has none, and following a 307 or 308 sends the request again, the code in it
+// included, to wherever the redirect points (Go drops the token only when the host
+// changes). The redirect comes back as the answer, which Connect reports as an error.
+func refuseRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
 // New returns a checked Remote dialing an absolute HTTP(S) base URL. Loopback
 // HTTP is allowed for local development; cleartext transport to any other host
 // requires the explicit WithInsecureHTTP option.
 func New(baseURL string, opts ...Option) (*Remote, error) {
-	cfg := &config{httpClient: &http.Client{Timeout: 6 * time.Minute}}
+	cfg := &config{httpClient: &http.Client{Timeout: 6 * time.Minute, CheckRedirect: refuseRedirect}}
 	for _, o := range opts {
 		o(cfg)
 	}

@@ -436,3 +436,17 @@ func TestCallsInOneSessionAreSerialized(t *testing.T) {
 		}
 	}
 }
+
+// A call that gives up waiting for the turn, held here as the previous call's sweep
+// holds it, ran nothing: it is marked so, as the daemon's own busy refusal is.
+func TestSessionGivingUpOnTheTurnIsNotDispatched(t *testing.T) {
+	_, _, s, _ := openFake(t, sandbox.SessionOptions{})
+	s.turn <- struct{}{}
+	defer func() { <-s.turn }()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := s.RunJavaScript(ctx, sandbox.Request{Code: "1", Timeout: time.Second})
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalCapacity || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a call behind a held turn: %v (reason %v, marked %v); want the deadline, not dispatched, capacity", err, reason, ok)
+	}
+}

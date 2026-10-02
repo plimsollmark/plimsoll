@@ -2,7 +2,6 @@ package openshell
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -52,6 +51,9 @@ const (
 	sweepBudget = 20 * time.Second
 	// stopBudget bounds a stop and its wait for the stopped phase.
 	stopBudget = 60 * time.Second
+	// startBudget bounds a start, its wait for the ready phase and the process list
+	// after it: the same as a stop, since both wait on the gateway's driver.
+	startBudget = 60 * time.Second
 )
 
 // SupportsSessions is true: sessions need nothing beyond what runs need.
@@ -188,7 +190,7 @@ func (s *session) acquire(ctx context.Context) error {
 	case <-s.done:
 		return sandbox.RefuseEndedSession(s.Err())
 	case <-ctx.Done():
-		return ctx.Err()
+		return sandbox.RefuseGaveUp(ctx)
 	}
 	if err := s.Err(); err != nil {
 		<-s.turn
@@ -325,10 +327,13 @@ func (s *session) prepare(ctx context.Context) error {
 	stopped := s.stopped
 	s.mu.Unlock()
 	if stopped {
-		if err := s.start(ctx); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
+		// The caller cannot cut the start short, only its budget can, as with the stop:
+		// a start cancelled after the gateway took it would leave the sandbox running
+		// while this session thinks it stopped.
+		startCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), startBudget)
+		err := s.start(startCtx)
+		cancel()
+		if err != nil {
 			s.finish(sandbox.SessionBoundaryFailed, "the sandbox could not be started again: "+err.Error())
 			return sandbox.RefuseEndedSession(s.Err())
 		}
@@ -336,7 +341,7 @@ func (s *session) prepare(ctx context.Context) error {
 	resp, err := s.p.client.GetSandbox(ctx, connect.NewRequest(&openshellv1.GetSandboxRequest{WorkspaceScope: ws(), Name: s.b.name}))
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return sandbox.RefuseGaveUp(ctx)
 		}
 		if connect.CodeOf(err) == connect.CodeNotFound {
 			s.finish(sandbox.SessionSandboxChanged, "the sandbox no longer exists")
@@ -360,7 +365,7 @@ func (s *session) prepare(ctx context.Context) error {
 	}
 	if err := s.p.verifyConfig(ctx, s.b.name); err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return sandbox.RefuseGaveUp(ctx)
 		}
 		s.finish(sandbox.SessionSandboxChanged, err.Error())
 		return sandbox.RefuseEndedSession(s.Err())
@@ -624,8 +629,8 @@ func (s *session) RunCell(ctx context.Context, req sandbox.CellRequest) (sandbox
 		Language: string(req.Language), Code: req.Code, Files: files,
 		Work: workDir, OutCap: maxOutputBytes, ErrCap: maxOutputBytes,
 	})
-	if errors.Is(err, sessionkit.ErrLaunch) {
-		return fail, sandbox.NotDispatched(sandbox.RefusalEnvironment, fmt.Errorf("%w: %v", sandbox.ErrUnsupported, err))
+	if refusal, ok := sandbox.RefuseCell(err, s.Err()); ok {
+		return fail, refusal
 	}
 	if err != nil {
 		return fail, s.callError(runCtx, err)

@@ -11,7 +11,7 @@ plimsoll as the sandbox instead of a hosted one:
 | `onChatSuspend` | it is closed right before the run sleeps waiting for the next message |
 | `onComplete` | it is closed if the run ends instead |
 
-The tool comes from [`@plimsoll/client/trigger`](../../clients/typescript/), which sits on
+The tool comes from [`@plimsollmark/client/trigger`](../../clients/typescript/), which sits on
 the same client and per-conversation layer as the Mastra add-on.
 
 ## What the tool gives the model
@@ -26,7 +26,8 @@ and the `openshell` provider keep. In a session every call is a **cell**: it run
 Python or Node.js interpreter that stays alive between calls, so a table the model loaded
 in one call is still in memory in the next, as it would be in a notebook, and files stay
 in the working directory. The tool's output says so (`stateKept`, `filesPersist`), and says
-when earlier state was lost (`interpreterRestarted`).
+when a call starts from nothing (`freshInterpreter`, `freshSandbox`): the recipe disposes
+the sandbox when the chat suspends, so the first call of a resumed turn reports both.
 
 On a provider without sessions (`e2b`, `dockercloud`) the agent still works, and each call
 starts a fresh sandbox; the tool's `stateKept: false` and `filesPersist: false` tell the

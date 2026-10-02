@@ -11,25 +11,26 @@ FROM plimsoll/sandbox:latest
 
 USER root
 
-# Alpine packages, pinned to the upstream version. `~=` fixes the upstream version
-# (3.14.7, 2.4.6, 1.17.1) and leaves only the Alpine packaging revision (-rN) free:
-# Alpine drops a package from its index when it rebuilds it, so an exact `=x-rN`
-# pin turns every routine rebuild into a failed build that changes nothing.
+# Alpine packages, pinned to the upstream minor version. `~3.14` admits any 3.14.x
+# and any Alpine packaging revision (-rN): Alpine drops a package from its index when
+# it updates or rebuilds it, so a pin to a patch version turned Alpine's python3 3.14.8
+# into a failed build that changed nothing we chose (2026-10-01, both hosted Docker jobs).
+# What ran stays exact: the image's identity is stated on every run.
 #
 # The base tag floats: `make docker-images` pulls node:22-alpine, and that tag
 # tracks Alpine's current release (3.23 on 2026-09-18 in the morning, 3.24 by the
 # first build of this file that afternoon, which changed all three versions). So
 # an "unable to select packages ... breaks: world[python3~3.x]" failure here means
-# the base moved to a newer Alpine and the pins need a deliberate bump to what
+# the base moved to a newer Alpine release and the pins need a deliberate bump to what
 # `apk search -x python3 py3-numpy py3-scipy` reports inside plimsoll/sandbox.
 #
 # NumPy is here as the proof that a native extension loads under the seccomp
 # profile and noexec writable mounts; SciPy rides along because the same proof
 # covers its LAPACK bindings. No pip: a run never installs anything.
 RUN apk add --no-cache \
-      "python3~=3.14.7" \
-      "py3-numpy~=2.4.6" \
-      "py3-scipy~=1.17.1"
+      "python3~3.14" \
+      "py3-numpy~2.4" \
+      "py3-scipy~1.17"
 
 # One BLAS thread. Alpine's OpenBLAS is the pthreads build (MAX_THREADS=256) and
 # sizes its pool from the host's core count, not the run's CPU quota, so without

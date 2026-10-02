@@ -51,6 +51,7 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		{"LifetimeEndsTheSession", lifetimeEnds},
 		{"CellChildrenDoNotOutliveTheCall", cellChildrenDie},
 		{"CellFilesLandInTheWorkDirectory", cellFiles},
+		{"CellFilesThatCannotBeWrittenAreRefused", cellFilesRefused},
 		{"KilledInterpreterIsStartedAgain", cellInterpreterKilled},
 	} {
 		t.Run(c.name, func(t *testing.T) { c.run(t, p, cfg) })
@@ -178,6 +179,26 @@ func cellFiles(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	}
 	if got := js(t, s, `process.stdout.write(require("fs").readFileSync("in/data.csv","utf8"))`, 10*time.Second); !strings.Contains(got.Stdout, tok) {
 		t.Fatalf("a later snippet read %q from the cell's file", got.Stdout)
+	}
+}
+
+// A cell whose files cannot be written (here a directory is in the way) is refused,
+// marked not dispatched: its code did not run, its interpreter keeps its state, and a
+// file written before the failing one stays.
+func cellFilesRefused(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	cell(t, s, sandbox.LanguageJavaScript, "globalThis.kept = 7", 30*time.Second, sandbox.File{Path: "d/x", Content: "1"})
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	_, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript, Code: "globalThis.ran = 1", Timeout: 30 * time.Second,
+		Files: []sandbox.File{{Path: "first.txt", Content: "written"}, {Path: "d", Content: "2"}}})
+	reason, ok := sandbox.NotDispatchedReason(err)
+	if !ok || reason != sandbox.RefusalRequest || !errors.Is(err, sandbox.ErrInvalidRequest) || !strings.Contains(err.Error(), "file 2 of 2: EISDIR") {
+		t.Fatalf("a cell whose second file is a directory: %v (reason %v, marked %v); want refused, request, naming file 2 and EISDIR", err, reason, ok)
+	}
+	got := cell(t, s, sandbox.LanguageJavaScript, `kept + ":" + typeof ran + ":" + require("fs").readFileSync("first.txt", "utf8")`, 30*time.Second)
+	if got.InterpreterStarted || !strings.Contains(got.Stdout, "7:undefined:written") {
+		t.Fatalf("after the refused cell: %+v; want the same interpreter, its state, no trace of the refused code, the first file", got)
 	}
 }
 

@@ -2,7 +2,7 @@
 
 A Python client for `plimsolld`, the plimsoll sandbox daemon. It runs JavaScript
 snippets, multi-file projects and compiled simulators (module runs) on a daemon, opens
-sessions, and makes every check the Go client in [client/](../../client/) makes on
+sessions, and makes every check the Go client in [client/](https://github.com/plimsollmark/plimsoll/tree/main/client/) makes on
 what comes back. It uses the Python standard library only and needs Python 3.10 or
 later.
 
@@ -11,7 +11,7 @@ JSON message
 ([Connect protocol reference (EXTERNAL · official docs ↗)](https://connectrpc.com/docs/protocol/)),
 with the message in protobuf's JSON form
 ([ProtoJSON format (EXTERNAL · official docs ↗)](https://protobuf.dev/programming-guides/json/)).
-The messages are defined in [proto/plimsoll/v1/sandbox.proto](../../proto/plimsoll/v1/sandbox.proto).
+The messages are defined in [proto/plimsoll/v1/sandbox.proto](https://github.com/plimsollmark/plimsoll/blob/main/proto/plimsoll/v1/sandbox.proto).
 
 ## Install
 
@@ -76,10 +76,10 @@ Terms used below:
 - *Dispatch* is the moment the daemon hands the code over to start running.
 - A *run record* is the daemon's statement of one run: SHA-256 digests of the request as
   sent and the result as returned, the evidence the run executed under, and when
-  ([docs/run-records.md](../../docs/run-records.md)).
+  ([docs/run-records.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/run-records.md)).
 - A *session* is one sandbox kept open for many calls: files persist between calls, and
   no process does except the interpreter the session keeps for its cells
-  ([docs/sessions.md](../../docs/sessions.md)).
+  ([docs/sessions.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md)).
 
 Results are frozen dataclasses. Guest output (`stdout`, `stderr`, artifact contents) is
 `bytes`, because a guest can print any byte sequence and the record covers the exact
