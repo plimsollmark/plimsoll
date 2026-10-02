@@ -6,7 +6,9 @@
     "one file, so the three implementations cannot drift apart. The cell vectors were computed",
     "from docs/run-records.md alone by an independent Python implementation (2026-10-01), the",
     "others were cross-checked the same way on 2026-09-28. Changing a digest here changes the",
-    "encoding for every verifier: change docs/run-records.md first."
+    "encoding for every verifier: change docs/run-records.md first.",
+    "The \"unanswered record\" vector (version 3: a session call that may have run but ended in",
+    "an error) was computed the same way, from docs/run-records.md alone, on 2026-10-01."
   ],
   "requests": [
     {
@@ -290,6 +292,25 @@
         "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001"
       },
       "sha256": "a5107eb6b1f726e1b2d7183419502309bfa34d932a65f1494150228ae8349156"
+    },
+    {
+      "name": "unanswered record",
+      "record": {
+        "version": 3,
+        "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
+        "resultSha256": "",
+        "provider": "openshell",
+        "isolation": "container",
+        "environment": "openshell-image:sha256:ab",
+        "policy": "openshell-policy:sha256:cd",
+        "startedUnixMs": "1790000000000",
+        "endedUnixMs": "1790000004210",
+        "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
+        "sequence": "2",
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "unanswered": "unavailable"
+      },
+      "sha256": "2ca45c37f90ea7fdf87e6d33b1526714963cb7555bfb4fbb918c8ecf0834d49e"
     }
   ],
   "sessionFingerprints": [

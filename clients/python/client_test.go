@@ -7,9 +7,11 @@
 package python
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -19,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,6 +87,8 @@ func TestPython(t *testing.T) {
 				opened[len(opened)-1].End(reason)
 			})
 		}),
+		"PLIMSOLL_BREAKING_URL="+serve(t, breakingSvc(), nil, nil),
+		"PLIMSOLL_LOSSY_URL="+lossyProxy(t, serve(t, plainSessionSvc(), nil, nil)),
 		"PLIMSOLL_SCRIPTED_SOFTWARE="+scriptedSoftware,
 		"PLIMSOLL_GO_PROTOCOL="+strconv.FormatUint(uint64(protocol.Number), 10),
 		"PLIMSOLL_GO_RECORD_VERSION="+strconv.Itoa(record.Version),
@@ -211,6 +216,8 @@ func (scripted) RunModule(_ context.Context, req sandbox.ModuleRequest) (sandbox
 			outputs[1] = canonicalNaN
 		case "nan-payload":
 			outputs[1] = math.NaN() // Go's NaN carries a payload bit JSON cannot state
+		case "nan-negative":
+			outputs[1] = math.Float64frombits(0xfff8000000000000) // x86's default NaN, from 0/0
 		}
 		status := int32(2)
 		if i == 1 {
@@ -403,4 +410,77 @@ func TestLicenseMatchesRepository(t *testing.T) {
 	if string(own) != string(root) {
 		t.Fatal("LICENSE differs from the repository's LICENSE; copy it again")
 	}
+}
+
+func plainSessionSvc() *rpc.SandboxService {
+	svc := quiet(rpc.NewSandboxService(&sandboxtest.Sessions{}))
+	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	return svc
+}
+
+func breakingSvc() *rpc.SandboxService {
+	svc := quiet(rpc.NewSandboxService(&breakingSessions{Sessions: &sandboxtest.Sessions{}}))
+	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	return svc
+}
+
+// breakingSessions opens fake sessions whose second snippet call runs and then
+// returns an unmarked error, as an exec stream that broke after the code ran does:
+// the daemon sends that call's record with the error.
+type breakingSessions struct{ *sandboxtest.Sessions }
+
+func (p *breakingSessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	s, err := p.Sessions.OpenSession(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &breakingSession{Session: s}, nil
+}
+
+type breakingSession struct {
+	sandbox.Session
+	n int
+}
+
+func (s *breakingSession) RunJavaScript(ctx context.Context, req sandbox.Request) (sandbox.Result, error) {
+	res, err := s.Session.RunJavaScript(ctx, req)
+	if s.n++; s.n == 2 {
+		return res, errors.New("the exec stream broke after the code ran")
+	}
+	return res, err
+}
+
+// lossyProxy forwards to target and drops the answer to the second SessionRun after
+// the daemon handled it: the call ran, and its answer never arrives.
+func lossyProxy(t *testing.T, target string) string {
+	var runs atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		out, err := http.NewRequestWithContext(r.Context(), r.Method, target+r.URL.Path, bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		out.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(out)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		answer, _ := io.ReadAll(resp.Body)
+		if strings.HasSuffix(r.URL.Path, "/SessionRun") && runs.Add(1) == 2 {
+			if conn, _, herr := w.(http.Hijacker).Hijack(); herr == nil {
+				_ = conn.Close()
+			}
+			return
+		}
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(answer)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }

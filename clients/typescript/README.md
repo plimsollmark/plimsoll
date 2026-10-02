@@ -107,8 +107,14 @@ across conversations would show one user another's files. A language the daemon'
 cannot run is refused before anything is sent.
 
 Closing a sandbox checks the daemon's count of calls against the chain the client saw; a
-mismatch means someone else held the session ID, and it goes to `onCloseError` (by default
-a warning) rather than being dropped at teardown.
+mismatch means the daemon counted a call the client has no answer for (one that ended in an
+abort, a timeout, a dropped connection or a proxy's error), or, if none did, that someone
+else held the session ID. It goes to `onCloseError` (by default a warning) rather than being
+dropped at teardown. A call that may have run but ended in an error comes with its record
+(`PlimsollError.unanswered`, a version 3 record); the session checks it, keeps it in its
+chain and goes on. A call whose answer never arrived carries none, so the client sends
+nothing more on that session, and the conversation's next call opens a new sandbox and
+reports `freshSandbox: true`.
 
 The session ID is a capability. It lives in the client's memory and nowhere else: not in
 a log line, not in a record, not in Trigger.dev's `chat.local` (which is serialized into

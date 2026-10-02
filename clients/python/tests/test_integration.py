@@ -187,13 +187,13 @@ class Scripted(unittest.TestCase):
         self.assertIsNotNone(r.record)
 
     def test_nan_in_a_module_result(self) -> None:
-        # JSON writes every NaN as "NaN", so the quiet NaN with no payload is the only
-        # one whose bits survive the trip; a NaN with payload bits cannot be checked
-        # over this encoding and is reported as a mismatch, never accepted.
-        r = self.c.run_module("nan", [[1]], end_time=1, step=0.5)
-        self.assertTrue(math.isnan(r.runs[0].outputs[1]))
-        with self.assertRaises(RecordMismatchError):
-            self.c.run_module("nan-payload", [[1]], end_time=1, step=0.5)
+        # JSON writes every NaN as "NaN". The daemon sends every NaN of a module output
+        # as the quiet NaN with no sign or payload, the one float("nan") encodes to, so
+        # the record checks whichever NaN the simulator produced.
+        for model in ("nan", "nan-payload", "nan-negative"):
+            r = self.c.run_module(model, [[1]], end_time=1, step=0.5)
+            self.assertTrue(math.isnan(r.runs[0].outputs[1]), model)
+            self.assertIsNotNone(r.record, model)
 
 
 class Liar(unittest.TestCase):
@@ -387,3 +387,33 @@ class Sessions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnansweredCalls(unittest.TestCase):
+    def test_an_unanswered_call_is_in_the_chain(self) -> None:
+        # The daemon sends the record of a call that may have run but ended in an
+        # error; the session keeps it in its chain and goes on, and the close agrees.
+        c = Client(setting("PLIMSOLL_BREAKING_URL"))
+        s = c.open_session()
+        s.run_javascript("1")
+        with self.assertRaises(PlimsollError) as cm:
+            s.run_javascript("2")
+        self.assertIsNone(cm.exception.not_dispatched)
+        self.assertIsNotNone(cm.exception.unanswered)
+        self.assertEqual(cm.exception.unanswered["version"], 3)
+        r = s.run_javascript("3")
+        self.assertEqual(r.record.sequence, 3)
+        self.assertEqual(s.close().calls, 3)
+
+    def test_a_lost_answer_stops_the_session(self) -> None:
+        # A call whose answer never arrived may have run: the session sends nothing
+        # more, and says the later call was not sent.
+        c = Client(setting("PLIMSOLL_LOSSY_URL"))
+        s = c.open_session()
+        s.run_javascript("1")
+        with self.assertRaises(PlimsollError) as cm:
+            s.run_javascript("2")
+        self.assertIsNone(cm.exception.not_dispatched)
+        with self.assertRaises(PlimsollError) as cm:
+            s.run_javascript("3")
+        self.assertEqual(cm.exception.not_dispatched, "request")

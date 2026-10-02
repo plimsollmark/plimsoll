@@ -120,7 +120,11 @@ pass in (`timeout`, `request_timeout`, a session's `lifetime`) are seconds.
 - **A session's chain.** Each call's record must name the session's fingerprint (the
   SHA-256 of the session ID), the next call number and the previous record's digest. At
   close, the daemon's count of executed calls and its last record must match what the
-  client saw. A gap means someone else holding the session ID made a call.
+  client saw. A gap means someone else holding the session ID made a call. A call that may
+  have run but ended in an error comes with its record (`PlimsollError.unanswered`, a
+  version 3 record); the session checks it, keeps it in its chain and goes on. A call whose
+  answer never arrived carries none, so the session refuses every later call before sending
+  it, marked not dispatched: open a new one.
 - **The response size and the time.** An answer over 32 MiB is refused, and
   `request_timeout` (default 360 seconds, above the daemon's five-minute ceiling on a run)
   bounds the whole HTTP exchange, not each socket read. Redirects are never followed and
@@ -177,10 +181,10 @@ message of the expected type).
 ## Limits
 
 - **NaN in module outputs.** JSON writes every NaN (the floating-point "not a number"
-  value) as the string `"NaN"`, which loses the bits a NaN can carry, while the record's
-  digest covers those bits. A module output holding the quiet NaN with no payload bits
-  checks; any other NaN fails the record check as `RecordMismatchError`. The Go client
-  sends binary protobuf and does not have this limit.
+  value) as the string `"NaN"`, which loses the bits a NaN can carry. The daemon sends
+  every NaN of a module output as the quiet NaN with no sign or payload, the one
+  `float("nan")` encodes to, so the record checks whichever NaN the simulator produced; a
+  NaN's sign and payload do not reach the client.
 - **Text files only.** A project file's content is a protobuf `string`, so it must be
   text (`str`); captured artifacts come back as `bytes`.
 - **No signing.** The Go module's `attest` package signs checked records outside the

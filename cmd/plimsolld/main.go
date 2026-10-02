@@ -157,6 +157,11 @@ const usageLimits = `
                              holds one concurrency slot; a suspended one holds
                              none, except on docker, where a suspend is a pause
                              that keeps the memory.
+  SANDBOX_MAX_SESSIONS_PER_CALLER
+                             open sessions one caller may hold, suspended ones
+                             included (default 0: no cap beyond
+                             SANDBOX_MAX_SESSIONS; required in hardened mode
+                             with sessions on)
   SANDBOX_SESSION_LIFETIME   a session's absolute lifetime (default 30m, at most
                              12h); a request may ask for less
   SANDBOX_SESSION_IDLE       suspend a session idle this long (default 5m; 0 =
@@ -274,8 +279,12 @@ func main() {
 			slog.Error("sessions are not ready; refusing to serve", "provider", sb.Name(), "error", err)
 			os.Exit(1)
 		}
-		slog.Info("sessions enabled", "max_sessions", sc.MaxSessions, "lifetime", sc.Lifetime.String(),
-			"idle", sc.IdleTimeout.String(), "disk_mb", sc.DiskBytes>>20)
+		slog.Info("sessions enabled", "max_sessions", sc.MaxSessions, "max_sessions_per_caller", sc.MaxPerCaller,
+			"lifetime", sc.Lifetime.String(), "idle", sc.IdleTimeout.String(), "disk_mb", sc.DiskBytes>>20)
+		if sb.Name() == "docker" && sc.MaxSessions >= maxConcurrent {
+			slog.Warn("SANDBOX_MAX_SESSIONS is at least SANDBOX_MAX_CONCURRENT: a paused docker session keeps its slot, so open sessions can leave no slot for single runs",
+				"max_sessions", sc.MaxSessions, "max_concurrent", maxConcurrent)
+		}
 	}
 	svc.Sessions = sc
 
@@ -366,6 +375,7 @@ func main() {
 			MetricsAddr:     metricsAddr,
 			RatePerMin:      ratePerMin,
 			PerCaller:       perKey,
+			Sessions:        sc,
 		}); err != nil {
 			slog.Error("hardened-mode policy violation; refusing to serve", "error", err)
 			os.Exit(1)

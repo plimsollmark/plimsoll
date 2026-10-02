@@ -83,6 +83,7 @@ type Predicate struct {
 	Session          string `json:"session"`
 	Sequence         uint64 `json:"sequence"`
 	PreviousSHA256   string `json:"previous_sha256"`
+	Unanswered       string `json:"unanswered,omitempty"` // version 3 only
 	RecordSHA256     string `json:"record_sha256"`
 }
 
@@ -93,7 +94,7 @@ func predicateOf(r sandbox.RunRecord) Predicate {
 		SoftwareIdentity: r.SoftwareIdentity, SoftwareRuleID: r.SoftwareRuleID,
 		StartedUnixMs: r.Started.UnixMilli(), EndedUnixMs: r.Ended.UnixMilli(),
 		Session: r.Session, Sequence: r.Sequence, PreviousSHA256: r.PreviousSHA256,
-		RecordSHA256: r.SHA256,
+		Unanswered: r.Unanswered, RecordSHA256: r.SHA256,
 	}
 }
 
@@ -104,7 +105,7 @@ func (p Predicate) record() sandbox.RunRecord {
 		SoftwareIdentity: p.SoftwareIdentity, SoftwareRuleID: p.SoftwareRuleID,
 		Started: time.UnixMilli(p.StartedUnixMs).UTC(), Ended: time.UnixMilli(p.EndedUnixMs).UTC(),
 		Session: p.Session, Sequence: p.Sequence, PreviousSHA256: p.PreviousSHA256,
-		SHA256: p.RecordSHA256,
+		Unanswered: p.Unanswered, SHA256: p.RecordSHA256,
 	}
 }
 
@@ -158,10 +159,12 @@ var ErrUnchecked = errors.New("attest: the record's digest does not match its fi
 // signs. Verification can still accept older signed records already in bundles.
 var ErrSigningVersion = errors.New("attest: the harness only signs the current run record version")
 
-// Sign wraps rec in an in-toto statement and signs it as a DSSE envelope.
+// Sign wraps rec in an in-toto statement and signs it as a DSSE envelope: an
+// answered call's record at record.Version, or an unanswered session call's at
+// record.UnansweredVersion.
 func (s *Signer) Sign(rec sandbox.RunRecord) (Envelope, error) {
-	if rec.Version != record.Version {
-		return Envelope{}, fmt.Errorf("%w: got %d, current version is %d", ErrSigningVersion, rec.Version, record.Version)
+	if (rec.Version != record.Version || rec.Unanswered != "") && (rec.Version != record.UnansweredVersion || rec.Unanswered == "") {
+		return Envelope{}, fmt.Errorf("%w: got %d, current versions are %d and, for an unanswered call, %d", ErrSigningVersion, rec.Version, record.Version, record.UnansweredVersion)
 	}
 	if rec.SHA256 != record.Digest(rec) {
 		return Envelope{}, ErrUnchecked
@@ -222,8 +225,11 @@ func (v *Verifier) Verify(env Envelope) (sandbox.RunRecord, error) {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: types or subjects", ErrStatement)
 	}
 	rec := st.Predicate.record()
-	if rec.Version != 1 && rec.Version != record.Version {
+	switch {
+	case rec.Version != 1 && rec.Version != record.Version && rec.Version != record.UnansweredVersion:
 		return sandbox.RunRecord{}, fmt.Errorf("%w: record version %d", ErrStatement, rec.Version)
+	case (rec.Version == record.UnansweredVersion) != (rec.Unanswered != ""):
+		return sandbox.RunRecord{}, fmt.Errorf("%w: only a version %d record names an unanswered call, and it must", ErrStatement, record.UnansweredVersion)
 	}
 	if rec.Version == 1 && (rec.SoftwareIdentity != "" || rec.SoftwareRuleID != "") {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: version 1 cannot carry software admission fields", ErrStatement)

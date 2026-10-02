@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -395,20 +397,24 @@ func recordEnd(started, ended time.Time) time.Time {
 }
 
 func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunResponse, started, ended time.Time, link sandbox.RunRecord, rule sandbox.SoftwareRule) *plimsollv1.RunRecord {
-	var env sandbox.Environments
-	if d, ok := s.Sandbox.(sandbox.Describer); ok {
-		env = d.Environments()
-	}
 	return record.Stamp(sandbox.RunRecord{
 		RequestSHA256:  requestDigest,
 		SoftwareRuleID: rule.ID(),
-		Policy:         env.Policy,
+		Policy:         s.policy(),
 		Started:        started,
 		Ended:          recordEnd(started, ended),
 		Session:        link.Session,
 		Sequence:       link.Sequence,
 		PreviousSHA256: link.PreviousSHA256,
 	}, resp)
+}
+
+// policy is the verified sandbox policy's digest the provider states, or "".
+func (s *SandboxService) policy() string {
+	if d, ok := s.Sandbox.(sandbox.Describer); ok {
+		return d.Environments().Policy
+	}
+	return ""
 }
 
 // runJavaScript is the snippet kind. The envelope has been checked; the grant
@@ -422,6 +428,13 @@ func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *pli
 	grant, err := s.grantFor(ctx, p.GetGrantProfile())
 	if err != nil {
 		return nil, err
+	}
+	// Before admission, so a refused call spends no rate token and takes no slot; the
+	// provider checks again before it dispatches.
+	if t.session {
+		if err := sandbox.CheckSessionGrant(grant); err != nil {
+			return nil, mapSandboxErr(err)
+		}
 	}
 	if grant != nil {
 		ctx, err = applyGrantSubject(ctx, grant) // per-session token minting; refuses anon subject-bound grants
@@ -558,6 +571,13 @@ func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimso
 	grant, err := s.grantFor(ctx, p.GetGrantProfile())
 	if err != nil {
 		return nil, err
+	}
+	// Before admission, so a refused call spends no rate token and takes no slot; the
+	// provider checks again before it dispatches.
+	if t.session {
+		if err := sandbox.CheckSessionGrant(grant); err != nil {
+			return nil, mapSandboxErr(err)
+		}
 	}
 	if grant != nil {
 		ctx, err = applyGrantSubject(ctx, grant) // per-session token minting; refuses anon subject-bound grants
@@ -783,7 +803,7 @@ func (s *SandboxService) runModule(ctx context.Context, env envelope, p *plimsol
 		Stderr:        []byte(res.Stderr),
 	}
 	for _, run := range res.Runs {
-		result.Runs = append(result.Runs, &plimsollv1.ModuleRowResult{Status: run.Status, Outputs: run.Outputs})
+		result.Runs = append(result.Runs, &plimsollv1.ModuleRowResult{Status: run.Status, Outputs: canonicalNaNs(run.Outputs)})
 	}
 	return &plimsollv1.RunResponse{
 		Sandbox:          wireString(res.Sandbox),
@@ -922,4 +942,30 @@ func hostCallAttrs(t *sandbox.CallTrace) []slog.Attr {
 		attrs = append(attrs, slog.Int("host_calls_shed", t.Shed))
 	}
 	return attrs
+}
+
+// wireNaN is the one NaN a module result carries: the quiet NaN with no sign and no
+// payload. Protobuf JSON writes every NaN as "NaN", and Python's float("nan") and
+// JavaScript's NaN both encode back to these bits, so a JSON client recomputes the
+// record's digest over exactly what was hashed. A simulator that blew up yields x86's
+// default NaN, which has the sign bit set, and that used to fail the record check.
+var wireNaN = math.Float64frombits(0x7ff8000000000000)
+
+// canonicalNaNs returns outputs with every NaN as wireNaN, copying only when one is
+// not already.
+func canonicalNaNs(outputs []float64) []float64 {
+	var out []float64
+	for i, v := range outputs {
+		if v == v || math.Float64bits(v) == math.Float64bits(wireNaN) {
+			continue
+		}
+		if out == nil {
+			out = slices.Clone(outputs)
+		}
+		out[i] = wireNaN
+	}
+	if out == nil {
+		return outputs
+	}
+	return out
 }

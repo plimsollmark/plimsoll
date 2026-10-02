@@ -35,6 +35,7 @@ type Session struct {
 	fingerprint string
 	isolation   sandbox.IsolationClass
 	software    sandbox.SoftwareRule
+	floor       sandbox.IsolationClass // the floor given at open, sent with every call
 	expires     time.Time
 	idle        time.Duration
 
@@ -42,7 +43,41 @@ type Session struct {
 	calls uint64
 	last  string
 	end   *sandbox.SessionEndedError
+	// unanswered is the first call that ended without an answer this client could
+	// check: an error without a not-dispatched mark and without the record the daemon
+	// chains for such a call (lost with the answer, or failing its check). That call
+	// may have run and moved the daemon's chain on, so every later call would run and
+	// then fail the chain check; they are refused here instead, before anything is
+	// sent.
+	unanswered error
 }
+
+// UnansweredCallError is a session call that may have run but ended in Err. Its
+// version 3 Record, checked against the call sent and the chain, is in the session's
+// chain, so the session goes on and the call is not hidden from a verifier. The
+// call's outcome is unknown: it is never a retry signal.
+type UnansweredCallError struct {
+	Record *sandbox.RunRecord
+	Err    error
+}
+
+func (e *UnansweredCallError) Error() string {
+	return fmt.Sprintf("client: session call %d may have run but ended without a result (%s): %v", e.Record.Sequence, e.Record.Unanswered, e.Err)
+}
+
+func (e *UnansweredCallError) Unwrap() error { return e.Err }
+
+// UnansweredRecorder is a Recorder that also signs the record of a session call
+// that may have run but ended in an error. attest.Harness is one.
+type UnansweredRecorder interface {
+	Recorder
+	RecordUnanswered(req *plimsollv1.RunRequest, rec *plimsollv1.RunRecord) error
+}
+
+// ErrSessionUnanswered refuses a call on a session an earlier call of which ended
+// without an answer this client could check. It is marked not dispatched: the call
+// was never sent. Open a new session.
+var ErrSessionUnanswered = errors.New("client: an earlier call of this session ended without an answer this client could check, and may have run")
 
 // SessionRecorder is a Recorder that also signs a session's close: the daemon's
 // count of executed calls and its last record, which lets a verifier tell a
@@ -75,10 +110,12 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 		fingerprint: m.GetSession(),
 		isolation:   sandbox.ParseIsolationClass(m.GetIsolation()),
 		software:    opts.Software,
+		floor:       opts.MinimumIsolation,
 		expires:     time.UnixMilli(m.GetExpiresUnixMs()),
 		idle:        time.Duration(m.GetIdleTimeoutMs()) * time.Millisecond,
 	}
 	if s.fingerprint != record.SessionFingerprint(s.id) {
+		_, _ = s.Close(context.WithoutCancel(ctx)) // the session exists either way; nothing else holds its ID
 		return nil, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: the daemon's session fingerprint does not match its session ID", record.ErrChain))
 	}
 	if err := sandbox.CheckResultIsolation(s.isolation, opts.MinimumIsolation); err != nil {
@@ -135,7 +172,8 @@ func (s *Session) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbo
 	if err != nil {
 		return fail, err
 	}
-	req := s.envelope(ctx, in.Timeout, in.MinimumIsolation, software)
+	floor := max(s.floor, in.MinimumIsolation)
+	req := s.envelope(ctx, in.Timeout, floor, software)
 	req.Payload = &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: in.Code, GrantProfile: s.r.jsGrant}}
 	resp, rec, err := s.call(ctx, req)
 	if resp == nil {
@@ -148,7 +186,7 @@ func (s *Session) RunJavaScript(ctx context.Context, in sandbox.Request) (sandbo
 	if err != nil {
 		return res, err
 	}
-	if err := sandbox.CheckResultIsolation(res.Isolation, in.MinimumIsolation); err != nil {
+	if err := sandbox.CheckResultIsolation(res.Isolation, floor); err != nil {
 		return res, connect.NewError(connect.CodeDataLoss, err)
 	}
 	return res, nil
@@ -171,7 +209,8 @@ func (s *Session) RunProject(ctx context.Context, in sandbox.ProjectRequest) (sa
 	if err != nil {
 		return fail, err
 	}
-	req := s.envelope(ctx, in.Timeout, in.MinimumIsolation, software)
+	floor := max(s.floor, in.MinimumIsolation)
+	req := s.envelope(ctx, in.Timeout, floor, software)
 	req.Payload = &plimsollv1.SessionRunRequest_Project{Project: p}
 	resp, rec, err := s.call(ctx, req)
 	if resp == nil {
@@ -184,7 +223,7 @@ func (s *Session) RunProject(ctx context.Context, in sandbox.ProjectRequest) (sa
 	if err != nil {
 		return res, err
 	}
-	if err := sandbox.CheckResultIsolation(res.Isolation, in.MinimumIsolation); err != nil {
+	if err := sandbox.CheckResultIsolation(res.Isolation, floor); err != nil {
 		return res, connect.NewError(connect.CodeDataLoss, err)
 	}
 	return res, nil
@@ -205,7 +244,8 @@ func (s *Session) RunCell(ctx context.Context, in sandbox.CellRequest) (sandbox.
 	if err != nil {
 		return fail, err
 	}
-	req := s.envelope(ctx, in.Timeout, in.MinimumIsolation, software)
+	floor := max(s.floor, in.MinimumIsolation)
+	req := s.envelope(ctx, in.Timeout, floor, software)
 	req.Payload = &plimsollv1.SessionRunRequest_Cell{Cell: c}
 	resp, rec, err := s.call(ctx, req)
 	if resp == nil {
@@ -218,7 +258,7 @@ func (s *Session) RunCell(ctx context.Context, in sandbox.CellRequest) (sandbox.
 	if err != nil {
 		return res, err
 	}
-	if err := sandbox.CheckResultIsolation(res.Isolation, in.MinimumIsolation); err != nil {
+	if err := sandbox.CheckResultIsolation(res.Isolation, floor); err != nil {
 		return res, connect.NewError(connect.CodeDataLoss, err)
 	}
 	return res, nil
@@ -242,19 +282,42 @@ func (s *Session) envelope(ctx context.Context, timeout time.Duration, minimum s
 func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (*plimsollv1.RunResponse, *sandbox.RunRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.unanswered != nil {
+		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w (%v); open a new session", ErrSessionUnanswered, s.unanswered))
+	}
 	req := connect.NewRequest(msg)
 	s.r.auth(req)
 	resp, err := s.r.client.SessionRun(ctx, req)
 	if err != nil {
+		rec := unansweredDetail(err)
 		err = restoreSandboxError(err)
 		var se *sandbox.SessionEndedError
 		if errors.As(err, &se) {
 			s.end = se
 		}
-		return nil, nil, err
+		if _, marked := sandbox.NotDispatchedReason(err); marked {
+			return nil, nil, err
+		}
+		if rec == nil {
+			s.unanswered = err
+			return nil, nil, err
+		}
+		r, cerr := record.CheckUnanswered(msg, rec, s.fingerprint, s.calls, s.last)
+		if cerr != nil {
+			s.unanswered = cerr
+			return nil, nil, connect.NewError(connect.CodeDataLoss, cerr)
+		}
+		s.calls, s.last = r.Sequence, r.SHA256
+		if ur, ok := s.r.recorder.(UnansweredRecorder); ok {
+			if rerr := ur.RecordUnanswered(record.AsRunRequest(msg), rec); rerr != nil {
+				return nil, nil, fmt.Errorf("%w: %w", ErrNotRecorded, &UnansweredCallError{Record: r, Err: err})
+			}
+		}
+		return nil, nil, &UnansweredCallError{Record: r, Err: err}
 	}
 	run := resp.Msg.GetRun()
 	if run == nil {
+		s.unanswered = ErrResultKindMismatch
 		return nil, nil, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
 	if e := resp.Msg.GetEnded(); e != plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED {
@@ -262,6 +325,7 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 	}
 	rec, err := record.CheckSessionCall(msg, run, s.fingerprint, s.calls, s.last)
 	if err != nil {
+		s.unanswered = err
 		return run, nil, connect.NewError(connect.CodeDataLoss, err)
 	}
 	s.calls, s.last = rec.Sequence, rec.SHA256
@@ -333,4 +397,21 @@ func (s *Session) Exchange(ctx context.Context, req *plimsollv1.RunRequest) (*pl
 		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w: only snippets, projects and cells run in a session", sandbox.ErrInvalidRequest))
 	}
 	return s.call(ctx, msg)
+}
+
+// unansweredDetail reads the record the daemon chains for a session call that may
+// have run but ended in an error, or nil.
+func unansweredDetail(err error) *plimsollv1.RunRecord {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return nil
+	}
+	for _, d := range ce.Details() {
+		if v, derr := d.Value(); derr == nil {
+			if u, ok := v.(*plimsollv1.UnansweredCall); ok {
+				return u.GetRecord()
+			}
+		}
+	}
+	return nil
 }

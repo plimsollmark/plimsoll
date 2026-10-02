@@ -9,6 +9,7 @@ import { isIP } from "node:net";
 
 import {
   checkRecord,
+  checkUnanswered,
   requestDigest,
   sessionFingerprint,
   softwareRuleAllows,
@@ -585,7 +586,9 @@ function finish<T extends Evidence>(
 /**
  * An open session. Calls are serialized here as they are on the daemon, so the
  * chain this client tracks follows the daemon's; a record that does not continue
- * it means someone else holding the session ID made a call.
+ * it means someone else holding the session ID made a call. A call that ends
+ * without an answer this client can check (any error not marked notDispatched)
+ * may have run, so the session refuses every later call, marked notDispatched.
  */
 export class Session {
   /** The SHA-256 of the session ID, as the session's records carry it. */
@@ -602,6 +605,10 @@ export class Session {
   #calls = 0n;
   #last = "";
   #end: { reason: SessionEnd; detail: string } | undefined;
+  // Set once a call ended without an answer this client could check: the daemon may
+  // have run it and moved its chain on, so every later call would run and then fail
+  // the chain check. They are refused here instead, before anything is sent.
+  #unknown: string | undefined;
   #queue: Promise<unknown> = Promise.resolve();
 
   /** @internal */
@@ -661,7 +668,45 @@ export class Session {
   #call(payload: Payload, opts: RunOptions): Promise<{ run: WireRunResponse; record: RunRecord }> {
     const rule = mergeRules(this.#rule, validateRule(opts.software));
     return this.#serial(async () => {
+      if (this.#unknown !== undefined) {
+        throw new PlimsollError(
+          "failed_precondition",
+          `plimsoll: an earlier call of this session ended without an answer this client could check (${this.#unknown}); it may have run, so this client sends nothing more on the session: open a new one`,
+          { notDispatched: "request" },
+        );
+      }
       const env = this.#client.envelope(opts, rule);
+      const digest = requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: rule, payload: digestPayload(payload) });
+      try {
+        return await this.#exchange(payload, opts, rule, env, digest);
+      } catch (e) {
+        if (e instanceof PlimsollError && e.notDispatched) throw e;
+        if (e instanceof PlimsollError && e.unanswered) {
+          // The call may have run, and the daemon chained its record: check it and keep
+          // it in the chain, so the session goes on and the call is not hidden.
+          const checked = checkUnanswered(digest, rule, e.unanswered, this.fingerprint, this.#calls, this.#last);
+          if ("problem" in checked) {
+            this.#unknown = checked.problem;
+            throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { cause: e });
+          }
+          this.#calls = checked.record.sequence;
+          this.#last = checked.record.sha256;
+          throw e;
+        }
+        this.#unknown = e instanceof Error ? e.message : String(e);
+        throw e;
+      }
+    });
+  }
+
+  async #exchange(
+    payload: Payload,
+    opts: RunOptions,
+    rule: WireSoftwareRule | undefined,
+    env: ReturnType<PlimsollClient["envelope"]>,
+    digest: string,
+  ): Promise<{ run: WireRunResponse; record: RunRecord }> {
+    {
       let m: WireSessionRunResponse;
       try {
         m = await this.#client.call<WireSessionRunResponse>("SessionRun", { ...env, sessionId: this.#id, ...payload }, opts.signal);
@@ -673,12 +718,7 @@ export class Session {
       if (!run) throw new PlimsollError("data_loss", "plimsoll: the session call's answer carries no run");
       const end = sessionEndFromWire(m.ended);
       if (end !== "open") this.#end = { reason: end, detail: m.endDetail ?? "" };
-      const checked = checkRecord(
-        requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: rule, payload: digestPayload(payload) }),
-        env.protocol,
-        rule,
-        run,
-      );
+      const checked = checkRecord(digest, env.protocol, rule, run);
       if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: run });
       const r = checked.record;
       if (r.session !== this.fingerprint || r.sequence !== this.#calls + 1n || r.previousSha256 !== this.#last) {
@@ -691,7 +731,7 @@ export class Session {
       this.#calls = r.sequence;
       this.#last = r.sha256;
       return { run, record: r };
-    });
+    }
   }
 
   /**

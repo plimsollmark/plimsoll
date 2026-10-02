@@ -15,7 +15,7 @@ from dataclasses import replace
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from . import _validate as v
-from ._record import check, check_single, request_digest, session_fingerprint
+from ._record import check, check_single, check_unanswered, request_digest, session_fingerprint
 from ._transport import Transport
 from ._wire import (
     INT32,
@@ -31,6 +31,7 @@ from ._wire import (
 from .errors import (
     ChainError,
     DataLossError,
+    PlimsollError,
     IsolationEvidenceMismatchError,
     MalformedResponseError,
     ProtocolMismatchError,
@@ -490,6 +491,11 @@ class Session:
         self._ended: Optional[SessionEnded] = None
         self._closed: Optional[SessionSummary] = None
         self._close_error: Optional[ChainError] = None
+        # Set once a call ended without an answer this client could check (no answer,
+        # or one whose record did not check): that call may have run and moved the
+        # daemon's chain on, so later calls would run and then fail the chain check.
+        # They are refused instead, before anything is sent.
+        self._unanswered: Optional[str] = None
 
     def __repr__(self) -> str:
         return f"Session(fingerprint={self.fingerprint!r}, calls={self._calls})"
@@ -583,19 +589,56 @@ class Session:
                     reason="closed",
                     not_dispatched="request",
                 )
+            if self._unanswered is not None:
+                raise PlimsollError(
+                    "plimsoll: an earlier call of this session ended without an answer this client could check "
+                    f"({self._unanswered}); it may have run, so this client sends nothing more on the session: open a new one",
+                    code="failed_precondition",
+                    not_dispatched="request",
+                )
             try:
                 m = self._transport.call("SessionRun", req, "SessionRunResponse")
-            except SessionEndedError as e:
-                self._ended = SessionEnded(reason=e.reason, detail=e.detail)
+            except PlimsollError as e:
+                if isinstance(e, SessionEndedError):
+                    self._ended = SessionEnded(reason=e.reason, detail=e.detail)
+                if e.not_dispatched is not None:
+                    raise
+                if e.unanswered is None:
+                    self._unanswered = e.message
+                    raise
+                # The call may have run, and the daemon chained its record: check it and
+                # keep it, so the session goes on and the call is not hidden.
+                try:
+                    r = check_unanswered(digest, rule, Msg(e.unanswered, "unanswered"))
+                    if r.session != self.fingerprint or r.sequence != self._calls + 1 or r.previous_sha256 != self._last:
+                        raise ChainError(
+                            f"plimsoll: the session's chain is broken: call {r.sequence} after {r.previous_sha256!r}, "
+                            f"this client's last was call {self._calls}, {self._last!r}"
+                        )
+                except PlimsollError as ce:
+                    self._unanswered = ce.message
+                    raise ce from e
+                self._calls, self._last = r.sequence, r.sha256
+                raise
+            except Exception as e:
+                self._unanswered = str(e)
                 raise
             run = m.get_msg("run")
             if run is None:
+                self._unanswered = "the answer carried no run"
                 raise ResultKindMismatchError("plimsoll: the session call's answer carries no run")
             end = m.get_enum("ended", SESSION_ENDS)
             if end != 0:
                 name = SESSION_END_NAMES[end] if 0 < end < len(SESSION_END_NAMES) else "open"
                 self._ended = SessionEnded(reason=name, detail=m.get_str("endDetail"))
-            return _finish(kind, run, lambda: self._check_chain(digest, rule, run), floor)
+            return _finish(kind, run, lambda: self._checked_chain(digest, rule, run), floor)
+
+    def _checked_chain(self, digest: str, rule: Optional[SoftwareRule], run: Msg) -> RunRecord:
+        try:
+            return self._check_chain(digest, rule, run)
+        except PlimsollError as e:
+            self._unanswered = e.message
+            raise
 
     def _check_chain(self, digest: str, rule: Optional[SoftwareRule], run: Msg) -> RunRecord:
         # record.CheckSessionCall, then the chain this client tracks moves on.

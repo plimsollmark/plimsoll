@@ -43,6 +43,7 @@ export type WireRecord = {
   session?: string;
   sequence?: string | number;
   previousSha256?: string;
+  unanswered?: string;
   softwareIdentity?: string;
   softwareRuleId?: string;
   recordSha256?: string;

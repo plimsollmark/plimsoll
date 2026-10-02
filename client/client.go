@@ -83,7 +83,10 @@ type config struct {
 const maxResponseBytes = 32 << 20
 
 // WithHTTPClient overrides the HTTP client (default: a 6-minute timeout client that
-// never follows a redirect; a replacement should not follow one either).
+// never follows a redirect). An *http.Client is used as a copy that refuses
+// redirects whatever its CheckRedirect says, since a followed 307 or 308 re-sends the
+// code and the token to wherever it points; any other implementation must not follow
+// one either.
 func WithHTTPClient(c connect.HTTPClient) Option { return func(cfg *config) { cfg.httpClient = c } }
 
 // WithToken sends "Authorization: Bearer <token>" on every call. Omit it for a
@@ -174,6 +177,11 @@ func New(baseURL string, opts ...Option) (*Remote, error) {
 	cfg := &config{httpClient: &http.Client{Timeout: 6 * time.Minute, CheckRedirect: refuseRedirect}}
 	for _, o := range opts {
 		o(cfg)
+	}
+	if hc, ok := cfg.httpClient.(*http.Client); ok {
+		c := *hc
+		c.CheckRedirect = refuseRedirect
+		cfg.httpClient = &c
 	}
 	checkedURL, err := validateBaseURL(baseURL, cfg.insecureHTTP)
 	if err != nil {

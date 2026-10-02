@@ -48,7 +48,12 @@ func (b *GrantBroker) Serve(l net.Listener) *http.Server {
 // a path, body or credential. Nil when the run made no call.
 func (b *GrantBroker) Trace() *CallTrace { return b.core.traceSnapshot() }
 
-// Close releases the broker's idle upstream connections.
+// End ends the run's authority: a call in flight is cut off upstream, a later one
+// is refused, and End waits briefly for calls in flight, so Trace after it holds
+// every call that reached the API. Call it before reading the run's final trace.
+func (b *GrantBroker) End() { b.core.End() }
+
+// Close ends the run's authority and releases the broker's idle upstream connections.
 func (b *GrantBroker) Close() { b.core.Close() }
 
 // HostClientSnippet returns code with the injected host client (and the grant's

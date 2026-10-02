@@ -11,7 +11,7 @@ FROM plimsoll/sandbox:latest
 
 USER root
 
-# Alpine packages, pinned to the upstream minor version. `~3.14` admits any 3.14.x
+# Alpine packages, constrained to the upstream minor version, not pinned: `~3.14` admits any 3.14.x
 # and any Alpine packaging revision (-rN): Alpine drops a package from its index when
 # it updates or rebuilds it, so a pin to a patch version turned Alpine's python3 3.14.8
 # into a failed build that changed nothing we chose (2026-10-01, both hosted Docker jobs).
@@ -21,7 +21,7 @@ USER root
 # tracks Alpine's current release (3.23 on 2026-09-18 in the morning, 3.24 by the
 # first build of this file that afternoon, which changed all three versions). So
 # an "unable to select packages ... breaks: world[python3~3.x]" failure here means
-# the base moved to a newer Alpine release and the pins need a deliberate bump to what
+# the base moved to a newer Alpine release and the constraints need a deliberate bump to what
 # `apk search -x python3 py3-numpy py3-scipy` reports inside plimsoll/sandbox.
 #
 # NumPy is here as the proof that a native extension loads under the seccomp

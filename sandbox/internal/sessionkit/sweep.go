@@ -70,13 +70,14 @@ let ptrace="";try{ptrace=fs.readFileSync("/proc/sys/kernel/yama/ptrace_scope","l
 process.stdout.write(JSON.stringify({ptrace,procs}))`
 
 // SweepScript kills every process that is not kept, not an ancestor and not itself,
-// until a scan finds none, then walks the session's directories. Arguments: the disk
-// budget in bytes (0 = none), the entry bound, the directories to measure (joined by
+// until a scan finds none, then measures the session's directories, unless the budget
+// is 0, which measures nothing. Arguments: the disk budget in bytes (0 = none), the
+// entry bound, how to measure (Measure), the directories to measure (joined by
 // commas), then the identities to keep (pid:starttime:cmdline-hex, so a process that
 // lands on a kept PID in the same clock tick is kept only if its command line matches
 // too). Its exit status is the verdict (the Sweep* constants); its stdout is a summary
 // for the log only.
-const SweepScript = liveFn + `const fs=require("fs");const [budget,maxEntries,dirList,...keepList]=process.argv.slice(1);
+const SweepScript = liveFn + `const fs=require("fs");const [budget,maxEntries,measure,dirList,...keepList]=process.argv.slice(1);
 const keep=new Set(keepList);const self=String(process.pid);const up=new Set([self]);
 for(let p=self;;){let st;try{st=fs.readFileSync("/proc/"+p+"/stat","latin1")}catch{break}
 const pp=st.slice(st.lastIndexOf(")")+2).split(" ")[1];if(!pp||pp==="0"||up.has(pp))break;up.add(pp);p=pp}
@@ -90,21 +91,70 @@ let rounds=0,killed=0;
 for(let o=others();o.length>0;o=others()){if(++rounds>50)process.exit(1);
 for(const p of o){try{process.kill(p,"SIGKILL");killed++}catch{}}nap()}
 let bytes=0,entries=0;const dirs=dirList.split(",").filter(Boolean);
-while(dirs.length>0){const dir=dirs.pop();let names;
-try{names=fs.readdirSync(dir)}catch{try{fs.chmodSync(dir,0o700);names=fs.readdirSync(dir)}catch{process.exit(11)}}
+if(+budget>0&&measure==="statfs"){for(const d of dirs){let s;try{s=fs.statfsSync(d)}catch{process.exit(11)}
+bytes+=(s.blocks-s.bfree)*s.bsize}if(bytes>+budget)process.exit(10)}
+else if(+budget>0)while(dirs.length>0){const dir=dirs.pop();let names;
+try{names=fs.readdirSync(dir)}catch{let st;try{st=fs.lstatSync(dir)}catch{process.exit(11)}if(!st.isDirectory())continue;
+try{fs.chmodSync(dir,0o700);names=fs.readdirSync(dir)}catch{process.exit(11)}}
 for(const n of names){const p=dir+"/"+n;let st;try{st=fs.lstatSync(p)}catch{continue}
-if(++entries>+maxEntries)process.exit(10);bytes+=st.blocks*512;if(+budget>0&&bytes>+budget)process.exit(10);
+if(++entries>+maxEntries)process.exit(10);bytes+=st.blocks*512;if(bytes>+budget)process.exit(10);
 if(st.isDirectory())dirs.push(p)}}
 process.stdout.write(JSON.stringify({rounds,killed,bytes,entries}))`
+
+// CheckScript checks identities a launcher or a relay reported, each given as
+// kind:pid:starttime:cmdline-hex, and exits 0 when every one holds and 1 otherwise,
+// saying why on stderr (for a log; only the status counts):
+//   - relay: the process is live with that start time and command line, and its
+//     parent is 0, which only a process the provider started has (docker exec gives
+//     its process no parent in the container; code in it cannot make one);
+//   - interp: the process is live with that start time and command line, and no
+//     other live process has the same command line.
+//
+// A launcher and a relay print their identities on stdout, and on docker code of the
+// session can write into a new process's stdout while it starts, so it could name a
+// process of its own for the sweep to keep. The provider runs this check as a user
+// the session's code is not, so nothing in the sandbox can write into the check or
+// change how it exits.
+const CheckScript = liveFn + `const fs=require("fs");const procs=[];
+for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d)||!live(d))continue;let st,cmd;
+try{st=fs.readFileSync("/proc/"+d+"/stat","latin1");cmd=fs.readFileSync("/proc/"+d+"/cmdline").toString("hex")}catch{continue}
+const f=st.slice(st.lastIndexOf(")")+2).split(" ");procs.push({pid:d,ppid:f[1],start:f[19],cmd})}
+const why=[];if(process.argv.length<2)why.push("nothing to check");
+for(const w of process.argv.slice(1)){const [kind,pid,start,cmd]=w.split(":");const p=procs.find(q=>q.pid===pid);
+if(!p){why.push(pid+": no live process");continue}if(p.start!==start||p.cmd!==cmd){why.push(pid+": another start or command line");continue}
+if(kind==="relay"){if(p.ppid!=="0")why.push(pid+": parent "+p.ppid)}
+else if(kind==="interp"){const n=procs.filter(q=>q.cmd===cmd).length;if(n!==1)why.push(pid+": "+n+" processes with its command line")}
+else why.push(pid+": unknown kind")}
+if(why.length>0)process.stderr.write(why.join("; ")+"\n");process.exit(why.length>0?1:0)`
+
+// CheckArgv is the check's command line for identities given as kind:identity.
+func CheckArgv(ids []string) []string { return append([]string{"node", "-e", CheckScript}, ids...) }
 
 // ListArgv is the lister's command line.
 func ListArgv() []string { return []string{"node", "-e", ListScript} }
 
-// SweepArgv is the sweep's command line: the disk budget, the directories it
-// measures, and every process identity to keep.
-func SweepArgv(diskBytes int64, dirs []string, keep []string) []string {
+// Measure is how the sweep measures a session's files against its budget.
+type Measure string
+
+const (
+	// MeasureStatfs reads the usage of each directory's filesystem: for directories
+	// that are each a size-capped tmpfs of their own (docker's), everything on them,
+	// a file deleted while a process holds it open included, and nothing the
+	// session's code can steer.
+	MeasureStatfs Measure = "statfs"
+	// MeasureWalk walks the directories and sums what lstat reports, up to
+	// MaxDiskEntries entries, for directories on a filesystem the session shares
+	// (openshell's /tmp). Code of the session can hide files from it (one deleted
+	// while a process holds it open, a directory swapped for a link mid-walk), so it
+	// is an estimate of what the session keeps, not a bound.
+	MeasureWalk Measure = "walk"
+)
+
+// SweepArgv is the sweep's command line: the disk budget (0 measures nothing), how
+// to measure, the directories it measures, and every process identity to keep.
+func SweepArgv(diskBytes int64, measure Measure, dirs []string, keep []string) []string {
 	return append([]string{"node", "-e", SweepScript, strconv.FormatInt(diskBytes, 10),
-		strconv.Itoa(MaxDiskEntries), strings.Join(dirs, ",")}, keep...)
+		strconv.Itoa(MaxDiskEntries), string(measure), strings.Join(dirs, ",")}, keep...)
 }
 
 // Process is one entry of the lister's output.

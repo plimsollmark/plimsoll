@@ -180,7 +180,7 @@ func TestSessionCallVerifiesRunsAndSweeps(t *testing.T) {
 	// Each kept process is named by PID, start time and command line, so one that lands
 	// on a spared PID in the same clock tick is not spared unless it is the same
 	// program (external review of v0.10.0, documentation item 5, 2026-09-28).
-	if want := []string{"5242880", "200000", "/tmp", "1:100:2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800", "7:101:736c656570003231343734383336343700"}; !slices.Equal(sc.sweeps[0], want) {
+	if want := []string{"5242880", "200000", "walk", "/tmp", "1:100:2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800", "7:101:736c656570003231343734383336343700"}; !slices.Equal(sc.sweeps[0], want) {
 		t.Fatalf("sweep arguments %v, want %v", sc.sweeps[0], want)
 	}
 	// A project call gets the same verification and sweep.

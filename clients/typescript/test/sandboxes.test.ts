@@ -71,14 +71,14 @@ test("without a key, or with sessions off, a call runs fresh with its files and 
   const r = await s.run("run-a", { code: "print(1)", files: [{ path: "data.csv", content: "a" }] });
   const plan = JSON.parse(r.stdout);
   assert.deepEqual(plan.files, ["data.csv", ".plimsoll/cell.py", ".plimsoll/run.py"]);
-  assert.deepEqual(plan.steps, ["python3 .plimsoll/run.py"]);
+  assert.deepEqual(plan.steps, ["python3 -I .plimsoll/run.py"]);
   assert.equal(plan.cell, "print(1)");
   assert.equal(r.stateKept, false);
   assert.equal(r.filesPersist, false);
   assert.equal(r.isolation, "container");
   assert.ok(!calls.includes("OpenSession"));
   const js = JSON.parse((await s.run(undefined, { code: "1", language: "javascript" })).stdout);
-  assert.deepEqual(js.steps, ["node .plimsoll/run.cjs"]);
+  assert.deepEqual(js.steps, ["node --expose-internals .plimsoll/run.cjs"]);
 
   const never = new CodeSandboxes({ client: new PlimsollClient({ baseUrl: sessionsUrl! }), sessions: "never" });
   // The fake provider refuses single runs, which proves no session was used.
@@ -280,4 +280,48 @@ for (const language of ["javascript", "python"] as const) {
     const out = execFileSync(cmd === "node" ? process.execPath : cmd!, args, { cwd: dir, encoding: "utf8" });
     assert.equal(out, "printed\n6\n");
   });
+
+  // What a session cell takes, a fresh run takes too: a module from the work
+  // directory (and, in Node, require at all), and top-level await.
+  test(`the ${language} runner imports from the work directory and awaits at the top level`, { skip: available ? false : `${bin} is not installed` }, () => {
+    const dir = mkdtempSync(join(tmpdir(), "plimsoll-runner-"));
+    mkdirSync(join(dir, ".plimsoll"));
+    writeFileSync(join(dir, runner.path), runner.source);
+    if (language === "python") {
+      writeFileSync(join(dir, "helper.py"), "x = 5\n");
+      writeFileSync(join(dir, "json.py"), "raise SystemExit('a work-directory json.py ran')\n");
+      writeFileSync(join(dir, runner.file), "import asyncio, helper\nawait asyncio.sleep(0)\nhelper.x + 1");
+    } else {
+      writeFileSync(join(dir, "helper.js"), "module.exports = { x: 5 };\n");
+      writeFileSync(join(dir, runner.file), "const helper = require('./helper.js');\nawait new Promise((r) => setTimeout(r, 1));\nhelper.x + 1");
+    }
+    const [cmd, ...args] = runner.step.split(" ");
+    const out = execFileSync(cmd === "node" ? process.execPath : cmd!, args, { cwd: dir, encoding: "utf8" });
+    assert.equal(out, "6\n");
+  });
 }
+
+// A call whose answer is lost after it ran: the conversation's next call opens a new
+// sandbox, says so, and answers, where a client that kept the session would have
+// run it there and then failed the chain check.
+test("after a call that ended without an answer, the next call gets a new sandbox", { skip }, async () => {
+  let drop = false;
+  const lossy = new PlimsollClient({
+    baseUrl: sessionsUrl!,
+    fetch: async (input, init) => {
+      const res = await fetch(input, init);
+      if (drop && String(input).endsWith("/SessionRun")) throw new TypeError("the connection dropped after the daemon answered");
+      return res;
+    },
+  });
+  const closeErrors: unknown[] = [];
+  const s = new CodeSandboxes({ client: lossy, onCloseError: (_k, e) => closeErrors.push(e) });
+  await s.run("k", { code: "x = 1" });
+  drop = true;
+  await assert.rejects(s.run("k", { code: "x" }), (e: unknown) => e instanceof PlimsollError && e.notDispatched === undefined);
+  drop = false;
+  const r = await s.run("k", { code: "x" });
+  assert.equal(r.exitCode, 0, r.stderr);
+  assert.equal(r.freshSandbox, true, "the next call says its sandbox is new");
+  await s.disposeAll();
+});

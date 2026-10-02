@@ -223,6 +223,16 @@ func (b *dockerBroker) traceSnapshot() *CallTrace {
 	return b.core.traceSnapshot()
 }
 
+// finalTrace ends the run's authority and returns its complete trace: the run is
+// over, so a call in flight is cut off upstream and waited for.
+func (b *dockerBroker) finalTrace() *CallTrace {
+	if b == nil {
+		return nil
+	}
+	b.core.End()
+	return b.core.traceSnapshot()
+}
+
 // Close stops the broker and removes its socket dir. Safe to call on a nil broker.
 func (b *dockerBroker) Close() {
 	if b == nil {
@@ -1779,7 +1789,7 @@ func (d *DockerSandbox) RunJavaScript(ctx context.Context, req Request) (Result,
 		EnvironmentIdentity: dockerImageIdentity(execState.imageID),
 		// Metadata-only evidence of the run's brokered host.* calls. Nil unless the
 		// run carried a grant that made calls; it never affects execution below.
-		CallTrace: broker.traceSnapshot(),
+		CallTrace: broker.finalTrace(),
 	}
 
 	if deadline.Expired(runCtx) == context.DeadlineExceeded {
@@ -1968,7 +1978,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 
 	// Metadata-only evidence of the run's brokered host.* calls; nil unless the run
 	// carried a grant that made calls. Never affects the outcome.
-	return projectResultFromReport(d.Name(), isolation, report, broker.traceSnapshot()), nil
+	return projectResultFromReport(d.Name(), isolation, report, broker.finalTrace()), nil
 }
 
 // projectResultFromReport is a project result from the runner's authenticated

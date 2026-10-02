@@ -6,6 +6,7 @@ package typescript
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -105,8 +106,11 @@ func TestTypeScript(t *testing.T) {
 		})
 	})
 	echoURL := serve(t, rpc.NewSandboxService(projectEcho{}), nil)
+	breaking := rpc.NewSandboxService(&breakingSessions{Sessions: &sandboxtest.Sessions{}})
+	breaking.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	breakingURL := serve(t, breaking, nil)
 	env := append(os.Environ(), "PLIMSOLL_WASM_URL="+wasmURL, "PLIMSOLL_SESSIONS_URL="+sessionsURL, "PLIMSOLL_URL="+sessionsURL,
-		"PLIMSOLL_ECHO_URL="+echoURL)
+		"PLIMSOLL_ECHO_URL="+echoURL, "PLIMSOLL_BREAKING_URL="+breakingURL)
 
 	suites := []struct{ name, dir, glob, needs string }{
 		{"client", ".", "test/*.test.ts", ""},
@@ -197,4 +201,30 @@ func TestClientVersionsAgree(t *testing.T) {
 			t.Fatalf("client versions disagree: %v", versions)
 		}
 	}
+}
+
+// breakingSessions opens fake sessions whose second snippet call runs and then
+// returns an unmarked error, as an exec stream that broke after the code ran does:
+// the daemon sends that call's record with the error.
+type breakingSessions struct{ *sandboxtest.Sessions }
+
+func (p *breakingSessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	s, err := p.Sessions.OpenSession(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &breakingSession{Session: s}, nil
+}
+
+type breakingSession struct {
+	sandbox.Session
+	n int
+}
+
+func (s *breakingSession) RunJavaScript(ctx context.Context, req sandbox.Request) (sandbox.Result, error) {
+	res, err := s.Session.RunJavaScript(ctx, req)
+	if s.n++; s.n == 2 {
+		return res, errors.New("the exec stream broke after the code ran")
+	}
+	return res, err
 }

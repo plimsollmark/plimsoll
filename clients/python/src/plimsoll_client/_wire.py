@@ -385,6 +385,75 @@ def decode_enum_and_string(b: bytes) -> Tuple[int, str]:
     return reason, detail
 
 
+_RECORD_STRINGS = {
+    2: "requestSha256", 3: "resultSha256", 4: "provider", 5: "isolation", 6: "environment", 7: "policy",
+    10: "session", 12: "previousSha256", 13: "recordSha256", 14: "softwareIdentity", 15: "softwareRuleId",
+    16: "unanswered",
+}
+_RECORD_INTS = {1: ("version", 32), 8: ("startedUnixMs", -64), 9: ("endedUnixMs", -64), 11: ("sequence", 64)}
+
+
+def decode_unanswered(b: bytes) -> Optional[Dict[str, Any]]:
+    """Decodes an UnansweredCall detail (field 1, a RunRecord) into the record's
+    proto3 JSON form, so it checks exactly as a record read off a JSON answer.
+    Unknown fields are skipped; a known field of the wrong wire type, a truncated
+    value or a string that is not UTF-8 raises ValueError."""
+    rec: Optional[Dict[str, Any]] = None
+    i = 0
+    while i < len(b):
+        tag, i = _varint(b, i)
+        field, wire = tag >> 3, tag & 7
+        if wire != 2:
+            raise ValueError("UnansweredCall holds only length-delimited fields")
+        n, i = _varint(b, i)
+        if i + n > len(b):
+            raise ValueError("length-delimited field overruns the message")
+        if field == 1:
+            rec = _decode_record(b[i : i + n])
+        i += n
+    return rec
+
+
+def _decode_record(b: bytes) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    i = 0
+    while i < len(b):
+        tag, i = _varint(b, i)
+        field, wire = tag >> 3, tag & 7
+        if field == 0:
+            raise ValueError("field number 0")
+        if wire == 0:
+            v, i = _varint(b, i)
+            if field in _RECORD_STRINGS:
+                raise ValueError(f"field {field} is not length-delimited")
+            if field in _RECORD_INTS:
+                name, bits = _RECORD_INTS[field]
+                if bits == 32:
+                    out[name] = v & 0xFFFFFFFF
+                elif bits == -64:
+                    out[name] = str(v - (1 << 64) if v >= 1 << 63 else v)
+                else:
+                    out[name] = str(v)
+        elif wire == 2:
+            n, i = _varint(b, i)
+            if i + n > len(b):
+                raise ValueError("length-delimited field overruns the message")
+            if field in _RECORD_INTS:
+                raise ValueError(f"field {field} is not a varint")
+            if field in _RECORD_STRINGS:
+                out[_RECORD_STRINGS[field]] = b[i : i + n].decode("utf-8")
+            i += n
+        elif wire in (1, 5):
+            if field in _RECORD_STRINGS or field in _RECORD_INTS:
+                raise ValueError("a known field has a fixed-width wire type")
+            i += 8 if wire == 1 else 4
+            if i > len(b):
+                raise ValueError("fixed-width field overruns the message")
+        else:
+            raise ValueError(f"unsupported wire type {wire}")
+    return out
+
+
 def _http_code(status: int) -> str:
     # Connect's mapping for an answer without a Connect error body.
     if status == 400:
@@ -420,6 +489,7 @@ def error_from_wire(status: int, body: bytes) -> PlimsollError:
 
     refusal: Optional[str] = None
     end: Optional[Tuple[str, str]] = None
+    unanswered: Optional[Dict[str, Any]] = None
     details = parsed.get("details")
     for d in details if isinstance(details, list) else []:
         if not isinstance(d, dict):
@@ -437,11 +507,15 @@ def error_from_wire(status: int, body: bytes) -> PlimsollError:
             elif type_name == "plimsoll.v1.SessionEnded" and end is None:
                 n, text = decode_enum_and_string(raw)
                 end = (SESSION_END_NAMES[n] if 0 <= n < len(SESSION_END_NAMES) else "open", text)
+            elif type_name == "plimsoll.v1.UnansweredCall" and unanswered is None:
+                unanswered = decode_unanswered(raw)
         except (ValueError, UnicodeDecodeError):
             # An undecodable detail states nothing; in particular not that nothing ran.
             continue
 
     kwargs: Dict[str, Any] = {"code": code, "not_dispatched": refusal, "http_status": status}
+    if refusal is None and unanswered is not None:
+        kwargs["unanswered"] = unanswered
     message = f"plimsoll: {code}: {message}"
     if code == "failed_precondition":
         if end is not None:

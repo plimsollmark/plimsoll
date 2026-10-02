@@ -591,3 +591,214 @@ func TestCellRunsOnlyInASession(t *testing.T) {
 		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{Cell: bad}}))
 	wantNotDispatched(t, "an unknown language", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST)
 }
+
+// A call re-arms the idle timer before it gives the session's turn back, so a short
+// idle timeout can fire while the turn is still held. That suspend must try again,
+// or the session holds its slot until its next call.
+func TestIdleSuspendFindingTheTurnBusyTriesAgain(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sessions.IdleTimeout = time.Hour // nothing fires by itself
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := svc.sessions.get(open.Msg.GetSessionId(), auditCaller(ctx))
+	if !ok {
+		t.Fatal("the session is not registered")
+	}
+	e.mu.Lock()
+	e.idleTimeout = 20 * time.Millisecond
+	e.mu.Unlock()
+	e.turn <- struct{}{} // a call holds the turn
+	svc.suspend(e)       // the idle timer fires now
+	<-e.turn             // the call gives the turn back
+	deadline := time.Now().Add(3 * time.Second)
+	for p.Opened()[0].Suspends() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("an idle suspend that found the turn busy never tried again")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// hangingCloseSessions opens sessions that its caller has given up on by the time
+// they open, and whose Close hangs until its context ends, reporting whether that
+// context had a deadline.
+type hangingCloseSessions struct {
+	*sandboxtest.Sessions
+	cancelCaller context.CancelFunc
+	closed       chan bool
+}
+
+func (p *hangingCloseSessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	s, err := p.Sessions.OpenSession(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	p.cancelCaller()
+	return &hangingClose{Session: s, closed: p.closed}, nil
+}
+
+type hangingClose struct {
+	sandbox.Session
+	closed chan bool
+}
+
+func (s *hangingClose) Close(ctx context.Context) error {
+	_, bounded := ctx.Deadline()
+	<-ctx.Done()
+	s.closed <- bounded
+	return ctx.Err()
+}
+
+// A session that finishes opening after its caller gave up is closed, and a close
+// that hangs must not hold the handler (and its slot and place) without end.
+func TestOrphanSessionCloseIsBounded(t *testing.T) {
+	old := sessionOrphanCloseBudget
+	sessionOrphanCloseBudget = 50 * time.Millisecond
+	t.Cleanup(func() { sessionOrphanCloseBudget = old })
+	ctx, cancel := context.WithCancel(authenticatedContext("alice"))
+	defer cancel()
+	p := &hangingCloseSessions{Sessions: &sandboxtest.Sessions{}, cancelCaller: cancel, closed: make(chan bool, 1)}
+	svc := NewSandboxService(p)
+	svc.Sessions = SessionConfig{MaxSessions: 4, Lifetime: time.Minute, IdleTimeout: time.Minute, DiskBytes: 1 << 20}
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.OpenSession(ctx, openReq())
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if _, marked := sandbox.NotDispatchedReason(err); !marked {
+			t.Fatalf("the open its caller gave up on: %v; want a marked refusal", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hanging close held the open's handler")
+	}
+	if bounded := <-p.closed; !bounded {
+		t.Fatal("the close had no deadline")
+	}
+}
+
+// One caller holds at most MaxPerCaller sessions, suspended ones included, so a
+// caller with a short idle timeout cannot take every place; another caller still
+// gets one, and a close gives the place back.
+func TestSessionsPerCallerCap(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sessions.MaxPerCaller = 2
+	svc.Sessions.IdleTimeout = 20 * time.Millisecond
+	alice, bob := authenticatedContext("alice"), authenticatedContext("bob")
+	var ids []string
+	for i := 0; i < 2; i++ {
+		o, err := svc.OpenSession(alice, openReq())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, o.Msg.GetSessionId())
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for p.Opened()[0].Suspends() == 0 || p.Opened()[1].Suspends() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the sessions never suspended")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_, err := svc.OpenSession(alice, openReq())
+	if reason, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeResourceExhausted || !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY {
+		t.Fatalf("a third session for one caller: %v; want ResourceExhausted, marked capacity", err)
+	}
+	if _, err := svc.OpenSession(bob, openReq()); err != nil {
+		t.Fatalf("another caller's first session: %v", err)
+	}
+	if _, err := svc.CloseSession(alice, connect.NewRequest(&plimsollv1.CloseSessionRequest{Protocol: protocol.Number, SessionId: ids[0]})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.OpenSession(alice, openReq()); err != nil {
+		t.Fatalf("a session after closing one: %v", err)
+	}
+}
+
+// failingSessions opens fake sessions whose failCall-th snippet call runs (the fake
+// counts it) and then returns an unmarked error, as an exec stream that broke after
+// the code ran does.
+type failingSessions struct {
+	*sandboxtest.Sessions
+	failCall int
+}
+
+func (p *failingSessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	s, err := p.Sessions.OpenSession(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &failingSession{Session: s, failCall: p.failCall}, nil
+}
+
+type failingSession struct {
+	sandbox.Session
+	failCall, n int
+}
+
+func (s *failingSession) RunJavaScript(ctx context.Context, req sandbox.Request) (sandbox.Result, error) {
+	res, err := s.Session.RunJavaScript(ctx, req)
+	if s.n++; s.n == s.failCall {
+		return res, errors.New("the exec stream broke after the code ran")
+	}
+	return res, err
+}
+
+// A session call that may have run but ended in an error gets a record in the
+// chain, carried on the error: the next call chains after it, and the close counts
+// it, so a verified chain cannot hide a call that ran.
+func TestUnansweredSessionCallIsInTheChain(t *testing.T) {
+	inner := &sandboxtest.Sessions{}
+	svc := NewSandboxService(&failingSessions{Sessions: inner, failCall: 2})
+	svc.Sessions = SessionConfig{MaxSessions: 4, Lifetime: time.Minute, IdleTimeout: time.Minute, DiskBytes: 1 << 20}
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := open.Msg.GetSessionId()
+	fp := record.SessionFingerprint(id)
+	first, err := svc.SessionRun(ctx, callReq(id, "1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r1 := first.Msg.GetRun().GetRecord()
+	second := callReq(id, "2")
+	_, err = svc.SessionRun(ctx, second)
+	if _, marked := sandbox.NotDispatchedReason(err); err == nil || marked {
+		t.Fatalf("the call that broke after running: %v; want an unmarked error", err)
+	}
+	var unanswered *plimsollv1.RunRecord
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		for _, d := range ce.Details() {
+			if v, derr := d.Value(); derr == nil {
+				if u, ok := v.(*plimsollv1.UnansweredCall); ok {
+					unanswered = u.GetRecord()
+				}
+			}
+		}
+	}
+	r2, cerr := record.CheckUnanswered(second.Msg, unanswered, fp, 1, r1.GetRecordSha256())
+	if cerr != nil {
+		t.Fatalf("the unanswered call's record: %v", cerr)
+	}
+	third, err := svc.SessionRun(ctx, callReq(id, "3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r3 := third.Msg.GetRun().GetRecord(); r3.GetSequence() != 3 || r3.GetPreviousSha256() != r2.SHA256 {
+		t.Fatalf("the call after: sequence %d after %q; want 3 after the unanswered record", r3.GetSequence(), r3.GetPreviousSha256())
+	}
+	sum, err := svc.CloseSession(ctx, closeReq(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ran := inner.Opened()[0].Calls(); sum.Msg.GetCalls() != uint64(ran) {
+		t.Fatalf("the close counts %d calls, the session ran %d", sum.Msg.GetCalls(), ran)
+	}
+}

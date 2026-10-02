@@ -343,7 +343,10 @@ type RunRecord struct {
 	Session          string // SHA-256 of the session ID; "" for a single run
 	Sequence         uint64 // the call's number in its session, from 1; 0 for a single run
 	PreviousSHA256   string // the previous call's SHA256; "" for a single run or a first call
-	SHA256           string // over every field above
+	// Unanswered, on a version 3 record, is the Connect code of the error a session
+	// call that may have run ended with; ResultSHA256 is then empty. "" when answered.
+	Unanswered string
+	SHA256     string // over every field above
 }
 
 // Sandbox is an isolated code runner.

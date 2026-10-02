@@ -88,7 +88,7 @@ const interpRoot = "/tmp/.plimsoll-interp/"
 // command is how each language's interpreter starts.
 var command = map[string][]string{
 	"javascript": {"node", "--expose-internals", "-e", kernelJS},
-	"python":     {"python3", "-c", kernelPy},
+	"python":     {"python3", "-I", "-c", kernelPy},
 }
 
 // ExecResult is one command's outcome in the sandbox, as the provider's exec reports it.
@@ -133,6 +133,13 @@ type CellOutcome struct {
 // Interpreters is a session's live interpreters, by language, with the identity
 // the sweep keeps each by.
 type Interpreters struct {
+	// Checker, where the provider has one, runs a command as a user the session's
+	// code is not; identities reported from inside the sandbox are kept only once
+	// CheckScript confirms them through it. Docker has one (a second uid). OpenShell
+	// has none: its exec takes no user, and it walls each exec's processes off from
+	// the others' (a cell could not open its relay's stdout, measured 2026-10-01).
+	Checker ExecFunc
+
 	mu     sync.Mutex
 	live   map[string]string
 	relays map[string]*relay // only for a provider that relays (RunRelayed)
@@ -221,6 +228,26 @@ func (in *Interpreters) launch(ctx context.Context, exec ExecFunc, lang, work st
 	if !identityPattern.MatchString(out.Stdout) {
 		return fmt.Errorf("%w: the launcher printed no identity", ErrLaunch)
 	}
+	if err := in.check(ctx, "interp:"+out.Stdout); err != nil {
+		return err
+	}
 	in.set(lang, out.Stdout)
+	return nil
+}
+
+// check confirms identities a launcher or relay reported (kind:identity, see
+// CheckScript) through the provider's Checker; with none, the reports stand. A
+// failed check is ErrLaunch: it runs before any of the cell's code is sent.
+func (in *Interpreters) check(ctx context.Context, ids ...string) error {
+	if in.Checker == nil {
+		return nil
+	}
+	out, err := in.Checker(ctx, CheckArgv(ids), nil, nil, 4096, 4096)
+	if err != nil {
+		return fmt.Errorf("%w: the identity check could not run: %v", ErrLaunch, err)
+	}
+	if !out.Exited || out.ExitCode != 0 {
+		return fmt.Errorf("%w: a reported identity is not the process plimsoll started (check exit %d)", ErrLaunch, out.ExitCode)
+	}
 	return nil
 }

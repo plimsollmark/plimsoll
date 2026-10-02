@@ -257,8 +257,10 @@ message RunResponse {
 // any language can reproduce it without a protobuf or JSON canonicalization
 // library.
 message RunRecord {
-  // version is the encoding version; new records use 2. Version 1 remains
-  // verifiable. A verifier refuses an unknown version.
+  // version is the encoding version: 2 for a call that was answered, 3 for a
+  // session call that may have run but ended in an error (unanswered is set and
+  // result_sha256 is empty). Version 1 remains verifiable. A verifier refuses an
+  // unknown version.
   uint32 version = 1;
   // request_sha256 covers what the caller sent: protocol number, floor,
   // timeout, software rule and payload, never the trace id.
@@ -283,6 +285,10 @@ message RunRecord {
   string previous_sha256 = 12;
   string software_identity = 14; // RunResponse.software_identity
   string software_rule_id = 15; // exact identity or digest of approved set
+  // unanswered, on a version 3 record, is the Connect code of the error the call
+  // ended with ("unknown", "deadline_exceeded", ...): the daemon's own word, never
+  // error text. Empty on an answered call's record.
+  string unanswered = 16;
   // record_sha256 covers every field above.
   string record_sha256 = 13;
 }
@@ -551,6 +557,13 @@ message SessionEnded {
 // execution, whatever its status code, and is never a safe automatic-retry signal.
 message NotDispatched {
   NotDispatchedReason reason = 1;
+}
+
+// UnansweredCall is the error detail of a session call that may have run but ended
+// in an error (an error without NotDispatched): its version 3 record, which the
+// session's chain counts, so a call that ran is never missing from the chain.
+message UnansweredCall {
+  RunRecord record = 1;
 }
 
 // NotDispatchedReason says why, in the terms a caller acts on: whether another

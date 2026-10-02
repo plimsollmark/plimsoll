@@ -385,7 +385,7 @@ func (s *session) boundary() {
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, sweepBudget)
 	s.mu.Lock()
-	args := sessionkit.SweepArgv(s.disk, sessionDirs, s.interps.Keep(s.baseline))
+	args := sessionkit.SweepArgv(s.disk, sessionkit.MeasureWalk, sessionDirs, s.interps.Keep(s.baseline))
 	s.mu.Unlock()
 	out, err := s.p.exec(ctx, s.b, args, nil, nil, 4096, 4096)
 	cancel()
@@ -512,6 +512,7 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 		Isolation:       s.tier,
 	}
 	if g != nil {
+		g.broker.End()
 		res.CallTrace = g.broker.Trace()
 	}
 	if out.exited {
@@ -572,6 +573,7 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 	}
 	res, err := s.p.runPlan(runCtx, s.b, s.tier, planJSON, key, g)
 	if g != nil {
+		g.broker.End()
 		res.CallTrace = g.broker.Trace()
 	}
 	// The brokered calls happened whatever became of the run.

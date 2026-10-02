@@ -64,8 +64,10 @@ export type CodeSandboxesOptions = {
   maxOutputChars?: number;
   /**
    * Called when closing a sandbox fails. A "data_loss" error here means the
-   * daemon counted calls this client did not make: someone else held the
-   * session ID. Default: console.warn. The error never contains the session ID.
+   * daemon counted calls this client has no answer for: a call that ended
+   * without one (an abort, a timeout, a dropped connection, a proxy's error),
+   * or, if none did, someone else holding the session ID. Default: console.warn.
+   * The error never contains the session ID.
    */
   onCloseError?: (key: string, err: unknown) => void;
 };
@@ -140,35 +142,63 @@ export function snippetRunner(code: string): string {
   ].join("\n");
 }
 
-/** @internal A fresh run prints its last expression as a cell does, through these runners. */
+/**
+ * @internal A fresh run prints its last expression as a cell does, through these
+ * runners, and takes what a cell takes: top-level await, and imports from the work
+ * directory (Python's own imports first, in isolated mode, as the session kernel
+ * does; Node's require resolving from the work directory, and the image's baked
+ * packages above it).
+ */
 export const RUNNERS: Record<Language, { path: string; file: string; step: string; source: string }> = {
   python: {
     path: ".plimsoll/run.py",
     file: ".plimsoll/cell.py",
-    step: "python3 .plimsoll/run.py",
+    step: "python3 -I .plimsoll/run.py",
     source: [
-      "import ast",
+      "import ast, asyncio, inspect, sys",
+      "sys.path.insert(0, '')",
       "src = open('.plimsoll/cell.py').read()",
       "tree = ast.parse(src, 'cell', 'exec')",
       "last = ast.Expression(tree.body.pop().value) if tree.body and isinstance(tree.body[-1], ast.Expr) else None",
       "ns = {'__name__': '__main__'}",
-      "exec(compile(tree, 'cell', 'exec'), ns)",
-      "if last is not None:",
-      "    value = eval(compile(last, 'cell', 'eval'), ns)",
-      "    if value is not None:",
-      "        print(repr(value))",
+      "flags = ast.PyCF_ALLOW_TOP_LEVEL_AWAIT",
+      "async def main():",
+      "    r = eval(compile(tree, 'cell', 'exec', flags=flags), ns)",
+      "    if inspect.iscoroutine(r):",
+      "        await r",
+      "    if last is not None:",
+      "        value = eval(compile(last, 'cell', 'eval', flags=flags), ns)",
+      "        if inspect.iscoroutine(value):",
+      "            value = await value",
+      "        if value is not None:",
+      "            print(repr(value))",
+      "asyncio.run(main())",
       "",
     ].join("\n"),
   },
   javascript: {
     path: ".plimsoll/run.cjs",
     file: ".plimsoll/cell.js",
-    step: "node .plimsoll/run.cjs",
+    step: "node --expose-internals .plimsoll/run.cjs",
     source: [
       "const fs = require('node:fs'), util = require('node:util'), vm = require('node:vm');",
-      "Promise.resolve(vm.runInThisContext(fs.readFileSync('.plimsoll/cell.js', 'utf8'), { filename: 'cell.js' })).then((v) => {",
+      "globalThis.require = require('node:module').createRequire(process.cwd() + '/');",
+      "let tla = null;",
+      "try { tla = require('internal/repl/await').processTopLevelAwait; } catch {}",
+      "const src = fs.readFileSync('.plimsoll/cell.js', 'utf8');",
+      "let wrapped = null;",
+      "if (tla) { try { wrapped = tla(src); } catch {} }",
+      "(async () => {",
+      "  let v;",
+      "  if (wrapped) {",
+      "    const out = await vm.runInThisContext(wrapped, { filename: 'cell.js' });",
+      "    v = out === undefined ? undefined : out.value;",
+      "  } else {",
+      "    v = vm.runInThisContext(src, { filename: 'cell.js' });",
+      "    if (v instanceof Promise) v = await v;",
+      "  }",
       "  if (v !== undefined) console.log(util.inspect(v, { depth: 4 }));",
-      "});",
+      "})().catch((e) => { console.error(e); process.exitCode = 1; });",
       "",
     ].join("\n"),
   },
@@ -275,6 +305,10 @@ export class CodeSandboxes {
           this.#drop(key, session);
           continue;
         }
+        // A call that may have run without an answer leaves the session unusable
+        // (the Session refuses its later calls), so the next call opens a new
+        // sandbox and says so with freshSandbox.
+        if (session && !(e instanceof PlimsollError && e.notDispatched)) this.#drop(key, session);
         throw e;
       } finally {
         entry.busy--;

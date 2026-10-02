@@ -663,8 +663,18 @@ func TestRemoteRecorder(t *testing.T) {
 	}
 }
 
-// A redirect is never followed: the code would go to wherever it points.
+// A redirect is never followed: the code would go to wherever it points. That holds
+// for an HTTP client the caller supplies too, which by default follows a 307.
 func TestRedirectIsNotFollowed(t *testing.T) {
+	for name, opts := range map[string][]Option{
+		"default":  {WithToken("tok")},
+		"caller's": {WithToken("tok"), WithHTTPClient(&http.Client{Timeout: time.Minute})},
+	} {
+		t.Run(name, func(t *testing.T) { redirectNotFollowed(t, opts) })
+	}
+}
+
+func redirectNotFollowed(t *testing.T, opts []Option) {
 	var elsewhere int
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		elsewhere++
@@ -675,7 +685,7 @@ func TestRedirectIsNotFollowed(t *testing.T) {
 		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusTemporaryRedirect)
 	}))
 	defer srv.Close()
-	r, err := New(srv.URL, WithToken("tok"))
+	r, err := New(srv.URL, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}

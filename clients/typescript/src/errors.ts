@@ -3,7 +3,7 @@
 // and comes back with notDispatched set; anything else may have followed
 // execution and is never a safe automatic retry (docs/run-results.md).
 
-import type { WireError } from "./wire.ts";
+import type { WireError, WireRecord } from "./wire.ts";
 
 /** Why a request was refused before any code ran (plimsoll.v1.NotDispatchedReason). */
 export type Refusal = "request" | "permission" | "protocol" | "unsupported" | "isolation" | "capacity" | "environment" | "unknown";
@@ -57,11 +57,17 @@ export class PlimsollError extends Error {
    * have executed, and this is what came back.
    */
   readonly result: unknown;
+  /**
+   * The record the daemon sends with a session call that may have run but ended in
+   * an error (a version 3 record, as it came off the wire). The Session checks it
+   * and keeps it in its chain, so the session goes on; the call's outcome is unknown.
+   */
+  readonly unanswered: WireRecord | undefined;
 
   constructor(
     code: Code,
     message: string,
-    opts: { notDispatched?: Refusal; sessionEnded?: { reason: SessionEnd; detail: string }; result?: unknown; cause?: unknown } = {},
+    opts: { notDispatched?: Refusal; sessionEnded?: { reason: SessionEnd; detail: string }; result?: unknown; unanswered?: WireRecord; cause?: unknown } = {},
   ) {
     super(message, opts.cause === undefined ? undefined : { cause: opts.cause });
     this.name = "PlimsollError";
@@ -69,6 +75,7 @@ export class PlimsollError extends Error {
     this.notDispatched = opts.notDispatched;
     this.sessionEnded = opts.sessionEnded;
     this.result = opts.result;
+    this.unanswered = opts.unanswered;
   }
 }
 
@@ -131,11 +138,74 @@ function decodeDetail(b: Uint8Array): { reason: number; detail: string } {
   return { reason, detail };
 }
 
+// Reads one varint at b[i] as a bigint (an int64 or uint64 field); returns [value,
+// next index].
+function bigVarint(b: Uint8Array, i: number): [bigint, number] {
+  let v = 0n;
+  for (let shift = 0n; i < b.length && shift < 70n; shift += 7n) {
+    const c = b[i++]!;
+    v |= BigInt(c & 0x7f) << shift;
+    if ((c & 0x80) === 0) return [v, i];
+  }
+  throw new Error("bad varint");
+}
+
+const RECORD_STRINGS: Record<number, keyof WireRecord> = {
+  2: "requestSha256", 3: "resultSha256", 4: "provider", 5: "isolation", 6: "environment", 7: "policy",
+  10: "session", 12: "previousSha256", 13: "recordSha256", 14: "softwareIdentity", 15: "softwareRuleId", 16: "unanswered",
+};
+
+// Decodes an UnansweredCall detail (field 1, a RunRecord) by hand, into the record's
+// proto3 JSON form, so the record checks exactly as one read off a JSON answer.
+function decodeUnanswered(b: Uint8Array): WireRecord | undefined {
+  let rec: WireRecord | undefined;
+  for (let i = 0; i < b.length; ) {
+    const [tag, j] = varint(b, i);
+    const [n, k] = varint(b, j);
+    if ((tag & 7) !== 2 || k + n > b.length) throw new Error("bad detail");
+    if (tag >>> 3 === 1) rec = decodeRecord(b.subarray(k, k + n));
+    i = k + n;
+  }
+  return rec;
+}
+
+function decodeRecord(b: Uint8Array): WireRecord {
+  const m: Record<string, unknown> = {};
+  for (let i = 0; i < b.length; ) {
+    const [tag, j] = varint(b, i);
+    const field = Math.floor(tag / 8);
+    const wire = tag & 7;
+    i = j;
+    if (wire === 0) {
+      const [v, k] = bigVarint(b, i);
+      i = k;
+      if (field === 1) m.version = Number(v);
+      else if (field === 8) m.startedUnixMs = BigInt.asIntN(64, v).toString();
+      else if (field === 9) m.endedUnixMs = BigInt.asIntN(64, v).toString();
+      else if (field === 11) m.sequence = v.toString();
+    } else if (wire === 2) {
+      const [n, k] = varint(b, i);
+      if (k + n > b.length) throw new Error("bad length");
+      const name = RECORD_STRINGS[field];
+      if (name) m[name] = new TextDecoder("utf-8", { fatal: true }).decode(b.subarray(k, k + n));
+      i = k + n;
+    } else if (wire === 1) {
+      i += 8;
+    } else if (wire === 5) {
+      i += 4;
+    } else {
+      throw new Error("unexpected wire type");
+    }
+  }
+  return m as WireRecord;
+}
+
 /** The error a Connect error body describes, with its plimsoll details restored. */
 export function errorFromWire(httpStatus: number, body: WireError | undefined): PlimsollError {
   const code = (body?.code as Code | undefined) ?? httpStatusCode(httpStatus);
   let notDispatched: Refusal | undefined;
   let sessionEnded: { reason: SessionEnd; detail: string } | undefined;
+  let unanswered: WireRecord | undefined;
   for (const d of body?.details ?? []) {
     try {
       const bytes = Buffer.from(d.value ?? "", "base64");
@@ -144,12 +214,14 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined): 
       } else if (d.type === "plimsoll.v1.SessionEnded") {
         const m = decodeDetail(bytes);
         sessionEnded = { reason: sessionEndFromWire(m.reason), detail: m.detail };
+      } else if (d.type === "plimsoll.v1.UnansweredCall") {
+        unanswered = decodeUnanswered(bytes);
       }
     } catch {
       // An undecodable detail states nothing; in particular not that nothing ran.
     }
   }
-  return new PlimsollError(code, body?.message ?? `HTTP ${httpStatus}`, { notDispatched, sessionEnded });
+  return new PlimsollError(code, body?.message ?? `HTTP ${httpStatus}`, { notDispatched, sessionEnded, unanswered: notDispatched ? undefined : unanswered });
 }
 
 // Connect's mapping for a response without a Connect error body.

@@ -74,6 +74,26 @@ func (s *Signer) entry(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse,
 	return Entry{Request: reqBytes, Response: respBytes, Envelope: env}, nil
 }
 
+// Unanswered checks the record of a session call that may have run but ended in an
+// error against the request sent (the call as a Run request, record.AsRunRequest),
+// signs it, and returns the bundle entry: the request and the signed record, no
+// response. Its place in the chain is VerifyBundle's to check, as for Call.
+func (s *Signer) Unanswered(req *plimsollv1.RunRequest, rec *plimsollv1.RunRecord) (Entry, error) {
+	r := record.FromWire(rec)
+	if err := record.CheckUnansweredExchange(req, r); err != nil {
+		return Entry{}, err
+	}
+	env, err := s.Sign(r)
+	if err != nil {
+		return Entry{}, err
+	}
+	reqBytes, err := proto.Marshal(req)
+	if err != nil {
+		return Entry{}, err
+	}
+	return Entry{Request: reqBytes, Envelope: env}, nil
+}
+
 // Close signs a session-close statement.
 func (s *Signer) Close(c SessionClose) (Entry, error) {
 	st := closeStatement{
@@ -212,6 +232,9 @@ func verifyEntries(entries []Entry, v *Verifier) (Report, []sandbox.RunRecord, e
 			return fail(err)
 		}
 		recs[i] = rec
+		if rec.Version == record.UnansweredVersion && rec.Session == "" {
+			return fail(fmt.Errorf("%w: an unanswered record outside a session", ErrChain))
+		}
 		if rec.Session == "" {
 			if rec.Sequence != 0 || rec.PreviousSHA256 != "" {
 				return fail(fmt.Errorf("%w: a single run's record carries chain fields", ErrChain))
@@ -221,14 +244,14 @@ func verifyEntries(entries []Entry, v *Verifier) (Report, []sandbox.RunRecord, e
 		}
 		ch := chains[rec.Session]
 		if ch == nil {
-			ch = &chain{index: len(rep.Sessions), version: rec.Version}
+			ch = &chain{index: len(rep.Sessions), version: family(rec.Version)}
 			chains[rec.Session] = ch
 			rep.Sessions = append(rep.Sessions, SessionReport{Session: rec.Session})
 		}
 		switch {
 		case ch.closed:
 			return fail(fmt.Errorf("%w: a call after session %s was closed", ErrChain, rec.Session))
-		case rec.Version != ch.version:
+		case family(rec.Version) != ch.version:
 			// A version-1 link states no software, so a mixed chain could hold a call
 			// that says nothing about what ran while the chain still verifies.
 			return fail(fmt.Errorf("%w: session %s call %d is record version %d, the session's first is %d",
@@ -255,7 +278,31 @@ var ErrChain = errors.New("attest: broken session chain")
 // ErrStored means a stored request or response does not match the signed record.
 var ErrStored = errors.New("attest: the stored request or response does not match the signed record")
 
+// family groups record versions that may share a chain: version 3 (an unanswered
+// call) is version 2's fields and more, so a session's chain may mix them, never 1.
+func family(version int) int {
+	if version == record.UnansweredVersion {
+		return record.Version
+	}
+	return version
+}
+
 func matchStored(e Entry, rec sandbox.RunRecord) error {
+	if rec.Version == record.UnansweredVersion {
+		// An unanswered call stored its request and no response: the same check the
+		// signer and the live client ran.
+		if len(e.Response) != 0 {
+			return fmt.Errorf("%w: an unanswered call's entry stores a response", ErrStored)
+		}
+		req := &plimsollv1.RunRequest{}
+		if err := proto.Unmarshal(e.Request, req); err != nil {
+			return fmt.Errorf("%w: request: %v", ErrStored, err)
+		}
+		if err := record.CheckUnansweredExchange(req, rec); err != nil {
+			return fmt.Errorf("%w: %w", ErrStored, err)
+		}
+		return nil
+	}
 	req, resp, err := e.Messages()
 	if err != nil {
 		return err
@@ -327,10 +374,13 @@ type Replayed struct {
 	Recorded string // the signed result digest
 	Replayed string // the new run's result digest; "" when it failed
 	Err      error  // the new run's error, if any
+	// Unanswered is the recorded call's error code when it ended without a result
+	// (a version 3 record): there is no recorded result, so it never matches.
+	Unanswered string
 }
 
 // Match reports whether the new run reproduced the recorded result.
-func (r Replayed) Match() bool { return r.Err == nil && r.Replayed == r.Recorded }
+func (r Replayed) Match() bool { return r.Err == nil && r.Unanswered == "" && r.Replayed == r.Recorded }
 
 // Replay sends every single run in a bundle again through send and compares
 // result digests. It is meaningful for deterministic workloads (the physics
@@ -399,7 +449,7 @@ func ReplaySessions(ctx context.Context, entries []Entry, v *Verifier, open func
 		sender, openErr := open(ctx)
 		for _, i := range calls[fp] {
 			req, _, _ := entries[i].Messages()
-			r := Replayed{Entry: i + 1, Session: fp, Recorded: recs[i].ResultSHA256}
+			r := Replayed{Entry: i + 1, Session: fp, Recorded: recs[i].ResultSHA256, Unanswered: recs[i].Unanswered}
 			switch {
 			case openErr != nil:
 				r.Err = openErr
@@ -435,6 +485,18 @@ func NewHarness(s *Signer, w io.Writer) *Harness { return &Harness{signer: s, w:
 // Record checks the exchange's record, signs it and writes the entry.
 func (h *Harness) Record(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) error {
 	e, err := h.signer.Call(req, resp)
+	if err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return WriteEntry(h.w, e)
+}
+
+// RecordUnanswered signs the record of a session call that may have run but ended
+// in an error, and writes it. With it, Harness is a client.UnansweredRecorder.
+func (h *Harness) RecordUnanswered(req *plimsollv1.RunRequest, rec *plimsollv1.RunRecord) error {
+	e, err := h.signer.Unanswered(req, rec)
 	if err != nil {
 		return err
 	}

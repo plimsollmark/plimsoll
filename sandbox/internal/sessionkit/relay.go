@@ -26,8 +26,13 @@ import (
 //go:embed interp/relay.js
 var relayJS string
 
-// maxFrame bounds one line from a relay: a chunk of output, base64-encoded.
-const maxFrame = 8 << 20
+// maxFrame bounds one line from a relay: a piece of output (at most 48 KiB, so
+// 64 KiB in base64) or the relay's identity. With frameQueue it bounds what a relay
+// can make the daemon hold, whatever the session's code writes into its stdout.
+const (
+	maxFrame   = 128 << 10
+	frameQueue = 64
+)
 
 // Attached is a long-lived command in the sandbox whose stdin and stdout the
 // provider holds.
@@ -49,12 +54,14 @@ func RelayArgv(lang, work string) []string {
 }
 
 type frame struct {
-	Ready string `json:"ready"`
-	O     string `json:"o"`
-	E     string `json:"e"`
-	Done  *int   `json:"done"`
-	OT    bool   `json:"ot"`
-	ET    bool   `json:"et"`
+	N        string `json:"n"` // the request's nonce, on every frame of a cell
+	Prepared bool   `json:"prepared"`
+	Ready    string `json:"ready"`
+	O        string `json:"o"`
+	E        string `json:"e"`
+	Done     *int   `json:"done"`
+	OT       bool   `json:"ot"`
+	ET       bool   `json:"et"`
 	// On a done of cellFilesFailed: the failing file's index in the request and the
 	// system's error code. On OpenShell the session's own code can forge them.
 	File  *int   `json:"file"`
@@ -94,7 +101,7 @@ func startRelay(ctx context.Context, attach AttachFunc, lang, work string) (*rel
 	if err != nil {
 		return nil, fmt.Errorf("%w: the relay could not start: %v", ErrLaunch, err)
 	}
-	r := &relay{att: att, frames: make(chan frame, 64), errc: make(chan error, 1), done: make(chan struct{})}
+	r := &relay{att: att, frames: make(chan frame, frameQueue), errc: make(chan error, 1), done: make(chan struct{})}
 	go func() {
 		sc := bufio.NewScanner(att.Stdout())
 		sc.Buffer(make([]byte, 64<<10), maxFrame)
@@ -138,18 +145,91 @@ func startRelay(ctx context.Context, attach AttachFunc, lang, work string) (*rel
 // errRelayLost is a relay that stopped answering during a cell.
 var errRelayLost = errors.New("the relay stopped answering")
 
-// cell sends one request and reads its frames until the relay says it is done,
-// keeping at most the caps of output. The request is written under the deadline
-// too: a relay that stops reading would otherwise block the write, and with it the
-// session's turn, past the cell's budget. Ending the call lets go of the relay,
-// which unblocks the write.
-func (r *relay) cell(ctx context.Context, req []byte, outCap, errCap int) (ExecResult, frame, error) {
-	var res ExecResult
+// errOutOfTurn is a frame that does not belong to the cell in progress: another
+// nonce, or a status the step cannot produce. Code of the session can write frames
+// into the relay's stdout, so this is what a forged frame usually looks like.
+var errOutOfTurn = errors.New("the relay answered out of turn")
+
+// drain drops frames left from before this cell: the relay writes none between
+// cells, so any there were written by something else.
+func (r *relay) drain() {
+	for {
+		select {
+		case <-r.frames:
+		default:
+			return
+		}
+	}
+}
+
+// send writes one request line under ctx: a relay that stops reading would
+// otherwise block the write, and with it the session's turn, past the cell's
+// budget. Ending the call lets go of the relay, which unblocks the write.
+func (r *relay) send(req []byte) <-chan error {
 	wrote := make(chan error, 1)
 	go func() {
 		_, err := r.att.Stdin().Write(append(req, '\n'))
 		wrote <- err
 	}()
+	return wrote
+}
+
+// prepare asks the relay to write the cell's files and connect to the interpreter,
+// and waits for its answer: a done frame (3, files; 75, no interpreter) or
+// prepared. No code has been sent, whatever the answer, so every outcome here is
+// one in which the cell's code did not run.
+func (r *relay) prepare(ctx context.Context, nonce string, files []File) (frame, error) {
+	req, err := json.Marshal(struct {
+		Nonce string `json:"nonce"`
+		Files []File `json:"files"`
+	}{nonce, files})
+	if err != nil {
+		return frame{}, err
+	}
+	r.drain()
+	wrote := r.send(req)
+	for {
+		select {
+		case err := <-wrote:
+			if err != nil {
+				return frame{}, fmt.Errorf("%w: %v", errRelayLost, err)
+			}
+			wrote = nil
+		case f := <-r.frames:
+			switch {
+			case f.N != nonce:
+				return frame{}, errOutOfTurn
+			case f.Prepared:
+				return f, nil
+			case f.Done != nil && (*f.Done == cellFilesFailed || *f.Done == cellNoInterpreter):
+				return f, nil
+			default:
+				return frame{}, errOutOfTurn
+			}
+		case err := <-r.errc:
+			return frame{}, fmt.Errorf("%w: %v", errRelayLost, err)
+		case <-ctx.Done():
+			r.close()
+			return frame{}, ctx.Err()
+		}
+	}
+}
+
+// run hands the prepared cell's code to the relay and reads its frames until the
+// relay says it is done, keeping at most the caps of output. Its done is the cell's
+// status; a frame of another nonce is errOutOfTurn.
+func (r *relay) run(ctx context.Context, nonce, code string, outCap, errCap int) (ExecResult, frame, error) {
+	var res ExecResult
+	req, err := json.Marshal(struct {
+		Nonce  string `json:"nonce"`
+		Code   string `json:"code"`
+		OutCap int    `json:"outCap"`
+		ErrCap int    `json:"errCap"`
+	}{nonce, code, outCap, errCap})
+	if err != nil {
+		return res, frame{}, err
+	}
+	wrote := r.send(req)
 	var out, errb []byte
 	add := func(dst []byte, cap int, b64 string, cut *bool) []byte {
 		b, err := base64.StdEncoding.DecodeString(b64)
@@ -171,6 +251,9 @@ func (r *relay) cell(ctx context.Context, req []byte, outCap, errCap int) (ExecR
 			wrote = nil
 		case f := <-r.frames:
 			switch {
+			case f.N != nonce:
+				res.Stdout, res.Stderr = string(out), string(errb)
+				return res, frame{}, errOutOfTurn
 			case f.Done != nil:
 				res.Stdout, res.Stderr = string(out), string(errb)
 				res.StdoutTruncated = res.StdoutTruncated || f.OT
@@ -222,31 +305,27 @@ func (in *Interpreters) Close() {
 }
 
 // RunRelayed runs one cell through the language's relay, starting the interpreter
-// and then its relay when either is missing, and when the interpreter turns out to be
-// gone before the code was handed over (code of an earlier call killed it), starts
-// both again and tries once more. A deadline drops both, so the sweep after the call
-// kills them. An error means the cell's result is unknown, except ErrLaunch, which
-// means its code did not run. A relaunched
-// interpreter gets a new relay too, since the launcher replaces the FIFOs the old
-// relay reads.
+// and then its relay when either is missing. A cell is two steps. The prepare writes
+// the cell's files and connects to the interpreter; whatever it answers, no code has
+// been sent, so a refusal from it (files that could not be written, ErrFiles; an
+// interpreter that cannot be started or reached, ErrLaunch) is one in which the code
+// did not run, and an interpreter found gone there (code of an earlier call killed
+// it) is started again once. Only then is the code sent, and from then on nothing
+// the relay says can turn the call into a refusal or a second send: code of the
+// session can write into the relay's stdout, so a status the run step cannot produce
+// is read as an interpreter that ended, with the cell's result unknown. A deadline
+// drops the interpreter and its relay, so the sweep after the call kills them. A
+// relaunched interpreter gets a new relay too, since the launcher replaces the FIFOs
+// the old relay reads.
 func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach AttachFunc, c Cell) (CellOutcome, error) {
 	if _, ok := command[c.Language]; !ok {
 		return CellOutcome{}, fmt.Errorf("unknown interpreter language %q", c.Language)
 	}
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
 		return CellOutcome{}, err
 	}
-	req, err := json.Marshal(struct {
-		Nonce  string `json:"nonce"`
-		Code   string `json:"code"`
-		Files  []File `json:"files"`
-		OutCap int    `json:"outCap"`
-		ErrCap int    `json:"errCap"`
-	}{hex.EncodeToString(nonce), c.Code, c.Files, c.OutCap, c.ErrCap})
-	if err != nil {
-		return CellOutcome{}, err
-	}
+	nonce := hex.EncodeToString(raw)
 	var outcome CellOutcome
 	// An interpreter started for a cell whose files failed was never reported;
 	// this cell reports it, or nothing would say the earlier state is gone.
@@ -255,7 +334,15 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 		in.dropRelay(c.Language)
 		in.drop(c.Language)
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	timedOut := func() (CellOutcome, error) {
+		lose()
+		return CellOutcome{TimedOut: true, Raised: true, Started: outcome.Started, Ended: true}, nil
+	}
+	var r *relay
+	for attempt := 0; ; attempt++ {
+		if attempt == 2 {
+			return outcome, fmt.Errorf("%w: the %s interpreter stopped answering as soon as it started", ErrLaunch, c.Language)
+		}
 		if !in.alive(c.Language) {
 			in.dropRelay(c.Language)
 			if err := in.launch(ctx, exec, c.Language, c.Work); err != nil {
@@ -266,7 +353,7 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 			}
 			outcome.Started = true
 		}
-		r := in.relayFor(c.Language)
+		r = in.relayFor(c.Language)
 		if r != nil && r.gone() {
 			// Killed between calls. Its interpreter may still be alive; if it is not,
 			// the new relay finds no one listening and the loop starts both.
@@ -274,10 +361,15 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 			r = nil
 		}
 		if r == nil {
-			if r, err = startRelay(ctx, attach, c.Language, c.Work); err != nil {
+			var err error
+			if r, err = startRelay(ctx, attach, c.Language, c.Work); err == nil {
+				if err = in.check(ctx, "relay:"+r.id); err != nil {
+					r.close()
+				}
+			}
+			if err != nil {
 				if deadline.Expired(ctx) == context.DeadlineExceeded {
-					lose()
-					return CellOutcome{TimedOut: true, Raised: true, Started: outcome.Started, Ended: true}, nil
+					return timedOut()
 				}
 				lose()
 				return CellOutcome{}, err
@@ -289,49 +381,56 @@ func (in *Interpreters) RunRelayed(ctx context.Context, exec ExecFunc, attach At
 			in.relays[c.Language] = r
 			in.mu.Unlock()
 		}
-		out, done, err := r.cell(ctx, req, c.OutCap, c.ErrCap)
-		status := 0
-		if done.Done != nil {
-			status = *done.Done
-		}
-		outcome.ExecResult = out
-		outcome.ExitCode, outcome.Exited = status, err == nil
+		f, err := r.prepare(ctx, nonce, c.Files)
 		if deadline.Expired(ctx) == context.DeadlineExceeded {
-			lose()
-			outcome.TimedOut, outcome.Raised, outcome.Ended = true, true, true
-			return outcome, nil
-		}
-		if errors.Is(err, errRelayLost) {
-			// The code may have run; the interpreter's state is unknown.
-			lose()
-			outcome.Raised, outcome.Ended = true, true
-			return outcome, nil
+			return timedOut()
 		}
 		if err != nil {
 			lose()
-			return outcome, err
+			return CellOutcome{}, fmt.Errorf("%w: the relay failed before the code was sent: %v", ErrLaunch, err)
 		}
-		switch status {
-		case cellRan:
-			return outcome, nil
-		case cellRaised:
-			outcome.Raised = true
-			return outcome, nil
-		case cellFilesFailed:
+		if f.Prepared {
+			break
+		}
+		if *f.Done == cellFilesFailed {
 			// Nothing of the cell ran, and its interpreter is as the last cell left it,
 			// or new, which the next answered cell reports.
 			if outcome.Started {
 				in.markUnreported(c.Language)
 			}
-			return CellOutcome{}, filesError(done, len(c.Files))
-		case cellNoInterpreter:
-			lose()
-			continue
-		default:
-			lose()
-			outcome.Raised, outcome.Ended = true, true
-			return outcome, nil
+			return CellOutcome{}, filesError(f, len(c.Files))
 		}
+		lose() // cellNoInterpreter: start both again, once
 	}
-	return outcome, fmt.Errorf("%w: the %s interpreter stopped answering as soon as it started", ErrLaunch, c.Language)
+	out, done, err := r.run(ctx, nonce, c.Code, c.OutCap, c.ErrCap)
+	outcome.ExecResult = out
+	if deadline.Expired(ctx) == context.DeadlineExceeded {
+		lose()
+		outcome.TimedOut, outcome.Raised, outcome.Ended = true, true, true
+		return outcome, nil
+	}
+	if errors.Is(err, errRelayLost) || errors.Is(err, errOutOfTurn) {
+		// The code may have run; the interpreter's state is unknown.
+		lose()
+		outcome.Raised, outcome.Ended = true, true
+		return outcome, nil
+	}
+	if err != nil {
+		lose()
+		return outcome, err
+	}
+	outcome.ExitCode, outcome.Exited = *done.Done, true
+	switch *done.Done {
+	case cellRan:
+		return outcome, nil
+	case cellRaised:
+		outcome.Raised = true
+		return outcome, nil
+	default:
+		// The interpreter ended during the cell (76), or a status the run step cannot
+		// produce: either way the code may have run, and the interpreter is gone.
+		lose()
+		outcome.Raised, outcome.Ended = true, true
+		return outcome, nil
+	}
 }

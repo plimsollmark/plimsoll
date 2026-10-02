@@ -107,11 +107,14 @@ function writeAll(fd, buf) {
 let queue = Promise.resolve();
 const server = net.createServer((conn) => {
   let input = "";
+  let taken = false; // one cell per connection: later chunks never queue it again
   conn.setEncoding("utf8");
   conn.on("data", (chunk) => {
+    if (taken) return;
     input += chunk;
     const nl = input.indexOf("\n");
     if (nl < 0) return;
+    taken = true;
     const req = JSON.parse(input.slice(0, nl));
     queue = queue.then(async () => {
       writeAll(1, marker("start", req.nonce));

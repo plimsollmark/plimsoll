@@ -411,6 +411,8 @@ func TestRecordDigestCoversEveryField(t *testing.T) {
 		"Session":          func(r *sandbox.RunRecord) { r.Session = "" },
 		"Sequence":         func(r *sandbox.RunRecord) { r.Sequence = 3 },
 		"PreviousSHA256":   func(r *sandbox.RunRecord) { r.PreviousSHA256 = "" },
+		// Encoded from version 3 on; the check below moves it within version 3.
+		"Unanswered": func(r *sandbox.RunRecord) { r.Version, r.Unanswered = 3, "unknown" },
 	}
 	fields := reflect.TypeOf(sandbox.RunRecord{})
 	for i := range fields.NumField() {
@@ -521,5 +523,53 @@ func TestStampStatesTheResponsesEvidence(t *testing.T) {
 	}
 	if _, err := Check(req, resp); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Within version 3, the error code an unanswered record names moves its digest.
+func TestUnansweredCodeIsInTheDigest(t *testing.T) {
+	r := goldenRecord()
+	r.Version, r.ResultSHA256, r.Unanswered = UnansweredVersion, "", "unknown"
+	other := r
+	other.Unanswered = "internal"
+	if Digest(r) == Digest(other) {
+		t.Fatal("the unanswered code did not move the record digest")
+	}
+}
+
+// An unanswered session call's record checks against the request sent and the chain
+// seen, and is refused when anything it states does not hold.
+func TestCheckUnanswered(t *testing.T) {
+	req := fixture("cell request", &plimsollv1.SessionRunRequest{})
+	fp := SessionFingerprint("session-id")
+	stamp := func(edit func(*sandbox.RunRecord), code string) *plimsollv1.RunRecord {
+		r := sandbox.RunRecord{RequestSHA256: SessionRunRequestDigest(req), Provider: "docker", Isolation: "container",
+			Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000001000), Session: fp, Sequence: 2, PreviousSHA256: "prev"}
+		if edit != nil {
+			edit(&r)
+		}
+		return StampUnanswered(r, code)
+	}
+	if r, err := CheckUnanswered(req, stamp(nil, "unavailable"), fp, 1, "prev"); err != nil || r.Unanswered != "unavailable" || r.Version != 3 {
+		t.Fatalf("a good unanswered record: %+v, %v", r, err)
+	}
+	for name, c := range map[string]struct {
+		rec  *plimsollv1.RunRecord
+		want error
+	}{
+		"no error code":    {stamp(nil, ""), ErrMismatch},
+		"not a code":       {stamp(nil, "the relay said so"), ErrMismatch},
+		"another request":  {stamp(func(r *sandbox.RunRecord) { r.RequestSHA256 = "other" }, "unknown"), ErrMismatch},
+		"another session":  {stamp(func(r *sandbox.RunRecord) { r.Session = "other" }, "unknown"), ErrChain},
+		"a gap":            {stamp(func(r *sandbox.RunRecord) { r.Sequence = 3 }, "unknown"), ErrChain},
+		"another previous": {stamp(func(r *sandbox.RunRecord) { r.PreviousSHA256 = "other" }, "unknown"), ErrChain},
+		"a version 2":      {func() *plimsollv1.RunRecord { m := stamp(nil, "unknown"); m.Version = 2; return m }(), ErrVersion},
+		"a result digest":  {func() *plimsollv1.RunRecord { m := stamp(nil, "unknown"); m.ResultSha256 = "x"; return m }(), ErrMismatch},
+		"a changed field":  {func() *plimsollv1.RunRecord { m := stamp(nil, "unknown"); m.Provider = "e2b"; return m }(), ErrMismatch},
+		"no record at all": {nil, ErrNoRecord},
+	} {
+		if _, err := CheckUnanswered(req, c.rec, fp, 1, "prev"); !errors.Is(err, c.want) {
+			t.Errorf("%s: %v; want %v", name, err, c.want)
+		}
 	}
 }

@@ -508,6 +508,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 		Isolation:       tier,
 	}
 	if g != nil {
+		g.broker.End()
 		res.CallTrace = g.broker.Trace()
 	}
 	if out.exited {
@@ -580,6 +581,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 	}
 	res, err := p.runPlan(runCtx, b, tier, planJSON, key, g)
 	if g != nil {
+		g.broker.End()
 		res.CallTrace = g.broker.Trace()
 	}
 	return res, err

@@ -124,6 +124,13 @@ func (s *FakeSession) Suspends() int {
 	return s.suspended
 }
 
+// Calls counts the snippet and project calls the session ran.
+func (s *FakeSession) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
 // LastTimeout is the timeout the last snippet call carried, as the caller set it.
 func (s *FakeSession) LastTimeout() time.Duration {
 	s.mu.Lock()

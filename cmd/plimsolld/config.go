@@ -168,6 +168,7 @@ type hardenedFacts struct {
 	MetricsAddr     string                 // metrics listen address; "" = metrics off
 	RatePerMin      int                    // effective per-caller rate limit
 	PerCaller       int                    // effective per-caller concurrency cap; 0 = none
+	Sessions        rpc.SessionConfig      // the session settings in force
 }
 
 // enforceHardenedPolicy is the production policy PLIMSOLL_HARDENED=1 turns on.
@@ -289,9 +290,16 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 		fail("hardened mode requires per-caller rate limiting: SANDBOX_RATE_PER_MIN must be positive")
 	}
 	// A rate limit bounds what a caller starts, not what it holds: without a
-	// concurrency cap one caller can hold every slot with long runs or open sessions.
+	// concurrency cap one caller can hold every slot with long runs or running
+	// sessions. A suspended session holds no slot, so the session cap below bounds
+	// those.
 	if f.PerCaller <= 0 {
 		fail("hardened mode requires a per-caller concurrency cap: SANDBOX_PER_KEY_CONCURRENT must be positive")
+	}
+	// A suspended session holds no concurrency slot, so the cap above does not bound
+	// how many sessions one caller keeps open.
+	if f.Sessions.MaxSessions > 0 && f.Sessions.MaxPerCaller <= 0 {
+		fail("hardened mode requires a per-caller session cap with sessions on: SANDBOX_MAX_SESSIONS_PER_CALLER must be positive")
 	}
 
 	if len(violations) > 0 {
@@ -334,6 +342,10 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 	if err != nil {
 		return rpc.SessionConfig{}, err
 	}
+	perCaller, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS_PER_CALLER", 0)
+	if err != nil {
+		return rpc.SessionConfig{}, err
+	}
 	diskMB, err := envIntWith(getenv, "SANDBOX_SESSION_DISK_MB", 1024)
 	if err != nil {
 		return rpc.SessionConfig{}, err
@@ -349,6 +361,8 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 	switch {
 	case max < 0:
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_MAX_SESSIONS=%d must not be negative", max)
+	case perCaller < 0:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_MAX_SESSIONS_PER_CALLER=%d must not be negative", perCaller)
 	case diskMB < 0:
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_DISK_MB=%d must not be negative", diskMB)
 	case lifetime < time.Second || lifetime > maxSessionLifetime:
@@ -356,7 +370,7 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 	case idle < 0:
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_IDLE=%v must not be negative", idle)
 	}
-	return rpc.SessionConfig{MaxSessions: max, Lifetime: lifetime, IdleTimeout: idle, DiskBytes: int64(diskMB) << 20}, nil
+	return rpc.SessionConfig{MaxSessions: max, MaxPerCaller: perCaller, Lifetime: lifetime, IdleTimeout: idle, DiskBytes: int64(diskMB) << 20}, nil
 }
 
 // envDurationWith reads a Go duration ("30m", "90s") the way envIntWith reads an int.

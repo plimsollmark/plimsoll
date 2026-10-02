@@ -69,7 +69,9 @@ sessions at the `kernel` tier.
 
 The `minimumIsolation: "container"` in `chat.ts` makes the daemon refuse, before running
 anything, if its provider reports less (the `wasm` provider is `process`). Raise it to
-`kernel` or `vm` to require those, at the cost of sessions.
+`kernel` to require gVisor, which keeps sessions on docker under
+`SANDBOX_DOCKER_RUNTIME=runsc`, or to `vm`, which costs sessions: the providers at that
+tier keep none.
 
 ## Test
 

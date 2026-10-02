@@ -179,6 +179,7 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 		turn: make(chan struct{}, 1), done: make(chan struct{}),
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.interps.Checker = s.checkFunc
 	args := []string{"run", "-d", "--name", s.name, "--log-driver", "none", "--init",
 		"--label", dockerSessionLabel + "=1",
 		"--label", dockerExpiresLabel + "=" + strconv.FormatInt(expires.Unix(), 10)}
@@ -264,7 +265,21 @@ type dockerExecResult struct {
 // Killing the docker CLI at ctx's end does not kill the command inside the
 // container; the sweep after the call does.
 func (s *dockerSession) exec(ctx context.Context, argv, env []string, stdin []byte, outCap, errCap int) (dockerExecResult, error) {
+	return s.execAs(ctx, "", argv, env, stdin, outCap, errCap)
+}
+
+// dockerCheckerUser is the user the identity check runs as: not the container's
+// (1000), so no process of the session can open the check's stdout or signal it, and
+// with no capabilities it can read every process's stat and command line and nothing
+// more (measured under runc and gVisor, 2026-10-01).
+const dockerCheckerUser = "2000:2000"
+
+// execAs is exec as user ("" for the container's own).
+func (s *dockerSession) execAs(ctx context.Context, user string, argv, env []string, stdin []byte, outCap, errCap int) (dockerExecResult, error) {
 	args := []string{"exec", "-i", "-w", dockerSessionWork}
+	if user != "" {
+		args = append(args, "--user", user)
+	}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
@@ -591,7 +606,7 @@ func (s *dockerSession) boundary() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, dockerSweepBudget)
-	out, err := s.exec(ctx, guarded(sessionkit.SweepArgv(s.disk, dockerSessionDirs, s.keep())), nil, nil, 4096, 4096)
+	out, err := s.exec(ctx, guarded(sessionkit.SweepArgv(s.disk, sessionkit.MeasureStatfs, dockerSessionDirs, s.keep())), nil, nil, 4096, 4096)
 	cancel()
 	if s.Err() != nil {
 		return
@@ -600,10 +615,10 @@ func (s *dockerSession) boundary() {
 	case err == nil && out.exited && out.exitCode == sessionkit.SweepClean:
 		return
 	case err == nil && out.exited && out.exitCode == sessionkit.SweepOverBudget:
-		s.finish(SessionDiskExceeded, fmt.Sprintf("the session's files exceed %d bytes or %d entries", s.disk, sessionkit.MaxDiskEntries))
+		s.finish(SessionDiskExceeded, fmt.Sprintf("the session's writable filesystems hold more than %d bytes", s.disk))
 		return
 	case err == nil && out.exited && out.exitCode == sessionkit.SweepUnmeasurable:
-		s.finish(SessionDiskExceeded, "a directory could not be read, so the session's disk use cannot be measured")
+		s.finish(SessionDiskExceeded, "the session's disk use could not be read")
 		return
 	}
 	if !s.running() {
@@ -677,8 +692,7 @@ func (s *dockerSession) lend(ctx context.Context, grant *HostAPIGrant, timeout t
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	s.broker.set(core)
-	return core, []string{"HOST_API_SOCKET=" + containerSocketPath}, func() { s.broker.set(nil); core.Close() }, nil
+	return core, []string{"HOST_API_SOCKET=" + containerSocketPath}, s.broker.lend(core), nil
 }
 
 // RunJavaScript runs req.Code with `node -` in the session's container.
@@ -710,6 +724,7 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 	defer unlend()
 	start := time.Now()
 	out, err := s.exec(runCtx, []string{"node", "-"}, env, []byte(withHostSDK(req.Code, req.Grant)), s.d.maxOutput(), s.d.maxOutput())
+	unlend()
 	res := Result{
 		Stdout:              out.stdout,
 		Stderr:              out.stderr,
@@ -783,6 +798,7 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	}
 	defer unlend()
 	out, err := s.exec(runCtx, dockerRunnerCommand, env, planJSON, runnerwire.StdoutCap, s.d.maxOutput())
+	unlend()
 	fail.CallTrace = core.traceSnapshot()
 	fail.SoftwareIdentity, fail.EnvironmentIdentity = s.manifest, dockerImageIdentity(s.imageID)
 	if deadline.Expired(runCtx) == context.DeadlineExceeded && s.Err() == nil {
@@ -813,6 +829,12 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	res := projectResultFromReport(s.d.Name(), s.tier, report, fail.CallTrace)
 	res.SoftwareIdentity, res.EnvironmentIdentity = s.manifest, dockerImageIdentity(s.imageID)
 	return res, nil
+}
+
+// checkFunc runs the interpreter driver's identity check as dockerCheckerUser.
+func (s *dockerSession) checkFunc(ctx context.Context, argv []string, _ map[string]string, stdin []byte, outCap, errCap int) (sessionkit.ExecResult, error) {
+	out, err := s.execAs(ctx, dockerCheckerUser, argv, nil, stdin, outCap, errCap)
+	return sessionkit.ExecResult{Stdout: out.stdout, Stderr: out.stderr, ExitCode: out.exitCode, Exited: out.exited}, err
 }
 
 // execFunc is exec in the form the shared interpreter driver calls.
@@ -1021,6 +1043,22 @@ func (b *dockerSessionBroker) set(core *brokerSession) {
 	b.mu.Lock()
 	b.core = core
 	b.mu.Unlock()
+}
+
+// lend serves core's grant until the returned release, which stops serving it and
+// ends it: a request still in flight is cut off upstream, one still arriving is
+// refused, and the release waits for them, so the call's trace is read complete
+// after it. Release is idempotent: a call releases before reading its trace and
+// again, deferred, on its error paths.
+func (b *dockerSessionBroker) lend(core *brokerSession) (release func()) {
+	b.set(core)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			b.set(nil)
+			core.Close()
+		})
+	}
 }
 
 // Close stops the broker and removes its socket directory.

@@ -27,8 +27,14 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
-// Version is the encoding version this package computes and checks.
+// Version is the encoding version of an answered call's record, which this package
+// computes and checks.
 const Version = 2
+
+// UnansweredVersion is the encoding version of the record of a session call that may
+// have run but ended in an error: Version's fields, then unanswered after the empty
+// result digest. Answered records stay at Version, so a chain can hold both.
+const UnansweredVersion = 3
 
 // Each encoding opens with its domain string, so a digest of one kind can never
 // equal a digest of another, whatever the fields hold.
@@ -256,6 +262,9 @@ func Digest(r sandbox.RunRecord) string {
 	e := newEncoder(recordDomain(r.Version))
 	e.str("request_sha256", r.RequestSHA256)
 	e.str("result_sha256", r.ResultSHA256)
+	if r.Version >= 3 {
+		e.str("unanswered", r.Unanswered)
+	}
 	e.str("provider", r.Provider)
 	e.str("isolation", r.Isolation)
 	e.str("environment", r.Environment)
@@ -302,6 +311,7 @@ func ToWire(r sandbox.RunRecord) *plimsollv1.RunRecord {
 		Session:          r.Session,
 		Sequence:         r.Sequence,
 		PreviousSha256:   r.PreviousSHA256,
+		Unanswered:       r.Unanswered,
 		RecordSha256:     r.SHA256,
 	}
 }
@@ -323,6 +333,7 @@ func FromWire(m *plimsollv1.RunRecord) sandbox.RunRecord {
 		Session:          m.GetSession(),
 		Sequence:         m.GetSequence(),
 		PreviousSHA256:   m.GetPreviousSha256(),
+		Unanswered:       m.GetUnanswered(),
 		SHA256:           m.GetRecordSha256(),
 	}
 }
@@ -349,6 +360,74 @@ func Stamp(r sandbox.RunRecord, resp *plimsollv1.RunResponse) *plimsollv1.RunRec
 	r.SoftwareIdentity = resp.GetSoftwareIdentity()
 	r.SHA256 = Digest(r)
 	return ToWire(r)
+}
+
+// StampUnanswered completes r as the record of a session call that may have run but
+// ended in the error whose Connect code is code: version 3, no result digest, and the
+// record's own digest. The caller sets everything else, the evidence included, since
+// there is no response to read it from.
+func StampUnanswered(r sandbox.RunRecord, code string) *plimsollv1.RunRecord {
+	r.Version = UnansweredVersion
+	r.ResultSHA256 = ""
+	r.Unanswered = code
+	r.SHA256 = Digest(r)
+	return ToWire(r)
+}
+
+// unansweredCodes are the Connect codes a version 3 record may name: every code but
+// "ok", in Connect's spelling.
+var unansweredCodes = map[string]bool{
+	"canceled": true, "unknown": true, "invalid_argument": true, "deadline_exceeded": true,
+	"not_found": true, "already_exists": true, "permission_denied": true, "resource_exhausted": true,
+	"failed_precondition": true, "aborted": true, "out_of_range": true, "unimplemented": true,
+	"internal": true, "unavailable": true, "data_loss": true, "unauthenticated": true,
+}
+
+// CheckUnanswered verifies the record an unanswered session call's error carries:
+// version 3, no result digest, a Connect code, the digest of the request the caller
+// sent, the record's own digest, and that it continues the chain the caller has seen
+// (as CheckSessionCall). The call may have run; the record says only that it is in
+// the chain.
+func CheckUnanswered(req *plimsollv1.SessionRunRequest, m *plimsollv1.RunRecord, fingerprint string, prevSeq uint64, prev string) (*sandbox.RunRecord, error) {
+	if m == nil {
+		return nil, ErrNoRecord
+	}
+	r := FromWire(m)
+	if err := checkUnanswered(SessionRunRequestDigest(req), softwarewire.FromWire(req.GetSoftwareRule()), r); err != nil {
+		return nil, err
+	}
+	switch {
+	case r.Session != fingerprint:
+		return nil, fmt.Errorf("%w: the record names session %s, the call was sent to %s", ErrChain, r.Session, fingerprint)
+	case r.Sequence != prevSeq+1 || r.PreviousSHA256 != prev:
+		return nil, fmt.Errorf("%w: call %d after %q, the caller's last was call %d, %q", ErrChain, r.Sequence, r.PreviousSHA256, prevSeq, prev)
+	}
+	return &r, nil
+}
+
+// CheckUnansweredExchange verifies an unanswered call's record against the stored
+// request it came with (the call as a Run request, record.AsRunRequest), as
+// CheckExchange does for an answered call: everything but its place in the chain.
+func CheckUnansweredExchange(req *plimsollv1.RunRequest, r sandbox.RunRecord) error {
+	return checkUnanswered(RunRequestDigest(req), softwarewire.FromWire(req.GetSoftwareRule()), r)
+}
+
+// checkUnanswered is what an unanswered record states that a caller can recompute
+// from the request it sent.
+func checkUnanswered(requestDigest string, rule sandbox.SoftwareRule, r sandbox.RunRecord) error {
+	switch {
+	case r.Version != UnansweredVersion:
+		return fmt.Errorf("%w: an unanswered call's record is version %d, not %d", ErrVersion, r.Version, UnansweredVersion)
+	case r.ResultSHA256 != "" || !unansweredCodes[r.Unanswered]:
+		return fmt.Errorf("%w: an unanswered call's record states a result or no error code", ErrMismatch)
+	case r.RequestSHA256 != requestDigest:
+		return fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
+	case r.SoftwareRuleID != rule.ID():
+		return fmt.Errorf("%w: the record's software rule is not the request's", ErrMismatch)
+	case r.SHA256 != Digest(r):
+		return fmt.Errorf("%w: record digest %s, its fields digest to %s", ErrMismatch, r.SHA256, Digest(r))
+	}
+	return nil
 }
 
 // ErrVersion means a record uses an encoding this package does not know.

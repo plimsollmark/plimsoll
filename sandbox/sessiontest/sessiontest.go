@@ -55,6 +55,7 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		{"CellFilesThatCannotBeWrittenAreRefused", cellFilesRefused},
 		{"KilledInterpreterIsStartedAgain", cellInterpreterKilled},
 		{"GrantedCallNeedsAGrantThatAllowsSessions", grantNeedsSessionOptIn},
+		{"ForgedRelayFramesNeitherMarkNorRepeatACell", forgedRelayFrames},
 	} {
 		t.Run(c.name, func(t *testing.T) { c.run(t, p, cfg) })
 	}
@@ -76,6 +77,8 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	}
 	if slices.Contains(langs, sandbox.LanguagePython) {
 		t.Run("InterpreterIdentityCannotBeSubstituted", func(t *testing.T) { interpreterNotSubstituted(t, p, cfg) })
+		t.Run("ForgedRelayIdentityIsNotKept", func(t *testing.T) { forgedRelayIdentity(t, p, cfg) })
+		t.Run("WorkDirectoryModulesDoNotRunAtInterpreterStart", func(t *testing.T) { pythonShadowFiles(t, p, cfg) })
 	}
 }
 
@@ -122,6 +125,124 @@ const spoof = setInterval(() => {
 	again := cell(t, s, sandbox.LanguagePython, "plimsoll_x + 1", 30*time.Second)
 	if again.InterpreterStarted || strings.TrimSpace(again.Stdout) != "42" {
 		t.Fatalf("the sweep did not keep the real Python interpreter: %+v", again)
+	}
+}
+
+// Code of a session can write into the stdout of the relay that carries its cells
+// wherever the relay stays open to processes of its own user (on OpenShell it must,
+// and on docker it is for a moment as it starts). Here a JavaScript cell finds its
+// relay and writes a forged done frame into it while it runs: 75, which says no
+// interpreter took the code, and 3, which says the cell's files could not be
+// written, so nothing ran. Either way the code ran once, so the call must come back
+// unmarked (a not-dispatched mark would let a caller run it again elsewhere) and the
+// code must not be sent a second time. A provider that keeps the relay out of reach
+// passes by refusing the write, which the case logs.
+func forgedRelayFrames(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	for _, frame := range []string{`{"done":75}`, `{"done":3,"file":0,"errno":"EIO"}`} {
+		s := open(t, p, cfg.Lifetime)
+		if warm := cell(t, s, sandbox.LanguageJavaScript, "1", 30*time.Second); warm.ExitCode != 0 {
+			t.Fatalf("warm-up cell: %+v", warm)
+		}
+		code := `const fs = require("fs");
+fs.appendFileSync("forge-runs", "x");
+let relay = "";
+for (const d of fs.readdirSync("/proc")) {
+  if (!/^[0-9]+$/.test(d)) continue;
+  let c = ""; try { c = fs.readFileSync("/proc/" + d + "/cmdline", "latin1"); } catch { continue; }
+  if (c.includes("A session interpreter's relay") && c.includes("/javascript\0")) relay = d;
+}
+let forged = "no relay found";
+if (relay) try { const fd = fs.openSync("/proc/" + relay + "/fd/1", "w"); fs.writeSync(fd, ` + "`" + frame + `\n` + "`" + `); fs.closeSync(fd); forged = "written"; } catch (e) { forged = e.code; }
+forged`
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		res, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript, Code: code, Timeout: 30 * time.Second})
+		cancel()
+		if reason, marked := sandbox.NotDispatchedReason(err); marked {
+			t.Fatalf("forged %s: the call that ran came back marked not dispatched (%s): %v", frame, reason, err)
+		}
+		runs := strings.TrimSpace(js(t, s, `process.stdout.write(require("fs").readFileSync("forge-runs", "utf8"))`, 30*time.Second).Stdout)
+		if runs != "x" {
+			t.Fatalf("forged %s: the cell's code ran %d times", frame, len(runs))
+		}
+		t.Logf("forged %s: the cell's write into its relay: %s (result %+v, err %v)", frame, strings.TrimSpace(res.Stdout), res.InterpreterEnded, err)
+	}
+}
+
+// A relay prints its identity, the process the sweep keeps beside its interpreter, as
+// its first line. Here a JavaScript cell's timer waits for the Python relay to start,
+// opens its stdout while it can (on docker, before the relay has made itself
+// unreadable), starts a detached process and writes a ready line naming that process.
+// The Python cell may be refused for it, marked not dispatched, but the process must
+// not outlive the sweep, and a later Python cell must work. A provider that keeps the
+// relay out of reach passes by refusing the open, which the case logs. The case races
+// the relay's start: the forged line must arrive before the relay's own.
+func forgedRelayIdentity(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	arm := cell(t, s, sandbox.LanguageJavaScript, `const fs = require("fs"), cp = require("child_process");
+globalThis.forged = "relay never opened"; let decoy = null;
+const ident = (pid) => {
+  const st = fs.readFileSync("/proc/" + pid + "/stat", "latin1");
+  return pid + ":" + st.slice(st.lastIndexOf(")") + 2).split(" ")[19] + ":" + fs.readFileSync("/proc/" + pid + "/cmdline").toString("hex");
+};
+const poll = setInterval(() => {
+  if (!decoy && fs.existsSync("/tmp/.plimsoll-interp/python")) {
+    decoy = cp.spawn("sleep", ["7793"], { detached: true, stdio: "ignore" }); decoy.unref();
+  }
+  if (!decoy) return;
+  for (const d of fs.readdirSync("/proc")) {
+    if (!/^[0-9]+$/.test(d)) continue;
+    let c = ""; try { c = fs.readFileSync("/proc/" + d + "/cmdline", "latin1"); } catch { continue; }
+    if (!c.includes("A session interpreter's relay") || !c.includes("/python\0")) continue;
+    let fd; try { fd = fs.openSync("/proc/" + d + "/fd/1", "w"); } catch (e) { forged = e.code; continue; }
+    clearInterval(poll);
+    for (const end = Date.now() + 200; Date.now() < end;) {
+      try { if (fs.readFileSync("/proc/" + decoy.pid + "/cmdline", "latin1").startsWith("sleep")) break; } catch {}
+    }
+    fs.writeSync(fd, JSON.stringify({ ready: ident(decoy.pid) }) + "\n"); fs.closeSync(fd);
+    forged = "written"; return;
+  }
+}, 1);
+"armed"`, 30*time.Second)
+	if arm.ExitCode != 0 {
+		t.Fatalf("arm: %+v", arm)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	py, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguagePython, Code: "1 + 1", Timeout: 60 * time.Second})
+	cancel()
+	if _, marked := sandbox.NotDispatchedReason(err); err != nil && !marked {
+		t.Fatalf("the Python cell under a forged relay identity: unmarked error %v", err)
+	}
+	if err == nil && strings.TrimSpace(py.Stdout) != "2" {
+		t.Fatalf("the Python cell under a forged relay identity answered %+v", py)
+	}
+	forged := strings.TrimSpace(cell(t, s, sandbox.LanguageJavaScript, "forged", 30*time.Second).Stdout)
+	if got := strings.TrimSpace(js(t, s, procsRunning("sleep 7793"), 10*time.Second).Stdout); got != "[]" {
+		t.Fatalf("a process a forged relay identity named outlived the sweep (forgery: %s, Python cell err %v): %s", forged, err, got)
+	}
+	if again := cell(t, s, sandbox.LanguagePython, "1 + 1", 60*time.Second); strings.TrimSpace(again.Stdout) != "2" {
+		t.Fatalf("a Python cell after the forgery: %+v", again)
+	}
+	t.Logf("forgery: %s; the Python cell under it: err %v", forged, err)
+}
+
+// The Python interpreter starts in the work directory, where any earlier call can
+// have written files. One named like a module the interpreter imports as it starts
+// (json.py) must not run there: it would run before the interpreter's relay connects,
+// with nobody's cell in progress. A cell's own import still finds the work directory.
+func pythonShadowFiles(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	if w := js(t, s, `const fs = require("fs");
+for (const m of ["json", "socket", "ast"]) fs.writeFileSync(m + ".py", "open('shadow-ran', 'a').write('" + m + "')\n");
+fs.writeFileSync("helper.py", "x = 5\n");`, 30*time.Second); w.ExitCode != 0 {
+		t.Fatalf("writing the files: %+v", w)
+	}
+	py := cell(t, s, sandbox.LanguagePython, "import helper\nhelper.x + 1", 60*time.Second)
+	ran := strings.TrimSpace(js(t, s, `const fs = require("fs"); process.stdout.write(fs.existsSync("shadow-ran") ? fs.readFileSync("shadow-ran", "utf8") : "none")`, 30*time.Second).Stdout)
+	if ran != "none" {
+		t.Fatalf("modules in the work directory ran as the Python interpreter started: %s", ran)
+	}
+	if py.ExitCode != 0 || strings.TrimSpace(py.Stdout) != "6" {
+		t.Fatalf("a cell importing a module from the work directory: %+v", py)
 	}
 }
 

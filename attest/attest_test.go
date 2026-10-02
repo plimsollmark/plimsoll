@@ -508,3 +508,40 @@ func TestBundleKeepsNaNBits(t *testing.T) {
 		t.Fatalf("a NaN output did not survive the bundle: %v", err)
 	}
 }
+
+// An unanswered session call's entry is its request and its signed version 3 record,
+// no response. It verifies in a chain beside answered calls, and is refused when it
+// stores a response, another request, or a record that does not hold.
+func TestUnansweredEntryVerifiesInItsChain(t *testing.T) {
+	key := newKey(t)
+	s, v := NewSigner(key), NewVerifier(key.Public().(ed25519.PublicKey))
+	fp := record.SessionFingerprint("session-id")
+	req := &plimsollv1.RunRequest{Protocol: 2, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1"}}}
+	rec := record.StampUnanswered(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req), Provider: "docker", Isolation: "container",
+		Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000001000), Session: fp, Sequence: 1}, "unavailable")
+	call, err := s.Unanswered(req, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := s.Close(SessionClose{Session: fp, Calls: 1, LastRecordSHA256: rec.GetRecordSha256()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep, err := VerifyBundle([]Entry{call, closed}, v); err != nil || rep.Sessions[0].Calls != 1 {
+		t.Fatalf("a chain of one unanswered call: %+v, %v", rep, err)
+	}
+	withResponse := call
+	withResponse.Response = []byte{0x0a, 0x00}
+	other := call
+	other.Request, _ = proto.Marshal(&plimsollv1.RunRequest{Protocol: 2, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "2"}}})
+	for name, e := range map[string]Entry{"a stored response": withResponse, "another request": other} {
+		if _, err := VerifyBundle([]Entry{e, closed}, v); !errors.Is(err, ErrStored) {
+			t.Errorf("%s: %v; want ErrStored", name, err)
+		}
+	}
+	bad := proto.Clone(rec).(*plimsollv1.RunRecord)
+	bad.Unanswered = "the relay said so"
+	if _, err := s.Unanswered(req, bad); err == nil {
+		t.Error("a record naming no Connect code was signed")
+	}
+}

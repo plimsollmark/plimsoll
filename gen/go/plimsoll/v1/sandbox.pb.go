@@ -1223,8 +1223,10 @@ func (*RunResponse_Cell) isRunResponse_Result() {}
 // library.
 type RunRecord struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// version is the encoding version; new records use 2. Version 1 remains
-	// verifiable. A verifier refuses an unknown version.
+	// version is the encoding version: 2 for a call that was answered, 3 for a
+	// session call that may have run but ended in an error (unanswered is set and
+	// result_sha256 is empty). Version 1 remains verifiable. A verifier refuses an
+	// unknown version.
 	Version uint32 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	// request_sha256 covers what the caller sent: protocol number, floor,
 	// timeout, software rule and payload, never the trace id.
@@ -1249,6 +1251,10 @@ type RunRecord struct {
 	PreviousSha256   string `protobuf:"bytes,12,opt,name=previous_sha256,json=previousSha256,proto3" json:"previous_sha256,omitempty"`
 	SoftwareIdentity string `protobuf:"bytes,14,opt,name=software_identity,json=softwareIdentity,proto3" json:"software_identity,omitempty"` // RunResponse.software_identity
 	SoftwareRuleId   string `protobuf:"bytes,15,opt,name=software_rule_id,json=softwareRuleId,proto3" json:"software_rule_id,omitempty"`     // exact identity or digest of approved set
+	// unanswered, on a version 3 record, is the Connect code of the error the call
+	// ended with ("unknown", "deadline_exceeded", ...): the daemon's own word, never
+	// error text. Empty on an answered call's record.
+	Unanswered string `protobuf:"bytes,16,opt,name=unanswered,proto3" json:"unanswered,omitempty"`
 	// record_sha256 covers every field above.
 	RecordSha256  string `protobuf:"bytes,13,opt,name=record_sha256,json=recordSha256,proto3" json:"record_sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1379,6 +1385,13 @@ func (x *RunRecord) GetSoftwareIdentity() string {
 func (x *RunRecord) GetSoftwareRuleId() string {
 	if x != nil {
 		return x.SoftwareRuleId
+	}
+	return ""
+}
+
+func (x *RunRecord) GetUnanswered() string {
+	if x != nil {
+		return x.Unanswered
 	}
 	return ""
 }
@@ -2929,6 +2942,53 @@ func (x *NotDispatched) GetReason() NotDispatchedReason {
 	return NotDispatchedReason_NOT_DISPATCHED_REASON_UNSPECIFIED
 }
 
+// UnansweredCall is the error detail of a session call that may have run but ended
+// in an error (an error without NotDispatched): its version 3 record, which the
+// session's chain counts, so a call that ran is never missing from the chain.
+type UnansweredCall struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Record        *RunRecord             `protobuf:"bytes,1,opt,name=record,proto3" json:"record,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnansweredCall) Reset() {
+	*x = UnansweredCall{}
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnansweredCall) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnansweredCall) ProtoMessage() {}
+
+func (x *UnansweredCall) ProtoReflect() protoreflect.Message {
+	mi := &file_plimsoll_v1_sandbox_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnansweredCall.ProtoReflect.Descriptor instead.
+func (*UnansweredCall) Descriptor() ([]byte, []int) {
+	return file_plimsoll_v1_sandbox_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *UnansweredCall) GetRecord() *RunRecord {
+	if x != nil {
+		return x.Record
+	}
+	return nil
+}
+
 var File_plimsoll_v1_sandbox_proto protoreflect.FileDescriptor
 
 const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
@@ -3016,7 +3076,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\aproject\x18\v \x01(\v2\x1a.plimsoll.v1.ProjectResultH\x00R\aproject\x123\n" +
 	"\x06module\x18\f \x01(\v2\x19.plimsoll.v1.ModuleResultH\x00R\x06module\x12-\n" +
 	"\x04cell\x18\r \x01(\v2\x17.plimsoll.v1.CellResultH\x00R\x04cellB\b\n" +
-	"\x06result\"\x8c\x04\n" +
+	"\x06result\"\xac\x04\n" +
 	"\tRunRecord\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12%\n" +
 	"\x0erequest_sha256\x18\x02 \x01(\tR\rrequestSha256\x12#\n" +
@@ -3032,7 +3092,10 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\bsequence\x18\v \x01(\x04R\bsequence\x12'\n" +
 	"\x0fprevious_sha256\x18\f \x01(\tR\x0epreviousSha256\x12+\n" +
 	"\x11software_identity\x18\x0e \x01(\tR\x10softwareIdentity\x12(\n" +
-	"\x10software_rule_id\x18\x0f \x01(\tR\x0esoftwareRuleId\x12#\n" +
+	"\x10software_rule_id\x18\x0f \x01(\tR\x0esoftwareRuleId\x12\x1e\n" +
+	"\n" +
+	"unanswered\x18\x10 \x01(\tR\n" +
+	"unanswered\x12#\n" +
 	"\rrecord_sha256\x18\r \x01(\tR\frecordSha256\"\x86\x02\n" +
 	"\x10JavaScriptResult\x12\x16\n" +
 	"\x06stdout\x18\x01 \x01(\fR\x06stdout\x12\x16\n" +
@@ -3155,7 +3218,9 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x06reason\x18\x01 \x01(\x0e2\x17.plimsoll.v1.SessionEndR\x06reason\x12\x16\n" +
 	"\x06detail\x18\x02 \x01(\tR\x06detail\"I\n" +
 	"\rNotDispatched\x128\n" +
-	"\x06reason\x18\x01 \x01(\x0e2 .plimsoll.v1.NotDispatchedReasonR\x06reason*\xb5\x01\n" +
+	"\x06reason\x18\x01 \x01(\x0e2 .plimsoll.v1.NotDispatchedReasonR\x06reason\"@\n" +
+	"\x0eUnansweredCall\x12.\n" +
+	"\x06record\x18\x01 \x01(\v2\x16.plimsoll.v1.RunRecordR\x06record*\xb5\x01\n" +
 	"\x0eProjectOutcome\x12\x1f\n" +
 	"\x1bPROJECT_OUTCOME_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19PROJECT_OUTCOME_COMPLETED\x10\x01\x12 \n" +
@@ -3202,7 +3267,7 @@ func file_plimsoll_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_plimsoll_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_plimsoll_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_plimsoll_v1_sandbox_proto_goTypes = []any{
 	(ProjectOutcome)(0),          // 0: plimsoll.v1.ProjectOutcome
 	(SessionEnd)(0),              // 1: plimsoll.v1.SessionEnd
@@ -3237,6 +3302,7 @@ var file_plimsoll_v1_sandbox_proto_goTypes = []any{
 	(*CloseSessionResponse)(nil), // 30: plimsoll.v1.CloseSessionResponse
 	(*SessionEnded)(nil),         // 31: plimsoll.v1.SessionEnded
 	(*NotDispatched)(nil),        // 32: plimsoll.v1.NotDispatched
+	(*UnansweredCall)(nil),       // 33: plimsoll.v1.UnansweredCall
 }
 var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	5,  // 0: plimsoll.v1.DescribeResponse.javascript_environment:type_name -> plimsoll.v1.PayloadEnvironment
@@ -3273,21 +3339,22 @@ var file_plimsoll_v1_sandbox_proto_depIdxs = []int32{
 	1,  // 31: plimsoll.v1.CloseSessionResponse.ended:type_name -> plimsoll.v1.SessionEnd
 	1,  // 32: plimsoll.v1.SessionEnded.reason:type_name -> plimsoll.v1.SessionEnd
 	2,  // 33: plimsoll.v1.NotDispatched.reason:type_name -> plimsoll.v1.NotDispatchedReason
-	9,  // 34: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
-	3,  // 35: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
-	23, // 36: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
-	25, // 37: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
-	29, // 38: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
-	11, // 39: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
-	4,  // 40: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
-	24, // 41: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
-	28, // 42: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
-	30, // 43: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
-	39, // [39:44] is the sub-list for method output_type
-	34, // [34:39] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	12, // 34: plimsoll.v1.UnansweredCall.record:type_name -> plimsoll.v1.RunRecord
+	9,  // 35: plimsoll.v1.SandboxService.Run:input_type -> plimsoll.v1.RunRequest
+	3,  // 36: plimsoll.v1.SandboxService.Describe:input_type -> plimsoll.v1.DescribeRequest
+	23, // 37: plimsoll.v1.SandboxService.OpenSession:input_type -> plimsoll.v1.OpenSessionRequest
+	25, // 38: plimsoll.v1.SandboxService.SessionRun:input_type -> plimsoll.v1.SessionRunRequest
+	29, // 39: plimsoll.v1.SandboxService.CloseSession:input_type -> plimsoll.v1.CloseSessionRequest
+	11, // 40: plimsoll.v1.SandboxService.Run:output_type -> plimsoll.v1.RunResponse
+	4,  // 41: plimsoll.v1.SandboxService.Describe:output_type -> plimsoll.v1.DescribeResponse
+	24, // 42: plimsoll.v1.SandboxService.OpenSession:output_type -> plimsoll.v1.OpenSessionResponse
+	28, // 43: plimsoll.v1.SandboxService.SessionRun:output_type -> plimsoll.v1.SessionRunResponse
+	30, // 44: plimsoll.v1.SandboxService.CloseSession:output_type -> plimsoll.v1.CloseSessionResponse
+	40, // [40:45] is the sub-list for method output_type
+	35, // [35:40] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_plimsoll_v1_sandbox_proto_init() }
@@ -3318,7 +3385,7 @@ func file_plimsoll_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plimsoll_v1_sandbox_proto_rawDesc), len(file_plimsoll_v1_sandbox_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   30,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

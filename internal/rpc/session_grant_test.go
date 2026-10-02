@@ -56,3 +56,38 @@ func TestSessionGrantProfileNeedsAllowInSessions(t *testing.T) {
 		t.Fatalf("stdout %q, want the first dispatched call's \"x\"", out)
 	}
 }
+
+// A granted session call that the profile does not allow in sessions is refused
+// before admission: it spends no rate token. Opening takes one of two tokens, the
+// refused call none, so the allowed call after it still gets the second.
+func TestRefusedSessionGrantSpendsNoRateToken(t *testing.T) {
+	t.Setenv("HUE_TOKEN", "tok-xyz")
+	path := filepath.Join(t.TempDir(), "grants.json")
+	const profile = `"base_url":"https://hue.internal","allow":["GET /v1/lights"],"allowed_callers":["alice"],"token":{"type":"static","env":"HUE_TOKEN"}`
+	if err := os.WriteFile(path, []byte(`{"profiles":{"plain":{`+profile+`},"shared":{`+profile+`,"allow_in_sessions":true}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := grants.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, _ := sessionService()
+	svc.Grants = reg
+	svc.Limiter = NewCodeLimiter(10, 10, 1, 2)
+	ctx := authenticatedContext("alice")
+	opened, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(grantProfile string) error {
+		_, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: opened.Msg.GetSessionId(),
+			Payload: &plimsollv1.SessionRunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1", GrantProfile: grantProfile}}}))
+		return err
+	}
+	if err := call("plain"); !errors.Is(err, sandbox.ErrGrantNotForSessions) {
+		t.Fatalf("the plain profile in a session: %v", err)
+	}
+	if err := call("shared"); err != nil {
+		t.Fatalf("the allowed call after a refused one: %v (the refusal spent the token)", err)
+	}
+}

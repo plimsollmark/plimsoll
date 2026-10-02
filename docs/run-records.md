@@ -54,7 +54,7 @@ field changes what a daemon may execute.
 
 | Field | Meaning |
 |---|---|
-| `version` | The encoding version, `2` for new records. New signers only sign version `2`; verifiers still accept existing version `1` signed records. A verifier refuses an unknown version. |
+| `version` | The encoding version: `2` for an answered call, `3` for a call that may have run but ended in an error (below). New signers sign versions `2` and `3`; verifiers still accept existing version `1` signed records. A verifier refuses an unknown version. |
 | `request_sha256` | Digest of what the caller sent: protocol number, isolation <dfn>*floor*</dfn> (the weakest tier the caller accepts), timeout, software rule and payload. Version 1 omits the software rule. |
 | `result_sha256` | Digest of the result as sent: exit codes or outcome, output, truncation flags, steps, artifacts, module rows. |
 | `provider` | The provider that ran it (the response's `sandbox`). |
@@ -65,6 +65,7 @@ field changes what a daemon may execute.
 | `policy` | The sandbox policy the provider verified before the run, by digest. For <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, it is the policy that sets the sandbox's network and filesystem rules, and `openshell-policy:sha256:...` is the hash its gateway itself reports. Empty for providers without one. |
 | `started_unix_ms`, `ended_unix_ms` | When the daemon received the request and when it finished the result. |
 | `session`, `sequence`, `previous_sha256` | A call's place in its <dfn>*session*</dfn> (one sandbox kept open for many calls) and its chain: the SHA-256 of the session ID (the ID works like a password for the session, so it is never recorded), the call's number counting from 1, and the previous call's `record_sha256`. Empty or zero for a single run. |
+| `unanswered` | Version 3 only: the status code of the error the call ended with (`unknown`, `deadline_exceeded`, `unavailable`, ...), the daemon's own word, never error text. `result_sha256` is then empty. |
 | `record_sha256` | Digest of every field above. |
 
 Left out on purpose: the **trace id** (the caller's own ID for matching this run to
@@ -128,7 +129,7 @@ order sent. Then both versions encode `kind`
 A cell's result depends on what earlier cells of its session left in the interpreter,
 so a cell is replayed only as part of its session's chain, in order, never alone.
 
-### Record: domains `plimsoll.run-record.v1` and `.v2`
+### Record: domains `plimsoll.run-record.v1`, `.v2` and `.v3`
 
 The domain ends in the record's `version` (`plimsoll.run-record.v<version>`), so the
 digest covers the version without a field of its own: a record read under another
@@ -138,6 +139,7 @@ Version 1 encodes `request_sha256`, `result_sha256`, `provider`, `isolation`,
 `environment`, `policy`, then `started_unix_ms`, `ended_unix_ms`, `session`,
 `sequence`, `previous_sha256`. Version 2 inserts `software_identity` and
 `software_rule_id` after `policy`; every other field stays in the same order.
+Version 3 is version 2 with `unanswered` inserted after `result_sha256`.
 The approved-set rule ID is SHA-256 over its unique identities sorted in byte
 order and joined with a zero byte. Identity syntax excludes zero bytes. The
 `RunResponse` repeats the outer environment and selected software identities,
@@ -175,6 +177,30 @@ print(digest("plimsoll.run-request.v1", [
 (`str()` suits integers and strings here; booleans must be written `true` or
 `false`, and floats packed with `struct.pack(">d", v)`.)
 
+## A session call that may have run but got no result
+
+A session call can end in an error that does not say nothing ran: an exec stream that
+broke after the code started, a cell whose relay was lost. Its code may have run, so it is
+part of the session, and its record says so. The daemon numbers it in the chain like any
+call, writes a version 3 record (no result digest, the error's status code in
+`unanswered`, and as evidence what the session stated when it opened, since there is no
+response to read it from), and sends that record with the error as the
+`plimsoll.v1.UnansweredCall` error detail. The next call chains after it, and
+`CloseSession` counts it. A call refused before it ran (an error marked not dispatched)
+gets no record and is not counted.
+
+The official clients check that record (version 3, no result, a status code, the digest
+of the request they sent, its software rule, its own digest, its place in the chain),
+keep it in their chain, and return the error: the session goes on, and the call's outcome
+stays unknown. A call whose answer never arrived (a dropped connection) carries no
+record, so the client cannot follow the daemon's chain any more, and it refuses every
+later call of that session before sending it, marked not dispatched. The Go client's
+recorder signs a version 3 record like any other; a bundle stores it as the request
+alone, with no response.
+
+Before 2026-10, such a call returned no record: the next call chained cleanly, the close
+count matched the client's, and a verified chain could hide a call that ran.
+
 ## Signing, verifying and replaying
 
 Package [attest](../attest/) is the harness's half. It runs outside the daemon and
@@ -206,8 +232,10 @@ uses the standard library only (Ed25519, SHA-256, JSON).
   (one JSON object per line). A call's line is its stored request and response (their
   binary protobuf encodings, in base64) and its envelope; a close's line is an envelope
   alone. The messages are stored binary because protobuf JSON writes every NaN as `"NaN"`
-  and reads it back as one particular NaN, so a module output holding any other NaN
-  would no longer match its signed digest. Verification:
+  and reads it back as one particular NaN, which in Go is not the one the daemon sends
+  (every NaN of a module output goes out as the quiet NaN with no sign or payload, so a
+  JSON client in Python or TypeScript reads back the bits it hashed), so a stored JSON
+  message would no longer match its signed digest. Verification:
   - checks every signature;
   - checks each stored exchange exactly as the client checked it live: both content
     digests recomputed from the stored messages, the provider, tier, environment and

@@ -6,8 +6,17 @@ import { createHash, type Hash } from "node:crypto";
 
 import type { WireRecord, WireRunResponse, WireSoftwareRule } from "./wire.ts";
 
-/** The record encoding version this client computes and checks. */
+/** The record encoding version of an answered call, which this client computes and checks. */
 export const RECORD_VERSION = 2;
+
+/** The record encoding version of a session call that may have run but ended in an error. */
+export const UNANSWERED_RECORD_VERSION = 3;
+
+const UNANSWERED_CODES = new Set([
+  "canceled", "unknown", "invalid_argument", "deadline_exceeded", "not_found", "already_exists", "permission_denied",
+  "resource_exhausted", "failed_precondition", "aborted", "out_of_range", "unimplemented", "internal", "unavailable",
+  "data_loss", "unauthenticated",
+]);
 
 class Encoder {
   private readonly h: Hash = createHash("sha256");
@@ -200,6 +209,8 @@ export type RunRecord = {
   session: string;
   sequence: bigint;
   previousSha256: string;
+  /** On a version 3 record, the Connect code a session call that may have run ended with. */
+  unanswered: string;
   sha256: string;
 };
 
@@ -219,6 +230,7 @@ export function recordFromWire(m: WireRecord): RunRecord {
     session: m.session ?? "",
     sequence: BigInt(m.sequence ?? 0),
     previousSha256: m.previousSha256 ?? "",
+    unanswered: m.unanswered ?? "",
     sha256: m.recordSha256 ?? "",
   };
 }
@@ -228,6 +240,7 @@ export function recordDigest(r: RunRecord): string {
   const e = new Encoder(`plimsoll.run-record.v${r.version}`);
   e.str("request_sha256", r.requestSha256);
   e.str("result_sha256", r.resultSha256);
+  if (r.version >= 3) e.str("unanswered", r.unanswered);
   e.str("provider", r.provider);
   e.str("isolation", r.isolation);
   e.str("environment", r.environment);
@@ -264,6 +277,32 @@ export function softwareRuleId(rule: WireSoftwareRule | undefined): string {
 export function softwareRuleAllows(rule: WireSoftwareRule | undefined, identity: string): boolean {
   if (!rule || !rule.mode) return true;
   return identity !== "" && rule.identities.includes(identity);
+}
+
+/**
+ * Checks the record the daemon sends with an unanswered session call's error
+ * (record.CheckUnanswered): version 3, no result digest, a Connect code, the digest of
+ * the request sent, its software rule, its own digest, and its place in the chain.
+ * Returns the reason it does not check, or the record.
+ */
+export function checkUnanswered(
+  reqDigest: string,
+  rule: WireSoftwareRule | undefined,
+  m: WireRecord,
+  fingerprint: string,
+  prevSeq: bigint,
+  prev: string,
+): { record: RunRecord } | { problem: string } {
+  const r = recordFromWire(m);
+  if (r.version !== UNANSWERED_RECORD_VERSION) return { problem: `an unanswered call's record is version ${r.version}` };
+  if (r.resultSha256 !== "" || !UNANSWERED_CODES.has(r.unanswered)) return { problem: "an unanswered call's record states a result or no error code" };
+  if (r.requestSha256 !== reqDigest) return { problem: `request digest ${r.requestSha256}, the request sent digests to ${reqDigest}` };
+  if (r.softwareRuleId !== softwareRuleId(rule)) return { problem: "the record's software rule is not the request's" };
+  if (r.sha256 !== recordDigest(r)) return { problem: `record digest ${r.sha256}, its fields digest to ${recordDigest(r)}` };
+  if (r.session !== fingerprint || r.sequence !== prevSeq + 1n || r.previousSha256 !== prev) {
+    return { problem: `the session's chain is broken: call ${r.sequence} after "${r.previousSha256}", this client's last was call ${prevSeq}, "${prev}"` };
+  }
+  return { record: r };
 }
 
 /**

@@ -273,3 +273,53 @@ test("a wasm daemon has no sessions", { skip }, async () => {
     return true;
   });
 });
+
+// A session call whose answer is lost after the daemon ran it leaves the client's
+// chain behind the daemon's. The session refuses every later call itself, marked
+// not dispatched, instead of sending calls that would run and then fail the check.
+test("a session sends nothing after a call that ended without an answer", { skip }, async () => {
+  let runs = 0;
+  let drop = false;
+  const lossy = new PlimsollClient({
+    baseUrl: sessionsUrl!,
+    fetch: async (input, init) => {
+      const res = await fetch(input, init);
+      if (String(input).endsWith("/SessionRun")) {
+        runs++;
+        if (drop) throw new TypeError("the connection dropped after the daemon answered");
+      }
+      return res;
+    },
+  });
+  const s = await lossy.openSession();
+  await s.runCell({ language: "python", code: "x = 1" });
+  drop = true;
+  await assert.rejects(s.runCell({ language: "python", code: "x" }), (e: unknown) => e instanceof PlimsollError && e.notDispatched === undefined);
+  drop = false;
+  await assert.rejects(s.runCell({ language: "python", code: "x" }), (e: unknown) => {
+    assert.ok(e instanceof PlimsollError);
+    assert.equal(e.code, "failed_precondition");
+    assert.equal(e.notDispatched, "request");
+    return true;
+  });
+  assert.equal(runs, 2, "the refused call reached the daemon");
+  await s.close().catch(() => undefined); // its count is ahead of this client's
+});
+
+// A session call that may have run but ended in an error comes with its record: the
+// session keeps it in its chain and goes on, and the close's count agrees.
+test("an unanswered session call is in the chain and the session goes on", { skip: process.env.PLIMSOLL_BREAKING_URL ? false : "run through `go test ./clients/typescript`" }, async () => {
+  const c = new PlimsollClient({ baseUrl: process.env.PLIMSOLL_BREAKING_URL! });
+  const s = await c.openSession();
+  await s.runJavaScript("1");
+  await assert.rejects(s.runJavaScript("2"), (e: unknown) => {
+    assert.ok(e instanceof PlimsollError);
+    assert.equal(e.notDispatched, undefined, "a call that may have run is never marked not dispatched");
+    assert.equal(e.unanswered?.version, 3);
+    return true;
+  });
+  const r = await s.runJavaScript("3");
+  assert.equal(r.record.sequence, 3n);
+  const sum = await s.close();
+  assert.equal(sum.calls, 3n);
+});

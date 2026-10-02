@@ -20,10 +20,15 @@ import (
 // SessionConfig is the operator's session settings. Sessions are off unless
 // MaxSessions is positive, since a session holds a sandbox between calls.
 type SessionConfig struct {
-	MaxSessions int           // open sessions at once, daemon-wide; 0 = sessions off
-	Lifetime    time.Duration // absolute, from open; a request may ask for less
-	IdleTimeout time.Duration // a session idle this long is suspended; a request may ask for less
-	DiskBytes   int64         // what a session's calls may leave behind; 0 = no bound
+	MaxSessions int // open sessions at once, daemon-wide; 0 = sessions off
+	// MaxPerCaller is how many of them one principal may hold, suspended ones
+	// included; 0 = no cap beyond MaxSessions. A suspended session holds no
+	// concurrency slot, so the per-caller concurrency cap alone does not stop one
+	// caller from taking every place.
+	MaxPerCaller int
+	Lifetime     time.Duration // absolute, from open; a request may ask for less
+	IdleTimeout  time.Duration // a session idle this long is suspended; a request may ask for less
+	DiskBytes    int64         // what a session's calls may leave behind; 0 = no bound
 }
 
 // tombstoneTTL is how long a session that ended by itself stays collectable: its
@@ -37,6 +42,11 @@ const tombstoneTTL = 10 * time.Minute
 // bound, so a slow stop is the provider's to report (openshell allows 60 s for a stop
 // and its wait, stopBudget); the margin beyond that is a judgment, not a measurement.
 const sessionSuspendBudget = 90 * time.Second
+
+// sessionOrphanCloseBudget bounds closing a session opened for a caller that gave up:
+// nobody waits for that close, but its handler, slot and place do, so it gets the
+// suspend's bound, which covers a provider's stop.
+var sessionOrphanCloseBudget = sessionSuspendBudget
 
 // sessionEntry is one session in the registry. calls, last and the slot change only
 // with turn held, so the chain numbers calls in the order they executed.
@@ -59,29 +69,46 @@ type sessionEntry struct {
 }
 
 type sessionRegistry struct {
-	mu      sync.Mutex
-	byID    map[string]*sessionEntry
-	opening int // reservations taken by opens still creating their sandbox
+	mu        sync.Mutex
+	byID      map[string]*sessionEntry
+	opening   int            // reservations taken by opens still creating their sandbox
+	openingBy map[string]int // the same, by principal
 }
 
 // reserve takes one of max session places for an open about to create its sandbox,
 // counting the sessions that have not ended and the opens already under way, all
 // under one lock: two opens at once cannot both see the last place free. add turns
 // the reservation into the session; an open that fails gives it back with unreserve.
-func (r *sessionRegistry) reserve(max int) bool {
+// A principal past perCaller (0 = no cap) is refused the same way, its own sessions
+// and opens counted.
+func (r *sessionRegistry) reserve(max, perCaller int, principal string) (ok, callerFull bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.openLocked()+r.opening >= max {
-		return false
+	if r.openLocked("")+r.opening >= max {
+		return false, false
+	}
+	if perCaller > 0 && r.openLocked(principal)+r.openingBy[principal] >= perCaller {
+		return false, true
 	}
 	r.opening++
-	return true
+	if r.openingBy == nil {
+		r.openingBy = make(map[string]int)
+	}
+	r.openingBy[principal]++
+	return true, false
 }
 
-func (r *sessionRegistry) unreserve() {
+func (r *sessionRegistry) unreserve(principal string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.opening--
+	r.doneOpeningLocked(principal)
+}
+
+func (r *sessionRegistry) doneOpeningLocked(principal string) {
+	if r.openingBy[principal]--; r.openingBy[principal] <= 0 {
+		delete(r.openingBy, principal)
+	}
 }
 
 // add registers an opened session in the place its open reserved.
@@ -93,6 +120,7 @@ func (r *sessionRegistry) add(e *sessionEntry) {
 	}
 	r.byID[e.id] = e
 	r.opening--
+	r.doneOpeningLocked(e.principal)
 }
 
 func (r *sessionRegistry) remove(id string) {
@@ -113,10 +141,13 @@ func (r *sessionRegistry) get(id, principal string) (*sessionEntry, bool) {
 	return e, true
 }
 
-// openLocked counts the sessions that have not ended.
-func (r *sessionRegistry) openLocked() int {
+// openLocked counts the sessions that have not ended, of one principal or ("") all.
+func (r *sessionRegistry) openLocked(principal string) int {
 	n := 0
 	for _, e := range r.byID {
+		if principal != "" && e.principal != principal {
+			continue
+		}
 		e.mu.Lock()
 		if !e.ended {
 			n++
@@ -178,13 +209,17 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	if err := env.software.Check(software.Project.SoftwareIdentity); err != nil {
 		return nil, mapSandboxErr(err)
 	}
-	if !s.sessions.reserve(s.Sessions.MaxSessions) {
+	principal := auditCaller(ctx)
+	if ok, callerFull := s.sessions.reserve(s.Sessions.MaxSessions, s.Sessions.MaxPerCaller, principal); callerFull {
+		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+			fmt.Errorf("%w: this caller has %d sessions open, the most one caller keeps", sandbox.ErrAtCapacity, s.Sessions.MaxPerCaller))
+	} else if !ok {
 		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
 			fmt.Errorf("%w: %d sessions are open, the most this daemon keeps", sandbox.ErrAtCapacity, s.Sessions.MaxSessions))
 	}
 	release, err := s.limit(ctx)
 	if err != nil {
-		s.sessions.unreserve()
+		s.sessions.unreserve(principal)
 		return nil, err
 	}
 	lifetime := shorter(s.Sessions.Lifetime, m.GetLifetimeMs())
@@ -193,7 +228,7 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	sess, err := sp.OpenSession(ctx, sandbox.SessionOptions{MinimumIsolation: env.minimum, Lifetime: lifetime, DiskBytes: s.Sessions.DiskBytes})
 	if err != nil {
 		release()
-		s.sessions.unreserve()
+		s.sessions.unreserve(principal)
 		attrs := []slog.Attr{
 			slog.String("caller", auditCaller(ctx)),
 			slog.String("sandbox", s.Sandbox.Name()),
@@ -206,21 +241,23 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	// A caller that gave up while the sandbox opened never learns the session's ID,
 	// so the session would hold its place until it expired.
 	if ctx.Err() != nil {
-		_ = sess.Close(context.WithoutCancel(ctx))
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
+		_ = sess.Close(closeCtx)
+		cancel()
 		release()
-		s.sessions.unreserve()
+		s.sessions.unreserve(principal)
 		return nil, mapSandboxErr(sandbox.RefuseGaveUp(ctx))
 	}
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
 		release()
-		s.sessions.unreserve()
+		s.sessions.unreserve(principal)
 		_ = sess.Close(context.Background())
 		return nil, mapSandboxErr(err)
 	}
 	e := &sessionEntry{
 		id:          hex.EncodeToString(id),
-		principal:   auditCaller(ctx),
+		principal:   principal,
 		sess:        sess,
 		software:    software,
 		rule:        env.software,
@@ -291,7 +328,13 @@ func (s *SandboxService) suspend(e *sessionEntry) {
 	select {
 	case e.turn <- struct{}{}:
 	default:
-		return // a call is running; it rearms the timer when it ends
+		// A call holds the turn. It rearms the timer when it ends, but it does so
+		// before giving the turn back, so a short idle timeout can fire in between and
+		// land here: rearm, or nothing would suspend the session until its next call.
+		e.mu.Lock()
+		e.armIdle(s)
+		e.mu.Unlock()
+		return
 	}
 	defer func() { <-e.turn }()
 	e.mu.Lock()
@@ -389,7 +432,10 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 		resp, err = s.runCell(ctx, env, p.Cell, e.sess, t)
 	}
 	if err != nil {
-		return nil, err
+		if _, marked := sandbox.NotDispatchedReason(err); marked {
+			return nil, err // nothing ran, so the chain does not count it
+		}
+		return nil, s.unanswered(ctx, e, m, env, seq, received, err)
 	}
 	e.mu.Lock()
 	link := sandbox.RunRecord{Session: e.fingerprint, Sequence: seq, PreviousSHA256: e.last}
@@ -604,4 +650,45 @@ var sessionEnds = map[sandbox.SessionEnd]plimsollv1.SessionEnd{
 
 func sessionEndWire(e sandbox.SessionEnd) plimsollv1.SessionEnd {
 	return sessionEnds[e]
+}
+
+// unanswered chains the record of a session call that may have run but ended in err
+// (an error without a not-dispatched mark) and returns err carrying it as an
+// UnansweredCall detail. Without it the next call would chain cleanly, the close count
+// would match the caller's, and a verified chain could hide a call that ran. The
+// record's evidence is what the session stated at open, since there is no response to
+// read it from, and its error code is plimsoll's own word for err, never err's text.
+func (s *SandboxService) unanswered(ctx context.Context, e *sessionEntry, m *plimsollv1.SessionRunRequest, env envelope, seq uint64, received time.Time, err error) error {
+	payload := e.software.Project
+	if m.GetJavascript() != nil {
+		payload = e.software.JavaScript
+	}
+	ce, ok := err.(*connect.Error)
+	if !ok {
+		errors.As(mapSandboxErr(err), &ce) // unmarked, as err is
+	}
+	e.mu.Lock()
+	rec := record.StampUnanswered(sandbox.RunRecord{
+		RequestSHA256:    record.SessionRunRequestDigest(m),
+		Provider:         s.Sandbox.Name(),
+		Isolation:        e.sess.Isolation().String(),
+		Environment:      payload.Identity,
+		SoftwareIdentity: payload.SoftwareIdentity,
+		SoftwareRuleID:   env.software.ID(),
+		Policy:           s.policy(),
+		Started:          received,
+		Ended:            recordEnd(received, time.Now()),
+		Session:          e.fingerprint,
+		Sequence:         seq,
+		PreviousSHA256:   e.last,
+	}, ce.Code().String())
+	e.calls, e.last = seq, rec.GetRecordSha256()
+	e.mu.Unlock()
+	if detail, derr := connect.NewErrorDetail(&plimsollv1.UnansweredCall{Record: rec}); derr == nil {
+		ce.AddDetail(detail)
+	}
+	s.logger().LogAttrs(ctx, slog.LevelWarn, "session call unanswered",
+		slog.String("caller", auditCaller(ctx)), slog.String("session", e.fingerprint),
+		slog.Uint64("session_call", seq), slog.String("session_call_unanswered", ce.Code().String()))
+	return ce
 }

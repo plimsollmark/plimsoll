@@ -16,6 +16,11 @@ import socket
 import sys
 import traceback
 
+# Started with -I, so a file in the work directory (a json.py an earlier call wrote)
+# shadowed none of the imports above. A cell's own imports find the work directory
+# first, as a script's would.
+sys.path.insert(0, "")
+
 directory = sys.argv[1]
 namespace = {"__name__": "__main__", "__builtins__": __builtins__}
 loop = asyncio.new_event_loop()

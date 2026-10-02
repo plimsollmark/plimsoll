@@ -71,6 +71,17 @@ type brokerSession struct {
 	trace     *callTrace
 	health    *HostRoute // optional concrete GET route the breaker probes for recovery
 	breaker   breaker
+
+	// life ends with the run, or with a session's call: End cancels it, which cuts off
+	// an upstream request in flight and refuses a call that arrives later. A session's
+	// broker socket outlives its calls, so without it a request a leftover process
+	// began during a call could reach the API with that call's credential after the
+	// call ended, and land in no trace.
+	life     context.Context
+	end      context.CancelFunc
+	mu       sync.Mutex
+	ended    bool
+	inflight sync.WaitGroup
 }
 
 // breaker is the per-run circuit breaker that implements host-API backpressure. It is
@@ -199,6 +210,7 @@ func newBrokerSession(grant *HostAPIGrant, token string, transport http.RoundTri
 		tr.Proxy = nil
 		transport = tr
 	}
+	life, end := context.WithCancel(context.Background())
 	return &brokerSession{
 		grant:     grant,
 		token:     token,
@@ -207,6 +219,8 @@ func newBrokerSession(grant *HostAPIGrant, token string, transport http.RoundTri
 		requests:  make(chan struct{}, maxHostConcurrent),
 		trace:     newCallTrace(),
 		health:    grant.HealthCheck, // frozen concrete GET route, or nil
+		life:      life,
+		end:       end,
 	}, nil
 }
 
@@ -235,11 +249,52 @@ func (b *brokerSession) traceSnapshot() *CallTrace {
 	return b.trace.snapshot()
 }
 
-// Close releases idle upstream connections owned by this run. It is nil-safe.
+// brokerEndWait bounds how long End waits for calls in flight. A call already
+// upstream is cancelled and returns at once; a call still reading its request body
+// can take up to the server's read timeout, and is refused when it finishes.
+const brokerEndWait = 2 * time.Second
+
+// End revokes the run's authority: a call in flight loses its upstream request, a
+// call that arrives later is refused, and End waits (up to brokerEndWait) for the
+// calls in flight, so a trace read after it holds every call that reached the API.
+// Nil-safe and idempotent.
+func (b *brokerSession) End() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.ended = true
+	b.mu.Unlock()
+	b.end()
+	done := make(chan struct{})
+	go func() {
+		b.inflight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(brokerEndWait):
+	}
+}
+
+// enter counts a call in flight, or reports that the run's authority has ended.
+func (b *brokerSession) enter() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.ended {
+		return false
+	}
+	b.inflight.Add(1)
+	return true
+}
+
+// Close ends the run's authority and releases its idle upstream connections. It is
+// nil-safe.
 func (b *brokerSession) Close() {
 	if b == nil {
 		return
 	}
+	b.End()
 	if c, ok := b.transport.(interface{ CloseIdleConnections() }); ok {
 		c.CloseIdleConnections()
 	}
@@ -259,6 +314,14 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	if b == nil {
 		return brokerError(http.StatusServiceUnavailable, "host api broker unavailable")
 	}
+	if !b.enter() {
+		b.trace.recordDenied()
+		return brokerError(http.StatusServiceUnavailable, "host api grant has ended")
+	}
+	defer b.inflight.Done()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(b.life, cancel)()
 	select {
 	case b.requests <- struct{}{}:
 		defer func() { <-b.requests }()
@@ -338,6 +401,12 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	// SEAM(forensic-logging): this is the only shared point where an authorized
 	// call's request and response bytes are both in scope. Any future opt-in sink
 	// attaches here; CallRow remains metadata-only by construction.
+	// The body can take until the server's read timeout to arrive, long enough for the
+	// call that lent this grant to end: check that it has not, as late as possible.
+	if b.life.Err() != nil {
+		b.trace.recordDenied()
+		return brokerError(http.StatusServiceUnavailable, "host api grant has ended")
+	}
 	started := time.Now()
 	resp, err := b.transport.RoundTrip(req) // RoundTrip never follows redirects.
 	// The three failure records below leave Delivered false: the guest receives a

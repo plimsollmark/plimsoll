@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/internal/rpc"
+
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -281,5 +283,20 @@ func TestHardenedPolicyRequiresAPerCallerConcurrencyCap(t *testing.T) {
 	err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f)
 	if err == nil || !strings.Contains(err.Error(), "SANDBOX_PER_KEY_CONCURRENT") {
 		t.Fatalf("hardened policy with no per-caller concurrency cap: %v", err)
+	}
+}
+
+// A suspended session holds no concurrency slot, so with sessions on, hardened mode
+// also needs a cap on the sessions one caller keeps.
+func TestHardenedPolicyRequiresAPerCallerSessionCap(t *testing.T) {
+	f := hardenedDockerFacts()
+	f.Sessions = rpc.SessionConfig{MaxSessions: 4, Lifetime: time.Minute}
+	err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f)
+	if err == nil || !strings.Contains(err.Error(), "SANDBOX_MAX_SESSIONS_PER_CALLER") {
+		t.Fatalf("hardened policy with sessions and no per-caller session cap: %v", err)
+	}
+	f.Sessions.MaxPerCaller = 2
+	if err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f); err != nil {
+		t.Fatalf("hardened policy with a per-caller session cap: %v", err)
 	}
 }

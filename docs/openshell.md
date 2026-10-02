@@ -244,13 +244,11 @@ v0.1.2 gateway with the docker driver:
   does not wait: it ends the session and deletes the sandbox, which stops the sweep with
   everything else in it.
 
-- **Grants in a session.** A granted session call starts its relay, the in-sandbox end of
-  the grant's connection, as one of the call's processes, and the sweep after the call
-  ends it. While the call runs, anything an earlier call left running can connect to the
-  relay too, as on docker, so a granted call needs a grant that allows sessions
-  ([sessions.md](sessions.md#what-a-session-gives-up)).
 
-  The budget is measured after the call, not enforced during it: `SANDBOX_DISK_MB` sizes
+  The budget is measured after the call, not enforced during it, by a walk of `/tmp` that
+  stops at 200,000 entries (counted as over the budget) and that code of the session can
+  hide files from (a deleted file it still holds open, a directory swapped for a link
+  mid-walk): an estimate, where docker's sessions read their filesystems' usage. `SANDBOX_DISK_MB` sizes
   a run's `/tmp` but never a session's, because docker discards a tmpfs when its
   container stops, and suspending a session stops it (measured on v0.1.2: a file written
   before a suspend was gone after it).
@@ -262,6 +260,19 @@ v0.1.2 gateway with the docker driver:
   on a gateway host where it is 0 or unreadable. When the sweep does not prove the
   sandbox clean, the sandbox is stopped and started, which ends every process; when that
   fails, the session ends.
+- **Each exec is walled off from the others.** A process of one exec could not open the
+  input or output of a process another exec started, not even the sandbox's own `sleep`,
+  although all run as the same user and the relay stays readable by it (measured on v0.1.2,
+  2026-10-01). So code of the session cannot write into a cell's relay, the interpreter
+  launcher or a project's runner, which on docker it can for the moment each starts
+  ([sessions.md](sessions.md#interpreters-state-between-calls)). This is OpenShell's
+  behavior as measured, not something plimsoll sets: the relay protocol and the cell's two
+  steps assume it does not hold.
+- **Grants in a session.** A granted session call starts its relay, the in-sandbox end of
+  the grant's connection, as one of the call's processes, and the sweep after the call
+  ends it. While the call runs, anything an earlier call left running can connect to the
+  relay too, as on docker, so a granted call needs a grant that allows sessions
+  ([sessions.md](sessions.md#what-a-session-gives-up)).
 - **A read-back before every call.** Anyone who can call the gateway can change a
   sandbox's policy or settings between calls, so before every call the provider reads the
   sandbox and its effective configuration back and ends the session on any difference,

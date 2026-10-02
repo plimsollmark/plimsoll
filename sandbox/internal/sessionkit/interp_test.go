@@ -2,6 +2,9 @@ package sessionkit
 
 import (
 	"encoding/hex"
+	"errors"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,5 +106,134 @@ func TestLaunchIdentityIsTheProcessItStarted(t *testing.T) {
 	}
 	if want := hex.EncodeToString(cmdline); !strings.HasSuffix(id, ":"+want) {
 		t.Fatalf("the identity %q does not carry the interpreter's command line", id)
+	}
+}
+
+// procIdentity is pid:starttime:cmdline-hex of a live process, as a launcher reports it.
+func procIdentity(t *testing.T, pid int) string {
+	t.Helper()
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(stat)
+	f := strings.Fields(s[strings.LastIndex(s, ")")+2:])
+	cmd, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strconv.Itoa(pid) + ":" + f[19] + ":" + hex.EncodeToString(cmd)
+}
+
+// The check confirms an interpreter only when it is the one live process with its
+// command line, and a relay only when its parent is 0, which no process this test can
+// start has (docker exec gives one; the docker suite proves that side).
+func TestCheckScriptConfirmsOnlyTheProcessReported(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the check reads /proc")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed")
+	}
+	check := func(ids ...string) int {
+		argv := CheckArgv(ids)
+		out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+		if err == nil {
+			return 0
+		}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Logf("check %v: exit %d: %s", ids, ee.ExitCode(), out)
+			return ee.ExitCode()
+		}
+		t.Fatal(err)
+		return -1
+	}
+	// A command line no other process has: this test's PID and the time.
+	arg := "4" + strconv.Itoa(os.Getpid()) + strconv.FormatInt(time.Now().UnixNano()%1e9, 10)
+	start := func() *exec.Cmd {
+		c := exec.Command("sleep", arg)
+		if err := c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = c.Process.Kill(); _ = c.Wait() })
+		return c
+	}
+	one := start()
+	id := procIdentity(t, one.Process.Pid)
+	if got := check("interp:" + id); got != 0 {
+		t.Fatalf("the only process with its command line: exit %d, want 0", got)
+	}
+	parts := strings.SplitN(id, ":", 3)
+	if got := check("interp:" + parts[0] + ":1" + parts[1] + ":" + parts[2]); got != 1 {
+		t.Fatalf("another start time: exit %d, want 1", got)
+	}
+	if got := check("relay:" + id); got != 1 {
+		t.Fatalf("a relay whose parent is not 0: exit %d, want 1", got)
+	}
+	if got := check("other:" + id); got != 1 {
+		t.Fatalf("an unknown kind: exit %d, want 1", got)
+	}
+	if got := check(); got != 1 {
+		t.Fatalf("nothing to check: exit %d, want 1", got)
+	}
+	start() // a look-alike: the same command line
+	if got := check("interp:" + id); got != 1 {
+		t.Fatalf("an interpreter with a look-alike: exit %d, want 1", got)
+	}
+}
+
+// A cell's request can reach the JavaScript kernel in several chunks; a chunk that
+// arrives after the request's newline must not run the cell again.
+func TestKernelJSRunsACellOnceWhateverTheChunks(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("unix sockets")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed")
+	}
+	dir := t.TempDir()
+	k := exec.Command("node", "-e", kernelJS, dir)
+	k.Stdout, k.Stderr = io.Discard, io.Discard
+	if err := k.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = k.Process.Kill(); _ = k.Wait() })
+	for i := 0; ; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "ready")); err == nil {
+			break
+		}
+		if i > 200 {
+			t.Fatal("the kernel never became ready")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	send := func(chunks ...string) string {
+		c, err := net.Dial("unix", filepath.Join(dir, "ctl.sock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		for i, ch := range chunks {
+			// The first chunk carries the request; the kernel may have answered and
+			// closed before the later ones, which then have nowhere to go.
+			if _, err := io.WriteString(c, ch); err != nil && i == 0 {
+				t.Fatal(err)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		reply, _ := io.ReadAll(c)
+		return string(reply)
+	}
+	send(`{"nonce":"a","code":"globalThis.runs = (globalThis.runs || 0) + 1"}`+"\n", "a later chunk\n", "and another")
+	if reply := send(`{"nonce":"b","code":"require('fs').writeFileSync(process.argv[1] + '/runs', String(runs))"}` + "\n"); !strings.Contains(reply, `"ok"`) {
+		t.Fatalf("reading the count: %q", reply)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "runs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "1" {
+		t.Fatalf("the cell ran %s times", got)
 	}
 }

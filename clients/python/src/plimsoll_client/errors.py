@@ -14,7 +14,7 @@ package ``sandbox``); the comment on each names its Go counterpart.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 __all__ = [
     "PlimsollError",
@@ -51,6 +51,9 @@ class PlimsollError(Exception):
     it. ``not_dispatched`` is set only when the daemon stated that nothing ran
     (or when the client refused the request before sending it). ``http_status``
     is the HTTP status of the daemon's answer, ``None`` when there was none.
+    ``unanswered`` is the record the daemon sends with a session call that may have
+    run but ended in an error (a version 3 record, in its proto3 JSON form): the
+    Session checks it and keeps it in its chain, so the session goes on.
     """
 
     default_code = "unknown"
@@ -62,12 +65,14 @@ class PlimsollError(Exception):
         code: Optional[str] = None,
         not_dispatched: Optional[str] = None,
         http_status: Optional[int] = None,
+        unanswered: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.code: str = code if code is not None else self.default_code
         self.not_dispatched: Optional[str] = not_dispatched
         self.http_status: Optional[int] = http_status
+        self.unanswered: Optional[Dict[str, Any]] = unanswered
 
 
 # --- refused before anything was sent ----------------------------------------

@@ -108,6 +108,9 @@ class RunRecord:
     sequence: int
     previous_sha256: str
     sha256: str
+    unanswered: str = ""
+    """On a version 3 record, the Connect code of the error a session call that may
+    have run ended with (``result_sha256`` is then empty); "" when answered."""
 
 
 @dataclass(frozen=True)

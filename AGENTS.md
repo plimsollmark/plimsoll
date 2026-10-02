@@ -52,8 +52,8 @@ option is intentionally only process-tier.
   - [sandbox/wasm/qjs-wasi.wasm](sandbox/wasm/) — embedded QuickJS-ng WASI build
     (`//go:embed`); MIT plus a minimal checked-in host-call shim. Rebuild from
     pinned inputs with [sandbox/wasm/build.sh](sandbox/wasm/build.sh).
-- [placement/](placement/): the routing library for a caller with several daemons
-  (Carroll's MP-B, 2026-09-28). It filters backends by what `Describe` states (payload
+- [placement/](placement/): the routing library for a caller with several daemons.
+  It filters backends by what `Describe` states (payload
   kind, floor, grant capability, selected software identity), ranks them by the caller's own
   comparison, sends with each backend's own credential, and retries on another backend
   only after a refusal marked not-dispatched with reason unsupported, isolation,
@@ -182,8 +182,8 @@ Every provider implements [sandbox/sandbox.go](sandbox/sandbox.go):
 **Sessions** (optional `sandbox.SessionProvider`, [docs/sessions.md](docs/sessions.md)):
 one sandbox kept for many calls, files persisting, and of processes only the interpreters a
 session keeps for its cells, as of the sweep after each call (an interpreter runs between
-calls, so it can start a process the next sweep kills) (Carroll, 2026-10-01: surviving a
-call is optional). `OpenSession`
+calls, so it can start a process the next sweep kills); surviving a call is optional.
+`OpenSession`
 returns a `sandbox.Session` (snippet, project and cell calls, serialized; `Suspend`, `Close`,
 `Done`, `Err`), and a session's end is a typed `SessionEndedError`; a call on an ended
 session is refused not-dispatched. A **cell** (`RunCell`, wire payload `cell`, only in a
@@ -193,10 +193,16 @@ a notebook; its files are written into the work directory first (a cell whose fi
 all be written is refused not-dispatched, reason `request`, its interpreter untouched); it
 carries no grant. The
 interpreters, their launcher and the relay each provider keeps attached beside each
-interpreter (one `docker exec` or one OpenShell exec stream held open, so a warm cell starts
-no process) live in [sandbox/internal/sessionkit](sandbox/internal/sessionkit/) and travel in argv, so an image
+interpreter (one `docker exec` or one OpenShell exec stream held open, so a warm cell's code
+reaches its interpreter without a new process) live in [sandbox/internal/sessionkit](sandbox/internal/sessionkit/) and travel in argv, so an image
 needs only `node` (and `python3` for Python); the sweep keeps each live interpreter by PID,
-start time and command line and kills its children; a deadline kills it. Which languages an
+start time and command line and kills its children; a deadline kills it. Code of a session can
+write into a docker relay's or launcher's output while it starts, so nothing they print decides
+a not-dispatched mark, a second send or what the sweep keeps: a cell is two steps (files and
+the interpreter's connection, then the code), only the first can refuse it, every relay line
+carries the cell's nonce, and on docker an identity is kept only once a check run as a second
+uid (`2000:2000`) confirms it (a relay started by `docker exec`, so parent PID 0; the one
+process with the interpreter's command line). Which languages an
 image runs is found by each provider's smoke test (the interpreter starts and prints) and stated
 on `PayloadEnvironment.languages`; with sessions on, the session smoke test then runs a cell that
 keeps state in each, and refuses a stated language it has no check for. Every call of a session runs in one work directory
@@ -214,7 +220,7 @@ mounted at open and serves only the grant of the call in progress, to anything i
 container, code an earlier call left running included; an OpenShell session's granted call
 starts its relay in the sandbox, reachable the same way. So a granted session call needs a
 grant that allows sessions (`HostAPIGrant.AllowInSessions`, a profile's
-`allow_in_sessions`; Carroll, 2026-10-01), or both providers refuse it before dispatch
+`allow_in_sessions`), or both providers refuse it before dispatch
 (`ErrGrantNotForSessions`, reason `permission`, `PermissionDenied` over RPC).
 [docs/sessions.md](docs/sessions.md#what-a-session-gives-up) says what a session gives up.
 Over RPC the procedures are `OpenSession`, `SessionRun` (its own request message, so a
@@ -301,9 +307,14 @@ OpenShell sets no swap limit), rejects `SANDBOX_PIDS`, and with `SANDBOX_DISK_MB
 mounts a run's `/tmp` as a `noexec` tmpfs of that size through the sandbox's driver config,
 which needs the gateway's `allow_driver_config = true`; never a session's),
 `SANDBOX_MAX_SESSIONS` (open sessions at once; default 0, sessions off; startup fails when
-set for a provider without sessions), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
+set for a provider without sessions), `SANDBOX_MAX_SESSIONS_PER_CALLER` (open sessions one
+principal may hold, suspended ones included; default 0, no cap beyond the daemon's; a
+suspended session holds no concurrency slot, so the per-caller concurrency cap does not bound
+them), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
 12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends), `SANDBOX_SESSION_DISK_MB`
-(default 1024; 0 disables the check; disk use is measured after each call;
+(default 1024; 0 disables the check and measures nothing; disk use is measured after each call,
+on docker as the used space of the session's tmpfs mounts (`statfs`), on openshell by a walk
+the session's code can hide files from;
 exceeding the limit ends the session, but it is not enforced during the call; openshell's
 `SANDBOX_DISK_MB` caps runs only, because docker discards a tmpfs when a suspend stops the
 container),
@@ -365,7 +376,10 @@ outer environment, selected software identity, caller's admission rule, verified
 sandbox policy) and the daemon's start and end
 times. The daemon only hashes and holds no key; the official client recomputes both
 digests and returns a mismatch as `DataLoss` (`record.ErrMismatch`), and a harness outside
-the daemon signs checked records. Encoding and field list: [docs/run-records.md](docs/run-records.md). The daemon serves `GET /healthz` and
+the daemon signs checked records. A session call that may have run but ended in an error (no
+not-dispatched mark) is chained too: a version 3 record (no result digest, the error's Connect
+code in `unanswered`) rides on the error as the `UnansweredCall` detail, the clients check and
+keep it, and the session goes on. Encoding and field list: [docs/run-records.md](docs/run-records.md). The daemon serves `GET /healthz` and
 `/readyz` outside auth on its RPC listener. `GET /metrics`, also outside auth, has a listener of its own,
 `PLIMSOLL_METRICS_ADDR` (default `127.0.0.1:9464`: loopback and port 9464 are OpenTelemetry's Prometheus exporter
 defaults; `off` disables it), because its labels name grant profiles and route templates, which a caller who can reach the RPC
@@ -437,7 +451,7 @@ rejected), TLS on any non-loopback listener (the metrics listener included), an 
 (docker: `SANDBOX_REQUIRE_PINNED_IMAGES=1`, no `unconfined` seccomp; e2b: an
 explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1`), an explicit
 per-run resource envelope (memory and CPU only for dockercloud, which has no disk
-control) plus, for docker, whose runners share the daemon's host, the aggregate memory budget, per-caller rate limiting, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive: a rate limit bounds what a caller starts, not the slots its long runs or open sessions hold). Every violation is reported at once
+control) plus, for docker, whose runners share the daemon's host, the aggregate memory budget, per-caller rate limiting, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive: a rate limit bounds what a caller starts, not the slots its long runs or running sessions hold), and with sessions on a per-caller session cap (`SANDBOX_MAX_SESSIONS_PER_CALLER` positive). Every violation is reported at once
 (one fix pass, not a startup loop). TLS itself is configured with
 `PLIMSOLL_TLS_CERT`/`PLIMSOLL_TLS_KEY` (both-or-neither; loaded and validated
 at startup); with them the daemon serves HTTP/1.1 + HTTP/2 over TLS instead of
@@ -474,7 +488,9 @@ version, rows, width, params; then per row an int32 status and status × width
 float64 outputs) that `sandbox.DecodeModuleResults` bounds-checks before anything
 is trusted. The row width must equal the simulator's own `sim_run` parameter count and
 the output width is the module's exported `sim_width()`; the worker reads both from
-the module, so the daemon assumes no layout. `ModuleResult.Outcome` reuses the
+the module, so the daemon assumes no layout. Over RPC every NaN of an output is sent as the quiet NaN with
+no sign or payload (`0x7ff8000000000000`), the one Python's and JavaScript's NaN encode to,
+so a JSON client's record check agrees whatever NaN the simulator produced. `ModuleResult.Outcome` reuses the
 project outcome type: `completed` (every row has a status; a failed row is a
 negative status, the table continues), `setup_failed` (the worker refused: unknown
 simulator, a row of the wrong width), `timed_out`, `protocol_error` (an undecodable
