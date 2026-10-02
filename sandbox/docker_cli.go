@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -190,7 +191,7 @@ var imageEnvLoaders = map[string]bool{
 	"HOSTALIASES": true, "PERL5OPT": true, "RUBYOPT": true, "JAVA_TOOL_OPTIONS": true,
 	"_JAVA_OPTIONS": true, "JDK_JAVA_OPTIONS": true, "PYTHONSTARTUP": true, "PYTHONHOME": true,
 	"PYTHONUSERBASE": true, "PYTHONBREAKPOINT": true, "PYTHONINSPECT": true, "PYTHONEXECUTABLE": true,
-	"PYTHONPYCACHEPREFIX": true,
+	"PYTHONPYCACHEPREFIX": true, "NODE_COMPILE_CACHE": true,
 }
 
 // imageEnvPathLists are searched for code, one directory per entry; an image may set
@@ -220,8 +221,12 @@ func checkImageEnv(env []string) error {
 			if !strings.HasPrefix(dir, "/") {
 				return fmt.Errorf("the image's %s has the entry %q, which is not an absolute directory; a relative entry resolves inside the work directory guest code writes; refused", name, dir)
 			}
+			// Compared as the place it names: //tmp, /usr/../tmp and /./tmp are /tmp. A
+			// link on the image's root is the image author's own statement and is not
+			// followed here.
+			clean := path.Clean(dir)
 			for _, w := range guestWritable {
-				if dir == w || strings.HasPrefix(dir, w+"/") {
+				if clean == w || strings.HasPrefix(clean, w+"/") {
 					return fmt.Errorf("the image's %s has the entry %q, inside %s, which guest code can write; refused", name, dir, w)
 				}
 			}

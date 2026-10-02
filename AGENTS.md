@@ -240,7 +240,8 @@ the verified execution state and its relays are attached; it is never returned o
 `sandbox.SessionLanguages` (an unknown name refused, an unstated one dropped): a claim takes
 the member warming the most hinted languages, and the pool divides its size across language
 sets by a decaying weight of the hints it sees (no hint = every language), rebalancing one
-member at a time; hints never add members. A
+member at a time and only when a move is worth more than 1.25 members (`poolMoveMargin`), so
+alternating hints never churn the pool; hints never add members. A
 member's lifetime label covers 30 minutes of waiting plus `SANDBOX_SESSION_LIFETIME`, and a
 member idle 30 minutes is replaced. With the pool on, the startup session smoke test runs
 on a claimed member.
@@ -277,7 +278,8 @@ output stream past the transfer budget is classified as a failed user run
 code pass its own exit for docker's: a docker snippet's node, in a run or a session
 call, writes a per-call start marker to stderr from an `--import` preload before the
 script runs (stripped from the result), and a call whose stderr starts with it is a
-result whatever its exit code; only one without it can be docker's 125, 126 or 127. A
+result whatever its exit code; only one without it can be docker's (125, 126 or 127 for
+`docker run`; in a session any non-zero exit, since `docker exec`'s own failures exit 1). A
 session call whose exit may be docker's is also checked against the container: paused,
 stopped, gone or unreadable ends the session. A docker session finds its container gone
 by an ID-filtered listing, never by docker's wording, and a read-back docker cannot

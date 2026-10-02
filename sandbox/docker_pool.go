@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -54,6 +53,15 @@ const dockerPoolAddBudget = 2 * time.Minute
 // in what callers run moves the pool within a few dozen sessions.
 const poolDemandRate = 1.0 / 16
 
+// poolMoveMargin is how much more than one member a move must be worth before
+// rebalance makes it: the deficit of the set below its share and the surplus of the
+// set above it, in members, must sum to more than 1 + poolMoveMargin. Moving one
+// member brings that sum down by up to 2, so a move worth just over 1 only trades
+// which set is off by half a member; demand alternating between two sets then never
+// moves a member (in a pool of 1, the member stays put until one set holds more than
+// about 62% of the weight).
+const poolMoveMargin = 0.25
+
 var errPoolStopped = errors.New("docker: the session pool stopped")
 
 // dockerPool is a docker provider's session pool.
@@ -72,8 +80,11 @@ type dockerPool struct {
 	mu    sync.Mutex
 	ready []*dockerSession // oldest first
 	// demand is the decaying weight of each language set (languageSetKey) opens asked
-	// for; a set whose weight falls below a quarter of one member's share is
-	// forgotten, which bounds the table at 4 x size sets.
+	// for. The weights sum to at most 1, and a set whose weight falls below a quarter
+	// of one open's (a quarter of one member's share, in a pool of more than 16) is
+	// forgotten, which bounds the table at max(64, 4 x size) sets. The floor is never
+	// above one open's weight: a set would otherwise be forgotten at the next open of
+	// another, however often it is asked for.
 	demand map[string]float64
 }
 
@@ -87,31 +98,18 @@ func languageSetKey[L ~string](langs []L) string {
 }
 
 // poolShares divides size members across language sets in proportion to their
-// weight: each set gets the whole part of its share, and the members left over go to
-// the largest remainders, ties to the set named first. The shares sum to size.
-func poolShares(demand map[string]float64, size int) map[string]int {
-	keys := make([]string, 0, len(demand))
+// weight, exactly: shares are fractions of a member and sum to size.
+func poolShares(demand map[string]float64, size int) map[string]float64 {
 	total := 0.0
-	for k, w := range demand {
-		keys = append(keys, k)
+	for _, w := range demand {
 		total += w
 	}
-	slices.Sort(keys)
-	shares := make(map[string]int, len(keys))
+	shares := make(map[string]float64, len(demand))
 	if total <= 0 {
 		return shares
 	}
-	rest := make(map[string]float64, len(keys))
-	given := 0
-	for _, k := range keys {
-		exact := float64(size) * demand[k] / total
-		shares[k] = int(exact)
-		rest[k] = exact - float64(shares[k])
-		given += shares[k]
-	}
-	slices.SortStableFunc(keys, func(a, b string) int { return cmp.Compare(rest[b], rest[a]) })
-	for i := 0; given < size; i, given = i+1, given+1 {
-		shares[keys[i%len(keys)]]++
+	for k, w := range demand {
+		shares[k] = float64(size) * w / total
 	}
 	return shares
 }
@@ -119,7 +117,7 @@ func poolShares(demand map[string]float64, size int) map[string]int {
 // observe records that a session opened wanting set.
 func (p *dockerPool) observe(set []Language) {
 	key := languageSetKey(set)
-	floor := 1 / (4 * float64(p.size))
+	floor := min(1/(4*float64(p.size)), poolDemandRate/4)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for k, w := range p.demand {
@@ -132,10 +130,12 @@ func (p *dockerPool) observe(set []Language) {
 	p.demand[key] += poolDemandRate
 }
 
-// gaps compares the ready members of each language set with the set's share: the set
-// furthest below its share (want), and the set furthest above it (spare); "" when no
-// set is below, or none above. Call with mu held.
-func (p *dockerPool) gaps() (want, spare string) {
+// gaps compares the ready members of each language set with the set's exact share:
+// want is the set furthest below its share and need how many members it lacks; spare
+// is the set furthest above it and over how many members it has beyond it. want is ""
+// when no set is below its share, spare when none is above; ties go to the set named
+// first. Call with mu held.
+func (p *dockerPool) gaps() (want, spare string, need, over float64) {
 	shares := poolShares(p.demand, p.size)
 	have := make(map[string]int)
 	for _, s := range p.ready {
@@ -151,15 +151,14 @@ func (p *dockerPool) gaps() (want, spare string) {
 		}
 	}
 	slices.Sort(keys)
-	most, least := 0, 0
 	for _, k := range keys {
-		if d := shares[k] - have[k]; d > most {
-			want, most = k, d
-		} else if d < least {
-			spare, least = k, d
+		if d := shares[k] - float64(have[k]); d > need {
+			want, need = k, d
+		} else if -d > over {
+			spare, over = k, -d
 		}
 	}
-	return want, spare
+	return want, spare, need, over
 }
 
 // dockerPoolKey is the execution state a member was made under; a member is claimed
@@ -193,9 +192,20 @@ func (d *DockerSandbox) StartSessionPool(ctx context.Context, size int, lifetime
 	if !d.pool.CompareAndSwap(nil, p) {
 		return errors.New("docker: the session pool is already started")
 	}
-	if err := p.add(ctx); err != nil {
+	if err := p.start(ctx); err != nil {
 		d.pool.Store(nil)
 		return fmt.Errorf("docker: session pool: %w", err)
+	}
+	return nil
+}
+
+// start makes the first member and starts the filler. A pool whose first member
+// cannot be made has no filler, so start closes done itself: a Drain that loaded the
+// pool meanwhile waits for done and would otherwise wait forever.
+func (p *dockerPool) start(ctx context.Context) error {
+	if err := p.add(ctx); err != nil {
+		close(p.done)
+		return err
 	}
 	go p.run()
 	return nil
@@ -215,7 +225,7 @@ func (p *dockerPool) add(ctx context.Context) error {
 		return errors.New("no interpreter languages are known for the project image (run EnsureReady first)")
 	}
 	p.mu.Lock()
-	want, _ := p.gaps()
+	want, _, _, _ := p.gaps()
 	p.mu.Unlock()
 	// A set names only languages the image stated when it was asked for; one the
 	// image no longer states is dropped, and a set left empty is every language.
@@ -323,14 +333,15 @@ func closestMember(members []*dockerSession, want []Language) int {
 }
 
 // rebalance removes the oldest member of the language set furthest above its share
-// when another set is below its share, so the next add makes one of that set. It
-// moves one member a call, so a change in demand costs at most one container start
-// per member moved. It reports whether it removed one.
+// when another set is below its share and the move is worth more than one member
+// (poolMoveMargin), so the next add makes one of that set. It moves one member a
+// call, so a change in demand costs at most one container start per member moved.
+// It reports whether it removed one.
 func (p *dockerPool) rebalance() bool {
 	p.mu.Lock()
-	want, spare := p.gaps()
+	want, spare, need, over := p.gaps()
 	var gone *dockerSession
-	if want != "" && spare != "" {
+	if want != "" && spare != "" && need+over > 1+poolMoveMargin {
 		for i, s := range p.ready {
 			if languageSetKey(s.warm) == spare {
 				gone = s
@@ -441,13 +452,21 @@ func (p *dockerPool) run() {
 	}
 }
 
-// close stops the filler, waits for it, and removes every ready member.
-func (p *dockerPool) close() {
+// close stops the filler, waits for it until ctx ends, and removes every ready
+// member. A filler still making a member when ctx ends removes that member itself
+// once it sees the pool stopped (add), but possibly after Drain returned; its label
+// bounds how long it can outlive the daemon.
+func (p *dockerPool) close(ctx context.Context) error {
 	if p == nil {
-		return
+		return nil
 	}
 	p.stopOnce.Do(func() { close(p.stop) })
-	<-p.done
+	var err error
+	select {
+	case <-p.done:
+	case <-ctx.Done():
+		err = fmt.Errorf("docker: the session pool is still making a member: %w", ctx.Err())
+	}
 	p.mu.Lock()
 	ready := p.ready
 	p.ready = nil
@@ -455,6 +474,7 @@ func (p *dockerPool) close() {
 	for _, s := range ready {
 		p.discard(s)
 	}
+	return err
 }
 
 // members are the names of the ready members, which ReconcileOrphans must not reap.

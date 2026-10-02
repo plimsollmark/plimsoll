@@ -437,9 +437,14 @@ A docker session is the container a project run gets, kept for the session:
     wanting every language. The pool also divides its size across language sets by what
     sessions ask for: each open adds 1/16 to the weight of its set and every other set keeps
     15/16 of its own, so the split follows roughly the last 16 to 32 sessions, and a set
-    whose weight falls below a quarter of one container's share is forgotten. When the pool
-    is full but one set has more containers than its share and another fewer, it removes
-    one surplus container and makes one of the missing set, one at a time. Hints move
+    whose weight falls below a quarter of one open's 1/16 is forgotten (about 22 opens
+    after it was last asked for, if it was asked for once). When the pool is full, it
+    moves a container only when the shift is clear: what the set furthest below its share
+    lacks and what the set furthest above its share holds beyond it must add up to more
+    than 1.25 containers (a share counts fractions of a container). It then removes one
+    surplus container and makes one of the missing set, one at a time.
+    Callers that alternate between languages therefore cost one container per session (the
+    one claimed is replaced) and no more. Hints move
     containers between sets and never add any: `SANDBOX_SESSION_POOL` still bounds how many
     wait, and so the memory. Callers that send no hints see every container warm every
     language, as before hints existed.

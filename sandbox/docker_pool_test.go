@@ -1,9 +1,12 @@
 package sandbox
 
 import (
+	"context"
 	"errors"
 	"maps"
+	"math"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,22 +60,21 @@ func TestPoolClaimsOnlyAMemberItMayHandOver(t *testing.T) {
 	}
 }
 
-// The pool's size is divided across language sets by weight: whole parts first, the
-// rest to the largest remainders, ties to the set named first, always summing to the
-// size.
+// The pool's size is divided across language sets in proportion to their weight,
+// exactly, summing to the size.
 func TestPoolSharesDivideTheSizeByWeight(t *testing.T) {
 	for _, c := range []struct {
 		demand map[string]float64
 		size   int
-		want   map[string]int
+		want   map[string]float64
 	}{
-		{map[string]float64{"javascript,python": 1}, 3, map[string]int{"javascript,python": 3}},
-		{map[string]float64{"python": 0.5, "javascript": 0.5}, 3, map[string]int{"javascript": 2, "python": 1}},
-		{map[string]float64{"a": 0.7, "b": 0.2, "c": 0.1}, 4, map[string]int{"a": 3, "b": 1, "c": 0}},
-		{map[string]float64{"a": 0.01, "b": 0.01}, 1, map[string]int{"a": 1, "b": 0}},
-		{map[string]float64{}, 2, map[string]int{}},
+		{map[string]float64{"javascript,python": 1}, 3, map[string]float64{"javascript,python": 3}},
+		{map[string]float64{"python": 0.5, "javascript": 0.5}, 3, map[string]float64{"javascript": 1.5, "python": 1.5}},
+		{map[string]float64{"a": 0.7, "b": 0.2, "c": 0.1}, 4, map[string]float64{"a": 2.8, "b": 0.8, "c": 0.4}},
+		{map[string]float64{}, 2, map[string]float64{}},
 	} {
-		if got := poolShares(c.demand, c.size); !maps.Equal(got, c.want) {
+		got := poolShares(c.demand, c.size)
+		if !maps.EqualFunc(got, c.want, func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }) {
 			t.Errorf("poolShares(%v, %d) = %v; want %v", c.demand, c.size, got, c.want)
 		}
 	}
@@ -87,18 +89,83 @@ func TestPoolDemandFollowsObservedHints(t *testing.T) {
 	for range 20 {
 		p.observe([]Language{LanguagePython})
 	}
-	if got := poolShares(p.demand, p.size); got[py] != 3 || got[all] != 1 {
-		t.Fatalf("after 20 Python opens the shares are %v; want 3 Python and 1 of every language", got)
+	if got := poolShares(p.demand, p.size); math.Round(got[py]) != 3 || math.Round(got[all]) != 1 {
+		t.Fatalf("after 20 Python opens the shares are %v; want about 3 Python and 1 of every language", got)
 	}
-	for range 40 {
+	for range 50 {
 		p.observe([]Language{LanguagePython})
 	}
 	if _, ok := p.demand[all]; ok || len(p.demand) != 1 {
-		t.Fatalf("after 60 Python opens the table is %v; want only Python", p.demand)
+		t.Fatalf("after 70 Python opens the table is %v; want only Python", p.demand)
 	}
 	p.observe([]Language{LanguageJavaScript, LanguagePython})
-	if got := poolShares(p.demand, p.size); got[py] != 4 {
+	if got := poolShares(p.demand, p.size); math.Round(got[py]) != 4 {
 		t.Fatalf("one open of every language moved the shares to %v; want all 4 still Python", got)
+	}
+}
+
+// Callers that alternate between two languages keep both sets in the table and, once
+// the split has settled, cost one container per open (the claimed one's replacement),
+// never a rebalance; with two or more members each open finds its language warm. Before
+// the fix a pool of 4 or fewer forgot every set but the last one asked for (one open's
+// weight was below the forget floor after a single decay), so each open moved the whole
+// pool to the language the next open did not want; a pool of 1 also flipped its one
+// member on every open as two near-equal weights crossed.
+func TestPoolAlternatingHintsDoNotChurn(t *testing.T) {
+	js, py := []Language{LanguageJavaScript}, []Language{LanguagePython}
+	for _, size := range []int{1, 2, 3, 4, 8} {
+		removed := 0
+		p := &dockerPool{size: size, demand: map[string]float64{"javascript,python": 1},
+			discard: func(*dockerSession) { removed++ }}
+		// fill is the filler's loop (run): rebalance only a full pool, else add one
+		// member of the set furthest below its share.
+		fill := func() {
+			for {
+				if !p.short() {
+					if !p.rebalance() {
+						return
+					}
+					continue
+				}
+				p.mu.Lock()
+				want, _, _, _ := p.gaps()
+				p.ready = append(p.ready, &dockerSession{warm: strings.Split(want, ",")})
+				p.mu.Unlock()
+			}
+		}
+		fill()
+		hits := 0
+		for i := range 200 {
+			want := js
+			if i%2 == 1 {
+				want = py
+			}
+			p.observe(want)
+			p.mu.Lock()
+			got := p.ready[closestMember(p.ready, want)]
+			p.ready = slices.DeleteFunc(p.ready, func(s *dockerSession) bool { return s == got })
+			p.mu.Unlock()
+			if i == 100 {
+				removed = 0
+				hits = 0
+			}
+			if slices.Contains(got.warm, string(want[0])) {
+				hits++
+			}
+			fill()
+		}
+		if _, ok := p.demand["javascript"]; !ok {
+			t.Errorf("size %d: JavaScript was forgotten though every other open asks for it: %v", size, p.demand)
+		}
+		if _, ok := p.demand["python"]; !ok {
+			t.Errorf("size %d: Python was forgotten though every other open asks for it: %v", size, p.demand)
+		}
+		if removed != 0 {
+			t.Errorf("size %d: %d members removed by rebalancing in the last 100 alternating opens; want none", size, removed)
+		}
+		if size >= 2 && hits != 100 {
+			t.Errorf("size %d: %d of the last 100 opens found their language warm; want all", size, hits)
+		}
 	}
 }
 
@@ -172,5 +239,43 @@ func TestSessionLanguagesChecksTheHint(t *testing.T) {
 	}
 	if got, err := SessionLanguages([]Language{LanguagePython, LanguagePython}, nil); err != nil || !slices.Equal(got, []Language{LanguagePython}) {
 		t.Fatalf("no stated languages: %v, %v; want the hint without repeats", got, err)
+	}
+}
+
+// Drain is bounded by its context while the pool's filler is busy making a member,
+// and a filler that never started cannot hold it up: before the fix Drain waited for
+// the filler with no bound, and a pool whose first member failed never closed done,
+// so a Drain racing StartSessionPool never returned.
+func TestDrainIsBoundedWhileThePoolFillerRuns(t *testing.T) {
+	d := DefaultDocker("")
+	d.pool.Store(&dockerPool{d: d, stop: make(chan struct{}), done: make(chan struct{}), discard: func(*dockerSession) {}})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	errc := make(chan error, 1)
+	go func() { errc <- d.Drain(ctx) }()
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("Drain reported success while the pool's filler had not stopped")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Drain did not return within 10 s of its 1 s context")
+	}
+}
+
+// A pool whose first member cannot be made has no filler, so start closes done itself:
+// anything waiting for the filler (Drain, through close) returns at once.
+func TestPoolThatFailsToStartHasNoFillerToWaitFor(t *testing.T) {
+	d := DefaultDocker("") // never made ready, so making a member fails at once
+	p := &dockerPool{d: d, size: 1, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1),
+		demand: map[string]float64{"javascript": 1}, discard: func(*dockerSession) {}}
+	d.projectLanguages = []Language{LanguageJavaScript}
+	if err := p.start(context.Background()); err == nil {
+		t.Fatal("a pool whose first member could not be made started")
+	}
+	select {
+	case <-p.done:
+	default:
+		t.Fatal("the pool failed to start but done is still open, so close would wait forever")
 	}
 }

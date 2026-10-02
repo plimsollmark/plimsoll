@@ -91,6 +91,10 @@ func TestCheckImageEnv(t *testing.T) {
 		"LD_LIBRARY_PATH=/opt/lib", "GLIBC_TUNABLES=glibc.malloc.check=3", "BASH_ENV=/etc/x", "PYTHONSTARTUP=/opt/s.py",
 		"NODE_EXTRA_CA_CERTS=/etc/ca.pem", "PATH=/work/bin:/usr/bin", "PATH=.:/usr/bin", "PATH=/usr/bin:", "NODE_PATH=/tmp/m",
 		"PYTHONPATH=lib", "PATH=/dev/shm/x", "NODE_PATH=/proc/self/fd/3",
+		// The same places spelled another way, and node's compile cache (node 22.1 and
+		// later reads cached compiled code for every module, the runner's included).
+		"PATH=//tmp:/usr/bin", "PATH=/usr/../tmp", "NODE_PATH=/./work/node_modules", "PYTHONPATH=/opt/../work",
+		"NODE_COMPILE_CACHE=/tmp/cc", "NODE_COMPILE_CACHE=/opt/cache",
 	} {
 		if err := checkImageEnv([]string{"PATH=/usr/bin", bad}); err == nil {
 			t.Errorf("%s was accepted", bad)

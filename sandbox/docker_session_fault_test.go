@@ -18,7 +18,8 @@ import (
 // dockerFaults puts a docker CLI on PATH that runs the real one, except where a
 // trigger file in the returned directory makes it fail the way a daemon or another
 // operator can: a call's exec (the one whose last argument is "-", a snippet's node)
-// failing with 125, alone or after pausing the container; a container inspect failing,
+// failing with the exit code the trigger holds (docker exec's own failures exit 1;
+// docker run's exit 125), alone or after pausing the container; a container inspect failing,
 // or removing the container first and then failing in words docker never used; a
 // container inspect taking 3 seconds. The faults are what the daemon does, not what
 // guest code does, so no other way to cause them from a test exists.
@@ -46,9 +47,9 @@ done
 last=
 for a in "$@"; do last=$a; done
 if [ "$sub" = exec ] && [ "$last" = - ]; then
-  if [ -e "$ctl/call-exec-125" ]; then
+  if [ -e "$ctl/call-exec-fail" ]; then
     echo "Error response from daemon: injected failure" >&2
-    exit 125
+    exit "$(cat "$ctl/call-exec-fail")"
   fi
   if [ -e "$ctl/call-exec-pause" ]; then
     name=$(cat "$ctl/call-exec-pause"); rm -f "$ctl/call-exec-pause"
@@ -91,25 +92,28 @@ exec "$real" "$@"
 	return trigger, clear
 }
 
-// A snippet's own exit 125 is its result; docker's exit 125 for an exec that never
-// started node is an error, never the caller's exit code with docker's words in its
+// A snippet's own exit is its result, 1 and 125 alike; docker's failure to exec, whose
+// exit is 1 for a daemon error (docker exec does not use docker run's 125) and 125 to
+// 127 otherwise, is an error, never the caller's exit code with docker's words in its
 // stderr.
 func TestDockerSessionExecFailureIsNotTheCallsExit(t *testing.T) {
 	d := sessionDocker(t)
 	trigger, clear := dockerFaults(t)
 	s := openDockerSession(t, d)
-	res, err := sessionJS(t, s, `process.exit(125)`)
-	if err != nil || res.ExitCode != 125 {
-		t.Fatalf("a snippet's own exit 125: %+v, %v", res, err)
-	}
-	trigger("call-exec-125", "")
-	res, err = sessionJS(t, s, `console.log("never")`)
-	clear("call-exec-125")
-	if err == nil {
-		t.Fatalf("docker's failed exec came back as the call's result: exit %d, stderr %q", res.ExitCode, res.Stderr)
-	}
-	if _, marked := sandbox.NotDispatchedReason(err); marked {
-		t.Fatalf("an exec docker may have started is marked not dispatched: %v", err)
+	for _, code := range []int{1, 125} {
+		res, err := sessionJS(t, s, fmt.Sprintf(`process.exit(%d)`, code))
+		if err != nil || res.ExitCode != code {
+			t.Fatalf("a snippet's own exit %d: %+v, %v", code, res, err)
+		}
+		trigger("call-exec-fail", fmt.Sprint(code))
+		res, err = sessionJS(t, s, `console.log("never")`)
+		clear("call-exec-fail")
+		if err == nil {
+			t.Fatalf("docker's failed exec (exit %d) came back as the call's result: exit %d, stderr %q", code, res.ExitCode, res.Stderr)
+		}
+		if _, marked := sandbox.NotDispatchedReason(err); marked {
+			t.Fatalf("an exec docker may have started is marked not dispatched: %v", err)
+		}
 	}
 }
 

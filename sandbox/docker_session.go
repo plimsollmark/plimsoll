@@ -858,10 +858,12 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 	}
 	defer unlend()
 	// As in a single run, node reads the script from stdin after a preload writes
-	// started to stderr, so a non-zero exit without it can be docker's (125 to 127: the
-	// exec never started node). Session code can write into the new node's stderr
-	// before the preload does, but cannot learn started before node exists, so it can
-	// make its own call read as docker's failure and never docker's failure as a result.
+	// started to stderr, so a non-zero exit without it can be docker's: unlike docker
+	// run's 125, docker exec's own failures (a daemon error, a refused exec) exit 1, and
+	// 126 or 127 when the exec never started node, so here any non-zero exit without it
+	// counts. Session code can write into the new node's stderr before the preload
+	// does, but cannot learn started before node exists, so it can make its own call
+	// read as docker's failure and never docker's failure as a result.
 	started := "plimsoll-started:" + randID() + "\n"
 	argv := []string{"node", "--import", "data:text/javascript,process.stderr.write(" + strconv.Quote(started) + ")", "-"}
 	start := time.Now()
@@ -894,7 +896,7 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 		fail.CallTrace = res.CallTrace
 		return fail, s.Err()
 	}
-	if !guestStarted && out.exitCode >= 125 && out.exitCode <= 127 {
+	if !guestStarted && out.exitCode != 0 {
 		// Unmarked: the preload not leading stderr does not prove node never ran.
 		fail.CallTrace = res.CallTrace
 		return fail, fmt.Errorf("docker could not run the call in the session's container (exit %d): %s", out.exitCode, truncateForError(strings.TrimSpace(out.stderr)))
@@ -1096,7 +1098,7 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 	d.sessions.mu.Lock()
 	d.sessions.draining = true
 	d.sessions.mu.Unlock()
-	d.pool.Load().close()
+	poolErr := d.pool.Load().close(ctx)
 	opened := make(chan struct{})
 	go func() {
 		d.sessions.opening.Wait()
@@ -1123,7 +1125,7 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
-		return nil
+		return poolErr
 	case <-ctx.Done():
 		return fmt.Errorf("docker: session containers still being removed: %w", ctx.Err())
 	}
