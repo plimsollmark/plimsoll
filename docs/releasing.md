@@ -47,3 +47,24 @@ path gave for free. Re-adding the exemption would leave this module, whose job i
 running hostile code, as the one dependency in a consumer's graph that nothing
 cross-checks. If a future pre-publication tag ever needs the file proxy again, scope
 the exemption to that work and remove it with the tag.
+
+## The client packages
+
+The TypeScript client (`@plimsollmark/client` on npm) and the Python client
+(`plimsoll-client`, installed from a checkout; it is not on PyPI) carry the version of
+the plimsoll release they ship in, without the `v`. `TestClientVersionsAgree` in
+`clients/typescript` fails when `package.json`, its lockfile, `pyproject.toml` and the
+Python client's `_version.py` disagree, so a release sets all four before its tag.
+
+The npm package is published from the commit the release tag names, after that
+commit's checks are green, so the package and the tagged source are the same code:
+
+```sh
+cd clients/typescript
+npm ci          # installs the compiler; `prepare` builds dist/ during the publish
+npm publish --access public
+```
+
+npm requires two-factor authentication for every publish made after `npm login`; an
+unattended publish uses a granular access token with publish rights on the
+`@plimsollmark` scope.

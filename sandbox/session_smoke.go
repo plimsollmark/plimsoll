@@ -17,7 +17,10 @@ import (
 //   - a process a call leaves running, detached in a process group of its own, is
 //     gone when the next call runs (the sweep killed it), and a file the call wrote
 //     is there;
-//   - a cell's interpreter keeps what the cell before it defined;
+//   - in every cell language the provider states, a cell's interpreter keeps what the
+//     cell before it defined (cellChecks has one check per language, and a stated
+//     language without one fails the test, so no language is stated that startup did
+//     not run);
 //   - after a suspend, the call that resumes the session finds the file, and a cell's
 //     interpreter is either the one that holds the definition or one that says it is
 //     new;
@@ -45,8 +48,8 @@ func SessionSmokeTest(ctx context.Context, sp SessionProvider, opts SessionOptio
 		}
 		return strings.TrimSpace(res.Stdout), nil
 	}
-	cell := func(step, code string) (CellResult, error) {
-		res, err := s.RunCell(ctx, CellRequest{Language: LanguageJavaScript, Code: code, Timeout: 30 * time.Second})
+	cell := func(step string, lang Language, code string) (CellResult, error) {
+		res, err := s.RunCell(ctx, CellRequest{Language: lang, Code: code, Timeout: 30 * time.Second})
 		if err != nil {
 			return res, fmt.Errorf("session smoke: %s: %w", step, err)
 		}
@@ -81,15 +84,25 @@ console.log(state + " " + fs.readFileSync("plimsoll-session-smoke.txt", "utf8"))
 		return fmt.Errorf("session smoke: after the sweep the next call saw %.80q, want the process gone and the file kept", out)
 	}
 
-	if _, err := cell("a cell that defines", "globalThis.plimsollSmoke = 41"); err != nil {
-		return err
+	langs := sp.SessionEnvironments().Project.Languages
+	if len(langs) == 0 {
+		langs = []Language{LanguageJavaScript}
 	}
-	res, err := cell("the next cell", "plimsollSmoke + 1")
-	if err != nil {
-		return err
-	}
-	if res.InterpreterStarted || strings.TrimSpace(res.Stdout) != "42" {
-		return fmt.Errorf("session smoke: the next cell got %.80q (fresh interpreter %v), want 42 from the same interpreter", res.Stdout, res.InterpreterStarted)
+	for _, lang := range langs {
+		check, ok := cellChecks[lang]
+		if !ok {
+			return fmt.Errorf("session smoke: the provider states cell language %q, which has no startup check", lang)
+		}
+		if _, err := cell("a "+string(lang)+" cell that defines", lang, check.define); err != nil {
+			return err
+		}
+		res, err := cell("the next "+string(lang)+" cell", lang, check.read)
+		if err != nil {
+			return err
+		}
+		if res.InterpreterStarted || strings.TrimSpace(res.Stdout) != "42" {
+			return fmt.Errorf("session smoke: the next %s cell got %.80q (fresh interpreter %v), want 42 from the same interpreter", lang, res.Stdout, res.InterpreterStarted)
+		}
 	}
 
 	if _, err := s.Suspend(ctx); err != nil {
@@ -101,7 +114,7 @@ console.log(state + " " + fs.readFileSync("plimsoll-session-smoke.txt", "utf8"))
 	if out != "kept" {
 		return fmt.Errorf("session smoke: after the suspend the file reads %.80q, want it kept", out)
 	}
-	res, err = cell("a cell after the resume", "typeof plimsollSmoke")
+	res, err := cell("a cell after the resume", LanguageJavaScript, "typeof plimsollSmoke")
 	if err != nil {
 		return err
 	}
@@ -122,4 +135,11 @@ console.log(state + " " + fs.readFileSync("plimsoll-session-smoke.txt", "utf8"))
 		return fmt.Errorf("session smoke: a closed session reports %v, want closed", s.Err())
 	}
 	return nil
+}
+
+// cellChecks are the two cells SessionSmokeTest runs in each cell language: one that
+// defines a value and one that reads it back, printing 42, from the same interpreter.
+var cellChecks = map[Language]struct{ define, read string }{
+	LanguageJavaScript: {"globalThis.plimsollSmoke = 41", "plimsollSmoke + 1"},
+	LanguagePython:     {"plimsoll_smoke = 41", "plimsoll_smoke + 1"},
 }

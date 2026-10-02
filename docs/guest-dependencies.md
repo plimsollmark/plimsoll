@@ -247,7 +247,7 @@ file in the image root, named by a step.
   - `satclock.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/satellite-clock/index.html)): a navigation satellite's clock, which runs about 38.6
     microseconds a day fast from relativity, steered through a delayed
     measurement.
-  - `slits.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/double-slit/index.html)): an aperture of sixteen phase-plate cells and a
+  - `slits.wasm` ([replay page, INTERNAL · plimsoll site →](https://plimsollmark.github.io/plimsoll/examples/envs/double-slit/index.html)): an aperture of sixteen phase-plate segments and a
     64-point screen; the controller sets all sixteen phases to produce a target
     pattern, and the simulator also exports the exact output Jacobian (how fast each
     output changes with each input).

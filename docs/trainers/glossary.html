@@ -54,7 +54,7 @@
     <h2 id="h-runtimes">What actually runs your container</h2>
     <p>When Docker runs a container, Docker doesn't build the walls around it itself. It hands
     that job to a smaller program called an <dfn>OCI runtime</dfn>. OCI, the
-    <a href="https://opencontainers.org/" target="_blank" rel="noopener">Open Container Initiative (EXTERNAL · official site ↗)</a>,
+    <a href="https://opencontainers.org/about/overview/" target="_blank" rel="noopener">Open Container Initiative (EXTERNAL · official docs ↗)</a>,
     is the industry group that wrote the standard for how a container gets started. Any
     runtime that follows it can be swapped in under Docker without changing your image, and
     which one you pick decides how strong the walls around untrusted code are. plimsoll
@@ -132,10 +132,10 @@
     <a href="https://github.com/opencontainers/runc" target="_blank" rel="noopener"><dfn>runc</dfn> (EXTERNAL · source repo ↗)</a>
     is Docker's default runtime, and usually the default under Kubernetes too. It separates
     programs with two features built into the Linux kernel:
-    <a href="https://man7.org/linux/man-pages/man7/namespaces.7.html" target="_blank" rel="noopener"><dfn>namespaces</dfn> (EXTERNAL · man page ↗)</a>,
+    <a href="https://man7.org/linux/man-pages/man7/namespaces.7.html" target="_blank" rel="noopener"><dfn>namespaces</dfn> (EXTERNAL · official docs ↗)</a>,
     which control what each program can see (its own files, its own process list, its own
     network), and
-    <a href="https://man7.org/linux/man-pages/man7/cgroups.7.html" target="_blank" rel="noopener"><dfn>cgroups</dfn> (EXTERNAL · man page ↗)</a>,
+    <a href="https://man7.org/linux/man-pages/man7/cgroups.7.html" target="_blank" rel="noopener"><dfn>cgroups</dfn> (EXTERNAL · official docs ↗)</a>,
     which cap how much memory and CPU it can use.</p>
     <p><b>In the analogy.</b> An apartment building. Every unit has its own walls and its own
     front door, but they all stand on one foundation and share the building's plumbing and
@@ -170,7 +170,7 @@
 
     <h3>3. Kata Containers: the tiny house village</h3>
     <p><b>What it is.</b>
-    <a href="https://katacontainers.io/learn/" target="_blank" rel="noopener"><dfn>Kata Containers</dfn> (EXTERNAL · official site ↗)</a>
+    <a href="https://github.com/kata-containers/kata-containers/tree/main/docs" target="_blank" rel="noopener"><dfn>Kata Containers</dfn> (EXTERNAL · official docs ↗)</a>
     starts a small <dfn>virtual machine</dfn> (VM) for each sandbox, with its own separate
     kernel inside. The CPU's virtualization features keep the VMs apart, not just the host
     kernel's rules.</p>
@@ -183,7 +183,7 @@
     or <dfn>nested virtualization</dfn> (a VM running inside another VM) switched on.</p>
     <p><b>In plimsoll:</b> the <b>VM</b> tier. The <code>e2b</code> provider uses the same idea
     with
-    <a href="https://firecracker-microvm.github.io/" target="_blank" rel="noopener"><dfn>Firecracker</dfn> (EXTERNAL · official site ↗)</a>,
+    <a href="https://github.com/firecracker-microvm/firecracker/tree/main/docs" target="_blank" rel="noopener"><dfn>Firecracker</dfn> (EXTERNAL · official docs ↗)</a>,
     a VM builder made for small VMs that start fast, and <dfn>Docker Cloud Sandboxes</dfn>,
     Docker's hosted service, also run each sandbox in its own small VM.</p>
 
@@ -260,6 +260,10 @@
         <dt>cart-pole</dt>
         <dd>A cart on a rail with a pole hinged on top; the task is to push the cart left and right so the pole stays upright.</dd>
       </div>
+      <div class="entry" id="cell">
+        <dt>cell</dt>
+        <dd>Code a session runs in a Python or Node.js interpreter that it keeps alive between calls, so what one cell defines can still be there for the next, as in a notebook.</dd>
+      </div>
       <div class="entry" id="cgroup">
         <dt>cgroup</dt>
         <dd>The Linux kernel feature that caps and counts the memory, CPU time and number of processes a group of processes may use. <a class="more" href="#what-runs-your-container">More: What actually runs your container ↑</a></dd>
@@ -274,7 +278,7 @@
       </div>
       <div class="entry" id="connect">
         <dt>Connect</dt>
-        <dd>An RPC framework whose Go library serves protobuf-defined procedures over ordinary HTTP; plimsolld and its Go client use it.</dd>
+        <dd>An RPC framework whose Go library serves protobuf-defined procedures over ordinary HTTP; plimsolld and its Go client use that library, and the Python and TypeScript clients speak its JSON form over plain HTTP.</dd>
       </div>
       <div class="entry" id="container">
         <dt>container</dt>
@@ -446,7 +450,7 @@
       </div>
       <div class="entry" id="openshell">
         <dt>OpenShell</dt>
-        <dd>NVIDIA OpenShell, an agent sandbox runtime whose gateway server creates and deletes sandboxes on request; the openshell provider asks a gateway for one sandbox per run.</dd>
+        <dd>NVIDIA OpenShell, an agent sandbox runtime whose gateway server creates and deletes sandboxes on request; the openshell provider asks a gateway for one sandbox per run, or one per session.</dd>
       </div>
       <div class="entry" id="physics-oracle">
         <dt>physics oracle</dt>
@@ -494,7 +498,7 @@
       </div>
       <div class="entry" id="run-record">
         <dt>run record</dt>
-        <dd>The statement plimsolld attaches to every answered run: SHA-256 digests of the request and the result, the isolation evidence, and the start and end times; the official client recomputes the digests and rejects a mismatch.</dd>
+        <dd>The statement plimsolld attaches to every answered run: SHA-256 digests of the request and the result, the isolation evidence, and the start and end times; the official Go, Python and TypeScript clients recompute the digests and reject a mismatch.</dd>
       </div>
       <div class="entry" id="runc">
         <dt>runc</dt>
@@ -518,7 +522,7 @@
       </div>
       <div class="entry" id="session">
         <dt>session</dt>
-        <dd>One sandbox kept open for many calls: files one call writes are there for the next, but no process outlives the call that started it, except the interpreter (a Python or Node.js process) the session keeps for its cells.</dd>
+        <dd>One sandbox kept open for many calls: the files a call writes are there for the next, a cleanup between calls ends what a call left running, and an interpreter kept for cells can carry its state from one call to the next.</dd>
       </div>
       <div class="entry" id="shed">
         <dt>shed</dt>

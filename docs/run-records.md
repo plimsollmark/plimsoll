@@ -106,7 +106,7 @@ order sent. Then both versions encode `kind`
   `file_content`; `steps` (count), then per step `step_command`; `artifacts`
   (count), then per path `artifact_path`
 - module: `model`, `end_time`, `step`, `rows` (count), then per row `row_values`
-- cell (a session call to the session's interpreter, [sessions.md](sessions.md)):
+- [cell (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#cell) (a session call to the session's interpreter, [sessions.md](sessions.md)):
   `language`, `code`; `files` (count), then per file `file_path`, `file_content`
 
 ### Result: domain `plimsoll.run-result.v1`

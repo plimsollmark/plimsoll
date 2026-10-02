@@ -11,6 +11,7 @@ import (
 // smokeScript is a session whose calls answer from a script: what each snippet
 // prints and what each cell answers, in order.
 type smokeScript struct {
+	langs  []Language
 	js     []string
 	cells  []CellResult
 	mu     sync.Mutex
@@ -22,11 +23,13 @@ type smokeScript struct {
 
 func (s *smokeScript) OpenSession(context.Context, SessionOptions) (Session, error) { return s, nil }
 func (s *smokeScript) SupportsSessions() bool                                       { return true }
-func (s *smokeScript) SessionEnvironments() Environments                            { return Environments{} }
-func (s *smokeScript) Isolation() IsolationClass                                    { return IsolationContainer }
-func (s *smokeScript) ExpiresAt() time.Time                                         { return time.Now().Add(time.Hour) }
-func (s *smokeScript) Suspend(context.Context) (bool, error)                        { return true, nil }
-func (s *smokeScript) Done() <-chan struct{}                                        { return s.done }
+func (s *smokeScript) SessionEnvironments() Environments {
+	return Environments{Project: PayloadEnvironment{Languages: s.langs}}
+}
+func (s *smokeScript) Isolation() IsolationClass             { return IsolationContainer }
+func (s *smokeScript) ExpiresAt() time.Time                  { return time.Now().Add(time.Hour) }
+func (s *smokeScript) Suspend(context.Context) (bool, error) { return true, nil }
+func (s *smokeScript) Done() <-chan struct{}                 { return s.done }
 
 func (s *smokeScript) RunProject(context.Context, ProjectRequest) (ProjectResult, error) {
 	return ProjectResult{}, ErrUnsupported
@@ -93,6 +96,34 @@ func TestSessionSmokeTestChecks(t *testing.T) {
 			s := good()
 			c.spoil(s)
 			err := SessionSmokeTest(context.Background(), s, SessionOptions{})
+			switch {
+			case c.want == "" && err != nil:
+				t.Fatalf("want a pass, got %v", err)
+			case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+				t.Fatalf("got %v, want an error saying %q", err, c.want)
+			}
+		})
+	}
+}
+
+// The smoke test runs a keep-state check in every cell language the provider states,
+// and refuses a stated language it has no check for.
+func TestSessionSmokeTestRunsEveryStatedLanguage(t *testing.T) {
+	script := func(langs []Language, cells ...CellResult) *smokeScript {
+		return &smokeScript{langs: langs, js: []string{"4242", "gone kept", "kept"}, cells: cells, done: make(chan struct{})}
+	}
+	both := []Language{LanguageJavaScript, LanguagePython}
+	for _, c := range []struct {
+		name string
+		s    *smokeScript
+		want string
+	}{
+		{"both keep state", script(both, CellResult{}, CellResult{Stdout: "42\n"}, CellResult{}, CellResult{Stdout: "42\n"}, CellResult{Stdout: "'number'\n"}), ""},
+		{"python forgets", script(both, CellResult{}, CellResult{Stdout: "42\n"}, CellResult{}, CellResult{Stdout: "NameError\n", InterpreterStarted: true}), "the next python cell"},
+		{"a language without a check", script([]Language{LanguageJavaScript, "ruby"}, CellResult{}, CellResult{Stdout: "42\n"}), `cell language "ruby", which has no startup check`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := SessionSmokeTest(context.Background(), c.s, SessionOptions{})
 			switch {
 			case c.want == "" && err != nil:
 				t.Fatalf("want a pass, got %v", err)

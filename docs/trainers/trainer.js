@@ -180,7 +180,7 @@ function renderScenario(chapter) {
 function resultHTML(option) {
   const correct = option.correct;
   const tone = correct === true ? "good" : correct === false ? "bad" : (option.tone || "neutral");
-  const heading = correct === true ? `Correct — ${option.result}` : correct === false ? `Not quite — ${option.result}` : option.result;
+  const heading = correct === true ? `Correct: ${option.result}` : correct === false ? `Not quite: ${option.result}` : option.result;
   return `<div class="result-card ${tone}"><h3>${heading}</h3><p>${option.detail}</p>
     ${option.facts?.length ? `<div class="result-facts">${option.facts.map((fact) => `<span class="fact">${fact}</span>`).join("")}</div>` : ""}</div>`;
 }

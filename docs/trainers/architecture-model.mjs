@@ -1,7 +1,7 @@
 // One registry drives the map, walkthrough, and component connection index.
 // Teaching examples only. Implementation anchors make content review tractable.
 export const nodes = {
-  caller: {name: 'Caller program', sub: 'MCP server · gateway · Go client', x: 25, y: 96,
+  caller: {name: 'Caller program', sub: 'MCP server · gateway · client', x: 25, y: 96,
     role: 'Submits code and receives the result.',
     detail: 'A model may write the code, but a program submits the remote procedure call (RPC). An MCP (Model Context Protocol) server, the kind of program that offers tools to an AI model, is one possible caller. The submitted code later becomes the guest: the untrusted code running inside the sandbox. Those are different roles, even when they belong to one application.',
     holds: 'A secret caller token supplied beforehand by the operator, the person running plimsoll. It selects a grant profile by name; it does not receive the downstream API token.', source: 'client/client.go'},
@@ -177,10 +177,10 @@ add('audit', 'service', 'operator', 'observe', 'Write a metadata-only audit line
 add('wire-result', 'service', 'ingress', 'response', 'Encode the result and release the capacity slot',
   'The final response fields are mapped to protobuf, the RPC’s binary message format; stdout and stderr are bytes.',
   'The handler returns and releases its limiter slot. Raw CallTrace is not a response field. Only eligible caller advice is added when the profile permits it.',
-  'RunResponse\nsandbox, isolation: {{tier}}, duration_ms\njavascript: { stdout / stderr: bytes, exit_code }\nor project: { steps, outcome, artifacts }', 'internal/rpc/sandbox_service.go', [[625, 25], [375, 25]]);
+  'RunResponse\nsandbox, isolation: {{tier}}, duration_ms\nrecord: { request_sha256, result_sha256, evidence, times }\njavascript: { stdout / stderr: bytes, exit_code }\nor project: { steps, outcome, artifacts }', 'internal/rpc/sandbox_service.go', [[625, 25], [375, 25]]);
 add('caller-result', 'ingress', 'caller', 'response', 'The caller gets the answer',
   'The RPC response, including the evidence for this completed execution.',
-  'The official Go client checks the returned isolation against the requested floor. The caller decides what to show a model or user. A successful RPC can still contain a failed guest program.',
+  'The official clients (Go, Python and TypeScript) check the returned isolation against the requested floor and recompute the run record’s digests. The caller decides what to show a model or user. A successful RPC can still contain a failed guest program.',
   'Go client → sandbox.Result / ProjectResult\nCheckResultIsolation(returned, requested)\nThen inspect exit / outcome / truncation flags', 'client/client.go', [[375, 48], [115, 48]]);
 add('bad-auth', 'ingress', 'caller', 'deny', 'Stop at the entrance',
   'Unauthenticated for a missing or invalid bearer token; PermissionDenied for a missing permission (scope).',
@@ -278,6 +278,10 @@ add('smoke-result', 'guest', 'provider', 'observe', 'Collect startup evidence an
   'The bounded smoke result and provider/configuration evidence.',
   'Docker must have verified runsc for the kernel tier. E2B’s startup test runs without a grant, so it does not prove the path through the guard. Docker Cloud Sandboxes also reads each run’s effective network policy back and refuses one that does not block everything. OpenShell reads each run’s sandbox back (labels, image, limits, policy) and refuses any difference; its tier comes from the gateway’s reported docker driver. WASM has no real-provider throwaway container or VM; this step summarizes its in-process checks.',
   'Behavioral checks + provider configuration\nNo runtime attestation\nProbe resources released', 'sandbox/factory.go', [[980, 532], [980, 330]]);
+add('session-smoke', 'provider', 'guest', 'observe', 'With sessions on, prove one real session',
+  'Only when SANDBOX_MAX_SESSIONS is set: one session opened, called, suspended, resumed and closed.',
+  'A provider’s own startup test proves single runs. With sessions on, plimsolld also opens one real session and refuses to serve unless a process the first call leaves is gone by the next call, a file survives calls and a suspend, an interpreter keeps what an earlier cell defined or says it started fresh, and closing ends the session. Only docker and openshell keep sessions; on any other provider, setting SANDBOX_MAX_SESSIONS stops startup.',
+  'SessionSmokeTest(provider, options)\ncalls: leave a process, write a file, define a value\nsuspend, resume, check, close\nStartup refuses if any promise fails', 'sandbox/session_smoke.go');
 add('wasm-ready', 'provider', 'operator', 'observe', 'Check WASM configuration without a smoke guest',
   'The result of WASM’s Preflight configuration check.',
   'WASM implements Preflight but does not implement SmokeTest. EnsureReady calls only the readiness interfaces that this provider implements. No throwaway guest is started by this check.',
@@ -297,11 +301,11 @@ add('describe', 'caller', 'ingress', 'request', 'Ask what this instance supports
 add('describe-handler', 'ingress', 'service', 'request', 'Read the provider’s reported capabilities',
   'The authenticated Describe request.',
   'The service consults the configured Sandbox interfaces. Project and grant support say what the provider is built to do; they do not prove that a project has completed or that a request has reached the guard.',
-  'Name / IsolationClass\nProjectCapable / GrantCapable\nMinimum-isolation protocol support', 'internal/rpc/sandbox_service.go');
+  'Name / IsolationClass\nProjectCapable / GrantCapable\nSessions: a SessionProvider and SANDBOX_MAX_SESSIONS set\nEnvironments: identity, timeout ceiling, languages', 'internal/rpc/sandbox_service.go');
 add('describe-result', 'service', 'ingress', 'response', 'Return discovery, without executing',
-  'Provider, current tier, and operation-specific support bits.',
+  'Provider, current tier, operation-specific support bits, whether sessions are on, and the interpreter languages each environment’s startup test proved.',
   'An E2B grant support bit depends on configured guard support; it does not prove the guard is reachable. Describe never substitutes for the next run’s isolation check.',
-  'sandbox: {{provider}}\nisolation: {{tier}}\nprotocol: 2\nsupports_project / supports_javascript_grants\nsupports_project_grants', 'internal/rpc/sandbox_service.go');
+  'sandbox: {{provider}}\nisolation: {{tier}}\nprotocol: 2\nsupports_project / supports_javascript_grants\nsupports_project_grants / supports_sessions\nproject_environment.languages: [proved at startup]', 'internal/rpc/sandbox_service.go');
 add('describe-caller', 'ingress', 'caller', 'response', 'Use discovery to prepare a request',
   'Capability information for the caller’s integration.',
   'Attach minimum_isolation to the actual Run request, which also states the protocol number this client speaks. A daemon on another number refuses before it reads the payload, rather than silently ignoring a field it does not know.',
@@ -353,28 +357,28 @@ add('submit-open', 'caller', 'ingress', 'request', 'Open a session',
   'OpenSession\nprotocol: 2\nminimum_isolation: {{tier}}\nAuthorization: Bearer [caller credential]', 'client/session.go');
 add('session-create', 'service', 'provider', 'request', 'Create the session’s sandbox',
   'The floor, the session’s absolute lifetime and its disk budget.',
-  'The provider creates a sandbox with the run policy and an idle main process, reads it back, and records the sandbox’s own processes, which every later sweep spares. The session holds its capacity slot while its sandbox runs.',
+  'The provider creates a sandbox with the run policy and an idle main process, reads it back, and records the sandbox’s own processes, which every later cleanup spares. On docker the session is instead one locked-down container from the project image, kept alive under docker’s own init. The session holds its capacity slot while its sandbox runs.',
   'SessionProvider.OpenSession(ctx, {floor, lifetime: 30m, disk: 1 GiB})\nmain process: sleep (idle)\nread back: policy, spec, labels', 'sandbox/openshell/session.go');
 add('session-handle', 'ingress', 'caller', 'response', 'The caller gets a session ID',
   'A 128-bit random ID, its SHA-256 fingerprint, the tier and the expiry.',
   'The ID works like a key: only the caller that opened the session can use it, and an unknown ID and another caller’s ID get the same NotFound. It is never logged or recorded; records carry the fingerprint.',
   'OpenSessionResponse\nsession_id: [capability, 32 hex digits]\nsession: [its SHA-256]\nisolation: {{tier}}', 'internal/rpc/sessions.go', [[375, 48], [115, 48]]);
-add('submit-call', 'caller', 'ingress', 'request', 'Send a call into the session',
-  'The session ID and one snippet or project, in a message of its own.',
-  'A daemon that predates sessions refuses this message instead of dropping the ID and running the payload as a fresh run.',
-  'SessionRun\nprotocol: 2\nsession_id: [capability]\njavascript: { code: read a file an earlier call wrote }', 'client/session.go');
+add('submit-call', 'caller', 'ingress', 'request', 'Send a cell into the session',
+  'The session ID and one snippet, project or cell, in a message of its own. Here it is a cell: code for the interpreter the session keeps.',
+  'A daemon that predates sessions refuses this message instead of dropping the ID and running the payload as a fresh run. A cell exists only in a session; Run refuses one.',
+  'SessionRun\nprotocol: 2\nsession_id: [capability]\ncell: { language: "python", code: "len(rows)" }\nrows was defined by an earlier cell', 'client/session.go');
 add('call-owner', 'ingress', 'service', 'request', 'Authenticate, then match the session to its owner',
   'The caller’s identity and the session it names.',
   'The call waits for the session’s previous call to finish, so the chain of records numbers calls in the order they ran.',
   'Principal { UserID: "client-a" }\nsession owner: client-a\none call at a time', 'internal/rpc/sessions.go');
 add('session-verify', 'service', 'provider', 'request', 'Read the sandbox back, then run the call',
   'The call, after the provider has read the sandbox and its effective policy from the gateway.',
-  'Any client of the gateway can change a sandbox between calls, so any difference ends the session and refuses the call before it runs. A suspended session is started first.',
+  'Any client of the gateway can change a sandbox between calls, so any difference ends the session and refuses the call before it runs. A suspended session is started first. On docker the session compares the container’s security settings (image, limits, mounts, capabilities, networks, user) with what they were at open, and a suspended session is unpaused.',
   'Session.RunJavaScript(ctx, request)\nbefore: GetSandbox + GetSandboxConfig\nstopped? StartSandbox, then read back again', 'sandbox/openshell/session.go');
-add('session-sweep', 'provider', 'guest', 'request', 'Sweep leftover processes after the call',
-  'One exec that kills every process except the sandbox’s own, by process ID.',
-  'A process a call starts outlives the call unless something ends it. The sweep’s verdict is its exit status, which leftover code cannot forge; when it cannot prove the sandbox clean, the sandbox is stopped and started, and when that fails the session ends. Files under /tmp stay.',
-  'kill every pid not in {PID 1, main process, the sweep}\nrepeat until a scan finds none\nthen measure /tmp against the disk budget', 'sandbox/openshell/session.go');
+add('session-sweep', 'provider', 'guest', 'request', 'Clean up after the answer',
+  'One exec that ends the processes the call left running.',
+  'A process a call starts outlives the call unless something ends it. The cleanup runs after the answer has gone back: the next call or a suspend waits for it, and a close does not, because deleting the sandbox ends everything. Its verdict is its exit status, which leftover code cannot forge; when it cannot prove the sandbox clean, the session ends (OpenShell first tries stopping and starting the sandbox). Files stay, and the interpreters the session keeps for cells are meant to outlive it; docs/sessions.md says which processes it spares and how it tells them apart.',
+  'after the answer: end what the call left running\nthe session’s interpreters are meant to stay\nrepeat until a scan finds none\nthen measure the session’s files against the disk budget', 'sandbox/internal/sessionkit/sweep.go');
 add('session-record', 'service', 'ingress', 'response', 'Chain the call’s record to the one before',
   'The result and a run record naming the session, the call’s number and the previous record’s digest.',
   'The daemon holds no signing key; it only computes hashes. The caller’s harness, a program outside the daemon, checks each record against the chain it has seen and signs it, so a dropped or foreign call shows as a gap.',
@@ -396,7 +400,7 @@ export const paths = [
   {id:'run', category:'execute', title:'A run, out and back', intro:'Follow a snippet from its caller to the guest and all the way back. There is no API grant in this run.', question:'Where does my code go, and what comes back?', steps:[...entry, 'launch', ...end]},
   {id:'granted', category:'api', title:'A granted API call, round trip', intro:'Follow one host.get call. Watch the caller credential, API credential, call message, and response take different paths.', question:'How can isolated code reach my API without holding its credential?', steps:[...grantEntry, ...setup, ...call, ...reply, ...end]},
   {id:'project', category:'execute', title:'A project with API access', intro:'Write files, run ordered steps, make an API call through the broker, then return per-step outcomes and artifacts. Select WASM to see where it stops.', question:'What changes when the request is a whole project?', steps:['submit-project', ...grantEntry.slice(1), ...setup.slice(0,-1), 'launch-project', ...call, ...reply, ...end], variants:{wasm:['submit-project','authenticate','profile','grant','admit','dispatch','unsupported','provider-error-wire','error-caller']}},
-  {id:'session', category:'execute', title:'A session: open, then one call', intro:'One sandbox kept for many calls: files persist between calls, processes do not. Follow the open and the second call of a session on OpenShell.', question:'How does a later call see what an earlier one wrote, and nothing else?', fixedProvider:'openshell', steps:['submit-open','authenticate','admit','session-create','session-handle','submit-call','call-owner','session-verify','launch','finish','session-sweep','result','session-record','caller-result']},
+  {id:'session', category:'execute', title:'A session: open, then a cell', intro:'One sandbox kept for many calls: files persist between calls, and so can the Python or Node.js interpreter the session keeps for cells; a cleanup after the answer ends what the call left running. Drawn on OpenShell; a docker session takes the same steps with one container and docker exec.', question:'How does a later call see what an earlier one left, and nothing else?', fixedProvider:'openshell', steps:['submit-open','authenticate','admit','session-create','session-handle','submit-call','call-owner','session-verify','launch','finish','result','session-record','caller-result','session-sweep']},
   {id:'embed', category:'execute', title:'Use plimsoll inside a Go program', intro:'The direct entry point calls the same provider interface. The embedding application owns the outer service policies.', question:'Does every execution have to travel over RPC?', steps:['embed','launch','finish','embed-result']},
   {id:'guest-failure', category:'execute', title:'The guest program fails', intro:'A non-zero exit is a result. Follow it back without mistaking it for a failed RPC.', question:'Can the RPC succeed while my code fails?', steps:[...entry,'launch','guest-fail','failed-result','wire-result','caller-result']},
   {id:'route-denied', category:'api', title:'The guest tries an ungranted route', intro:'This run has a read-only grant. The guest tries DELETE, and the broker refuses before the API is contacted.', question:'What if guest code bypasses the injected helper?', steps:[...grantEntry,...setup,'guest-call','bad-path','broker-denied','guest-error']},
@@ -408,7 +412,7 @@ export const paths = [
   {id:'capacity-denied', category:'refuse', title:'The service is at capacity', intro:'The request is valid and meets its floor, but a configured concurrency or rate limit refuses it a slot.', question:'Does plimsoll queue work when the pool is full?', steps:['submit','authenticate','admit','capacity-denied','error-wire','error-caller']},
   {id:'disabled', category:'refuse', title:'Execution was never enabled', intro:'Assumption: the provider is unset and the request has no isolation floor. The safe default refuses execution.', question:'What happens when SANDBOX_PROVIDER is unset?', fixedProvider:'disabled', steps:['submit','authenticate','admit','dispatch','disabled','provider-error-wire','error-caller']},
   {id:'evidence-mismatch', category:'refuse', title:'The returned evidence is too weak', intro:'Assumption: a faulty backend returns insufficient evidence after execution. This is a client-side error with a different retry meaning.', question:'When does an error still mean code may have run?', steps:[...entry,'launch','finish','result','wire-result','mismatch']},
-  {id:'startup', category:'operate', title:'Configure, check, and start', intro:'Follow startup controls, including the difference between selecting a provider and launching each guest. These are grouped checks, not a line-by-line startup schedule.', question:'What already happened before the first RPC arrives?', steps:['configure','smoke','smoke-result','startup-profile','serve']},
+  {id:'startup', category:'operate', title:'Configure, check, and start', intro:'Follow startup controls, including the difference between selecting a provider and launching each guest. These are grouped checks, not a line-by-line startup schedule.', question:'What already happened before the first RPC arrives?', steps:['configure','smoke','smoke-result','session-smoke','startup-profile','serve']},
   {id:'describe', category:'operate', title:'Discover an instance with Describe', intro:'An authenticated discovery request reads capability information without running code or taking an execution slot.', question:'What can a caller learn without executing anything?', steps:['describe','describe-handler','describe-result','describe-caller']},
   {id:'readiness', category:'operate', title:'Probe readiness, liveness, and metrics', intro:'Monitoring endpoints bypass RPC authentication. Readiness re-runs Preflight, the provider’s bounded configuration check, not a new startup test.', question:'What does a green readiness probe actually prove?', steps:['ready','ready-result']},
   {id:'cancel', category:'operate', title:'Cancel a run and clean up', intro:'Execution has started when the caller cancels. Follow the cancellation into the provider, without assuming completed API effects are undone.', question:'Who stops work, releases resources, and handles leaked VMs?', steps:[...entry,'launch','cancel','cancel-handler','cancel-provider','cancel-result']},
@@ -418,7 +422,7 @@ export const paths = [
 // Context belongs to its worked path. Shared steps must not invent identical
 // payloads for a read, a denied write, a project, or a deliberately faulty reply.
 const byID = id => paths.find(path => path.id === id);
-byID('startup').variants = {wasm:['configure','wasm-ready','startup-profile','serve']};
+byID('startup').variants = {wasm:['configure','wasm-ready','startup-profile','serve'], e2b:['configure','smoke','smoke-result','startup-profile','serve']};
 byID('route-denied').overrides = {
   'submit-grant': {payload:'Run\nprotocol: 2\nminimum_isolation: {{tier}}\njavascript: { code: try DELETE /items/42 and catch any error, grant_profile: inventory-read }'},
   'launch-grant': {payload:'Guest tries a write under a read-only grant\nawait host.del("/items/42")\nNo downstream credential in guest code'},
@@ -439,6 +443,10 @@ byID('advice').overrides = {
   'submit-grant':{payload:'Run\nprotocol: 2\njavascript: { code: repeated host.get calls in a loop, grant_profile: inventory-read }\nProfile advice configured by operator'},
   'guest-call':{title:'Broker calls repeat during the run',moves:'A series of successful API calls, collapsed here to one representative round trip.',why:'This path assumes repeated successful calls sufficient to produce a finding. The map shows one representative call; analysis only happens after all calls and execution finish.',payload:'for each item: host.get("/items/…")\nRepeated calls, collapsed in this walkthrough\nMetadata retains /items/*, never the concrete IDs'},
   advice:{payload:'Assumed: repeated delivered 2xx calls\nGranted alternative: GET /items, if it returns the same items\nadvice: caller\nadvice_retention: detailed\nThese illustrative settings are opt-in'}
+};
+byID('session').overrides = {
+  launch:{title:'Run the cell in the session’s interpreter',moves:'The cell’s code and files, through the relay kept beside the interpreter.',why:'The interpreter is a Python or Node.js process the session keeps alive, so what earlier cells defined is normally still there; interpreter_started says when it is not. A small relay process, attached to the daemon through one exec held open, writes the cell’s files into the work directory, hands the code to the interpreter and streams the output back, so a warm cell starts no process. If no interpreter for the language is alive, the call starts a fresh one and says so. A cell carries no grant.',payload:'cell: len(rows)\ninterpreter: python, kept from an earlier call\nfiles written into the work directory first\nHost API grant: none'},
+  finish:{title:'The interpreter answers',moves:'The value of the last expression, stderr, the exit code and whether the interpreter started or ended.',why:'Exit code 0 means the code ran, 1 that it raised an error, and 124 that the deadline ended it, which also ends the interpreter; the next cell then starts a fresh one.',payload:'stdout: 2\nexit_code: 0\ninterpreter_started: false\ninterpreter_ended: false'}
 };
 byID('guest-failure').overrides = {
   submit:{payload:'Run\nprotocol: 2\nminimum_isolation: {{tier}}\njavascript: { code: throw new Error("example guest failure") }'},

@@ -27,7 +27,7 @@
     <header class="catalog-head">
       <p class="catalog-eyebrow">interactive field guide</p>
       <h2>Lessons on running code you do not trust.</h2>
-      <p>Twelve compact trainers, each one page, with no build step and no network calls. They cover the walls plimsoll can put around code, called <dfn>isolation tiers</dfn>, and how the daemon proves each one; how to call it from Go or from an AI agent; and how sandboxed code can use an API without ever holding its key. That is the job of the <dfn>broker</dfn>, the part of plimsoll that makes API calls for the code, and four trainers go deeper into it: how it connects to each kind of sandbox, a worked example with a private API, the efficiency advisor that reads a run's API calls afterwards, and how it backs off from an overloaded API. Each new word is defined where it first appears and collected in the <a href="glossary.html">glossary (INTERNAL · trainer site →)</a>.</p>
+      <p>Twelve compact trainers, each one page, with no build step and no network calls. They cover the walls plimsoll can put around code, called <dfn>isolation tiers</dfn>, and how the daemon proves each one; how to call it from Go, Python, TypeScript or an AI agent; and how sandboxed code can use an API without ever holding its key. That is the job of the <dfn>broker</dfn>, the part of plimsoll that makes API calls for the code, and four trainers go deeper into it: how it connects to each kind of sandbox, a worked example with a private API, the efficiency advisor that reads a run's API calls afterwards, and how it backs off from an overloaded API. Each new word is defined where it first appears and collected in the <a href="glossary.html">glossary (INTERNAL · trainer site →)</a>.</p>
     </header>
 
     <a class="catalog-live" href="../examples/oracle/index.html">
@@ -39,8 +39,8 @@
 
     <a class="catalog-live" href="../examples/providers/index.html">
       <p class="catalog-eyebrow">see real runs · same run, different sandboxes</p>
-      <strong>The same run on a local container and on two cloud services: identical results.</strong>
-      <p>Not a lesson: on 2026-09-24 the same accepted controller, runner and simulator ran on three <dfn>providers</dfn> (the backends that run code), with nothing changed but <code>SANDBOX_PROVIDER</code>. A locked-down local container reported the container tier. <dfn>E2B</dfn> and <dfn>Docker Cloud Sandboxes</dfn>, two hosted services, each ran it in a <dfn>microVM</dfn>, a small virtual machine created for one run, and reported vm. The Node versions differed, and all three records hashed to the same value the first report published.</p>
+      <strong>The same run on five sandboxes, local and in two clouds: identical results.</strong>
+      <p>Not a lesson: on 2026-09-28 the same accepted controller, runner and simulator ran on five sandboxes from four <dfn>providers</dfn> (the backends that run code), with nothing changed but the provider's settings. A locked-down local container reported the container tier, the same container under <dfn>gVisor</dfn>, a stand-in kernel that runs as an ordinary program, reported kernel, and a sandbox from NVIDIA's <dfn>OpenShell</dfn>, an agent sandbox runtime, reported container. <dfn>E2B</dfn> and <dfn>Docker Cloud Sandboxes</dfn>, two hosted services, each ran it in a <dfn>microVM</dfn>, a small virtual machine created for one run, and reported vm. The Node versions differed, and all five records hashed to the same value the first report published.</p>
       <span class="catalog-cta">Open the run report →</span>
     </a>
 
@@ -64,8 +64,8 @@
       <a class="catalog-card" href="concepts.html" style="--card-accent:#177f99">
         <span class="catalog-number">01 / FOUNDATIONS</span>
         <h2>Concepts and providers</h2>
-        <p>Why the project is named after the <dfn>load line</dfn>, the mark on a ship's hull that shows how deep it may sit: pick a provider, set the <dfn>floor</dfn> (the weakest tier a request accepts), and see whether the run goes ahead. Then what each provider proves at startup, what a <dfn>grant</dfn> (one run's permission to call listed API routes) is and is not, the three kinds of answer, how the daemon caps the runs it takes at once, and a checklist for switching it on.</p>
-        <div class="catalog-topics"><span>load line</span><span>providers</span><span>startup checks</span><span>results</span><span>capacity</span></div>
+        <p>Why the project is named after the <dfn>load line</dfn>, the mark on a ship's hull that shows how deep it may sit: pick a provider, set the <dfn>floor</dfn> (the weakest tier a request accepts), and see whether the run goes ahead. Then what each provider proves at startup, what a <dfn>grant</dfn> (one run's permission to call listed API routes) is and is not, the three kinds of answer, how the daemon caps the runs it takes at once, how one sandbox can serve many calls with an interpreter that can keep its state, and a checklist for switching it on.</p>
+        <div class="catalog-topics"><span>load line</span><span>providers</span><span>startup checks</span><span>results</span><span>capacity</span><span>one sandbox, many calls</span></div>
         <span class="catalog-cta">Read the line →</span>
       </a>
 
@@ -91,15 +91,15 @@
       <a class="catalog-card" href="integrations.html" style="--card-accent:#1c779f">
         <span class="catalog-number">04 / CLIENT CONTRACT</span>
         <h2>Integrations</h2>
-        <p>Run plimsoll inside your own Go program, or call a remote daemon with the official client, and get the same request checks, permissions and isolation guarantees either way.</p>
-        <div class="catalog-topics"><span>Go client</span><span>RPC</span><span>projects</span><span>results</span></div>
+        <p>Run plimsoll inside your own Go program, or call a remote daemon with the official client for Go, Python or TypeScript, and get the same request checks, permissions and isolation guarantees either way.</p>
+        <div class="catalog-topics"><span>Go, Python, TypeScript</span><span>RPC</span><span>projects</span><span>results</span></div>
         <span class="catalog-cta">Wire plimsoll in →</span>
       </a>
 
       <a class="catalog-card" href="agent-products.html" style="--card-accent:#c06c26">
         <span class="catalog-number">05 / AI AGENTS</span>
         <h2>Agent products</h2>
-        <p>Design a <code>run_code</code> tool for an AI agent over <dfn>MCP</dfn>, the standard way an AI application offers tools to a model: who is calling, strict limits on each request, quotas, and failure messages the agent can act on.</p>
+        <p>Design a <code>run_code</code> tool for an AI agent over <dfn>MCP</dfn>, the standard way an AI application offers tools to a model: who is calling, strict limits on each request, quotas, failure messages the agent can act on, and a code tool that keeps one sandbox per conversation.</p>
         <div class="catalog-topics"><span>MCP</span><span>agents</span><span>identity</span><span>quotas</span></div>
         <span class="catalog-cta">Design the product surface →</span>
       </a>
@@ -126,7 +126,7 @@
       <a class="catalog-card" href="brokering.html" style="--card-accent:#177f99">
         <span class="catalog-number">08 / HOW THE BROKER CONNECTS</span>
         <h2>The API Broker</h2>
-        <p>How agent code reaches your API without ever holding the key, how Docker and WASM reach the same broker by different routes, and why E2B is the hard case.</p>
+        <p>How agent code reaches your API without ever holding the key, how Docker, WASM and OpenShell reach the same broker by different routes, why E2B is the hard case, and what a grant means when one sandbox serves many calls.</p>
         <div class="catalog-topics"><span>broker</span><span>network access</span><span>proxies</span><span>E2B</span></div>
         <span class="catalog-cta">Follow a request →</span>
       </a>
@@ -157,7 +157,7 @@
     </section>
 
 
-    <p class="catalog-note"><strong>How to use these:</strong> open any page directly or serve this directory as static files. Progress stays in your browser. The lessons have no build step, analytics, or third-party JavaScript.</p>
+    <p class="catalog-note"><strong>How to use these:</strong> read them here, or serve the repository's <code>docs</code> directory with any static file server (serving only <code>docs/trainers</code> breaks the links up a level, and the architecture map stays blank when a page is opened straight from disk). Nothing you click is saved. The lessons have no build step, analytics, or third-party JavaScript.</p>
   </main>
 </body>
 </html>

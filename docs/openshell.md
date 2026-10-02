@@ -221,7 +221,7 @@ How plimsoll manages those connections:
 
 The provider keeps sessions ([docs/sessions.md](sessions.md)): one sandbox for many
 calls, with files persisting and, of processes, only the interpreters a session keeps for
-its cells, as of the sweep after each call ([sessions.md](sessions.md#interpreters-state-between-calls)). A session's sandbox is a run's sandbox
+its [cells (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#cell), as of the sweep after each call ([sessions.md](sessions.md#interpreters-state-between-calls)). A session's sandbox is a run's sandbox
 (the same policy, read back the same way) with three differences, each measured on a
 v0.1.2 gateway with the docker driver:
 

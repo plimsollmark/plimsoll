@@ -225,8 +225,67 @@
   </section>
 
   <!-- 06 ─────────────────────────────────────────────────────────────────── -->
-  <section id="gate" aria-labelledby="h-gate">
+  <section id="conversation" aria-labelledby="h-conversation">
     <p class="draft" aria-hidden="true">06</p>
+    <h2 id="h-conversation">One sandbox per conversation</h2>
+    <p>A chat agent calls its code tool many times in one conversation, and the TypeScript
+    client (<code>npm install @plimsollmark/client</code>) ships that tool:
+    <code>executeCode</code> takes <code>code</code>, a <code>language</code> (Python or
+    JavaScript) and optional <code>files</code>, text files written into the working
+    directory before the code runs, so the model can hand the code another tool's output by
+    path instead of pasting it into the source. The value of the code's last expression is
+    printed, as in a notebook. <code>CodeSandboxes</code>, underneath it, keeps one sandbox
+    per conversation.</p>
+    <div class="two">
+      <div class="card good">
+        <h3>On a daemon that keeps sessions</h3>
+        <p>Each conversation holds one <dfn>session</dfn>, one sandbox kept open for many
+        calls (<code>docker</code> with a project image, or <code>openshell</code>). Every
+        call is a <dfn>cell</dfn>, code run in a Python or Node.js interpreter the session
+        keeps alive, so variables, imports and data loaded by earlier calls can still be
+        there, and so can the files.</p>
+      </div>
+      <div class="card">
+        <h3>Everywhere else</h3>
+        <p>On <code>e2b</code>, <code>dockercloud</code> and <code>wasm</code> every call runs
+        in a fresh sandbox, as a small project whose runner prints the last expression the
+        same way, and nothing persists. <code>wasm</code> runs no projects, so there a call
+        is a JavaScript snippet; Python and files are refused before anything is sent.</p>
+      </div>
+    </div>
+    <ul>
+      <li><b>The tool says what survived.</b> <code>stateKept</code> and
+      <code>filesPersist</code> say whether this call's interpreter and its sandbox were
+      still alive when the call answered. They are not a promise about the next call: the
+      cleanup after the answer can still end the session (its files over the disk budget,
+      a sandbox it cannot prove clean), and the session's lifetime can run out between
+      calls. The next call's <code>freshInterpreter</code> and <code>freshSandbox</code> say
+      what actually survived: <code>freshInterpreter</code> that nothing earlier calls
+      defined exists (the first call in a language, or one after a deadline or a crash),
+      <code>freshSandbox</code> that no earlier file is there either (a new sandbox after
+      an idle close, a dispose, or an end such as the session's lifetime).</li>
+      <li><b>No conversation, no shared sandbox.</b> A call without a conversation key always
+      runs fresh: one sandbox shared across conversations would show one user another's
+      files.</li>
+      <li><b>The session ID stays in memory.</b> It works like a password for the session,
+      so the client keeps it in memory only: never in a log line, a record, or the chat state
+      the agent framework saves.</li>
+      <li><b>No API access.</b> The tool sends no grant, so its code reaches no API. For code
+      that calls your API through the broker, use a tool whose runs select a grant held on
+      the daemon (section 05).</li>
+    </ul>
+    <p>Two add-ons wire it into agent frameworks. <code>@plimsollmark/client/trigger</code>
+    follows the code-sandbox recipe of <dfn>Trigger.dev</dfn>, a hosted job runner for
+    TypeScript whose chat agents can sleep between messages: the sandbox is warmed when a
+    turn starts and closed right before the run sleeps and when it completes.
+    <code>@plimsollmark/client/mastra</code> does the same for Mastra, a TypeScript agent
+    framework, keyed by its thread and resource, and closes a sandbox on
+    <code>dispose</code> or after 10 minutes without a call.</p>
+  </section>
+
+  <!-- 07 ─────────────────────────────────────────────────────────────────── -->
+  <section id="gate" aria-labelledby="h-gate">
+    <p class="draft" aria-hidden="true">07</p>
     <h2 id="h-gate">Before the tool goes live</h2>
     <p>One successful demo proves the happy path. The launch is decided by what happens
     under overload, bad code, a weak backend, two tenants, one forbidden route and one
@@ -250,6 +309,8 @@
     <li><a href="discoverability.html"><b>Internal · trainer site →</b><strong>Discoverable tools</strong><small>Giving that run_code tool an output schema, honest annotations and typed sandbox globals.</small></a></li>
     <li><a href="brokering.html"><b>Internal · trainer site →</b><strong>The API broker</strong><small>How the route check and the key injection work on each provider.</small></a></li>
     <li><a href="private-api.html"><b>Internal · trainer site →</b><strong>Private API Flight Recorder</strong><small>The same topology as real processes, with the wire formats between them.</small></a></li>
+    <li><a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/trigger-chat" target="_blank" rel="noopener"><b>External · source repo ↗</b><strong>The Trigger.dev chat example</strong><small>A chat agent whose executeCode calls share one interpreter across turns, with a test that drives two turns offline.</small></a></li>
+    <li><a href="https://github.com/plimsollmark/plimsoll/tree/main/clients/typescript" target="_blank" rel="noopener"><b>External · source repo ↗</b><strong>The TypeScript client</strong><small>The client, CodeSandboxes, and both add-ons.</small></a></li>
     <li><a href="https://modelcontextprotocol.io/specification" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Model Context Protocol</strong><small>The tool-calling protocol most agent hosts speak.</small></a></li>
   </ul>
 

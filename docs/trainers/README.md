@@ -113,8 +113,8 @@ The chapter renderer (`trainer.js`, `trainer.css`) was the default until 2026-09
 catalog page uses it now: eleven pages were rebuilt as plain pages with their own
 instruments, because a renderer that shows one chapter at a time could not draw the
 picture each subject needed. `trainer.css` still styles the catalog and the quick start,
-and `trainer.js` still drives the private positioning page (see **Pages that are not in
-this directory**), which is why both are kept.
+and `trainer.js` still drives one page that lives outside this directory, which is why
+both are kept.
 
 A `plain` page is checked for what that shape promises: it loads `plain.css` and not the
 lesson stylesheet, it has one `<h1>`, it links back to the catalog, and its own markup
@@ -156,11 +156,21 @@ strong the wall around a run is, and the pages state them this way:
 - `docker` with <dfn>*runsc*</dfn>, gVisor's runtime, reaches `kernel` tier only with
   current <dfn>*preflight*</dfn> evidence (preflight is the check a provider runs at
   startup and on every readiness poll).
-- `e2b` is `vm` tier.
-- JavaScript snippets on `docker` and `wasm` support grants to a host API through one
-  shared broker core; `e2b` supports grants only through its configured guard.
-- Project support differs by provider: `docker` projects take grants, `wasm` projects
-  reject them.
+- `e2b` and `dockercloud` are `vm` tier.
+- `openshell` is `container` tier: the gateway of <dfn>*OpenShell*</dfn>, NVIDIA's agent
+  sandbox runtime, runs each sandbox through docker, and no OpenShell API reports which
+  runtime that docker uses.
+- Grants to a host API all go through one shared broker core. `docker` and `openshell`
+  take them on snippets and projects; `wasm` on snippets only, since it runs no projects;
+  `e2b` and `dockercloud` only through their configured guard, and on `dockercloud` the
+  <dfn>*guest*</dfn>, the code in the sandbox, holds its own run's short-lived guard
+  credential. `openshell` reaches the broker
+  through a relay inside the sandbox that plimsoll connects to from outside, so the
+  sandbox keeps no network rules.
+- <dfn>*Sessions*</dfn>, one sandbox kept for many calls, exist on `docker` with a project
+  image and on `openshell`, nowhere else. A <dfn>*cell*</dfn>, code run in the interpreter a
+  session keeps alive, carries no grant, and in a docker session the broker serves the grant of the call in
+  progress to anything in the container.
 
 ## Terms and the glossary
 

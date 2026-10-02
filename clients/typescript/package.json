@@ -1,7 +1,6 @@
 {
   "name": "@plimsollmark/client",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.13.1",
   "description": "TypeScript client for plimsolld, with Trigger.dev and Mastra executeCode add-ons",
   "license": "Apache-2.0",
   "homepage": "https://github.com/plimsollmark/plimsoll/tree/main/clients/typescript#readme",
@@ -11,7 +10,14 @@
     "directory": "clients/typescript"
   },
   "bugs": "https://github.com/plimsollmark/plimsoll/issues",
-  "keywords": ["sandbox", "code-execution", "ai-agents", "trigger.dev", "mastra", "code-interpreter"],
+  "keywords": [
+    "sandbox",
+    "code-execution",
+    "ai-agents",
+    "trigger.dev",
+    "mastra",
+    "code-interpreter"
+  ],
   "type": "module",
   "exports": {
     ".": {

@@ -31,11 +31,17 @@ func TestOpenShellSessionConformanceLive(t *testing.T) {
 	sessiontest.Run(t, p, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs})
 }
 
-// The startup check plimsolld runs when sessions are enabled passes on this gateway.
+// The startup check plimsolld runs when sessions are enabled passes on this gateway,
+// run as the daemon runs it: after the provider's smoke test, so it runs a cell in every
+// language the image proved (both, with plimsoll/sandbox-python).
 func TestOpenShellSessionSmokeTestLive(t *testing.T) {
 	p := liveProvider(t, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
+	if err := p.SmokeTest(ctx); err != nil {
+		t.Fatalf("SmokeTest: %v", err)
+	}
+	t.Logf("cell languages: %v", p.SessionEnvironments().Project.Languages)
 	if err := sandbox.SessionSmokeTest(ctx, p, sandbox.SessionOptions{Lifetime: 5 * time.Minute, DiskBytes: 64 << 20}); err != nil {
 		t.Fatal(err)
 	}

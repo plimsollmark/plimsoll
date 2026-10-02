@@ -22,6 +22,16 @@ protocol over `fetch` and keeps the promises the Go client keeps:
 The tier it reports is configuration and provider evidence, never runtime attestation
 (the README's provider table says what each tier means).
 
+## Install
+
+```sh
+npm install @plimsollmark/client
+```
+
+The package's version is the plimsoll release it ships in: version X.Y.Z was built and
+tested against plimsolld vX.Y.Z. The add-ons need their framework installed beside it:
+`@trigger.dev/sdk`, `ai` and `zod` for `/trigger`, `@mastra/core` and `zod` for `/mastra`.
+
 ## The client
 
 ```ts
@@ -74,9 +84,12 @@ default) it asks the daemon once whether it keeps sessions:
   and nothing persists. `wasm` runs no projects, so there a call is a JavaScript snippet
   printing its last value; Python and files are refused before anything is sent.
 
-The tool's output says which: `stateKept` (what this call defined is still there for the
-next call; false when no interpreter is kept, and when the call's deadline or the sandbox's
-end ended its interpreter) and `filesPersist` (the same for its files). It also says what is new, rather than what was lost, because
+The tool's output says which: `stateKept` (this call's interpreter was still running when
+it answered, so what it defined can be there for the next call; false when no interpreter is
+kept, and when the call's deadline or the sandbox's end ended it) and `filesPersist` (the same
+for its sandbox and files). Neither promises the next call anything: the sandbox can still end
+between calls, at the end of its lifetime or when the disk check after a call finds it over
+its limit. So the output also says what is new, rather than what was lost, because
 only the sandbox knows: `freshInterpreter` whenever the call's interpreter had just started
 (the first call in a language, a deadline, a crash), so nothing earlier calls defined
 exists, and `freshSandbox` whenever the call is the first answered one in a newly opened

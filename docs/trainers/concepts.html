@@ -137,7 +137,7 @@
   the <dfn>isolation tier</dfn>, how strong the wall around a run is, the same way. It is
   <b>a value on every response</b>. A caller can set a <dfn>floor</dfn>, the weakest tier it
   accepts, before anything runs. And the daemon has to pass a startup check before it claims a
-  tier at all. One page, starting with the picture.</p>
+  tier at all.</p>
 
   <!-- 01 ─────────────────────────────────────────────────────────────────── -->
   <section id="line" aria-labelledby="h-line">
@@ -462,6 +462,16 @@
         minutes has passed.</li>
       </ol>
     </div>
+    <div class="card">
+      <h3>With sessions on, one real session before serving</h3>
+      <p>Each provider's startup test also proves which interpreters its image runs, Python
+      or JavaScript, and <code>Describe</code> reports only those. When the operator turns on
+      sandboxes kept for many calls (<code>SANDBOX_MAX_SESSIONS</code>, section 07), the
+      daemon then opens one for real and refuses to serve unless it keeps what section 07
+      promises: a process the first call leaves running is gone by the next call, a file
+      survives calls and a suspend, an interpreter keeps what an earlier call defined or says
+      it started fresh, and closing it ends it.</p>
+    </div>
   </section>
 
   <!-- 04 ─────────────────────────────────────────────────────────────────── -->
@@ -573,26 +583,38 @@
     <p class="draft" aria-hidden="true">07</p>
     <h2 id="h-sessions">One sandbox, many calls</h2>
     <p>A run gets a fresh sandbox and loses it at the end. A <dfn>session</dfn> keeps one
-    sandbox for many calls: the files a call writes are there for the next call, and no process a call
-    starts outlives it. An agent that edits, builds and tests in a loop pays for one sandbox,
-    and its later steps see what its earlier steps wrote. Sessions are off until the operator
-    sets <code>SANDBOX_MAX_SESSIONS</code>; OpenShell is the provider that keeps them today.</p>
+    sandbox for many calls: the files a call writes are there for the next call, and a
+    cleanup between calls ends what a call left running. An agent that edits, builds and tests
+    in a loop pays for one sandbox, and its later steps see what its earlier steps wrote.
+    Sessions are off until the operator sets <code>SANDBOX_MAX_SESSIONS</code>. Two providers
+    keep them: <code>docker</code> with a project image configured, under either runtime,
+    and <code>openshell</code>. <code>Describe</code> says whether this daemon does
+    (<code>supports_sessions</code>).</p>
     <details>
       <summary>What persists, and what does not <span class="what">the contract</span></summary>
-      <div><p>Files under the sandbox's writable directory persist, up to the session's disk budget (<code>SANDBOX_SESSION_DISK_MB</code>). Processes never do: after every call the provider kills every process but the sandbox's own, by process ID, and a call that cannot be followed by a clean sandbox ends the session instead of running the next call beside a leftover.</p></div>
+      <div><p>Files in the session's work directory persist, up to the session's disk budget (<code>SANDBOX_SESSION_DISK_MB</code>). Processes are another matter: a cleanup between calls ends what a call left running, while the interpreters a session keeps for its code (next item) are meant to outlive it. The cleanup runs after the answer has gone back, so the next call waits for it and the caller does not. When it cannot prove the sandbox clean, the session ends rather than run the next call beside a leftover. An interpreter can run between calls (a timer, a thread), so a process it starts then lives until the next cleanup, inside the session's limits. Which processes the cleanup spares, and how it tells them apart, is in the <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md" target="_blank" rel="noopener">sessions guide (EXTERNAL · source repo ↗)</a>.</p></div>
+    </details>
+    <details>
+      <summary>State between calls <span class="what">notebook-style</span></summary>
+      <div><p>A <dfn>cell</dfn> is code the session runs in a Python or Node.js interpreter it keeps alive between calls, so variables, imports and loaded data can survive from one call to the next, as in a notebook. The request names the language, the code and optional files, which are written into the work directory before the code runs. The value of the last expression is printed. The exit code is 0 when the code ran, 1 when it raised an error, and 124 when the deadline ended it, which also ends the interpreter. <code>interpreter_started</code> says the call began with a fresh interpreter, so nothing defined earlier exists. A cell carries no grant, and it exists only in a session: <code>Run</code> refuses one. <code>Describe</code> lists the languages the startup test proved (<code>languages</code>); Python needs <code>python3</code> in the image.</p></div>
+    </details>
+    <details>
+      <summary>Docker and OpenShell <span class="what">same contract, two sandboxes</span></summary>
+      <div><p>On <code>docker</code> a session is one locked-down container from the project image, with a run's walls: a read-only root, no network, size-capped writable directories held in memory, every capability dropped. Every call is a <code>docker exec</code> into it, in <code>/work</code>, and before each call the session compares the container's security settings with what they were at open and ends on any difference. On <code>openshell</code> it is one gateway sandbox whose main process does nothing, read back from the gateway before every call. Both run the same cleanup between calls. <code>e2b</code>, <code>dockercloud</code> and <code>wasm</code> keep no sessions.</p></div>
     </details>
     <details>
       <summary>Who can use a session <span class="what">one owner</span></summary>
       <div><p>The caller that opened it, and nobody else. The session ID is treated as a secret: an unknown ID and another caller's ID get the same refusal, and the ID is never logged. Calls run one at a time, in order.</p></div>
     </details>
     <details>
-      <summary>When it ends <span class="what">typed, like a refusal</span></summary>
-      <div><p>At its lifetime (<code>SANDBOX_SESSION_LIFETIME</code>), past its disk budget, when code kills the sandbox's main process, when the sandbox changed under it, or when its owner closes it. A call on an ended session is refused before dispatch with <code>ErrSessionEnded</code>, and <code>SessionEndedError</code> says why. An idle session (<code>SANDBOX_SESSION_IDLE</code>) is stopped, not deleted: it gives back its admission slot and keeps its files.</p></div>
+      <summary>When it ends, and when it sleeps <span class="what">typed, like a refusal</span></summary>
+      <div><p>At its lifetime (<code>SANDBOX_SESSION_LIFETIME</code>), past its disk budget, when code kills the sandbox's main process, when the sandbox changed under it, when the cleanup between calls cannot prove it clean, when the daemon shuts down, or when its owner closes it. A call on an ended session is refused before dispatch with <code>ErrSessionEnded</code>, and <code>SessionEndedError</code> says why. An idle session (<code>SANDBOX_SESSION_IDLE</code>) is suspended, not deleted. On <code>openshell</code> its sandbox is stopped: the files stay, the interpreters end, and the session gives back its admission slot. On <code>docker</code> the container is paused (<code>docker pause</code>): files, interpreters and memory stay, so the session keeps its slot.</p></div>
     </details>
     <details>
       <summary>How you know no call was dropped <span class="what">a record per run</span></summary>
-      <div><p>Every answered run carries a <dfn>run record</dfn>: digests of what was sent and what came back, the evidence, and the times. In a session each record also names the previous one, so the calls form a chain. The daemon only computes the hashes; the caller's <dfn>harness</dfn>, a program outside the daemon that drives the runs, checks each record and signs it. A missing, reordered or foreign call breaks the chain, and the Go client reports it as <code>record.ErrChain</code>.</p></div>
+      <div><p>Every answered run carries a <dfn>run record</dfn>: digests of what was sent and what came back, the evidence, and the times. The end time is the start plus the time that passed on a clock that never moves backwards, so it cannot fall before the start. In a session each record also names the previous one, so the calls form a chain. The daemon only computes the hashes; the caller's <dfn>harness</dfn>, a program outside the daemon that drives the runs, checks each record and signs it. A missing, reordered or foreign call breaks the chain, and the Go, Python and TypeScript clients each check it (the Go client reports a break as <code>record.ErrChain</code>).</p></div>
     </details>
+    <p>Details and measurements: <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md" target="_blank" rel="noopener">sessions guide (EXTERNAL · source repo ↗)</a>.</p>
   </section>
 
   <!-- 08 ─────────────────────────────────────────────────────────────────── -->
@@ -602,12 +624,12 @@
     <p>A provider is ready when every line below is true for the job in front of you, not
     when its name sounds strong enough. Check what you have.</p>
     <ul class="gate" id="gateList">
-      <li><label><input type="checkbox" data-required="1"><span><b>The operation is supported.</b><small>Snippet, project and module support are separate answers, and <code>Describe</code> reports each one, so a gateway (the service between your users and plimsoll) never has to hard-code which provider supports what.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>The operation is supported.</b><small>Snippet, project, module and session support are separate answers, and <code>Describe</code> reports each one, with the interpreter languages a project step or a cell can use, so a gateway (the service between your users and plimsoll) never has to hard-code which provider supports what.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>The floor is set and enforced.</b><small><code>SANDBOX_MIN_ISOLATION</code> at startup, and <code>minimum_isolation</code> on every request, because the caller is the one who knows what the work is worth.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>The startup proof passed here, not on a docs page.</b><small>Docker's filesystem and socket checks, the real throwaway VM that E2B or Docker Cloud Sandboxes creates, or the throwaway sandbox an OpenShell gateway creates, in the deployment environment.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>The startup proof passed here, not on a docs page.</b><small>Docker's filesystem and socket checks, the real throwaway VM that E2B or Docker Cloud Sandboxes creates, or the throwaway sandbox an OpenShell gateway creates, in the deployment environment, plus the one real session the daemon opens when sessions are on.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>Every run is bounded.</b><small>Memory, CPUs, processes, disk, time and output per run; count, rate and total memory across runs.</small></span></label></li>
       <li><label><input type="checkbox" data-required="1"><span><b>The toolchain is baked in.</b><small>A project image, an E2B template (E2B's prebuilt VM image), or the image Docker Cloud Sandboxes or OpenShell boots already carries every build, lint and run tool, because the run has no network to fetch one.</small></span></label></li>
-      <li><label><input type="checkbox" data-required="1"><span><b>Grant support matches the provider.</b><small>Docker brokers snippet and project grants; WASM brokers snippets only; E2B needs <code>E2B_GUARD_URL</code> for either; Docker Cloud Sandboxes needs <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>, and there the guest holds its own run’s short-lived guard credential; OpenShell reaches the same broker through a relay in the sandbox that plimsoll dials into, so its sandboxes keep no network rules at all.</small></span></label></li>
+      <li><label><input type="checkbox" data-required="1"><span><b>Grant support matches the provider.</b><small>Docker brokers snippet and project grants; WASM brokers snippets only; E2B needs <code>E2B_GUARD_URL</code> for either; Docker Cloud Sandboxes needs <code>SANDBOX_DOCKERCLOUD_GUARD_URL</code>, and there the guest holds its own run’s short-lived guard credential; OpenShell reaches the same broker through a relay in the sandbox that plimsoll dials into, so its sandboxes keep no network rules at all. A cell carries no grant, and in a docker session the broker serves the grant of the call in progress to anything in the container, so a call that must not lend its grant runs outside a session.</small></span></label></li>
       <li><label><input type="checkbox"><span><b>Describe and readiness are recorded.</b> <span class="opt">recommended</span><small>The active provider, tier, which operations it supports, each payload kind's software identity and longest allowed timeout, the per-run limits and readiness state, kept where an operator will look for them later. The identities and timeouts are configuration, like the tier, not proof.</small></span></label></li>
     </ul>
     <div class="card gate-readout" id="gateReadout"></div>
@@ -620,7 +642,7 @@
     <li><a href="../examples/sessions/index.html"><b>Internal · trainer site →</b><strong>One sandbox, five calls</strong><small>A real session on OpenShell, its chain of signed records, and the verifier refusing a dropped call and a changed byte.</small></a></li>
     <li><a href="dependencies.html"><b>Internal · trainer site →</b><strong>Dependencies</strong><small>What is compiled in, what each provider needs at run time, and which versions are fixed by a hash of their content.</small></a></li>
     <li><a href="https://gvisor.dev/docs/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>gVisor</strong><small>The user-space kernel behind <code>runsc</code> and the K mark.</small></a></li>
-    <li><a href="https://firecracker-microvm.github.io/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Firecracker</strong><small>The microVM monitor behind E2B's V mark.</small></a></li>
+    <li><a href="https://github.com/firecracker-microvm/firecracker/tree/main/docs" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Firecracker</strong><small>The microVM monitor behind E2B's V mark.</small></a></li>
     <li><a href="https://docs.docker.com/ai/sandboxes/cloud/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>Docker Cloud Sandboxes</strong><small>The Docker-managed service behind the <code>dockercloud</code> provider's V mark.</small></a></li>
     <li><a href="https://docs.nvidia.com/openshell/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>NVIDIA OpenShell</strong><small>The agent sandbox runtime behind the <code>openshell</code> provider's C mark.</small></a></li>
     <li><a href="https://wazero.io/" target="_blank" rel="noopener"><b>External · official docs ↗</b><strong>wazero</strong><small>The WebAssembly runtime that runs the embedded engine and applies its memory cap.</small></a></li>

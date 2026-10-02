@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,55 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		} {
 			t.Run(c.name+"/"+string(lang), func(t *testing.T) { c.run(t, p, cfg, lang) })
 		}
+	}
+	if slices.Contains(langs, sandbox.LanguagePython) {
+		t.Run("InterpreterIdentityCannotBeSubstituted", func(t *testing.T) { interpreterNotSubstituted(t, p, cfg) })
+	}
+}
+
+// A live interpreter can write anything in the sandbox, including the ready file the
+// launcher of a second language's interpreter waits on. Here a JavaScript cell's timer
+// waits for the Python interpreter's directory to appear (its launch, during the next
+// call), starts a detached process, writes that process's PID into the ready file over
+// and over for half a second, then writes the real interpreter's PID back. The Python cell answers
+// from its own interpreter, the sweep after it kills the process, and the interpreter
+// it kept is the real one: a later Python cell still has its state. The case races the
+// launcher it tests, so a launcher that read the PID from the file escaped it in 1 of 7
+// runs (Docker and OpenShell, 2026-10-01); sessionkit's
+// TestLaunchIdentityIsTheProcessItStarted orders the writes and catches that every time.
+func interpreterNotSubstituted(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	arm := cell(t, s, sandbox.LanguageJavaScript, `const fs = require("fs"), cp = require("child_process");
+const dir = "/tmp/.plimsoll-interp/python", ready = dir + "/ready";
+globalThis.decoy = 0;
+const spoof = setInterval(() => {
+  if (!fs.existsSync(dir)) return;
+  clearInterval(spoof);
+  const c = cp.spawn("sleep", ["7792"], { detached: true, stdio: "ignore" }); c.unref(); decoy = c.pid;
+  for (const end = Date.now() + 500; Date.now() < end;) try { fs.writeFileSync(ready, String(decoy)); } catch {}
+  for (const d of fs.readdirSync("/proc")) {
+    if (!/^[0-9]+$/.test(d)) continue;
+    let c = ""; try { c = fs.readFileSync("/proc/" + d + "/cmdline", "latin1"); } catch { continue; }
+    if (c.endsWith(dir + "\0")) try { fs.writeFileSync(ready, d); } catch {}
+  }
+}, 1);
+"armed"`, 30*time.Second)
+	if arm.ExitCode != 0 {
+		t.Fatalf("arm: %+v", arm)
+	}
+	py := cell(t, s, sandbox.LanguagePython, "plimsoll_x = 41\nplimsoll_x + 1", 60*time.Second)
+	if py.ExitCode != 0 || strings.TrimSpace(py.Stdout) != "42" {
+		t.Fatalf("the Python cell launched while its ready file was overwritten: %+v", py)
+	}
+	if d := cell(t, s, sandbox.LanguageJavaScript, "decoy", 30*time.Second); d.InterpreterStarted || strings.TrimSpace(d.Stdout) == "0" {
+		t.Fatalf("the timer never wrote into the Python interpreter's ready file, so this case tested nothing: %+v", d)
+	}
+	if got := strings.TrimSpace(js(t, s, procsRunning("sleep 7792"), 10*time.Second).Stdout); got != "[]" {
+		t.Fatalf("a process whose PID was written into the Python interpreter's ready file outlived the sweep: %s", got)
+	}
+	again := cell(t, s, sandbox.LanguagePython, "plimsoll_x + 1", 30*time.Second)
+	if again.InterpreterStarted || strings.TrimSpace(again.Stdout) != "42" {
+		t.Fatalf("the sweep did not keep the real Python interpreter: %+v", again)
 	}
 }
 

@@ -51,11 +51,11 @@ go run ./cmd/plimsolld</code></pre>
   -H 'Content-Type: application/json' \
   --data-binary '{"protocol":2,"timeoutMs":1000,"minimumIsolation":"process","javascript":{"code":"console.log(6 * 7)"}}'</code></pre>
         <h2>4. Read the receipt</h2>
-        <p>The response says what happened: the provider, the isolation tier the run actually got, how long it took, and the output, inside a result of the same kind as the payload.</p>
-        <pre><code>{"sandbox":"wasm", "isolation":"process", "durationMs":"292", "javascript":{"stdout":"NDIK"}}</code></pre>
-        <p>Output travels as raw <strong>bytes</strong>, so the JSON form carries it base64-encoded: <code>NDIK</code> is <code>42</code> and a newline. Decode it with <code>printf %s NDIK | base64 -d</code>. The Go client decodes it for you; curl does not. A zero exit code is left out of the JSON.</p>
+        <p>The response says what happened: the provider, the isolation tier the run actually got, how long it took, a <dfn>run record</dfn> (the daemon's statement of what was sent, what came back and where it ran, shortened here to <code>{…}</code>), the engine it ran on, named by a hash of its content, and the output, inside a result of the same kind as the payload.</p>
+        <pre><code>{"sandbox":"wasm", "isolation":"process", "durationMs":"292", "record":{…}, "environment":"quickjs-wasm:sha256:…", "javascript":{"stdout":"NDIK"}}</code></pre>
+        <p>Output travels as raw <strong>bytes</strong>, so the JSON form carries it base64-encoded: <code>NDIK</code> is <code>42</code> and a newline. Decode it with <code>printf %s NDIK | base64 -d</code>. The Go, Python and TypeScript clients decode it for you and check the record; curl does neither. A zero exit code is left out of the JSON.</p>
         <p>Four other answers you should be able to tell apart:</p>
-        <pre><code>{"sandbox":"wasm", "isolation":"process", "durationMs":"283", "javascript":{"stdout":"cGFydGlhbAo=", "stderr":"RXJyb3I6IGJvb20K...", "exitCode":1}}
+        <pre><code>{"sandbox":"wasm", "isolation":"process", "durationMs":"283", "record":{…}, "environment":"quickjs-wasm:sha256:…", "javascript":{"stdout":"cGFydGlhbAo=", "stderr":"RXJyb3I6IGJvb20K...", "exitCode":1}}
 {"code":"failed_precondition","message":"sandbox isolation requirement not met: provider isolation process is below requested minimum kernel"}
 {"code":"unauthenticated","message":"invalid or expired token"}
 {"code":"unimplemented","message":"this daemon serves protocol 2 and the request states 3; nothing ran"}</code></pre>
@@ -65,15 +65,15 @@ go run ./cmd/plimsolld</code></pre>
       <aside class="customer-panel">
         <h2>What to verify next</h2>
         <ol>
-          <li>Make the same request from your own Go program with <code>client.WithToken</code>, then switch the daemon to Docker and watch the reported tier move without the program changing. The getting-started guide in the reference shelf below walks it.</li>
+          <li>Make the same request from your own program: in Go with <code>client.WithToken</code> (the getting-started guide in the reference shelf below walks it), or with the Python or TypeScript client. Then switch the daemon to Docker and watch the reported tier move without the program changing.</li>
           <li>Move to Docker with verified <code>runsc</code> when the workload is hostile and needs a kernel tier.</li>
           <li>Set per-run limits (memory, CPU, processes, disk), a total memory budget across runs, and a minimum isolation tier. Then turn on <code>PLIMSOLL_HARDENED=1</code>: the daemon refuses to start unless those limits are set and its provider is at the <code>kernel</code> or <code>vm</code> tier.</li>
           <li>Give a run a <dfn>grant</dfn>, a named permission stored on the server to call listed routes of one API, only when your product has deliberately approved that narrow access.</li>
         </ol>
         <div class="customer-callout good"><strong>Safe default:</strong> leave <code>SANDBOX_PROVIDER</code> unset when you are not intentionally running code. The default is Disabled.</div>
         <div class="customer-links">
-          <a href="concepts.html">Compare providers →</a>
-          <a href="integrations.html">Use the Go client →</a>
+          <a href="concepts.html">Compare providers · INTERNAL · trainer site →</a>
+          <a href="integrations.html">Use a client: Go, Python, TypeScript · INTERNAL · trainer site →</a>
           <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples">Run the examples · EXTERNAL · source repo ↗</a>
         </div>
       </aside>

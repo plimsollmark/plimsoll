@@ -204,8 +204,10 @@ func (in *Interpreters) alive(lang string) bool {
 var identityPattern = regexp.MustCompile(`^[0-9]+:-?[0-9]+:[0-9a-f]+$`)
 
 // launch starts lang's interpreter and records it. It runs where the sweep has just
-// run, so nothing of a call is left that could have written the launcher's output
-// but another live interpreter of the same session, whose code is the session's own.
+// run, but another live interpreter of the same session can still write anything in
+// the sandbox, so the launcher takes the identity from the process it started and
+// trusts no file for it: a PID read from a writable file let a cell make the sweep
+// keep a process of its choosing.
 func (in *Interpreters) launch(ctx context.Context, exec ExecFunc, lang, work string) error {
 	argv := append([]string{"sh", "-c", launchScript, "sh"}, command[lang]...)
 	env := map[string]string{"PLIMSOLL_INTERP_DIR": interpRoot + lang, "PLIMSOLL_WORK": work}

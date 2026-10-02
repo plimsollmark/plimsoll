@@ -36,7 +36,19 @@ sessions at the `kernel` tier.
 
 ## Run it
 
-1. A plimsolld with sessions on, for example docker under gVisor with the Python image
+1. A caller for the agent, from the repository root. This creates `clients.json`, the
+   file the daemon reads its callers from, with one caller holding the `code:run` scope,
+   and prints that caller's token once; nothing else keeps a copy
+   ([callers.md](../../docs/callers.md) has the rest of the commands):
+
+   ```sh
+   TOKEN="$(go run ./cmd/plimsoll-clients create -file clients.json -id trigger-chat -token-stdout)"
+   ```
+
+   `docs/clients.example.json` only shows the file's shape: its placeholders are not
+   usable tokens.
+
+2. A plimsolld with sessions on, for example docker under gVisor with the Python image
    (`make docker-images` builds it):
 
    ```sh
@@ -48,11 +60,11 @@ sessions at the `kernel` tier.
    or the openshell provider ([openshell.md](../../docs/openshell.md) for the gateway
    settings).
 
-2. In this directory, `npm install` (the `.npmrc` installs the client as a copy, so it
+3. In this directory, `npm install` (the `.npmrc` installs the client as a copy, so it
    shares the example's `ai` and Trigger.dev packages), then set on the Trigger.dev
-   environment: `PLIMSOLL_URL`, `PLIMSOLL_TOKEN` (a caller with `code:run`) and
+   environment: `PLIMSOLL_URL`, `PLIMSOLL_TOKEN` (the `$TOKEN` from step 1) and
    `ANTHROPIC_API_KEY`, plus `TRIGGER_PROJECT_REF` for `trigger.config.ts`.
-3. `npm run dev`, and connect a frontend with Trigger.dev's chat transport
+4. `npm run dev`, and connect a frontend with Trigger.dev's chat transport
    ([frontend docs](https://trigger.dev/docs/ai-chat/frontend)).
 
 The `minimumIsolation: "container"` in `chat.ts` makes the daemon refuse, before running

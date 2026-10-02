@@ -87,9 +87,11 @@ export type ExecuteCodeOutput = {
   /** Output was cut, by the daemon's cap or by maxOutputChars. */
   truncated: boolean;
   /**
-   * What this call defined is still there for the conversation's next call in this
-   * language: false without a kept interpreter, and when this call's interpreter or
-   * sandbox ended (a deadline, the sandbox's end).
+   * This call's interpreter, and its sandbox, were still running when it answered, so
+   * what it defined can be there for the conversation's next call in this language:
+   * false without a kept interpreter, and when a deadline or the sandbox's end ended
+   * them. Not a promise: the sandbox can still end before the next call (its lifetime,
+   * the disk check after a call), and that call's freshInterpreter says what survived.
    */
   stateKept: boolean;
   /**
@@ -97,7 +99,11 @@ export type ExecuteCodeOutput = {
    * language exists (the first call, a deadline, a crash, a new sandbox).
    */
   freshInterpreter?: true;
-  /** The files of this call are there for the next call: false without a kept sandbox, and when it ended. */
+  /**
+   * This call's sandbox was still running when it answered, so its files can be there
+   * for the next call: false without a kept sandbox, and when it ended. The next call's
+   * freshSandbox says whether they are.
+   */
   filesPersist: boolean;
   /**
    * This call ran in a newly opened sandbox: no file an earlier call wrote or was
@@ -248,8 +254,9 @@ export class CodeSandboxes {
         const first = !entry.answered;
         const r = await session.runCell({ language, code: input.code, files }, opts);
         entry.answered = true;
-        // What the call defined, and the files it wrote, are there for the next call
-        // only if its interpreter, and the sandbox, outlived it.
+        // What the call defined, and the files it wrote, can be there for the next call
+        // only if its interpreter, and the sandbox, outlived it; the next call's fresh
+        // flags say whether they did.
         const ended = session.ended !== undefined;
         if (ended) this.#drop(key, session); // the next call opens a new one
         return {

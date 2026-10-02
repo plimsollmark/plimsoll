@@ -2,7 +2,8 @@
 
 A <dfn>*session*</dfn> keeps one sandbox open for many calls. The files a call writes
 are there for the next call; no process a call starts outlives it, except the
-interpreter a session can keep for code it runs as notebook-style cells
+interpreter a session can keep for code it runs as notebook-style
+[cells (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#cell)
 ([below](#interpreters-state-between-calls)). An agent that edits,
 builds and tests in a loop pays for one sandbox instead of one per step, and its later
 steps see what its earlier steps wrote. Each call gets everything a single run gets:

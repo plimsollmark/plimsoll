@@ -47,12 +47,9 @@ func sessionDocker(t *testing.T) *sandbox.DockerSandbox {
 	return d
 }
 
-// TestDockerSessionConformance runs the session conformance suite against the
-// docker provider: the suite every session provider passes before it states
-// sessions. The project image is the Python one (the base image plus python3), so
-// the smoke test's language probe finds both languages and the cell cases run for
-// each.
-func TestDockerSessionConformance(t *testing.T) {
+// pythonSessionDocker is sessionDocker with the Python image (the base image plus
+// python3) as the project image, so a session runs cells in both languages.
+func pythonSessionDocker(t *testing.T) *sandbox.DockerSandbox {
 	d := sessionDocker(t)
 	const pythonImage = "plimsoll/sandbox-python:latest"
 	if err := exec.Command("docker", "image", "inspect", pythonImage).Run(); err != nil {
@@ -62,6 +59,16 @@ func TestDockerSessionConformance(t *testing.T) {
 		t.Skipf("%s is not present (run `make docker-images`)", pythonImage)
 	}
 	d.ProjectImage = pythonImage
+	return d
+}
+
+// TestDockerSessionConformance runs the session conformance suite against the
+// docker provider: the suite every session provider passes before it states
+// sessions. The project image is the Python one (the base image plus python3), so
+// the smoke test's language probe finds both languages and the cell cases run for
+// each.
+func TestDockerSessionConformance(t *testing.T) {
+	d := pythonSessionDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if err := d.SmokeTest(ctx); err != nil {
@@ -69,7 +76,7 @@ func TestDockerSessionConformance(t *testing.T) {
 	}
 	langs := d.SessionEnvironments().Project.Languages
 	if !slices.Equal(langs, []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython}) {
-		t.Fatalf("the language probe found %v in %s", langs, pythonImage)
+		t.Fatalf("the language probe found %v in %s", langs, d.ProjectImage)
 	}
 	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs})
 	dctx, dcancel := context.WithTimeout(context.Background(), time.Minute)
@@ -138,10 +145,18 @@ func TestDockerSessionSuspendPausesAndHoldsMemory(t *testing.T) {
 }
 
 // The startup check plimsolld runs when sessions are enabled passes on this host.
+// The session smoke test as the daemon runs it: after the provider's smoke test has
+// proved the image's languages, so it runs a cell in each, here the Python image's two.
 func TestDockerSessionSmokeTest(t *testing.T) {
-	d := sessionDocker(t)
+	d := pythonSessionDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
+	if err := d.SmokeTest(ctx); err != nil {
+		t.Fatalf("SmokeTest: %v", err)
+	}
+	if langs := d.SessionEnvironments().Project.Languages; !slices.Equal(langs, []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython}) {
+		t.Fatalf("the language probe found %v", langs)
+	}
 	if err := sandbox.SessionSmokeTest(ctx, d, sandbox.SessionOptions{Lifetime: 5 * time.Minute, DiskBytes: 64 << 20}); err != nil {
 		t.Fatal(err)
 	}

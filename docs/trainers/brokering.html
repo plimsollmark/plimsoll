@@ -150,6 +150,20 @@
         <div class="card" id="roomNote"></div>
       </div>
     </div>
+    <div class="card warn">
+      <h3>Inside a docker session, the line serves the call in progress</h3>
+      <p>A <dfn>session</dfn> keeps one sandbox open for many calls. A <dfn>cell</dfn>, code
+      the session runs in an interpreter it keeps alive between calls, carries no grant at
+      all: the interpreter outlives the call, and its code with it. A snippet or project call
+      in a docker session can carry one, with one difference from a single run. A running
+      container cannot gain a mount, so the session mounts the broker's socket once, when it
+      opens. The socket serves a call's grant only while that call runs, and answers 503
+      between calls and to a call without a grant. While it serves a grant, it serves
+      anything in the container, so code an earlier call left running (a timer inside an
+      interpreter, a process it started between calls) can use a later call's grant. Every
+      call of a session comes from one caller, so the grant is lent only to that caller's
+      own earlier code; a call that must not lend its grant runs outside a session.</p>
+    </div>
   </section>
 
   <!-- 02 ─────────────────────────────────────────────────────────────────── -->

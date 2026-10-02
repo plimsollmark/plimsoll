@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
@@ -151,5 +152,49 @@ func TestLicenseMatchesRepository(t *testing.T) {
 	}
 	if string(own) != string(root) {
 		t.Fatal("LICENSE differs from the repository's LICENSE; copy it again")
+	}
+}
+
+// Both client packages carry the version of the plimsoll release they ship in, so a
+// reader can tell which daemon release a package was built and tested with: the npm
+// package, its lockfile, the Python distribution and the version the Python client
+// sends.
+func TestClientVersionsAgree(t *testing.T) {
+	var pkg, lock struct {
+		Version string `json:"version"`
+	}
+	for _, f := range []struct {
+		path string
+		into any
+	}{{"package.json", &pkg}, {"package-lock.json", &lock}} {
+		b, err := os.ReadFile(f.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(b, f.into); err != nil {
+			t.Fatalf("%s: %v", f.path, err)
+		}
+	}
+	python := func(path, pattern string) string {
+		b, err := os.ReadFile(filepath.Join("..", "python", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := regexp.MustCompile(`(?m)` + pattern).FindSubmatch(b)
+		if m == nil {
+			t.Fatalf("%s: no version", path)
+		}
+		return string(m[1])
+	}
+	versions := map[string]string{
+		"package.json":                           pkg.Version,
+		"package-lock.json":                      lock.Version,
+		"python/pyproject.toml":                  python("pyproject.toml", `^version = "([^"]+)"$`),
+		"python/src/plimsoll_client/_version.py": python(filepath.Join("src", "plimsoll_client", "_version.py"), `^__version__ = "([^"]+)"$`),
+	}
+	for _, v := range versions {
+		if v != pkg.Version || v == "" {
+			t.Fatalf("client versions disagree: %v", versions)
+		}
 	}
 }

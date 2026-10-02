@@ -131,6 +131,12 @@
   <p><code>golang.org/x/sys</code> and <code>golang.org/x/text</code> come along
   indirectly. Adding a fifth direct module is a decision about what plimsoll trusts, not
   a convenience: anything that parses input or runs code has to earn its place.</p>
+  <p>The clients outside Go keep the same discipline. The Python client uses Python's
+  standard library only. The TypeScript client has no runtime dependencies; its two
+  add-ons import the agent framework they plug into (the SDK of <dfn>Trigger.dev</dfn>, a
+  hosted job runner for TypeScript, with the <code>ai</code> package, or Mastra's core),
+  and their tool's input schema imports <code>zod</code>; all of these are optional peer
+  dependencies the application installs itself.</p>
 
   <div class="card bad">
     <h3>One module is banned by name</h3>
@@ -252,7 +258,9 @@
       accepts in <code>SANDBOX_OPENSHELL_CERT_FILE</code> and
       <code>SANDBOX_OPENSHELL_KEY_FILE</code>. The image each sandbox boots,
       <code>SANDBOX_OPENSHELL_IMAGE</code>, must carry <code>node</code>, <code>sh</code>
-      and the project runner, as the project image does.</dd>
+      and the project runner with its guard library, as the project image does, plus
+      <code>python3</code> for Python code in a <dfn>session</dfn>, one sandbox kept open
+      for many calls.</dd>
       <dt>Fails when</dt>
       <dd>The gateway is unreachable, rejects the client identity or the call that reports
       its compute driver, or runs a driver other than docker. Each is a startup failure: the
@@ -268,7 +276,7 @@
       (<code>SANDBOX_DISK_MB</code>) makes <code>/tmp</code>, the only writable directory, a
       fixed-size filesystem held in memory, which the gateway allows only when its operator
       sets <code>allow_driver_config</code>. Each run gets a fresh sandbox, deleted when the
-      run ends; module runs are not supported. The gateway is free, so its live suite
+      run ends, and a session keeps one for many calls; module runs are not supported. The gateway is free, so its live suite
       costs nothing, but no automated run has a gateway to drive.</dd>
     </dl>
   </div>
@@ -276,8 +284,10 @@
   <h2>Guest tools are baked, never fetched</h2>
   <p>A project run compiles and lints inside a sandbox with no network. That works
   because the tools are already in the image: the project image carries Node and the
-  TypeScript toolchain, a derived image carries Python with NumPy and SciPy, and a third
-  carries the simulation worker with its compiled simulators. Third-party packages for
+  TypeScript toolchain, a derived image carries Python with NumPy and SciPy (the image a
+  session needs for Python code), a third carries the simulation worker with its compiled
+  simulators, and a fourth, built on the third, carries a C compiler that produces
+  WebAssembly. Third-party packages for
   projects are built into an image derived from plimsoll's, at build time, where Node's
   own lookup finds them.</p>
   <p>The point is not convenience. A live install inside a run would mean fetching code
@@ -285,8 +295,8 @@
   you trust least. Baking turns that into a reviewed ingredient of an image you built.</p>
 
   <h2>Pinned, because a tag is mutable</h2>
-  <p>Anything fetched from outside the module is pinned to exact bytes, and each pin has
-  a file that holds it.</p>
+  <p>What the build fetches from outside the module is pinned to exact bytes, and each pin
+  has a file that holds it. The guest images are the one exception, last in the list.</p>
   <dl>
     <dt>The embedded JavaScript engine</dt>
     <dd>A <dfn>QuickJS-ng</dfn> build (QuickJS is a small JavaScript engine, and
@@ -311,6 +321,14 @@
     <dt>Third-party CI actions</dt>
     <dd>The reusable steps the GitHub workflows call. Pinned by commit, not by tag, for
     exactly the same reason as everything above.</dd>
+    <dt>The guest images, by version, not by bytes</dt>
+    <dd>The base image tag (<code>node:22-alpine</code>) moves with Alpine's releases, and
+    the Python image pins Python, NumPy and SciPy to a minor version (3.14, 2.4, 1.17)
+    rather than a patch: Alpine keeps only each package's current build, so a patch pin
+    broke the image build the day a new patch shipped. What a run used stays exact: the
+    daemon launches the image by the content ID its startup check inspected and states it
+    on every run, and <code>SANDBOX_REQUIRE_PINNED_IMAGES</code> refuses an image not named
+    by digest.</dd>
   </dl>
 
   <h2>The toolchain is two numbers on purpose</h2>
@@ -331,7 +349,9 @@
     <li><strong>The container suite.</strong> Adds the real isolation tests: a container
     comes up read-only, every writable mount is a sized no-execute temporary filesystem,
     the profile of allowed <dfn>system calls</dfn> (the requests a program makes to the
-    kernel) loads, and the broker refuses what it should. Under this flag a missing daemon
+    kernel) loads, and the broker refuses what it should. The profile allows
+    <code>mknod</code> only for the named pipes a session's interpreters use, never for a
+    device or a regular file. Under this flag a missing daemon
     fails instead of skipping.
     <pre><code>make audit DOCKER=1</code></pre></li>
     <li><strong>The kernel-tier run.</strong> The same suite again under

@@ -228,8 +228,8 @@ func TestSharedAssetsAreLocal(t *testing.T) {
 			}
 		}
 	}
-	// trainer.css and trainer.js still serve the catalog, the quick start, the demo
-	// page and the private positioning page.
+	// trainer.css styles the catalog and the quick start; trainer.js drives one page
+	// that lives outside this directory.
 	for _, asset := range []string{"trainer.css", "trainer.js", "plain.css"} {
 		if info, err := os.Stat(asset); err != nil || info.Size() == 0 {
 			t.Errorf("asset %s is missing or empty: %v", asset, err)

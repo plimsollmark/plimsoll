@@ -197,7 +197,9 @@ interpreter (one `docker exec` or one OpenShell exec stream held open, so a warm
 no process) live in [sandbox/internal/sessionkit](sandbox/internal/sessionkit/) and travel in argv, so an image
 needs only `node` (and `python3` for Python); the sweep keeps each live interpreter by PID,
 start time and command line and kills its children; a deadline kills it. Which languages an
-image runs is proven by each provider's smoke test and stated on `PayloadEnvironment.languages`. Every call of a session runs in one work directory
+image runs is found by each provider's smoke test (the interpreter starts and prints) and stated
+on `PayloadEnvironment.languages`; with sessions on, the session smoke test then runs a cell that
+keeps state in each, and refuses a stated language it has no check for. Every call of a session runs in one work directory
 (docker `/work`, openshell `/tmp/work`), so a snippet finds what a project wrote. Every
 implementation runs the conformance suite in [sandbox/sessiontest](sandbox/sessiontest/) and
 states sessions only once it passes; openshell and docker do (their call boundaries:
@@ -372,7 +374,8 @@ host or a remote service (docker, e2b, dockercloud, openshell) runs a startup
 **`SmokeTest`** (behavior, not just configuration) via `EnsureReady`, and none
 serves if it fails. With sessions enabled, plimsolld then runs `sandbox.SessionSmokeTest`
 on one real session (the sweep kills a process a call left, files survive calls and a
-suspend, a cell's interpreter keeps state or says it is fresh, close ends it), and a
+suspend, a cell's interpreter keeps state in every stated language and after a suspend keeps
+it or says it is fresh, close ends it), and a
 failure refuses startup too. wasm has none, and its startup check is configuration only: its
 boundary is wazero library code compiled into plimsolld (the per-run memory cap, no
 network API), the same on every host, so the gate's tests (`TestWasmMemoryLimitEnforced`,

@@ -87,16 +87,20 @@ func TestArchitectureProviderTiers(t *testing.T) {
 	}
 }
 
-// trainerProse is every page a reader can reach, including the two that live
-// outside this directory. Missing files are skipped: the public export does not
-// contain the private ones, and failing its build for a file it never had would be
-// a false alarm, not a finding.
+// extraTrainerProse names pages outside this directory that the guards below also
+// read. It is empty here: a test file that never ships registers its own pages in an
+// init function, so their paths stay out of the published tree.
+var extraTrainerProse []string
+
+// trainerProse is every page a reader can reach from this directory, plus the pages
+// in extraTrainerProse. Missing files are skipped, so a page a working copy does not
+// have is not a false alarm.
 func trainerProse(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	names := append([]string{}, trainerPages...)
-	names = append(names, "index.html", "quick-start.html", "glossary.html", "trainer.js",
-		"../../private/positioning/docker-agent-boundaries.html")
+	names = append(names, "index.html", "quick-start.html", "glossary.html", "trainer.js")
+	names = append(names, extraTrainerProse...)
 	for _, name := range names {
 		raw, err := os.ReadFile(name)
 		if os.IsNotExist(err) {
