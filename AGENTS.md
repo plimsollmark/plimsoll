@@ -239,9 +239,10 @@ the verified execution state and its relays are attached; it is never returned o
 `SessionOptions.Languages` (wire `languages`) is a latency hint, checked by
 `sandbox.SessionLanguages` (an unknown name refused, an unstated one dropped): a claim takes
 the member warming the most hinted languages, and the pool divides its size across language
-sets by a decaying weight of the hints it sees (no hint = every language), rebalancing one
-member at a time and only when a move is worth more than 1.25 members (`poolMoveMargin`), so
-alternating hints never churn the pool; hints never add members. A
+sets by a decaying weight of the hints it sees (no hint = every language; one open moves a
+set's share by at most a quarter member), rebalancing one member at a time and only when a
+move is worth more than 1.75 members (1 + `poolMoveMargin`), so hints that take turns never
+churn the pool; hints never add members. A
 member's lifetime label covers 30 minutes of waiting plus `SANDBOX_SESSION_LIFETIME`, and a
 member idle 30 minutes is replaced. With the pool on, the startup session smoke test runs
 on a claimed member.
@@ -279,7 +280,8 @@ code pass its own exit for docker's: a docker snippet's node, in a run or a sess
 call, writes a per-call start marker to stderr from an `--import` preload before the
 script runs (stripped from the result), and a call whose stderr starts with it is a
 result whatever its exit code; only one without it can be docker's (125, 126 or 127 for
-`docker run`; in a session any non-zero exit, since `docker exec`'s own failures exit 1). A
+`docker run`; in a session any non-zero exit, since `docker exec`'s own failures exit 1, so
+Preflight refuses an image whose ENV makes node write first, `NODE_DEBUG`). A
 session call whose exit may be docker's is also checked against the container: paused,
 stopped, gone or unreadable ends the session. A docker session finds its container gone
 by an ID-filtered listing, never by docker's wording, and a read-back docker cannot
@@ -429,7 +431,8 @@ host or a remote service (docker, e2b, dockercloud, openshell) runs a startup
 serves if it fails. With sessions enabled, plimsolld then runs `sandbox.SessionSmokeTest`
 on one real session (the sweep kills a process a call left, files survive calls and a
 suspend, a cell's interpreter keeps state in every stated language and after a suspend keeps
-it or says it is fresh, a call cannot open a running relay's pipes, close ends it), and a
+it or says it is fresh, a call cannot open a running relay's pipes, a failing call is a
+result with its exit code, close ends it), and a
 failure refuses startup too. wasm has none, and its startup check is configuration only: its
 boundary is wazero library code compiled into plimsolld (the per-run memory cap, no
 network API), the same on every host, so the gate's tests (`TestWasmMemoryLimitEnforced`,

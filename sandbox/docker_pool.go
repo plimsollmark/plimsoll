@@ -47,20 +47,24 @@ const dockerPoolMaxIdle = 30 * time.Minute
 // and per language a launch (whose script gives up after 20 seconds) and a relay.
 const dockerPoolAddBudget = 2 * time.Minute
 
-// poolDemandRate is the weight an open gives its language set; every other set's
-// weight shrinks by the same share, so the split follows roughly the last 16 to 32
+// poolDemandRate is the most weight an open gives its language set; every set's
+// weight first shrinks by the same share. A pool of more than 4 gives 1/(4 size)
+// instead (rate), so one open moves a set's share of the pool by at most a quarter
+// member whatever the size, and the split follows roughly the last max(16, 4 x size)
 // opens: long enough that one odd caller moves no member, short enough that a change
-// in what callers run moves the pool within a few dozen sessions.
+// in what callers run moves the pool within a few turnovers of it.
 const poolDemandRate = 1.0 / 16
 
 // poolMoveMargin is how much more than one member a move must be worth before
 // rebalance makes it: the deficit of the set below its share and the surplus of the
-// set above it, in members, must sum to more than 1 + poolMoveMargin. Moving one
-// member brings that sum down by up to 2, so a move worth just over 1 only trades
-// which set is off by half a member; demand alternating between two sets then never
-// moves a member (in a pool of 1, the member stays put until one set holds more than
-// about 62% of the weight).
-const poolMoveMargin = 0.25
+// set above it, in members, must sum to more than 1 + poolMoveMargin. Moving one member
+// brings that sum down by up to 2, so a move worth just over 1 only trades which set is
+// off by half a member, and since one open moves a share by at most a quarter member,
+// demand that cycles (two or three sets in turn, or runs of a few opens each) leaves
+// the pool where it is; simulated over sizes 1 to 32, it moved no member once settled,
+// and random hints cost under 0.02 extra container starts per open. A pool of 1 moves
+// its member only once one set holds more than 87.5% of the weight.
+const poolMoveMargin = 0.75
 
 var errPoolStopped = errors.New("docker: the session pool stopped")
 
@@ -81,10 +85,10 @@ type dockerPool struct {
 	ready []*dockerSession // oldest first
 	// demand is the decaying weight of each language set (languageSetKey) opens asked
 	// for. The weights sum to at most 1, and a set whose weight falls below a quarter
-	// of one open's (a quarter of one member's share, in a pool of more than 16) is
-	// forgotten, which bounds the table at max(64, 4 x size) sets. The floor is never
-	// above one open's weight: a set would otherwise be forgotten at the next open of
-	// another, however often it is asked for.
+	// of one open's is forgotten (about 22 opens after it was last asked for, in a pool
+	// of 4 or fewer, if it was asked for once). The floor is below one open's weight: a
+	// set would otherwise be forgotten at the next open of another, however often it is
+	// asked for.
 	demand map[string]float64
 }
 
@@ -117,18 +121,22 @@ func poolShares(demand map[string]float64, size int) map[string]float64 {
 // observe records that a session opened wanting set.
 func (p *dockerPool) observe(set []Language) {
 	key := languageSetKey(set)
-	floor := min(1/(4*float64(p.size)), poolDemandRate/4)
+	rate := p.rate()
+	floor := rate / 4
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for k, w := range p.demand {
-		if w *= 1 - poolDemandRate; w < floor && k != key {
+		if w *= 1 - rate; w < floor && k != key {
 			delete(p.demand, k)
 		} else {
 			p.demand[k] = w
 		}
 	}
-	p.demand[key] += poolDemandRate
+	p.demand[key] += rate
 }
+
+// rate is the weight one open gives its set (poolDemandRate).
+func (p *dockerPool) rate() float64 { return min(poolDemandRate, 1/(4*float64(p.size))) }
 
 // gaps compares the ready members of each language set with the set's exact share:
 // want is the set furthest below its share and need how many members it lacks; spare
@@ -189,7 +197,16 @@ func (d *DockerSandbox) StartSessionPool(ctx context.Context, size int, lifetime
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
 		demand: map[string]float64{all: 1}}
 	p.discard = p.remove
-	if !d.pool.CompareAndSwap(nil, p) {
+	// Under the lock Drain sets draining with, so a Drain either finds this pool and
+	// stops it or has already begun, and the pool is refused.
+	d.sessions.mu.Lock()
+	draining := d.sessions.draining
+	installed := !draining && d.pool.CompareAndSwap(nil, p)
+	d.sessions.mu.Unlock()
+	if draining {
+		return errDraining
+	}
+	if !installed {
 		return errors.New("docker: the session pool is already started")
 	}
 	if err := p.start(ctx); err != nil {
@@ -224,20 +241,7 @@ func (p *dockerPool) add(ctx context.Context) error {
 	if len(stated) == 0 {
 		return errors.New("no interpreter languages are known for the project image (run EnsureReady first)")
 	}
-	p.mu.Lock()
-	want, _, _, _ := p.gaps()
-	p.mu.Unlock()
-	// A set names only languages the image stated when it was asked for; one the
-	// image no longer states is dropped, and a set left empty is every language.
-	var langs []Language
-	for _, l := range stated {
-		if slices.Contains(strings.Split(want, ","), string(l)) {
-			langs = append(langs, l)
-		}
-	}
-	if len(langs) == 0 {
-		langs = stated
-	}
+	langs := p.next(stated)
 	born := p.now()
 	s, err := p.d.newSessionContainer(ctx, state, born.Add(dockerPoolMaxIdle+p.lifetime))
 	if err != nil {
@@ -261,6 +265,32 @@ func (p *dockerPool) add(ctx context.Context) error {
 	}
 	p.ready = append(p.ready, s)
 	return nil
+}
+
+// next is the language set the next member warms: the set furthest below its share,
+// less any language the image no longer states (an embedder's later EnsureReady may
+// find fewer), or every stated language when nothing is left. When that is not the set
+// asked for, the asked-for set's weight moves to it, so the table names only sets the
+// pool can make: otherwise the member counts as a set nobody wants, and a full pool
+// removes it and makes the same set again, with no backoff, until the old weight fades.
+func (p *dockerPool) next(stated []Language) []Language {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	want, _, _, _ := p.gaps()
+	var langs []Language
+	for _, l := range stated {
+		if slices.Contains(strings.Split(want, ","), string(l)) {
+			langs = append(langs, l)
+		}
+	}
+	if len(langs) == 0 {
+		langs = slices.Clone(stated)
+	}
+	if made := languageSetKey(langs); want != "" && made != want {
+		p.demand[made] += p.demand[want]
+		delete(p.demand, want)
+	}
+	return langs
 }
 
 // usable reports whether s may be handed to a session made under key that ends at
@@ -464,8 +494,12 @@ func (p *dockerPool) close(ctx context.Context) error {
 	var err error
 	select {
 	case <-p.done:
-	case <-ctx.Done():
-		err = fmt.Errorf("docker: the session pool is still making a member: %w", ctx.Err())
+	default:
+		select {
+		case <-p.done:
+		case <-ctx.Done():
+			err = fmt.Errorf("docker: the session pool is still making a member: %w", ctx.Err())
+		}
 	}
 	p.mu.Lock()
 	ready := p.ready
@@ -490,3 +524,4 @@ func (p *dockerPool) members() []string {
 	}
 	return names
 }
+

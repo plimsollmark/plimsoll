@@ -17,6 +17,8 @@ import (
 type smokeScript struct {
 	langs  []Language
 	js     []string
+	jsExit map[int]int   // the exit code of the nth snippet, when not 0
+	jsErr  map[int]error // the error the nth snippet returns instead of a result
 	cells  []CellResult
 	mu     sync.Mutex
 	nJS    int
@@ -42,9 +44,12 @@ func (s *smokeScript) RunProject(context.Context, ProjectRequest) (ProjectResult
 func (s *smokeScript) RunJavaScript(context.Context, Request) (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := s.js[s.nJS]
+	n := s.nJS
 	s.nJS++
-	return Result{Stdout: out + "\n"}, nil
+	if err := s.jsErr[n]; err != nil {
+		return Result{}, err
+	}
+	return Result{Stdout: s.js[n] + "\n", ExitCode: s.jsExit[n]}, nil
 }
 
 func (s *smokeScript) RunCell(context.Context, CellRequest) (CellResult, error) {
@@ -74,7 +79,8 @@ func (s *smokeScript) Err() error {
 func TestSessionSmokeTestChecks(t *testing.T) {
 	good := func() *smokeScript {
 		return &smokeScript{
-			js: []string{"4242", "gone kept", "1 ", "kept"},
+			js:     []string{"4242", "gone kept", "1 ", "kept", ""},
+			jsExit: map[int]int{4: 3},
 			cells: []CellResult{
 				{},
 				{Stdout: "42\n"},
@@ -97,6 +103,8 @@ func TestSessionSmokeTestChecks(t *testing.T) {
 		{"a suspend loses the file", func(s *smokeScript) { s.js[3] = "" }, "want it kept"},
 		{"a fresh interpreter not said", func(s *smokeScript) { s.cells[2] = CellResult{Stdout: "'undefined'\n"} }, "saying its interpreter is fresh: false"},
 		{"a fresh interpreter said", func(s *smokeScript) { s.cells[2] = CellResult{Stdout: "'undefined'\n", InterpreterStarted: true} }, ""},
+		{"a failing call is an error", func(s *smokeScript) { s.jsErr = map[int]error{4: errors.New("docker could not run the call")} }, "came back as an error, not a result"},
+		{"a failing call's exit is lost", func(s *smokeScript) { s.jsExit = nil }, "came back with exit 0"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := good()
@@ -116,7 +124,7 @@ func TestSessionSmokeTestChecks(t *testing.T) {
 // and refuses a stated language it has no check for.
 func TestSessionSmokeTestRunsEveryStatedLanguage(t *testing.T) {
 	script := func(langs []Language, cells ...CellResult) *smokeScript {
-		return &smokeScript{langs: langs, js: []string{"4242", "gone kept", "2 ", "kept"}, cells: cells, done: make(chan struct{})}
+		return &smokeScript{langs: langs, js: []string{"4242", "gone kept", "2 ", "kept", ""}, jsExit: map[int]int{4: 3}, cells: cells, done: make(chan struct{})}
 	}
 	both := []Language{LanguageJavaScript, LanguagePython}
 	for _, c := range []struct {

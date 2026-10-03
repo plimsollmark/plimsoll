@@ -194,6 +194,12 @@ var imageEnvLoaders = map[string]bool{
 	"PYTHONPYCACHEPREFIX": true, "NODE_COMPILE_CACHE": true,
 }
 
+// imageEnvEarlyStderr make node write to stderr before the preload that writes a
+// call's start marker (NODE_DEBUG=esm does, checked with node 22), so no call would
+// start with it: a failing session snippet would read as docker's failure, an error
+// that says it may have run, instead of its exit code.
+var imageEnvEarlyStderr = map[string]bool{"NODE_DEBUG": true, "NODE_DEBUG_NATIVE": true}
+
 // imageEnvPathLists are searched for code, one directory per entry; an image may set
 // them only to absolute directories on its read-only root.
 var imageEnvPathLists = map[string]bool{
@@ -207,12 +213,16 @@ var guestWritable = []string{"/tmp", "/work", "/dev", "/proc", "/sys", "/run", "
 
 // checkImageEnv refuses an image environment that could load code guest code wrote:
 // a loader variable (imageEnvLoaders, or any LD_ or DYLD_ variable), or a search path
-// with an entry that is relative or inside a place guest code can write.
+// with an entry that is relative or inside a place guest code can write; and one that
+// makes node write before a call's start marker (imageEnvEarlyStderr).
 func checkImageEnv(env []string) error {
 	for _, kv := range env {
 		name, value, _ := strings.Cut(kv, "=")
 		if imageEnvLoaders[name] || strings.HasPrefix(name, "LD_") || strings.HasPrefix(name, "DYLD_") {
 			return fmt.Errorf("the image sets %s, which makes a program load code or change what it trusts before plimsoll's checks run; refused (bake the setting into the toolchain's own files instead)", name)
+		}
+		if imageEnvEarlyStderr[name] {
+			return fmt.Errorf("the image sets %s, which makes node write to stderr before plimsoll's start marker, so a failing call could not be told from docker's own failure; refused", name)
 		}
 		if !imageEnvPathLists[name] {
 			continue

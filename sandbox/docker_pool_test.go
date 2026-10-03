@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"math"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -104,21 +105,87 @@ func TestPoolDemandFollowsObservedHints(t *testing.T) {
 	}
 }
 
-// Callers that alternate between two languages keep both sets in the table and, once
-// the split has settled, cost one container per open (the claimed one's replacement),
-// never a rebalance; with two or more members each open finds its language warm. Before
-// the fix a pool of 4 or fewer forgot every set but the last one asked for (one open's
-// weight was below the forget floor after a single decay), so each open moved the whole
-// pool to the language the next open did not want; a pool of 1 also flipped its one
-// member on every open as two near-equal weights crossed.
-func TestPoolAlternatingHintsDoNotChurn(t *testing.T) {
-	js, py := []Language{LanguageJavaScript}, []Language{LanguagePython}
-	for _, size := range []int{1, 2, 3, 4, 8} {
-		removed := 0
-		p := &dockerPool{size: size, demand: map[string]float64{"javascript,python": 1},
-			discard: func(*dockerSession) { removed++ }}
-		// fill is the filler's loop (run): rebalance only a full pool, else add one
-		// member of the set furthest below its share.
+// Callers that cycle through languages keep every set they ask for in the table and,
+// once the split has settled, cost one container per open (the claimed one's
+// replacement), never a rebalance: alternating JavaScript and Python, rotating through
+// JavaScript, Python and no hint (every language), two JavaScript opens to one Python,
+// and runs of three and of five opens of each, in pools of 1 to 32. With two or more
+// members an alternating open always finds its language warm. Before the fixes a pool
+// of 4 or fewer forgot every set but the last one asked for (one open's weight fell
+// below the forget floor after a single decay), so each open moved the whole pool; and
+// with a fixed rate of 1/16 an open swung a set's share by up to size/16 members, so
+// larger pools moved a member on every open or every run, even for two sets alternating.
+func TestPoolCyclingHintsDoNotChurn(t *testing.T) {
+	js, py, all := []Language{LanguageJavaScript}, []Language{LanguagePython}, []Language{LanguageJavaScript, LanguagePython}
+	patterns := map[string][][]Language{
+		"alternating":   {js, py},
+		"rotating":      {js, py, all},
+		"two to one":    {js, js, py},
+		"runs of three": {js, js, js, py, py, py},
+		"runs of five":  {js, js, js, js, js, py, py, py, py, py},
+	}
+	for name, pattern := range patterns {
+		for size := 1; size <= 32; size++ {
+			removed := 0
+			p := &dockerPool{size: size, demand: map[string]float64{"javascript,python": 1},
+				discard: func(*dockerSession) { removed++ }}
+			// fill is the filler's loop (run): rebalance only a full pool, else add one
+			// member of the set furthest below its share.
+			fill := func() {
+				for {
+					if !p.short() {
+						if !p.rebalance() {
+							return
+						}
+						continue
+					}
+					p.mu.Lock()
+					want, _, _, _ := p.gaps()
+					p.ready = append(p.ready, &dockerSession{warm: strings.Split(want, ",")})
+					p.mu.Unlock()
+				}
+			}
+			fill()
+			hits := 0
+			// 1000 opens settle the split: a pool of 32 forgets the starting set only
+			// after about 800.
+			for i := range 1150 {
+				want := pattern[i%len(pattern)]
+				p.observe(want)
+				p.mu.Lock()
+				got := p.ready[closestMember(p.ready, want)]
+				p.ready = slices.DeleteFunc(p.ready, func(s *dockerSession) bool { return s == got })
+				p.mu.Unlock()
+				if i == 1000 {
+					removed, hits = 0, 0
+				}
+				if slices.Equal(got.warm, languageNames(want)) {
+					hits++
+				}
+				fill()
+			}
+			for _, w := range pattern {
+				if _, ok := p.demand[languageSetKey(w)]; !ok {
+					t.Errorf("%s, size %d: %v was forgotten though it is asked for every %d opens: %v", name, size, w, len(pattern), p.demand)
+				}
+			}
+			if removed != 0 {
+				t.Errorf("%s, size %d: %d members removed by rebalancing in the last 150 opens; want none", name, size, removed)
+			}
+			if name == "alternating" && size >= 2 && hits != 150 {
+				t.Errorf("%s, size %d: %d of the last 150 opens found exactly their language warm; want all", name, size, hits)
+			}
+		}
+	}
+}
+
+// The margin that keeps cycling demand from moving members does not freeze the pool:
+// once sessions ask only for Python, the pool turns to Python within a few turnovers,
+// short only of the members the old set's fading weight still earns.
+func TestPoolFollowsARealShift(t *testing.T) {
+	py := []Language{LanguagePython}
+	for _, size := range []int{1, 2, 4, 8, 16, 32} {
+		p := &dockerPool{size: size, demand: map[string]float64{"javascript,python": 1}, discard: func(*dockerSession) {}}
 		fill := func() {
 			for {
 				if !p.short() {
@@ -127,46 +194,57 @@ func TestPoolAlternatingHintsDoNotChurn(t *testing.T) {
 					}
 					continue
 				}
-				p.mu.Lock()
 				want, _, _, _ := p.gaps()
 				p.ready = append(p.ready, &dockerSession{warm: strings.Split(want, ",")})
-				p.mu.Unlock()
 			}
 		}
 		fill()
-		hits := 0
-		for i := range 200 {
-			want := js
-			if i%2 == 1 {
-				want = py
-			}
-			p.observe(want)
-			p.mu.Lock()
-			got := p.ready[closestMember(p.ready, want)]
+		for range 12 * size {
+			p.observe(py)
+			got := p.ready[closestMember(p.ready, py)]
 			p.ready = slices.DeleteFunc(p.ready, func(s *dockerSession) bool { return s == got })
-			p.mu.Unlock()
-			if i == 100 {
-				removed = 0
-				hits = 0
-			}
-			if slices.Contains(got.warm, string(want[0])) {
-				hits++
-			}
 			fill()
 		}
-		if _, ok := p.demand["javascript"]; !ok {
-			t.Errorf("size %d: JavaScript was forgotten though every other open asks for it: %v", size, p.demand)
+		n := 0
+		for _, s := range p.ready {
+			if slices.Equal(s.warm, []string{"python"}) {
+				n++
+			}
 		}
-		if _, ok := p.demand["python"]; !ok {
-			t.Errorf("size %d: Python was forgotten though every other open asks for it: %v", size, p.demand)
-		}
-		if removed != 0 {
-			t.Errorf("size %d: %d members removed by rebalancing in the last 100 alternating opens; want none", size, removed)
-		}
-		if size >= 2 && hits != 100 {
-			t.Errorf("size %d: %d of the last 100 opens found their language warm; want all", size, hits)
+		if want := size - 1 - size/16; n < want {
+			t.Errorf("size %d: %d Python members after %d Python opens; want at least %d", size, n, 12*size, want)
 		}
 	}
+}
+
+// When the image no longer runs a language the table still asks for (an embedder's
+// second EnsureReady found no Python), the pool makes what it can and settles: before
+// the fix the member it made counted as a set nobody wanted, so a full pool removed it
+// and made the same set again, with no backoff, until the old set's weight faded.
+func TestPoolSettlesWhenASetCannotBeMade(t *testing.T) {
+	stated := []Language{LanguageJavaScript}
+	moves := 0
+	p := &dockerPool{size: 2, demand: map[string]float64{"javascript,python": 1}, discard: func(*dockerSession) { moves++ }}
+	for range 100 {
+		if !p.short() {
+			if !p.rebalance() {
+				break
+			}
+			continue
+		}
+		p.ready = append(p.ready, &dockerSession{warm: languageNames(p.next(stated))})
+	}
+	if moves > p.size || p.short() || p.rebalance() {
+		t.Fatalf("the pool moved %d members and has not settled (ready %d, demand %v); want at most %d moves", moves, len(p.ready), p.demand, p.size)
+	}
+}
+
+func languageNames(langs []Language) []string {
+	out := make([]string, len(langs))
+	for i, l := range langs {
+		out[i] = string(l)
+	}
+	return out
 }
 
 // A claim takes the member warming the most of the hinted languages, then the one
@@ -277,5 +355,39 @@ func TestPoolThatFailsToStartHasNoFillerToWaitFor(t *testing.T) {
 	case <-p.done:
 	default:
 		t.Fatal("the pool failed to start but done is still open, so close would wait forever")
+	}
+}
+
+// A Drain whose pool's filler did not stop in time returns the pool's error and leaves
+// no goroutine waiting for removals: the filler can still add one (it removes the
+// member it was making once it sees the pool stopped), and a WaitGroup must not be
+// added to from zero while it is waited on. Before the fix Drain went on to wait.
+func TestDrainLeavesNoWaitBehindAPoolStillFilling(t *testing.T) {
+	d := DefaultDocker("")
+	d.pool.Store(&dockerPool{d: d, stop: make(chan struct{}), done: make(chan struct{}), discard: func(*dockerSession) {}})
+	d.sessions.deletes.Add(1) // a removal still in flight
+	defer d.sessions.deletes.Done()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := d.Drain(ctx); err == nil || !strings.Contains(err.Error(), "still making a member") {
+		t.Fatalf("Drain = %v; want the pool's error", err)
+	}
+	buf := make([]byte, 1<<20)
+	if stacks := string(buf[:runtime.Stack(buf, true)]); strings.Contains(stacks, "(*DockerSandbox).Drain.func") {
+		t.Fatalf("Drain left a goroutine behind:\n%s", stacks)
+	}
+}
+
+// A pool started after Drain is refused: nothing would stop its filler, which would
+// keep making containers for a daemon that is shutting down.
+func TestPoolStartedAfterDrainIsRefused(t *testing.T) {
+	d := DefaultDocker("")
+	d.projectLanguages = []Language{LanguageJavaScript}
+	if err := d.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	err := d.StartSessionPool(context.Background(), 1, time.Minute)
+	if !errors.Is(err, errDraining) || d.pool.Load() != nil {
+		t.Fatalf("StartSessionPool after Drain = %v (pool installed %v); want refused as shutting down", err, d.pool.Load() != nil)
 	}
 }

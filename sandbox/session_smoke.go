@@ -29,6 +29,10 @@ import (
 //   - after a suspend, the call that resumes the session finds the file, and a cell's
 //     interpreter is either the one that holds the definition or one that says it is
 //     new;
+//   - a call whose code fails comes back as a result with its exit code, not an error:
+//     a provider that cannot tell the code's exit from its own failure (on docker, an
+//     image whose node writes to stderr before the call's start marker) would turn
+//     every failing call into an error that says it may have run;
 //   - Close ends the session, and Done closes.
 //
 // It creates one sandbox and removes it, so a daemon runs it once at startup, never
@@ -133,6 +137,14 @@ console.log(state + " " + fs.readFileSync("plimsoll-session-smoke.txt", "utf8"))
 	}
 	if got, want := strings.TrimSpace(res.Stdout), map[bool]string{true: "'undefined'", false: "'number'"}[res.InterpreterStarted]; got != want {
 		return fmt.Errorf("session smoke: after the resume a cell saw %.80q while saying its interpreter is fresh: %v", got, res.InterpreterStarted)
+	}
+
+	failed, err := s.RunJavaScript(ctx, Request{Code: `console.error("plimsoll smoke: a failing call"); process.exitCode = 3`, Timeout: 30 * time.Second})
+	if err != nil {
+		return fmt.Errorf("session smoke: a call whose code exits 3 came back as an error, not a result: %w", err)
+	}
+	if failed.ExitCode != 3 || failed.TimedOut {
+		return fmt.Errorf("session smoke: a call whose code exits 3 came back with exit %d, timed out %v", failed.ExitCode, failed.TimedOut)
 	}
 
 	if err := s.Close(ctx); err != nil {

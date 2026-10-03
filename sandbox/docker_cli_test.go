@@ -95,6 +95,8 @@ func TestCheckImageEnv(t *testing.T) {
 		// later reads cached compiled code for every module, the runner's included).
 		"PATH=//tmp:/usr/bin", "PATH=/usr/../tmp", "NODE_PATH=/./work/node_modules", "PYTHONPATH=/opt/../work",
 		"NODE_COMPILE_CACHE=/tmp/cc", "NODE_COMPILE_CACHE=/opt/cache",
+		// node writes these before a call's start marker.
+		"NODE_DEBUG=esm", "NODE_DEBUG_NATIVE=fs",
 	} {
 		if err := checkImageEnv([]string{"PATH=/usr/bin", bad}); err == nil {
 			t.Errorf("%s was accepted", bad)

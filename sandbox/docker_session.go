@@ -1098,16 +1098,20 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 	d.sessions.mu.Lock()
 	d.sessions.draining = true
 	d.sessions.mu.Unlock()
-	poolErr := d.pool.Load().close(ctx)
 	opened := make(chan struct{})
 	go func() {
 		d.sessions.opening.Wait()
 		close(opened)
 	}()
+	poolErr := d.pool.Load().close(ctx)
 	select {
 	case <-opened:
-	case <-ctx.Done():
-		return fmt.Errorf("docker: sessions still opening: %w", ctx.Err())
+	default:
+		select {
+		case <-opened:
+		case <-ctx.Done():
+			return fmt.Errorf("docker: sessions still opening: %w", ctx.Err())
+		}
 	}
 	d.sessions.mu.Lock()
 	open := make([]*dockerSession, 0, len(d.sessions.open))
@@ -1118,6 +1122,11 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 	for _, s := range open {
 		s.finish(SessionShutdown, "")
 	}
+	if poolErr != nil {
+		// The filler is still running and will remove the member it was making, an Add
+		// to deletes that must not race a Wait; the context has ended anyway.
+		return poolErr
+	}
 	done := make(chan struct{})
 	go func() {
 		d.sessions.deletes.Wait()
@@ -1125,7 +1134,7 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
-		return poolErr
+		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("docker: session containers still being removed: %w", ctx.Err())
 	}
