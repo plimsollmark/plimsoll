@@ -437,38 +437,38 @@ A docker session is the container a project run gets, kept for the session:
     handed the waiting container that runs the most of its hinted languages, then the one
     running the fewest others, then the oldest; any waiting container beats creating one,
     since the container is most of the cold cost. A session without a hint counts as
-    wanting every language. The pool also divides its size across language sets by what
-    sessions ask for. Each open the daemon does not refuse first shrinks every set's
-    weight by a small rate and then adds that rate to its own set; a refused open counts
-    for nothing. The rate is 1/16, or 1/(4 x pool size) in a pool of more
-    than 4, so one open moves a set's share by about a quarter of a container at most and
-    the split follows roughly the last 16 sessions, or the last 4 x pool size. A set whose
-    weight falls below a quarter of one open's is forgotten (in a pool of 4 or fewer,
-    about 22 opens after it was last asked for, if it was asked for once).
+    wanting every language.
+  - **A pool of 4 or fewer does not split.** Every waiting container warms every
+    language the image runs, so every session finds its languages warm whatever callers
+    ask for, as before hints existed. Splitting so few containers cost more than it
+    saved: in simulation, a split pool of 1 to 3 found a language fewer than a quarter
+    of sessions asked for, or a burst of opens, warm 75 to 91% of the time, to save at
+    most a few idle interpreters.
+  - **A pool of 5 or more divides its size across language sets** by what sessions ask
+    for. Each open the daemon does not refuse first shrinks every set's weight by a small
+    rate and then adds that rate to its own set; a refused open counts for nothing. The
+    rate is 1/(4 x pool size), so one open moves a set's share by about a quarter of a
+    container at most and the split follows roughly the last 4 x pool size sessions. A
+    set whose weight falls below a quarter of one open's is forgotten.
   - Claims and refills follow the split by themselves: a claim takes the waiting container
     closest to its hint, and its replacement warms the set furthest below its share. A
-    pool with fewer containers than the sets holding at least a quarter of the weight
-    does not split: each container warms the languages of all of them, so sessions that
-    take turns between two or three language sets find theirs warm even in a pool of 1
-    or 2. A language fewer than a quarter of recent sessions ask for may wait for its
-    interpreter: in a pool of 1 serving three JavaScript sessions to every Python one,
-    the Python session's interpreter starts when it asks, in a container that is already
-    running. Concurrent opens that empty a split pool can find their language cold the
-    same way.
+    language fewer than a quarter of recent sessions ask for may wait for its
+    interpreter, which starts when the session asks, in a container that is already
+    running; concurrent opens that empty the pool can find their language cold the same
+    way.
   - A container of a set fewer than a quarter of recent sessions ask for is one claims
     seldom take, so the pool also replaces such containers itself: at most one a minute,
-    and only when the shift is
-    clear (what the set furthest below its share lacks and what the set furthest above
-    its share holds beyond it add up to more than 1.75 containers, a share counting
-    fractions of a container). Rebalancing therefore costs at most one container start a
-    minute whatever callers ask for, and demand that takes turns (two or three sets in
-    turn, or runs of up to five sessions each) costs nothing beyond the claimed
-    container's replacement. In simulation, sessions alternating or rotating found their
-    languages warm every time at pool sizes 1 to 32, and random hints (one session a
-    second) cost under 0.02 extra container starts per session. Hints move
-    containers between sets and never add any: `SANDBOX_SESSION_POOL` still bounds how many
-    wait, and so the memory. Callers that send no hints see every container warm every
-    language, as before hints existed.
+    and only when the shift is clear (what the set furthest below its share lacks and
+    what the set furthest above its share holds beyond it add up to more than 1.75
+    containers, a share counting fractions of a container). Rebalancing therefore costs
+    at most one container start a minute whatever callers ask for, and demand that takes
+    turns (two or three sets in turn, or runs of up to five sessions each) costs nothing
+    beyond the claimed container's replacement. In simulation at sizes 5 to 32, sessions
+    alternating or rotating found their languages warm every time, and random hints (one
+    session a second) cost under 0.02 extra container starts per session. Hints move
+    containers between sets and never add any: `SANDBOX_SESSION_POOL` still bounds how
+    many wait, and so the memory. Callers that send no hints see every container warm
+    every language.
   - At startup, the session check runs on a container from the pool, so the warm path is
     the one startup proves.
 

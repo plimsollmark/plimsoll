@@ -227,46 +227,39 @@ func TestPoolCyclingHintsDoNotChurn(t *testing.T) {
 	}
 }
 
-// A pool with fewer members than the language sets sessions ask for does not split:
-// every member warms the languages of every set holding at least a quarter of the
-// weight, so whichever comes next finds its languages warm. Before the fix a pool of 1
-// warmed only the set narrowly ahead, which was the one the last session asked for and
-// so never the next one's (0 of 200 alternating opens warm), and a pool of 2 with three
-// sets in turn found two of three. A set asked for almost alone still gets members of
-// its own.
-func TestPoolSmallerThanItsDemandWarmsTheUnion(t *testing.T) {
+// A pool of 4 or fewer does not split: every member warms every language the image
+// runs, so every session finds its languages warm whatever the mix, and a pool of 5 or
+// more is the smallest that divides by demand. Before,
+// a split pool of 1 warmed the set narrowly ahead (0 of 200 alternating opens warm), a
+// pool of 2 with three sets in turn found two in three, and a language under a quarter
+// of the demand, or a burst, found a split pool of 1 to 3 warm 75 to 91% of the time.
+func TestPoolOfFourOrFewerWarmsEveryLanguage(t *testing.T) {
 	js, py, all := []Language{LanguageJavaScript}, []Language{LanguagePython}, []Language{LanguageJavaScript, LanguagePython}
-	for _, c := range []struct {
-		size    int
-		pattern [][]Language
-	}{
-		{1, [][]Language{js, py}},
-		{1, [][]Language{js, py, all}},
-		{2, [][]Language{js, py, all}},
-		{2, [][]Language{js, py}},
-		{3, [][]Language{js, py, all}},
-	} {
-		sim := newPoolSim(c.size, []Language{LanguageJavaScript, LanguagePython}, time.Second)
-		for i := range 200 {
-			sim.open(c.pattern[i%len(c.pattern)])
-		}
-		hits := 0
-		for i := range 300 {
-			if sim.open(c.pattern[i%len(c.pattern)]) {
-				hits++
+	for _, pattern := range [][][]Language{{js, py}, {js, py, all}, {js, js, js, py}, runsOf(40, js, py)} {
+		for size := 1; size < poolSplitMinSize; size++ {
+			sim := newPoolSim(size, []Language{LanguageJavaScript, LanguagePython}, time.Second)
+			for i := range 200 {
+				sim.open(pattern[i%len(pattern)])
+			}
+			hits := 0
+			for i := range 300 {
+				if sim.open(pattern[i%len(pattern)]) {
+					hits++
+				}
+			}
+			if hits != 300 || sim.removed != 0 {
+				t.Errorf("size %d, %d hints in turn: %d of 300 opens found their languages warm, %d members moved; want all, none", size, len(pattern), hits, sim.removed)
 			}
 		}
-		if hits != 300 {
-			t.Errorf("size %d, %d sets in turn: %d of 300 opens found their languages warm; want all", c.size, len(c.pattern), hits)
-		}
-		for range 300 {
-			sim.clock = sim.clock.Add(time.Minute)
-			sim.open(py)
-		}
-		for _, m := range sim.p.ready {
-			if !slices.Equal(m.warm, []string{"python"}) {
-				t.Errorf("size %d: after 300 Python opens a member warms %v; want only Python", c.size, m.warm)
-			}
+	}
+	sim := newPoolSim(poolSplitMinSize-1, []Language{LanguageJavaScript, LanguagePython}, time.Second)
+	for range 300 {
+		sim.clock = sim.clock.Add(time.Minute)
+		sim.open(py)
+	}
+	for _, m := range sim.p.ready {
+		if !slices.Equal(m.warm, []string{"javascript", "python"}) {
+			t.Errorf("after 300 Python opens a member of a pool of %d warms %v; want every language", poolSplitMinSize-1, m.warm)
 		}
 	}
 }
@@ -276,9 +269,9 @@ func TestPoolSmallerThanItsDemandWarmsTheUnion(t *testing.T) {
 func TestPoolRebalancesAtMostOnceAMinute(t *testing.T) {
 	now := time.Unix(1e9, 0)
 	removed := 0
-	p := &dockerPool{size: 4, demand: map[string]float64{"python": 1}, now: func() time.Time { return now },
+	p := &dockerPool{size: poolSplitMinSize, demand: map[string]float64{"python": 1}, now: func() time.Time { return now },
 		discard: func(*dockerSession) { removed++ }}
-	for range 4 {
+	for range poolSplitMinSize {
 		p.ready = append(p.ready, &dockerSession{warm: []string{"javascript"}})
 	}
 	if !p.rebalance() || p.rebalance() {
@@ -302,7 +295,7 @@ func TestPoolRebalancesAtMostOnceAMinute(t *testing.T) {
 // JavaScript ones, which no claim takes, go through rebalance.
 func TestPoolFollowsARealShift(t *testing.T) {
 	js, py := []Language{LanguageJavaScript}, []Language{LanguagePython}
-	for _, size := range []int{1, 2, 4, 8, 16, 32} {
+	for _, size := range []int{poolSplitMinSize, 8, 16, 32} {
 		sim := newPoolSim(size, []Language{LanguageJavaScript, LanguagePython}, 10*time.Second)
 		for range 12 * size {
 			sim.open(js)
@@ -312,12 +305,12 @@ func TestPoolFollowsARealShift(t *testing.T) {
 		}
 		n := 0
 		for _, s := range sim.p.ready {
-			if slices.Contains(s.warm, "python") {
+			if slices.Equal(s.warm, []string{"python"}) {
 				n++
 			}
 		}
 		if want := size - 1 - size/16; n < want {
-			t.Errorf("size %d: %d members warm Python after %d Python opens over %v; want at least %d", size, n, 12*size, time.Duration(12*size)*sim.step, want)
+			t.Errorf("size %d: %d members warm Python alone after %d Python opens over %v; want at least %d", size, n, 12*size, time.Duration(12*size)*sim.step, want)
 		}
 	}
 }
@@ -377,15 +370,17 @@ func TestClosestMemberPrefersTheOneWarmingTheHint(t *testing.T) {
 // removes one member of the surplus set, oldest first, and nothing more.
 func TestPoolRebalanceMovesOneMember(t *testing.T) {
 	var removed []string
-	p := &dockerPool{size: 2, demand: map[string]float64{"python": 1}, now: time.Now, discard: func(s *dockerSession) { removed = append(removed, s.name) }}
-	p.ready = []*dockerSession{{name: "old", warm: []string{"javascript", "python"}}, {name: "new", warm: []string{"javascript", "python"}}}
-	if !p.rebalance() || !slices.Equal(removed, []string{"old"}) || len(p.ready) != 1 {
-		t.Fatalf("rebalance removed %v and left %d; want old removed and one left", removed, len(p.ready))
+	p := &dockerPool{size: poolSplitMinSize, demand: map[string]float64{"python": 1}, now: time.Now, discard: func(s *dockerSession) { removed = append(removed, s.name) }}
+	for i := range poolSplitMinSize {
+		p.ready = append(p.ready, &dockerSession{name: fmt.Sprint("both", i), warm: []string{"javascript", "python"}})
 	}
-	p.ready = append(p.ready, &dockerSession{name: "py", warm: []string{"python"}})
-	p.ready = p.ready[1:]
-	p.ready = append(p.ready, &dockerSession{name: "py2", warm: []string{"python"}})
-	removed = nil
+	if !p.rebalance() || !slices.Equal(removed, []string{"both0"}) || len(p.ready) != poolSplitMinSize-1 {
+		t.Fatalf("rebalance removed %v and left %d; want the oldest removed and %d left", removed, len(p.ready), poolSplitMinSize-1)
+	}
+	p.ready, p.lastMove, removed = nil, time.Time{}, nil
+	for i := range poolSplitMinSize {
+		p.ready = append(p.ready, &dockerSession{name: fmt.Sprint("py", i), warm: []string{"python"}})
+	}
 	if p.rebalance() || removed != nil {
 		t.Fatalf("a pool at its shares rebalanced, removing %v", removed)
 	}

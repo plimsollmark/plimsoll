@@ -238,11 +238,10 @@ still reports its interpreter as new), and is handed to `OpenSession` only while
 the verified execution state and its relays are attached; it is never returned or reused.
 `SessionOptions.Languages` (wire `languages`) is a latency hint, checked by
 `sandbox.SessionLanguages` (an unknown name refused, an unstated one dropped): a claim takes
-the member warming the most hinted languages, and the pool divides its size across language
-sets by a decaying weight of the hints it sees (no hint = every language; one open moves a
-set's weight by at most a quarter member's worth); a pool with fewer members than the sets
-holding a quarter of the weight does not split (every member warms all their languages).
-Claims and refills follow the split; rebalance only replaces members of sets holding under
+the member warming the most hinted languages. A pool of 4 or fewer (`poolSplitMinSize`)
+warms every language in every member; a larger one divides its size across language sets by
+a decaying weight of the hints it sees (no hint = every language; one open moves a set's
+weight by at most a quarter member's worth). Claims and refills follow the split; rebalance only replaces members of sets holding under
 a quarter of the weight, at most one a minute (`poolMoveInterval`) and only when a move is
 worth more than 1.75 members (1 + `poolMoveMargin`); hints never add members. A
 member's lifetime label covers 30 minutes of waiting plus `SANDBOX_SESSION_LIFETIME`, and a

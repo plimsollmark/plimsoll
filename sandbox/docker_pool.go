@@ -72,6 +72,14 @@ const poolMoveMargin = 0.75
 // costs at most one container start a minute, whatever callers ask for.
 const poolMoveInterval = time.Minute
 
+// poolSplitMinSize is the smallest pool that divides its members across language sets.
+// A smaller one warms every language the image runs in every member. Measured in
+// simulation on v0.17.3, split pools of 1 to 3 found a language fewer than a quarter
+// of sessions asked for, or a burst of opens, warm 75 to 91% of the time against 100%
+// warming every language, and the most a split of 4 or fewer can save is four idle
+// interpreters.
+const poolSplitMinSize = 5
+
 var errPoolStopped = errors.New("docker: the session pool stopped")
 
 // dockerPool is a docker provider's session pool.
@@ -314,38 +322,15 @@ func (p *dockerPool) asked(set string) bool {
 	return total > 0 && p.demand[set] >= total/4
 }
 
-// target is the demand the pool divides its size by. It is the table, unless the pool
-// has fewer members than the language sets holding at least a quarter of the weight:
-// no split could then give each its own member, so every member warms the languages
-// of all of them (in a pool of 1, sessions alternating two languages would otherwise
-// always find the one the previous session asked for). Call with mu held.
+// target is the demand the pool divides its size by: the table, or in a pool smaller
+// than poolSplitMinSize all of it on every language the image runs. Call with mu held.
 func (p *dockerPool) target() map[string]float64 {
-	total := 0.0
-	for _, w := range p.demand {
-		total += w
-	}
-	var likely []string
-	for k := range p.demand {
-		if p.asked(k) {
-			likely = append(likely, k)
+	if p.size < poolSplitMinSize {
+		if all := languageSetKey(p.stated); all != "" {
+			return map[string]float64{all: 1}
 		}
 	}
-	if len(likely) <= p.size {
-		return p.demand
-	}
-	var union []Language
-	for _, l := range p.stated {
-		for _, k := range likely {
-			if slices.Contains(strings.Split(k, ","), string(l)) {
-				union = append(union, l)
-				break
-			}
-		}
-	}
-	if len(union) == 0 {
-		return p.demand
-	}
-	return map[string]float64{languageSetKey(union): 1}
+	return p.demand
 }
 
 // usable reports whether s may be handed to a session made under key that ends at

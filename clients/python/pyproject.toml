@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plimsoll-client"
-version = "0.17.4"
+version = "0.17.5"
 description = "Client for plimsolld, the plimsoll sandbox daemon, that checks every run record it receives"
 readme = "README.md"
 license = "Apache-2.0"

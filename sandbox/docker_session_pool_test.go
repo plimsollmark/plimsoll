@@ -176,7 +176,8 @@ func TestDockerSessionPoolConformance(t *testing.T) {
 func TestDockerSessionPoolFollowsLanguageHints(t *testing.T) {
 	d := pythonSessionDocker(t)
 	before := sessionContainers(t)
-	startPool(t, d, 2)
+	// 5 is the smallest pool that divides its members across language sets.
+	startPool(t, d, 5)
 	python := []sandbox.Language{sandbox.LanguagePython}
 	open := func() sandbox.Session {
 		t.Helper()
@@ -196,15 +197,15 @@ func TestDockerSessionPoolFollowsLanguageHints(t *testing.T) {
 		}
 	}
 	// Closed sessions' containers are removed off the caller's path, and one of them
-	// can look like a Python member, so wait until only the pool's two members are left:
-	// one warming Python alone, one warming every language. A member joins the pool
+	// can look like a Python member, so wait until only the pool's five members are left:
+	// one warming Python alone, four warming every language. A member joins the pool
 	// once its relays are attached, after its interpreters start; a relay's command
 	// line ends with its interpreter's directory and the work directory, so wait for
 	// that, on two polls in a row.
 	var member, seen string
 	for deadline := time.Now().Add(3 * time.Minute); member == "" && time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
 		names := newContainers(t, before)
-		if len(names) != 2 {
+		if len(names) != 5 {
 			seen = ""
 			continue
 		}
@@ -222,7 +223,7 @@ func TestDockerSessionPoolFollowsLanguageHints(t *testing.T) {
 			}
 		}
 		switch {
-		case len(py) != 1 || len(all) != 1:
+		case len(py) != 1 || len(all) != 4:
 			seen = ""
 		case py[0] == seen:
 			member = seen
@@ -231,7 +232,7 @@ func TestDockerSessionPoolFollowsLanguageHints(t *testing.T) {
 		}
 	}
 	if member == "" {
-		t.Fatalf("after five Python-hinted sessions the pool is not one member warming Python alone and one warming both: %v", newContainers(t, before))
+		t.Fatalf("after five Python-hinted sessions the pool is not one member warming Python alone and four warming both: %v", newContainers(t, before))
 	}
 	s := open()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
