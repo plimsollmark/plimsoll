@@ -240,9 +240,11 @@ the verified execution state and its relays are attached; it is never returned o
 `sandbox.SessionLanguages` (an unknown name refused, an unstated one dropped): a claim takes
 the member warming the most hinted languages, and the pool divides its size across language
 sets by a decaying weight of the hints it sees (no hint = every language; one open moves a
-set's share by at most a quarter member), rebalancing one member at a time and only when a
-move is worth more than 1.75 members (1 + `poolMoveMargin`), so hints that take turns never
-churn the pool; hints never add members. A
+set's share by about a quarter member at most); a pool with fewer members than the sets
+holding a quarter of the weight does not split (every member warms all their languages).
+Claims and refills follow the split; rebalance only replaces members no claim would take,
+at most one a minute (`poolMoveInterval`) and only when a move is worth more than 1.75
+members (1 + `poolMoveMargin`); hints never add members. A
 member's lifetime label covers 30 minutes of waiting plus `SANDBOX_SESSION_LIFETIME`, and a
 member idle 30 minutes is replaced. With the pool on, the startup session smoke test runs
 on a claimed member.

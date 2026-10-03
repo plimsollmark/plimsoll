@@ -708,7 +708,10 @@ func TestRecorderFailureKeepsTheIsolationCheck(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	var recorded int
-	failing := recorderFunc(func(*plimsollv1.RunRequest, *plimsollv1.RunResponse) error { recorded++; return errors.New("disk full") })
+	failing := recorderFunc(func(*plimsollv1.RunRequest, *plimsollv1.RunResponse) error {
+		recorded++
+		return errors.New("disk full")
+	})
 	res, err := newRemote(t, server.URL, WithRecorder(failing)).RunJavaScript(context.Background(), sandbox.Request{
 		Code: "mutate()", MinimumIsolation: sandbox.IsolationVM,
 	})

@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1104,15 +1105,18 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 		close(opened)
 	}()
 	poolErr := d.pool.Load().close(ctx)
+	var openErr error
 	select {
 	case <-opened:
 	default:
 		select {
 		case <-opened:
 		case <-ctx.Done():
-			return fmt.Errorf("docker: sessions still opening: %w", ctx.Err())
+			openErr = fmt.Errorf("docker: sessions still opening: %w", ctx.Err())
 		}
 	}
+	// The sessions already open end either way; an open still in flight is refused
+	// when it finishes, since activate checks draining.
 	d.sessions.mu.Lock()
 	open := make([]*dockerSession, 0, len(d.sessions.open))
 	for s := range d.sessions.open {
@@ -1122,10 +1126,11 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 	for _, s := range open {
 		s.finish(SessionShutdown, "")
 	}
-	if poolErr != nil {
-		// The filler is still running and will remove the member it was making, an Add
-		// to deletes that must not race a Wait; the context has ended anyway.
-		return poolErr
+	if err := cmp.Or(openErr, poolErr); err != nil {
+		// An open in flight or the pool's filler is still running and will remove the
+		// container it was making, an Add to deletes that must not race a Wait; the
+		// context has ended anyway.
+		return err
 	}
 	done := make(chan struct{})
 	go func() {

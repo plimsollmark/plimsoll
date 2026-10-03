@@ -59,12 +59,18 @@ const poolDemandRate = 1.0 / 16
 // rebalance makes it: the deficit of the set below its share and the surplus of the
 // set above it, in members, must sum to more than 1 + poolMoveMargin. Moving one member
 // brings that sum down by up to 2, so a move worth just over 1 only trades which set is
-// off by half a member, and since one open moves a share by at most a quarter member,
-// demand that cycles (two or three sets in turn, or runs of a few opens each) leaves
-// the pool where it is; simulated over sizes 1 to 32, it moved no member once settled,
-// and random hints cost under 0.02 extra container starts per open. A pool of 1 moves
-// its member only once one set holds more than 87.5% of the weight.
+// off by half a member; and one open moves a share by at most a quarter member, so
+// demand that takes turns (two or three sets in turn, or runs of up to five opens each)
+// never moves a member once settled.
 const poolMoveMargin = 0.75
+
+// poolMoveInterval is how often rebalance may move a member. Claims and refills already
+// follow demand (a claim takes the member closest to its hint and the refill makes the
+// set furthest below its share), so rebalance only clears out members of sets nobody
+// asks for any more, which no claim would take; longer runs of one language would
+// otherwise move a member every few opens for nothing. So rebalancing costs at most one
+// container start a minute, whatever callers ask for.
+const poolMoveInterval = time.Minute
 
 var errPoolStopped = errors.New("docker: the session pool stopped")
 
@@ -81,8 +87,10 @@ type dockerPool struct {
 	stopOnce sync.Once
 	done     chan struct{} // closed when the filler has returned
 
-	mu    sync.Mutex
-	ready []*dockerSession // oldest first
+	mu       sync.Mutex
+	ready    []*dockerSession // oldest first
+	lastMove time.Time        // when rebalance last moved a member
+	stated   []Language       // the languages the image runs, as next last saw them
 	// demand is the decaying weight of each language set (languageSetKey) opens asked
 	// for. The weights sum to at most 1, and a set whose weight falls below a quarter
 	// of one open's is forgotten (about 22 opens after it was last asked for, in a pool
@@ -144,7 +152,7 @@ func (p *dockerPool) rate() float64 { return min(poolDemandRate, 1/(4*float64(p.
 // when no set is below its share, spare when none is above; ties go to the set named
 // first. Call with mu held.
 func (p *dockerPool) gaps() (want, spare string, need, over float64) {
-	shares := poolShares(p.demand, p.size)
+	shares := poolShares(p.target(), p.size)
 	have := make(map[string]int)
 	for _, s := range p.ready {
 		have[languageSetKey(s.warm)]++
@@ -195,7 +203,7 @@ func (d *DockerSandbox) StartSessionPool(ctx context.Context, size int, lifetime
 	}
 	p := &dockerPool{d: d, size: size, lifetime: lifetime, now: time.Now,
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
-		demand: map[string]float64{all: 1}}
+		demand: map[string]float64{all: 1}, stated: slices.Clone(d.projectLanguages)}
 	p.discard = p.remove
 	// Under the lock Drain sets draining with, so a Drain either finds this pool and
 	// stops it or has already begun, and the pool is refused.
@@ -276,6 +284,7 @@ func (p *dockerPool) add(ctx context.Context) error {
 func (p *dockerPool) next(stated []Language) []Language {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.stated = slices.Clone(stated)
 	want, _, _, _ := p.gaps()
 	var langs []Language
 	for _, l := range stated {
@@ -286,11 +295,47 @@ func (p *dockerPool) next(stated []Language) []Language {
 	if len(langs) == 0 {
 		langs = slices.Clone(stated)
 	}
-	if made := languageSetKey(langs); want != "" && made != want {
-		p.demand[made] += p.demand[want]
-		delete(p.demand, want)
+	if made := languageSetKey(langs); made != want {
+		if w, ok := p.demand[want]; ok {
+			p.demand[made] += w
+			delete(p.demand, want)
+		}
 	}
 	return langs
+}
+
+// target is the demand the pool divides its size by. It is the table, unless the pool
+// has fewer members than the language sets holding at least a quarter of the weight:
+// no split could then give each its own member, so every member warms the languages
+// of all of them (in a pool of 1, sessions alternating two languages would otherwise
+// always find the one the previous session asked for). Call with mu held.
+func (p *dockerPool) target() map[string]float64 {
+	total := 0.0
+	for _, w := range p.demand {
+		total += w
+	}
+	var likely []string
+	for k, w := range p.demand {
+		if w >= total/4 {
+			likely = append(likely, k)
+		}
+	}
+	if len(likely) <= p.size {
+		return p.demand
+	}
+	var union []Language
+	for _, l := range p.stated {
+		for _, k := range likely {
+			if slices.Contains(strings.Split(k, ","), string(l)) {
+				union = append(union, l)
+				break
+			}
+		}
+	}
+	if len(union) == 0 {
+		return p.demand
+	}
+	return map[string]float64{languageSetKey(union): 1}
 }
 
 // usable reports whether s may be handed to a session made under key that ends at
@@ -363,19 +408,19 @@ func closestMember(members []*dockerSession, want []Language) int {
 }
 
 // rebalance removes the oldest member of the language set furthest above its share
-// when another set is below its share and the move is worth more than one member
-// (poolMoveMargin), so the next add makes one of that set. It moves one member a
-// call, so a change in demand costs at most one container start per member moved.
-// It reports whether it removed one.
+// when another set is below its share, the move is worth more than one member
+// (poolMoveMargin), and no member moved in the last poolMoveInterval, so the next add
+// makes one of that set. It reports whether it removed one.
 func (p *dockerPool) rebalance() bool {
 	p.mu.Lock()
 	want, spare, need, over := p.gaps()
 	var gone *dockerSession
-	if want != "" && spare != "" && need+over > 1+poolMoveMargin {
+	if want != "" && spare != "" && need+over > 1+poolMoveMargin && p.now().Sub(p.lastMove) >= poolMoveInterval {
 		for i, s := range p.ready {
 			if languageSetKey(s.warm) == spare {
 				gone = s
 				p.ready = slices.Delete(p.ready, i, i+1)
+				p.lastMove = p.now()
 				break
 			}
 		}
@@ -524,4 +569,3 @@ func (p *dockerPool) members() []string {
 	}
 	return names
 }
-

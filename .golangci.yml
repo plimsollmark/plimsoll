@@ -19,3 +19,10 @@ linters:
                 github.com/fastschema/qjs is banned (its MemoryLimit is a no-op,
                 so it does not bound memory). Use plimsoll/sandbox, which drives
                 wazero directly with WithMemoryLimitPages. See MIGRATION_NOTES.md.
+# gofmt is the one formatter: an unformatted file fails the gate, as it would a reader.
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - tmp # untracked scratch, never exported
