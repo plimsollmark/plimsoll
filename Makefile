@@ -21,15 +21,22 @@
 # dockercloud spend money; no CI job runs them, nor openshell, which needs a gateway.
 SECCOMP := $(CURDIR)/docker/seccomp.json
 
+# The docker suite's tests in ./sandbox and ./docker, by top-level name. With DOCKER=1
+# the gate runs them once, in docker-suite (race detector, the shipped seccomp profile,
+# no skip allowed), and its race pass leaves them out: with the images present, race
+# would run them a second time under docker's default profile, which on 2026-10-03 was
+# about 290 s of a 365 s sandbox package.
+DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
+
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite clients-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
+.PHONY: audit build vet test race race-without-docker lint generate buf vuln docker-images docker-suite clients-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
 ##   TestProjectRunnerAlwaysEmitsCompleteBoundedJSON and TestProjectRunnerReportsTruncationFlags
 ##   skip without node or as root (root defeats the runner guard they test)
-audit: tools-check build vet race lint buf vuln
+audit: tools-check build vet $(if $(filter 1,$(DOCKER)),race-without-docker,race) lint buf vuln
 	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
 	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL, SANDBOX_DOCKERCLOUD_IMAGE)"; fi
@@ -58,6 +65,14 @@ test:
 ## race: unit tests under the race detector; never sees E2B_API_KEY or DOCKER_SBX_TOKEN
 race:
 	$(NO_PAID_KEYS) go test -race ./... -count=1
+
+# A -skip pattern without a slash matches top-level names only, so the two runs split
+# ./sandbox and ./docker exactly where docker-suite's -run selects (its -skip 'Live$'
+# drops only live paid tests, which skip here without their keys anyway).
+## race-without-docker: race tests minus docker-suite's selection, which `audit DOCKER=1` runs in docker-suite under the race detector
+race-without-docker:
+	$(NO_PAID_KEYS) go test -race $$(go list ./... | grep -vxE "$$(go list -m)/(sandbox|docker)") -count=1
+	$(NO_PAID_KEYS) go test -race ./sandbox ./docker -skip '$(DOCKER_TESTS)' -count=1
 
 ## lint: golangci-lint (must be on PATH)
 lint:
@@ -95,21 +110,23 @@ docker-images:
 # Required mode, twice over. SANDBOX_TEST_REQUIRE_DOCKER=1 makes the test helpers
 # fail instead of skip when the daemon or an image is missing; the scan afterwards
 # fails the target on ANY skipped test in the selection, so a future bare t.Skip
-# cannot turn requested coverage into a quiet pass either. -skip Live excludes the
+# cannot turn requested coverage into a quiet pass either. -skip 'Live$' excludes the
 # live E2B and dockercloud tests, which can match the selection by name and skip
 # without a key; they belong to their own suites, and here a skip must mean docker.
+# Anchored, because an unanchored Live also matched TestDockerSessionGrantLivesForItsCall,
+# which no required run covered until 2026-10-03.
 # The dockercloud unit tests (a fake Connect server, and the exec wrapper under the
 # toolchain image's busybox) match 'Docker' and run here. The status file, rather
 # than a pipe, keeps the go test exit code under POSIX sh. OracleAttack is the oracle's
 # anti-forgery set, which needs the sim image and matches none of the other names; the
 # ./docker package holds the gVisor installer's offline-bundle check, which skips
 # without zstd and so ran in no required suite before.
-## docker-suite: the real docker/seccomp/broker/smoke tests, the oracle anti-forgery tests and the gVisor installer check; a missing daemon, image, tool or skipped test FAILS
+## docker-suite: the real docker/seccomp/broker/smoke tests, the oracle anti-forgery tests and the gVisor installer check, under the race detector; a missing daemon, image, tool or skipped test FAILS
 docker-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "docker-suite: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     $(NO_PAID_KEYS) go test ./sandbox ./docker -run 'Docker|RunProject|Broker|Smoke|OracleAttack|Installer' -skip 'Live' -count=1 -v; \
+	     $(NO_PAID_KEYS) go test -race ./sandbox ./docker -run '$(DOCKER_TESTS)' -skip 'Live$$' -count=1 -v; \
 	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/docker-suite.log; then \
 	   echo "docker-suite: required coverage was skipped:" >&2; \

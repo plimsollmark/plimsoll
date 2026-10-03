@@ -30,8 +30,10 @@ gate is the project's full check, `make audit`. In CI:
   <dfn>*gVisor*</dfn> (a stand-in kernel that runs as an ordinary program), in the
   [gvisor workflow](.github/workflows/gvisor.yml).
 
-Race tests run in the plain audit job; the two docker-suite jobs run their isolation
-tests without the race detector. The `clients` job also runs without the race detector.
+Race tests run in the plain audit job, and the two docker-suite jobs run their
+isolation tests under the race detector too. The `clients` job runs without it.
+Locally, `make audit DOCKER=1` runs each docker test once: its race pass leaves the
+docker suite's tests to `make docker-suite`.
 
 Both docker-suite jobs run on the hosted runners' classic image store, where docker
 states no software identity, so there the identity tests check only that a required

@@ -235,21 +235,39 @@ func TestDockerSessionRefusesAChangedLimit(t *testing.T) {
 
 // Code in the session can kill the main process, which stops the container; the
 // session ends with that reason rather than reporting docker's error as the call's.
+// The killing call may still end as a plain result: its node can exit before the
+// container stops, and the sweep after it can run before the stop too (under runsc in
+// CI it did, 2026-10-03). Then the next call's read-back ends the session, so once
+// docker reports the container stopped, the session has ended or the next call is
+// refused with that reason.
 func TestDockerSessionMainProcessKilled(t *testing.T) {
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
+	name := sessionContainer(t, s, "main-process-marker")
 	_, err := sessionJS(t, s, `const fs=require("fs");for(const p of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(p))continue;
 let c="";try{c=fs.readFileSync("/proc/"+p+"/cmdline","latin1")}catch{continue}
 if(c.startsWith("sleep\0"))process.kill(+p,"SIGKILL")}`)
-	if err == nil && s.Err() == nil {
-		t.Fatal("the session survived its main process")
+	if err != nil && !errors.Is(err, sandbox.ErrSessionEnded) {
+		t.Fatalf("the killing call failed with something other than the session's end: %v", err)
 	}
 	deadline := time.Now().Add(10 * time.Second)
-	for s.Err() == nil && time.Now().Before(deadline) {
+	for {
+		out, ierr := exec.Command("docker", "inspect", "--format", "{{.State.Running}}", name).Output()
+		if ierr != nil || strings.TrimSpace(string(out)) == "false" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the container still runs 10 s after its main process was killed")
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	if s.Err() == nil {
+		if _, nerr := sessionJS(t, s, `console.log("should not run")`); !errors.Is(nerr, sandbox.ErrSessionEnded) {
+			t.Fatalf("a call after the container stopped: %v, want the session's end", nerr)
+		}
+	}
 	if got := sandbox.SessionEndReason(s.Err()); got != sandbox.SessionMainProcessEnded {
-		t.Fatalf("the session ended with %v, want main_process_ended (call error %v)", got, err)
+		t.Fatalf("the session ended with %v, want main_process_ended (killing call error %v)", got, err)
 	}
 }
 

@@ -213,7 +213,7 @@ may make ([docs/seccomp.md](docs/seccomp.md)).
   and proved a read-only root, sized `noexec` writable mounts, and the broker's
   refusals. The [gvisor workflow](.github/workflows/gvisor.yml) runs the same suite
   under runsc, the kernel tier, from the pinned installer. The race detector runs in
-  the plain audit job; the client and two provider jobs run without it.
+  the plain audit job and both docker-suite jobs; the client job runs without it.
   No check exercises E2B or Docker Cloud Sandboxes: those suites drive live paid services and are
   deliberately never wired to a runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
