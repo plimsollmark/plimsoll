@@ -39,10 +39,25 @@ type admissionSandbox struct {
 	sem chan struct{} // global concurrency; nil = no cap
 
 	mu       sync.Mutex
-	memInUse int // MiB reserved by in-flight runs and the session pool
-	memCap   int // TotalMemoryMB; 0 = no memory budget
-	perRun   int // PerRunMemoryMB charged per admitted run
-	poolMem  int // MiB charged for the session pool's waiting members, until Drain
+	memInUse int                      // MiB reserved by in-flight runs and the session pool
+	memCap   int                      // TotalMemoryMB; 0 = no memory budget
+	perRun   int                      // PerRunMemoryMB charged per admitted run
+	pools    map[*poolCharge]struct{} // session pool reservations not yet given back
+}
+
+// poolCharge is one StartSessionPool call's reservation against the memory budget.
+// It is given back once, by whichever removes it from pools first: that call's
+// failure, or a Drain that has stopped the pool. A Drain can finish while the start is
+// still inside the provider, which then refuses it, so neither may assume the other
+// has not run.
+type poolCharge struct{ mib int }
+
+// releasePool gives c back if it is still held. a.mu must be held.
+func (a *admissionSandbox) releasePool(c *poolCharge) {
+	if _, held := a.pools[c]; held {
+		delete(a.pools, c)
+		a.memInUse -= c.mib
+	}
 }
 
 // WithAdmission wraps inner so every run passes a shared admission budget first. A
@@ -272,8 +287,9 @@ func (a *admissionSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 }
 
 // Drain forwards to the wrapped provider; one that leaves no work behind a run has
-// nothing to wait for. The session pool's memory charge is given back once the
-// provider has drained, since its Drain stops the pool.
+// nothing to wait for. The session pool's reservations are given back once the
+// provider has drained, since its Drain stops the pool and refuses a start that has not
+// installed one; a start that fails afterwards finds its reservation already given back.
 func (a *admissionSandbox) Drain(ctx context.Context) error {
 	if d, ok := a.Sandbox.(Drainer); ok {
 		if err := d.Drain(ctx); err != nil {
@@ -281,8 +297,9 @@ func (a *admissionSandbox) Drain(ctx context.Context) error {
 		}
 	}
 	a.mu.Lock()
-	a.memInUse -= a.poolMem
-	a.poolMem = 0
+	for c := range a.pools {
+		a.releasePool(c)
+	}
 	a.mu.Unlock()
 	return nil
 }
@@ -313,23 +330,27 @@ func (a *admissionSandbox) StartSessionPool(ctx context.Context, size int, lifet
 	if !ok {
 		return fmt.Errorf("%w: provider %s keeps no session pool", ErrUnsupported, a.Name())
 	}
-	charge := 0
+	var c *poolCharge
 	if a.memCap > 0 && size > 0 {
-		charge = size * a.perRun
+		c = &poolCharge{mib: size * a.perRun}
 		a.mu.Lock()
-		if free := a.memCap - a.memInUse; charge > free {
+		if free := a.memCap - a.memInUse; c.mib > free {
 			a.mu.Unlock()
-			return fmt.Errorf("sandbox admission: a session pool of %d holds %d MiB, more than the %d MiB of the memory budget not in use", size, charge, free)
+			return fmt.Errorf("sandbox admission: a session pool of %d holds %d MiB, more than the %d MiB of the memory budget not in use", size, c.mib, free)
 		}
-		a.memInUse += charge
-		a.poolMem += charge
+		if a.pools == nil {
+			a.pools = map[*poolCharge]struct{}{}
+		}
+		a.pools[c] = struct{}{}
+		a.memInUse += c.mib
 		a.mu.Unlock()
 	}
 	if err := p.StartSessionPool(ctx, size, lifetime); err != nil {
-		a.mu.Lock()
-		a.memInUse -= charge
-		a.poolMem -= charge
-		a.mu.Unlock()
+		if c != nil {
+			a.mu.Lock()
+			a.releasePool(c)
+			a.mu.Unlock()
+		}
 		return err
 	}
 	return nil

@@ -228,7 +228,7 @@ func TestPoolCyclingHintsDoNotChurn(t *testing.T) {
 }
 
 // A pool of 4 or fewer does not split: every member warms every language the image
-// runs, so every session finds its languages warm whatever the mix, and a pool of 5 or
+// runs, so every session handed a member finds its languages warm whatever the mix, and a pool of 5 or
 // more is the smallest that divides by demand. Before,
 // a split pool of 1 warmed the set narrowly ahead (0 of 200 alternating opens warm), a
 // pool of 2 with three sets in turn found two in three, and a language under a quarter

@@ -439,8 +439,10 @@ A docker session is the container a project run gets, kept for the session:
     since the container is most of the cold cost. A session without a hint counts as
     wanting every language.
   - **A pool of 4 or fewer does not split.** Every waiting container warms every
-    language the image runs, so every session finds its languages warm whatever callers
-    ask for, as before hints existed. Splitting so few containers cost more than it
+    language the image runs, so every session handed a waiting container finds its
+    languages warm whatever callers ask for, as before hints existed. Opens that find no
+    container waiting, as a burst larger than the pool can, create their containers as
+    they would without a pool. Splitting so few containers cost more than it
     saved: in simulation, a split pool of 1 to 3 found a language fewer than a quarter
     of sessions asked for, or a burst of opens, warm 75 to 91% of the time, to save at
     most a few idle interpreters.
@@ -454,8 +456,8 @@ A docker session is the container a project run gets, kept for the session:
     closest to its hint, and its replacement warms the set furthest below its share. A
     language fewer than a quarter of recent sessions ask for may wait for its
     interpreter, which starts when the session asks, in a container that is already
-    running; concurrent opens that empty the pool can find their language cold the same
-    way.
+    running. Concurrent opens that empty the pool create their containers as they would
+    without one.
   - A container of a set fewer than a quarter of recent sessions ask for is one claims
     seldom take, so the pool also replaces such containers itself: at most one a minute,
     and only when the shift is clear (what the set furthest below its share lacks and
