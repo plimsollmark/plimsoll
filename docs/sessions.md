@@ -430,14 +430,17 @@ A docker session is the container a project run gets, kept for the session:
   - The cost is memory. A waiting container held 39 MiB under runc and 66 MiB under gVisor
     with both interpreters running, against 0.5 and 18 MiB for a bare one. That memory counts
     inside its session's limit, including the interpreter of a language the session never
-    uses. A waiting container holds no concurrency slot until it is claimed.
+    uses. A waiting container holds no concurrency slot until it is claimed, but each is
+    charged one run's memory against `SANDBOX_TOTAL_MEMORY_MB` (its container's limit is
+    one run's), so with a budget set, a pool of 2 leaves room for two runs fewer.
   - **Language hints decide which interpreters wait.** A session opened with a hint is
     handed the waiting container that runs the most of its hinted languages, then the one
     running the fewest others, then the oldest; any waiting container beats creating one,
     since the container is most of the cold cost. A session without a hint counts as
     wanting every language. The pool also divides its size across language sets by what
-    sessions ask for. Each open first shrinks every set's weight by a small rate and then
-    adds that rate to its own set. The rate is 1/16, or 1/(4 x pool size) in a pool of more
+    sessions ask for. Each open the daemon does not refuse first shrinks every set's
+    weight by a small rate and then adds that rate to its own set; a refused open counts
+    for nothing. The rate is 1/16, or 1/(4 x pool size) in a pool of more
     than 4, so one open moves a set's share by about a quarter of a container at most and
     the split follows roughly the last 16 sessions, or the last 4 x pool size. A set whose
     weight falls below a quarter of one open's is forgotten (in a pool of 4 or fewer,
@@ -445,10 +448,16 @@ A docker session is the container a project run gets, kept for the session:
   - Claims and refills follow the split by themselves: a claim takes the waiting container
     closest to its hint, and its replacement warms the set furthest below its share. A
     pool with fewer containers than the sets holding at least a quarter of the weight
-    does not split: each container warms the languages of all of them, so a pool of 1 or
-    2 serves sessions that take turns between languages as it did before hints.
-  - A container of a set nobody asks for any more is one no claim takes, so the pool also
-    replaces such containers itself: at most one a minute, and only when the shift is
+    does not split: each container warms the languages of all of them, so sessions that
+    take turns between two or three language sets find theirs warm even in a pool of 1
+    or 2. A language fewer than a quarter of recent sessions ask for may wait for its
+    interpreter: in a pool of 1 serving three JavaScript sessions to every Python one,
+    the Python session's interpreter starts when it asks, in a container that is already
+    running. Concurrent opens that empty a split pool can find their language cold the
+    same way.
+  - A container of a set fewer than a quarter of recent sessions ask for is one claims
+    seldom take, so the pool also replaces such containers itself: at most one a minute,
+    and only when the shift is
     clear (what the set furthest below its share lacks and what the set furthest above
     its share holds beyond it add up to more than 1.75 containers, a share counting
     fractions of a container). Rebalancing therefore costs at most one container start a

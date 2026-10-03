@@ -241,7 +241,7 @@ func envMap(m map[string]string) func(string) string {
 }
 
 func TestLoadLimiterConfigDefaults(t *testing.T) {
-	lc, err := loadLimiterConfig(envMap(nil), "wasm", 0)
+	lc, err := loadLimiterConfig(envMap(nil), "wasm", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,13 +270,35 @@ func TestMinimumIsolationWithRejectsNone(t *testing.T) {
 	}
 }
 
+// The session pool's waiting containers hold memory (each container's limit is one
+// run's) and no concurrency slot, so the memory budget is charged for them first: with
+// 1 GiB, 256 MiB a run and a pool of 2, two runs fit, not four. A pool that leaves no
+// room for one run refuses to start. Before the fix the pool was not charged, so the
+// budget did not bound what sandboxes hold.
+func TestLoadLimiterConfigChargesTheSessionPool(t *testing.T) {
+	env := envMap(map[string]string{"SANDBOX_MAX_CONCURRENT": "8", "SANDBOX_TOTAL_MEMORY_MB": "1024"})
+	lc, err := loadLimiterConfig(env, "docker", 256, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.MaxConcurrent != 2 {
+		t.Fatalf("max_concurrent = %d with a pool of 2 in a budget of 4 runs; want 2", lc.MaxConcurrent)
+	}
+	if _, err := loadLimiterConfig(env, "docker", 256, 4); err == nil {
+		t.Fatal("a pool holding the whole budget was accepted")
+	}
+	if lc, err := loadLimiterConfig(envMap(map[string]string{"SANDBOX_MAX_CONCURRENT": "8"}), "docker", 256, 2); err != nil || lc.MaxConcurrent != 8 {
+		t.Fatalf("with no memory budget the pool changes nothing: %+v, %v", lc, err)
+	}
+}
+
 func TestLoadLimiterConfigExplicit(t *testing.T) {
 	lc, err := loadLimiterConfig(envMap(map[string]string{
 		"SANDBOX_MAX_CONCURRENT":     "16",
 		"SANDBOX_PER_KEY_CONCURRENT": "3",
 		"SANDBOX_RATE_PER_MIN":       "60",
 		"SANDBOX_RATE_BURST":         "10",
-	}), "docker", 0)
+	}), "docker", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +312,7 @@ func TestLoadLimiterConfigMemoryClamp(t *testing.T) {
 	lc, err := loadLimiterConfig(envMap(map[string]string{
 		"SANDBOX_MAX_CONCURRENT":  "8",
 		"SANDBOX_TOTAL_MEMORY_MB": "1024",
-	}), "docker", 256)
+	}), "docker", 256, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +323,7 @@ func TestLoadLimiterConfigMemoryClamp(t *testing.T) {
 	lc, err = loadLimiterConfig(envMap(map[string]string{
 		"SANDBOX_MAX_CONCURRENT":  "8",
 		"SANDBOX_TOTAL_MEMORY_MB": "1024",
-	}), "e2b", 256)
+	}), "e2b", 256, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,23 +335,23 @@ func TestLoadLimiterConfigMemoryClamp(t *testing.T) {
 func TestLoadLimiterConfigMemoryTooSmall(t *testing.T) {
 	_, err := loadLimiterConfig(envMap(map[string]string{
 		"SANDBOX_TOTAL_MEMORY_MB": "100",
-	}), "docker", 256)
+	}), "docker", 256, 0)
 	if err == nil {
 		t.Fatal("a total that cannot fit one run should error")
 	}
 }
 
 func TestLoadLimiterConfigInvalidMaxConcurrent(t *testing.T) {
-	if _, err := loadLimiterConfig(envMap(map[string]string{"SANDBOX_MAX_CONCURRENT": "9999"}), "wasm", 0); err == nil {
+	if _, err := loadLimiterConfig(envMap(map[string]string{"SANDBOX_MAX_CONCURRENT": "9999"}), "wasm", 0, 0); err == nil {
 		t.Fatal("out-of-range max_concurrent should error")
 	}
 }
 
 func TestLoadLimiterConfigUnparseableFailsClosed(t *testing.T) {
-	if _, err := loadLimiterConfig(envMap(map[string]string{"SANDBOX_RATE_PER_MIN": "3O"}), "wasm", 0); err == nil {
+	if _, err := loadLimiterConfig(envMap(map[string]string{"SANDBOX_RATE_PER_MIN": "3O"}), "wasm", 0, 0); err == nil {
 		t.Fatal("unparseable rate silently became a default")
 	}
-	if _, err := loadLimiterConfig(envMap(map[string]string{"SANDBOX_TOTAL_MEMORY_MB": "-1"}), "wasm", 0); err == nil {
+	if _, err := loadLimiterConfig(envMap(map[string]string{"SANDBOX_TOTAL_MEMORY_MB": "-1"}), "wasm", 0, 0); err == nil {
 		t.Fatal("negative aggregate memory limit was silently disabled")
 	}
 }

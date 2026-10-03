@@ -39,9 +39,10 @@ type admissionSandbox struct {
 	sem chan struct{} // global concurrency; nil = no cap
 
 	mu       sync.Mutex
-	memInUse int // MiB reserved by in-flight runs
+	memInUse int // MiB reserved by in-flight runs and the session pool
 	memCap   int // TotalMemoryMB; 0 = no memory budget
 	perRun   int // PerRunMemoryMB charged per admitted run
+	poolMem  int // MiB charged for the session pool's waiting members, until Drain
 }
 
 // WithAdmission wraps inner so every run passes a shared admission budget first. A
@@ -271,11 +272,18 @@ func (a *admissionSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 }
 
 // Drain forwards to the wrapped provider; one that leaves no work behind a run has
-// nothing to wait for.
+// nothing to wait for. The session pool's memory charge is given back once the
+// provider has drained, since its Drain stops the pool.
 func (a *admissionSandbox) Drain(ctx context.Context) error {
 	if d, ok := a.Sandbox.(Drainer); ok {
-		return d.Drain(ctx)
+		if err := d.Drain(ctx); err != nil {
+			return err
+		}
 	}
+	a.mu.Lock()
+	a.memInUse -= a.poolMem
+	a.poolMem = 0
+	a.mu.Unlock()
 	return nil
 }
 
@@ -296,12 +304,35 @@ func (a *admissionSandbox) SessionEnvironments() Environments {
 
 // StartSessionPool forwards to the wrapped provider; one without a pool refuses
 // (ErrUnsupported), so a daemon configured for a pool fails at startup. A waiting
-// member holds no admission reservation: OpenSession reserves when it is claimed.
+// member holds memory (its container's limit is one run's) but no concurrency slot,
+// so the pool is charged size runs against TotalMemoryMB for as long as it runs: the
+// pool refills a claimed member, so size is always what waits. OpenSession reserves a
+// claimed member's session as it does any session.
 func (a *admissionSandbox) StartSessionPool(ctx context.Context, size int, lifetime time.Duration) error {
-	if p, ok := a.Sandbox.(SessionPool); ok {
-		return p.StartSessionPool(ctx, size, lifetime)
+	p, ok := a.Sandbox.(SessionPool)
+	if !ok {
+		return fmt.Errorf("%w: provider %s keeps no session pool", ErrUnsupported, a.Name())
 	}
-	return fmt.Errorf("%w: provider %s keeps no session pool", ErrUnsupported, a.Name())
+	charge := 0
+	if a.memCap > 0 && size > 0 {
+		charge = size * a.perRun
+		a.mu.Lock()
+		if free := a.memCap - a.memInUse; charge > free {
+			a.mu.Unlock()
+			return fmt.Errorf("sandbox admission: a session pool of %d holds %d MiB, more than the %d MiB of the memory budget not in use", size, charge, free)
+		}
+		a.memInUse += charge
+		a.poolMem += charge
+		a.mu.Unlock()
+	}
+	if err := p.StartSessionPool(ctx, size, lifetime); err != nil {
+		a.mu.Lock()
+		a.memInUse -= charge
+		a.poolMem -= charge
+		a.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // OpenSession admits a session as it admits a run, and keeps the reservation until

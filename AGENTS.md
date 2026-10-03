@@ -240,11 +240,11 @@ the verified execution state and its relays are attached; it is never returned o
 `sandbox.SessionLanguages` (an unknown name refused, an unstated one dropped): a claim takes
 the member warming the most hinted languages, and the pool divides its size across language
 sets by a decaying weight of the hints it sees (no hint = every language; one open moves a
-set's share by about a quarter member at most); a pool with fewer members than the sets
+set's weight by at most a quarter member's worth); a pool with fewer members than the sets
 holding a quarter of the weight does not split (every member warms all their languages).
-Claims and refills follow the split; rebalance only replaces members no claim would take,
-at most one a minute (`poolMoveInterval`) and only when a move is worth more than 1.75
-members (1 + `poolMoveMargin`); hints never add members. A
+Claims and refills follow the split; rebalance only replaces members of sets holding under
+a quarter of the weight, at most one a minute (`poolMoveInterval`) and only when a move is
+worth more than 1.75 members (1 + `poolMoveMargin`); hints never add members. A
 member's lifetime label covers 30 minutes of waiting plus `SANDBOX_SESSION_LIFETIME`, and a
 member idle 30 minutes is replaced. With the pool on, the startup session smoke test runs
 on a claimed member.
@@ -345,7 +345,8 @@ suspended session holds no concurrency slot, so the per-caller concurrency cap d
 them), `SANDBOX_SESSION_POOL` (docker only: never-used session containers kept ready,
 each with an interpreter and relay already attached for every language the image runs;
 default 0, at most `SANDBOX_MAX_SESSIONS`; one goes to one session and is removed at its
-close, never reused; [docs/sessions.md](docs/sessions.md#docker)), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
+close, never reused; each is charged one run's memory against `SANDBOX_TOTAL_MEMORY_MB`, in
+plimsolld's clamp and in `WithAdmission`; [docs/sessions.md](docs/sessions.md#docker)), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
 12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends; otherwise 1s to 12h, and a
 request may ask for less but not under 1s), `SANDBOX_SESSION_DISK_MB`
 (default 1024; 0 disables the check and measures nothing; disk use is measured after each call,

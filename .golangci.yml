@@ -25,4 +25,4 @@ formatters:
     - gofmt
   exclusions:
     paths:
-      - tmp # untracked scratch, never exported
+      - ^tmp/ # untracked scratch, never exported

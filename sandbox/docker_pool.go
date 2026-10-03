@@ -66,10 +66,10 @@ const poolMoveMargin = 0.75
 
 // poolMoveInterval is how often rebalance may move a member. Claims and refills already
 // follow demand (a claim takes the member closest to its hint and the refill makes the
-// set furthest below its share), so rebalance only clears out members of sets nobody
-// asks for any more, which no claim would take; longer runs of one language would
-// otherwise move a member every few opens for nothing. So rebalancing costs at most one
-// container start a minute, whatever callers ask for.
+// set furthest below its share), so rebalance only clears out members of sets holding
+// less than a quarter of the weight, which claims seldom take; longer runs of one
+// language would otherwise move a member every few opens for nothing. So rebalancing
+// costs at most one container start a minute, whatever callers ask for.
 const poolMoveInterval = time.Minute
 
 var errPoolStopped = errors.New("docker: the session pool stopped")
@@ -196,14 +196,15 @@ func (d *DockerSandbox) StartSessionPool(ctx context.Context, size int, lifetime
 		return fmt.Errorf("%w: docker sessions need a project image", ErrUnsupported)
 	}
 	d.stateMu.RLock()
-	all := languageSetKey(d.projectLanguages)
+	stated := slices.Clone(d.projectLanguages)
 	d.stateMu.RUnlock()
+	all := languageSetKey(stated)
 	if all == "" {
 		return errors.New("docker: session pool: no interpreter languages are known for the project image (run EnsureReady first)")
 	}
 	p := &dockerPool{d: d, size: size, lifetime: lifetime, now: time.Now,
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
-		demand: map[string]float64{all: 1}, stated: slices.Clone(d.projectLanguages)}
+		demand: map[string]float64{all: 1}, stated: stated}
 	p.discard = p.remove
 	// Under the lock Drain sets draining with, so a Drain either finds this pool and
 	// stops it or has already begun, and the pool is refused.
@@ -304,6 +305,15 @@ func (p *dockerPool) next(stated []Language) []Language {
 	return langs
 }
 
+// asked reports whether set holds at least a quarter of the weight. Call with mu held.
+func (p *dockerPool) asked(set string) bool {
+	total := 0.0
+	for _, w := range p.demand {
+		total += w
+	}
+	return total > 0 && p.demand[set] >= total/4
+}
+
 // target is the demand the pool divides its size by. It is the table, unless the pool
 // has fewer members than the language sets holding at least a quarter of the weight:
 // no split could then give each its own member, so every member warms the languages
@@ -315,8 +325,8 @@ func (p *dockerPool) target() map[string]float64 {
 		total += w
 	}
 	var likely []string
-	for k, w := range p.demand {
-		if w >= total/4 {
+	for k := range p.demand {
+		if p.asked(k) {
 			likely = append(likely, k)
 		}
 	}
@@ -356,7 +366,8 @@ func (p *dockerPool) usable(s *dockerSession, key string, expires time.Time) boo
 // warms the most of want: then the one warming the fewest languages beyond want, then
 // the oldest. Any member beats none, since creating the container is most of what a
 // claim saves. It returns nil when no member may be handed over. The members it finds
-// unusable are removed, and the filler is asked to make up the difference.
+// unusable are removed, and the filler is asked to make up the difference; the caller
+// counts the open (observe) first, so the refill sees it.
 func (p *dockerPool) claim(state dockerExecutionState, expires time.Time, want []Language) *dockerSession {
 	if p == nil {
 		return nil
@@ -409,13 +420,15 @@ func closestMember(members []*dockerSession, want []Language) int {
 
 // rebalance removes the oldest member of the language set furthest above its share
 // when another set is below its share, the move is worth more than one member
-// (poolMoveMargin), and no member moved in the last poolMoveInterval, so the next add
-// makes one of that set. It reports whether it removed one.
+// (poolMoveMargin), no member moved in the last poolMoveInterval, and the surplus set
+// holds less than a quarter of the weight (a member of a set sessions still ask for
+// is one a claim will take), so the next add makes one of the set below its share.
+// It reports whether it removed one.
 func (p *dockerPool) rebalance() bool {
 	p.mu.Lock()
 	want, spare, need, over := p.gaps()
 	var gone *dockerSession
-	if want != "" && spare != "" && need+over > 1+poolMoveMargin && p.now().Sub(p.lastMove) >= poolMoveInterval {
+	if want != "" && spare != "" && need+over > 1+poolMoveMargin && p.now().Sub(p.lastMove) >= poolMoveInterval && !p.asked(spare) {
 		for i, s := range p.ready {
 			if languageSetKey(s.warm) == spare {
 				gone = s

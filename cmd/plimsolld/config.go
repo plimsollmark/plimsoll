@@ -44,9 +44,11 @@ func minimumIsolationWith(getenv func(string) string) (sandbox.IsolationClass, b
 // providerName and perRunMemMB drive the SANDBOX_TOTAL_MEMORY_MB clamp: a count is not
 // a resource budget, so when a total is set the max-concurrent is clamped so
 // concurrent × per-run memory cannot oversubscribe the host (skipped for e2b and dockercloud, whose
-// runners live off-host). It returns a typed error instead of exiting, so callers
-// decide how to fail.
-func loadLimiterConfig(getenv func(string) string, providerName string, perRunMemMB int) (limiterConfig, error) {
+// runners live off-host). The session pool's poolSize waiting containers are charged
+// first: each holds memory (its container's limit is one run's) and no concurrency
+// slot, and the pool refills what a session claims, so poolSize is always what waits.
+// It returns a typed error instead of exiting, so callers decide how to fail.
+func loadLimiterConfig(getenv func(string) string, providerName string, perRunMemMB, poolSize int) (limiterConfig, error) {
 	maxConcurrent, err := envIntWith(getenv, "SANDBOX_MAX_CONCURRENT", 8)
 	if err != nil {
 		return limiterConfig{}, err
@@ -67,13 +69,16 @@ func loadLimiterConfig(getenv func(string) string, providerName string, perRunMe
 		if perRun <= 0 {
 			perRun = 256 // wasm and docker both default to 256 MiB per run
 		}
-		fit := totalMB / perRun
+		fit := totalMB/perRun - poolSize
 		if fit < 1 {
+			if poolSize > 0 {
+				return limiterConfig{}, fmt.Errorf("SANDBOX_TOTAL_MEMORY_MB=%d cannot fit the session pool's %d waiting containers (%d MiB each) and one run", totalMB, poolSize, perRun)
+			}
 			return limiterConfig{}, fmt.Errorf("SANDBOX_TOTAL_MEMORY_MB=%d cannot fit even one %d MiB run", totalMB, perRun)
 		}
 		if fit < maxConcurrent {
 			slog.Warn("clamping max concurrency to the aggregate memory budget",
-				"total_mb", totalMB, "per_run_mb", perRun,
+				"total_mb", totalMB, "per_run_mb", perRun, "session_pool", poolSize,
 				"max_concurrent_requested", maxConcurrent, "max_concurrent_effective", fit)
 			maxConcurrent = fit
 		}

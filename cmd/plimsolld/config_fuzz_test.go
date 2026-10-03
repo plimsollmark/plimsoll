@@ -35,7 +35,7 @@ func FuzzDaemonConfigEnv(f *testing.F) {
 		if err != nil {
 			perRunMemMB = 256 // unparseable per-run memory would already fail Build
 		}
-		lc, err := loadLimiterConfig(getenv, provider, perRunMemMB)
+		lc, err := loadLimiterConfig(getenv, provider, perRunMemMB, 0)
 		if err == nil {
 			// An accepted envelope must satisfy the documented bounds exactly.
 			if verr := validateLimiterConfig(lc.MaxConcurrent, lc.PerKey, lc.RatePerMin, lc.Burst); verr != nil {

@@ -193,6 +193,7 @@ func TestPoolCyclingHintsDoNotChurn(t *testing.T) {
 		{"alternating", [][]Language{js, py}, true},
 		{"rotating", [][]Language{js, py, all}, true},
 		{"two to one", [][]Language{js, js, py}, true},
+		{"every language, then Python, then JavaScript twice", [][]Language{all, py, js, js}, true},
 		{"runs of three", runsOf(3, js, py), true},
 		{"runs of five", runsOf(5, js, py), true},
 		{"runs of six", runsOf(6, js, py), false},
@@ -508,5 +509,56 @@ func TestDrainEndsOpenSessionsWhileAnOpenIsInFlight(t *testing.T) {
 	}
 	if got := SessionEndReason(s.Err()); got != SessionShutdown {
 		t.Fatalf("the open session ended with %v after Drain; want shutdown", got)
+	}
+}
+
+// Drain reports success only once every session it found open has been removed, even
+// one that another goroutine (its lifetime timer, a client's Close) had begun to end:
+// before the fix Drain's own finish returned early for such a session, and Drain
+// waited on a removals count the other goroutine had not added to yet, so it returned
+// nil with the container still there (and could race that Add).
+func TestDrainWaitsForASessionAnotherGoroutineIsEnding(t *testing.T) {
+	d := DefaultDocker("")
+	b, err := startDockerSessionBroker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &dockerSession{d: d, broker: b, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	if err := d.activate(s, time.Now().Add(time.Hour), 0); err != nil {
+		t.Fatal(err)
+	}
+	// Another goroutine's finish has claimed the end and not yet reached its removal.
+	s.mu.Lock()
+	s.end = &SessionEndedError{Reason: SessionExpired}
+	s.life.Stop()
+	s.mu.Unlock()
+	dctx, dcancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer dcancel()
+	if err := d.Drain(dctx); err == nil {
+		t.Fatal("Drain reported success while a session it found open was still being ended")
+	}
+}
+
+// An open the provider refuses leaves the pool's demand as it was: a caller asking
+// again and again for a floor the provider cannot meet (or for anything while it is at
+// capacity) would otherwise move the pool toward its languages, away from the callers
+// it serves. Before the fix the hint was recorded before the floor was checked.
+func TestRefusedOpenLeavesPoolDemandUnchanged(t *testing.T) {
+	d := DefaultDocker("")
+	d.ready, d.daemonHost, d.verifiedRuntime = true, "unix:///var/run/docker.sock", d.Runtime
+	d.verifiedImageIDs = map[string]string{d.Image: "sha256:snippet", d.ProjectImage: "sha256:project"}
+	d.projectLanguages = []Language{LanguageJavaScript, LanguagePython}
+	p := &dockerPool{d: d, size: 1, now: time.Now, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
+		demand: map[string]float64{"javascript,python": 1}, discard: func(*dockerSession) {}}
+	d.pool.Store(p)
+	for range 20 {
+		_, err := d.OpenSession(context.Background(), SessionOptions{Lifetime: time.Minute, MinimumIsolation: IsolationVM, Languages: []Language{LanguagePython}})
+		if _, refused := NotDispatchedReason(err); !refused {
+			t.Fatalf("an open with a VM floor on a container-tier provider: %v; want refused", err)
+		}
+	}
+	if !maps.Equal(p.demand, map[string]float64{"javascript,python": 1}) {
+		t.Fatalf("20 refused opens moved the pool's demand to %v", p.demand)
 	}
 }

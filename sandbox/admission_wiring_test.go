@@ -223,3 +223,50 @@ func packageInterfaces(t *testing.T) []string {
 	}
 	return names
 }
+
+// A waiting pool member holds memory (its container's limit is one run's), so a pool
+// started through the admission wrapper is charged size runs against TotalMemoryMB for
+// as long as it runs, and Drain gives the charge back. Before the fix it was charged
+// nothing, so with the pool on the budget no longer bounded the memory sandboxes hold.
+func TestAdmissionChargesTheSessionPoolAgainstTheMemoryBudget(t *testing.T) {
+	ctx := context.Background()
+	wrapped, err := WithAdmission(&fullProvider{called: map[string]bool{}}, AdmissionConfig{TotalMemoryMB: 1024, PerRunMemoryMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wrapped.(SessionPool).StartSessionPool(ctx, 2, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	var open []Session
+	for range 2 {
+		s, err := wrapped.(SessionProvider).OpenSession(ctx, SessionOptions{Lifetime: time.Minute})
+		if err != nil {
+			t.Fatalf("a session within the budget left by a pool of 2: %v", err)
+		}
+		open = append(open, s)
+	}
+	if _, err := wrapped.(SessionProvider).OpenSession(ctx, SessionOptions{Lifetime: time.Minute}); !errors.Is(err, ErrAtCapacity) {
+		t.Fatalf("a third session while the pool holds two runs' memory of four: %v", err)
+	}
+	for _, s := range open {
+		_ = s.Close(ctx)
+	}
+	if err := wrapped.(Drainer).Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := wrapped.(SessionPool).StartSessionPool(ctx, 5, time.Minute); err == nil {
+		t.Fatal("a pool of 5 runs' memory started within a budget of 4")
+	}
+	// The closed sessions give their reservations back as they end.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		err := wrapped.(SessionPool).StartSessionPool(ctx, 4, time.Minute)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after Drain and the sessions' ends the whole budget is free again, but a pool of 4 was refused: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

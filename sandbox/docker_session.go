@@ -159,6 +159,9 @@ type dockerSession struct {
 	cancel context.CancelFunc
 	turn   chan struct{} // one slot: holding it is the right to call, suspend or resume
 	done   chan struct{}
+	// removed is closed once the container of a session activate registered is removed,
+	// whichever goroutine ended it; Drain waits for it.
+	removed chan struct{}
 
 	mu       sync.Mutex
 	end      *SessionEndedError
@@ -205,13 +208,24 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 	// A pool member was verified when the pool made it and is read back before every
 	// call, as any session is for its whole life, so a claim needs no new Preflight
 	// (which re-runs once its result is 5 seconds old): it must match the execution
-	// state the last Preflight verified, which a failed Preflight withdraws.
-	if pool := d.pool.Load(); pool != nil {
-		pool.observe(want)
+	// state the last Preflight verified, which a failed Preflight withdraws. An open
+	// counts toward the pool's demand once it passes the floor, where opens are
+	// refused, so a caller whose opens are refused cannot move the pool toward its
+	// languages; and before the claim, so the refill the claim asks for sees it.
+	pool := d.pool.Load()
+	observed := false
+	observe := func() {
+		if pool != nil && !observed {
+			pool.observe(want)
+			observed = true
+		}
+	}
+	if pool != nil {
 		if state, err := d.executionState(); err == nil {
 			if err := CheckMinimumIsolation(state.isolation, opts.MinimumIsolation); err != nil {
 				return nil, err
 			}
+			observe()
 			if s := pool.claim(state, expires, want); s != nil {
 				if err := d.activate(s, expires, opts.DiskBytes); err != nil {
 					s.abandon()
@@ -231,6 +245,7 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 	if err := CheckMinimumIsolation(state.isolation, opts.MinimumIsolation); err != nil {
 		return nil, err
 	}
+	observe()
 	s, err := d.newSessionContainer(ctx, state, expires)
 	if err != nil {
 		return nil, err
@@ -302,6 +317,7 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 // removes s.
 func (d *DockerSandbox) activate(s *dockerSession, expires time.Time, disk int64) error {
 	s.expires, s.disk = expires, disk
+	s.removed = make(chan struct{})
 	d.sessions.mu.Lock()
 	if d.sessions.draining {
 		d.sessions.mu.Unlock()
@@ -591,6 +607,9 @@ func (s *dockerSession) finish(reason SessionEnd, detail string) {
 		s.interps.Close()
 		s.d.forceRemove(s.host, s.name)
 		s.broker.Close()
+		if s.removed != nil {
+			close(s.removed)
+		}
 	}()
 }
 
@@ -1131,6 +1150,18 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 		// container it was making, an Add to deletes that must not race a Wait; the
 		// context has ended anyway.
 		return err
+	}
+	// A session another goroutine (its lifetime timer, a client's Close) had begun to
+	// end is not finished above, and its removal may not be counted in deletes yet, so
+	// each session found open is waited for by its own removal first. After that every
+	// Add to deletes has happened: a session ended before the snapshot counted its
+	// removal as it left open, opens in flight are done, and the pool's filler stopped.
+	for _, s := range open {
+		select {
+		case <-s.removed:
+		case <-ctx.Done():
+			return fmt.Errorf("docker: session containers still being removed: %w", ctx.Err())
+		}
 	}
 	done := make(chan struct{})
 	go func() {

@@ -144,9 +144,10 @@ const usageLimits = `
   SANDBOX_RATE_PER_MIN       per-caller runs per minute (default 30; 0 = disabled)
   SANDBOX_RATE_BURST         per-caller token-bucket burst (default = rate)
   SANDBOX_TOTAL_MEMORY_MB    aggregate host memory budget for runners; clamps
-                             max-concurrent to total/per-run so concurrent runs
-                             cannot oversubscribe the host (ignored for e2b and
-                             dockercloud, whose runners live off-host)
+                             max-concurrent to total/per-run, less one run for
+                             each SANDBOX_SESSION_POOL container, so concurrent
+                             runs cannot oversubscribe the host (ignored for e2b
+                             and dockercloud, whose runners live off-host)
   SANDBOX_MEMORY_MB / SANDBOX_CPUS / SANDBOX_PIDS / SANDBOX_DISK_MB
                              per-run resource envelope applied to the provider
   SANDBOX_MAX_SESSIONS       open sessions at once (default 0: sessions off). A
@@ -170,6 +171,8 @@ const usageLimits = `
                              never used, has its interpreters already running,
                              goes to one session and is removed when it closes,
                              never reused; an idle one is replaced after 30m.
+                             Each counts as one run against
+                             SANDBOX_TOTAL_MEMORY_MB.
   SANDBOX_SESSION_LIFETIME   a session's absolute lifetime (default 30m, at most
                              12h); a request may ask for less
   SANDBOX_SESSION_IDLE       suspend a session idle this long (default 5m; 0 =
@@ -263,14 +266,6 @@ func main() {
 	svc.Resources = res
 	// Resolve the effective limiter envelope (env parsing + aggregate-memory clamp +
 	// validation) in one typed, unit-tested function so main() only wires the result.
-	lc, err := loadLimiterConfig(os.Getenv, sb.Name(), res.MemoryMB)
-	if err != nil {
-		slog.Error("invalid limiter configuration", "error", err)
-		os.Exit(1)
-	}
-	maxConcurrent, perKey, ratePerMin, burst := lc.MaxConcurrent, lc.PerKey, lc.RatePerMin, lc.Burst
-	svc.Limiter = rpc.NewCodeLimiter(maxConcurrent, perKey, ratePerMin, burst)
-
 	var poolSize int
 	sc, err := loadSessionConfig(os.Getenv)
 	if err == nil {
@@ -280,6 +275,15 @@ func main() {
 		slog.Error("invalid session configuration", "error", err)
 		os.Exit(1)
 	}
+	// The session pool is charged against the memory budget, so it is read first.
+	lc, err := loadLimiterConfig(os.Getenv, sb.Name(), res.MemoryMB, poolSize)
+	if err != nil {
+		slog.Error("invalid limiter configuration", "error", err)
+		os.Exit(1)
+	}
+	maxConcurrent, perKey, ratePerMin, burst := lc.MaxConcurrent, lc.PerKey, lc.RatePerMin, lc.Burst
+	svc.Limiter = rpc.NewCodeLimiter(maxConcurrent, perKey, ratePerMin, burst)
+
 	if sc.MaxSessions > 0 {
 		sp, ok := sb.(sandbox.SessionProvider)
 		if !ok || !sp.SupportsSessions() {
