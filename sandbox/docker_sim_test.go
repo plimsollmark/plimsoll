@@ -64,6 +64,7 @@ const (
 // last and the run's outcome stays completed. Skips without the image; fails under
 // SANDBOX_TEST_REQUIRE_DOCKER=1.
 func TestDockerProjectSimWorker(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = simProjectImage
 	requireProjectImage(t, d)
@@ -186,6 +187,7 @@ func sweepRows(n int, p0min, p0max, p1, p2 float64) [][]float64 {
 // daemon's pre-dispatch bound; a ragged table and an impossible isolation floor
 // never reach a container; no module image is ErrUnsupported.
 func TestDockerRunModule(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ModuleImage = simProjectImage
 	requireModuleImage(t, d)

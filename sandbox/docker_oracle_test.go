@@ -93,6 +93,7 @@ func judge(t *testing.T, d *DockerSandbox, controller string) (oracleVerdict, st
 }
 
 func TestDockerOracleJudgesControllerByFingerprint(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = simProjectImage
 	requireProjectImage(t, d)
@@ -130,6 +131,7 @@ func TestDockerOracleJudgesControllerByFingerprint(t *testing.T) {
 // Without the cap the row would have succeeded inside the container's memory
 // limit or, past it, killed the worker and every other row with it.
 func TestDockerRunModuleGreedyRowFailsAlone(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ModuleImage = simProjectImage
 	requireModuleImage(t, d)

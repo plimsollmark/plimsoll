@@ -114,6 +114,8 @@ export type ExecuteCodeOutput = {
   freshSandbox?: true;
   /** The tier the code ran behind: configuration and provider evidence, not attestation. */
   isolation: string;
+  /** SHA-256 of the run record checked by the client before this result was returned. */
+  recordSha256: string;
 };
 
 type Entry = {
@@ -309,6 +311,7 @@ export class CodeSandboxes {
           filesPersist: !ended,
           ...(first ? { freshSandbox: true as const } : {}),
           isolation: r.isolation,
+          recordSha256: r.record.sha256,
         };
       } catch (e) {
         // A call refused because its session had ended ran nothing, so it is
@@ -374,6 +377,7 @@ export class CodeSandboxes {
         stateKept: false,
         filesPersist: false,
         isolation: r.isolation,
+        recordSha256: r.record.sha256,
       };
     }
     const runner = RUNNERS[language];
@@ -392,13 +396,15 @@ export class CodeSandboxes {
         stateKept: false,
         filesPersist: false,
         isolation: r.isolation,
+        recordSha256: r.record.sha256,
       };
     }
     return {
       ...this.#cut(language, step.exitCode, step.timedOut || r.outcome === "timed_out", step.stdout, step.stderr, step.stdoutTruncated || step.stderrTruncated),
       stateKept: false,
       filesPersist: false,
-      isolation: r.isolation,
+        isolation: r.isolation,
+        recordSha256: r.record.sha256,
     };
   }
 

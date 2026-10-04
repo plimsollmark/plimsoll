@@ -41,10 +41,15 @@ option is intentionally only process-tier.
     per-run grant socket), beside docker_cli.go, docker_session.go and docker_pool.go.
   - [sandbox/e2b.go](sandbox/e2b.go) — E2B Firecracker microVM provider.
   - [sandbox/dockercloud.go](sandbox/dockercloud.go): Docker Cloud Sandboxes
-    microVM provider, written against Docker's sandboxes-api v0.36.0 (Connect) and verified
-    against the live service (2026-09-24; Docker now documents a different REST API, see
-    [docs/dockercloud.md](docs/dockercloud.md)); its runs, exec, network guard, API client and
-    sandbox lifecycle are in the `dockercloud_*.go` files beside it.
+    microVM provider. Its wire calls go through one interface
+    ([dockercloud_transport.go](sandbox/dockercloud_transport.go)) with two implementations:
+    the REST API Docker documents, the default
+    ([dockercloud_rest.go](sandbox/dockercloud_rest.go)), and Connect, Docker's pre-launch
+    sandboxes-api v0.36.0, kept as the backup
+    ([dockercloud_connect.go](sandbox/dockercloud_connect.go)), both verified against the
+    live service on 2026-10-04; see
+    [docs/dockercloud.md](docs/dockercloud.md). Its runs, exec, network guard, token
+    exchange and sandbox lifecycle are in the other `dockercloud_*.go` files beside it.
   - [sandbox/openshell/](sandbox/openshell/openshell.go): NVIDIA OpenShell provider
     (the gateway's docker driver, container tier), in its own package because its
     generated gRPC client registers protobuf names OpenShell's Go SDK also registers.
@@ -318,7 +323,7 @@ and its hardened-mode envelope.
 | `wasm`    | in-process QuickJS via wazero | process tier, lowest latency | JS snippets and snippet grants through a direct host function; no projects. An engine escape lands in plimsolld. |
 | `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. Every container declares its lifetime as a label (a run's is its deadline); a run whose `docker run` does not exit 0 has its container removed at once, and `ReconcileOrphans` removes any container past its lifetime plus 5 minutes that no open session or pool holds. |
 | `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. No redirect from envd or the control plane is followed (a followed one would carry the envd and traffic tokens, or the API key, wherever a guest answering on envd's port pointed it), with the default HTTP client or an embedder's. A sandbox ID that is not letters, digits and dashes is never put in envd's host name or a path, and a vendor's error body is cut to 512 bytes with credentials scrubbed before it enters an error. Sandboxes are stamped with a per-instance metadata ID and a lease key tracked from before the create request until the kill has finished ([sandbox/internal/lease](sandbox/internal/lease/), the rule E2B, Docker Cloud and OpenShell share); `ReconcileOrphans` (run periodically by the daemon) reaps stamped microVMs whose key is not tracked, at any age, so a slow create is never reaped and a leak from a malformed or lost create response or failed teardown waits for no clock. |
-| `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | written against Docker's sandboxes-api v0.36.0 (Connect); live suite passed 2026-09-24, and Docker's documentation now describes a different REST API it does not speak. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
+| `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | speaks two APIs through one internal transport interface, chosen by `SANDBOX_DOCKERCLOUD_API` and never switched at run time, both through the live suite on 2026-10-04: `rest` (default), the API Docker documents since launch, which states no image identity (it reports no booted digest, so hardened mode requires `connect`), caps a run at 270 s (an exec ends with its 300 s endpoint credential, one cached per sandbox) and refuses grants, failing startup if a guard URL is set (after the guard's rule the REST API will not report the sandbox's policy, so the rule cannot be verified; a live tripwire watches for that to change); and `connect`, Docker's pre-launch sandboxes-api v0.36.0, now undocumented, kept as the backup, the only API with grants and image evidence. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
 | `openshell` | NVIDIA OpenShell sandbox through a gateway | container (the gateway's docker driver; any other driver is refused) | built by plimsolld, not `Build`. Keeps sessions (a sweep of every non-own process after each call, `sleep` as the main process, a read-back before each call). Each run creates a sandbox with no network rules (the gateway's deny-all default) and `/tmp` as the only writable directory (a `noexec` tmpfs of `SANDBOX_DISK_MB` when that is set), reads it back and refuses any difference, runs the payload over the streamed exec (the deadline cancels the stream, which kills the command's process group; a `setsid` descendant lives until the delete), and deletes the sandbox off the result path, holding the run's capacity until the delete is through (`sandbox.HoldCapacity`; admitters wrap their release with `sandbox.WithCapacity`); `Drain` waits for those deletes at shutdown. Every sandbox declares its lifetime, so `ReconcileOrphans` also reaps what a crashed instance left behind, once that lifetime plus 5 minutes has passed. Grants keep the no-grant policy: a relay in the sandbox pairs the guest's socket connections with connections plimsoll dials in through `ForwardTcp` (session tokens revoked at the run's end), and plimsoll serves the shared broker on them. Module runs: `ErrUnsupported`. Operator setup, grants and the smoke test: [docs/openshell.md](docs/openshell.md). |
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
 
@@ -342,9 +347,11 @@ public guard URL must resolve to that same process — an ordinary load balancer
 replicas rejects valid guard calls as unknown credentials), `DOCKER_SBX_TOKEN` (a Docker
 personal access token with the Cloud Sandboxes scope, read from the environment only),
 `DOCKER_SBX_USERNAME` (the account it belongs to), `SANDBOX_DOCKERCLOUD_AUTH_URL`
-(the token exchange; default Docker Hub's), `SANDBOX_DOCKERCLOUD_API_URL`
-(the management endpoint; required, since Docker documents no default;
-`https://sandboxes.connect.docker.com/sbx` answered on 2026-09-24),
+(the token exchange; default Docker Hub's), `SANDBOX_DOCKERCLOUD_API` (`rest`, the default, or `connect`),
+`SANDBOX_DOCKERCLOUD_API_URL`
+(the management endpoint; for `connect` required, since Docker documents no default,
+and `https://sandboxes.connect.docker.com/sbx` answered on 2026-10-04; for `rest` it
+defaults to the documented `https://connect.docker.com/sandboxes`),
 `SANDBOX_DOCKERCLOUD_IMAGE` (the raw OCI image each sandbox boots; `@sha256:` when
 pinning is required; dockercloud honors `SANDBOX_MEMORY_MB` and whole `SANDBOX_CPUS`,
 requested at create and verified after it, and rejects `SANDBOX_PIDS`/`SANDBOX_DISK_MB`),
@@ -842,14 +849,21 @@ Some tests need a local docker daemon and the five images `make docker-images`
 provides: `node:22-alpine` for snippets (pulled), and `plimsoll/sandbox:latest` for
 `RunProject` plus the `-python`, `-sim` and `-wasm-cc` images derived from it (built).
 Every docker test needs the images its sandbox is configured with, because Preflight
-requires them all. Without them those tests skip in an ordinary run and fail under
-`make audit DOCKER=1`, whose docker suite also covers the oracle's anti-forgery tests
+requires them all. Each image `make docker-images` builds carries a hash of its build
+context (`docker/`, minus the literal paths in `docker/.dockerignore`) as the label
+`io.plimsoll.inputs`, and `make docker-suite` refuses an image whose label is not the
+current hash: after editing `docker/`, rebuild the images. Without them those tests skip in an ordinary run and fail under
+`make audit DOCKER=1`. Only the docker suite runs them: `make audit`'s race pass and
+`make test` run with `-short`, which the docker test helpers (`requireDocker`,
+`sessionDocker`) read as skip, so a docker test reaches docker only through one of
+them. The docker suite also covers the oracle's anti-forgery tests
 and the gVisor installer's offline-bundle check (which needs `zstd`). Run the gate
 as a non-root user: root defeats the runner guard two runnerwire tests exercise, so
 they skip.
 
-`make audit` is the single local gate: build, vet, race tests, golangci-lint,
-`buf lint` plus a generated-code drift check, and `govulncheck`. The real
+`make audit` is the single local gate: build, vet, race tests (`-short`: no docker), golangci-lint,
+`buf lint` plus a generated-code drift check, and `govulncheck`. A working copy may append steps
+of its own through an optional, unpublished `local.mk` (`EXTRA_AUDIT`). The real
 infrastructure suites are opt-in: `make audit DOCKER=1` adds the
 docker/seccomp/broker/smoke tests, `make audit E2B=1` (with `E2B_API_KEY`) adds
 the live E2B suite, and `make audit DOCKERCLOUD=1` (with `DOCKER_SBX_TOKEN`,

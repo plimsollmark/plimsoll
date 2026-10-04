@@ -46,6 +46,7 @@ createInterface({ input: process.stdin }).on('line', () => process.stdout.write(
 // guarded itself and took the scenario from a file, this controller read the
 // scenario off the runner's command line.
 func TestDockerJudgeKeepsScenarioFromController(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = simProjectImage
 	requireProjectImage(t, d)

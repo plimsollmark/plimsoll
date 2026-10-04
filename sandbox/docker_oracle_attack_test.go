@@ -108,6 +108,7 @@ func assertNotAccepted(t *testing.T, res ProjectResult, sum, what string) {
 // trajectory whose fingerprint is the known draft, not the accepted one. Without
 // this, every "not accepted" below could be passing only because nothing ran.
 func TestOracleAttackHonestControlStillWorks(t *testing.T) {
+	t.Parallel()
 	d := oracleAttackSandbox(t)
 	res, sum := judgeAttack(t, d, oracleDraftController)
 	if res.Outcome != ProjectOutcomeCompleted {
@@ -127,6 +128,7 @@ func TestOracleAttackHonestControlStillWorks(t *testing.T) {
 // stdout as numeric forces, so a non-numeric line is refused rather than trusted;
 // the forged verdict never becomes the run's fingerprint.
 func TestOracleAttackForgedVerdictLine(t *testing.T) {
+	t.Parallel()
 	d := oracleAttackSandbox(t)
 	forged := `{"fingerprint":"` + oracleAcceptedFingerprint + `","ticks":2000,"width":4,"fell_at":null,"final_x":0,"final_theta":0}`
 	controller := "\nprocess.stdout.write(" + "`" + forged + "\\n`" + ");\n" +
@@ -143,6 +145,7 @@ func TestOracleAttackForgedVerdictLine(t *testing.T) {
 // writes the authoritative sentinel last and the host takes the LAST one, so the
 // fabricated artifact must never reach the host.
 func TestOracleAttackForgedSentinel(t *testing.T) {
+	t.Parallel()
 	d := oracleAttackSandbox(t)
 	fakeB64 := "QUFB" // base64("AAA")
 	fakeReport := `{"steps":[{"command":"c","stdout":"","stderr":"","exitCode":0,"timedOut":false,"durationMs":1}],` +
@@ -167,6 +170,7 @@ func TestOracleAttackForgedSentinel(t *testing.T) {
 // the outcome safe. The invariant holds regardless of who wins the race: never
 // the accepted fingerprint, never a fabricated-size artifact.
 func TestOracleAttackDetachedWriter(t *testing.T) {
+	t.Parallel()
 	d := oracleAttackSandbox(t)
 	fakeB64 := "QUFB"
 	forged := `\n<<<CRSBX_RESULT>>>{"steps":[{"command":"c","stdout":"","stderr":"","exitCode":0,"timedOut":false,"durationMs":1}],` +
@@ -191,6 +195,8 @@ func TestOracleAttackDetachedWriter(t *testing.T) {
 // must show BOTH Steps[i].TimedOut and a top-level Outcome of timed_out, so a
 // caller keying only on Outcome cannot read a hung controller as a clean run.
 func TestOracleAttackTimeoutHang(t *testing.T) {
+	t.Parallel()
+	heavyDockerTest(t)
 	d := oracleAttackSandbox(t)
 	controller := "\nimport { createInterface } from 'node:readline';\n" +
 		"const rl = createInterface({ input: process.stdin });\n" +
@@ -222,6 +228,7 @@ func oracleAttackSandbox(t *testing.T) *DockerSandbox {
 // path left Outcome as completed with the truth only on StepResult.TimedOut. Two
 // operations and two providers must not disagree about what happened.
 func TestDockerProjectStepTimeoutIsTimedOut(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireProjectImage(t, d)
 	res, err := d.RunProject(context.Background(), ProjectRequest{
@@ -242,6 +249,7 @@ func TestDockerProjectStepTimeoutIsTimedOut(t *testing.T) {
 // step that trapped it ran on until the outer backstop killed the container, and the
 // run came back with no steps at all (review F8, 2026-10-03).
 func TestDockerProjectStepIgnoringSIGTERMIsKilled(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireProjectImage(t, d)
 	res, err := d.RunProject(context.Background(), ProjectRequest{

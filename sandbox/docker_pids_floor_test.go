@@ -27,6 +27,7 @@ const (
 // and no output (docs/gvisor.md). External review of v0.10.0, documentation item 6
 // (2026-09-28).
 func TestDockerGuestGetsItsProcessBudget(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	requireProjectImage(t, d)

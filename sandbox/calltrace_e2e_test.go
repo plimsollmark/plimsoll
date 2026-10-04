@@ -19,6 +19,7 @@ import (
 // per template, a broker-side denial counted with no row, and neither the injected
 // credential nor a raw path anywhere in the serialized trace.
 func TestDockerRunPopulatesCallTrace(t *testing.T) {
+	t.Parallel()
 	requireSnippetImage(t, testDocker())
 
 	var mu sync.Mutex
@@ -135,6 +136,7 @@ func TestDockerRunPopulatesCallTrace(t *testing.T) {
 // import, the credential stays host-side, and the run's ProjectResult carries the
 // metadata-only CallTrace.
 func TestDockerProjectGrantPreloadsHostClient(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireProjectImage(t, d)
 

@@ -41,6 +41,7 @@ func sessionBrokerFixture(t *testing.T, upstream http.HandlerFunc) (*dockerSessi
 // and released its grant, the request must not reach the API with the call's
 // credential.
 func TestSessionBrokerRefusesARequestThatOutlivesItsCall(t *testing.T) {
+	t.Parallel()
 	b, _, release, hits := sessionBrokerFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "{}")
 	})
@@ -74,6 +75,7 @@ func TestSessionBrokerRefusesARequestThatOutlivesItsCall(t *testing.T) {
 // A request already upstream when its call ends is cut off, and the call's trace,
 // read after the release, holds it.
 func TestSessionBrokerReleaseCutsOffAndTracesTheRequestInFlight(t *testing.T) {
+	t.Parallel()
 	arrived, stop := make(chan struct{}, 1), make(chan struct{})
 	b, core, release, _ := sessionBrokerFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		arrived <- struct{}{}

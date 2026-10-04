@@ -227,6 +227,7 @@ func TestDockerSessionFailedReadBackIsNotDispatched(t *testing.T) {
 // A grant whose credential cannot be minted is refused before dispatch, reason
 // permission, and the call's code never runs.
 func TestDockerSessionFailedMintIsNotDispatched(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	grant := &sandbox.HostAPIGrant{

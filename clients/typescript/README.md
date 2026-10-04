@@ -115,6 +115,12 @@ call. A call without a key (no thread, no run) always runs fresh: one sandbox sh
 across conversations would show one user another's files. A language the daemon's image
 cannot run is refused before anything is sent.
 
+Each tool answer also includes `isolation` and `recordSha256`. The client checks
+the run record before returning, then gives the tool the checked record's SHA-256.
+The digest names that record; it is not a signature or a proof that the guest
+computed honestly. See the [Trigger.dev feature and deployment guide](https://github.com/plimsollmark/plimsoll/blob/main/docs/trigger-dev.md)
+for the three properties together.
+
 Closing a sandbox checks the daemon's count of calls against the chain the client saw; a
 mismatch means the daemon counted a call the client has no answer for (one that ended in an
 abort, a timeout, a dropped connection or a proxy's error), or, if none did, that someone
@@ -147,7 +153,7 @@ import { plimsollCodeSandbox } from "@plimsollmark/client/trigger";
 
 const sandbox = plimsollCodeSandbox({
   client: () => new PlimsollClient({ baseUrl: process.env.PLIMSOLL_URL!, token: process.env.PLIMSOLL_TOKEN }),
-  minimumIsolation: "container",
+  minimumIsolation: "kernel",
 });
 
 export const codeChat = chat.agent({
@@ -162,6 +168,11 @@ export const codeChat = chat.agent({
 
 The full example, with a test that drives real turns through Trigger.dev's `mockChatAgent`:
 [examples/trigger-chat](https://github.com/plimsollmark/plimsoll/tree/main/examples/trigger-chat/).
+Its source uses a `container` floor for local development. The
+[deployable sister starter](https://github.com/plimsollmark/plimsoll-trigger-starter)
+uses `kernel` by default. Hostile production code needs the verified kernel or
+VM tier; choose `vm` when the threat model requires a VM boundary, accepting
+that current VM providers cannot keep cells.
 
 What the hooks cannot cover: a run that dies without reaching `onChatSuspend` or
 `onComplete` (its process killed, a crash) leaves its sandbox open until the add-on's idle

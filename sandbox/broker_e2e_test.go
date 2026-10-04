@@ -20,6 +20,7 @@ import (
 // If the `if !grant.routeAllowed(...)` gate at startDockerBroker were removed or
 // inverted, or the Director stopped overwriting Authorization, this test fails.
 func TestDockerBrokerEnforcesAllowlistOverSocket(t *testing.T) {
+	t.Parallel()
 	var upstreamHits int32
 	var gotAuth atomic.Value // string
 	var gotHost atomic.Value
@@ -111,6 +112,7 @@ func TestDockerBrokerEnforcesAllowlistOverSocket(t *testing.T) {
 // holds at the HTTP layer, not just in the routeAllowed predicate: with no Allow
 // entries, every request is 403 and nothing reaches upstream.
 func TestDockerBrokerEmptyAllowlistDeniesOverSocket(t *testing.T) {
+	t.Parallel()
 	var upstreamHits int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&upstreamHits, 1)

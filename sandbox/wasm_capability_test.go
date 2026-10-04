@@ -11,6 +11,7 @@ import (
 )
 
 func TestWasmHostAPIGrantUsesSharedBroker(t *testing.T) {
+	t.Parallel()
 	type capturedRequest struct {
 		method, path, auth, contentType, accept, body string
 	}

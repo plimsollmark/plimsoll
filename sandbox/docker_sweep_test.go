@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
@@ -26,6 +27,8 @@ func sweepIn(t *testing.T, script string, docker ...string) string {
 // A disk budget of 0 means no bound, so the sweep measures nothing: past the entry
 // bound, or at a directory it cannot read, it used to end the session anyway.
 func TestDockerSweepWithNoBudgetMeasuresNothing(t *testing.T) {
+	t.Parallel()
+	sandbox.HeavyDockerTest(t)
 	got := sweepIn(t, `node -e 'const fs = require("fs"); fs.mkdirSync("/tmp/d"); for (let i = 0; i <= 200000; i++) fs.writeFileSync("/tmp/d/" + i, "")'
 node -e "$SWEEP" 0 200000 walk /tmp >/dev/null; echo "none=$?"
 node -e "$SWEEP" 1073741824 200000 walk /tmp >/dev/null; echo "budget=$?"`)
@@ -37,6 +40,7 @@ node -e "$SWEEP" 1073741824 200000 walk /tmp >/dev/null; echo "budget=$?"`)
 // Measured by statfs, a session's tmpfs counts a file deleted while a process still
 // holds it open, which a walk of the directory cannot see.
 func TestDockerSweepStatfsCountsAnOpenDeletedFile(t *testing.T) {
+	t.Parallel()
 	got := sweepIn(t, `node -e 'require("fs").writeFileSync("/m/big", Buffer.alloc(16 << 20))'
 exec 3</m/big; rm /m/big
 node -e "$SWEEP" 8388608 200000 statfs /m >/dev/null; echo "statfs=$?"

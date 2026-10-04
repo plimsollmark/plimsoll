@@ -18,6 +18,7 @@ import (
 // authenticated this forged the result in 7 of 12 runs under runc and 12 of 12 under
 // runsc (2026-09-28). The writer lives in its own file so no quoting can break it.
 func TestDockerProjectRejectsGuestForgedRunnerReport(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	requireProjectImage(t, d)
@@ -62,6 +63,7 @@ setTimeout(() => process.exit(9), 250);
 // reopening the runner's report descriptor. The honest frame must still report
 // the failed step, and the step must see a clear refusal opening that descriptor.
 func TestDockerProjectRunnerReportSurvivesGuestStdoutFlood(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	requireProjectImage(t, d)
@@ -91,6 +93,7 @@ process.exit(7);
 }
 
 func TestDockerProjectRunnerDescriptorsAndMemoryArePrivate(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	requireProjectImage(t, d)
@@ -120,6 +123,7 @@ process.exit(7);
 // TestDockerProjectSurvivesSentinelInGuestOutput: guest output that happens to
 // contain the framing token must not turn a clean run into a protocol error.
 func TestDockerProjectSurvivesSentinelInGuestOutput(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	requireProjectImage(t, d)
@@ -142,6 +146,7 @@ func TestDockerProjectSurvivesSentinelInGuestOutput(t *testing.T) {
 // TestDockerProjectArtifactsDoNotFollowSymlinks: artifact capture must not read
 // through a link the run planted in /work.
 func TestDockerProjectArtifactsDoNotFollowSymlinks(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	requireProjectImage(t, d)

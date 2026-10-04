@@ -118,7 +118,7 @@ const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the 
                              https://hub.docker.com/v2/auth/token
   SANDBOX_DOCKERCLOUD_GUARD_URL
                              absolute HTTPS egress-guard endpoint on 443; enables
-                             dockercloud grants. A grant run's sandbox may reach
+                             dockercloud grants (connect only). A grant run's sandbox may reach
                              only this host; the guest holds a per-run, guard-only
                              credential (Docker's proxy cannot inject one)
   SANDBOX_DOCKERCLOUD_POLICY_URL
@@ -126,10 +126,22 @@ const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the 
                              https://api.sandboxes-cloud.docker.com/v1. Not in
                              Docker's published contract (the sbx CLI's call);
                              every grant run verifies the result through it
+  SANDBOX_DOCKERCLOUD_API    which Docker API dockercloud speaks: rest (the
+                             default; the API Docker documents) or connect (the
+                             pre-launch contract, kept as a backup); both passed
+                             the live suite on 2026-10-04. rest states no image
+                             identity (it reports no booted digest, so hardened
+                             mode needs connect), caps a run at 270 s (an exec
+                             ends with its 300 s endpoint credential) and cannot
+                             verify grants, so it fails startup when
+                             SANDBOX_DOCKERCLOUD_GUARD_URL is set
   SANDBOX_DOCKERCLOUD_API_URL
-                             Docker Cloud Sandboxes management endpoint; required,
-                             no default (https://sandboxes.connect.docker.com/sbx
-                             answered on 2026-09-24)
+                             Docker Cloud Sandboxes management endpoint. connect:
+                             required, no default
+                             (https://sandboxes.connect.docker.com/sbx answered on
+                             2026-10-04); rest: default
+                             https://connect.docker.com/sandboxes, the documented
+                             base URL
   SANDBOX_DOCKERCLOUD_IMAGE  raw OCI image each dockercloud sandbox boots (the
                              toolchain image; must be @sha256: when
                              SANDBOX_REQUIRE_PINNED_IMAGES=1, and then the
@@ -611,6 +623,9 @@ func main() {
 				"pids", "unsupported (non-zero fails startup)",
 			)
 		case "dockercloud":
+			if dc, ok := sb.(*sandbox.DockerCloud); ok {
+				args = append(args, "api", dc.APIName())
+			}
 			args = append(args,
 				"resources", "requested at create and verified after it; 0 = backend default",
 				"max_mem_mb", res.MemoryMB,

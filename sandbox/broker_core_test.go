@@ -17,6 +17,7 @@ func (f brokerRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 func TestBrokerCoreOwnsAuthorizationAndExactWireTarget(t *testing.T) {
+	t.Parallel()
 	var upstreamCalls int
 	transport := brokerRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		upstreamCalls++
@@ -67,6 +68,7 @@ func TestBrokerCoreOwnsAuthorizationAndExactWireTarget(t *testing.T) {
 }
 
 func TestBrokerCoreRejectsEveryApproveWireMismatch(t *testing.T) {
+	t.Parallel()
 	var upstreamCalls int
 	transport := brokerRoundTripFunc(func(*http.Request) (*http.Response, error) {
 		upstreamCalls++
@@ -108,6 +110,7 @@ func TestBrokerCoreRejectsEveryApproveWireMismatch(t *testing.T) {
 }
 
 func TestBrokerCoreDoesNotFollowRedirects(t *testing.T) {
+	t.Parallel()
 	var upstreamCalls int
 	core, err := newBrokerSession(&HostAPIGrant{
 		BaseURL: "https://api.internal",
@@ -132,6 +135,7 @@ func TestBrokerCoreDoesNotFollowRedirects(t *testing.T) {
 }
 
 func TestBrokerCoreFreezesGrantForRun(t *testing.T) {
+	t.Parallel()
 	var paths []string
 	grant := &HostAPIGrant{
 		BaseURL: "https://api.internal",
@@ -159,6 +163,7 @@ func TestBrokerCoreFreezesGrantForRun(t *testing.T) {
 }
 
 func TestBrokerCoreCapsResponseBeforeReturningItToAnyAdapter(t *testing.T) {
+	t.Parallel()
 	core, err := newBrokerSession(&HostAPIGrant{
 		BaseURL: "https://api.internal",
 		Allow:   []HostRoute{{Method: "GET", Path: "/large"}},

@@ -68,6 +68,8 @@ func pythonSessionDocker(t *testing.T) *sandbox.DockerSandbox {
 // the smoke test's language probe finds both languages and the cell cases run for
 // each.
 func TestDockerSessionConformance(t *testing.T) {
+	t.Parallel()
+	sandbox.HeavyDockerTest(t)
 	d := pythonSessionDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -177,6 +179,7 @@ func TestDockerSessionSuspendPausesAndHoldsMemory(t *testing.T) {
 // The session smoke test as the daemon runs it: after the provider's smoke test has
 // proved the image's languages, so it runs a cell in each, here the Python image's two.
 func TestDockerSessionSmokeTest(t *testing.T) {
+	t.Parallel()
 	d := pythonSessionDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -196,6 +199,8 @@ func TestDockerSessionSmokeTest(t *testing.T) {
 // goes on. Cut short, a pause docker had taken left the session thinking the
 // container ran, and the next call ended it as paused by someone else.
 func TestDockerSessionGivingUpOnPauseOrResumeKeepsTheSession(t *testing.T) {
+	t.Parallel()
+	sandbox.HeavyDockerTest(t)
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	if _, err := sessionJS(t, s, `1`); err != nil {
@@ -320,6 +325,7 @@ func TestDockerSessionReconcileOrphans(t *testing.T) {
 // the call, injects the credential host-side, and answers 503 to a later call that
 // carries no grant, even one that dials the socket directly.
 func TestDockerSessionGrantLivesForItsCall(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	var mu sync.Mutex
 	var auths []string
@@ -369,6 +375,7 @@ req.on("error",(e)=>console.log("error",e.code));req.end();`, Timeout: 10 * time
 // session's variables survive an idle suspend (openshell's stop does not keep them;
 // its next cell reports a fresh interpreter).
 func TestDockerSessionPauseKeepsTheInterpreter(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -388,6 +395,7 @@ func TestDockerSessionPauseKeepsTheInterpreter(t *testing.T) {
 // A docker session relays cells through a process it keeps attached beside the
 // interpreter. Code that kills only the relay costs a new relay, not the state.
 func TestDockerSessionRelayKilledKeepsTheInterpreter(t *testing.T) {
+	t.Parallel()
 	d := sessionDocker(t)
 	s := openDockerSession(t, d)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

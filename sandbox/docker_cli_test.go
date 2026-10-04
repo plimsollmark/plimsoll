@@ -56,6 +56,7 @@ func TestDockerCommandGetsNoDaemonEnvironment(t *testing.T) {
 // An -e flag is always NAME=value with a valid name, and plimsoll's own programs in a
 // sandbox start from an empty environment.
 func TestDockerEnvFlagsAndControlArgv(t *testing.T) {
+	t.Parallel()
 	if f, err := dockerEnvFlag("HOST_API_SOCKET", "/run/x.sock"); err != nil || !slices.Equal(f, []string{"-e", "HOST_API_SOCKET=/run/x.sock"}) {
 		t.Fatalf("dockerEnvFlag: %q, %v", f, err)
 	}
@@ -234,6 +235,7 @@ func TestGuestUIDIsNoHostAccount(t *testing.T) {
 // new call site that starts docker directly, or writes "-e" or "--env" by hand, fails
 // here: it would reintroduce the leaks docker_cli.go describes.
 func TestDockerCLIIsStartedOnlyThroughDockerCommand(t *testing.T) {
+	t.Parallel()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -282,6 +284,7 @@ func TestDockerCLIIsStartedOnlyThroughDockerCommand(t *testing.T) {
 // (dockerCommand, dockerResolveCommand, exec.Command, exec.CommandContext, *exec.Cmd);
 // a pipe (StdoutPipe) is a stream its reader bounds and is not checked.
 func TestDockerCLIOutputIsAlwaysCapped(t *testing.T) {
+	t.Parallel()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -588,6 +591,7 @@ func TestCheckGuestIDs(t *testing.T) {
 // SANDBOX_GUEST_UID set for a provider that does not pick its guests' uid fails
 // Build, rather than look applied.
 func TestGuestUIDOnlyForDocker(t *testing.T) {
+	t.Parallel()
 	for _, provider := range []string{"wasm", "e2b", "dockercloud", ""} {
 		_, err := Build(func(k string) string {
 			switch k {

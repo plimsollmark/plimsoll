@@ -13,6 +13,7 @@ import (
 // node through mknod stay denied: the regular file only by the filter, since
 // creating one needs no capability.
 func TestDockerSeccompAllowsOnlyFIFOs(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = "plimsoll/sandbox-python:latest"
 	requireProjectImage(t, d)

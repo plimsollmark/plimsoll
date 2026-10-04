@@ -13,6 +13,7 @@ import (
 // Exercise the installer without root, network access, or system writes. The
 // fixture runtime refuses any attempt to enable downloads or register globally.
 func TestInstallerVerifiesCompleteOfflineBundle(t *testing.T) {
+	t.Parallel()
 	for _, tool := range []string{"bash", "tar", "zstd", "sha512sum"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("installer test requires %s", tool)

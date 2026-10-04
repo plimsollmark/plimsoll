@@ -13,6 +13,7 @@ import (
 // Unix socket. No daemon needed, so the plain gate catches a deletion too. The flag
 // must appear exactly once, so a later argument cannot override it.
 func TestDockerLockdownHasNoNetwork(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	for _, runtime := range []string{"", "runsc"} {
 		for _, workTmpfs := range []bool{false, true} {
@@ -91,6 +92,7 @@ func checkEgressProbe(t *testing.T, d *DockerSandbox, kind, stdout string) {
 // TestDockerRunHasNoEgress runs the probe as a snippet and as a project step, the two
 // lockdown shapes.
 func TestDockerRunHasNoEgress(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	res, err := d.RunJavaScript(context.Background(), Request{Timeout: 30 * time.Second, Code: egressProbe})

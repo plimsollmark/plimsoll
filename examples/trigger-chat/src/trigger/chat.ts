@@ -22,41 +22,50 @@ import { plimsollCodeSandbox } from "@plimsollmark/client/trigger";
 
 import { models } from "./models.ts";
 
-const sandbox = plimsollCodeSandbox({
-  // Built on first use, so indexing the task at deploy time needs no secrets.
-  client: () =>
-    new PlimsollClient({
-      baseUrl: process.env.PLIMSOLL_URL ?? "",
-      token: process.env.PLIMSOLL_TOKEN,
-    }),
-  // Refused before dispatch on a daemon whose provider reports less.
-  minimumIsolation: "container",
-  timeoutMs: 30_000,
-});
+// codeChatAgent builds the agent. idleTimeoutInSeconds is how long a run waits for the
+// next message before it suspends, which is when onChatSuspend closes the sandbox;
+// unset, it is Trigger.dev's default of 30. The test builds one with a few seconds,
+// so its check of the suspend does not wait half a minute of real time.
+export function codeChatAgent(options: { id?: string; idleTimeoutInSeconds?: number } = {}) {
+  const sandbox = plimsollCodeSandbox({
+    // Built on first use, so indexing the task at deploy time needs no secrets.
+    client: () =>
+      new PlimsollClient({
+        baseUrl: process.env.PLIMSOLL_URL ?? "",
+        token: process.env.PLIMSOLL_TOKEN,
+      }),
+    // Refused before dispatch on a daemon whose provider reports less.
+    minimumIsolation: "container",
+    timeoutMs: 30_000,
+  });
 
-export const codeChat = chat.agent({
-  id: "code-chat",
-  tools: { executeCode: sandbox.executeCode },
-  onTurnStart: async ({ runId }) => {
-    sandbox.warm(runId);
-  },
-  onChatSuspend: async ({ runId }) => {
-    await sandbox.dispose(runId);
-  },
-  onComplete: async ({ ctx }) => {
-    await sandbox.dispose(ctx.run.id);
-  },
-  run: async ({ messages, tools, signal, streamText }) =>
-    streamText({
-      model: models.chat(),
-      system:
-        "You are a careful analyst. When a question needs arithmetic, parsing or data analysis, " +
-        "write Python and run it with executeCode instead of computing in your head. Load data once: " +
-        "variables you define stay defined in later calls while stateKept is true, until a result says " +
-        "freshInterpreter (rebuild them) or freshSandbox (earlier files are gone too).",
-      messages,
-      tools,
-      stopWhen: stepCountIs(10),
-      abortSignal: signal,
-    }),
-});
+  return chat.agent({
+    id: options.id ?? "code-chat",
+    idleTimeoutInSeconds: options.idleTimeoutInSeconds,
+    tools: { executeCode: sandbox.executeCode },
+    onTurnStart: async ({ runId }) => {
+      sandbox.warm(runId);
+    },
+    onChatSuspend: async ({ runId }) => {
+      await sandbox.dispose(runId);
+    },
+    onComplete: async ({ ctx }) => {
+      await sandbox.dispose(ctx.run.id);
+    },
+    run: async ({ messages, tools, signal, streamText }) =>
+      streamText({
+        model: models.chat(),
+        system:
+          "You are a careful analyst. When a question needs arithmetic, parsing or data analysis, " +
+          "write Python and run it with executeCode instead of computing in your head. Load data once: " +
+          "variables you define stay defined in later calls while stateKept is true, until a result says " +
+          "freshInterpreter (rebuild them) or freshSandbox (earlier files are gone too).",
+        messages,
+        tools,
+        stopWhen: stepCountIs(10),
+        abortSignal: signal,
+      }),
+  });
+}
+
+export const codeChat = codeChatAgent();

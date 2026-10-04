@@ -54,7 +54,10 @@ func TestUsageNamesEveryVariable(t *testing.T) {
 		}
 		for _, match := range name.FindAllStringSubmatch(string(src), -1) {
 			seen++
-			if !strings.Contains(helpText(), match[1]) {
+			// A whole name: SANDBOX_DOCKERCLOUD_API_URL in the text must not count as
+			// documenting SANDBOX_DOCKERCLOUD_API ("_" is a word character, so \b does
+			// not match between "API" and "_URL").
+			if !regexp.MustCompile(`\b` + match[1] + `\b`).MatchString(helpText()) {
 				t.Errorf("%s reads %s but usage (-h) does not document it", file, match[1])
 			}
 		}

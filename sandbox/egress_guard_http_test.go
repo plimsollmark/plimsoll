@@ -53,6 +53,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 }
 
 func TestEgressGuardHTTPHandlerFramesBrokerCall(t *testing.T) {
+	t.Parallel()
 	h := EgressGuardHTTPHandler(&fakeE2BGuard{token: "run-token"}, "/v1/e2b/guard", 0, 0)
 	req := httptest.NewRequest(http.MethodPost, "https://guard.example/v1/e2b/guard", strings.NewReader(`{"method":"GET","path":"/v1/items","body":{"x":1}}`))
 	req.Header.Set(EgressGuardHeader, "run-token")

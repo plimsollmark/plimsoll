@@ -100,6 +100,7 @@ func buckRegulationScore(traj []byte, tickS float64) (score float64, failure str
 }
 
 func TestDockerWasmBuckControllerMatchesItsJavaScriptLaw(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = wasmCCProjectImage
 	requireProjectImage(t, d)

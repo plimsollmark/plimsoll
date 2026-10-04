@@ -38,6 +38,7 @@ func runWrapperOnHost(t *testing.T, limit, cap int, argv ...string) (stdout, std
 }
 
 func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {
+	t.Parallel()
 	for _, tool := range []string{"sh", "timeout", "head", "yes", "sleep"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not on PATH", tool)
@@ -82,6 +83,7 @@ func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {
 // wrapper, and the Docker Cloud guest applies no such profile; SmokeTest proves the
 // limit really holds in the configured guest.
 func TestDockerCloudExecWrapperUnderBusyboxDocker(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.Seccomp = ""
 	requireProjectImage(t, d)

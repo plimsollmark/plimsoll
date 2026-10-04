@@ -34,6 +34,10 @@ starts a fresh sandbox; the tool's `stateKept: false` and `filesPersist: false` 
 model nothing carried over. `docker` under gVisor (`SANDBOX_DOCKER_RUNTIME=runsc`) keeps
 sessions at the `kernel` tier.
 
+Every tool answer also includes the isolation tier and `recordSha256`, the digest
+of the run record the client checked before returning. The digest identifies
+the record, but is not a signature or a proof of the guest's computation.
+
 ## Run it
 
 1. A caller for the agent, from the repository root. This creates `clients.json`, the
@@ -72,6 +76,10 @@ anything, if its provider reports less (the `wasm` provider is `process`). Raise
 `kernel` to require gVisor, which keeps sessions on docker under
 `SANDBOX_DOCKER_RUNTIME=runsc`, or to `vm`, which costs sessions: the providers at that
 tier keep none.
+Use at least the verified `kernel` tier for hostile production code; choose
+`vm` when a VM boundary is required. This example's `container` floor is for
+local development. The [deployable starter](https://github.com/plimsollmark/plimsoll-trigger-starter)
+uses `kernel` by default and includes a task that checks two deployed cells.
 
 ## Test
 
@@ -79,6 +87,8 @@ tier keep none.
 are an in-memory fake and runs [`chat.test.ts`](src/trigger/chat.test.ts): Trigger.dev's
 `mockChatAgent` drives two turns with a scripted model that calls `executeCode` three
 times, the first with a CSV file. It checks that one interpreter served all three calls
-across both turns, that the file reached it, and, after Trigger.dev's 30-second idle
-window, that `onChatSuspend` closed the sandbox. The harness does not
+across both turns, that the file reached it, and, once the run's idle window passes,
+that `onChatSuspend` closed the sandbox. The test builds the agent with a 3-second window
+(`codeChatAgent({ idleTimeoutInSeconds: 3 })`) instead of Trigger.dev's default 30, so
+that wait is real time but short. The harness does not
 run task-level `onComplete`, so that hook is not exercised.

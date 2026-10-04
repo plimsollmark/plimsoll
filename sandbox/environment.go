@@ -108,11 +108,14 @@ func (e *E2B) Environments() Environments {
 	}
 }
 
-// Environments states the image digest when the image is pinned by one (each run
-// verifies that the booted digest matches it); a tag is not an identity.
+// Environments states the image digest when the image is pinned by one and the API
+// reports the digest each sandbox booted, so every run verifies it (Connect); a tag is
+// not an identity. The REST API reports no booted digest, so there a pin is what was
+// asked for, not evidence, and no identity is stated: a caller's software rule then
+// fails closed, as on E2B.
 func (d *DockerCloud) Environments() Environments {
 	identity := ""
-	if image := strings.TrimSpace(d.Image); isDigestPinned(image) {
+	if image := strings.TrimSpace(d.Image); isDigestPinned(image) && !d.rest() {
 		identity = "dockercloud-image:" + strings.ToLower(image[strings.LastIndex(image, "@")+1:])
 	}
 	ceiling := runCeiling(d.MaxTimeout)

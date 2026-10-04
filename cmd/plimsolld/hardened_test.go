@@ -155,10 +155,19 @@ func TestHardenedPolicyRequiresExplicitE2BTemplate(t *testing.T) {
 func TestHardenedPolicyDockerCloud(t *testing.T) {
 	f := hardenedDockerFacts()
 	f.Provider, f.Isolation = "dockercloud", sandbox.IsolationVM
-	env := map[string]string{"SANDBOX_MEMORY_MB": "1024", "SANDBOX_CPUS": "2", "SANDBOX_REQUIRE_PINNED_IMAGES": "1"}
+	env := map[string]string{"SANDBOX_MEMORY_MB": "1024", "SANDBOX_CPUS": "2", "SANDBOX_REQUIRE_PINNED_IMAGES": "1", "SANDBOX_DOCKERCLOUD_API": "connect"}
 	if err := enforceHardenedPolicy(getenvFrom(env), f); err != nil {
 		t.Fatalf("compliant dockercloud deployment rejected: %v", err)
 	}
+	// The REST API, the default, reports no booted digest, so a pin there is not
+	// evidence.
+	for _, api := range []string{"rest", ""} {
+		env["SANDBOX_DOCKERCLOUD_API"] = api
+		if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_DOCKERCLOUD_API=connect") {
+			t.Fatalf("API %q: err = %v, want a REST API violation", api, err)
+		}
+	}
+	env["SANDBOX_DOCKERCLOUD_API"] = "connect"
 	delete(env, "SANDBOX_REQUIRE_PINNED_IMAGES")
 	err := enforceHardenedPolicy(getenvFrom(env), f)
 	if err == nil || !strings.Contains(err.Error(), "SANDBOX_REQUIRE_PINNED_IMAGES") {

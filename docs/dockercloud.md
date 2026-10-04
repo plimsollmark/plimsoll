@@ -10,24 +10,28 @@ strongest of the four levels. The code is
 
 ## How it was built and verified
 
-It is written against the API Docker released as `github.com/docker/sandboxes-api`
-v0.36.0, a <dfn>*protobuf*</dfn> API (protobuf is Google's schema format for messages).
-The provider speaks that API by hand, as <dfn>*Connect*</dfn> JSON over `net/http`
-(Connect is an RPC protocol that carries JSON or protobuf over ordinary HTTP), so it
-adds no module to the dependency graph. The live suite (`make audit DOCKERCLOUD=1`)
-passed against the real service at `https://sandboxes.connect.docker.com/sbx` on
-2026-09-24: smoke test, snippet, project, resource bounds, and listing leftover
-sandboxes (orphans). "The published contract" below means that release.
+It was first written against the API Docker released as `github.com/docker/sandboxes-api`
+v0.36.0 (tagged 2026-09-03, before the service launched), a <dfn>*protobuf*</dfn> API
+(protobuf is Google's schema format for messages). The provider speaks that API by
+hand, as <dfn>*Connect*</dfn> JSON over `net/http` (Connect is an RPC protocol that
+carries JSON or protobuf over ordinary HTTP), so it adds no module to the dependency
+graph. The live suite (`make audit DOCKERCLOUD=1`) passed against the real service at
+`https://sandboxes.connect.docker.com/sbx` on 2026-09-24 and again on 2026-10-04: smoke
+test, snippet, project, resource bounds, and listing leftover sandboxes (orphans). "The
+published contract" below means that release.
 
-**Docker's documentation has since moved on.** On 2026-10-04 Docker's API reference
-documents a different, experimental REST API at `https://connect.docker.com/sandboxes`:
-`POST /v1/sandboxes` to create, and `DELETE /v1/sandboxes/{id}` by ID only, with a
-required `If-Match` header
-([EXTERNAL · official docs ↗](https://docs.docker.com/reference/api/sandboxes/latest/operations/createSandbox/)).
-This provider does not speak that API, and whether the Connect endpoint above still
-answers has not been checked since 2026-09-24. Before relying on this provider, run the
-live suite (it creates billable microVMs, a few cents' worth); a failure there is the
-signal that the provider needs porting.
+**That contract is no longer the one Docker documents.** When the service launched on
+2026-09-24, Docker published an experimental REST API at
+`https://connect.docker.com/sandboxes` and documents only that one
+([EXTERNAL · official docs ↗](https://docs.docker.com/ai/sandboxes-api/)). Its operations
+mirror the protobuf contract's, but the paths, the delete precondition (`If-Match`) and the
+network-policy read-back differ. The
+`sandboxes-api` repository is no longer public (404 on 2026-10-04), and Docker has stated
+neither a deprecation nor a sunset date for the Connect endpoint. Treat the endpoint as
+undocumented: it can change without notice. Since 2026-10-04 the provider speaks the REST
+API by default and keeps Connect as a backup, as [Choosing the API](#choosing-the-api)
+describes; run the live suite (it creates billable microVMs, a few cents' worth) before
+relying on either.
 
 ## Three things an operator must set up
 
@@ -108,3 +112,36 @@ traffic leaving the sandbox) is denied from inside the guest.
 
 The smoke test creates a billable sandbox, so it runs once at startup and never on
 the unauthenticated `/readyz` path, which checks configuration only.
+
+## Choosing the API
+
+`SANDBOX_DOCKERCLOUD_API` chooses the API once, at startup. The provider never falls
+back from one to the other: the startup smoke test proves only the API in use, and the
+two give different evidence. REST is the default; Connect is kept as a backup for as long
+as it passes the live suite.
+
+| | `rest` (the default) | `connect` |
+|---|---|---|
+| What it is | the API Docker documents | the pre-launch API described above |
+| Live suite through the provider | passed on 2026-10-04 | passed on 2026-09-24 and 2026-10-04 |
+| `SANDBOX_DOCKERCLOUD_API_URL` | defaults to `https://connect.docker.com/sandboxes` | required |
+| Pinned image | the API reports no booted digest, so each run checks only that the service recorded the pinned reference; no identity is stated, so a caller's software rule refuses the run | each run checks the digest the sandbox booted, and `Describe` states it as the image's identity |
+| The daemon's strict production check, `PLIMSOLL_HARDENED=1` | refused | allowed, and must be named: `SANDBOX_DOCKERCLOUD_API=connect` |
+| Host-API grants | refused; a configured `SANDBOX_DOCKERCLOUD_GUARD_URL` fails startup | supported |
+| Longest run | 270 s | the configured ceiling (default 120 s) |
+
+On REST, commands and file transfers go to the sandbox's own endpoint, which refuses
+the account's token. The provider creates a separate credential, valid for that one
+sandbox, and uses it for the run's calls while it outlives each call's deadline; the
+service limits how often one may be created (on 2026-10-04 one per call was answered
+"Too Many Requests"). A credential lives at most 300 seconds, and a command still
+running when its credential expires is cut off, which is why a REST run is capped at
+270 seconds: 30 seconds of margin for the run's setup. Grants stay on Connect: the call
+that sets the guard's network rule (see [Host-API grants](#host-api-grants)) is
+accepted on a sandbox the REST API created, but the REST API then refuses to report
+that sandbox's policy ("installed network policy is unavailable", 2026-10-04), so a
+grant run could not prove its network before running anything. The live suite checks
+that refusal on every REST run, so a change on Docker's side shows up. Keep the account's deny-all default for either API: while it is in force the
+REST API refuses a sandbox that carries its own network policy, and the Connect API
+cannot send one. On REST a delete's answer proves nothing (it reports success for a
+sandbox that does not exist), so the provider reads the sandbox until it is gone.

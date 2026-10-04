@@ -24,6 +24,7 @@ const pythonProjectImage = "plimsoll/sandbox-python:latest"
 // whether because the image ships no pip or because the run has no network and a
 // read-only root. Skips without the image; fails under SANDBOX_TEST_REQUIRE_DOCKER=1.
 func TestDockerProjectPython(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = pythonProjectImage
 	requireProjectImage(t, d)
@@ -176,6 +177,7 @@ func decodeNpyFloat64(b []byte) ([]float64, error) {
 // utimensat, so the test makes each raw syscall through ctypes on a file the run owns.
 // The numbers are x86_64's; arm64 has only utimensat, so there is nothing to prove there.
 func TestDockerLegacyTimestampSyscalls(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = pythonProjectImage
 	requireProjectImage(t, d)

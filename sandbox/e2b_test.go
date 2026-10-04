@@ -108,6 +108,7 @@ func TestE2BCreateGrantUsesAllowlistAndBetaHeaderTransform(t *testing.T) {
 }
 
 func TestE2BGuardKeepsCustomerCredentialInBroker(t *testing.T) {
+	t.Parallel()
 	var gotAuth string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -492,6 +493,7 @@ func e2bSmokeFake(t *testing.T, report string, exitCode int) (*httptest.Server, 
 // exact project-run mechanics: multi-file staging into the project dir, a probe
 // launched via `sh <script>` with the project cwd, and teardown afterwards.
 func TestE2BSmokeTestVerifiesTemplateEndToEnd(t *testing.T) {
+	t.Parallel()
 	srv, calls := e2bSmokeFake(t, `{"node":"v22.0.0","cwd":"/home/user/project","egressOpen":[]}`, 0)
 	e := &E2B{APIKey: "k", APIBase: srv.URL, EnvdHost: func(string) string { return srv.URL }}
 	if err := e.SmokeTest(context.Background()); err != nil {
@@ -522,6 +524,7 @@ func TestE2BSmokeTestVerifiesTemplateEndToEnd(t *testing.T) {
 // and a dishonored working directory must all be errors, and the throwaway
 // sandbox must be reaped even on failure.
 func TestE2BSmokeTestFailsClosed(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		report   string

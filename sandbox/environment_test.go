@@ -27,6 +27,7 @@ func TestWasmStatesItsInterpreterByHash(t *testing.T) {
 // has: a configured tag is not an identity. The stated ceiling is the one the
 // timeout clamp applies.
 func TestDockerStatesVerifiedImageIDs(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("node:22-alpine")
 	d.MaxProjectTime = 90 * time.Second
 	env := d.Environments()
@@ -57,7 +58,8 @@ func TestCloudProvidersStateOnlyContentAddressedIdentity(t *testing.T) {
 	}
 
 	digest := strings.Repeat("AB", 32)
-	dc := &DockerCloud{Image: "example/sandbox:1", MaxTimeout: time.Minute}
+	// Connect reports the booted digest; REST states no identity (TestBuildDockerCloudREST).
+	dc := &DockerCloud{API: dcAPIConnect, Image: "example/sandbox:1", MaxTimeout: time.Minute}
 	if env := dc.Environments(); env.Project.Identity != "" || env.Project.MaxTimeout != time.Minute {
 		t.Fatalf("dockercloud tag: %+v", env)
 	}

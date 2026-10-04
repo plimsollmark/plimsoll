@@ -80,6 +80,14 @@ func (d *DockerCloud) openGuard(ctx context.Context, grant *HostAPIGrant, timeou
 	if grant == nil {
 		return nil, func() {}, nil
 	}
+	if d.rest() {
+		// The guard's rule goes on through an undocumented call (putNetworkPolicy).
+		// On a REST-created sandbox the call is accepted, but the REST API then
+		// refuses to report the sandbox's policy (live 2026-10-04: 409 "installed
+		// network policy is unavailable for this sandbox"), so a grant run there
+		// could not prove its network before running anything.
+		return nil, func() {}, refused(fmt.Errorf("%w: dockercloud host-API grants cannot be verified on the REST API; use SANDBOX_DOCKERCLOUD_API=connect", ErrUnsupported))
+	}
 	endpoint := d.guardConfig()
 	if endpoint == nil {
 		return nil, func() {}, refused(fmt.Errorf("%w: dockercloud host-API grants require SANDBOX_DOCKERCLOUD_GUARD_URL", ErrUnsupported))
@@ -176,28 +184,19 @@ func (d *DockerCloud) sealNetwork(ctx context.Context, vm dcVM, guard *dcGuard) 
 	return d.verifyEgress(ctx, vm, allow)
 }
 
-// verifyEgress reads the sandbox's effective network policy back through the
-// published contract and refuses the run unless it is deny-all with exactly the
+// verifyEgress reads the sandbox's effective network policy back from the service
+// and refuses the run unless it is deny-all with exactly the
 // allowed networks: none for a no-grant run, the guard's host:443 for a grant run.
 // An extra rule from any layer (kit, owner, org) refuses the run too.
 func (d *DockerCloud) verifyEgress(ctx context.Context, vm dcVM, allowed []string) error {
-	var pol struct {
-		Mode          protoEnum `json:"mode"`
-		AllowNetworks []struct {
-			Network string `json:"network"`
-		} `json:"allowNetworks"`
-	}
-	in := map[string]any{"target": map[string]any{"sandbox": map[string]string{"id": vm.id}}}
-	if err := d.call(ctx, dcProcEffectivePolicy, in, &pol); err != nil {
+	pol, err := d.wire().effectivePolicy(ctx, vm)
+	if err != nil {
 		return fmt.Errorf("dockercloud verify egress policy: %w", err)
 	}
-	if !pol.Mode.is("NETWORK_POLICY_MODE_DENY_ALL", 2) {
-		return fmt.Errorf("dockercloud verify egress policy: effective mode is %q, not deny-all", string(pol.Mode))
+	if !pol.denyAll {
+		return fmt.Errorf("dockercloud verify egress policy: effective mode is %q, not deny-all", pol.mode)
 	}
-	got := make([]string, 0, len(pol.AllowNetworks))
-	for _, a := range pol.AllowNetworks {
-		got = append(got, a.Network)
-	}
+	got := pol.allow
 	if !sameStrings(got, allowed) {
 		if len(allowed) == 0 {
 			return fmt.Errorf("dockercloud verify egress policy: %d allow rule(s) in force on a no-grant run", len(got))

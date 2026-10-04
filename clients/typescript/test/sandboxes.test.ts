@@ -48,6 +48,9 @@ test("on a daemon with sessions, a key keeps one interpreter", { skip }, async (
   assert.equal(b.freshInterpreter, undefined);
   assert.equal(b.freshSandbox, undefined);
   assert.equal(b.isolation, "container");
+  assert.match(a.recordSha256, /^[0-9a-f]{64}$/);
+  assert.match(b.recordSha256, /^[0-9a-f]{64}$/);
+  assert.notEqual(a.recordSha256, b.recordSha256, "different checked cell records have different digests");
   const js = await s.run("run-a", { code: "1", language: "javascript" });
   assert.equal(js.stdout, "javascript 1: 1");
   assert.equal(js.freshInterpreter, true, "a language's first cell has no earlier state");
@@ -76,6 +79,7 @@ test("without a key, or with sessions off, a call runs fresh with its files and 
   assert.equal(r.stateKept, false);
   assert.equal(r.filesPersist, false);
   assert.equal(r.isolation, "container");
+  assert.match(r.recordSha256, /^[0-9a-f]{64}$/);
   assert.ok(!calls.includes("OpenSession"));
   const js = JSON.parse((await s.run(undefined, { code: "1", language: "javascript" })).stdout);
   assert.deepEqual(js.steps, ["node --expose-internals .plimsoll/run.cjs"]);
@@ -207,6 +211,7 @@ test("on a daemon without projects a JavaScript call runs as a snippet; Python a
   assert.equal(r.stateKept, false);
   assert.equal(r.filesPersist, false);
   assert.equal(r.isolation, "process");
+  assert.match(r.recordSha256, /^[0-9a-f]{64}$/);
   const failed = await s.run(undefined, { code: "throw new Error('boom')", language: "javascript" });
   assert.notEqual(failed.exitCode, 0);
   assert.match(failed.stderr, /boom/);

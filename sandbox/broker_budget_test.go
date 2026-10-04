@@ -25,6 +25,7 @@ func brokerSocketClient(t *testing.T, sock string) *http.Client {
 // denied), after which every further call is shed with 429 and nothing more
 // reaches the upstream. A capability must not be usable as a host-API flood.
 func TestDockerBrokerEnforcesPerRunCallBudget(t *testing.T) {
+	t.Parallel()
 	var upstreamHits int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		upstreamHits++
@@ -67,6 +68,7 @@ func TestDockerBrokerEnforcesPerRunCallBudget(t *testing.T) {
 // Content-Length exceeds the per-call byte budget never streams into the
 // sandbox: the broker aborts it as a bad gateway.
 func TestDockerBrokerCapsDeclaredResponseSize(t *testing.T) {
+	t.Parallel()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", strconv.Itoa(maxHostResponseBytes+1))
 		_, _ = w.Write(make([]byte, maxHostResponseBytes+1))
@@ -93,6 +95,7 @@ func TestDockerBrokerCapsDeclaredResponseSize(t *testing.T) {
 // length) over-budget response is cut off mid-copy rather than relayed without
 // bound: the sandbox must never receive more than the per-call byte budget.
 func TestDockerBrokerCutsUndeclaredResponseStream(t *testing.T) {
+	t.Parallel()
 	const total = maxHostResponseBytes * 3
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		f, _ := w.(http.Flusher)
@@ -135,6 +138,7 @@ func TestDockerBrokerCutsUndeclaredResponseStream(t *testing.T) {
 // value is the one worth testing behaviourally, because it exercises the same counter
 // without 6,000 round trips.
 func TestBrokerHonoursAGrantsOwnCallBudget(t *testing.T) {
+	t.Parallel()
 	var upstreamHits int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		upstreamHits++

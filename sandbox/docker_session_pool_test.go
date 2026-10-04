@@ -163,6 +163,8 @@ func TestDockerSessionPoolPassesOverADeadMember(t *testing.T) {
 // Every session the conformance suite opens comes from the pool while the pool keeps
 // up, so pooled sessions keep every promise new ones do.
 func TestDockerSessionPoolConformance(t *testing.T) {
+	t.Parallel()
+	sandbox.HeavyDockerTest(t)
 	d := pythonSessionDocker(t)
 	startPool(t, d, 2)
 	langs := d.SessionEnvironments().Project.Languages

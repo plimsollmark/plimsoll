@@ -55,7 +55,7 @@ func (d *DockerCloud) RunJavaScript(ctx context.Context, req Request) (res Resul
 	// Staged as a file, not a `node -e` argument: one argv element is limited to
 	// about 128 KiB and an accepted snippet may be larger.
 	const snippetPath = "/tmp/plimsoll-snippet.cjs"
-	if err := d.upload(runCtx, vm, []File{{Path: snippetPath, Content: code}}); err != nil {
+	if err := d.wire().upload(runCtx, vm, []File{{Path: snippetPath, Content: code}}); err != nil {
 		if deadline.Expired(runCtx) == context.DeadlineExceeded {
 			return Result{Sandbox: d.Name(), Isolation: IsolationVM, ExitCode: 124, TimedOut: true}, nil
 		}
@@ -173,7 +173,7 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (res P
 		}
 		return fail, fmt.Errorf("could not create project directories: %w", err)
 	}
-	if err := d.upload(runCtx, vm, staged); err != nil {
+	if err := d.wire().upload(runCtx, vm, staged); err != nil {
 		if deadline.Expired(runCtx) == context.DeadlineExceeded {
 			return timedOut(), nil
 		}
@@ -224,7 +224,7 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (res P
 		}
 	}
 	if len(wanted) > 0 {
-		arts, truncated, err := d.download(runCtx, vm, wanted)
+		arts, truncated, err := d.wire().download(runCtx, vm, wanted)
 		if err != nil {
 			if deadline.Expired(runCtx) == context.DeadlineExceeded {
 				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget while reading artifacts"

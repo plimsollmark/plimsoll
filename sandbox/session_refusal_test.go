@@ -13,6 +13,7 @@ import (
 // A call that gives up waiting for the turn, held here as the previous call's sweep
 // holds it, ran nothing: it is marked so, as the daemon's own busy refusal is.
 func TestDockerSessionGivingUpOnTheTurnIsNotDispatched(t *testing.T) {
+	t.Parallel()
 	s := &dockerSession{d: DefaultDocker("")}
 	s.life = sessionkit.NewLife("plsm-session-test", s.hooks())
 	release, err := s.life.Hold(context.Background())

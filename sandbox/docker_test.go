@@ -39,6 +39,22 @@ func infraSkip(t *testing.T, format string, args ...any) {
 	t.Skipf(format, args...)
 }
 
+// dockerHeavy admits the docker suite's heaviest parallel tests (the session
+// conformance suites, a full warm pool, a hung oracle, several controller runs)
+// three at a time, so its parallel phase cannot stack every one of them on the host's
+// memory. Measured 2026-10-04: at three the suite took 155 s with host memory about
+// 0.7 GiB above idle; at two, 174 s. The suite's -parallel (DOCKER_PARALLEL in the
+// Makefile) bounds the rest.
+var dockerHeavy = make(chan struct{}, 3)
+
+// heavyDockerTest waits for one of those places and holds it until the test ends.
+// Call it after t.Parallel, so the wait happens in the parallel phase.
+func heavyDockerTest(t *testing.T) {
+	t.Helper()
+	dockerHeavy <- struct{}{}
+	t.Cleanup(func() { <-dockerHeavy })
+}
+
 func requireDocker(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
@@ -64,6 +80,7 @@ func testDocker() *DockerSandbox {
 // runc runs and skipped under gVisor (which filters syscalls itself). No daemon
 // needed — inspects the generated flags.
 func TestDockerLockdownAppliesSeccomp(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	d.Seccomp = "/etc/crsbx/seccomp.json"
 	if !strings.Contains(strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime), " "), "--security-opt seccomp=/etc/crsbx/seccomp.json") {
@@ -76,6 +93,7 @@ func TestDockerLockdownAppliesSeccomp(t *testing.T) {
 }
 
 func TestDockerLockdownDisablesDaemonLogStorage(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	args := strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime), " ")
 	if !strings.Contains(args, "--log-driver none") {
@@ -271,6 +289,7 @@ func TestIsDigestPinned(t *testing.T) {
 }
 
 func TestDockerRequirePinnedImagesPreflight(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("docker"); err != nil {
 		infraSkip(t, "docker not on PATH")
 	}
@@ -282,6 +301,7 @@ func TestDockerRequirePinnedImagesPreflight(t *testing.T) {
 }
 
 func TestDockerHostIsRemote(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		host string
 		want bool
@@ -474,6 +494,7 @@ func TestDockerPreflightKeepsPinnedEndpointAndFailsClosed(t *testing.T) {
 // bounded wait keeps it: callers poll rather than block on the mutex and give up
 // on a deadline.
 func TestDockerPreflightBoundsConcurrentCallers(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	d.preflightWait = 150 * time.Millisecond
 	d.preflightMu.Lock()
@@ -498,6 +519,7 @@ func TestDockerPreflightBoundsConcurrentCallers(t *testing.T) {
 // succeeds instead of being told to retry. Measured without it, a concurrent
 // consumer lost 47 of 48 runs at every cache-TTL expiry.
 func TestDockerPreflightWaitsForInFlightProbe(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	now := time.Unix(1_700_000_000, 0)
 	d.preflightNow = func() time.Time { return now }
@@ -530,6 +552,7 @@ func TestDockerPreflightWaitsForInFlightProbe(t *testing.T) {
 // TestDockerPreflightWaitRespectsCallerDeadline: the wait never outlives the
 // caller's own budget, which is what keeps it safe for a short-timeout run.
 func TestDockerPreflightWaitRespectsCallerDeadline(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	d.preflightWait = 30 * time.Second
 	d.preflightMu.Lock()
@@ -547,6 +570,7 @@ func TestDockerPreflightWaitRespectsCallerDeadline(t *testing.T) {
 }
 
 func TestDockerConcurrentPreflightRejectsExpiredEvidence(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	now := time.Unix(1_700_000_000, 0)
 	d.preflightNow = func() time.Time { return now }
@@ -567,6 +591,7 @@ func TestDockerConcurrentPreflightRejectsExpiredEvidence(t *testing.T) {
 }
 
 func TestDockerDirectRunsEnforceSnapshottedMinimumIsolation(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	now := time.Unix(1_700_000_000, 0)
 	d.preflightNow = func() time.Time { return now }
@@ -631,6 +656,7 @@ func TestAfterMarker(t *testing.T) {
 }
 
 func TestDockerRunCapturesStdoutAndExitZero(t *testing.T) {
+	t.Parallel()
 
 	d := testDocker()
 	requireSnippetImage(t, d)
@@ -650,6 +676,7 @@ func TestDockerRunCapturesStdoutAndExitZero(t *testing.T) {
 }
 
 func TestDockerNonZeroExitIsResultNotError(t *testing.T) {
+	t.Parallel()
 
 	d := testDocker()
 	requireSnippetImage(t, d)
@@ -666,6 +693,7 @@ func TestDockerNonZeroExitIsResultNotError(t *testing.T) {
 }
 
 func TestDockerTimeout(t *testing.T) {
+	t.Parallel()
 
 	d := testDocker()
 	requireSnippetImage(t, d)
@@ -724,6 +752,7 @@ func TestHostSDKModuleIsPreloadable(t *testing.T) {
 }
 
 func TestDockerRejectsImageOptionInjection(t *testing.T) {
+	t.Parallel()
 	for _, image := range []string{"--runtime=runc", "-network=host", ""} {
 		if err := validateDockerImage(image); err == nil {
 			t.Errorf("validateDockerImage(%q) succeeded, want rejection", image)
@@ -735,6 +764,7 @@ func TestDockerRejectsImageOptionInjection(t *testing.T) {
 }
 
 func TestDockerZeroValueTimeoutFallbacks(t *testing.T) {
+	t.Parallel()
 	d := &DockerSandbox{}
 	if got := d.snippetTimeout(0); got != dockerDefaultTimeout {
 		t.Errorf("snippet default = %v, want %v", got, dockerDefaultTimeout)
@@ -786,6 +816,7 @@ func requireSnippetImage(t *testing.T, d *DockerSandbox) {
 }
 
 func TestRunProjectMultiFileTypeScript(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireProjectImage(t, d)
 	res, err := d.RunProject(context.Background(), ProjectRequest{
@@ -814,6 +845,7 @@ func TestRunProjectMultiFileTypeScript(t *testing.T) {
 }
 
 func TestRunProjectCapturesArtifacts(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireProjectImage(t, d)
 	res, err := d.RunProject(context.Background(), ProjectRequest{
@@ -844,6 +876,7 @@ func TestRunProjectCapturesArtifacts(t *testing.T) {
 }
 
 func TestRunProjectStopsChainOnFailure(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireProjectImage(t, d)
 	res, err := d.RunProject(context.Background(), ProjectRequest{
@@ -862,6 +895,7 @@ func TestRunProjectStopsChainOnFailure(t *testing.T) {
 }
 
 func TestRunProjectRejectsTraversalBeforeContainerStart(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	_, err := d.RunProject(context.Background(), ProjectRequest{
 		Files: []File{{Path: "../escape.ts", Content: "x"}},
@@ -912,6 +946,7 @@ func TestDockerPreflightIgnoresTheCallersCancellation(t *testing.T) {
 // not an infrastructure error, and its stderr is exactly what it wrote (v0.15.0
 // review, L7).
 func TestDockerGuestCannotFakeAnInfrastructureExit(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	for _, code := range []int{125, 126, 127} {
@@ -929,6 +964,7 @@ func TestDockerGuestCannotFakeAnInfrastructureExit(t *testing.T) {
 // name docker has no container under: never for a live container, and a name that is
 // only a prefix of a live one's is a different name. Checked against the daemon.
 func TestDockerContainerGoneByExactName(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -963,6 +999,8 @@ func TestDockerContainerGoneByExactName(t *testing.T) {
 
 // Every guest process runs as the guest uid and gid, a uid no host account uses, in a
 // run's snippet and project step alike.
+// Not parallel: it points hostPasswdPath and hostGroupPath, which every Preflight
+// reads, at an empty file for its duration (a data race under -parallel 8, 2026-10-04).
 func TestDockerGuestRunsAsTheGuestUID(t *testing.T) {
 	d := testDocker()
 	requireSnippetImage(t, d)

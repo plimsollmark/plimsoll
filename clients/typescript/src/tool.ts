@@ -20,7 +20,8 @@ export function executeCodeDescription(languages: ToolLanguages = DEFAULT_LANGUA
     "this call's interpreter had just started, so nothing earlier calls defined exists and has to be rebuilt; freshSandbox means no file from " +
     "earlier calls is there either. " +
     "To give the code data, such as another tool's output, pass it in files rather than pasting it into the code; the code reads each file by its relative path. " +
-    "Files written to the working directory can still be there on the next call when filesPersist is true; freshSandbox on that call says they are not."
+    "Files written to the working directory can still be there on the next call when filesPersist is true; freshSandbox on that call says they are not. " +
+    "The result also reports the isolation tier and the SHA-256 of the run record the client checked."
   );
 }
 
@@ -60,4 +61,5 @@ export const executeCodeOutput = z.object({
   filesPersist: z.boolean(),
   freshSandbox: z.literal(true).optional(),
   isolation: z.string(),
+  recordSha256: z.string().regex(/^[0-9a-f]{64}$/),
 });

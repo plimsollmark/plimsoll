@@ -107,6 +107,7 @@ func TestPinnedImageBooleanIsStrict(t *testing.T) {
 }
 
 func TestBuildConfiguresBothPinnedDockerImages(t *testing.T) {
+	t.Parallel()
 	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	snippet := "registry.example/plimsoll/node@sha256:" + digest
 	project := "registry.example/plimsoll/toolchain@sha256:" + digest

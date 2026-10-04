@@ -23,6 +23,9 @@ import (
 // Connect JSON shapes the provider sends, records every call, and exposes knobs
 // for the failure paths.
 type dcFake struct {
+	api  string      // the API it speaks: dcAPIConnect (newDCFake's) or dcAPIREST
+	rest *dcRESTFake // REST-only state (dockercloud_rest_test.go)
+
 	exchanges      int
 	refuseExchange bool
 	accessLife     time.Duration
@@ -94,7 +97,7 @@ func dcTestAccess(exp time.Time) string {
 
 func newDCFake(t *testing.T) *dcFake {
 	t.Helper()
-	f := &dcFake{t: t, policyMode: "NETWORK_POLICY_MODE_DENY_ALL"}
+	f := &dcFake{t: t, api: dcAPIConnect, policyMode: "NETWORK_POLICY_MODE_DENY_ALL"}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -102,6 +105,7 @@ func newDCFake(t *testing.T) *dcFake {
 
 func (f *dcFake) provider() *DockerCloud {
 	return &DockerCloud{
+		API:            f.api,
 		Token:          dcTestToken,
 		Username:       dcTestUser,
 		AuthURL:        f.srv.URL + "/v2/auth/token",
@@ -293,6 +297,10 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 			echo["allowNetworks"] = []string{"evil.example.com:443"}
 		}
 		writeJSON(w, echo)
+		return
+	}
+	if f.api == dcAPIREST {
+		f.handleREST(w, r)
 		return
 	}
 	if issued == "" || r.Header.Get("Authorization") != "Bearer "+issued {
@@ -534,411 +542,456 @@ func (d *DockerCloud) inflightCount() int {
 }
 
 func TestDockerCloudCreateDeniesAllEgressAndWrapsTheSnippet(t *testing.T) {
-	f := newDCFake(t)
-	f.exec = func(argv []string) (int, string, string) {
-		if strings.Join(argv, " ") != "node /tmp/plimsoll-snippet.cjs" {
-			t.Errorf("snippet argv = %q", argv)
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		f.exec = func(argv []string) (int, string, string) {
+			if strings.Join(argv, " ") != "node /tmp/plimsoll-snippet.cjs" {
+				t.Errorf("snippet argv = %q", argv)
+			}
+			return 0, "dc 42\n", ""
 		}
-		return 0, "dc 42\n", ""
-	}
-	d := f.provider()
-	res, err := d.RunJavaScript(context.Background(), Request{Code: `console.log("dc", 6*7)`})
-	if err != nil {
-		t.Fatalf("RunJavaScript: %v", err)
-	}
-	if res.ExitCode != 0 || res.Stdout != "dc 42\n" || res.Sandbox != "dockercloud" || res.Isolation != IsolationVM {
-		t.Fatalf("result = %+v", res)
-	}
+		d := f.provider()
+		res, err := d.RunJavaScript(context.Background(), Request{Code: `console.log("dc", 6*7)`})
+		if err != nil {
+			t.Fatalf("RunJavaScript: %v", err)
+		}
+		if res.ExitCode != 0 || res.Stdout != "dc 42\n" || res.Sandbox != "dockercloud" || res.Isolation != IsolationVM {
+			t.Fatalf("result = %+v", res)
+		}
 
-	create := f.creates[0]
-	name, _ := create["name"].(string)
-	if !strings.HasPrefix(name, dcNamePrefix+d.instance()+"-") || create["requestId"] != name {
-		t.Fatalf("sandbox not stamped with this instance: name=%q requestId=%v", name, create["requestId"])
-	}
-	// No inline policy: the live service fails a create that carries one
-	// (2026-09-24). Deny-all comes from the account policy and is read back.
-	if _, ok := create["networkPolicies"]; ok {
-		t.Fatalf("create carries an inline networkPolicies field: %v", create["networkPolicies"])
-	}
-	if f.called(dcProcEffectivePolicy) == 0 {
-		t.Fatal("the effective egress policy was not read back before the run")
-	}
-	cloud := create["cloud"].(map[string]any)
-	if cloud["imageRef"] != d.Image || cloud["onTimeout"] != "ON_TIMEOUT_DELETE" || cloud["autoResume"] != false {
-		t.Fatalf("cloud options = %v", cloud)
-	}
-	if ttl, _ := cloud["timeout"].(string); !strings.HasSuffix(ttl, "s") || ttl == "0s" {
-		t.Fatalf("cloud TTL = %v, want a protojson duration", cloud["timeout"])
-	}
-	// No envelope configured: the Micro size is requested, since the service
-	// refuses a raw-image create without cpus (TestDockerCloudDefaultsToMicroWhenUnset).
-	if res, _ := create["resources"].(map[string]any); res["cpus"] != float64(dcDefaultCPUs) {
-		t.Fatalf("resources without a configured envelope = %v, want the Micro default", create["resources"])
-	}
+		create := f.creates[0]
+		name, _ := create["name"].(string)
+		if !strings.HasPrefix(name, dcNamePrefix+d.instance()+"-") || create["requestId"] != name {
+			t.Fatalf("sandbox not stamped with this instance: name=%q requestId=%v", name, create["requestId"])
+		}
+		// No inline policy: the live service fails a create that carries one
+		// (2026-09-24). Deny-all comes from the account policy and is read back.
+		if _, ok := create["networkPolicies"]; ok {
+			t.Fatalf("create carries an inline networkPolicies field: %v", create["networkPolicies"])
+		}
+		if f.called(dcProcEffectivePolicy) == 0 {
+			t.Fatal("the effective egress policy was not read back before the run")
+		}
+		cloud := create["cloud"].(map[string]any)
+		if cloud["imageRef"] != d.Image || cloud["onTimeout"] != "ON_TIMEOUT_DELETE" || cloud["autoResume"] != false {
+			t.Fatalf("cloud options = %v", cloud)
+		}
+		if ttl, _ := cloud["timeout"].(string); !strings.HasSuffix(ttl, "s") || ttl == "0s" {
+			t.Fatalf("cloud TTL = %v, want a protojson duration", cloud["timeout"])
+		}
+		// No envelope configured: the Micro size is requested, since the service
+		// refuses a raw-image create without cpus (TestDockerCloudDefaultsToMicroWhenUnset).
+		if res, _ := create["resources"].(map[string]any); res["cpus"] != float64(dcDefaultCPUs) {
+			t.Fatalf("resources without a configured envelope = %v, want the Micro default", create["resources"])
+		}
 
-	// The effective policy is read back before any guest code runs.
-	if f.called(dcProcEffectivePolicy) != 1 {
-		t.Fatalf("effective network policy read %d times, want 1", f.called(dcProcEffectivePolicy))
-	}
-	if len(f.uploads) != 1 || len(f.uploads[0]) != 1 || f.uploads[0][0].path != "/tmp/plimsoll-snippet.cjs" ||
-		string(f.uploads[0][0].content) != `console.log("dc", 6*7)` {
-		t.Fatalf("uploads = %+v", f.uploads)
-	}
-	if got := f.deletedRefs(); len(got) != 1 || got[0] != "id:sb-1" {
-		t.Fatalf("deletes = %v, want one forced delete by id", got)
-	}
-	if d.inflightCount() != 0 {
-		t.Fatal("sandbox still tracked after the run")
-	}
+		// The effective policy is read back before any guest code runs.
+		if f.called(dcProcEffectivePolicy) != 1 {
+			t.Fatalf("effective network policy read %d times, want 1", f.called(dcProcEffectivePolicy))
+		}
+		if len(f.uploads) != 1 || len(f.uploads[0]) != 1 || f.uploads[0][0].path != "/tmp/plimsoll-snippet.cjs" ||
+			string(f.uploads[0][0].content) != `console.log("dc", 6*7)` {
+			t.Fatalf("uploads = %+v", f.uploads)
+		}
+		if got := f.deletedRefs(); len(got) != 1 || got[0] != "id:sb-1" {
+			t.Fatalf("deletes = %v, want one forced delete by id", got)
+		}
+		if d.inflightCount() != 0 {
+			t.Fatal("sandbox still tracked after the run")
+		}
+	})
 }
 
 func TestDockerCloudRequestsAndVerifiesResources(t *testing.T) {
-	f := newDCFake(t)
-	d := f.provider()
-	d.MaxVCPU, d.MaxMemoryMB = 2, 1024
-	f.reportedCPUs, f.reportedMemMiB = 2, 1024
-	if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
-		t.Fatalf("within-cap run failed: %v", err)
-	}
-	res := f.creates[0]["resources"].(map[string]any)
-	if res["cpus"] != float64(2) || res["memoryMib"] != "1024" {
-		t.Fatalf("requested resources = %v, want cpus 2 and memoryMib \"1024\"", res)
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		d.MaxVCPU, d.MaxMemoryMB = 2, 1024
+		f.reportedCPUs, f.reportedMemMiB = 2, 1024
+		if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
+			t.Fatalf("within-cap run failed: %v", err)
+		}
+		res := f.creates[0]["resources"].(map[string]any)
+		if res["cpus"] != float64(2) || res["memoryMib"] != "1024" {
+			t.Fatalf("requested resources = %v, want cpus 2 and memoryMib \"1024\"", res)
+		}
 
-	for name, tweak := range map[string]func(){
-		"cpu over cap":     func() { f.noResources, f.reportedCPUs, f.reportedMemMiB = false, 4, 1024 },
-		"memory over cap":  func() { f.noResources, f.reportedCPUs, f.reportedMemMiB = false, 2, 4096 },
-		"resources absent": func() { f.noResources, f.reportedCPUs, f.reportedMemMiB = true, 0, 0 },
-	} {
-		t.Run(name, func(t *testing.T) {
-			tweak()
-			before := len(f.deletedRefs())
-			if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err == nil {
-				t.Fatal("run proceeded on a sandbox that does not prove the cap")
-			}
-			if len(f.deletedRefs()) != before+1 {
-				t.Fatal("rejected sandbox was not deleted")
-			}
-		})
-	}
+		for name, tweak := range map[string]func(){
+			"cpu over cap":     func() { f.noResources, f.reportedCPUs, f.reportedMemMiB = false, 4, 1024 },
+			"memory over cap":  func() { f.noResources, f.reportedCPUs, f.reportedMemMiB = false, 2, 4096 },
+			"resources absent": func() { f.noResources, f.reportedCPUs, f.reportedMemMiB = true, 0, 0 },
+		} {
+			t.Run(name, func(t *testing.T) {
+				tweak()
+				before := len(f.deletedRefs())
+				if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err == nil {
+					t.Fatal("run proceeded on a sandbox that does not prove the cap")
+				}
+				if len(f.deletedRefs()) != before+1 {
+					t.Fatal("rejected sandbox was not deleted")
+				}
+			})
+		}
+	})
 }
 
 func TestDockerCloudRefusesUnlessEgressIsDenied(t *testing.T) {
-	for name, tweak := range map[string]func(*dcFake){
-		"allow-all mode": func(f *dcFake) { f.policyMode = "NETWORK_POLICY_MODE_ALLOW_ALL" },
-		"numeric allow":  func(f *dcFake) { f.policyMode = "1" },
-		"allow rule":     func(f *dcFake) { f.policyAllow = []string{"0.0.0.0/0"} },
-	} {
-		t.Run(name, func(t *testing.T) {
-			f := newDCFake(t)
-			tweak(f)
-			d := f.provider()
-			_, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
-			if err == nil || !strings.Contains(err.Error(), "egress") {
-				t.Fatalf("err = %v, want an egress-policy refusal", err)
-			}
-			if len(f.execs) != 0 || len(f.uploads) != 0 {
-				t.Fatal("guest work happened before the egress policy was proven")
-			}
-			if len(f.deletedRefs()) != 1 {
-				t.Fatal("sandbox not deleted after the refusal")
-			}
-		})
-	}
-	// The number form of DENY_ALL is accepted, since protojson allows it.
-	f := newDCFake(t)
-	f.policyMode = "2"
-	if _, err := f.provider().RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
-		t.Fatalf("numeric deny-all refused: %v", err)
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		for name, tweak := range map[string]func(*dcFake){
+			"allow-all mode": func(f *dcFake) { f.policyMode = "NETWORK_POLICY_MODE_ALLOW_ALL" },
+			"numeric allow":  func(f *dcFake) { f.policyMode = "1" },
+			"allow rule":     func(f *dcFake) { f.policyAllow = []string{"0.0.0.0/0"} },
+		} {
+			t.Run(name, func(t *testing.T) {
+				f := newDCFakeAPI(t, api)
+				tweak(f)
+				d := f.provider()
+				_, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
+				if err == nil || !strings.Contains(err.Error(), "egress") {
+					t.Fatalf("err = %v, want an egress-policy refusal", err)
+				}
+				if len(f.execs) != 0 || len(f.uploads) != 0 {
+					t.Fatal("guest work happened before the egress policy was proven")
+				}
+				if len(f.deletedRefs()) != 1 {
+					t.Fatal("sandbox not deleted after the refusal")
+				}
+			})
+		}
+		// The number form of DENY_ALL is accepted, since protojson allows it.
+		f := newDCFakeAPI(t, api)
+		f.policyMode = "2"
+		if _, err := f.provider().RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
+			t.Fatalf("numeric deny-all refused: %v", err)
+		}
+	})
 }
 
 func TestDockerCloudUploadFramingAndProjectFlow(t *testing.T) {
-	f := newDCFake(t)
-	big := strings.Repeat("x", dcUploadChunk+123) // spans two data frames
-	var stepArgv [][]string
-	f.exec = func(argv []string) (int, string, string) {
-		stepArgv = append(stepArgv, argv)
-		return 0, "", ""
-	}
-	f.files = map[string][]byte{"/tmp/plimsoll-project/out/result.txt": []byte("artifact")}
-	d := f.provider()
-	res, err := d.RunProject(context.Background(), ProjectRequest{
-		Files: []File{
-			{Path: "main.mjs", Content: "console.log(1)\n"},
-			{Path: "lib/big.txt", Content: big},
-			{Path: "empty.txt", Content: ""},
-		},
-		Steps:     []string{"node main.mjs", "echo done"},
-		Artifacts: []string{"out/result.txt", "missing.txt"},
-	})
-	if err != nil {
-		t.Fatalf("RunProject: %v", err)
-	}
-	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 2 {
-		t.Fatalf("result = %+v", res)
-	}
-
-	// One mkdir for the project tree, before the upload.
-	if f.execs[0][0] != "mkdir" || strings.Join(f.execs[0], " ") != "mkdir -p -- /tmp/plimsoll-project /tmp/plimsoll-project/lib" {
-		t.Fatalf("first exec = %q, want one mkdir -p of the project dirs", f.execs[0])
-	}
-	// One upload carrying every file and every step script.
-	if len(f.uploads) != 1 {
-		t.Fatalf("%d uploads, want 1", len(f.uploads))
-	}
-	got := map[string]dcFakeFile{}
-	for _, file := range f.uploads[0] {
-		got[file.path] = file
-	}
-	want := map[string]string{
-		"/tmp/plimsoll-project/main.mjs":    "console.log(1)\n",
-		"/tmp/plimsoll-project/lib/big.txt": big,
-		"/tmp/plimsoll-project/empty.txt":   "",
-		"/tmp/plimsoll-step-0.sh":           "node main.mjs",
-		"/tmp/plimsoll-step-1.sh":           "echo done",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("uploaded %d files, want %d", len(got), len(want))
-	}
-	for p, content := range want {
-		file, ok := got[p]
-		if !ok || string(file.content) != content || file.mode != 0o644 {
-			t.Fatalf("upload %s = %+v (present %v)", p, file.mode, ok)
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		big := strings.Repeat("x", dcUploadChunk+123) // spans two data frames
+		var stepArgv [][]string
+		f.exec = func(argv []string) (int, string, string) {
+			stepArgv = append(stepArgv, argv)
+			return 0, "", ""
 		}
-	}
-	// Steps run through the wrapper in the project dir, in order.
-	if len(stepArgv) != 2 || strings.Join(stepArgv[0], " ") != "sh /tmp/plimsoll-step-0.sh" || strings.Join(stepArgv[1], " ") != "sh /tmp/plimsoll-step-1.sh" {
-		t.Fatalf("step argv = %q", stepArgv)
-	}
-	if f.execCwds[1] != "/tmp/plimsoll-project" {
-		t.Fatalf("step cwd = %q", f.execCwds[1])
-	}
-	// The existing artifact comes back relative; the missing one is absent.
-	if len(res.Artifacts) != 1 || res.Artifacts[0].Path != "out/result.txt" || string(res.Artifacts[0].Content) != "artifact" || res.ArtifactsTruncated {
-		t.Fatalf("artifacts = %+v truncated=%v", res.Artifacts, res.ArtifactsTruncated)
-	}
-	if len(f.deletedRefs()) != 1 {
-		t.Fatal("sandbox not deleted")
-	}
+		f.files = map[string][]byte{"/tmp/plimsoll-project/out/result.txt": []byte("artifact")}
+		d := f.provider()
+		res, err := d.RunProject(context.Background(), ProjectRequest{
+			Files: []File{
+				{Path: "main.mjs", Content: "console.log(1)\n"},
+				{Path: "lib/big.txt", Content: big},
+				{Path: "empty.txt", Content: ""},
+			},
+			Steps:     []string{"node main.mjs", "echo done"},
+			Artifacts: []string{"out/result.txt", "missing.txt"},
+		})
+		if err != nil {
+			t.Fatalf("RunProject: %v", err)
+		}
+		if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 2 {
+			t.Fatalf("result = %+v", res)
+		}
+
+		// One mkdir for the project tree, before the upload.
+		if f.execs[0][0] != "mkdir" || strings.Join(f.execs[0], " ") != "mkdir -p -- /tmp/plimsoll-project /tmp/plimsoll-project/lib" {
+			t.Fatalf("first exec = %q, want one mkdir -p of the project dirs", f.execs[0])
+		}
+		// One upload carrying every file and every step script.
+		if len(f.uploads) != 1 {
+			t.Fatalf("%d uploads, want 1", len(f.uploads))
+		}
+		got := map[string]dcFakeFile{}
+		for _, file := range f.uploads[0] {
+			got[file.path] = file
+		}
+		want := map[string]string{
+			"/tmp/plimsoll-project/main.mjs":    "console.log(1)\n",
+			"/tmp/plimsoll-project/lib/big.txt": big,
+			"/tmp/plimsoll-project/empty.txt":   "",
+			"/tmp/plimsoll-step-0.sh":           "node main.mjs",
+			"/tmp/plimsoll-step-1.sh":           "echo done",
+		}
+		if len(got) != len(want) {
+			t.Fatalf("uploaded %d files, want %d", len(got), len(want))
+		}
+		for p, content := range want {
+			file, ok := got[p]
+			if !ok || string(file.content) != content || file.mode != 0o644 {
+				t.Fatalf("upload %s = %+v (present %v)", p, file.mode, ok)
+			}
+		}
+		// Steps run through the wrapper in the project dir, in order.
+		if len(stepArgv) != 2 || strings.Join(stepArgv[0], " ") != "sh /tmp/plimsoll-step-0.sh" || strings.Join(stepArgv[1], " ") != "sh /tmp/plimsoll-step-1.sh" {
+			t.Fatalf("step argv = %q", stepArgv)
+		}
+		if f.execCwds[1] != "/tmp/plimsoll-project" {
+			t.Fatalf("step cwd = %q", f.execCwds[1])
+		}
+		// The existing artifact comes back relative; the missing one is absent.
+		if len(res.Artifacts) != 1 || res.Artifacts[0].Path != "out/result.txt" || string(res.Artifacts[0].Content) != "artifact" || res.ArtifactsTruncated {
+			t.Fatalf("artifacts = %+v truncated=%v", res.Artifacts, res.ArtifactsTruncated)
+		}
+		if len(f.deletedRefs()) != 1 {
+			t.Fatal("sandbox not deleted")
+		}
+	})
 }
 
 func TestDockerCloudProjectStopsOnFirstFailure(t *testing.T) {
-	f := newDCFake(t)
-	f.exec = func(argv []string) (int, string, string) { return 2, "", "boom" }
-	res, err := f.provider().RunProject(context.Background(), ProjectRequest{
-		Files: []File{{Path: "a.txt", Content: "a"}},
-		Steps: []string{"false", "never"},
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		f.exec = func(argv []string) (int, string, string) { return 2, "", "boom" }
+		res, err := f.provider().RunProject(context.Background(), ProjectRequest{
+			Files: []File{{Path: "a.txt", Content: "a"}},
+			Steps: []string{"false", "never"},
+		})
+		if err != nil || res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 2 || res.Steps[0].Stderr != "boom" {
+			t.Fatalf("res = %+v err = %v", res, err)
+		}
 	})
-	if err != nil || res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 2 || res.Steps[0].Stderr != "boom" {
-		t.Fatalf("res = %+v err = %v", res, err)
-	}
 }
 
 func TestDockerCloudArtifactBudgetTruncates(t *testing.T) {
-	f := newDCFake(t)
-	f.files = map[string][]byte{
-		"/tmp/plimsoll-project/a.bin": bytes.Repeat([]byte("a"), 5<<20),
-		"/tmp/plimsoll-project/b.bin": bytes.Repeat([]byte("b"), 5<<20),
-	}
-	res, err := f.provider().RunProject(context.Background(), ProjectRequest{
-		Files:     []File{{Path: "x", Content: "x"}},
-		Steps:     []string{"true"},
-		Artifacts: []string{"a.bin", "b.bin"},
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		f.files = map[string][]byte{
+			"/tmp/plimsoll-project/a.bin": bytes.Repeat([]byte("a"), 5<<20),
+			"/tmp/plimsoll-project/b.bin": bytes.Repeat([]byte("b"), 5<<20),
+		}
+		res, err := f.provider().RunProject(context.Background(), ProjectRequest{
+			Files:     []File{{Path: "x", Content: "x"}},
+			Steps:     []string{"true"},
+			Artifacts: []string{"a.bin", "b.bin"},
+		})
+		if err != nil {
+			t.Fatalf("RunProject: %v", err)
+		}
+		if !res.ArtifactsTruncated || len(res.Artifacts) != 1 || res.Artifacts[0].Path != "a.bin" || len(res.Artifacts[0].Content) != 5<<20 {
+			t.Fatalf("artifacts = %d truncated=%v", len(res.Artifacts), res.ArtifactsTruncated)
+		}
 	})
-	if err != nil {
-		t.Fatalf("RunProject: %v", err)
-	}
-	if !res.ArtifactsTruncated || len(res.Artifacts) != 1 || res.Artifacts[0].Path != "a.bin" || len(res.Artifacts[0].Content) != 5<<20 {
-		t.Fatalf("artifacts = %d truncated=%v", len(res.Artifacts), res.ArtifactsTruncated)
-	}
 }
 
 func TestDockerCloudTruncationFlagsNoMarkers(t *testing.T) {
-	f := newDCFake(t)
-	d := f.provider()
-	d.MaxOutputBytes = 10
-	// The in-guest head caps at max+1, so 11 bytes means "more existed".
-	f.exec = func([]string) (int, string, string) { return 141, "0123456789X", "short" }
-	res, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
-	if err != nil {
-		t.Fatalf("RunJavaScript: %v", err)
-	}
-	if res.Stdout != "0123456789" || !res.StdoutTruncated || res.Stderr != "short" || res.StderrTruncated || res.ExitCode != 141 || res.TimedOut {
-		t.Fatalf("result = %+v", res)
-	}
-	// The cap the wrapper receives is the host cap plus one.
-	if f.execs[0][5] != "11" {
-		t.Fatalf("in-guest cap = %s, want 11", f.execs[0][5])
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		d.MaxOutputBytes = 10
+		// The in-guest head caps at max+1, so 11 bytes means "more existed".
+		f.exec = func([]string) (int, string, string) { return 141, "0123456789X", "short" }
+		res, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
+		if err != nil {
+			t.Fatalf("RunJavaScript: %v", err)
+		}
+		if res.Stdout != "0123456789" || !res.StdoutTruncated || res.Stderr != "short" || res.StderrTruncated || res.ExitCode != 141 || res.TimedOut {
+			t.Fatalf("result = %+v", res)
+		}
+		// The cap the wrapper receives is the host cap plus one.
+		if f.execs[0][5] != "11" {
+			t.Fatalf("in-guest cap = %s, want 11", f.execs[0][5])
+		}
+	})
 }
 
 func TestDockerCloudFloodIsAFailedUserRun(t *testing.T) {
-	f := newDCFake(t)
-	d := f.provider()
-	d.MaxOutputBytes = 16
-	f.execHandler = func(w http.ResponseWriter, _ *http.Request) {
-		// Far more than the wrapper's caps allow, as guest code writing around them
-		// would produce.
-		writeJSON(w, map[string]any{"exitCode": 0, "stdout": bytes.Repeat([]byte("y"), 1<<20)})
-	}
-	res, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
-	if err != nil {
-		t.Fatalf("a flood must not be an infrastructure error: %v", err)
-	}
-	if res.ExitCode != exitOutputFlooded || !res.StdoutTruncated || !res.StderrTruncated || res.Stdout != "" {
-		t.Fatalf("result = %+v", res)
-	}
-	if len(f.deletedRefs()) != 1 {
-		t.Fatal("sandbox not deleted after a flood")
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		d.MaxOutputBytes = 16
+		f.execHandler = func(w http.ResponseWriter, _ *http.Request) {
+			// Far more than the wrapper's caps allow, as guest code writing around them
+			// would produce.
+			writeJSON(w, map[string]any{"exitCode": 0, "stdout": bytes.Repeat([]byte("y"), 1<<20)})
+		}
+		res, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
+		if err != nil {
+			t.Fatalf("a flood must not be an infrastructure error: %v", err)
+		}
+		if res.ExitCode != exitOutputFlooded || !res.StdoutTruncated || !res.StderrTruncated || res.Stdout != "" {
+			t.Fatalf("result = %+v", res)
+		}
+		if len(f.deletedRefs()) != 1 {
+			t.Fatal("sandbox not deleted after a flood")
+		}
+	})
 }
 
 // TestDockerCloudInGuestTimeout: exit 137 counts as a timeout only when the call
 // actually lasted the in-guest limit, so a program exiting 137 on its own is not
 // misread.
 func TestDockerCloudInGuestTimeout(t *testing.T) {
-	f := newDCFake(t)
-	d := f.provider()
-	var sleep time.Duration
-	f.exec = func([]string) (int, string, string) {
-		time.Sleep(sleep)
-		return 137, "partial", ""
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		var sleep time.Duration
+		f.exec = func([]string) (int, string, string) {
+			time.Sleep(sleep)
+			return 137, "partial", ""
+		}
 
-	// Budget 3s leaves a 1s in-guest limit after the 2s margin.
-	sleep = 1100 * time.Millisecond
-	res, err := d.RunJavaScript(context.Background(), Request{Code: "1", Timeout: 3 * time.Second})
-	if err != nil {
-		t.Fatalf("RunJavaScript: %v", err)
-	}
-	if f.execs[0][4] != "1" {
-		t.Fatalf("in-guest limit = %s, want 1", f.execs[0][4])
-	}
-	if !res.TimedOut || res.ExitCode != 124 || res.Stdout != "partial" {
-		t.Fatalf("killed-at-limit result = %+v", res)
-	}
+		// Budget 3s leaves a 1s in-guest limit after the 2s margin.
+		sleep = 1100 * time.Millisecond
+		res, err := d.RunJavaScript(context.Background(), Request{Code: "1", Timeout: 3 * time.Second})
+		if err != nil {
+			t.Fatalf("RunJavaScript: %v", err)
+		}
+		if f.execs[0][4] != "1" {
+			t.Fatalf("in-guest limit = %s, want 1", f.execs[0][4])
+		}
+		if !res.TimedOut || res.ExitCode != 124 || res.Stdout != "partial" {
+			t.Fatalf("killed-at-limit result = %+v", res)
+		}
 
-	sleep = 0
-	res, err = d.RunJavaScript(context.Background(), Request{Code: "1", Timeout: 3 * time.Second})
-	if err != nil || res.TimedOut || res.ExitCode != 137 {
-		t.Fatalf("an immediate exit 137 was read as a timeout: %+v %v", res, err)
-	}
+		sleep = 0
+		res, err = d.RunJavaScript(context.Background(), Request{Code: "1", Timeout: 3 * time.Second})
+		if err != nil || res.TimedOut || res.ExitCode != 137 {
+			t.Fatalf("an immediate exit 137 was read as a timeout: %+v %v", res, err)
+		}
 
-	// A project step killed by the in-guest limit makes the run timed_out.
-	sleep = 1100 * time.Millisecond
-	pres, err := d.RunProject(context.Background(), ProjectRequest{
-		Files: []File{{Path: "a", Content: "a"}}, Steps: []string{"sleep 60", "never"}, Timeout: 3 * time.Second,
+		// A project step killed by the in-guest limit makes the run timed_out.
+		sleep = 1100 * time.Millisecond
+		pres, err := d.RunProject(context.Background(), ProjectRequest{
+			Files: []File{{Path: "a", Content: "a"}}, Steps: []string{"sleep 60", "never"}, Timeout: 3 * time.Second,
+		})
+		if err != nil || pres.Outcome != ProjectOutcomeTimedOut || len(pres.Steps) != 1 || !pres.Steps[0].TimedOut || pres.Steps[0].ExitCode != 124 {
+			t.Fatalf("project = %+v err = %v", pres, err)
+		}
 	})
-	if err != nil || pres.Outcome != ProjectOutcomeTimedOut || len(pres.Steps) != 1 || !pres.Steps[0].TimedOut || pres.Steps[0].ExitCode != 124 {
-		t.Fatalf("project = %+v err = %v", pres, err)
-	}
 }
 
 // TestDockerCloudDeletesOnEveryExitPath: the sandbox is deleted whether the run
 // succeeds, fails in the infrastructure, hits the host deadline, or is cancelled,
 // and whether or not the create itself succeeded.
 func TestDockerCloudDeletesOnEveryExitPath(t *testing.T) {
-	cases := []struct {
-		name    string
-		setup   func(*dcFake)
-		ctx     func() (context.Context, context.CancelFunc)
-		timeout time.Duration
-		check   func(t *testing.T, res Result, err error)
-		wantRef string // "id" or "name"
-	}{
-		{
-			name:    "success",
-			check:   func(t *testing.T, res Result, err error) { mustNil(t, err) },
-			wantRef: "id",
-		},
-		{
-			name: "exec infrastructure error",
-			setup: func(f *dcFake) {
-				f.execHandler = func(w http.ResponseWriter, _ *http.Request) {
-					connectError(w, http.StatusInternalServerError, "internal", "exec broke")
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		cases := []struct {
+			name    string
+			setup   func(*dcFake)
+			ctx     func() (context.Context, context.CancelFunc)
+			timeout time.Duration
+			check   func(t *testing.T, res Result, err error)
+			wantRef string // "id" or "name"
+			// restRef is wantRef on REST, where a sandbox the service never named is
+			// looked up by its display name and deleted by ID: "" when nothing exists.
+			restRef string
+		}{
+			{
+				name:    "success",
+				check:   func(t *testing.T, res Result, err error) { mustNil(t, err) },
+				wantRef: "id",
+				restRef: "id",
+			},
+			{
+				name: "exec infrastructure error",
+				setup: func(f *dcFake) {
+					f.execHandler = func(w http.ResponseWriter, _ *http.Request) {
+						connectError(w, http.StatusInternalServerError, "internal", "exec broke")
+					}
+				},
+				check: func(t *testing.T, _ Result, err error) {
+					if err == nil || !strings.Contains(err.Error(), "exec broke") {
+						t.Fatalf("err = %v", err)
+					}
+				},
+				wantRef: "id",
+				restRef: "id",
+			},
+			{
+				name:    "host deadline",
+				setup:   func(f *dcFake) { f.execBlock = true },
+				timeout: 1500 * time.Millisecond,
+				check: func(t *testing.T, res Result, err error) {
+					if err != nil || !res.TimedOut || res.ExitCode != 124 {
+						t.Fatalf("res = %+v err = %v, want a timed-out result", res, err)
+					}
+				},
+				wantRef: "id",
+				restRef: "id",
+			},
+			{
+				name:  "context cancel",
+				setup: func(f *dcFake) { f.execBlock = true },
+				ctx: func() (context.Context, context.CancelFunc) {
+					ctx, cancel := context.WithCancel(context.Background())
+					time.AfterFunc(300*time.Millisecond, cancel)
+					return ctx, cancel
+				},
+				check: func(t *testing.T, _ Result, err error) {
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("err = %v, want context.Canceled", err)
+					}
+				},
+				wantRef: "id",
+				restRef: "id",
+			},
+			{
+				name:  "create rejected",
+				setup: func(f *dcFake) { f.createStatus = http.StatusTooManyRequests },
+				check: func(t *testing.T, _ Result, err error) {
+					if err == nil || !strings.Contains(err.Error(), "resource_exhausted") {
+						t.Fatalf("err = %v", err)
+					}
+				},
+				wantRef: "name",
+				restRef: "", // refused: nothing was made, and the lookup finds nothing
+			},
+			{
+				name:  "create operation failed",
+				setup: func(f *dcFake) { f.opError = true },
+				check: func(t *testing.T, _ Result, err error) {
+					if err == nil || !strings.Contains(err.Error(), "quota exhausted") {
+						t.Fatalf("err = %v", err)
+					}
+				},
+				wantRef: "name",
+				restRef: "id", // the 202 named the sandbox
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				f := newDCFakeAPI(t, api)
+				if tc.setup != nil {
+					tc.setup(f)
 				}
-			},
-			check: func(t *testing.T, _ Result, err error) {
-				if err == nil || !strings.Contains(err.Error(), "exec broke") {
-					t.Fatalf("err = %v", err)
+				d := f.provider()
+				ctx, cancel := context.Background(), context.CancelFunc(func() {})
+				if tc.ctx != nil {
+					ctx, cancel = tc.ctx()
 				}
-			},
-			wantRef: "id",
-		},
-		{
-			name:    "host deadline",
-			setup:   func(f *dcFake) { f.execBlock = true },
-			timeout: 1500 * time.Millisecond,
-			check: func(t *testing.T, res Result, err error) {
-				if err != nil || !res.TimedOut || res.ExitCode != 124 {
-					t.Fatalf("res = %+v err = %v, want a timed-out result", res, err)
+				defer cancel()
+				res, err := d.RunJavaScript(ctx, Request{Code: "1", Timeout: tc.timeout})
+				tc.check(t, res, err)
+				refs, want := f.deletedRefs(), tc.wantRef
+				if api == dcAPIREST {
+					want = tc.restRef
 				}
-			},
-			wantRef: "id",
-		},
-		{
-			name:  "context cancel",
-			setup: func(f *dcFake) { f.execBlock = true },
-			ctx: func() (context.Context, context.CancelFunc) {
-				ctx, cancel := context.WithCancel(context.Background())
-				time.AfterFunc(300*time.Millisecond, cancel)
-				return ctx, cancel
-			},
-			check: func(t *testing.T, _ Result, err error) {
-				if !errors.Is(err, context.Canceled) {
-					t.Fatalf("err = %v, want context.Canceled", err)
+				if want == "" && len(refs) != 0 {
+					t.Fatalf("deletes = %v, want none", refs)
 				}
-			},
-			wantRef: "id",
-		},
-		{
-			name:  "create rejected",
-			setup: func(f *dcFake) { f.createStatus = http.StatusTooManyRequests },
-			check: func(t *testing.T, _ Result, err error) {
-				if err == nil || !strings.Contains(err.Error(), "resource_exhausted") {
-					t.Fatalf("err = %v", err)
+				if want != "" && (len(refs) != 1 || !strings.HasPrefix(refs[0], want+":")) {
+					t.Fatalf("deletes = %v, want one forced delete by %s", refs, want)
 				}
-			},
-			wantRef: "name",
-		},
-		{
-			name:  "create operation failed",
-			setup: func(f *dcFake) { f.opError = true },
-			check: func(t *testing.T, _ Result, err error) {
-				if err == nil || !strings.Contains(err.Error(), "quota exhausted") {
-					t.Fatalf("err = %v", err)
+				if want == "name" && refs[0] != "name:"+f.lastName() {
+					t.Fatalf("deleted %s, created %s", refs[0], f.lastName())
 				}
-			},
-			wantRef: "name",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newDCFake(t)
-			if tc.setup != nil {
-				tc.setup(f)
-			}
-			d := f.provider()
-			ctx, cancel := context.Background(), context.CancelFunc(func() {})
-			if tc.ctx != nil {
-				ctx, cancel = tc.ctx()
-			}
-			defer cancel()
-			res, err := d.RunJavaScript(ctx, Request{Code: "1", Timeout: tc.timeout})
-			tc.check(t, res, err)
-			refs := f.deletedRefs()
-			if len(refs) != 1 || !strings.HasPrefix(refs[0], tc.wantRef+":") {
-				t.Fatalf("deletes = %v, want one forced delete by %s", refs, tc.wantRef)
-			}
-			if tc.wantRef == "name" && refs[0] != "name:"+f.lastName() {
-				t.Fatalf("deleted %s, created %s", refs[0], f.lastName())
-			}
-			if d.inflightCount() != 0 {
-				t.Fatal("sandbox still tracked after the run")
-			}
-		})
-	}
+				if d.inflightCount() != 0 {
+					t.Fatal("sandbox still tracked after the run")
+				}
+			})
+		}
+	})
 }
 
 func mustNil(t *testing.T, err error) {
@@ -949,6 +1002,7 @@ func mustNil(t *testing.T, err error) {
 }
 
 func TestDockerCloudWaitsForTheCreateOperation(t *testing.T) {
+	t.Parallel()
 	for _, unimpl := range []bool{false, true} {
 		f := newDCFake(t)
 		f.opPending, f.waitUnimpl = true, unimpl
@@ -965,58 +1019,69 @@ func TestDockerCloudWaitsForTheCreateOperation(t *testing.T) {
 }
 
 func TestDockerCloudGrantsAreRefusedBeforeAnyCall(t *testing.T) {
-	f := newDCFake(t)
-	d := f.provider()
-	grant := &HostAPIGrant{BaseURL: "https://api.example.com"}
-	if _, err := d.RunJavaScript(context.Background(), Request{Code: "1", Grant: grant}); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("snippet grant err = %v, want ErrUnsupported", err)
-	}
-	if _, err := d.RunProject(context.Background(), ProjectRequest{Files: []File{{Path: "a", Content: "a"}}, Steps: []string{"true"}, Grant: grant}); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("project grant err = %v, want ErrUnsupported", err)
-	}
-	if d.SupportsJavaScriptGrants() || d.SupportsProjectGrants() {
-		t.Fatal("dockercloud advertises grant support")
-	}
-	if len(f.calls) != 0 {
-		t.Fatalf("grant refusal made API calls: %v", f.calls)
-	}
-	if _, err := d.RunModule(context.Background(), ModuleRequest{Model: "vdp", Rows: [][]float64{{1}}, EndTime: 1, Step: 0.1}); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("module err = %v", err)
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		grant := &HostAPIGrant{BaseURL: "https://api.example.com"}
+		if _, err := d.RunJavaScript(context.Background(), Request{Code: "1", Grant: grant}); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("snippet grant err = %v, want ErrUnsupported", err)
+		}
+		if _, err := d.RunProject(context.Background(), ProjectRequest{Files: []File{{Path: "a", Content: "a"}}, Steps: []string{"true"}, Grant: grant}); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("project grant err = %v, want ErrUnsupported", err)
+		}
+		if d.SupportsJavaScriptGrants() || d.SupportsProjectGrants() {
+			t.Fatal("dockercloud advertises grant support")
+		}
+		if len(f.calls) != 0 {
+			t.Fatalf("grant refusal made API calls: %v", f.calls)
+		}
+		if _, err := d.RunModule(context.Background(), ModuleRequest{Model: "vdp", Rows: [][]float64{{1}}, EndTime: 1, Step: 0.1}); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("module err = %v", err)
+		}
+	})
 }
 
 func TestDockerCloudOrphanReconciliation(t *testing.T) {
-	f := newDCFake(t)
-	d := f.provider()
-	d.instanceID = "inst1"
-	live := dcNamePrefix + "inst1-live"
-	d.leases.Track(live)
-	sb := func(id, name string) map[string]any {
-		return map[string]any{"core": map[string]any{"id": id, "name": name, "createdAt": "2026-09-24T00:00:00Z"}}
-	}
-	f.listPages = [][]map[string]any{
-		{sb("sb-orphan", dcNamePrefix+"inst1-orphan"), sb("sb-live", live), sb("sb-other", dcNamePrefix+"inst2-x")},
-		{sb("sb-foreign", "someone-elses-sandbox"), sb("", dcNamePrefix+"inst1-noid"), sb("sb-prefixtrick", dcNamePrefix+"inst1")},
-	}
-	n, err := d.ReconcileOrphans(context.Background())
-	if err != nil {
-		t.Fatalf("ReconcileOrphans: %v", err)
-	}
-	refs := f.deletedRefs()
-	want := []string{"id:sb-orphan", "name:" + dcNamePrefix + "inst1-noid"}
-	if n != 2 || strings.Join(refs, ",") != strings.Join(want, ",") {
-		t.Fatalf("deleted %d: %v, want %v", n, refs, want)
-	}
-	if f.called(dcProcListSandboxes) != 2 {
-		t.Fatal("did not follow the page token")
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		d.instanceID = "inst1"
+		live := dcNamePrefix + "inst1-live"
+		d.leases.Track(live)
+		sb := func(id, name string) map[string]any {
+			return map[string]any{"core": map[string]any{"id": id, "name": name, "createdAt": "2026-09-24T00:00:00Z"}}
+		}
+		f.listPages = [][]map[string]any{
+			{sb("sb-orphan", dcNamePrefix+"inst1-orphan"), sb("sb-live", live), sb("sb-other", dcNamePrefix+"inst2-x")},
+			{sb("sb-foreign", "someone-elses-sandbox"), sb("", dcNamePrefix+"inst1-noid"), sb("sb-prefixtrick", dcNamePrefix+"inst1")},
+		}
+		n, err := d.ReconcileOrphans(context.Background())
+		if err != nil {
+			t.Fatalf("ReconcileOrphans: %v", err)
+		}
+		refs := f.deletedRefs()
+		want := []string{"id:sb-orphan", "name:" + dcNamePrefix + "inst1-noid"}
+		if api == dcAPIREST {
+			want = want[:1] // the REST API names every sandbox's uid, so no listing lacks one
+		}
+		if n != len(want) || strings.Join(refs, ",") != strings.Join(want, ",") {
+			t.Fatalf("deleted %d: %v, want %v", n, refs, want)
+		}
+		if f.called(dcProcListSandboxes) != 2 {
+			t.Fatal("did not follow the page token")
+		}
+	})
 }
 
 func TestBuildDockerCloudValidation(t *testing.T) {
+	t.Parallel()
 	pinned := "registry.example/plimsoll/sandbox@sha256:" + strings.Repeat("b", 64)
 	base := func() map[string]string {
 		return map[string]string{
 			"SANDBOX_PROVIDER":            "dockercloud",
+			"SANDBOX_DOCKERCLOUD_API":     "connect", // Connect's URL rules; REST's are in TestBuildDockerCloudREST
 			"DOCKER_SBX_TOKEN":            "t",
 			"DOCKER_SBX_USERNAME":         "u",
 			"SANDBOX_DOCKERCLOUD_API_URL": "https://sbx.example.com/sbx",
@@ -1071,6 +1136,7 @@ func TestBuildDockerCloudValidation(t *testing.T) {
 }
 
 func TestDockerCloudRefusesUnsafeSandboxEndpoint(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	sb := dcSandbox{}
@@ -1105,16 +1171,19 @@ func TestDockerCloudRefusesUnsafeSandboxEndpoint(t *testing.T) {
 }
 
 func TestDockerCloudDefaultsToMicroWhenUnset(t *testing.T) {
-	f := newDCFake(t)
-	d := f.provider()
-	d.MaxVCPU, d.MaxMemoryMB = 0, 0
-	if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
-		t.Fatalf("RunJavaScript: %v", err)
-	}
-	res, _ := f.creates[0]["resources"].(map[string]any)
-	if res["cpus"] != float64(dcDefaultCPUs) || res["memoryMib"] != strconv.Itoa(dcDefaultMemoryMiB) {
-		t.Fatalf("requested resources = %v, want the Micro size", res)
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		d.MaxVCPU, d.MaxMemoryMB = 0, 0
+		if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
+			t.Fatalf("RunJavaScript: %v", err)
+		}
+		res, _ := f.creates[0]["resources"].(map[string]any)
+		if res["cpus"] != float64(dcDefaultCPUs) || res["memoryMib"] != strconv.Itoa(dcDefaultMemoryMiB) {
+			t.Fatalf("requested resources = %v, want the Micro size", res)
+		}
+	})
 }
 
 // dcSmokeGuest simulates the guest side of the startup smoke: the probe script,
@@ -1149,80 +1218,89 @@ func (g *dcSmokeGuest) exec(argv []string) (int, string, string) {
 }
 
 func TestDockerCloudSmokeTest(t *testing.T) {
-	report := func(cwd string, open []string) func() (int, string, string) {
-		return func() (int, string, string) {
-			b, _ := json.Marshal(map[string]any{"node": "v22.0.0", "cwd": cwd, "egressOpen": open})
-			return 0, string(b), ""
-		}
-	}
-	setup := func(t *testing.T, tweak func(*dcFake, *dcSmokeGuest)) *dcFake {
-		f := newDCFake(t)
-		g := &dcSmokeGuest{t: t, probe: report("/tmp/plimsoll-project", nil)}
-		if tweak != nil {
-			tweak(f, g)
-		}
-		f.exec = g.exec
-		return f
-	}
-
-	f := setup(t, nil)
-	if err := f.provider().SmokeTest(context.Background()); err != nil {
-		t.Fatalf("SmokeTest: %v", err)
-	}
-	if f.called(dcProcGetCapabilities) != 1 || len(f.deletedRefs()) != 1 {
-		t.Fatal("smoke did not check capabilities or did not delete its sandbox")
-	}
-
-	fails := map[string]func(*dcFake, *dcSmokeGuest){
-		"missing permission": func(f *dcFake, _ *dcSmokeGuest) {
-			f.caps = map[string]any{"canAttachPolicies": true, "permissions": []string{"PERMISSION_SANDBOXES_READ"}}
-		},
-		"egress open": func(_ *dcFake, g *dcSmokeGuest) {
-			g.probe = report("/tmp/plimsoll-project", []string{"https://1.1.1.1"})
-		},
-		"cwd ignored": func(_ *dcFake, g *dcSmokeGuest) { g.probe = report("/", nil) },
-		"missing toolchain": func(_ *dcFake, g *dcSmokeGuest) {
-			g.probe = func() (int, string, string) { return 127, "", "sh: node: not found" }
-		},
-		"policy not in force":     func(f *dcFake, _ *dcSmokeGuest) { f.policyMode = "NETWORK_POLICY_MODE_ALLOW_ALL" },
-		"time limit fails open":   func(_ *dcFake, g *dcSmokeGuest) { g.hangEscape = true },
-		"output cap not in force": func(_ *dcFake, g *dcSmokeGuest) { g.floodEsc = true },
-	}
-	for name, tweak := range fails {
-		t.Run(name, func(t *testing.T) {
-			f := setup(t, tweak)
-			if err := f.provider().SmokeTest(context.Background()); err == nil {
-				t.Fatal("SmokeTest passed")
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		report := func(cwd string, open []string) func() (int, string, string) {
+			return func() (int, string, string) {
+				b, _ := json.Marshal(map[string]any{"node": "v22.0.0", "cwd": cwd, "egressOpen": open})
+				return 0, string(b), ""
 			}
-			if len(f.creates) > 0 && len(f.deletedRefs()) != 1 {
-				t.Fatal("smoke sandbox not deleted")
+		}
+		setup := func(t *testing.T, tweak func(*dcFake, *dcSmokeGuest)) *dcFake {
+			f := newDCFakeAPI(t, api)
+			g := &dcSmokeGuest{t: t, probe: report("/tmp/plimsoll-project", nil)}
+			if tweak != nil {
+				tweak(f, g)
 			}
+			f.exec = g.exec
+			return f
+		}
+
+		f := setup(t, nil)
+		if err := f.provider().SmokeTest(context.Background()); err != nil {
+			t.Fatalf("SmokeTest: %v", err)
+		}
+		if f.called(dcProcGetCapabilities) != 1 || len(f.deletedRefs()) != 1 {
+			t.Fatal("smoke did not check capabilities or did not delete its sandbox")
+		}
+
+		fails := map[string]func(*dcFake, *dcSmokeGuest){
+			"missing permission": func(f *dcFake, _ *dcSmokeGuest) {
+				f.caps = map[string]any{"canAttachPolicies": true, "permissions": []string{"PERMISSION_SANDBOXES_READ"}}
+			},
+			"egress open": func(_ *dcFake, g *dcSmokeGuest) {
+				g.probe = report("/tmp/plimsoll-project", []string{"https://1.1.1.1"})
+			},
+			"cwd ignored": func(_ *dcFake, g *dcSmokeGuest) { g.probe = report("/", nil) },
+			"missing toolchain": func(_ *dcFake, g *dcSmokeGuest) {
+				g.probe = func() (int, string, string) { return 127, "", "sh: node: not found" }
+			},
+			"policy not in force":     func(f *dcFake, _ *dcSmokeGuest) { f.policyMode = "NETWORK_POLICY_MODE_ALLOW_ALL" },
+			"time limit fails open":   func(_ *dcFake, g *dcSmokeGuest) { g.hangEscape = true },
+			"output cap not in force": func(_ *dcFake, g *dcSmokeGuest) { g.floodEsc = true },
+		}
+		for name, tweak := range fails {
+			if api == dcAPIREST && name == "missing permission" {
+				continue // the REST API lists no permissions
+			}
+			t.Run(name, func(t *testing.T) {
+				f := setup(t, tweak)
+				if err := f.provider().SmokeTest(context.Background()); err == nil {
+					t.Fatal("SmokeTest passed")
+				}
+				if len(f.creates) > 0 && len(f.deletedRefs()) != 1 {
+					t.Fatal("smoke sandbox not deleted")
+				}
+			})
+		}
+		// A full permission list passes.
+		f = setup(t, func(f *dcFake, _ *dcSmokeGuest) {
+			var perms []string
+			for _, p := range dockerCloudRequiredPermissions {
+				perms = append(perms, p.name)
+			}
+			f.caps = map[string]any{"canAttachPolicies": true, "permissions": perms}
 		})
-	}
-	// A full permission list passes.
-	f = setup(t, func(f *dcFake, _ *dcSmokeGuest) {
-		var perms []string
-		for _, p := range dockerCloudRequiredPermissions {
-			perms = append(perms, p.name)
+		if err := f.provider().SmokeTest(context.Background()); err != nil {
+			t.Fatalf("SmokeTest with full permissions: %v", err)
 		}
-		f.caps = map[string]any{"canAttachPolicies": true, "permissions": perms}
 	})
-	if err := f.provider().SmokeTest(context.Background()); err != nil {
-		t.Fatalf("SmokeTest with full permissions: %v", err)
-	}
 }
 
 func TestDockerCloudUnauthenticatedIsAnError(t *testing.T) {
-	f := newDCFake(t)
-	d := f.provider()
-	d.Token = "wrong"
-	_, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
-	if !dcCodeIs(err, "unauthenticated") {
-		t.Fatalf("err = %v, want unauthenticated", err)
-	}
-	if strings.Contains(err.Error(), "wrong") {
-		t.Fatal("the token leaked into the error text")
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		d.Token = "wrong"
+		_, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
+		if !dcCodeIs(err, "unauthenticated") {
+			t.Fatalf("err = %v, want unauthenticated", err)
+		}
+		if strings.Contains(err.Error(), "wrong") {
+			t.Fatal("the token leaked into the error text")
+		}
+	})
 }
 
 func TestReadConnectFramesRequiresEndOfStream(t *testing.T) {
@@ -1243,6 +1321,7 @@ func TestReadConnectFramesRequiresEndOfStream(t *testing.T) {
 }
 
 func TestDockerCloudExchangesTokenAndCaches(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	for i := 0; i < 3; i++ {
@@ -1256,6 +1335,7 @@ func TestDockerCloudExchangesTokenAndCaches(t *testing.T) {
 }
 
 func TestDockerCloudRefreshesNearExpiry(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	f.accessLife = dcAuthRefreshMargin / 2 // already inside the refresh margin
 	d := f.provider()
@@ -1270,6 +1350,7 @@ func TestDockerCloudRefreshesNearExpiry(t *testing.T) {
 }
 
 func TestDockerCloudRefusedExchangeHidesSecret(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	f.refuseExchange = true
 	_, err := f.provider().bearer(context.Background())
@@ -1282,6 +1363,7 @@ func TestDockerCloudRefusedExchangeHidesSecret(t *testing.T) {
 }
 
 func TestDockerCloudRequiresUsername(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	d.Username = ""
@@ -1291,6 +1373,7 @@ func TestDockerCloudRequiresUsername(t *testing.T) {
 }
 
 func TestDockerCloudJWTExpiry(t *testing.T) {
+	t.Parallel()
 	now := time.Unix(1_800_000_000, 0)
 	if got := dcJWTExpiry(dcTestAccess(now.Add(900*time.Second)), now); !got.Equal(now.Add(900 * time.Second)) {
 		t.Fatalf("exp read as %v", got)
@@ -1320,6 +1403,7 @@ func dcGrant(t *testing.T) (*HostAPIGrant, *httptest.Server) {
 }
 
 func TestDockerCloudGrantRefusedWithoutGuardURL(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	grant, _ := dcGrant(t)
@@ -1333,6 +1417,7 @@ func TestDockerCloudGrantRefusedWithoutGuardURL(t *testing.T) {
 }
 
 func TestDockerCloudGrantSnippetOpensOnlyTheGuard(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
@@ -1390,6 +1475,7 @@ func TestDockerCloudGrantSnippetOpensOnlyTheGuard(t *testing.T) {
 }
 
 func TestDockerCloudNoGrantRunNeverOpensTheNetwork(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/g"
@@ -1403,6 +1489,7 @@ func TestDockerCloudNoGrantRunNeverOpensTheNetwork(t *testing.T) {
 }
 
 func TestDockerCloudGrantFailsClosed(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(*dcFake){
 		"policy PUT refused":               func(f *dcFake) { f.policyPutStatus = http.StatusForbidden },
 		"policy PUT echoes another":        func(f *dcFake) { f.policyEchoWrong = true },
@@ -1433,6 +1520,7 @@ func TestDockerCloudGrantFailsClosed(t *testing.T) {
 }
 
 func TestDockerCloudGrantProjectPreloadsTheClient(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/g"
@@ -1470,6 +1558,7 @@ func TestDockerCloudGrantProjectPreloadsTheClient(t *testing.T) {
 // allowed route reach the upstream with the downstream credential added outside the
 // VM; a wrong route, a forged credential and an expired one are refused.
 func TestDockerCloudGuardEnforcesTheGrant(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
@@ -1511,8 +1600,10 @@ func TestDockerCloudGuardEnforcesTheGrant(t *testing.T) {
 }
 
 func TestBuildDockerCloudRejectsABadGuardURL(t *testing.T) {
+	t.Parallel()
 	env := map[string]string{
 		"SANDBOX_PROVIDER": "dockercloud", "DOCKER_SBX_TOKEN": "t", "DOCKER_SBX_USERNAME": "u",
+		"SANDBOX_DOCKERCLOUD_API":     "connect", // grants are Connect's
 		"SANDBOX_DOCKERCLOUD_API_URL": "https://api.example.com/sbx",
 		"SANDBOX_DOCKERCLOUD_IMAGE":   "registry.example/img@sha256:" + strings.Repeat("a", 64),
 	}
@@ -1535,72 +1626,82 @@ func TestBuildDockerCloudRejectsABadGuardURL(t *testing.T) {
 // An accepted DeleteSandbox is not a completed deletion: a failed delete operation
 // makes teardown retry until one succeeds.
 func TestDockerCloudDeleteWaitsForItsOperation(t *testing.T) {
-	f := newDCFake(t)
-	f.deleteOpFailures = 1
-	d := f.provider()
-	f.exec = func([]string) (int, string, string) { return 0, "", "" }
-	if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
-		t.Fatal(err)
-	}
-	if n := len(f.deletedRefs()); n != 2 {
-		t.Fatalf("delete requests = %d, want 2 (the first operation failed, the retry succeeded)", n)
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		f.deleteOpFailures = 1
+		d := f.provider()
+		f.exec = func([]string) (int, string, string) { return 0, "", "" }
+		if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err != nil {
+			t.Fatal(err)
+		}
+		if n := len(f.deletedRefs()); n != 2 {
+			t.Fatalf("delete requests = %d, want 2 (the first operation failed, the retry succeeded)", n)
+		}
+	})
 }
 
 func TestDockerCloudRefusesUnreportedOrLargerSize(t *testing.T) {
-	for name, tweak := range map[string]func(*dcFake){
-		"no size reported":       func(f *dcFake) { f.noResources = true },
-		"more CPU than asked":    func(f *dcFake) { f.reportedCPUs = 2 },
-		"more memory than asked": func(f *dcFake) { f.reportedMemMiB = 4096 },
-	} {
-		t.Run(name, func(t *testing.T) {
-			f := newDCFake(t)
-			tweak(f)
-			d := f.provider()
-			d.MaxVCPU, d.MaxMemoryMB = 0, 0 // the Micro default is the requested size
-			ran := false
-			f.exec = func([]string) (int, string, string) { ran = true; return 0, "", "" }
-			if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err == nil || ran {
-				t.Fatalf("err = %v, ran = %v; want a refusal before any code", err, ran)
-			}
-		})
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		for name, tweak := range map[string]func(*dcFake){
+			"no size reported":       func(f *dcFake) { f.noResources = true },
+			"more CPU than asked":    func(f *dcFake) { f.reportedCPUs = 2 },
+			"more memory than asked": func(f *dcFake) { f.reportedMemMiB = 4096 },
+		} {
+			t.Run(name, func(t *testing.T) {
+				f := newDCFakeAPI(t, api)
+				tweak(f)
+				d := f.provider()
+				d.MaxVCPU, d.MaxMemoryMB = 0, 0 // the Micro default is the requested size
+				ran := false
+				f.exec = func([]string) (int, string, string) { ran = true; return 0, "", "" }
+				if _, err := d.RunJavaScript(context.Background(), Request{Code: "1"}); err == nil || ran {
+					t.Fatalf("err = %v, ran = %v; want a refusal before any code", err, ran)
+				}
+			})
+		}
+	})
 }
 
 // Vendor text that echoes the exchanged bearer, the personal access token or a JWT
 // never reaches an error.
 func TestDockerCloudErrorsNeverCarryCredentials(t *testing.T) {
-	for name, tweak := range map[string]func(*dcFake, string){
-		"connect error":    func(f *dcFake, s string) { f.echoSecret = s },
-		"failed operation": func(f *dcFake, s string) { f.opErrorEcho = s },
-		"stream end error": func(f *dcFake, s string) { f.uploadEndEcho = s },
-	} {
-		t.Run(name, func(t *testing.T) {
-			f := newDCFake(t)
-			d := f.provider()
-			// Mint the bearer first so the fake can echo the real one.
-			if _, err := d.bearer(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			tweak(f, f.issued)
-			_, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
-			if err == nil {
-				t.Fatal("run succeeded")
-			}
-			if strings.Contains(err.Error(), f.issued) || strings.Contains(err.Error(), dcTestToken) || !strings.Contains(err.Error(), "<redacted>") {
-				t.Fatalf("error carries a credential or was not scrubbed: %v", err)
-			}
-		})
-	}
-	if got := truncateForError("x dckr_pat_AbC-123 y crg_" + strings.Repeat("a", 64)); strings.Contains(got, "dckr_pat_") || strings.Contains(got, "crg_") {
-		t.Fatalf("personal token or guard credential survived: %q", got)
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		for name, tweak := range map[string]func(*dcFake, string){
+			"connect error":    func(f *dcFake, s string) { f.echoSecret = s },
+			"failed operation": func(f *dcFake, s string) { f.opErrorEcho = s },
+			"stream end error": func(f *dcFake, s string) { f.uploadEndEcho = s },
+		} {
+			t.Run(name, func(t *testing.T) {
+				f := newDCFakeAPI(t, api)
+				d := f.provider()
+				// Mint the bearer first so the fake can echo the real one.
+				if _, err := d.bearer(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				tweak(f, f.issued)
+				_, err := d.RunJavaScript(context.Background(), Request{Code: "1"})
+				if err == nil {
+					t.Fatal("run succeeded")
+				}
+				if strings.Contains(err.Error(), f.issued) || strings.Contains(err.Error(), dcTestToken) || !strings.Contains(err.Error(), "<redacted>") {
+					t.Fatalf("error carries a credential or was not scrubbed: %v", err)
+				}
+			})
+		}
+		if got := truncateForError("x dckr_pat_AbC-123 y crg_" + strings.Repeat("a", 64)); strings.Contains(got, "dckr_pat_") || strings.Contains(got, "crg_") {
+			t.Fatalf("personal token or guard credential survived: %q", got)
+		}
+	})
 }
 
 // The grant ends with the run's code, before the teardown: a guard call a process the
 // guest detached makes while the sandbox is being deleted is refused, not served
 // after the trace was returned (v0.15.0 review, L16).
 func TestDockerCloudGrantEndsBeforeTheTeardown(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
@@ -1636,6 +1737,7 @@ func TestDockerCloudGrantEndsBeforeTheTeardown(t *testing.T) {
 // A run that brokered a call and then failed returns its trace with the error (review
 // F11): the call happened, and the daemon counts calls from the returned result.
 func TestDockerCloudFailedRunKeepsItsCallTrace(t *testing.T) {
+	t.Parallel()
 	f := newDCFake(t)
 	d := f.provider()
 	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
@@ -1671,22 +1773,25 @@ func TestDockerCloudFailedRunKeepsItsCallTrace(t *testing.T) {
 // context (TeardownGaveUp), so a caller that meters runs charges the run's whole
 // reservation: the sandbox bills until its TTL. A retry that succeeds says nothing.
 func TestDockerCloudReportsADeleteThatGaveUp(t *testing.T) {
-	for _, tc := range []struct {
-		failures int
-		want     bool
-	}{{1, false}, {meteredDeleteAttempts, true}} {
-		f := newDCFake(t)
-		f.deleteOpFailures = tc.failures
-		d := f.provider()
-		f.exec = func([]string) (int, string, string) { return 0, "", "" }
-		ctx, gaveUp := WatchTeardown(context.Background())
-		if _, err := d.RunJavaScript(ctx, Request{Code: "1"}); err != nil {
-			t.Fatal(err)
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		for _, tc := range []struct {
+			failures int
+			want     bool
+		}{{1, false}, {meteredDeleteAttempts, true}} {
+			f := newDCFakeAPI(t, api)
+			f.deleteOpFailures = tc.failures
+			d := f.provider()
+			f.exec = func([]string) (int, string, string) { return 0, "", "" }
+			ctx, gaveUp := WatchTeardown(context.Background())
+			if _, err := d.RunJavaScript(ctx, Request{Code: "1"}); err != nil {
+				t.Fatal(err)
+			}
+			if gaveUp() != tc.want {
+				t.Errorf("%d failed deletes: reported gave up = %v; want %v", tc.failures, gaveUp(), tc.want)
+			}
 		}
-		if gaveUp() != tc.want {
-			t.Errorf("%d failed deletes: reported gave up = %v; want %v", tc.failures, gaveUp(), tc.want)
-		}
-	}
+	})
 }
 
 // A create whose outcome is unknown (an answer that is not a refusal, an answer lost,
@@ -1695,55 +1800,69 @@ func TestDockerCloudReportsADeleteThatGaveUp(t *testing.T) {
 // gave up. A refusal, a create never sent and a delete that removed the sandbox are
 // not charged, and a create never sent is not deleted either.
 func TestDockerCloudChargesACreateWhoseOutcomeIsUnknown(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		set     func(*dcFake)
-		timeout time.Duration
-		charged bool
-		deletes bool
-	}{
-		{"refused", func(f *dcFake) { f.createStatus = http.StatusTooManyRequests; f.deleteNotFound = true }, 0, false, true},
-		{"unavailable", func(f *dcFake) {
-			f.createStatus, f.createCode, f.deleteNotFound = http.StatusServiceUnavailable, "unavailable", true
-		}, 0, true, true},
-		{"internal", func(f *dcFake) {
-			f.createStatus, f.createCode, f.deleteNotFound = http.StatusInternalServerError, "internal", true
-		}, 0, true, true},
-		{"already exists", func(f *dcFake) {
-			f.createStatus, f.createCode, f.deleteNotFound = http.StatusConflict, "already_exists", true
-		}, 0, true, true},
-		{"answer lost", func(f *dcFake) { f.createDrop, f.deleteNotFound = true, true }, 0, true, true},
-		{"still running, delete finds nothing", func(f *dcFake) {
-			f.opPending, f.opNeverDone, f.waitUnimpl, f.deleteNotFound = true, true, true, true
-		}, 700 * time.Millisecond, true, true},
-		{"still running, delete removes it", func(f *dcFake) {
-			f.opPending, f.opNeverDone, f.waitUnimpl = true, true, true
-		}, 700 * time.Millisecond, false, true},
-		{"never sent", func(f *dcFake) { f.refuseExchange = true }, 0, false, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newDCFake(t)
-			tc.set(f)
-			d := f.provider()
-			base := context.Background()
-			if tc.timeout > 0 {
-				var cancel context.CancelFunc
-				base, cancel = context.WithTimeout(base, tc.timeout)
-				defer cancel()
-			}
-			ctx, gaveUp := WatchTeardown(base)
-			if _, err := d.create(ctx, 10*time.Second); err == nil {
-				t.Fatal("create succeeded")
-			}
-			if gaveUp() != tc.charged {
-				t.Errorf("charged as a delete that gave up = %v; want %v", gaveUp(), tc.charged)
-			}
-			if got := f.called(dcProcDeleteSandbox) > 0; got != tc.deletes {
-				t.Errorf("deleted by name = %v; want %v", got, tc.deletes)
-			}
-			if d.leases.Len() != 0 {
-				t.Errorf("%d names left tracked; the reconciler could never reap a late sandbox", d.leases.Len())
-			}
-		})
-	}
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		for _, tc := range []struct {
+			name    string
+			set     func(*dcFake)
+			timeout time.Duration
+			charged bool
+			deletes bool
+			// restDeletes is deletes on REST, which deletes only what a read finds:
+			// a DELETE goes out only for a sandbox that exists.
+			restDeletes bool
+		}{
+			{"refused", func(f *dcFake) { f.createStatus = http.StatusTooManyRequests; f.deleteNotFound = true }, 0, false, true, false},
+			{"unavailable", func(f *dcFake) {
+				f.createStatus, f.createCode, f.deleteNotFound = http.StatusServiceUnavailable, "unavailable", true
+			}, 0, true, true, false},
+			{"internal", func(f *dcFake) {
+				f.createStatus, f.createCode, f.deleteNotFound = http.StatusInternalServerError, "internal", true
+			}, 0, true, true, false},
+			{"already exists", func(f *dcFake) {
+				f.createStatus, f.createCode, f.deleteNotFound = http.StatusConflict, "already_exists", true
+			}, 0, true, true, false},
+			{"answer lost", func(f *dcFake) { f.createDrop, f.deleteNotFound = true, true }, 0, true, true, false},
+			{"still running, delete finds nothing", func(f *dcFake) {
+				f.opPending, f.opNeverDone, f.waitUnimpl, f.deleteNotFound = true, true, true, true
+			}, 700 * time.Millisecond, true, true, false},
+			{"still running, delete removes it", func(f *dcFake) {
+				f.opPending, f.opNeverDone, f.waitUnimpl = true, true, true
+			}, 700 * time.Millisecond, false, true, true},
+			{"never sent", func(f *dcFake) { f.refuseExchange = true }, 0, false, false, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				f := newDCFakeAPI(t, api)
+				tc.set(f)
+				d := f.provider()
+				base := context.Background()
+				if tc.timeout > 0 {
+					var cancel context.CancelFunc
+					base, cancel = context.WithTimeout(base, tc.timeout)
+					defer cancel()
+				}
+				ctx, gaveUp := WatchTeardown(base)
+				if _, err := d.create(ctx, 10*time.Second); err == nil {
+					t.Fatal("create succeeded")
+				}
+				if gaveUp() != tc.charged {
+					t.Errorf("charged as a delete that gave up = %v; want %v", gaveUp(), tc.charged)
+				}
+				wantDeletes := tc.deletes
+				if api == dcAPIREST {
+					wantDeletes = tc.restDeletes
+					// Where Connect deletes by name, REST must still have looked.
+					if tc.deletes && f.called(dcProcListSandboxes)+f.called(dcProcGetSandbox) == 0 {
+						t.Error("no lookup for a sandbox the create may have made")
+					}
+				}
+				if got := f.called(dcProcDeleteSandbox) > 0; got != wantDeletes {
+					t.Errorf("sent a delete = %v; want %v", got, wantDeletes)
+				}
+				if d.leases.Len() != 0 {
+					t.Errorf("%d names left tracked; the reconciler could never reap a late sandbox", d.leases.Len())
+				}
+			})
+		}
+	})
 }

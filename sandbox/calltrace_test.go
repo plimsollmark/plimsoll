@@ -24,6 +24,7 @@ func brokerClient(sock string) *http.Client {
 // brokered call is recorded with the matched route TEMPLATE ("/items/*"), never the
 // raw request path ("/items/42"), and the credential never appears in the trace.
 func TestBrokerTraceRecordsTemplateNotRawPath(t *testing.T) {
+	t.Parallel()
 	var gotAuth, gotPath string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -88,6 +89,7 @@ func TestBrokerTraceRecordsTemplateNotRawPath(t *testing.T) {
 // TestBrokerTraceCountsDeniedWithoutPath proves a denied call is counted but records
 // no row and no path, since a denied call matched no template.
 func TestBrokerTraceCountsDeniedWithoutPath(t *testing.T) {
+	t.Parallel()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
 	}))

@@ -78,6 +78,7 @@ func (s *smokeScript) Err() error {
 // Each check the startup smoke test makes fails it when the session breaks that
 // promise, and a session that keeps them all passes.
 func TestSessionSmokeTestChecks(t *testing.T) {
+	t.Parallel()
 	good := func() *smokeScript {
 		return &smokeScript{
 			js:     []string{"4242", "gone kept", "1 ", "kept", ""},
@@ -124,6 +125,7 @@ func TestSessionSmokeTestChecks(t *testing.T) {
 // The smoke test runs a keep-state check in every cell language the provider states,
 // and refuses a stated language it has no check for.
 func TestSessionSmokeTestRunsEveryStatedLanguage(t *testing.T) {
+	t.Parallel()
 	script := func(langs []Language, cells ...CellResult) *smokeScript {
 		return &smokeScript{langs: langs, js: []string{"4242", "gone kept", "2 ", "kept", ""}, jsExit: map[int]int{4: 3}, cells: cells, done: make(chan struct{})}
 	}

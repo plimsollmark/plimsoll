@@ -13,35 +13,42 @@
 # The docker/e2b/dockercloud/openshell suites need real infrastructure, so they are
 # opt-in even inside `make audit`: set DOCKER=1 (local daemon, images from `make
 # docker-images`), E2B=1 (E2B_API_KEY in the environment), DOCKERCLOUD=1
-# (DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL and
-# SANDBOX_DOCKERCLOUD_IMAGE) and/or OPENSHELL=1 (an OpenShell gateway and the
+# (DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE, and for
+# SANDBOX_DOCKERCLOUD_API=connect SANDBOX_DOCKERCLOUD_API_URL) and/or OPENSHELL=1 (an OpenShell gateway and the
 # SANDBOX_OPENSHELL_* files) to include them. DOCKER=1, DOCKERCLOUD=1 and OPENSHELL=1
 # are requests for proof: those suites run in required mode, where missing
 # infrastructure or configuration fails the target instead of passing quietly. E2B and
 # dockercloud spend money; no CI job runs them, nor openshell, which needs a gateway.
 SECCOMP := $(CURDIR)/docker/seccomp.json
 
-# The docker suite's tests in ./sandbox and ./docker, by top-level name. With DOCKER=1
-# the gate runs them once, in docker-suite (race detector, the shipped seccomp profile,
-# no skip allowed), and its race pass leaves them out: with the images present, race
-# would run them a second time under docker's default profile, which on 2026-10-03 was
-# about 290 s of a 365 s sandbox package.
+# The docker suite's tests in ./sandbox and ./docker, by top-level name. Only
+# docker-suite runs a docker container: the race and test passes run with -short, which
+# the docker test helpers (requireDocker, sessionDocker) read as "skip", so a box with
+# docker and the images no longer runs the docker tests a second time, outside required
+# mode, in every plain `make audit` (418 s of a 7-minute gate on 2026-10-04). Tests in
+# this selection that need no docker run in both passes.
 DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race race-without-docker lint generate buf vuln docker-images docker-suite clients-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
+.PHONY: audit build vet test race private-suite lint generate buf vuln docker-images docker-suite clients-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
 ##   TestProjectRunnerAlwaysEmitsCompleteBoundedJSON and TestProjectRunnerReportsTruncationFlags
 ##   skip without node or as root (root defeats the runner guard they test)
-audit: tools-check build vet $(if $(filter 1,$(DOCKER)),race-without-docker,race) lint buf vuln
+audit: tools-check build vet race lint buf vuln
 	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
-	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL, SANDBOX_DOCKERCLOUD_IMAGE)"; fi
+	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE, and for SANDBOX_DOCKERCLOUD_API=connect SANDBOX_DOCKERCLOUD_API_URL)"; fi
 	@if [ "$(OPENSHELL)" = "1" ]; then $(MAKE) openshell-suite; else echo "skip openshell-suite (set OPENSHELL=1 with a gateway and SANDBOX_OPENSHELL_GATEWAY_URL, _CA_FILE, _CERT_FILE, _KEY_FILE, _IMAGE)"; fi
 	@echo "audit: OK"
+
+# A working copy may add steps of its own to the gate: local.mk, if present, appends
+# them to EXTRA_AUDIT. It is optional and never part of the published tree. Included
+# after the rule above, so a bare `make` still means audit.
+-include local.mk
+audit: $(EXTRA_AUDIT)
 
 ## build: compile every package
 build:
@@ -58,21 +65,17 @@ vet:
 # dockercloud-suite, the deliberate paid runs, see one, and each sees only its own.
 NO_PAID_KEYS := env -u E2B_API_KEY -u DOCKER_SBX_TOKEN
 
-## test: unit tests (includes fuzz corpora as regressions); never sees E2B_API_KEY or DOCKER_SBX_TOKEN
+## test: unit tests (includes fuzz corpora as regressions); -short skips every docker test; never sees E2B_API_KEY or DOCKER_SBX_TOKEN
 test:
-	$(NO_PAID_KEYS) go test ./... -count=1
+	$(NO_PAID_KEYS) go test -short ./... -count=1
 
-## race: unit tests under the race detector; never sees E2B_API_KEY or DOCKER_SBX_TOKEN
+## race: unit tests under the race detector; -short skips every docker test (docker-suite runs them); never sees E2B_API_KEY or DOCKER_SBX_TOKEN
 race:
-	$(NO_PAID_KEYS) go test -race ./... -count=1
+	$(NO_PAID_KEYS) go test -race -short ./... -count=1
 
-# A -skip pattern without a slash matches top-level names only, so the two runs split
-# ./sandbox and ./docker exactly where docker-suite's -run selects (its -skip 'Live$'
-# drops only live paid tests, which skip here without their keys anyway).
-## race-without-docker: race tests minus docker-suite's selection, which `audit DOCKER=1` runs in docker-suite under the race detector
-race-without-docker:
-	$(NO_PAID_KEYS) go test -race $$(go list ./... | grep -vxE "$$(go list -m)/(sandbox|docker)") -count=1
-	$(NO_PAID_KEYS) go test -race ./sandbox ./docker -skip '$(DOCKER_TESTS)' -count=1
+## private-suite: vet and race-test the private module (private/go.mod), which `audit` no longer reaches; run it when private/ changes
+private-suite:
+	cd private && go vet ./... && $(NO_PAID_KEYS) go test -race -short ./... -count=1
 
 ## lint: golangci-lint (must be on PATH)
 lint:
@@ -102,10 +105,21 @@ vuln:
 ## docker-images: pull the snippet image and build the project images the docker suite runs against
 docker-images:
 	docker pull node:22-alpine
-	docker build -t plimsoll/sandbox:latest docker/
-	docker build -t plimsoll/sandbox-python:latest -f docker/python.Dockerfile docker/
-	docker build -t plimsoll/sandbox-sim:latest -f docker/sim.Dockerfile docker/
-	docker build -t plimsoll/sandbox-wasm-cc:latest -f docker/wasm-cc.Dockerfile docker/
+	@h="$$($(DOCKER_INPUTS_HASH))"; set -ex; \
+	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox:latest docker/; \
+	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-python:latest -f docker/python.Dockerfile docker/; \
+	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-sim:latest -f docker/sim.Dockerfile docker/; \
+	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-wasm-cc:latest -f docker/wasm-cc.Dockerfile docker/
+
+# The images the suite builds from docker/, and the label each carries: a hash of the
+# build context (every file under docker/ by path and content, minus the literal paths
+# in docker/.dockerignore). docker-suite refuses an image whose label is not the current
+# hash, so a change under docker/ cannot pass the suite on images built before it. The
+# base images the Dockerfiles name (node:22-alpine and the others) are outside it.
+DOCKER_BUILT_IMAGES = plimsoll/sandbox:latest plimsoll/sandbox-python:latest plimsoll/sandbox-sim:latest plimsoll/sandbox-wasm-cc:latest
+DOCKER_INPUTS_LABEL = io.plimsoll.inputs
+DOCKER_INPUTS_HASH = cd docker && find . -type f | sed 's|^\./||' | LC_ALL=C sort | grep -vxF -f .dockerignore \
+	| while IFS= read -r f; do printf '%s\0' "$$f"; cat -- "$$f"; done | sha256sum | cut -c1-64
 
 # Required mode, twice over. SANDBOX_TEST_REQUIRE_DOCKER=1 makes the test helpers
 # fail instead of skip when the daemon or an image is missing; the scan afterwards
@@ -122,11 +136,19 @@ docker-images:
 # ./docker package holds the gVisor installer's offline-bundle check, which skips
 # without zstd and so ran in no required suite before.
 ## docker-suite: the real docker/seccomp/broker/smoke tests, the oracle anti-forgery tests and the gVisor installer check, under the race detector; a missing daemon, image, tool or skipped test FAILS
+# DOCKER_PARALLEL caps how many docker-suite tests run at once. Only the tests that
+# call t.Parallel take part; the rest (those that change the environment, list every
+# session container on the host, or retag a shared image) run first, alone.
+DOCKER_PARALLEL ?= 4
 docker-suite:
+	@h="$$($(DOCKER_INPUTS_HASH))"; for img in $(DOCKER_BUILT_IMAGES); do \
+	   got="$$(docker image inspect -f '{{index .Config.Labels "$(DOCKER_INPUTS_LABEL)"}}' $$img 2>/dev/null)"; \
+	   [ "$$got" = "$$h" ] || { echo "docker-suite: $$img was not built from the current docker/ (label '$$got', inputs now $$h); run make docker-images" >&2; exit 1; }; \
+	 done
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "docker-suite: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     $(NO_PAID_KEYS) go test -race ./sandbox ./docker -run '$(DOCKER_TESTS)' -skip 'Live$$' -count=1 -v; \
+	     $(NO_PAID_KEYS) go test -race ./sandbox ./docker -run '$(DOCKER_TESTS)' -skip 'Live$$' -count=1 -parallel $(DOCKER_PARALLEL) -v; \
 	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/docker-suite.log; then \
 	   echo "docker-suite: required coverage was skipped:" >&2; \
@@ -159,7 +181,9 @@ e2b-suite:
 # target is how it gets verified against the real service.
 #
 #   DOCKER_SBX_TOKEN              a Docker personal access token for automation
-#   SANDBOX_DOCKERCLOUD_API_URL   the management endpoint (no default)
+#   DOCKER_SBX_USERNAME           the account it belongs to
+#   SANDBOX_DOCKERCLOUD_API       rest (default) or connect; run the suite once per API
+#   SANDBOX_DOCKERCLOUD_API_URL   the management endpoint: required for connect
 #   SANDBOX_DOCKERCLOUD_IMAGE     the toolchain image, pullable by the service
 #
 ## dockercloud-suite: the live Docker Cloud Sandboxes tests (FAILS if not configured; spends)

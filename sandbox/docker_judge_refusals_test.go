@@ -43,6 +43,8 @@ setInterval(() => {}, 1000);
 )
 
 func TestDockerJudgesRefuseNonAnswers(t *testing.T) {
+	t.Parallel()
+	heavyDockerTest(t)
 	d := testDocker()
 	d.ProjectImage = simProjectImage
 	requireProjectImage(t, d)

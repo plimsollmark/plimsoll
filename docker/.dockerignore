@@ -1,0 +1,9 @@
+# Files in docker/ that no image is built from: the gVisor installer and its test, its
+# pinned versions, and the seccomp profile the host applies at run time. Keeping them
+# out of the build context also keeps them out of the hash `make docker-images` stamps
+# on each image, so editing one does not mark the images stale. One literal path per
+# line, no patterns: the Makefile's hash reads this file as a plain list.
+gvisor.versions
+install-gvisor.sh
+install_gvisor_test.go
+seccomp.json

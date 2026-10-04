@@ -19,35 +19,18 @@ import (
 // DockerCloud runs agent code in a Docker Cloud Sandbox: a Docker-managed microVM
 // created for one run and deleted when it ends.
 //
-// It is written against Docker's published contract, the protobuf API released as
-// the Go module github.com/docker/sandboxes-api (v0.36.0, Apache-2.0). It passed
-// its live suite against the real service on 2026-09-24. Where the service differs
+// It was first written against Docker's pre-launch contract, the protobuf API released
+// as the Go module github.com/docker/sandboxes-api (v0.36.0, Apache-2.0), and since
+// 2026-10-04 speaks by default the REST API Docker documents, keeping Connect as a
+// backup; both passed the live suite on 2026-10-04 (docs/dockercloud.md). Where the service differs
 // from the contract (the token exchange, the inline network policy, the reported
 // image digest, the required CPU count) the code says so where it depends on it.
 // "Assumption (live probe)" marks behavior the contract does not pin down; the live
 // suite exercises it, but no document promises it.
 //
-// The contract is Connect RPC. This provider speaks it by hand, as JSON over
-// net/http, rather than importing Docker's generated client: that client would add
-// protovalidate and googleapis generated code to the module graph of a hostile-code
-// TCB, for a surface of nine procedures. Unary calls are JSON POSTs; the file
-// upload and download streams use Connect's enveloped framing in one request body.
-//
-// Two endpoints, one credential:
-//   - Management (APIURL): docker.sbx.v1 sandbox, operation, capability and
-//     network-policy services.
-//   - Sandbox endpoint (SandboxCore.endpoint.uri, reported per sandbox):
-//     docker.sbx.process.v1 and docker.sbx.files.v1.
-//
-// The contract has no separate endpoint credential in v1: SandboxEndpoint's
-// credential_audience "is empty in v1; an empty value does not mean open access",
-// PERMISSION_SANDBOXES_CREDENTIAL is "reserved for endpoint credentials", and the
-// generated facade (gen/go/sbx/facade.go, NewSandboxClient) says "the endpoint takes
-// the same credential as the management client". The cloud CloudCredentialService
-// is unrelated: it exchanges a one-use Docker OIDC id_token for a Docker credential
-// stored server-side and returns nothing. So the same bearer token authorizes both
-// endpoints: the short-lived one exchanged from the personal access token (bearer),
-// never the personal access token itself, which the service refuses.
+// Its calls to the service go through one transport (dcTransport,
+// dockercloud_transport.go), which speaks one of Docker's APIs, chosen by the
+// operator (API): Connect (dockercloud_connect.go) or REST (dockercloud_rest.go).
 //
 // Bounds the API does not give are enforced here. ExecRequest has no timeout, no
 // stdin and no output limit, and ExecResponse returns whole stdout and stderr, so
@@ -67,8 +50,13 @@ type DockerCloud struct {
 	// dcDefaultAuthURL. It answers {"access_token": JWT}; the JWT lived 900 s when
 	// verified live on 2026-09-24.
 	AuthURL string
-	// APIURL is the management endpoint (SANDBOX_DOCKERCLOUD_API_URL). There is no
-	// default: Docker has not documented it. The only hint in the published module
+	// API is the Docker API this provider speaks (SANDBOX_DOCKERCLOUD_API): dcAPIREST,
+	// the one Docker documents, or dcAPIConnect, the pre-launch contract, kept as the
+	// backup. Empty is rest (both passed the live suite on 2026-10-04). One API serves a provider for its whole life (dcTransport).
+	API string
+	// APIURL is the management endpoint (SANDBOX_DOCKERCLOUD_API_URL). For REST the
+	// default is the base URL Docker documents (dcRESTDefaultURL). For Connect there
+	// is no default: Docker has not documented it. The only hint in the published module
 	// is its Python README, which connects to "https://sandboxes.connect.docker.com/sbx"
 	// (sandboxes-api v0.36.0, gen/python/README.md); it is an example, not a
 	// documented contract, so the operator must state the URL.
@@ -111,6 +99,10 @@ type DockerCloud struct {
 	MaxDiskMB   int
 	PidsLimit   int
 
+	// The REST transport's endpoint credentials, one per live sandbox (dcREST).
+	restCredMu sync.Mutex
+	restCreds  map[string]dcRESTCred
+
 	// Orphan-reconciliation state. Every sandbox is named after this provider
 	// instance, and the name is its lease key (sandbox/internal/lease).
 	mu         sync.Mutex
@@ -131,27 +123,17 @@ func (*DockerCloud) SupportsProjects() bool { return true }
 // Host-API grants need a forced, authenticated channel out of the VM that keeps the
 // credential host-side (E2B's guard). None exists for this provider yet, so grants
 // are refused before any sandbox is created.
-func (d *DockerCloud) SupportsJavaScriptGrants() bool { return d.guardConfig() != nil }
-func (d *DockerCloud) SupportsProjectGrants() bool    { return d.guardConfig() != nil }
+func (d *DockerCloud) SupportsJavaScriptGrants() bool { return d.grantsServed() }
+func (d *DockerCloud) SupportsProjectGrants() bool    { return d.grantsServed() }
+
+// grantsServed: a guard URL is configured and the API is one on which the guard's
+// network rule has been shown to take effect (Connect, live 2026-09-24).
+func (d *DockerCloud) grantsServed() bool { return d.guardConfig() != nil && !d.rest() }
 
 // IsolationClass is VM: each run gets a disposable Docker-managed microVM. As for
 // every provider, the tier is configuration and provider evidence plus the startup
 // smoke test, never runtime attestation.
 func (*DockerCloud) IsolationClass() IsolationClass { return IsolationVM }
-
-const (
-	dcProcCreateSandbox   = "/docker.sbx.v1.SandboxService/CreateSandbox"
-	dcProcGetSandbox      = "/docker.sbx.v1.SandboxService/GetSandbox"
-	dcProcListSandboxes   = "/docker.sbx.v1.SandboxService/ListSandboxes"
-	dcProcDeleteSandbox   = "/docker.sbx.v1.SandboxService/DeleteSandbox"
-	dcProcGetCapabilities = "/docker.sbx.v1.CapabilityService/GetCapabilities"
-	dcProcWaitOperation   = "/docker.sbx.v1.OperationService/WaitOperation"
-	dcProcGetOperation    = "/docker.sbx.v1.OperationService/GetOperation"
-	dcProcEffectivePolicy = "/docker.sbx.v1.NetworkPolicyService/GetEffectiveNetworkPolicy"
-	dcProcExec            = "/docker.sbx.process.v1.ProcessService/Exec"
-	dcProcUpload          = "/docker.sbx.files.v1.FileService/Upload"
-	dcProcDownload        = "/docker.sbx.files.v1.FileService/Download"
-)
 
 const (
 	// dcNamePrefix starts every sandbox name; the instance ID follows it, so the
@@ -169,8 +151,6 @@ const (
 	dcSmokeTimeout = 120 * time.Second
 	// dcMaxUnaryResponse caps a management response body.
 	dcMaxUnaryResponse = 1 << 20
-	// dcUploadChunk is the data-frame size for file uploads.
-	dcUploadChunk = 512 << 10
 	// dcMaxListPages bounds reconciliation's walk over ListSandboxes pages.
 	dcMaxListPages = 50
 )
@@ -211,6 +191,11 @@ func (d *DockerCloud) validateConfig() error {
 	if strings.TrimSpace(d.Token) == "" {
 		return errors.New("DOCKER_SBX_TOKEN is not set")
 	}
+	switch d.API {
+	case "", dcAPIConnect, dcAPIREST:
+	default:
+		return fmt.Errorf("SANDBOX_DOCKERCLOUD_API=%q: want %s or %s", d.API, dcAPIConnect, dcAPIREST)
+	}
 	if strings.TrimSpace(d.Username) == "" {
 		return errors.New("DOCKER_SBX_USERNAME is not set (the Docker account the token belongs to)")
 	}
@@ -223,8 +208,14 @@ func (d *DockerCloud) validateConfig() error {
 	if _, err := parseDockerCloudURL(d.policyURL(), "SANDBOX_DOCKERCLOUD_POLICY_URL"); err != nil {
 		return err
 	}
-	if _, err := parseDockerCloudURL(d.APIURL, "SANDBOX_DOCKERCLOUD_API_URL"); err != nil {
+	if _, err := parseDockerCloudURL(d.apiURL(), "SANDBOX_DOCKERCLOUD_API_URL"); err != nil {
 		return err
+	}
+	if d.rest() && strings.TrimSpace(d.GuardURL) != "" {
+		return errors.New("dockercloud host-API grants cannot be verified on the REST API (it does not report a sandbox's policy once the guard's rule is on): unset SANDBOX_DOCKERCLOUD_GUARD_URL, or set SANDBOX_DOCKERCLOUD_API=connect")
+	}
+	if d.rest() && runCeiling(d.MaxTimeout) > dcRESTMaxRun {
+		return fmt.Errorf("dockercloud on the REST API cannot run past %s (an exec ends with its endpoint credential); the configured ceiling is %s", dcRESTMaxRun, runCeiling(d.MaxTimeout))
 	}
 	image := strings.TrimSpace(d.Image)
 	if image == "" {
@@ -278,7 +269,48 @@ func parseDockerCloudURL(raw, what string) (*url.URL, error) {
 	return u, nil
 }
 
-func (d *DockerCloud) apiBase() string { return strings.TrimRight(strings.TrimSpace(d.APIURL), "/") }
+// The values of DockerCloud.API.
+const (
+	dcAPIConnect = "connect"
+	dcAPIREST    = "rest"
+)
+
+// dcRESTDefaultURL is the REST API's base URL, as Docker documents it.
+const dcRESTDefaultURL = "https://connect.docker.com/sandboxes"
+
+// dcRESTMaxRun is the longest run the REST transport accepts: an exec is cut off when
+// its endpoint credential expires, at most 300 s after the credential is minted
+// (probe 2026-10-04: 299.6 s), and each exec mints its own just before it starts.
+// The 30 s margin covers the run's own setup and the mint's round trip.
+const dcRESTMaxRun = 270 * time.Second
+
+// rest reports that this provider speaks the REST API, the default.
+func (d *DockerCloud) rest() bool { return d.API != dcAPIConnect }
+
+// APIName is the Docker API this provider speaks: "rest" or "connect".
+func (d *DockerCloud) APIName() string {
+	if d.rest() {
+		return dcAPIREST
+	}
+	return dcAPIConnect
+}
+
+// wire is the transport this provider's calls go through.
+func (d *DockerCloud) wire() dcTransport {
+	if d.rest() {
+		return dcREST{d}
+	}
+	return dcConnect{d}
+}
+
+func (d *DockerCloud) apiURL() string {
+	if u := strings.TrimSpace(d.APIURL); u != "" || !d.rest() {
+		return u
+	}
+	return dcRESTDefaultURL
+}
+
+func (d *DockerCloud) apiBase() string { return strings.TrimRight(d.apiURL(), "/") }
 
 // httpClient never follows a redirect, whoever supplied the client: a redirected
 // request would carry the bearer token (or lose it) somewhere the operator did not

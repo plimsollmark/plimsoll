@@ -23,6 +23,7 @@ func jsonResp(status int, retryAfter, body string) *http.Response {
 // answers 429/503, the broker sheds subsequent permitted calls (fails fast) instead of
 // forwarding them, and records the shed distinctly from a policy denial.
 func TestBrokerShedsAfterUpstreamBackpressure(t *testing.T) {
+	t.Parallel()
 	var upstream int
 	core, err := newBrokerSession(&HostAPIGrant{
 		BaseURL: "https://api.internal",
@@ -62,6 +63,7 @@ func TestBrokerShedsAfterUpstreamBackpressure(t *testing.T) {
 // an elected caller probes the health route, and a 2xx closes the breaker so the call
 // proceeds upstream.
 func TestBrokerHealthProbeClosesBreakerOnRecovery(t *testing.T) {
+	t.Parallel()
 	var workHits, healthHits int
 	core, err := newBrokerSession(&HostAPIGrant{
 		BaseURL:     "https://api.internal",
@@ -114,6 +116,7 @@ func TestBrokerHealthProbeClosesBreakerOnRecovery(t *testing.T) {
 // TestBrokerHealthProbeKeepsSheddingWhileDegraded proves a still-degraded probe does not
 // reopen the gate: the elected caller probes, gets a non-2xx, and the call is shed.
 func TestBrokerHealthProbeKeepsSheddingWhileDegraded(t *testing.T) {
+	t.Parallel()
 	var healthHits int
 	core, err := newBrokerSession(&HostAPIGrant{
 		BaseURL:     "https://api.internal",
@@ -190,6 +193,7 @@ func TestHealthCheckGrantValidation(t *testing.T) {
 // would reopen the gate and push the run's traffic straight back into the limiter that
 // just asked it to back off, so a quota window is waited out with no probe at all.
 func TestBrokerDoesNotProbeAfterRateLimit(t *testing.T) {
+	t.Parallel()
 	var workHits, healthHits int
 	core, err := newBrokerSession(&HostAPIGrant{
 		BaseURL:     "https://api.internal",
@@ -229,6 +233,7 @@ func TestBrokerDoesNotProbeAfterRateLimit(t *testing.T) {
 // property of the open window, not of one call: a later 503 that extends a window opened
 // by a 429 must not turn probing back on, since nothing has shown the rate limit cleared.
 func TestBrokerQuotaTripSuppressesProbingForTheWholeWindow(t *testing.T) {
+	t.Parallel()
 	var br breaker
 	now := time.Now()
 	br.open(now, 30*time.Second, true) // 429
@@ -248,7 +253,8 @@ func TestBrokerQuotaTripSuppressesProbingForTheWholeWindow(t *testing.T) {
 }
 
 // A hung upstream fails the call at hostCallTimeout instead of holding one of the
-// run's slots (and a guard slot) until the run ends (v0.15.0 review, M3b).
+// run's slots (and a guard slot) until the run ends (v0.15.0 review, M3b). Not
+// parallel: it lowers hostCallTimeout, which every brokered call reads.
 func TestBrokerUpstreamCallHasADeadline(t *testing.T) {
 	old := hostCallTimeout
 	hostCallTimeout = 200 * time.Millisecond

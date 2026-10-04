@@ -15,6 +15,7 @@ import (
 
 // Every container the provider starts declares its lifetime, rounded up to the second.
 func TestDockerRunContainersDeclareTheirLifetime(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	at := time.Unix(1_000_000, 500_000_000)
 	args := strings.Join(d.lockdownArgs("c", at, false, d.Runtime), " ")
@@ -142,6 +143,7 @@ func runCLIChild() (int, string) {
 // names afterwards is refused, not dispatched, reason environment, until it is proven
 // (review F1). Before a smoke test has run there is no proof to keep.
 func TestDockerRefusesAnImageTheSmokeTestDidNotProve(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	d.ready, d.daemonHost, d.verifiedRuntime, d.verifiedGuestUID = true, "unix:///var/run/docker.sock", d.Runtime, d.guestUID()
 	d.verifiedImageIDs = map[string]string{d.Image: "sha256:snippet", d.ProjectImage: "sha256:project"}
@@ -166,6 +168,7 @@ func TestDockerRefusesAnImageTheSmokeTestDidNotProve(t *testing.T) {
 // readiness, until a smoke test proves the new content (review F1). Before, a rebuilt
 // tag was launched within Preflight's 5 s cache, its lockdown and runner guard unproven.
 func TestDockerRepointedTagIsRefusedUntilProven(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	tag := "plimsoll-test/proof:" + randID()

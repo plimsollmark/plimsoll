@@ -268,6 +268,7 @@ func cartPoleSwingScore(traj []byte) (score float64, failure string) {
 }
 
 func TestDockerWasmControllerCompiledInTheSandbox(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = wasmCCProjectImage
 	requireProjectImage(t, d)
@@ -322,6 +323,7 @@ func mathCosShim(t *testing.T) string {
 }
 
 func TestDockerWasmControllerDiffersFromJavaScriptOnlyInCos(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = wasmCCProjectImage
 	requireProjectImage(t, d)
@@ -337,6 +339,7 @@ func TestDockerWasmControllerDiffersFromJavaScriptOnlyInCos(t *testing.T) {
 }
 
 func TestDockerWasmControllerShimRefusesImports(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ProjectImage = wasmCCProjectImage
 	requireProjectImage(t, d)

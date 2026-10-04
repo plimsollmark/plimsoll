@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// ---- transport ----
+// ---- errors and the token exchange, shared by every transport ----
 
 // dcRPCError is a Connect error from either endpoint. Code and Message are the
 // vendor's text, kept as sent; Error scrubs them, so no construction site (a unary
@@ -66,32 +66,6 @@ func dcRefused(err error) bool {
 		return false
 	}
 	return true
-}
-
-// dcErrorFrom parses a unary Connect error body, falling back to the protocol's
-// HTTP-status mapping when the body is not a Connect error (a proxy's page, say).
-func dcErrorFrom(procedure string, status int, raw []byte) error {
-	var body struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(raw, &body) == nil && body.Code != "" {
-		return &dcRPCError{Procedure: procedure, HTTPStatus: status, Code: body.Code, Message: body.Message}
-	}
-	code := "unknown"
-	switch status {
-	case http.StatusBadRequest:
-		code = "internal"
-	case http.StatusUnauthorized:
-		code = "unauthenticated"
-	case http.StatusForbidden:
-		code = "permission_denied"
-	case http.StatusNotFound:
-		code = "unimplemented"
-	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		code = "unavailable"
-	}
-	return &dcRPCError{Procedure: procedure, HTTPStatus: status, Code: code, Message: strings.TrimSpace(string(raw))}
 }
 
 // dcDefaultAuthURL is Docker Hub's documented token endpoint: POST
@@ -176,101 +150,6 @@ func dcJWTExpiry(token string, now time.Time) time.Time {
 		return fallback
 	}
 	return time.Unix(claims.Exp, 0)
-}
-
-// authorize stamps the bearer token and the Connect headers. The remaining
-// deadline travels as Connect-Timeout-Ms so the server can stop work the client
-// has already abandoned.
-func (d *DockerCloud) authorize(ctx context.Context, req *http.Request, contentType string) error {
-	tok, err := d.bearer(ctx)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("Connect-Protocol-Version", "1")
-	if deadline, ok := ctx.Deadline(); ok {
-		ms := (time.Until(deadline) + time.Millisecond - 1) / time.Millisecond
-		if ms < 1 {
-			ms = 1
-		}
-		req.Header.Set("Connect-Timeout-Ms", strconv.FormatInt(int64(ms), 10))
-	}
-	return nil
-}
-
-// post sends one request and reads at most limit bytes of the response. over
-// reports that the body was longer than limit.
-func (d *DockerCloud) post(ctx context.Context, target, contentType string, body []byte, limit int64) (status int, raw []byte, over bool, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
-	if err != nil {
-		return 0, nil, false, err
-	}
-	if err := d.authorize(ctx, req, contentType); err != nil {
-		return 0, nil, false, &dcUnsentError{err}
-	}
-	if err := ctx.Err(); err != nil {
-		return 0, nil, false, &dcUnsentError{err}
-	}
-	resp, err := d.httpClient().Do(req)
-	if err != nil {
-		return 0, nil, false, err
-	}
-	defer resp.Body.Close()
-	raw, err = io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return resp.StatusCode, nil, false, err
-	}
-	if int64(len(raw)) > limit {
-		return resp.StatusCode, nil, true, nil
-	}
-	return resp.StatusCode, raw, false, nil
-}
-
-// call is one unary management RPC with a JSON body.
-func (d *DockerCloud) call(ctx context.Context, procedure string, in, out any) error {
-	body, err := json.Marshal(in)
-	if err != nil {
-		return err
-	}
-	status, raw, over, err := d.post(ctx, d.apiBase()+procedure, "application/json", body, dcMaxUnaryResponse)
-	if err != nil {
-		return err
-	}
-	if over {
-		return fmt.Errorf("dockercloud %s: response exceeds %d bytes", procedure, dcMaxUnaryResponse)
-	}
-	if status != http.StatusOK {
-		return dcErrorFrom(procedure, status, raw)
-	}
-	if out == nil {
-		return nil
-	}
-	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("dockercloud %s: unparseable response: %w", procedure, err)
-	}
-	return nil
-}
-
-// stream opens a Connect streaming call with a pre-framed request body.
-func (d *DockerCloud) stream(ctx context.Context, target string, framed []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(framed))
-	if err != nil {
-		return nil, err
-	}
-	if err := d.authorize(ctx, req, "application/connect+json"); err != nil {
-		return nil, err
-	}
-	resp, err := d.httpClient().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, dcErrorFrom(target, resp.StatusCode, raw)
-	}
-	return resp, nil
 }
 
 // ---- protojson helpers ----

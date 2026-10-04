@@ -121,6 +121,7 @@ func Build(getenv func(string) string) (Provider, error) {
 			Token:     getenv("DOCKER_SBX_TOKEN"),
 			Username:  getenv("DOCKER_SBX_USERNAME"),
 			AuthURL:   getenv("SANDBOX_DOCKERCLOUD_AUTH_URL"),
+			API:       getenv("SANDBOX_DOCKERCLOUD_API"),
 			APIURL:    getenv("SANDBOX_DOCKERCLOUD_API_URL"),
 			Image:     getenv("SANDBOX_DOCKERCLOUD_IMAGE"),
 			GuardURL:  getenv("SANDBOX_DOCKERCLOUD_GUARD_URL"),

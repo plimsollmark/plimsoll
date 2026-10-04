@@ -13,6 +13,7 @@ import (
 // budget: the sum of /tmp + /dev/shm + /work must fit SANDBOX_DISK_MB, an unset
 // /work takes the remainder, and impossible envelopes fail closed. No daemon.
 func TestDockerWritableBudgetValidation(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	if err := d.validateWritableBudget(); err != nil {
 		t.Fatalf("no budget configured must validate: %v", err)
@@ -50,6 +51,7 @@ func TestDockerWritableBudgetValidation(t *testing.T) {
 // generated flags is a sized, noexec tmpfs — in particular /dev/shm, which the
 // daemon would otherwise provide as an unaccounted writable 64 MiB default.
 func TestDockerLockdownBoundsWritableMounts(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	args := strings.Join(d.lockdownArgs("c", time.Now(), true, d.Runtime), " ")
 	for _, want := range []string{
@@ -192,6 +194,7 @@ func TestHostPidsMaxPath(t *testing.T) {
 // reference after Preflight must fail closed instead of running a tag whose
 // volume config was never inspected.
 func TestDockerExecutionStateRequiresVerifiedImages(t *testing.T) {
+	t.Parallel()
 	d := DefaultDocker("")
 	d.stateMu.Lock()
 	d.ready = true
@@ -239,6 +242,7 @@ func TestDockerPreflightRejectsImageWithVolumes(t *testing.T) {
 // TestDockerPreflightRequiresLocalImages: readiness must reflect the exact
 // artifacts runs will use — an absent image is not ready, not lazily pulled.
 func TestDockerPreflightRequiresLocalImages(t *testing.T) {
+	t.Parallel()
 	requireDocker(t)
 	d := testDocker()
 	d.Image = "plimsoll/definitely-absent:never-pulled"
@@ -254,6 +258,7 @@ func TestDockerPreflightRequiresLocalImages(t *testing.T) {
 // in-container evidence to prove every writable bound — including that the
 // promised tmpfs mounts are the ONLY mounts accepting writes at all.
 func TestDockerSmokeTestVerifiesStorageBounds(t *testing.T) {
+	t.Parallel()
 
 	d := testDocker()
 	requireSnippetImage(t, d)
@@ -265,6 +270,7 @@ func TestDockerSmokeTestVerifiesStorageBounds(t *testing.T) {
 }
 
 func TestDockerSmokeTestChecksModuleRunner(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	d.ModuleImage = simProjectImage
 	requireSnippetImage(t, d)

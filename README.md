@@ -19,6 +19,16 @@ result, not a sentence in a datasheet. A request can set a <dfn>*floor*</dfn>, t
 tier it will accept, and the official Go client checks the tier again when the result
 comes back.
 
+The same machinery lets plimsoll run an exam on code an agent wrote, not only contain
+it. A trial runner built into the simulation image runs the agent's program against
+scenarios that program cannot read: each one reaches the runner in a file deleted before
+the program starts. Every run returns SHA-256 hashes of the request as sent and the
+result as returned, which the official clients recompute ([how](docs/run-records.md)). A
+separate program outside the daemon, [`plimsoll-attest`](cmd/plimsoll-attest/), signs
+the checked results, refuses a chain of calls with one missing, and replays a run. The
+exam itself (the simulated system, the scenarios, the pass mark) stays yours: plimsoll
+supplies the boundary and the evidence.
+
 ## See one real run
 
 An AI agent wrote a <dfn>*controller*</dfn>: a program that reads a system's state at
@@ -82,6 +92,25 @@ The credential is <dfn>*minted*</dfn> per run: plimsoll asks for it once per run
 be a fresh short-lived token, and it never enters the sandbox. Code that skips the client
 and calls out by hand gets no further, because the broker, not the client, enforces the
 rules. See [docs/capability-grants.md](docs/capability-grants.md).
+
+## Give a Trigger.dev agent a code tool
+
+The [TypeScript add-on](clients/typescript/README.md#triggerdev) gives an
+`executeCode` tool to a chat agent on <dfn>*Trigger.dev*</dfn>, a hosted
+TypeScript job runner. On a daemon with a <dfn>*session*</dfn>, one sandbox kept
+for several calls, each call is a <dfn>*cell*</dfn>, code run inside the
+interpreter kept for that conversation:
+variables and files can survive the next call. Each tool result says whether
+they can survive, whether this call started fresh, the isolation tier it ran
+behind, and the SHA-256 of the <dfn>*run record*</dfn>, a receipt for what was
+sent and returned that the client checked before returning. The caller sets a
+minimum tier, so a weaker provider refuses before running code.
+
+[See the feature and deployment guide](docs/trigger-dev.md) for the exact
+guarantees and production floor. The
+[deployable Trigger.dev starter](https://github.com/plimsollmark/plimsoll-trigger-starter)
+has a chat agent and a task that proves two cells share one interpreter through
+a real daemon, without making an AI model call.
 
 ## Run something in one minute
 
@@ -159,10 +188,10 @@ reaches the network directly. A run with no grant has no network at all.
 | Provider | Boundary | Tier reported | Use |
 |---|---|---|---|
 | `wasm` | QuickJS on <dfn>*wazero*</dfn> (a WebAssembly runtime written in Go), inside `plimsolld` itself | `process` | Fast local development. An <dfn>*escape*</dfn> (a bug that lets code out of its sandbox) in the engine lands inside your daemon. |
-| `docker` with <dfn>*runc*</dfn>, docker's default runtime | a container sharing your machine's kernel | `container` | Self-hosting when a kernel bug is not one of the attacks you plan for. With a project image it keeps a <dfn>*session*</dfn>: one container for many calls, with Python and JavaScript interpreters whose variables survive between calls. |
+| `docker` with <dfn>*runc*</dfn>, docker's default runtime | a container sharing your machine's kernel | `container` | Self-hosting when a kernel bug is not one of the attacks you plan for. With a project image it keeps a session: one container for many calls, with Python and JavaScript interpreters whose variables survive between calls. |
 | `docker` with `runsc` | gVisor, once the startup checks confirm docker has `runsc` registered | `kernel` | Hostile code on your own machines. Keeps sessions too. |
 | `e2b` | a <dfn>*microVM*</dfn> (a small virtual machine made for one run, then destroyed) from <dfn>*E2B*</dfn>, a hosted service that runs them on <dfn>*Firecracker*</dfn>, AWS's open-source VM monitor | `vm` | Hostile code, on E2B's machines rather than yours; billed per run. |
-| `dockercloud` | a microVM from <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted sandbox service | `vm` | Hostile code, on Docker's machines; billed per run. Built against Docker's published API and tested against the live service on 2026-09-24. The account's network policy must be <dfn>*deny-all*</dfn> (no connection unless a rule allows it), and every run checks that. Grants work through the same <dfn>*guard*</dfn> as E2B (an address on the plimsoll server, the only place the microVM may connect to) when `SANDBOX_DOCKERCLOUD_GUARD_URL` is set. Unlike E2B, the guest holds its own run's short-lived credential for the guard, and the one network rule is set through a Docker call outside its published API. |
+| `dockercloud` | a microVM from <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted sandbox service | `vm` | Hostile code, on Docker's machines; billed per run. It speaks two APIs, chosen by `SANDBOX_DOCKERCLOUD_API`, and both passed the live suite on 2026-10-04: the REST API Docker documents (the default; no grants, refused under `PLIMSOLL_HARDENED=1`, runs of at most 270 s), and the one Docker released before launch, no longer documented, kept as a backup with grants and image evidence. The account's network policy must be <dfn>*deny-all*</dfn> (no connection unless a rule allows it), and every run checks that. Grants work through the same <dfn>*guard*</dfn> as E2B (an address on the plimsoll server, the only place the microVM may connect to) when `SANDBOX_DOCKERCLOUD_GUARD_URL` is set. Unlike E2B, the guest holds its own run's short-lived credential for the guard, and the one network rule is set through a Docker call outside its published API. |
 | `openshell` | a sandbox from <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, created by its gateway server on docker | `container` | Agent platforms that already run an OpenShell gateway. Each run gets its own sandbox with no network; plimsoll reads its settings back, refuses to run on any difference, and deletes it afterwards. Tested against a v0.1.2 gateway on 2026-09-28. Grants reach the broker through a relay inside the sandbox that plimsoll connects to from outside, so the sandbox needs no network rules. Keeps sessions too. |
 | unset | nothing runs | n/a | The default. |
 
@@ -188,7 +217,7 @@ may make ([docs/seccomp.md](docs/seccomp.md)).
 | [A controller in C, compiled in the sandbox ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html) | The same cart-pole simulator, with a swing-up controller (it swings the pole up from hanging, then balances it) written in C and compiled to WebAssembly by the run's own first step, so the simulator and the controller are both WebAssembly. The run report compares it with the JavaScript version tick by tick. The two languages' `cos` functions disagree in the last bit on about one input in a hundred, so in three of the four scenarios one or two force values differ, by a few representable doubles (at most 14). The fingerprint catches that difference, and the motion itself is identical to the bit. Source and caveats in [its README](examples/wasm-controller/README.md); reproduce with `make docker-images && go run ./examples/wasm-controller`. |
 | [A buck converter controller in C ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html) | A power supply's <dfn>*control law*</dfn> (the formula its controller applies at each tick) written in C, the language converter firmware is written in. It is compiled to WebAssembly in the sandbox and run against a simulated converter, whose output it must hold at 5 V while the load changes suddenly. It calls no library function, so its trajectory equals the JavaScript version's byte for byte in all four scenarios; the page charts one of them tick by tick. Source and caveats in [its README](examples/wasm-buck/README.md); reproduce with `make docker-images && go run ./examples/wasm-buck`. |
 | [Same run, different sandboxes ↗](https://plimsollmark.github.io/plimsoll/examples/providers/index.html) | The cart-pole run from the top of this page, on local `runc` and gVisor, an OpenShell gateway, E2B and Docker Cloud Sandboxes: three isolation tiers, two Node versions, and one fingerprint, the same one the first report published. Reproduce the configured rows with `go run ./examples/providers`; the cloud rows are billed. |
-| [One sandbox, five calls ↗](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html) | A session on an OpenShell sandbox: a failing test, a patch, the test passing without the files being sent again, and a leftover process that is gone by the next call. Each call's <dfn>*run record*</dfn> (the daemon's statement of what was sent, what came back and where it ran) is signed and linked to the previous one. The verifier accepts the signed set, and refuses it when one call is dropped or one byte is changed. Reproduce with `go run ./examples/sessions` and a gateway. |
+| [One sandbox, five calls ↗](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html) | A session on an OpenShell sandbox: a failing test, a patch, the test passing without the files being sent again, and a leftover process that is gone by the next call. Each call's run record (the daemon's statement of what was sent, what came back and where it ran) is signed and linked to the previous one. The verifier accepts the signed set, and refuses it when one call is dropped or one byte is changed. Reproduce with `go run ./examples/sessions` and a gateway. |
 | [The efficiency advisor's report ↗](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html) | The advisor reads the API calls a run made and points out wasteful patterns. One measured run: the same question asked of an API as 13 calls, then as 1, and the advisor's finding that names the route that answers it in one call. |
 | [Twelve interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | How a run is executed, the providers, the API broker, and connecting an AI agent. Static pages: no network calls, no analytics, no third-party scripts. |
 
@@ -244,7 +273,8 @@ Each of these answers one question, end to end.
 | [docs/run-records.md](docs/run-records.md) | What does each run's record state, how do I recompute it in another language, and how do I sign, verify and replay records outside the daemon? |
 | [docs/sessions.md](docs/sessions.md) | How do I keep one sandbox for many calls, and what holds between the calls, an interpreter's variables included? |
 | [clients/python](clients/python/README.md) | How do I call plimsolld from Python? |
-| [clients/typescript](clients/typescript/README.md) | How do I call it from TypeScript, and give a <dfn>*Trigger.dev*</dfn> (a hosted job runner for TypeScript) or Mastra agent a code tool that keeps its state? |
+| [clients/typescript](clients/typescript/README.md) | How do I call it from TypeScript, and give a Trigger.dev or Mastra agent a code tool that keeps its state? |
+| [docs/trigger-dev.md](docs/trigger-dev.md) | How do calls that reuse one interpreter, an isolation floor and checked run records appear together in a Trigger.dev tool, and how do I deploy a task? |
 | [docs/placement.md](docs/placement.md) | I run several daemons: how do I pick one per request, and when is a refusal safe to retry elsewhere? |
 | [docs/inner-loop-workflow.md](docs/inner-loop-workflow.md) | How do I iterate fast locally without shipping a weak sandbox to production? |
 | [docs/efficiency-advisor.md](docs/efficiency-advisor.md) | What does the advisor see, why can what it records never include the data the code sent or received, and how do I choose what it emits? |

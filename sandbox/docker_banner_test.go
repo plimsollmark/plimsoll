@@ -12,6 +12,7 @@ import (
 // move the isolation tier.
 
 func TestSmokeProbeScriptReadsBannerOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
 	with, without := smokeProbeScript(true, false), smokeProbeScript(false, false)
 	if !strings.Contains(with, "dmesg") {
 		t.Fatal("banner script does not read dmesg")
@@ -67,6 +68,7 @@ func TestRuntimeBannerNeverAffectsIsolation(t *testing.T) {
 // line came back, readiness is unaffected. It does not assert that gVisor
 // answers: an unavailable banner is a documented outcome, not a failure.
 func TestDockerSmokeBannerFollowsRuntime(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	requireProjectImage(t, d)

@@ -10,6 +10,7 @@ import (
 )
 
 func TestParseDockerSelectedManifest(t *testing.T) {
+	t.Parallel()
 	digest := "sha256:" + strings.Repeat("a", 64)
 	manifest := `{"Id":"` + digest + `","Os":"linux","Architecture":"amd64","Descriptor":{"digest":"` + digest + `","mediaType":"application/vnd.oci.image.manifest.v1+json"}}`
 	want := "oci-manifest:linux/amd64@" + digest
@@ -50,6 +51,7 @@ func TestDockerDefaultPlatformCannotSilentlyFallBack(t *testing.T) {
 // treats them as one platform, so the identity must be established, and written
 // the same way whichever form was asked for.
 func TestParseDockerSelectedManifestNormalizesPlatform(t *testing.T) {
+	t.Parallel()
 	digest := "sha256:" + strings.Repeat("c", 64)
 	manifest := `{"Id":"` + digest + `","Os":"linux","Architecture":"arm64","Variant":"v8","Descriptor":{"digest":"` + digest + `","mediaType":"application/vnd.oci.image.manifest.v1+json"}}`
 	want := "oci-manifest:linux/arm64@" + digest
@@ -92,6 +94,7 @@ func TestContainerdStoreFromDriverStatus(t *testing.T) {
 }
 
 func TestDockerSoftwareRuleMatchesSelectedManifest(t *testing.T) {
+	t.Parallel()
 	requireDocker(t)
 	d := testDocker()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -134,6 +137,7 @@ func TestDockerSoftwareRuleMatchesSelectedManifest(t *testing.T) {
 // identity fails on either store, and so does the containerd path quietly reporting
 // nothing, which would switch software rules off without a failing test.
 func TestDockerSoftwareIdentityIsDockersOwnManifestDigest(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

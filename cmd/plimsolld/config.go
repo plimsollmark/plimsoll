@@ -250,6 +250,11 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 		} else if !pinned {
 			fail("hardened mode requires SANDBOX_REQUIRE_PINNED_IMAGES=1 so SANDBOX_DOCKERCLOUD_IMAGE is an immutable @sha256 digest")
 		}
+		// A pin is only evidence where the API reports the digest each sandbox
+		// booted; the REST API, the default, reports none.
+		if api := strings.TrimSpace(getenv("SANDBOX_DOCKERCLOUD_API")); api != "connect" {
+			fail("hardened mode requires SANDBOX_DOCKERCLOUD_API=connect: the REST API (the default) does not report which image a sandbox booted, so the pinned image cannot be proven")
+		}
 	case "e2b":
 		// E2B offers no digest pinning; an explicit template (never the implicit
 		// "base" default) is the strongest surface selection available. The startup

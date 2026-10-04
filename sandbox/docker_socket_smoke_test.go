@@ -15,6 +15,7 @@ import (
 // when asked, and that an unreachable socket fails readiness with the fix named.
 
 func TestSmokeProbeScriptConnectsOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
 	with, without := smokeProbeScript(false, true), smokeProbeScript(false, false)
 	if !strings.Contains(with, `require("net").connect("`+containerSocketPath+`")`) {
 		t.Fatal("socket script does not connect to the broker socket path")
@@ -25,6 +26,7 @@ func TestSmokeProbeScriptConnectsOnlyWhenAsked(t *testing.T) {
 }
 
 func TestStartSmokeSocketAnswersPong(t *testing.T) {
+	t.Parallel()
 	path, closeFn, err := startSmokeSocket()
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +57,7 @@ func TestStartSmokeSocketAnswersPong(t *testing.T) {
 // readiness error that names the runtime fix, under whichever runtime is
 // configured.
 func TestDockerSmokeSocketProbeFailsClosed(t *testing.T) {
+	t.Parallel()
 	d := testDocker()
 	requireSnippetImage(t, d)
 	requireProjectImage(t, d)

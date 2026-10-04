@@ -10,7 +10,7 @@ import { after, test } from "node:test";
 import { simulateReadableStream } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 
-import { codeChat } from "./chat.ts";
+import { codeChatAgent } from "./chat.ts";
 import { models } from "./models.ts";
 
 const skip = process.env.PLIMSOLL_URL ? false : "needs PLIMSOLL_URL";
@@ -71,8 +71,12 @@ async function until(cond: () => boolean, ms: number): Promise<void> {
   }
 }
 
-// Takes about 30 s: the agent suspends only after its idle window, which is
-// Trigger.dev's default and the harness's real clock.
+// The exported agent with a 3 s idle window instead of Trigger.dev's default 30 s: the
+// agent suspends only once that window passes on the harness's real clock, and 3 s
+// still leaves the second turn, sent the moment the first ends, well inside it.
+const quickSuspend = codeChatAgent({ id: "code-chat-quick-suspend", idleTimeoutInSeconds: 3 });
+
+// Waits one 3 s idle window for the suspend.
 test("one sandbox per run: warmed on the turn, its interpreter reused by every call and turn, closed at suspend", { skip, timeout: 120_000 }, async () => {
   // One model across both turns, so the second turn continues the script.
   const model = scripted([
@@ -83,7 +87,7 @@ test("one sandbox per run: warmed on the turn, its interpreter reused by every c
     { text: "second" },
   ]);
   models.chat = () => model;
-  const harness = mockChatAgent(codeChat, { chatId: "chat-1" });
+  const harness = mockChatAgent(quickSuspend, { chatId: "chat-1" });
   try {
     const first = outputs((await harness.sendMessage(user("u1", "load the orders and count them"))).chunks);
     assert.deepEqual(
@@ -93,11 +97,13 @@ test("one sandbox per run: warmed on the turn, its interpreter reused by every c
         ["python", "python 2: len(rows)", "", true, true, "container"],
       ],
     );
+    for (const output of first) assert.match(output.recordSha256, /^[0-9a-f]{64}$/, "the tool exposes its checked record");
 
     // The next turn, before the idle window passes: the same interpreter (the
     // fake's cell counter continues).
     const [second] = outputs((await harness.sendMessage(user("u2", "and the total?"))).chunks);
     assert.equal(second.stdout, "python 3: sum(float(r['total']) for r in rows)");
+    assert.match(second.recordSha256, /^[0-9a-f]{64}$/);
     assert.equal(count("OpenSession"), 1);
     assert.equal(count("CloseSession"), 0);
 
