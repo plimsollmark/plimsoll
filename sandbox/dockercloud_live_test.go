@@ -9,7 +9,7 @@ import (
 )
 
 // These tests create real, billable Docker Cloud sandboxes, through the API
-// SANDBOX_DOCKERCLOUD_API selects (REST unless it says connect), as plimsolld would:
+// SANDBOX_DOCKERCLOUD_API selects (Connect unless it says rest), as plimsolld would:
 // run the suite once per API. They run only when DOCKER_SBX_TOKEN,
 // DOCKER_SBX_USERNAME and, for Connect, SANDBOX_DOCKERCLOUD_API_URL are set (REST
 // defaults to its documented URL), and skip
@@ -26,11 +26,11 @@ func dockerCloudLive(t *testing.T) *DockerCloud {
 	user := os.Getenv("DOCKER_SBX_USERNAME")
 	api := os.Getenv("SANDBOX_DOCKERCLOUD_API")
 	apiURL := os.Getenv("SANDBOX_DOCKERCLOUD_API_URL")
-	if token == "" || user == "" || (apiURL == "" && api == dcAPIConnect) {
+	if token == "" || user == "" || (apiURL == "" && api != dcAPIREST) {
 		if os.Getenv("DOCKERCLOUD_LIVE_REQUIRED") == "1" {
-			t.Fatal("the live dockercloud suite was required but DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME or (for connect) SANDBOX_DOCKERCLOUD_API_URL is not set")
+			t.Fatal("the live dockercloud suite was required but DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME or (unless the API is rest) SANDBOX_DOCKERCLOUD_API_URL is not set")
 		}
-		t.Skip("DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME and (for connect) SANDBOX_DOCKERCLOUD_API_URL not set")
+		t.Skip("DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME and (unless the API is rest) SANDBOX_DOCKERCLOUD_API_URL not set")
 	}
 	image := os.Getenv("SANDBOX_DOCKERCLOUD_IMAGE")
 	if image == "" {

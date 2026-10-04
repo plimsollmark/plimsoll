@@ -126,10 +126,11 @@ const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the 
                              https://api.sandboxes-cloud.docker.com/v1. Not in
                              Docker's published contract (the sbx CLI's call);
                              every grant run verifies the result through it
-  SANDBOX_DOCKERCLOUD_API    which Docker API dockercloud speaks: rest (the
-                             default; the API Docker documents) or connect (the
-                             pre-launch contract, kept as a backup); both passed
-                             the live suite on 2026-10-04. rest states no image
+  SANDBOX_DOCKERCLOUD_API    which Docker API dockercloud speaks: connect (the
+                             default; the pre-launch contract, the only one with
+                             grants and image identity) or rest (the API Docker
+                             documents, kept as a backup until it covers those);
+                             both passed the live suite on 2026-10-04. rest states no image
                              identity (it reports no booted digest, so hardened
                              mode needs connect), caps a run at 270 s (an exec
                              ends with its 300 s endpoint credential) and cannot

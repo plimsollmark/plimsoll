@@ -159,8 +159,9 @@ func TestHardenedPolicyDockerCloud(t *testing.T) {
 	if err := enforceHardenedPolicy(getenvFrom(env), f); err != nil {
 		t.Fatalf("compliant dockercloud deployment rejected: %v", err)
 	}
-	// The REST API, the default, reports no booted digest, so a pin there is not
-	// evidence.
+	// The REST API reports no booted digest, so a pin there is not evidence. Connect
+	// is the default, but hardened mode wants it named, so no change of default can
+	// move a hardened deployment.
 	for _, api := range []string{"rest", ""} {
 		env["SANDBOX_DOCKERCLOUD_API"] = api
 		if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_DOCKERCLOUD_API=connect") {

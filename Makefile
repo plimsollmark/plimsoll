@@ -13,8 +13,8 @@
 # The docker/e2b/dockercloud/openshell suites need real infrastructure, so they are
 # opt-in even inside `make audit`: set DOCKER=1 (local daemon, images from `make
 # docker-images`), E2B=1 (E2B_API_KEY in the environment), DOCKERCLOUD=1
-# (DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE, and for
-# SANDBOX_DOCKERCLOUD_API=connect SANDBOX_DOCKERCLOUD_API_URL) and/or OPENSHELL=1 (an OpenShell gateway and the
+# (DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE, and unless
+# SANDBOX_DOCKERCLOUD_API=rest SANDBOX_DOCKERCLOUD_API_URL) and/or OPENSHELL=1 (an OpenShell gateway and the
 # SANDBOX_OPENSHELL_* files) to include them. DOCKER=1, DOCKERCLOUD=1 and OPENSHELL=1
 # are requests for proof: those suites run in required mode, where missing
 # infrastructure or configuration fails the target instead of passing quietly. E2B and
@@ -40,7 +40,7 @@ GATE_TOOLS := gate-tools.versions
 audit: tools-check build vet race lint buf vuln
 	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
-	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE, and for SANDBOX_DOCKERCLOUD_API=connect SANDBOX_DOCKERCLOUD_API_URL)"; fi
+	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE, and unless SANDBOX_DOCKERCLOUD_API=rest SANDBOX_DOCKERCLOUD_API_URL)"; fi
 	@if [ "$(OPENSHELL)" = "1" ]; then $(MAKE) openshell-suite; else echo "skip openshell-suite (set OPENSHELL=1 with a gateway and SANDBOX_OPENSHELL_GATEWAY_URL, _CA_FILE, _CERT_FILE, _KEY_FILE, _IMAGE)"; fi
 	@echo "audit: OK"
 
@@ -182,8 +182,8 @@ e2b-suite:
 #
 #   DOCKER_SBX_TOKEN              a Docker personal access token for automation
 #   DOCKER_SBX_USERNAME           the account it belongs to
-#   SANDBOX_DOCKERCLOUD_API       rest (default) or connect; run the suite once per API
-#   SANDBOX_DOCKERCLOUD_API_URL   the management endpoint: required for connect
+#   SANDBOX_DOCKERCLOUD_API       connect (default) or rest; run the suite once per API
+#   SANDBOX_DOCKERCLOUD_API_URL   the management endpoint: required unless the API is rest
 #   SANDBOX_DOCKERCLOUD_IMAGE     the toolchain image, pullable by the service
 #
 ## dockercloud-suite: the live Docker Cloud Sandboxes tests (FAILS if not configured; spends)

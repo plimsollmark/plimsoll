@@ -856,11 +856,16 @@ func TestBuildDockerCloudREST(t *testing.T) {
 		t.Fatalf("connect identity = %q, want the pinned digest", id)
 	}
 
-	// REST is the default.
+	// Connect is the default, and Docker documents no URL for it.
 	delete(env, "SANDBOX_DOCKERCLOUD_API")
-	if p, err := Build(mapEnv(env)); err != nil || p.Sandbox.(*DockerCloud).APIName() != dcAPIREST {
-		t.Fatalf("unset API: %v, want rest", err)
+	if _, err := Build(mapEnv(env)); err == nil || !strings.Contains(err.Error(), "SANDBOX_DOCKERCLOUD_API_URL") {
+		t.Fatalf("unset API without an API URL: err = %v", err)
 	}
+	env["SANDBOX_DOCKERCLOUD_API_URL"] = "https://sandboxes.example/sbx"
+	if p, err := Build(mapEnv(env)); err != nil || p.Sandbox.(*DockerCloud).APIName() != dcAPIConnect {
+		t.Fatalf("unset API: %v, want connect", err)
+	}
+	delete(env, "SANDBOX_DOCKERCLOUD_API_URL")
 	env["SANDBOX_DOCKERCLOUD_API"] = "connect"
 	if _, err := Build(mapEnv(env)); err == nil || !strings.Contains(err.Error(), "SANDBOX_DOCKERCLOUD_API_URL") {
 		t.Fatalf("connect without an API URL: err = %v", err)

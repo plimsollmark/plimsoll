@@ -253,7 +253,7 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 		// A pin is only evidence where the API reports the digest each sandbox
 		// booted; the REST API, the default, reports none.
 		if api := strings.TrimSpace(getenv("SANDBOX_DOCKERCLOUD_API")); api != "connect" {
-			fail("hardened mode requires SANDBOX_DOCKERCLOUD_API=connect: the REST API (the default) does not report which image a sandbox booted, so the pinned image cannot be proven")
+			fail("hardened mode requires SANDBOX_DOCKERCLOUD_API=connect, named rather than left to the default: the REST API does not report which image a sandbox booted, so the pinned image cannot be proven")
 		}
 	case "e2b":
 		// E2B offers no digest pinning; an explicit template (never the implicit

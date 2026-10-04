@@ -21,8 +21,9 @@ import (
 //
 // It was first written against Docker's pre-launch contract, the protobuf API released
 // as the Go module github.com/docker/sandboxes-api (v0.36.0, Apache-2.0), and since
-// 2026-10-04 speaks by default the REST API Docker documents, keeping Connect as a
-// backup; both passed the live suite on 2026-10-04 (docs/dockercloud.md). Where the service differs
+// 2026-10-04 can also speak the REST API Docker documents, as a backup until it covers
+// grants, the booted image's identity and runs past 270 s; Connect stays the default.
+// Both passed the live suite on 2026-10-04 (docs/dockercloud.md). Where the service differs
 // from the contract (the token exchange, the inline network policy, the reported
 // image digest, the required CPU count) the code says so where it depends on it.
 // "Assumption (live probe)" marks behavior the contract does not pin down; the live
@@ -50,9 +51,11 @@ type DockerCloud struct {
 	// dcDefaultAuthURL. It answers {"access_token": JWT}; the JWT lived 900 s when
 	// verified live on 2026-09-24.
 	AuthURL string
-	// API is the Docker API this provider speaks (SANDBOX_DOCKERCLOUD_API): dcAPIREST,
-	// the one Docker documents, or dcAPIConnect, the pre-launch contract, kept as the
-	// backup. Empty is rest (both passed the live suite on 2026-10-04). One API serves a provider for its whole life (dcTransport).
+	// API is the Docker API this provider speaks (SANDBOX_DOCKERCLOUD_API): dcAPIConnect,
+	// the pre-launch contract and the default, the only one with grants, the booted
+	// image's identity and runs past 270 s; or dcAPIREST, the one Docker documents, kept
+	// as the backup until it covers those. Empty is connect (both passed the live suite on
+	// 2026-10-04). One API serves a provider for its whole life (dcTransport).
 	API string
 	// APIURL is the management endpoint (SANDBOX_DOCKERCLOUD_API_URL). For REST the
 	// default is the base URL Docker documents (dcRESTDefaultURL). For Connect there
@@ -284,8 +287,8 @@ const dcRESTDefaultURL = "https://connect.docker.com/sandboxes"
 // The 30 s margin covers the run's own setup and the mint's round trip.
 const dcRESTMaxRun = 270 * time.Second
 
-// rest reports that this provider speaks the REST API, the default.
-func (d *DockerCloud) rest() bool { return d.API != dcAPIConnect }
+// rest reports that this provider speaks the REST API; Connect is the default.
+func (d *DockerCloud) rest() bool { return d.API == dcAPIREST }
 
 // APIName is the Docker API this provider speaks: "rest" or "connect".
 func (d *DockerCloud) APIName() string {

@@ -28,9 +28,9 @@ mirror the protobuf contract's, but the paths, the delete precondition (`If-Matc
 network-policy read-back differ. The
 `sandboxes-api` repository is no longer public (404 on 2026-10-04), and Docker has stated
 neither a deprecation nor a sunset date for the Connect endpoint. Treat the endpoint as
-undocumented: it can change without notice. Since 2026-10-04 the provider speaks the REST
-API by default and keeps Connect as a backup, as [Choosing the API](#choosing-the-api)
-describes; run the live suite (it creates billable microVMs, a few cents' worth) before
+undocumented: it can change without notice. Since 2026-10-04 the provider can also speak
+the REST API, kept as the backup while Connect stays the default, as
+[Choosing the API](#choosing-the-api) describes; run the live suite (it creates billable microVMs, a few cents' worth) before
 relying on either.
 
 ## Three things an operator must set up
@@ -117,10 +117,12 @@ the unauthenticated `/readyz` path, which checks configuration only.
 
 `SANDBOX_DOCKERCLOUD_API` chooses the API once, at startup. The provider never falls
 back from one to the other: the startup smoke test proves only the API in use, and the
-two give different evidence. REST is the default; Connect is kept as a backup for as long
-as it passes the live suite.
+two give different evidence. Connect is the default, because it is the only one with
+host-API grants, the booted image's identity, the daemon's strict production check and runs
+past 270 s; REST is
+kept as the backup until it covers those.
 
-| | `rest` (the default) | `connect` |
+| | `rest` | `connect` (the default) |
 |---|---|---|
 | What it is | the API Docker documents | the pre-launch API described above |
 | Live suite through the provider | passed on 2026-10-04 | passed on 2026-09-24 and 2026-10-04 |
