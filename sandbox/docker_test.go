@@ -574,6 +574,7 @@ func TestDockerDirectRunsEnforceSnapshottedMinimumIsolation(t *testing.T) {
 	d.ready = true
 	d.daemonHost = "unix:///run/docker.sock"
 	d.verifiedRuntime = ""
+	d.verifiedGuestUID = d.guestUID()
 	d.verifiedImageIDs = map[string]string{
 		d.Image:        "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		d.ProjectImage: "sha256:2222222222222222222222222222222222222222222222222222222222222222",

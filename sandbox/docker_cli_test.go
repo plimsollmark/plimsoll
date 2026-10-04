@@ -513,7 +513,9 @@ console.log(JSON.stringify([process.env.PLIMSOLL_TEST_CANARY, process.env.HOME, 
 // start marker, so a guest's exit read as docker's
 // failure; LD_DEBUG does the same under musl and glibc.
 func TestDockerPreflightRefusesLoaderEnv(t *testing.T) {
-	requireDocker(t)
+	// Preflight also inspects the snippet image, so without the configured images the
+	// refusal under test is never reached (a hosted runner has docker and no images).
+	requireSnippetImage(t, testDocker())
 	for _, c := range []struct{ base, env, name string }{
 		{"node:22-alpine", "LD_DEBUG=all", "LD_DEBUG"},
 		{"plimsoll/sandbox-sim:latest", "LD_PRELOAD=/plimsoll/missing.so", "LD_PRELOAD"},
