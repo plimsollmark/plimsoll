@@ -57,8 +57,18 @@ type Pool struct {
 
 type seen struct {
 	info client.Info
-	at   time.Time
+	at   time.Time // when the daemon was asked, not when it answered (store)
 	err  error
+}
+
+// store keeps s for name unless the pool holds an answer that was asked for later
+// (review F12): a slow Refresh that finishes after an on-demand Describe must not put
+// its older answer back. The caller holds p.mu.
+func (p *Pool) store(name string, s seen) {
+	if cur, ok := p.seen[name]; ok && cur.at.After(s.at) {
+		return
+	}
+	p.seen[name] = s
 }
 
 // ErrNoBackend means no backend in the pool can take the request. It wraps
@@ -162,15 +172,16 @@ func (p *Pool) Refresh(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			asked := time.Now()
 			info, err := b.Client.Describe(ctx)
-			results[i] = seen{info: info, at: time.Now(), err: err}
+			results[i] = seen{info: info, at: asked, err: err}
 		}()
 	}
 	wg.Wait()
 	var first error
 	p.mu.Lock()
 	for i, b := range p.backends {
-		p.seen[b.Name] = results[i]
+		p.store(b.Name, results[i])
 		if results[i].err != nil && first == nil {
 			first = fmt.Errorf("placement: describing %s: %w", b.Name, results[i].err)
 		}
@@ -192,9 +203,10 @@ func (p *Pool) Describe(ctx context.Context, name string) (client.Info, error) {
 		if ok && s.err == nil && time.Since(s.at) < p.ttl {
 			return s.info, nil
 		}
+		asked := time.Now()
 		info, err := b.Client.Describe(ctx)
 		p.mu.Lock()
-		p.seen[name] = seen{info: info, at: time.Now(), err: err}
+		p.store(name, seen{info: info, at: asked, err: err})
 		p.mu.Unlock()
 		return info, err
 	}

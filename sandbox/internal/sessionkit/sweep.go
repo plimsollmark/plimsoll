@@ -59,7 +59,7 @@ const s=st.slice(st.lastIndexOf(")")+2).split(" ")[0];if(s!=="Z"&&s!=="X")return
 // host's Yama ptrace_scope, as JSON on stdout. Its output is trusted only where no
 // call's code can have run: in a sandbox just created or just started, or right
 // after a clean sweep when no interpreter is alive.
-const ListScript = liveFn + `const fs=require("fs");const self=String(process.pid);const skip=new Set([self]);
+const ListScript = liveFn + `const fs=require("node:fs");const self=String(process.pid);const skip=new Set([self]);
 for(let p=self;;){let st;try{st=fs.readFileSync("/proc/"+p+"/stat","latin1")}catch{break}
 const pp=st.slice(st.lastIndexOf(")")+2).split(" ")[1];if(!pp||pp==="0"||skip.has(pp))break;skip.add(pp);p=pp}
 const procs=[];for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d)||(skip.has(d)&&d!=="1")||!live(d))continue;
@@ -77,7 +77,7 @@ process.stdout.write(JSON.stringify({ptrace,procs}))`
 // lands on a kept PID in the same clock tick is kept only if its command line matches
 // too). Its exit status is the verdict (the Sweep* constants); its stdout is a summary
 // for the log only.
-const SweepScript = liveFn + `const fs=require("fs");const [budget,maxEntries,measure,dirList,...keepList]=process.argv.slice(1);
+const SweepScript = liveFn + `const fs=require("node:fs");const [budget,maxEntries,measure,dirList,...keepList]=process.argv.slice(1);
 const keep=new Set(keepList);const self=String(process.pid);const up=new Set([self]);
 for(let p=self;;){let st;try{st=fs.readFileSync("/proc/"+p+"/stat","latin1")}catch{break}
 const pp=st.slice(st.lastIndexOf(")")+2).split(" ")[1];if(!pp||pp==="0"||up.has(pp))break;up.add(pp);p=pp}
@@ -118,7 +118,7 @@ process.stdout.write(JSON.stringify({rounds,killed,bytes,entries}))`
 // that very program can be named. The provider runs this check as a user
 // the session's code is not, so nothing in the sandbox can write into the check or
 // change how it exits.
-const CheckScript = liveFn + `const fs=require("fs");const procs=[];
+const CheckScript = liveFn + `const fs=require("node:fs");const procs=[];
 for(const d of fs.readdirSync("/proc")){if(!/^[0-9]+$/.test(d)||!live(d))continue;let st,cmd;
 try{st=fs.readFileSync("/proc/"+d+"/stat","latin1");cmd=fs.readFileSync("/proc/"+d+"/cmdline").toString("hex")}catch{continue}
 const f=st.slice(st.lastIndexOf(")")+2).split(" ");procs.push({pid:d,ppid:f[1],start:f[19],cmd})}

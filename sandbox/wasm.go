@@ -157,7 +157,8 @@ func (w *WasmSandbox) RunJavaScript(ctx context.Context, req Request) (Result, e
 		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass()}, err
 	}
 	if w.configErr != nil {
-		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass()}, w.configErr
+		// A configuration it cannot run with: nothing ran.
+		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass()}, NotDispatched(RefusalEnvironment, w.configErr)
 	}
 	timeout := req.Timeout
 	if timeout <= 0 {

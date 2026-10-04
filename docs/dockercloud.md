@@ -10,14 +10,24 @@ strongest of the four levels. The code is
 
 ## How it was built and verified
 
-It is written against Docker's published API contract, the API definition Docker
-publishes (the `github.com/docker/sandboxes-api` <dfn>*protobuf*</dfn> API, v0.36.0;
-protobuf is Google's schema format for messages). The provider speaks that API by
-hand, as <dfn>*Connect*</dfn> JSON over `net/http` (Connect is an RPC protocol that
-carries JSON or protobuf over ordinary HTTP), so it adds no module to the dependency
-graph. The live suite (`make audit DOCKERCLOUD=1`) passed against the real service on
+It is written against the API Docker released as `github.com/docker/sandboxes-api`
+v0.36.0, a <dfn>*protobuf*</dfn> API (protobuf is Google's schema format for messages).
+The provider speaks that API by hand, as <dfn>*Connect*</dfn> JSON over `net/http`
+(Connect is an RPC protocol that carries JSON or protobuf over ordinary HTTP), so it
+adds no module to the dependency graph. The live suite (`make audit DOCKERCLOUD=1`)
+passed against the real service at `https://sandboxes.connect.docker.com/sbx` on
 2026-09-24: smoke test, snippet, project, resource bounds, and listing leftover
-sandboxes (orphans).
+sandboxes (orphans). "The published contract" below means that release.
+
+**Docker's documentation has since moved on.** On 2026-10-04 Docker's API reference
+documents a different, experimental REST API at `https://connect.docker.com/sandboxes`:
+`POST /v1/sandboxes` to create, and `DELETE /v1/sandboxes/{id}` by ID only, with a
+required `If-Match` header
+([EXTERNAL · official docs ↗](https://docs.docker.com/reference/api/sandboxes/latest/operations/createSandbox/)).
+This provider does not speak that API, and whether the Connect endpoint above still
+answers has not been checked since 2026-09-24. Before relying on this provider, run the
+live suite (it creates billable microVMs, a few cents' worth); a failure there is the
+signal that the provider needs porting.
 
 ## Three things an operator must set up
 

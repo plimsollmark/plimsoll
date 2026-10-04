@@ -78,7 +78,7 @@ func TestDockerSessionConformance(t *testing.T) {
 	if !slices.Equal(langs, []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython}) {
 		t.Fatalf("the language probe found %v in %s", langs, d.ProjectImage)
 	}
-	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs})
+	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs, Teardown: sandbox.DockerRemoveBudget})
 	dctx, dcancel := context.WithTimeout(context.Background(), time.Minute)
 	defer dcancel()
 	if err := d.Drain(dctx); err != nil {
@@ -132,6 +132,25 @@ func sessionContainer(t *testing.T, s sandbox.Session, marker string) string {
 	}
 	t.Fatal("no session container holds the marker")
 	return ""
+}
+
+// Done closes only once the container is removed (review F9): a session layer gives
+// back the session's capacity on Done, and the container holds its memory until then.
+func TestDockerSessionDoneWaitsForTheContainerRemoval(t *testing.T) {
+	d := sessionDocker(t)
+	s := openDockerSession(t, d)
+	name := sessionContainer(t, s, "done-after-removal")
+	if err := s.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.Done():
+	case <-time.After(sandbox.DockerRemoveBudget + 5*time.Second):
+		t.Fatal("Done was not closed within the removal budget")
+	}
+	if exec.Command("docker", "inspect", name).Run() == nil {
+		t.Fatalf("Done closed while container %s still exists", name)
+	}
 }
 
 // A suspend pauses the container and reports its memory as held; the next call

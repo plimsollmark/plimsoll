@@ -73,5 +73,6 @@ fields tell the outcomes apart, and checks each with both verifiers.
   a refused run with an error that carries no record, so no `blocked` or `denied` capsule
   can be stated from one.
 - **Not registered anywhere.** No capsule was sent to a transparency service, so a missing
-  last capsule is invisible to a store check. plimsoll's bundle catches that case on its own
-  with its signed close statement, and the page shows both results.
+  last capsule is invisible to a store check. plimsoll's bundle catches that case on its own:
+  its links and closing checkpoint, and the session's signed close statement, each refuse
+  it, and the page shows both results.

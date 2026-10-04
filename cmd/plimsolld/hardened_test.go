@@ -98,6 +98,9 @@ func TestHardenedPolicyFailsClosedPerViolation(t *testing.T) {
 		{"runc container tier", nil, func(f *hardenedFacts) { f.Isolation = sandbox.IsolationContainer }, "requires vm"},
 		{"process tier", nil, func(f *hardenedFacts) { f.Provider, f.Isolation = "wasm", sandbox.IsolationProcess }, "requires vm"},
 		{"disabled provider", nil, func(f *hardenedFacts) { f.Provider, f.Isolation = "disabled", sandbox.IsolationNone }, "requires vm"},
+		{"a metered provider with a caller without a daily allowance", nil, func(f *hardenedFacts) {
+			f.Metered, f.Uncapped = true, []string{"mcp-b"}
+		}, "daily allowance on every caller"},
 		{"shared-token auth", nil, func(f *hardenedFacts) { f.MultiClientAuth = false }, "multi-client auth"},
 		{"insecure override", func(e map[string]string) { e["PLIMSOLL_INSECURE"] = "1" }, nil, "PLIMSOLL_INSECURE"},
 		{"cleartext off loopback", nil, func(f *hardenedFacts) { f.TLS = false }, "requires TLS"},
@@ -304,5 +307,29 @@ func TestHardenedPolicyRequiresAPerCallerSessionCap(t *testing.T) {
 	f.Sessions.MaxPerCaller = 2
 	if err := enforceHardenedPolicy(getenvFrom(hardenedEnv()), f); err != nil {
 		t.Fatalf("hardened policy with a per-caller session cap: %v", err)
+	}
+}
+
+// The paid-provider settings that need no sandbox are checked before the smoke test:
+// an allowance on a provider that does not bill is refused, as are sessions on one
+// that does; a negative allowance is refused.
+func TestLoadPaidConfig(t *testing.T) {
+	for name, tc := range map[string]struct {
+		env     map[string]string
+		metered bool
+		want    int64
+		bad     bool
+	}{
+		"unset, metered":            {nil, true, 0, false},
+		"set, metered":              {map[string]string{"SANDBOX_PAID_SECONDS_PER_DAY": "3600"}, true, 3600, false},
+		"set, not metered":          {map[string]string{"SANDBOX_PAID_SECONDS_PER_DAY": "3600"}, false, 0, true},
+		"negative":                  {map[string]string{"SANDBOX_PAID_SECONDS_PER_DAY": "-1"}, true, 0, true},
+		"sessions on a metered one": {map[string]string{"SANDBOX_MAX_SESSIONS": "2"}, true, 0, true},
+		"sessions, not metered":     {map[string]string{"SANDBOX_MAX_SESSIONS": "2"}, false, 0, false},
+	} {
+		got, err := loadPaidConfig(getenvFrom(tc.env), tc.metered)
+		if (err != nil) != tc.bad || got != tc.want {
+			t.Errorf("%s: %d, %v", name, got, err)
+		}
 	}
 }

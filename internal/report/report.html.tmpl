@@ -112,8 +112,9 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
   <div class="tile"><div class="n">{{.TotalRuns}}</div><div class="k">Runs</div></div>
   <div class="tile"><div class="n">{{.TotalHostCalls}}</div><div class="k">Host calls</div></div>
   <div class="tile{{if .TotalFindings}} warn{{end}}"><div class="n">{{.TotalFindings}}</div><div class="k">Findings</div></div>
-  <div class="tile good"><div class="n">{{.TotalAgentFixable}}</div><div class="k">Agent-fixable (route already granted)</div></div>
-  <div class="tile{{if .TotalGrantRoute}} warn{{end}}"><div class="n">{{.TotalGrantRoute}}</div><div class="k">Route to grant (API has it)</div></div>
+  <div class="tile good"><div class="n">{{.TotalAgentFixable}}</div><div class="k">Agent-fixable (declared route granted)</div></div>
+  <div class="tile{{if .TotalGrantRoute}} warn{{end}}"><div class="n">{{.TotalGrantRoute}}</div><div class="k">Declared route to grant</div></div>
+  <div class="tile{{if .TotalCandidate}} warn{{end}}"><div class="n">{{.TotalCandidate}}</div><div class="k">Candidate route to check</div></div>
   <div class="tile{{if .TotalNoKnownRoute}} warn{{end}}"><div class="n">{{.TotalNoKnownRoute}}</div><div class="k">No known route</div></div>
   <div class="tile{{if .TotalAddedLatencyMs}} bad{{end}}"><div class="n">{{ms .TotalAddedLatencyMs}}</div><div class="k">Modelled latency beyond one call</div></div>
   <div class="tile"><div class="n">{{.TotalExtraCalls}}</div><div class="k">Extra calls</div></div>
@@ -124,7 +125,7 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
 <h2>Profiles by modelled latency beyond one call</h2>
 <div class="card">
 <table>
-  <thead><tr><th>Profile</th><th class="num">Runs</th><th class="num">Host calls</th><th class="num">Findings</th><th class="num">Agent-fixable</th><th class="num">To grant</th><th class="num">No known route</th><th class="num">Extra calls</th><th class="num">Modelled latency</th><th class="num">Bytes</th></tr></thead>
+  <thead><tr><th>Profile</th><th class="num">Runs</th><th class="num">Host calls</th><th class="num">Findings</th><th class="num">Agent-fixable</th><th class="num">To grant</th><th class="num">Candidates</th><th class="num">No known route</th><th class="num">Extra calls</th><th class="num">Modelled latency</th><th class="num">Bytes</th></tr></thead>
   <tbody>
   {{range .Profiles}}
     <tr>
@@ -134,6 +135,7 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
       <td class="num">{{.Findings}}</td>
       <td class="num">{{.AgentFixable}}</td>
       <td class="num">{{.GrantRoute}}</td>
+      <td class="num">{{.Candidate}}</td>
       <td class="num">{{.NoKnownRoute}}</td>
       <td class="num">{{.ExtraCalls}}</td>
       <td class="num">{{ms .AddedLatencyMs}}</td>
@@ -196,14 +198,15 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
           <div class="finding-head">
             <span class="badge">{{prettyPattern .Pattern}}</span>
             <span class="badge sev-{{sevKey .Severity}}">{{.Severity}}</span>
-            {{if .AgentFixable}}<span class="badge fix">agent-fixable</span>{{else if .GrantRoute}}<span class="badge api">grant a route</span>{{else}}<span class="badge api">no known route</span>{{end}}
+            {{if .AgentFixable}}<span class="badge fix">agent-fixable</span>{{else if .GrantRoute}}<span class="badge api">grant a route</span>{{else if .CandidateRoute}}<span class="badge api">candidate route</span>{{else}}<span class="badge api">no known route</span>{{end}}
             <code>{{.Method}} {{.Route}}</code>
           </div>
           <p>{{.Detail}}</p>
           {{$c := cost .}}{{if $c}}<p class="cost">{{$c}}</p>{{end}}
-          {{if .SuggestedRoute}}<p class="suggest">Better route already granted: <code>{{.SuggestedMethod}} {{.SuggestedRoute}}</code> — the agent can switch to it now.</p>{{end}}
-          {{if .GrantRoute}}<p class="suggest">The API exposes <code>{{.GrantRouteMethod}} {{.GrantRoute}}</code> but this profile does not grant it. Operator action: add that one route to the profile's <code>allow</code> list. No API change is needed.</p>{{end}}
-          {{if eq (printf "%s" .Class) "no-known-route"}}<p class="note">No granted route covers this, and the profile's catalog names none either — which may mean the API has no such endpoint, or that the profile declares no catalog to check. Confirm before treating it as missing.</p>{{end}}
+          {{if .SuggestedRoute}}<p class="suggest">The profile declares <code>{{.SuggestedMethod}} {{.SuggestedRoute}}</code> as this route's batch form and grants it, so the agent was told it can switch to it now.</p>{{end}}
+          {{if .GrantRoute}}<p class="suggest">The profile declares <code>{{.GrantRouteMethod}} {{.GrantRoute}}</code> as this route's batch form but does not grant it. Operator action: add that one route to the profile's <code>allow</code> list. No API change is needed.</p>{{end}}
+          {{if .CandidateRoute}}<p class="suggest">Its path makes <code>{{.CandidateMethod}} {{.CandidateRoute}}</code> this route's collection, but nothing declares it, so the agent was not told about it. Operator action: check that it returns the same items (every page, the same fields, the same scope); if it does, add it to the profile's <code>batch_of</code> (and to <code>allow</code> if it is not granted).</p>{{end}}
+          {{if eq (printf "%s" .Class) "no-known-route"}}<p class="note">No batch route is declared for this, and no granted or catalogued route matches its path, which may mean the API has no such endpoint, or that the profile declares no catalog to check. Confirm before treating it as missing.</p>{{end}}
           {{if .DesignPrompt}}<details class="prompt"><summary>API-design prompt for this finding</summary><pre>{{.DesignPrompt}}</pre></details>{{end}}
         </div>
       {{end}}

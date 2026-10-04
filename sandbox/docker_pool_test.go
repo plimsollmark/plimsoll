@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // A member is handed over only under the execution state it was made under, only for
@@ -22,7 +24,7 @@ func TestPoolClaimsOnlyAMemberItMayHandOver(t *testing.T) {
 	state := dockerExecutionState{host: "unix:///d.sock", runtime: "runsc", isolation: IsolationKernel,
 		projectImageID: "sha256:aa", projectManifest: "sha256:bb"}
 	member := func(name string, st dockerExecutionState, age time.Duration) *dockerSession {
-		return &dockerSession{name: name, key: dockerPoolKey(st), born: now.Add(-age),
+		return &dockerSession{life: testLife(), name: name, key: dockerPoolKey(st), born: now.Add(-age),
 			label: now.Add(-age).Add(dockerPoolMaxIdle + time.Hour)}
 	}
 	other := state
@@ -33,7 +35,7 @@ func TestPoolClaimsOnlyAMemberItMayHandOver(t *testing.T) {
 	unattached.warm = []string{"python"} // never warmed: no relay attached
 	var removed []string
 	p := &dockerPool{now: func() time.Time { return now }, wake: make(chan struct{}, 1),
-		discard: func(s *dockerSession) { removed = append(removed, s.name) }}
+		discard: func(s *dockerSession, gone func()) { removed = append(removed, s.name); gone() }}
 	p.ready = []*dockerSession{
 		member("other-runtime", other, time.Minute),
 		member("other-image", rebuilt, time.Minute),
@@ -121,7 +123,7 @@ type poolSim struct {
 func newPoolSim(size int, stated []Language, step time.Duration) *poolSim {
 	s := &poolSim{stated: stated, clock: time.Unix(1e9, 0), step: step}
 	s.p = &dockerPool{size: size, demand: map[string]float64{languageSetKey(stated): 1},
-		now: func() time.Time { return s.clock }, discard: func(*dockerSession) { s.removed++ }}
+		now: func() time.Time { return s.clock }, discard: func(_ *dockerSession, gone func()) { s.removed++; gone() }}
 	s.fill()
 	return s
 }
@@ -134,7 +136,7 @@ func (s *poolSim) fill() {
 			}
 			continue
 		}
-		s.p.ready = append(s.p.ready, &dockerSession{warm: languageNames(s.p.next(s.stated))})
+		s.p.ready = append(s.p.ready, &dockerSession{life: testLife(), warm: languageNames(s.p.next(s.stated))})
 	}
 }
 
@@ -270,14 +272,14 @@ func TestPoolRebalancesAtMostOnceAMinute(t *testing.T) {
 	now := time.Unix(1e9, 0)
 	removed := 0
 	p := &dockerPool{size: poolSplitMinSize, demand: map[string]float64{"python": 1}, now: func() time.Time { return now },
-		discard: func(*dockerSession) { removed++ }}
+		discard: func(_ *dockerSession, gone func()) { removed++; gone() }}
 	for range poolSplitMinSize {
-		p.ready = append(p.ready, &dockerSession{warm: []string{"javascript"}})
+		p.ready = append(p.ready, &dockerSession{life: testLife(), warm: []string{"javascript"}})
 	}
 	if !p.rebalance() || p.rebalance() {
 		t.Fatalf("rebalance moved %d members at once; want 1", removed)
 	}
-	p.ready = append(p.ready, &dockerSession{warm: []string{"python"}})
+	p.ready = append(p.ready, &dockerSession{life: testLife(), warm: []string{"python"}})
 	now = now.Add(poolMoveInterval - time.Second)
 	if p.rebalance() {
 		t.Fatal("rebalance moved a second member within a minute")
@@ -370,16 +372,16 @@ func TestClosestMemberPrefersTheOneWarmingTheHint(t *testing.T) {
 // removes one member of the surplus set, oldest first, and nothing more.
 func TestPoolRebalanceMovesOneMember(t *testing.T) {
 	var removed []string
-	p := &dockerPool{size: poolSplitMinSize, demand: map[string]float64{"python": 1}, now: time.Now, discard: func(s *dockerSession) { removed = append(removed, s.name) }}
+	p := &dockerPool{size: poolSplitMinSize, demand: map[string]float64{"python": 1}, now: time.Now, discard: func(s *dockerSession, gone func()) { removed = append(removed, s.name); gone() }}
 	for i := range poolSplitMinSize {
-		p.ready = append(p.ready, &dockerSession{name: fmt.Sprint("both", i), warm: []string{"javascript", "python"}})
+		p.ready = append(p.ready, &dockerSession{life: testLife(), name: fmt.Sprint("both", i), warm: []string{"javascript", "python"}})
 	}
 	if !p.rebalance() || !slices.Equal(removed, []string{"both0"}) || len(p.ready) != poolSplitMinSize-1 {
 		t.Fatalf("rebalance removed %v and left %d; want the oldest removed and %d left", removed, len(p.ready), poolSplitMinSize-1)
 	}
 	p.ready, p.lastMove, removed = nil, time.Time{}, nil
 	for i := range poolSplitMinSize {
-		p.ready = append(p.ready, &dockerSession{name: fmt.Sprint("py", i), warm: []string{"python"}})
+		p.ready = append(p.ready, &dockerSession{life: testLife(), name: fmt.Sprint("py", i), warm: []string{"python"}})
 	}
 	if p.rebalance() || removed != nil {
 		t.Fatalf("a pool at its shares rebalanced, removing %v", removed)
@@ -416,7 +418,7 @@ func TestSessionLanguagesChecksTheHint(t *testing.T) {
 // so a Drain racing StartSessionPool never returned.
 func TestDrainIsBoundedWhileThePoolFillerRuns(t *testing.T) {
 	d := DefaultDocker("")
-	d.pool.Store(&dockerPool{d: d, stop: make(chan struct{}), done: make(chan struct{}), discard: func(*dockerSession) {}})
+	d.pool.Store(&dockerPool{d: d, stop: make(chan struct{}), done: make(chan struct{}), discard: func(_ *dockerSession, gone func()) { gone() }})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	errc := make(chan error, 1)
@@ -436,7 +438,7 @@ func TestDrainIsBoundedWhileThePoolFillerRuns(t *testing.T) {
 func TestPoolThatFailsToStartHasNoFillerToWaitFor(t *testing.T) {
 	d := DefaultDocker("") // never made ready, so making a member fails at once
 	p := &dockerPool{d: d, size: 1, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1),
-		demand: map[string]float64{"javascript": 1}, discard: func(*dockerSession) {}}
+		demand: map[string]float64{"javascript": 1}, discard: func(_ *dockerSession, gone func()) { gone() }}
 	d.projectLanguages = []Language{LanguageJavaScript}
 	if err := p.start(context.Background()); err == nil {
 		t.Fatal("a pool whose first member could not be made started")
@@ -454,16 +456,16 @@ func TestPoolThatFailsToStartHasNoFillerToWaitFor(t *testing.T) {
 // added to from zero while it is waited on. Before the fix Drain went on to wait.
 func TestDrainLeavesNoWaitBehindAPoolStillFilling(t *testing.T) {
 	d := DefaultDocker("")
-	d.pool.Store(&dockerPool{d: d, stop: make(chan struct{}), done: make(chan struct{}), discard: func(*dockerSession) {}})
-	d.sessions.deletes.Add(1) // a removal still in flight
-	defer d.sessions.deletes.Done()
+	d.pool.Store(&dockerPool{d: d, stop: make(chan struct{}), done: make(chan struct{}), discard: func(_ *dockerSession, gone func()) { gone() }})
+	removed := d.sessions.Removal() // a removal still in flight
+	defer removed()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if err := d.Drain(ctx); err == nil || !strings.Contains(err.Error(), "still making a member") {
 		t.Fatalf("Drain = %v; want the pool's error", err)
 	}
 	buf := make([]byte, 1<<20)
-	if stacks := string(buf[:runtime.Stack(buf, true)]); strings.Contains(stacks, "(*DockerSandbox).Drain.func") {
+	if stacks := string(buf[:runtime.Stack(buf, true)]); strings.Contains(stacks, "(*DockerSandbox).Drain.func") || strings.Contains(stacks, "(*Registry).WaitRemovals") {
 		t.Fatalf("Drain left a goroutine behind:\n%s", stacks)
 	}
 }
@@ -492,11 +494,16 @@ func TestDrainEndsOpenSessionsWhileAnOpenIsInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s := &dockerSession{d: d, broker: b, ctx: ctx, cancel: cancel, done: make(chan struct{})}
-	d.sessions.open = map[*dockerSession]struct{}{s: {}}
-	d.sessions.opening.Add(1) // an open still in flight
-	defer d.sessions.opening.Done()
+	s := &dockerSession{d: d, broker: b}
+	s.life = sessionkit.NewLife("plsm-session-test", s.hooks())
+	if err := d.activate(s, time.Now().Add(time.Hour), 0); err != nil {
+		t.Fatal(err)
+	}
+	leave, ok := d.sessions.Enter() // an open still in flight
+	if !ok {
+		t.Fatal("an open was refused before Drain")
+	}
+	defer leave()
 	dctx, dcancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer dcancel()
 	if err := d.Drain(dctx); err == nil || !strings.Contains(err.Error(), "still opening") {
@@ -507,45 +514,17 @@ func TestDrainEndsOpenSessionsWhileAnOpenIsInFlight(t *testing.T) {
 	}
 }
 
-// Drain reports success only once every session it found open has been removed, even
-// one that another goroutine (its lifetime timer, a client's Close) had begun to end:
-// before the fix Drain's own finish returned early for such a session, and Drain
-// waited on a removals count the other goroutine had not added to yet, so it returned
-// nil with the container still there (and could race that Add).
-func TestDrainWaitsForASessionAnotherGoroutineIsEnding(t *testing.T) {
-	d := DefaultDocker("")
-	b, err := startDockerSessionBroker()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s := &dockerSession{d: d, broker: b, ctx: ctx, cancel: cancel, done: make(chan struct{})}
-	if err := d.activate(s, time.Now().Add(time.Hour), 0); err != nil {
-		t.Fatal(err)
-	}
-	// Another goroutine's finish has claimed the end and not yet reached its removal.
-	s.mu.Lock()
-	s.end = &SessionEndedError{Reason: SessionExpired}
-	s.life.Stop()
-	s.mu.Unlock()
-	dctx, dcancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer dcancel()
-	if err := d.Drain(dctx); err == nil {
-		t.Fatal("Drain reported success while a session it found open was still being ended")
-	}
-}
-
 // An open the provider refuses leaves the pool's demand as it was: a caller asking
 // again and again for a floor the provider cannot meet (or for anything while it is at
 // capacity) would otherwise move the pool toward its languages, away from the callers
 // it serves. Before the fix the hint was recorded before the floor was checked.
 func TestRefusedOpenLeavesPoolDemandUnchanged(t *testing.T) {
 	d := DefaultDocker("")
-	d.ready, d.daemonHost, d.verifiedRuntime = true, "unix:///var/run/docker.sock", d.Runtime
+	d.ready, d.daemonHost, d.verifiedRuntime, d.verifiedGuestUID = true, "unix:///var/run/docker.sock", d.Runtime, d.guestUID()
 	d.verifiedImageIDs = map[string]string{d.Image: "sha256:snippet", d.ProjectImage: "sha256:project"}
 	d.projectLanguages = []Language{LanguageJavaScript, LanguagePython}
 	p := &dockerPool{d: d, size: 1, now: time.Now, wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
-		demand: map[string]float64{"javascript,python": 1}, discard: func(*dockerSession) {}}
+		demand: map[string]float64{"javascript,python": 1}, discard: func(_ *dockerSession, gone func()) { gone() }}
 	d.pool.Store(p)
 	for range 20 {
 		_, err := d.OpenSession(context.Background(), SessionOptions{Lifetime: time.Minute, MinimumIsolation: IsolationVM, Languages: []Language{LanguagePython}})
@@ -555,5 +534,41 @@ func TestRefusedOpenLeavesPoolDemandUnchanged(t *testing.T) {
 	}
 	if !maps.Equal(p.demand, map[string]float64{"javascript,python": 1}) {
 		t.Fatalf("20 refused opens moved the pool's demand to %v", p.demand)
+	}
+}
+
+// testLife is a pool member's lifecycle in a test that never runs a call.
+func testLife() *sessionkit.Life { return sessionkit.NewLife("plsm-session-test", sessionkit.Hooks{}) }
+
+// A member taken out of the pool counts against its size until its container is gone
+// (review F9): admission charged the pool size runs' memory, so the replacement waits
+// for the removal instead of running beside the container it replaces.
+func TestPoolReplacesAMemberOnlyOnceItsContainerIsGone(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	state := dockerExecutionState{host: "unix:///d.sock", projectImageID: "sha256:aa", projectManifest: "sha256:bb"}
+	stale := &dockerSession{life: testLife(), name: "too-old", key: dockerPoolKey(state), born: now.Add(-dockerPoolMaxIdle - time.Second),
+		label: now.Add(time.Hour)}
+	var pending []func() // removals not yet reported gone
+	p := &dockerPool{size: 1, now: func() time.Time { return now }, wake: make(chan struct{}, 1),
+		discard: func(_ *dockerSession, gone func()) { pending = append(pending, gone) }}
+	p.ready = []*dockerSession{stale}
+	if got := p.claim(state, now.Add(time.Minute), nil); got != nil {
+		t.Fatalf("claimed %s, a member past its idle bound", got.name)
+	}
+	<-p.wake // the claim's own request for a refill
+	if len(pending) != 1 {
+		t.Fatalf("%d removals started; want 1", len(pending))
+	}
+	if p.short() {
+		t.Fatal("the pool asks for a replacement while the member's container is still being removed")
+	}
+	pending[0]()
+	if !p.short() {
+		t.Fatal("the pool is not short once the container is gone")
+	}
+	select {
+	case <-p.wake:
+	default:
+		t.Fatal("the removal did not wake the filler")
 	}
 }

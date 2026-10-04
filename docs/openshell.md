@@ -49,10 +49,13 @@ gateway with the docker driver.
 - **An identity that may read the compute driver.** The tier comes from
   `GetGatewayInfo`. If the gateway refuses that call (when the gateway signs users in
   through OIDC, a standard single sign-on protocol, the call needs the `platform_admin`
-  role), the provider refuses to serve.
+  role), the provider refuses to serve. The call is made again before every run and
+  session call, apart from the caller's request (bounded at 10 seconds), so a request
+  that times out or hangs up cannot change the tier every other caller is checked
+  against; when the gateway fails it, the run is refused before any of its code runs.
 - **An image with the runner.** `SANDBOX_OPENSHELL_IMAGE` must carry `node`, `sh`,
-  `/runner.mjs` and `/usr/local/lib/plimsoll-runner-guard.so`, as `plimsoll/sandbox`
-  does. The runner (`/runner.mjs`, the program that writes a project's files and runs its
+  `/usr/bin/env` (plimsoll's own programs start under `env -i`), `/runner.mjs` and
+  `/usr/local/lib/plimsoll-runner-guard.so`, as `plimsoll/sandbox` does. The runner (`/runner.mjs`, the program that writes a project's files and runs its
   steps) refuses a plan unless a child process running as the same user is denied access
   to the runner's plan descriptor, its report descriptor and its memory (the descriptors
   are the open files it reads the plan from and writes its report to). With
@@ -110,7 +113,9 @@ gateway with the docker driver.
    timeout is not used for that, because it reports exit 124 while the process keeps
    running.
 5. Returns the result, then deletes the sandbox without making the caller wait for the
-   delete. Daemon shutdown waits for those deletes.
+   delete. The run keeps its concurrency slot, and its share of `SANDBOX_TOTAL_MEMORY_MB`,
+   until the delete is through, since the sandbox and any process the run left in it live
+   until then. Daemon shutdown waits for those deletes.
 
 **Resources.** `SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` are requested and read back.
 OpenShell sets no swap limit, so on a gateway host with swap a sandbox may also use as
@@ -282,7 +287,16 @@ v0.1.2 gateway with the docker driver:
 - **A read-back before every call.** Anyone who can call the gateway can change a
   sandbox's policy or settings between calls, so before every call the provider reads the
   sandbox and its effective configuration back and ends the session on any difference,
-  the main process included.
+  the main process included. A read-back the gateway does not answer refuses that call
+  before any of it runs (reason `environment`), and the session goes on, as on docker.
+- **plimsoll's programs start with no variables of the exec's.** The process lister, the
+  sweep, the interpreters' relays and a grant's relay start under `/usr/bin/env -i` with a
+  fixed PATH. A v0.1.2 gateway hands every exec the same few variables of its own (HOME,
+  PATH, its CA settings, `OPENSHELL_SANDBOX`, `TERM`, `USER`), never the image's
+  (measured 2026-10-03), so this changes nothing today; it keeps a variable that loads
+  code, such as `NODE_OPTIONS`, out of those programs on a gateway that starts passing
+  the image's. A project's runner and the interpreter launcher keep the gateway's
+  variables, because the steps and the interpreter they start inherit them.
 
 An idle session is stopped, not deleted: a stopped container holds no memory or CPU and
 keeps its files, and the next call starts it and records its processes again (about

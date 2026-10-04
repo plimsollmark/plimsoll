@@ -98,7 +98,7 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("openshell smoke: %w", err)
 	}
-	defer p.deleteLater(b)
+	defer p.deleteLater(ctx, b)
 	ev := smokeEvidence{GatewayVersion: p.gatewayVersion(), Sandbox: b.name, PolicyHash: p.policyHash}
 
 	if err := p.smokeProbe(ctx, b, &ev); err != nil {

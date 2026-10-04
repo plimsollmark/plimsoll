@@ -19,7 +19,7 @@ import { mkdirSync, writeFileSync, readFileSync, readlinkSync, realpathSync, ope
 import { resolve, dirname } from "node:path";
 
 const WORK = resolve(process.env.PLIMSOLL_WORK || "/work");
-const MARKER = "<<<PLIMSOLL_REPORT_V2>>>"; // must match runnerwire.Marker
+const MARKER = "<<<PLIMSOLL_REPORT_V3>>>"; // must match runnerwire.Marker
 let reportKey = null; // set from the plan; a frame without it cannot verify
 const MAX_STEP_OUTPUT = 1 << 20; // 1 MiB per step stream
 const MAX_ARTIFACT_BYTES = 8 << 20; // 8 MiB total across all captured artifacts
@@ -168,9 +168,20 @@ try {
   // every Node step process as a global (node --import), so project files use the
   // SAME globalThis[host] contract as a snippet instead of an import. Written outside
   // WORK so it is never linted/compiled as project source nor captured as an artifact.
-  // The module only defines the global; the unix socket (HOST_API_SOCKET, inherited
-  // from the container env) and the host-side bearer stay outside the guest.
-  const stepEnv = { ...process.env, PLIMSOLL_RUNNER_PID: String(process.pid) };
+  // The module only defines the global; the unix socket (HOST_API_SOCKET, in the
+  // plan's env) and the host-side bearer stay outside the guest.
+  //
+  // Steps start with the runner's environment plus the plan's env entries, which win.
+  // The docker provider starts this runner with none of the image's environment (so
+  // nothing the image declares can change what the runner does) and hands that
+  // environment to the steps here instead.
+  const stepEnv = { ...process.env };
+  for (const entry of Array.isArray(plan.env) ? plan.env : []) {
+    const eq = typeof entry === "string" ? entry.indexOf("=") : -1;
+    if (eq <= 0) throw new Error("plan env entry is not NAME=value");
+    stepEnv[entry.slice(0, eq)] = entry.slice(eq + 1);
+  }
+  stepEnv.PLIMSOLL_RUNNER_PID = String(process.pid);
   if (typeof plan.hostSDK === "string" && plan.hostSDK.length > 0) {
     const sdkPath = "/tmp/plimsoll-host.mjs";
     writeFileSync(sdkPath, plan.hostSDK);
@@ -186,6 +197,10 @@ try {
       env: stepEnv,
       encoding: "utf8",
       timeout: plan.stepTimeoutMs || undefined,
+      // SIGKILL, not Node's default SIGTERM: a step that ignores SIGTERM would run on
+      // past its budget until the outer backstop killed the container and every
+      // step's report with it.
+      killSignal: "SIGKILL",
       maxBuffer: MAX_STEP_OUTPUT,
     });
     const timedOut = r.error?.code === "ETIMEDOUT";

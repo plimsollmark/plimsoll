@@ -41,9 +41,10 @@ in this directory:
 | [preamble.js](preamble.js) | typed JS SDK attached to `globalThis["home"]` | the profile's `preamble_file` |
 | [description.txt](description.txt) | model-facing operation listing | the gateway's MCP tool description |
 | [health_check.txt](health_check.txt) | the `"GET /path"` backpressure probe, if the spec declares one | the profile's `health_check` |
+| [batch_of.json](batch_of.json) | which collection route serves which per-item routes, if the spec declares any | the profile's `batch_of` |
 
 [grants.json](grants.json) assembles the generated fields into a real, loadable profile.
-The `preamble`, route list, and `health_check` are generated; the rest (`base_url`,
+The `preamble`, route list, `health_check` and `batch_of` are generated; the rest (`base_url`,
 `token`, `allowed_callers`) is operator policy the spec does not carry. The generated
 route list appears twice, for two different jobs:
 
@@ -52,12 +53,26 @@ route list appears twice, for two different jobs:
   `GET /lights` (the batch collection), modelling the common gap where the per-item
   routes are granted but the batch one is forgotten.
 
-Prospector reads `catalog` so that when a run fans out on `GET /lights/*`, its advice can
-name the concrete fix — *grant `GET /lights`* — instead of a vague "the API needs a
-change." With `advice_retention: detailed`, that surfaces on the operator audit line as
-`grant_route`. A route that IS already granted stays a caller-facing suggestion the agent
-can act on now; only an ungranted-but-cataloged route becomes this operator action. Get
-the full list for `catalog` with `plimsoll-specgen -emit catalog`.
+## The batch relation tells the advisor what serves what
+
+The spec's `GET /lights` ("List every light with its current state") carries
+`"x-plimsoll-batch-of": ["getLight"]`: the API owner's statement that one call to it
+returns what a loop of `GET /lights/{id}` calls would. specgen resolves `getLight` to
+`GET /lights/*` and writes [batch_of.json](batch_of.json), which `grants.json` sets as
+`"batch_of": {"GET /lights": ["GET /lights/*"]}`. An operationId that names no operation,
+names two, or names one a grant cannot express fails generation, and so does a relation
+`grants.Load` would refuse (a write on either side, or a served route with no `*`).
+
+The efficiency advisor reads the relation when a run fans out on `GET /lights/*`. Here the
+profile declares `GET /lights` but does not grant it, so the finding names the concrete
+fix, *grant `GET /lights`*, on the operator audit line as `grant_route` (with
+`advice_retention: detailed`), never to the caller, who cannot call it. Granted, the same
+route would come back to the caller as the route to switch to. Without the marker, the
+advisor would still see `GET /lights` in `catalog`, but only as a candidate for the
+operator to check: a route's path says nothing about whether it returns every page, the
+same fields or the same scope. That is why `catalog` alone never produces a suggestion.
+Get the full list for `catalog` with `plimsoll-specgen -emit catalog`, and the relation
+alone with `-emit batch`.
 
 ## The health route wires straight into backpressure
 

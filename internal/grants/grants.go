@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -140,6 +141,7 @@ type Profile struct {
 	advice          AdviceMode
 	adviceRetention AdviceRetention
 	catalog         []sandbox.HostRoute
+	batchOf         map[sandbox.HostRoute]sandbox.HostRoute // per-item route -> its declared batch route
 }
 
 // Advice reports the profile's efficiency-advice opt-in. Nil-safe: an absent
@@ -178,6 +180,22 @@ func (p *Profile) Catalog() []sandbox.HostRoute {
 		return nil
 	}
 	return append([]sandbox.HostRoute(nil), p.catalog...)
+}
+
+// BatchOf returns a copy of the profile's declared batch relations, keyed by the
+// per-item route each batch route serves. A declaration is the operator's assertion that
+// one request to the batch route returns what the per-item calls did; plimsoll cannot
+// check it, and it is the only basis on which an advisor finding names a route to the
+// caller. It grants nothing. Nil-safe: an absent profile declares none.
+func (p *Profile) BatchOf() map[sandbox.HostRoute]sandbox.HostRoute {
+	if p == nil || len(p.batchOf) == 0 {
+		return nil
+	}
+	out := make(map[sandbox.HostRoute]sandbox.HostRoute, len(p.batchOf))
+	for k, v := range p.batchOf {
+		out[k] = v
+	}
+	return out
 }
 
 // Allows reports whether caller may select this profile. "*" is an explicit
@@ -241,8 +259,14 @@ type profileConfig struct {
 	// Prospector reads it so a fan-out finding can name the concrete ungranted route the
 	// operator should add, instead of a vague "the API needs a change." Optional.
 	Catalog []string `json:"catalog"`
-	Global  string   `json:"global"` // JS global name; "" = "host"
-	Advice  string   `json:"advice"` // "off" (default) | "operator" | "caller"; Prospector opt-in
+	// BatchOf declares, per batch route, the per-item routes one request to it can
+	// replace: {"GET /items": ["GET /items/*"]}. The operator asserts it (pagination,
+	// fields and scope are unknown to plimsoll); it is the only basis on which an advisor
+	// finding names a route to the caller, and it grants nothing. Optional;
+	// plimsoll-specgen -emit batch derives it from the x-plimsoll-batch-of extension.
+	BatchOf map[string][]string `json:"batch_of"`
+	Global  string              `json:"global"` // JS global name; "" = "host"
+	Advice  string              `json:"advice"` // "off" (default) | "operator" | "caller"; Prospector opt-in
 	// AdviceRetention: "none" (default) | "aggregate" | "detailed". How much advisory
 	// telemetry reaches the durable audit log; independent of Advice. No effect when
 	// Advice is off (there are no findings to record).
@@ -380,6 +404,10 @@ func Load(path string) (*Registry, error) {
 				return nil, fmt.Errorf("grants: profile %q: catalog %w", name, err)
 			}
 		}
+		batchOf, err := ParseBatchOf(pc.BatchOf)
+		if err != nil {
+			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
+		}
 		callers, err := parseAllowedCallers(pc.AllowedCallers)
 		if err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
@@ -444,7 +472,7 @@ func Load(path string) (*Registry, error) {
 		if err := grant.Validate(); err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
 		}
-		r.profiles[name] = &Profile{grant: grant, allowedCallers: callers, advice: advice, adviceRetention: retention, catalog: catalog}
+		r.profiles[name] = &Profile{grant: grant, allowedCallers: callers, advice: advice, adviceRetention: retention, catalog: catalog, batchOf: batchOf}
 	}
 	return r, nil
 }
@@ -519,15 +547,84 @@ func parseHealthCheck(line string) (*sandbox.HostRoute, error) {
 func parseAllow(lines []string) ([]sandbox.HostRoute, error) {
 	routes := make([]sandbox.HostRoute, 0, len(lines))
 	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			return nil, fmt.Errorf("allow entry %q must be %q", line, "METHOD /path")
+		route, err := parseRoute(line)
+		if err != nil {
+			return nil, fmt.Errorf("allow entry %w", err)
 		}
-		method, path := strings.ToUpper(fields[0]), fields[1]
-		if !strings.HasPrefix(path, "/") {
-			return nil, fmt.Errorf("allow entry %q: path must be absolute", line)
-		}
-		routes = append(routes, sandbox.HostRoute{Method: method, Path: path})
+		routes = append(routes, route)
 	}
 	return routes, nil
+}
+
+// parseRoute turns one "METHOD /path" line into a HostRoute, the method upper-cased.
+func parseRoute(line string) (sandbox.HostRoute, error) {
+	fields := strings.Fields(line)
+	if len(fields) != 2 {
+		return sandbox.HostRoute{}, fmt.Errorf("%q must be %q", line, "METHOD /path")
+	}
+	method, path := strings.ToUpper(fields[0]), fields[1]
+	if !strings.HasPrefix(path, "/") {
+		return sandbox.HostRoute{}, fmt.Errorf("%q: path must be absolute", line)
+	}
+	return sandbox.HostRoute{Method: method, Path: path}, nil
+}
+
+// ParseBatchOf turns a profile's batch_of object into a map from each per-item route to
+// the batch route declared to serve it. Load applies it, and plimsoll-specgen applies it
+// to what it generates, so a generated batch_of passes the same rules. It refuses what could never match a finding or would
+// be ambiguous, rather than load a declaration that silently does nothing: either side
+// not a GET (a write's batch semantics are out of scope), a route a grant could not
+// hold, a served route with no "*" segment (a fan-out is always on one), a batch route
+// that serves itself or serves nothing, and a per-item route two batch routes claim.
+func ParseBatchOf(raw map[string][]string) (map[sandbox.HostRoute]sandbox.HostRoute, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(raw))
+	for k := range raw {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // a deterministic first error
+	out := make(map[sandbox.HostRoute]sandbox.HostRoute)
+	for _, key := range keys {
+		batch, err := parseBatchRoute(key)
+		if err != nil {
+			return nil, err
+		}
+		if len(raw[key]) == 0 {
+			return nil, fmt.Errorf("batch_of %q serves no route", key)
+		}
+		for _, line := range raw[key] {
+			served, err := parseBatchRoute(line)
+			if err != nil {
+				return nil, err
+			}
+			if !slices.Contains(strings.Split(served.Path, "/"), "*") {
+				return nil, fmt.Errorf("batch_of %q: served route %q has no \"*\" segment, so no fan-out could ever be on it", key, line)
+			}
+			if served == batch {
+				return nil, fmt.Errorf("batch_of %q serves itself", key)
+			}
+			if prior, dup := out[served]; dup {
+				return nil, fmt.Errorf("batch_of: %s %s is served by both %s %s and %s", served.Method, served.Path, prior.Method, prior.Path, key)
+			}
+			out[served] = batch
+		}
+	}
+	return out, nil
+}
+
+// parseBatchRoute parses one side of a batch_of relation: a GET a grant could hold.
+func parseBatchRoute(line string) (sandbox.HostRoute, error) {
+	route, err := parseRoute(line)
+	if err != nil {
+		return sandbox.HostRoute{}, fmt.Errorf("batch_of %w", err)
+	}
+	if route.Method != "GET" {
+		return sandbox.HostRoute{}, fmt.Errorf("batch_of %q: only GET routes can be declared (a write's batch semantics cannot be)", line)
+	}
+	if err := sandbox.ValidateHostRoute(route); err != nil {
+		return sandbox.HostRoute{}, fmt.Errorf("batch_of %q: %w", line, err)
+	}
+	return route, nil
 }

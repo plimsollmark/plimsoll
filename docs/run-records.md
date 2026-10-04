@@ -242,7 +242,8 @@ uses the standard library only (Ed25519, SHA-256, JSON).
 - **Verify.** A bundle is the file of signed records the harness keeps, in JSON Lines
   (one JSON object per line). A call's line is its stored request and response (their
   binary protobuf encodings, in base64) and its envelope; a close's line is an envelope
-  alone. The messages are stored binary because protobuf JSON writes every NaN as `"NaN"`
+  alone; every line also carries its link, and a checkpoint's line is its link alone (see
+  below). The messages are stored binary because protobuf JSON writes every NaN as `"NaN"`
   and reads it back as one particular NaN, which in Go is not the one the daemon sends
   (every NaN of a module output goes out as the quiet NaN with no sign or payload, so a
   JSON client in Python or TypeScript reads back the bits it hashed), so a stored JSON
@@ -254,14 +255,49 @@ uses the standard library only (Ed25519, SHA-256, JSON).
     that the tier meets the request's floor;
   - requires the record the stored response carries to equal the signed one in every
     field;
-  - checks each session's chain: one record version throughout (one daemon served it),
-    calls numbered from 1 with no gap, each naming the record before it, and a close
-    whose count and last record match.
+  - checks each session's chain: calls numbered from 1 with no gap, each naming the
+    record before it, and a close whose count and last record match. Records are
+    version 2, or version 3 for a call that may have run but got no answer (version 2's
+    fields and more); a version 1 record, which states no software, is refused.
 
   A chain without a close fails, because a chain whose last calls were cut off looks
   exactly like an ended session. A session closed before any call is its close alone,
   with a count of zero and no last record. A call another holder of the session ID made
   shows up as a gap, since the daemon numbers the calls it executed.
+
+  - follows the bundle's links: every line carries a second envelope the harness signed,
+    a link (`https://plimsollmark.github.io/plimsoll/bundle-link/v1`, one signature, the
+    harness's) stating the line's position, the SHA-256 of the line before it and the
+    SHA-256 of its own entry; and the last line must be a checkpoint, a link alone that
+    states how many lines come before it, which the harness writes when it finishes
+    (`Harness.Checkpoint`). The digests are over stored bytes: a line's is the SHA-256
+    of the line as stored, without its newline, and an entry's is the same bytes with
+    the line's `link` member, always its last, removed. A line must be exactly the
+    encoding the harness gives its entry (members in the order `request`, `response`,
+    `envelope`, `link`, standard padded base64, no whitespace, no escape the encoder
+    would not write, nothing after the object), and a payload exactly the base64 of
+    what it decodes to, so no reader finds more in a line than the verifier did.
+
+  So a bundle with a line removed, moved, added or changed anywhere in it, single runs and
+  whole sessions included, or with its end cut off, fails: the verified bundle is the
+  whole file the harness wrote. Two things it still cannot show. A harness resumed on a
+  bundle (`plimsoll-attest run` appends one run per invocation, each ending with a
+  checkpoint) leaves earlier checkpoints in the file, and a bundle cut back to one of them
+  verifies as whole. And the file being whole says nothing about whether the harness was
+  handed every run the caller made. Both take a record kept outside the file: the
+  caller's own list of the request digests of its calls, which `plimsoll-attest verify
+  -expect FILE` (or `-expect-count N`) holds the bundle to (`attest.VerifyExpected`),
+  or an entry in an append-only log such as a transparency log. A call's request digest
+  is `request_sha256` in its run record (`Result.Record.RequestSHA256` in Go), which the
+  client has already checked against the request it sent; every call that returned a
+  record counts, an unanswered session call's included. The bundle must hold exactly
+  those requests, each as many times as the list names it, so a call missing, a call
+  added, or a call whose request is not the one the caller sent fails. Two calls with
+  one digest sent the same request (the digest leaves out only the `trace_id`), so
+  counting them is exact and no ID has to be unique. Each line of the file is one
+  digest; anything after it on the line, such as the call's `trace_id`, is a label the
+  check ignores. The list binds what was sent, not what came back: a caller that also
+  needs a result proven compares that call's `result_sha256` with its own log.
 - **Replay.** The bundle is verified first, and nothing is sent unless it verifies.
   Each stored single run is then sent again and its result digest compared with the
   signed one. It is meaningful for deterministic workloads; one that reads the
@@ -291,4 +327,15 @@ go run ./cmd/plimsoll-attest replay -daemon http://127.0.0.1:8746 -pub harness.p
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as
 `{"protocol": 2, "javascript": {"code": "console.log(1)"}}`. The token comes from the
 environment and the key from a file or `PLIMSOLL_ATTEST_KEY`, so neither appears in a
-process listing.
+process listing. A bundle holds every run's request and response in full, the submitted
+code and its output included, so on Unix `run` creates it readable by its owner only
+(0600), and refuses, before the run, to add to an existing bundle its group or others
+can read or write unless `-shared-bundle` says it is shared on purpose; it never changes
+an existing bundle's mode. On Windows, where access is a matter of ACLs, a new bundle
+takes the ACL its directory passes on and no access is checked, so keep bundles in a
+directory only you can read.
+An append that fails part way is cut back and the cut synced to disk, so the bundle is
+left as it was and the next run continues it; the record it could not append goes to a
+new owner-only side file (`runs.jsonl.unsealed-<UTC time>-<random>.jsonl`), never into
+an existing one. If the cut or its sync fails too, the error says so: the bundle may then
+hold part of a line after a crash, so verify it before the next run.

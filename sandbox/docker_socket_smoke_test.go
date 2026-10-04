@@ -32,7 +32,7 @@ func TestStartSmokeSocketAnswersPong(t *testing.T) {
 	defer closeFn()
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o666 {
-		t.Fatalf("socket mode = %v, %v; want 0666 so the uid-1000 guest can connect", info, err)
+		t.Fatalf("socket mode = %v, %v; want 0666 so the guest uid can connect", info, err)
 	}
 	c, err := dialUnix(path)
 	if err != nil {

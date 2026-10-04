@@ -72,6 +72,11 @@ func Build(getenv func(string) string) (Provider, error) {
 	// " docker", "e2b ") select the intended provider instead of silently falling to
 	// Disabled. The default branch stays fail-safe: an unknown value never executes.
 	raw := getenv("SANDBOX_PROVIDER")
+	// A security setting that does nothing must not look applied: only docker picks
+	// its guests' uid.
+	if strings.TrimSpace(getenv("SANDBOX_GUEST_UID")) != "" && strings.ToLower(strings.TrimSpace(raw)) != "docker" {
+		return Provider{}, fmt.Errorf("SANDBOX_GUEST_UID applies to the docker provider only, not %q: leave it unset", strings.TrimSpace(raw))
+	}
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "docker":
 		d := DefaultDocker(getenv("SANDBOX_DOCKER_IMAGE"))
@@ -86,6 +91,16 @@ func Build(getenv func(string) string) (Provider, error) {
 			return Provider{}, err
 		}
 		d.RequirePinnedImages = requirePinned
+		if raw := strings.TrimSpace(getenv("SANDBOX_GUEST_UID")); raw != "" {
+			uid, err := strconv.Atoi(raw)
+			if err != nil {
+				return Provider{}, fmt.Errorf("SANDBOX_GUEST_UID %q is not a number", raw)
+			}
+			if err := validateGuestUID(uid); err != nil {
+				return Provider{}, err
+			}
+			d.GuestUID = uid
+		}
 		res.applyDocker(d)
 		return Provider{Sandbox: d, Resources: res}, nil
 	case "e2b":

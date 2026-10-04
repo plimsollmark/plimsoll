@@ -342,7 +342,9 @@ whose step is `python3 main.py`.
   `SANDBOX_TOTAL_MEMORY_MB`. A suspended session whose sandbox was stopped holds none; the
   call that resumes it takes a slot first, and a capacity refusal there ran nothing and is
   safe to retry. A paused docker session keeps its slot, because a paused container keeps
-  its memory. Every call
+  its memory. A session that ends keeps its slot until its sandbox is deleted, since the
+  sandbox holds its memory until then; the call that ended it says so in its own answer
+  at once. Every call
   is charged to the caller's rate limit. Opening a session is charged like a run. A call
   gets the daemon's own five-minute timeout ceiling, exactly as a run does.
 
@@ -432,7 +434,10 @@ A docker session is the container a project run gets, kept for the session:
     inside its session's limit, including the interpreter of a language the session never
     uses. A waiting container holds no concurrency slot until it is claimed, but each is
     charged one run's memory against `SANDBOX_TOTAL_MEMORY_MB` (its container's limit is
-    one run's), so with a budget set, a pool of 2 leaves room for two runs fewer.
+    one run's), so with a budget set, a pool of 2 leaves room for two runs fewer. A
+    container the pool removes (waiting too long, made under an older image, or moved to
+    another language) counts toward the pool's size until docker has removed it, so its
+    replacement never runs beside it outside that charge.
   - **Language hints decide which interpreters wait.** A session opened with a hint is
     handed the waiting container that runs the most of its hinted languages, then the one
     running the fewest others, then the oldest; any waiting container beats creating one,

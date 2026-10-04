@@ -140,6 +140,7 @@ func (a *admissionSandbox) RunJavaScript(ctx context.Context, req Request) (Resu
 	if err != nil {
 		return Result{Sandbox: a.Name()}, err
 	}
+	ctx, release = WithCapacity(ctx, release) // a sandbox that outlives the call keeps its share
 	defer release()
 	return a.Sandbox.RunJavaScript(ctx, req)
 }
@@ -152,6 +153,7 @@ func (a *admissionSandbox) RunProject(ctx context.Context, req ProjectRequest) (
 	if err != nil {
 		return ProjectResult{Sandbox: a.Name()}, err
 	}
+	ctx, release = WithCapacity(ctx, release) // a sandbox that outlives the call keeps its share
 	defer release()
 	return a.Sandbox.RunProject(ctx, req)
 }
@@ -164,6 +166,7 @@ func (a *admissionSandbox) RunModule(ctx context.Context, req ModuleRequest) (Mo
 	if err != nil {
 		return ModuleResult{Sandbox: a.Name()}, err
 	}
+	ctx, release = WithCapacity(ctx, release) // a sandbox that outlives the call keeps its share
 	defer release()
 	return a.Sandbox.RunModule(ctx, req)
 }
@@ -265,8 +268,13 @@ var (
 	_ Drainer            = (*admissionSandbox)(nil)
 	_ SessionProvider    = (*admissionSandbox)(nil)
 	_ SessionPool        = (*admissionSandbox)(nil)
+	_ Metered            = (*admissionSandbox)(nil)
 	_ EgressGuardCapable = (*admissionGuardSandbox)(nil)
 )
+
+// BillingTeardown forwards: a provider billed by the second stays so behind the
+// decorator, so its runs still draw on the daily allowances.
+func (a *admissionSandbox) BillingTeardown() time.Duration { return MeteredTeardown(a.Sandbox) }
 
 // SmokeTest forwards to the wrapped provider. A provider without one has no smoke
 // test through the decorator either, which is what EnsureReady does unwrapped.
@@ -332,12 +340,14 @@ func (a *admissionSandbox) StartSessionPool(ctx context.Context, size int, lifet
 	}
 	var c *poolCharge
 	if a.memCap > 0 && size > 0 {
-		c = &poolCharge{mib: size * a.perRun}
 		a.mu.Lock()
-		if free := a.memCap - a.memInUse; c.mib > free {
+		// Divided, not multiplied: an embedder's size can make size * perRun overflow
+		// and wrap to a charge the budget accepts. perRun is positive whenever memCap is.
+		if free := a.memCap - a.memInUse; size > free/a.perRun {
 			a.mu.Unlock()
-			return fmt.Errorf("sandbox admission: a session pool of %d holds %d MiB, more than the %d MiB of the memory budget not in use", size, c.mib, free)
+			return fmt.Errorf("sandbox admission: a session pool of %d runs of %d MiB each is more than the %d MiB of the memory budget not in use", size, a.perRun, free)
 		}
+		c = &poolCharge{mib: size * a.perRun}
 		if a.pools == nil {
 			a.pools = map[*poolCharge]struct{}{}
 		}
@@ -357,8 +367,8 @@ func (a *admissionSandbox) StartSessionPool(ctx context.Context, size int, lifet
 }
 
 // OpenSession admits a session as it admits a run, and keeps the reservation until
-// the session has ended: its sandbox holds memory between calls as well as during
-// them.
+// Done, when the session has ended and its sandbox is gone: the sandbox holds memory
+// between calls as well as during them, and until it is deleted.
 func (a *admissionSandbox) OpenSession(ctx context.Context, opts SessionOptions) (Session, error) {
 	sp, ok := a.Sandbox.(SessionProvider)
 	if !ok || !sp.SupportsSessions() {
@@ -371,9 +381,10 @@ func (a *admissionSandbox) OpenSession(ctx context.Context, opts SessionOptions)
 	if err != nil {
 		return nil, err
 	}
-	s, err := sp.OpenSession(ctx, opts)
+	openCtx, openFailed := WithCapacity(ctx, release) // a failed open's sandbox may outlive it
+	s, err := sp.OpenSession(openCtx, opts)
 	if err != nil {
-		release()
+		openFailed()
 		return nil, err
 	}
 	go func() {

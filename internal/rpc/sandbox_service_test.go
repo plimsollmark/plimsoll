@@ -773,3 +773,43 @@ func TestAFailedRunStillCountsItsBrokeredCalls(t *testing.T) {
 		})
 	}
 }
+
+// holdingSandbox is a provider whose sandbox outlives the call: it takes a
+// HoldCapacity during the run and leaves ending it to the test.
+type holdingSandbox struct {
+	fakeSandbox
+	gone func()
+}
+
+func (f *holdingSandbox) RunJavaScript(ctx context.Context, req sandbox.Request) (sandbox.Result, error) {
+	f.gone = sandbox.HoldCapacity(ctx)
+	return f.fakeSandbox.RunJavaScript(ctx, req)
+}
+
+// The daemon's concurrency slot for a run stays taken while the provider holds the
+// run's capacity past its return (its sandbox not yet deleted), and comes back when the
+// hold ends (review F14).
+func TestRunSlotFollowsTheProvidersHold(t *testing.T) {
+	p := &holdingSandbox{}
+	svc := NewSandboxService(p)
+	svc.Limiter = NewCodeLimiter(1, 0, 0, 0)
+	ctx := authenticatedContext("alice")
+	if _, err := svc.Run(ctx, jsReq("1")); err != nil {
+		t.Fatal(err)
+	}
+	if n := svc.Limiter.Stats().InFlight; n != 1 {
+		t.Fatalf("%d slots taken after the run returned with its sandbox still alive; want 1", n)
+	}
+	if _, err := svc.Run(ctx, jsReq("2")); connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("a second run while the first one's sandbox lives: %v", err)
+	}
+	gone := p.gone
+	gone()
+	if n := svc.Limiter.Stats().InFlight; n != 0 {
+		t.Fatalf("%d slots taken once the sandbox is gone; want 0", n)
+	}
+	if _, err := svc.Run(ctx, jsReq("3")); err != nil {
+		t.Fatalf("a run once the sandbox is gone: %v", err)
+	}
+	p.gone()
+}

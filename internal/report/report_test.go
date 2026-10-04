@@ -104,12 +104,12 @@ func TestRenderFromSample(t *testing.T) {
 		"Fan-out",
 		"Aggregate in code",
 		"/v1/lights/*",
-		"Better route already granted",
+		"as this route's batch form and grants it",
 		"a batch endpoint would collapse them into one request.",
 		// The three fix classes the report distinguishes, each on a real record.
 		"agent-fixable",
 		"grant a route",
-		"<code>GET /api/suppliers</code> but this profile does not grant it",
+		"<code>GET /api/suppliers</code> as this route's batch form but does not grant it",
 		"no known route",
 		"work in progress", // the advisor's own status, on the artifact itself
 		"metadata only",    // footer guarantee
@@ -230,14 +230,31 @@ func TestParseCarriesGrantRoute(t *testing.T) {
 	}
 }
 
-// TestRenderClassifiesByWhatIsKnown checks the three classes read differently on the
-// page. The distinction is the point: a granted route is the agent's to use, a catalogued
-// one is an operator's allow-list line, and neither being known is not evidence that the
-// API must change — the profile may simply declare no catalog.
+func TestParseCarriesCandidateRoute(t *testing.T) {
+	line := `{"msg":"code run","grant_profile":"inventory","advice_findings":1,"advice_finding_details":[{"pattern":"fan_out","severity":"medium","remedy":"batch","method":"GET","route":"/api/orders/*","agent_fixable":false,"candidate_method":"GET","candidate_route":"/api/orders"}]}`
+	recs, err := Parse(strings.NewReader(line))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || len(recs[0].Findings) != 1 {
+		t.Fatalf("parsed %+v, want one record with one finding", recs)
+	}
+	f := recs[0].Findings[0]
+	if f.CandidateMethod != "GET" || f.CandidateRoute != "/api/orders" || f.Class() != ClassCandidate {
+		t.Fatalf("candidate = %q %q class %q, want GET /api/orders, %q", f.CandidateMethod, f.CandidateRoute, f.Class(), ClassCandidate)
+	}
+}
+
+// TestRenderClassifiesByWhatIsKnown checks the four classes read differently on the
+// page. The distinction is the point: a declared, granted route is the agent's to use, a
+// declared, ungranted one is an operator's allow-list line, a route found from its path
+// is the operator's to check before declaring, and none being known is not evidence that
+// the API must change (the profile may simply declare no catalog).
 func TestRenderClassifiesByWhatIsKnown(t *testing.T) {
-	rec := Record{Profile: "inventory", Sandbox: "docker", FindingCount: 3, Findings: []Finding{
-		{Pattern: "fan_out", Severity: "high", Remedy: "batch", Method: "GET", Route: "/a/*", Detail: "granted sibling", AgentFixable: true, SuggestedMethod: "GET", SuggestedRoute: "/a"},
-		{Pattern: "fan_out", Severity: "medium", Remedy: "batch", Method: "GET", Route: "/b/*", Detail: "catalogued sibling", GrantRouteMethod: "GET", GrantRoute: "/b"},
+	rec := Record{Profile: "inventory", Sandbox: "docker", FindingCount: 4, Findings: []Finding{
+		{Pattern: "fan_out", Severity: "high", Remedy: "batch", Method: "GET", Route: "/a/*", Detail: "declared and granted", AgentFixable: true, SuggestedMethod: "GET", SuggestedRoute: "/a"},
+		{Pattern: "fan_out", Severity: "medium", Remedy: "batch", Method: "GET", Route: "/b/*", Detail: "declared, not granted", GrantRouteMethod: "GET", GrantRoute: "/b"},
+		{Pattern: "fan_out", Severity: "medium", Remedy: "batch", Method: "GET", Route: "/d/*", Detail: "from the path", CandidateMethod: "GET", CandidateRoute: "/d"},
 		{Pattern: "fan_out", Severity: "low", Remedy: "batch", Method: "GET", Route: "/c/*", Detail: "nothing known"},
 	}}
 	var buf bytes.Buffer
@@ -248,7 +265,9 @@ func TestRenderClassifiesByWhatIsKnown(t *testing.T) {
 	for _, want := range []string{
 		"agent-fixable",
 		"grant a route",
-		"<code>GET /b</code> but this profile does not grant it",
+		"<code>GET /b</code> as this route's batch form but does not grant it",
+		"candidate route",
+		"<code>GET /d</code> this route's collection, but nothing declares it, so the agent was not told about it",
 		"no known route",
 		"the profile declares no catalog to check",
 	} {

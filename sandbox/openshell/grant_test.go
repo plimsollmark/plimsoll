@@ -180,7 +180,7 @@ func (f *fakeGateway) ForwardTcp(ctx context.Context, stream *connect.BidiStream
 // relay is the Go stand-in for relayScript: the same pairing and the same "ready" and
 // "need" lines, on a real port and socket.
 func (fw *fakeForwarding) relay(e *fakeExec) error {
-	cmd := e.start.GetCommand()
+	cmd, _ := controlled(e.start.GetCommand())
 	port64, _ := strconv.ParseUint(cmd[3], 10, 32)
 	up, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -309,8 +309,11 @@ func getLines(sock, path string, n int) []string {
 // grantScript runs the relay stand-in for the relay exec and guest for the payload.
 func grantScript(fw *fakeForwarding, guest func(e *fakeExec) error) func(e *fakeExec) error {
 	return func(e *fakeExec) error {
-		cmd := e.start.GetCommand()
+		cmd, clean := controlled(e.start.GetCommand())
 		if len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && cmd[2] == relayScript {
+			if !clean || len(e.start.GetEnvironment()) > 0 {
+				return fmt.Errorf("the grant relay started with the exec's environment: %q", e.start.GetCommand())
+			}
 			return fw.relay(e)
 		}
 		return guest(e)

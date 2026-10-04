@@ -166,7 +166,7 @@ func TestDockerSessionPoolConformance(t *testing.T) {
 	d := pythonSessionDocker(t)
 	startPool(t, d, 2)
 	langs := d.SessionEnvironments().Project.Languages
-	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs})
+	sessiontest.Run(t, d, sessiontest.Config{Lifetime: 5 * time.Minute, ShortLifetime: 20 * time.Second, Languages: langs, Teardown: sandbox.DockerRemoveBudget})
 }
 
 // Sessions that hint Python move the pool: after five of them, one of its two members

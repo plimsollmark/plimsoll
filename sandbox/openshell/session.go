@@ -47,8 +47,6 @@ const (
 	// sessionLabel marks a session's sandbox (informational; the reaper treats it as
 	// any plimsoll sandbox, by its declared lifetime).
 	sessionLabel = "plimsoll.session"
-	// sweepBudget bounds one sweep exec: normally a node start and one /tmp walk.
-	sweepBudget = 20 * time.Second
 	// stopBudget bounds a stop and its wait for the stopped phase.
 	stopBudget = 60 * time.Second
 	// startBudget bounds a start, its wait for the ready phase and the process list
@@ -64,27 +62,19 @@ func (p *Provider) SessionEnvironments() sandbox.Environments { return p.Environ
 
 // session is one open session.
 type session struct {
-	p       *Provider
-	b       box
-	labels  map[string]string
-	tier    sandbox.IsolationClass
-	expires time.Time
-	disk    int64
-
-	ctx    context.Context // cancelled when the session ends, which stops a call in flight
-	cancel context.CancelFunc
-	turn   chan struct{} // one slot: holding it is the right to call, suspend or resume
-	done   chan struct{}
-
-	mu       sync.Mutex
-	end      *sandbox.SessionEndedError
-	stopped  bool
-	baseline []string // pid:starttime:cmdline-hex of the sandbox's own processes
-	life     *time.Timer
-
-	// interps are the session's live interpreters; a stop kills them.
-	interps sessionkit.Interpreters
+	p      *Provider
+	b      box
+	labels map[string]string
+	tier   sandbox.IsolationClass
+	// life is the lifecycle every provider's sessions share: the turn, the lifetime,
+	// suspend and the sweep after every call (sessionkit.Life), with the session's
+	// interpreters, which a stop kills.
+	life *sessionkit.Life
 }
+
+// errDraining is a sandbox creation (a run's, an open's, the smoke test's) refused
+// because Drain has begun.
+var errDraining = fmt.Errorf("%w: the openshell provider is shutting down", sandbox.ErrAtCapacity)
 
 var _ sandbox.Session = (*session)(nil)
 
@@ -105,6 +95,9 @@ func (p *Provider) OpenSession(ctx context.Context, opts sandbox.SessionOptions)
 	if _, err := sandbox.SessionLanguages(opts.Languages, p.SessionEnvironments().Project.Languages); err != nil {
 		return nil, err
 	}
+	// The lifetime runs from the open's start, as on docker: the sandbox declares it
+	// from its create, so the reaper never finds a live session past its declaration.
+	expires := time.Now().Add(opts.Lifetime)
 	// No sized /tmp, whatever DiskMB says: docker discards a tmpfs when its container
 	// stops, and a session is stopped to suspend it and to recover from a failed sweep,
 	// so its files would vanish (measured on v0.1.2, 2026-09-29). Its disk budget is
@@ -113,125 +106,74 @@ func (p *Provider) OpenSession(ctx context.Context, opts sandbox.SessionOptions)
 	if err != nil {
 		return nil, deadlineAware(ctx, err)
 	}
-	sctx, cancel := context.WithCancel(context.Background())
-	s := &session{
-		p: p, b: b, labels: labels, tier: tier,
-		expires: time.Now().Add(opts.Lifetime),
-		disk:    opts.DiskBytes,
-		ctx:     sctx, cancel: cancel,
-		turn: make(chan struct{}, 1),
-		done: make(chan struct{}),
-	}
+	s := &session{p: p, b: b, labels: labels, tier: tier}
+	s.life = sessionkit.NewLife(b.name, s.hooks())
 	if err := s.recordBaseline(ctx); err != nil {
-		cancel()
-		p.deleteLater(b)
+		s.life.Abandon()
+		p.deleteLater(ctx, b)
 		return nil, deadlineAware(ctx, err)
 	}
-	p.mu.Lock()
-	p.sessions[s] = struct{}{}
-	p.mu.Unlock()
-	s.mu.Lock()
-	s.life = time.AfterFunc(time.Until(s.expires), func() { s.finish(sandbox.SessionExpired, "") })
-	s.mu.Unlock()
+	// Once Drain has begun the session is refused and its sandbox deleted, which Drain
+	// waits for (the sandbox stays tracked until then).
+	if !s.life.Activate(&p.sessions, expires, opts.DiskBytes) {
+		s.life.Abandon()
+		p.deleteLater(ctx, b)
+		return nil, sandbox.NotDispatched(sandbox.RefusalCapacity, errDraining)
+	}
 	return s, nil
 }
 
-func (p *Provider) openSessions() []*session {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	out := make([]*session, 0, len(p.sessions))
-	for s := range p.sessions {
-		out = append(out, s)
+// hooks are what the session's lifecycle does to its sandbox.
+func (s *session) hooks() sessionkit.Hooks {
+	return sessionkit.Hooks{
+		Provider: Name, Unit: "sandbox",
+		Refuse: sessionkit.Refusals{Ended: sandbox.RefuseEndedSession, GaveUp: sandbox.RefuseGaveUp, Unreadable: sandbox.RefuseUnreadable},
+		// A stopped container holds no memory or CPU and keeps its files; the next call
+		// starts it again.
+		Suspend: func(ctx context.Context) error {
+			if err := s.stop(ctx); err != nil {
+				return fmt.Errorf("the sandbox could not be stopped: %w", err)
+			}
+			return nil
+		},
+		Resume: func(ctx context.Context) error {
+			ctx, cancel := context.WithTimeout(ctx, startBudget)
+			defer cancel()
+			if err := s.start(ctx); err != nil {
+				return fmt.Errorf("the sandbox could not be started again: %w", err)
+			}
+			return nil
+		},
+		ReadBack: s.readBack,
+		Sweep: func(ctx context.Context, argv []string) (sessionkit.ExecResult, error) {
+			return s.control(ctx, nil, argv, nil, 4096, 4096)
+		},
+		Measure:  sessionkit.MeasureWalk,
+		Dirs:     sessionDirs,
+		Unproven: s.recover,
+		Teardown: func() { s.p.destroy(s.b) },
 	}
-	return out
 }
 
 func (s *session) Isolation() sandbox.IsolationClass { return s.tier }
-func (s *session) ExpiresAt() time.Time              { return s.expires }
-func (s *session) Done() <-chan struct{}             { return s.done }
 
-func (s *session) Err() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.end == nil {
-		return nil
-	}
-	return s.end
-}
-
-// finish ends the session once, for the first reason given: it stops a call in
-// flight, and deletes the sandbox off the caller's path.
-func (s *session) finish(reason sandbox.SessionEnd, detail string) {
-	s.mu.Lock()
-	if s.end != nil {
-		s.mu.Unlock()
-		return
-	}
-	s.end = &sandbox.SessionEndedError{Reason: reason, Detail: detail}
-	if s.life != nil {
-		s.life.Stop()
-	}
-	s.mu.Unlock()
-	s.cancel()
-	s.interps.Close()
-	close(s.done)
-	s.p.mu.Lock()
-	delete(s.p.sessions, s)
-	s.p.mu.Unlock()
-	if reason != sandbox.SessionClosed && reason != sandbox.SessionShutdown {
-		slog.Info("openshell: session ended", "sandbox", s.b.name, "reason", reason.String(), "detail", detail)
-	}
-	s.p.deleteLater(s.b)
-}
-
-// acquire takes the session's turn, bounded by ctx. A session that ended, or ends
-// while waiting, refuses: nothing ran.
-func (s *session) acquire(ctx context.Context) error {
-	if err := s.Err(); err != nil {
-		return sandbox.RefuseEndedSession(err)
-	}
-	select {
-	case s.turn <- struct{}{}:
-	case <-s.done:
-		return sandbox.RefuseEndedSession(s.Err())
-	case <-ctx.Done():
-		return sandbox.RefuseGaveUp(ctx)
-	}
-	if err := s.Err(); err != nil {
-		<-s.turn
-		return sandbox.RefuseEndedSession(err)
-	}
-	return nil
-}
-
-func (s *session) release() { <-s.turn }
+// Environments is the provider's: an OpenShell sandbox runs the configured image,
+// which states no software identity.
+func (s *session) Environments() sandbox.Environments { return s.p.Environments() }
+func (s *session) ExpiresAt() time.Time               { return s.life.ExpiresAt() }
+func (s *session) Done() <-chan struct{}              { return s.life.Done() }
+func (s *session) Err() error                         { return s.life.Err() }
 
 // Close ends the session and deletes its sandbox. It does not wait for a call in
 // flight: the call is stopped.
 func (s *session) Close(context.Context) error {
-	s.finish(sandbox.SessionClosed, "")
+	s.life.Close()
 	return nil
 }
 
 // Suspend stops the sandbox: a stopped container holds no memory or CPU and keeps its
 // files; the next call starts it again.
-func (s *session) Suspend(ctx context.Context) (bool, error) {
-	if err := s.acquire(ctx); err != nil {
-		return false, err
-	}
-	defer s.release()
-	s.mu.Lock()
-	stopped := s.stopped
-	s.mu.Unlock()
-	if stopped {
-		return false, nil
-	}
-	if err := s.stop(ctx); err != nil {
-		s.finish(sandbox.SessionBoundaryFailed, "the sandbox could not be stopped: "+err.Error())
-		return false, s.Err()
-	}
-	return false, nil
-}
+func (s *session) Suspend(ctx context.Context) (bool, error) { return s.life.Suspend(ctx) }
 
 func (s *session) stop(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopBudget)
@@ -246,10 +188,7 @@ func (s *session) stop(ctx context.Context) error {
 		}
 		switch ph := resp.Msg.GetSandbox().GetStatus().GetPhase(); ph {
 		case openshellv1.SandboxPhase_SANDBOX_PHASE_STOPPED:
-			s.mu.Lock()
-			s.stopped = true
-			s.mu.Unlock()
-			s.interps.Clear()
+			s.life.Interps.Clear()
 			return nil
 		case openshellv1.SandboxPhase_SANDBOX_PHASE_STOPPING, openshellv1.SandboxPhase_SANDBOX_PHASE_READY:
 		default:
@@ -286,9 +225,6 @@ func (s *session) start(ctx context.Context) error {
 			return err
 		}
 	}
-	s.mu.Lock()
-	s.stopped = false
-	s.mu.Unlock()
 	return s.recordBaseline(ctx)
 }
 
@@ -297,20 +233,18 @@ func (s *session) start(ctx context.Context) error {
 // and one main process running the session command, and a host whose ptrace_scope is
 // missing or 0.
 func (s *session) recordBaseline(ctx context.Context) error {
-	out, err := s.p.exec(ctx, s.b, sessionkit.ListArgv(), nil, nil, 1<<20, maxOutputBytes)
+	out, err := s.control(ctx, nil, sessionkit.ListArgv(), nil, 1<<20, maxOutputBytes)
 	if err != nil {
 		return fmt.Errorf("openshell session: list processes: %w", err)
 	}
-	if out.exitCode != 0 {
-		return fmt.Errorf("openshell session: the process list exited %d: %q", out.exitCode, out.stderr)
+	if out.ExitCode != 0 {
+		return fmt.Errorf("openshell session: the process list exited %d: %q", out.ExitCode, out.Stderr)
 	}
-	keep, err := sessionkit.Baseline(out.stdout, sessionCommand, true)
+	keep, err := sessionkit.Baseline([]byte(out.Stdout), sessionCommand, true)
 	if err != nil {
 		return fmt.Errorf("openshell session: %w", err)
 	}
-	s.mu.Lock()
-	s.baseline = keep
-	s.mu.Unlock()
+	s.life.SetBaseline(keep)
 	return nil
 }
 
@@ -326,142 +260,61 @@ func (s *session) admit(ctx context.Context, grant *sandbox.HostAPIGrant, floor 
 	return sandbox.CheckSessionGrant(grant)
 }
 
-// prepare runs with the turn held, before a call: it starts a stopped sandbox, then
-// reads the sandbox and its configuration back and ends the session on any
-// difference. Nothing has run when it fails.
-func (s *session) prepare(ctx context.Context) error {
-	s.mu.Lock()
-	stopped := s.stopped
-	s.mu.Unlock()
-	if stopped {
-		// The caller cannot cut the start short, only its budget can, as with the stop:
-		// a start cancelled after the gateway took it would leave the sandbox running
-		// while this session thinks it stopped.
-		startCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), startBudget)
-		err := s.start(startCtx)
-		cancel()
-		if err != nil {
-			s.finish(sandbox.SessionBoundaryFailed, "the sandbox could not be started again: "+err.Error())
-			return sandbox.RefuseEndedSession(s.Err())
-		}
-	}
+// readBack reads the sandbox and its configuration back before a call and says how
+// the session ends on any difference. A read the gateway does not answer refuses the
+// call and keeps the session, as on docker (review F4).
+func (s *session) readBack(ctx context.Context) error {
 	resp, err := s.p.client.GetSandbox(ctx, connect.NewRequest(&openshellv1.GetSandboxRequest{WorkspaceScope: ws(), Name: s.b.name}))
+	if connect.CodeOf(err) == connect.CodeNotFound {
+		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: "the sandbox no longer exists"}
+	}
 	if err != nil {
-		if ctx.Err() != nil {
-			return sandbox.RefuseGaveUp(ctx)
-		}
-		if connect.CodeOf(err) == connect.CodeNotFound {
-			s.finish(sandbox.SessionSandboxChanged, "the sandbox no longer exists")
-			return sandbox.RefuseEndedSession(s.Err())
-		}
 		return fmt.Errorf("openshell get sandbox: %w", err)
 	}
 	sb := resp.Msg.GetSandbox()
 	switch ph := sb.GetStatus().GetPhase(); ph {
 	case openshellv1.SandboxPhase_SANDBOX_PHASE_READY:
 	case openshellv1.SandboxPhase_SANDBOX_PHASE_ERROR, openshellv1.SandboxPhase_SANDBOX_PHASE_COMPLETED:
-		s.finish(sandbox.SessionMainProcessEnded, conditionSummary(sb))
-		return sandbox.RefuseEndedSession(s.Err())
+		return &sandbox.SessionEndedError{Reason: sandbox.SessionMainProcessEnded, Detail: conditionSummary(sb)}
 	default:
-		s.finish(sandbox.SessionSandboxChanged, fmt.Sprintf("the sandbox is in phase %v, not ready", ph))
-		return sandbox.RefuseEndedSession(s.Err())
+		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: fmt.Sprintf("the sandbox is in phase %v, not ready", ph)}
 	}
 	if err := s.p.verifySandbox(sb, s.labels, sessionCommand, nil); err != nil {
-		s.finish(sandbox.SessionSandboxChanged, err.Error())
-		return sandbox.RefuseEndedSession(s.Err())
+		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: err.Error()}
 	}
-	if err := s.p.verifyConfig(ctx, s.b.name); err != nil {
-		if ctx.Err() != nil {
-			return sandbox.RefuseGaveUp(ctx)
-		}
-		s.finish(sandbox.SessionSandboxChanged, err.Error())
-		return sandbox.RefuseEndedSession(s.Err())
+	cfg, err := s.p.readConfig(ctx, s.b.name)
+	if err != nil {
+		return err
+	}
+	if err := s.p.checkConfig(cfg); err != nil {
+		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: err.Error()}
 	}
 	return nil
 }
 
-// boundary runs after every call, with the turn still held and whatever happened to
-// the caller's context: the sweep, then, when it did not prove the boundary, a stop
-// and start, and when that fails the end of the session. A session over its disk
-// budget ends here too. It reports nothing: the session's state says what happened.
-func (s *session) boundary() {
-	if s.Err() != nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(s.ctx, sweepBudget)
-	s.mu.Lock()
-	args := sessionkit.SweepArgv(s.disk, sessionkit.MeasureWalk, sessionDirs, s.interps.Keep(s.baseline))
-	s.mu.Unlock()
-	out, err := s.p.exec(ctx, s.b, args, nil, nil, 4096, 4096)
-	cancel()
-	if s.Err() != nil {
-		return
-	}
-	switch {
-	case err == nil && out.exited && out.exitCode == sessionkit.SweepClean:
-		return
-	case err == nil && out.exited && out.exitCode == sessionkit.SweepOverBudget:
-		s.finish(sandbox.SessionDiskExceeded, fmt.Sprintf("the session's files under /tmp exceed %d bytes or %d entries", s.disk, sessionkit.MaxDiskEntries))
-		return
-	case err == nil && out.exited && out.exitCode == sessionkit.SweepUnmeasurable:
-		s.finish(sandbox.SessionDiskExceeded, "a directory under /tmp could not be read, so the session's disk use cannot be measured")
-		return
-	}
-	sweepErr := fmt.Sprintf("the sweep exited %d (err %v)", out.exitCode, err)
-	// The sandbox's main process may have ended (code in the sandbox can kill it),
-	// which a restart would hide rather than repair.
-	rctx, rcancel := context.WithTimeout(s.ctx, stopBudget+projectMax)
-	defer rcancel()
-	resp, gerr := s.p.client.GetSandbox(rctx, connect.NewRequest(&openshellv1.GetSandboxRequest{WorkspaceScope: ws(), Name: s.b.name}))
-	if gerr == nil {
+// recover runs after a sweep that did not prove the call boundary: when the sandbox's
+// main process ended (code in the sandbox can kill it), which a restart would hide
+// rather than repair, the session ends; otherwise a stop and start (the platform
+// killing every process) gives the next call a clean sandbox, and when that fails the
+// session ends.
+func (s *session) recover(ctx context.Context, sweep string) *sandbox.SessionEndedError {
+	ctx, cancel := context.WithTimeout(ctx, stopBudget+projectMax)
+	defer cancel()
+	resp, err := s.p.client.GetSandbox(ctx, connect.NewRequest(&openshellv1.GetSandboxRequest{WorkspaceScope: ws(), Name: s.b.name}))
+	if err == nil {
 		switch resp.Msg.GetSandbox().GetStatus().GetPhase() {
 		case openshellv1.SandboxPhase_SANDBOX_PHASE_ERROR, openshellv1.SandboxPhase_SANDBOX_PHASE_COMPLETED:
-			s.finish(sandbox.SessionMainProcessEnded, conditionSummary(resp.Msg.GetSandbox()))
-			return
+			return &sandbox.SessionEndedError{Reason: sandbox.SessionMainProcessEnded, Detail: conditionSummary(resp.Msg.GetSandbox())}
 		}
 	}
-	slog.Warn("openshell: session sweep did not prove the call boundary; restarting the sandbox", "sandbox", s.b.name, "detail", sweepErr)
-	if err := s.stop(rctx); err != nil {
-		s.finish(sandbox.SessionBoundaryFailed, sweepErr+"; the recovery stop failed: "+err.Error())
-		return
+	slog.Warn("openshell: session sweep did not prove the call boundary; restarting the sandbox", "sandbox", s.b.name, "detail", sweep)
+	if err := s.stop(ctx); err != nil {
+		return &sandbox.SessionEndedError{Reason: sandbox.SessionBoundaryFailed, Detail: sweep + "; the recovery stop failed: " + err.Error()}
 	}
-	if err := s.start(rctx); err != nil {
-		s.finish(sandbox.SessionBoundaryFailed, sweepErr+"; the recovery start failed: "+err.Error())
+	if err := s.start(ctx); err != nil {
+		return &sandbox.SessionEndedError{Reason: sandbox.SessionBoundaryFailed, Detail: sweep + "; the recovery start failed: " + err.Error()}
 	}
-}
-
-// begin takes the session's turn and prepares the sandbox for one call. The returned
-// end runs the boundary (the sweep, and its recovery) and gives the turn back off the
-// caller's path: the answer goes back first, and the next call, a suspend or a close
-// waits for it. A session the boundary ends is therefore reported to the next call.
-func (s *session) begin(ctx context.Context) (end func(), err error) {
-	if err := s.acquire(ctx); err != nil {
-		return nil, err
-	}
-	if err := s.prepare(ctx); err != nil {
-		s.release()
-		return nil, err
-	}
-	return func() {
-		go func() {
-			s.boundary()
-			s.release()
-		}()
-	}, nil
-}
-
-// callError is what a call returns when its exec did not deliver an exit status: a
-// session that ended during the call (its lifetime passed, or it was closed) is
-// reported as that end. Execution may have happened, so it is not marked
-// not-dispatched.
-func (s *session) callError(runCtx context.Context, err error) error {
-	if end := s.Err(); end != nil {
-		return end
-	}
-	if ctxErr := deadline.Expired(runCtx); ctxErr != nil {
-		return ctxErr
-	}
-	return err
+	return nil
 }
 
 // RunJavaScript runs req.Code with `node -` in the session's sandbox.
@@ -477,15 +330,11 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 	if err := s.admit(ctx, req.Grant, req.MinimumIsolation); err != nil {
 		return fail, err
 	}
-	end, err := s.begin(ctx)
+	runCtx, done, err := s.life.Call(ctx, timeout)
 	if err != nil {
 		return fail, err
 	}
-	defer end()
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	stop := context.AfterFunc(s.ctx, cancel)
-	defer stop()
+	defer done()
 	code, env := req.Code, map[string]string(nil)
 	var g *grantRun
 	if req.Grant != nil {
@@ -493,7 +342,7 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 		// and the sweep after the call ends it like any other.
 		var err error
 		if g, err = s.p.startGrant(runCtx, s.b, req.Grant, timeout); err != nil {
-			return fail, s.callError(runCtx, err)
+			return fail, s.grantError(runCtx, err)
 		}
 		defer g.Close()
 		code, env = sandbox.HostClientSnippet(req.Code, req.Grant), g.env()
@@ -531,7 +380,7 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 	}
 	// The brokered calls happened whatever became of the exec stream.
 	fail.CallTrace = res.CallTrace
-	return fail, s.callError(runCtx, err)
+	return fail, s.life.CallError(runCtx, err)
 }
 
 // RunProject writes the files and runs the steps through /runner.mjs in the session's
@@ -560,19 +409,15 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 	if err := s.admit(ctx, req.Grant, req.MinimumIsolation); err != nil {
 		return fail, err
 	}
-	end, err := s.begin(ctx)
+	runCtx, done, err := s.life.Call(ctx, timeout+runnerGrace)
 	if err != nil {
 		return fail, err
 	}
-	defer end()
-	runCtx, cancel := context.WithTimeout(ctx, timeout+runnerGrace)
-	defer cancel()
-	stop := context.AfterFunc(s.ctx, cancel)
-	defer stop()
+	defer done()
 	var g *grantRun
 	if req.Grant != nil {
 		if g, err = s.p.startGrant(runCtx, s.b, req.Grant, timeout+runnerGrace); err != nil {
-			return fail, s.callError(runCtx, err)
+			return fail, s.grantError(runCtx, err)
 		}
 		defer g.Close()
 	}
@@ -584,7 +429,7 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 	// The brokered calls happened whatever became of the run.
 	fail.CallTrace = res.CallTrace
 	if err != nil {
-		return fail, s.callError(runCtx, err)
+		return fail, s.life.CallError(runCtx, err)
 	}
 	if res.Outcome == sandbox.ProjectOutcomeTimedOut && s.Err() != nil {
 		// The session ended under the call, not the call's own budget.
@@ -593,7 +438,36 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 	return res, nil
 }
 
-// execFunc is exec in the form the shared interpreter driver calls.
+// grantError is what a call returns when its grant could not be set up. A refusal
+// marked not dispatched (the credential could not be minted, before anything of the
+// call ran) stays as it is, as on docker, whatever became of the session meanwhile;
+// anything else, a relay that did not start, is a call error.
+func (s *session) grantError(runCtx context.Context, err error) error {
+	if _, marked := sandbox.NotDispatchedReason(err); marked {
+		return err
+	}
+	return s.life.CallError(runCtx, err)
+}
+
+// control runs argv, one of plimsoll's own programs (the process lister, the sweep),
+// under sessionkit.ControlArgv, with env as its only variables besides PATH: nothing
+// the gateway's exec hands a command reaches it. A v0.1.2 gateway hands every exec a
+// fixed set, never the image's environment (measured 2026-10-03); this keeps a
+// variable that loads code (NODE_OPTIONS) out of plimsoll's programs on a gateway
+// that starts passing the image's.
+func (s *session) control(ctx context.Context, env map[string]string, argv []string, stdin []byte, outCap, errCap int) (sessionkit.ExecResult, error) {
+	argv, err := sessionkit.ControlArgv(env, argv...)
+	if err != nil {
+		return sessionkit.ExecResult{}, err
+	}
+	return s.execFunc(ctx, argv, nil, stdin, outCap, errCap)
+}
+
+// execFunc is exec in the form the shared interpreter driver calls. What it runs is
+// the interpreter launcher, a shell whose child is the guest's interpreter, so it
+// starts with the gateway's environment, which the interpreter inherits; no
+// non-interactive shell loads code from a variable but bash's BASH_ENV, and the
+// gateway's own shell is busybox.
 func (s *session) execFunc(ctx context.Context, argv []string, env map[string]string, stdin []byte, outCap, errCap int) (sessionkit.ExecResult, error) {
 	out, err := s.p.exec(ctx, s.b, argv, env, stdin, outCap, errCap)
 	return sessionkit.ExecResult{
@@ -620,49 +494,22 @@ func (s *session) RunCell(ctx context.Context, req sandbox.CellRequest) (sandbox
 	if err := s.admit(ctx, nil, req.MinimumIsolation); err != nil {
 		return fail, err
 	}
-	end, err := s.begin(ctx)
+	runCtx, done, err := s.life.Call(ctx, timeout)
 	if err != nil {
 		return fail, err
 	}
-	defer end()
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	stop := context.AfterFunc(s.ctx, cancel)
-	defer stop()
+	defer done()
 	files := make([]sessionkit.File, 0, len(req.Files))
 	for _, f := range req.Files {
 		files = append(files, sessionkit.File{Path: f.Path, Content: f.Content})
 	}
 	start := time.Now()
-	out, err := s.interps.RunRelayed(runCtx, s.execFunc, s.attach, sessionkit.Cell{
+	out, err := s.life.Interps.RunRelayed(runCtx, s.execFunc, s.attach, sessionkit.Cell{
 		Language: string(req.Language), Code: req.Code, Files: files,
 		Work: workDir, OutCap: maxOutputBytes, ErrCap: maxOutputBytes,
 	})
-	if refusal, ok := sandbox.RefuseCell(err, s.Err()); ok {
-		return fail, refusal
-	}
-	if err != nil {
-		return fail, s.callError(runCtx, err)
-	}
-	res := sandbox.CellResult{
-		Stdout:             out.Stdout,
-		Stderr:             out.Stderr,
-		StdoutTruncated:    out.StdoutTruncated,
-		StderrTruncated:    out.StderrTruncated,
-		TimedOut:           out.TimedOut,
-		InterpreterStarted: out.Started,
-		InterpreterEnded:   out.Ended,
-		Duration:           time.Since(start),
-		Sandbox:            Name,
-		Isolation:          s.tier,
-	}
-	switch {
-	case out.TimedOut:
-		res.ExitCode = 124
-	case out.Raised:
-		res.ExitCode = 1
-	}
-	return res, nil
+	return sandbox.SessionCellResult(runCtx, fail, out, err, time.Since(start), "", "", s.Err,
+		func() error { return nil }, func(err error) error { return s.life.CallError(runCtx, err) })
 }
 
 // streamAttached is an exec stream held open for the session: an interpreter's relay.
@@ -705,14 +552,20 @@ func (a *streamAttached) Close() {
 // 2026-10-01), which sandbox.SessionSmokeTest checks at startup, refusing sessions on
 // a gateway where a call can open a running relay's pipes; the sweep's verdict stays
 // protected by the ptrace_scope check OpenSession makes.
+//
+// A relay is one of plimsoll's own programs: its frames carry every cell's result. It
+// starts under sessionkit.ControlArgv, with env as its only variables (control).
 func (s *session) attach(argv []string, env map[string]string) (sessionkit.Attached, error) {
-	ctx, cancel := context.WithCancel(s.ctx)
+	argv, err := sessionkit.ControlArgv(env, argv...)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(s.life.Context())
 	stream := s.p.client.ExecSandboxInteractive(ctx)
 	start := &openshellv1.ExecSandboxRequest{
 		WorkspaceScope: ws(),
 		Sandbox:        s.b.name,
 		Command:        argv,
-		Environment:    env,
 		NoLoginShell:   true,
 	}
 	if err := stream.Send(&openshellv1.ExecSandboxInput{Payload: &openshellv1.ExecSandboxInput_Start{Start: start}}); err != nil {

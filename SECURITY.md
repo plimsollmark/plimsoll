@@ -142,7 +142,9 @@ start unless all of these are verifiably in force:
 - an explicit resource envelope: the per-run limits, such as memory and CPU, that the
   operator sets;
 - per-caller rate limiting;
-- a per-caller concurrency cap.
+- a per-caller concurrency cap;
+- with a provider billed by the second (E2B, Docker Cloud), a daily allowance in seconds
+  on every caller (`paid_seconds_per_day`).
 
 `/metrics` has no authentication, and its labels name <dfn>*grant profiles*</dfn>
 (grants stored on the server under a name, which a caller selects by that name) and
@@ -150,3 +152,52 @@ route templates. It is therefore served on a listener of its own, bound to this 
 only by default (`PLIMSOLL_METRICS_ADDR`, default `127.0.0.1:9464`; `off` disables
 it). Bind it to an address other hosts can reach only behind a firewall rule that
 lets through just the scraper, the monitoring system that collects the metrics.
+
+## What a deployment still has to handle
+
+These follow from what plimsoll is, not from a flaw in it, and no setting removes them.
+
+- **Every grant is also a way out for data.** The <dfn>*broker*</dfn>, the part of the
+  daemon that makes a grant's calls for the guest, checks each call's method and route
+  against the grant, never what the call carries. The guest chooses what fills a route's
+  `*` segments, and it can send a request body with any method, `GET` included. So any
+  grant lets the guest send anything it can read (the files a caller handed it, what an
+  earlier call returned) to the API the grant names, inside the call budget and the
+  1 MiB request limit, which bound how much, not what. Grant a route only on an API you
+  would let receive that data, and prefer routes without `*`. A grant that writes
+  (`POST`, `PUT`, `PATCH`, `DELETE`) adds one more thing: the data can land where others
+  read it, so give the routes that write a profile of their own.
+- **Sandbox output is untrusted input to the model.** Everything a run returns
+  (standard output and error, a project step's output, artifacts) is
+  written by the guest's code, and by whatever that code read. It can contain text
+  written to steer the agent that reads it (<dfn>*prompt injection*</dfn>: instructions
+  hidden in data so that a model follows them). plimsoll does not inspect output. Treat
+  it as data: show it to the model as a tool result, and do not let a tool result widen
+  what the agent may do, such as which grant profile it may select next.
+- **The docker provider's daemon access is root on that host.** plimsolld drives the
+  docker daemon, and whoever can drive a docker daemon can start a container that
+  mounts the host's root. So whoever controls plimsolld's process or its configuration
+  controls the host. Run plimsolld under an account of its own on a host that serves
+  nothing else, keep its listener behind authentication (`PLIMSOLL_HARDENED=1` requires it),
+  and give it a docker daemon that serves only it.
+- **Under runc, a container's uid is the host's.** Unless the docker daemon remaps uids
+  (each container's uids shifted into a range of its own, through a
+  <dfn>*namespace*</dfn>, the kernel feature that gives a group of processes their own
+  view of something), a process that escapes a runc container acts on the host as the uid
+  it ran as. The docker
+  provider runs guests as uid 61000 (`SANDBOX_GUEST_UID`), which no account uses by
+  default, and refuses at startup a uid this host's `/etc/passwd` or `/etc/group` has; an
+  account from a directory service such as LDAP is not in those files, so choose the uid
+  with it in mind. Better still for runc: rootless docker, or the daemon's `userns-remap`,
+  which map container uids to a range no host account owns. Every run shares that uid,
+  so a runc escape still reaches the processes of other runs on the host. gVisor (`runsc`) or a microVM
+  keeps an escape away from the host kernel in the first place. On the
+  <dfn>*OpenShell*</dfn> provider, which runs code through NVIDIA's OpenShell gateway, the
+  sandbox user is the gateway's choice, not plimsoll's.
+- **Runs on one host share its hardware.** Two runs on the same machine share CPU
+  caches, memory bandwidth and scheduling, so one can measure the other's activity
+  through timing (a <dfn>*side channel*</dfn>: information that leaks through how
+  long or how hard something works, not through any permission). gVisor reduces what a
+  guest can observe of the host kernel, and a microVM more, but plimsoll makes no claim
+  against timing or cache side channels at any tier. Do not run callers that must not
+  learn about each other on the same host.

@@ -46,6 +46,23 @@ func TestReadConnectStreamErrorTrailer(t *testing.T) {
 	}
 }
 
+// envd answers from inside the VM, so its trailer is guest text: a credential in it is
+// scrubbed and its length bounded before it becomes an error.
+func TestReadConnectStreamErrorTrailerIsScrubbed(t *testing.T) {
+	const secret = "e2b_" + "SentinelKey0123456789"
+	msg := "leaked " + secret + " Bearer sentinel-bearer-value " + strings.Repeat("x", 4096)
+	var buf bytes.Buffer
+	buf.Write(frame(0x2, []byte(`{"error":{"code":"internal","message":"`+msg+`"}}`)))
+
+	err := readConnectStream(&buf, func([]byte) error { return nil })
+	if err == nil {
+		t.Fatal("the error trailer was not surfaced")
+	}
+	if got := err.Error(); strings.Contains(got, secret) || strings.Contains(got, "sentinel-bearer-value") || !strings.Contains(got, "<redacted>") || len(got) > 1100 {
+		t.Fatalf("trailer text was not scrubbed and bounded (%d bytes): %.200q", len(got), got)
+	}
+}
+
 func TestReadConnectStreamRejectsOversizedFrame(t *testing.T) {
 	// A header claiming a frame larger than the cap must be rejected BEFORE the
 	// body is allocated/read — this is the OOM-DoS guard.

@@ -4,7 +4,8 @@
 // `preamble` SDK, and the model-facing tool description a gateway shows the agent.
 // Generating all three from the one spec lets a consumer delete the hand-maintained
 // copies. When the spec marks one concrete GET with x-plimsoll-health-check, it also
-// emits the optional `health_check` backpressure probe (see docs/examples/specgen).
+// emits the optional `health_check` backpressure probe, and when collection operations
+// carry x-plimsoll-batch-of, the profile's `batch_of` (see docs/examples/specgen).
 //
 // It is offline and metadata-only: it never fetches the spec's server, embeds no
 // credential, and is byte-deterministic, so it fits a build step and the outputs can
@@ -18,8 +19,8 @@
 // Flags:
 //
 //	-global  JS global the typed SDK attaches to (default "host")
-//	-emit    all | allow | catalog | preamble | description | health | json (default "all", stdout)
-//	-outdir  write allow.json, preamble.js, description.txt (+ health_check.txt) into this dir
+//	-emit    all | allow | catalog | preamble | description | health | batch | json (default "all", stdout)
+//	-outdir  write allow.json, preamble.js, description.txt (+ health_check.txt, batch_of.json) into this dir
 //
 // The `catalog` emit is the full route list for a profile's `catalog` field, which
 // Prospector reads to name an ungranted batch route worth adding; `allow` is the same
@@ -28,6 +29,10 @@
 // probe. Only an operation marked x-plimsoll-health-check designates one, because the
 // probe decides when to resume traffic and an endpoint's name is not evidence of what it
 // measures; with no marker the emit is empty and the reason goes to stderr.
+// The `batch` emit is the JSON object for a profile's `batch_of`: per collection route,
+// the per-item routes its x-plimsoll-batch-of names. It is the API owner's statement
+// that one request returns what those calls did, and the only basis on which an advisor
+// finding names a route to the caller; with no marker the emit is empty.
 //
 // Operations the grant model cannot express (an unenforceable verb, a required query or
 // header parameter) are reported on stderr as skips, and generated-but-narrowed ones as
@@ -57,7 +62,7 @@ func main() {
 
 func run() error {
 	global := flag.String("global", "host", "JS global the typed SDK attaches to")
-	emit := flag.String("emit", "all", "all | allow | catalog | preamble | description | health | json")
+	emit := flag.String("emit", "all", "all | allow | catalog | preamble | description | health | batch | json")
 	outdir := flag.String("outdir", "", "write generated profile artifacts into this dir")
 	flag.Parse()
 
@@ -115,6 +120,11 @@ func run() error {
 		if res.HealthCheck != "" {
 			fmt.Fprintln(os.Stdout, res.HealthCheck)
 		}
+	case "batch":
+		// Empty when no operation is marked, like health: a script composes it as is.
+		if res.BatchOf != nil {
+			return printJSON(os.Stdout, res.BatchOf)
+		}
 	case "json":
 		return printBundleJSON(os.Stdout, res)
 	case "all":
@@ -127,8 +137,12 @@ func run() error {
 		if res.HealthCheck != "" {
 			fmt.Fprintf(os.Stdout, "\n=== health_check (the profile's health_check backpressure probe) ===\n%s\n", res.HealthCheck)
 		}
+		if res.BatchOf != nil {
+			fmt.Fprintf(os.Stdout, "\n=== batch_of (the profile's batch_of, from x-plimsoll-batch-of) ===\n")
+			return printJSON(os.Stdout, res.BatchOf)
+		}
 	default:
-		return fmt.Errorf("unknown -emit %q (want all|allow|catalog|preamble|description|health|json)", *emit)
+		return fmt.Errorf("unknown -emit %q (want all|allow|catalog|preamble|description|health|batch|json)", *emit)
 	}
 	return nil
 }
@@ -136,7 +150,12 @@ func run() error {
 // printAllowJSON writes the allow list as the JSON array of "METHOD /path" strings a
 // grants profile's `allow` field expects.
 func printAllowJSON(w io.Writer, res *specgen.Result) error {
-	b, err := json.MarshalIndent(res.AllowStrings(), "", "  ")
+	return printJSON(w, res.AllowStrings())
+}
+
+// printJSON writes v as indented JSON and a newline.
+func printJSON(w io.Writer, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -146,16 +165,17 @@ func printAllowJSON(w io.Writer, res *specgen.Result) error {
 
 // bundle is the -emit json shape: everything a programmatic consumer needs from one call.
 type bundle struct {
-	Title       string   `json:"title"`
-	Version     string   `json:"version"`
-	Global      string   `json:"global"`
-	Allow       []string `json:"allow"`
-	Preamble    string   `json:"preamble"`
-	Description string   `json:"description"`
-	Skipped     []string `json:"skipped,omitempty"`
-	Warnings    []string `json:"warnings,omitempty"`
-	HealthCheck string   `json:"health_check,omitempty"`
-	HealthNote  string   `json:"health_note,omitempty"`
+	Title       string              `json:"title"`
+	Version     string              `json:"version"`
+	Global      string              `json:"global"`
+	Allow       []string            `json:"allow"`
+	Preamble    string              `json:"preamble"`
+	Description string              `json:"description"`
+	Skipped     []string            `json:"skipped,omitempty"`
+	Warnings    []string            `json:"warnings,omitempty"`
+	HealthCheck string              `json:"health_check,omitempty"`
+	HealthNote  string              `json:"health_note,omitempty"`
+	BatchOf     map[string][]string `json:"batch_of,omitempty"`
 }
 
 // skippedLines renders the skipped operations for the JSON bundle, so a programmatic
@@ -184,6 +204,7 @@ func printBundleJSON(w io.Writer, res *specgen.Result) error {
 		Warnings:    res.Warnings,
 		HealthCheck: res.HealthCheck,
 		HealthNote:  res.HealthNote,
+		BatchOf:     res.BatchOf,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -212,6 +233,14 @@ func writeDir(dir string, res *specgen.Result) error {
 	if res.HealthCheck != "" {
 		files["health_check.txt"] = []byte(res.HealthCheck + "\n")
 	}
+	// batch_of.json likewise exists only when the spec declares a relation.
+	if res.BatchOf != nil {
+		b, err := json.MarshalIndent(res.BatchOf, "", "  ")
+		if err != nil {
+			return err
+		}
+		files["batch_of.json"] = append(b, '\n')
+	}
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -228,6 +257,13 @@ func writeDir(dir string, res *specgen.Result) error {
 		// silently keep authority that the current spec no longer designates.
 		if err := os.Remove(filepath.Join(dir, "health_check.txt")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove stale health_check.txt: %w", err)
+		}
+	}
+	if res.BatchOf == nil {
+		// A relation the current spec no longer declares must not survive in a committed
+		// batch_of.json, where it would keep naming a route to callers.
+		if err := os.Remove(filepath.Join(dir, "batch_of.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove stale batch_of.json: %w", err)
 		}
 	}
 	fmt.Fprintf(os.Stderr, "plimsoll-specgen: wrote %s to %s\n", strings.Join(names, ", "), dir)

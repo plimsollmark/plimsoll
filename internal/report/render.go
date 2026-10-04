@@ -36,6 +36,7 @@ type profileAgg struct {
 	Findings       int
 	AgentFixable   int
 	GrantRoute     int
+	Candidate      int
 	NoKnownRoute   int
 	ExtraCalls     int
 	AddedLatencyMs int64
@@ -73,6 +74,7 @@ type reportData struct {
 	TotalFindings       int
 	TotalAgentFixable   int
 	TotalGrantRoute     int
+	TotalCandidate      int
 	TotalNoKnownRoute   int
 	TotalExtraCalls     int
 	TotalAddedLatencyMs int64
@@ -126,13 +128,16 @@ func aggregate(records []Record, opts Options) reportData {
 
 		for _, f := range r.Findings {
 			// Counted by what plimsoll actually knows about the fix. A finding with no
-			// granted and no catalogued route is "no known route", not "the API must
+			// declared and no candidate route is "no known route", not "the API must
 			// change": that claim needs a complete catalog, which a profile need not
 			// declare.
 			switch f.Class() {
 			case ClassGrantRoute:
 				pa.GrantRoute++
 				d.TotalGrantRoute++
+			case ClassCandidate:
+				pa.Candidate++
+				d.TotalCandidate++
 			case ClassNoKnownRoute:
 				pa.NoKnownRoute++
 				d.TotalNoKnownRoute++

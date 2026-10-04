@@ -248,3 +248,47 @@ func TestShortTokensAreRefused(t *testing.T) {
 		t.Fatalf("a 32-character token: %v", err)
 	}
 }
+
+// A caller's daily allowance on a metered provider is set at create or import and
+// changed with limit (0 removes it); list shows it; a negative one, or limit without
+// a value, is refused.
+func TestPaidSecondsPerDay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "clients.json")
+	do := func(args ...string) (string, error) {
+		var out, diag bytes.Buffer
+		err := run(append([]string{args[0], "-file", path}, args[1:]...), strings.NewReader(""), &out, &diag)
+		return out.String(), err
+	}
+	if _, err := do("create", "-id", "alice", "-paid-seconds-per-day", "3600", "-token-stdout"); err != nil {
+		t.Fatal(err)
+	}
+	allowance := func() int64 {
+		t.Helper()
+		f, _, err := clientconfig.ReadRegular(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f.Clients[0].PaidSecondsPerDay
+	}
+	if got := allowance(); got != 3600 {
+		t.Fatalf("after create: %d", got)
+	}
+	if out, err := do("list"); err != nil || !strings.Contains(out, "3600") {
+		t.Fatalf("list: %q, %v", out, err)
+	}
+	if _, err := do("limit", "-id", "alice", "-paid-seconds-per-day", "60"); err != nil || allowance() != 60 {
+		t.Fatalf("limit 60: %v, %d", err, allowance())
+	}
+	if _, err := do("limit", "-id", "alice", "-paid-seconds-per-day", "0"); err != nil || allowance() != 0 {
+		t.Fatalf("limit 0: %v, %d", err, allowance())
+	}
+	if _, err := do("limit", "-id", "alice"); err == nil {
+		t.Fatal("limit without a value was accepted")
+	}
+	if _, err := do("limit", "-id", "alice", "-paid-seconds-per-day", "-5"); err == nil {
+		t.Fatal("a negative allowance was accepted")
+	}
+	if _, err := do("limit", "-id", "nobody", "-paid-seconds-per-day", "5"); err == nil {
+		t.Fatal("limit on an unknown caller was accepted")
+	}
+}

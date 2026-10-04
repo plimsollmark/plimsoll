@@ -63,7 +63,7 @@ func TestE2BSecuredAccessLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	defer e.kill(vm.id)
+	defer e.kill(ctx, vm)
 	if vm.accessToken == "" {
 		t.Fatal("secure create returned no envd access token")
 	}
@@ -185,9 +185,9 @@ func TestE2BSmokeLive(t *testing.T) {
 
 // TestE2BOrphanListingLive verifies the reconciliation contract against the real
 // control plane: a created sandbox is discoverable by this instance's metadata
-// stamp via GET /sandboxes, a tracked/young sandbox is never reaped, and after
-// untracking it is exactly the reconciler's candidate set (the kill decision
-// itself is unit-tested; the 60s create grace makes killing here too slow).
+// stamp via GET /sandboxes with its lease key intact, a sandbox whose lease is
+// tracked is never reaped, and once the lease is untracked the reconciler kills it
+// at once (review F3: no age window).
 func TestE2BOrphanListingLive(t *testing.T) {
 	e := e2bClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -197,7 +197,7 @@ func TestE2BOrphanListingLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	defer e.kill(vm.id)
+	defer e.kill(ctx, vm)
 
 	listed, err := e.listInstanceSandboxes(ctx)
 	if err != nil {
@@ -207,8 +207,8 @@ func TestE2BOrphanListingLive(t *testing.T) {
 	for _, sb := range listed {
 		if sb.id == vm.id {
 			found = true
-			if sb.startedAt.IsZero() {
-				t.Error("live listing has no parseable startedAt; the reconciler grace would never let this be reaped")
+			if sb.lease != vm.lease {
+				t.Fatalf("live listing carries lease %q, want %q: the control plane does not return the lease key, so reconciliation would never reap", sb.lease, vm.lease)
 			}
 		}
 	}
@@ -220,13 +220,12 @@ func TestE2BOrphanListingLive(t *testing.T) {
 	if n, err := e.ReconcileOrphans(ctx); err != nil || n != 0 {
 		t.Fatalf("reconcile with a tracked live sandbox: killed=%d err=%v, want 0/nil", n, err)
 	}
-	// Untracked but younger than the grace window: still spared.
-	e.untrackVM(vm.id)
-	if n, err := e.ReconcileOrphans(ctx); err != nil || n != 0 {
-		t.Fatalf("reconcile inside the grace window: killed=%d err=%v, want 0/nil", n, err)
+	// Untracked: an orphan now, however young.
+	e.leases.Untrack(vm.lease)
+	if n, err := e.ReconcileOrphans(ctx); err != nil || n != 1 {
+		t.Fatalf("reconcile with the lease untracked: killed=%d err=%v, want 1/nil", n, err)
 	}
-	e.trackVM(vm.id) // restore so the deferred kill's untrack stays consistent
-	t.Logf("ok: sandbox %s discoverable by instance stamp and correctly spared", vm.id)
+	t.Logf("ok: sandbox %s discoverable by instance stamp and lease, spared while tracked, reaped once not", vm.id)
 }
 
 // TestE2BRunProjectMultiStepLive runs a project of three steps, each reading what

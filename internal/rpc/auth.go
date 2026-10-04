@@ -45,6 +45,9 @@ var requiredScopes = map[string]string{
 type Principal struct {
 	UserID string
 	Scopes []string
+	// PaidSecondsPerDay is the caller's daily allowance on a metered provider (its
+	// paid_seconds_per_day); 0 = none of its own (SpendCap).
+	PaidSecondsPerDay int64
 }
 
 // HasScope reports whether the principal holds scope (or the "*" wildcard).

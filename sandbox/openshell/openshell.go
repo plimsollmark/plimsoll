@@ -54,7 +54,9 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/lease"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // Name is the provider id.
@@ -276,9 +278,9 @@ type Provider struct {
 	tier     sandbox.IsolationClass // evidence from the last driver check
 	tierLost bool                   // a check failed after one had passed, and none has passed since
 	version  string                 // the gateway version the last driver check reported
-	tracked  map[string]struct{}    // created and not yet deleted
+	leases   lease.Set              // created and not yet deleted
 	smoke    *smokeEvidence         // the last passing SmokeTest's measurements
-	sessions map[*session]struct{}  // open sessions, which Drain ends
+	sessions sessionkit.Registry    // open sessions and the sandbox creations in flight, which Drain ends and waits for
 }
 
 var (
@@ -335,8 +337,6 @@ func newProvider(cfg Config, client openshellv1connect.OpenShellClient) (*Provid
 		staleAfter: staleMargin,
 		pfTTL:      preflightTTL,
 		pfErr:      errors.New("openshell: no gateway check has completed yet"),
-		tracked:    make(map[string]struct{}),
-		sessions:   make(map[*session]struct{}),
 	}, nil
 }
 
@@ -414,7 +414,7 @@ func (p *Provider) Preflight(ctx context.Context) error {
 	}
 	p.pfRunning = true
 	p.pfMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), driverCheckBudget)
 	defer cancel()
 	_, err := p.checkDriver(ctx)
 	p.pfMu.Lock()
@@ -443,10 +443,19 @@ func deadlineAware(ctx context.Context, err error) error {
 	return err
 }
 
+// driverCheckBudget bounds one driver check, which runs detached from whoever asked for
+// it: the evidence it sets is every caller's, so a poll or a request that hangs up must
+// not be able to turn it to unknown.
+const driverCheckBudget = 10 * time.Second
+
 // ready runs the checks every dispatch shares after request validation: the grant's
 // own validity, the request's floor against the best tier this provider can report
 // (so an impossible floor costs no gateway call), the driver check, and the floor
-// against that evidence.
+// against that evidence. The driver check runs detached from ctx (driverCheckBudget): a
+// caller whose request ended during it (a 1 ms timeout) would otherwise set the tier to
+// unknown, and the daemon would refuse every other caller that states a floor. A failed
+// check is a refusal, not dispatched: reason capacity when the caller's own context has
+// ended, environment when the gateway failed it.
 func (p *Provider) ready(ctx context.Context, grant *sandbox.HostAPIGrant, floor sandbox.IsolationClass) (sandbox.IsolationClass, error) {
 	if grant != nil {
 		if err := grant.Validate(); err != nil {
@@ -456,9 +465,15 @@ func (p *Provider) ready(ctx context.Context, grant *sandbox.HostAPIGrant, floor
 	if err := sandbox.CheckMinimumIsolation(sandbox.IsolationContainer, floor); err != nil {
 		return sandbox.IsolationUnknown, err
 	}
-	tier, err := p.checkDriver(ctx)
+	check, cancel := context.WithTimeout(context.WithoutCancel(ctx), driverCheckBudget)
+	tier, err := p.checkDriver(check)
+	cancel()
 	if err != nil {
-		return tier, deadlineAware(ctx, err)
+		reason := sandbox.RefusalEnvironment
+		if ctx.Err() != nil {
+			reason = sandbox.RefusalCapacity
+		}
+		return tier, sandbox.NotDispatched(reason, deadlineAware(ctx, err))
 	}
 	return tier, sandbox.CheckMinimumIsolation(tier, floor)
 }
@@ -484,7 +499,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	if err != nil {
 		return fail, deadlineAware(runCtx, err)
 	}
-	defer p.deleteLater(b)
+	defer p.deleteLater(ctx, b)
 	code, env := req.Code, map[string]string(nil)
 	var g *grantRun
 	if req.Grant != nil {
@@ -571,7 +586,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 	if err != nil {
 		return fail, deadlineAware(runCtx, err)
 	}
-	defer p.deleteLater(b)
+	defer p.deleteLater(ctx, b)
 	var g *grantRun
 	if req.Grant != nil {
 		if g, err = p.startGrant(runCtx, b, req.Grant, timeout+runnerGrace); err != nil {

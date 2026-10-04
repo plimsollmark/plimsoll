@@ -30,6 +30,7 @@ func (f *fullProvider) Preflight(context.Context) error   { f.mark("Preflighter"
 func (f *fullProvider) SmokeTest(context.Context) error   { f.mark("SmokeTester"); return nil }
 func (f *fullProvider) Drain(context.Context) error       { f.mark("Drainer"); return nil }
 func (f *fullProvider) EgressGuardPath() string           { f.mark("EgressGuardCapable"); return "/guard" }
+func (f *fullProvider) BillingTeardown() time.Duration    { f.mark("Metered"); return time.Second }
 func (f *fullProvider) EgressGuardKnownToken(string) bool { return false }
 func (f *fullProvider) SupportsSessions() bool            { return true }
 func (f *fullProvider) SessionEnvironments() Environments { return Environments{} }
@@ -56,6 +57,7 @@ type endingSession struct {
 }
 
 func (s *endingSession) Isolation() IsolationClass             { return IsolationVM }
+func (s *endingSession) Environments() Environments            { return Environments{} }
 func (s *endingSession) ExpiresAt() time.Time                  { return time.Now().Add(time.Minute) }
 func (s *endingSession) Suspend(context.Context) (bool, error) { return false, nil }
 func (s *endingSession) RunCell(context.Context, CellRequest) (CellResult, error) {
@@ -97,6 +99,7 @@ func TestAdmissionForwardsEveryOptionalInterface(t *testing.T) {
 			return err == nil
 		},
 		"EgressGuardCapable": func(s Sandbox) bool { c, ok := s.(EgressGuardCapable); return ok && c.EgressGuardPath() == "/guard" },
+		"Metered":            func(s Sandbox) bool { return IsMetered(s) },
 		"SessionPool": func(s Sandbox) bool {
 			c, ok := s.(SessionPool)
 			return ok && c.StartSessionPool(ctx, 1, time.Minute) == nil

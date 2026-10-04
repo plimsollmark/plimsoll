@@ -140,13 +140,35 @@ token stops and the per-run downstream credential begins.
 ## List, rotate, revoke
 
 ```sh
-go run ./cmd/plimsoll-clients list   -file clients.json            # ids and scopes; add -json for machines
+go run ./cmd/plimsoll-clients list   -file clients.json            # ids, scopes and allowances; add -json for machines
+go run ./cmd/plimsoll-clients limit  -file clients.json -id mcp-gateway -paid-seconds-per-day 3600
 go run ./cmd/plimsoll-clients rotate -file clients.json -id mcp-gateway -token-stdout
 go run ./cmd/plimsoll-clients revoke -file clients.json -id mcp-gateway
 ```
 
-`list` shows ids and scopes only: no fingerprints, and nothing about a running
-daemon, since the command does not talk to one. `rotate` replaces the token and keeps
+`list` shows ids, scopes and allowances only: no fingerprints, and nothing about a
+running daemon, since the command does not talk to one. `limit` sets a caller's daily
+allowance on a provider billed by the second (<dfn>*E2B*</dfn>, a hosted service that
+runs code in small virtual machines, or Docker Cloud: each run creates a virtual machine
+the operator pays for by the second): seconds of that machine's wall time per UTC day (a
+run that crosses midnight counts in the new day for the part it ran after midnight),
+counted by each daemon on its own, so a caller on K daemons sharing this file can spend K
+times it. Before a run starts the daemon reserves its timeout (the provider's ceiling when
+the call sets none) plus the provider's teardown bound (33 seconds on E2B and Docker
+Cloud), refusing the run when that does not fit; at the end it charges what the run took,
+or the whole reservation when the provider could not delete the virtual machine (its
+delete gave up, or the create may have made one with nothing to delete it by: a create
+whose answer never came back or was neither a success nor a refusal, or on Docker Cloud
+one still running when the run gave up and not found by the cleanup delete; it then
+bills until the provider's own lifetime for it ends: the run's deadline plus 10 seconds on
+E2B, 30 on Docker Cloud, which the reservation covers).
+`0` removes the allowance; `create` and `import` take the same `-paid-seconds-per-day`.
+`SANDBOX_PAID_SECONDS_PER_DAY` is one allowance for the whole daemon on top. The counts
+live in the daemon's memory, so a restart forgets the day's spend, every caller's and the
+daemon's: changing an allowance with `limit` takes a restart, which gives every caller a
+fresh day. <dfn>*Hardened mode*</dfn> (`PLIMSOLL_HARDENED=1`, which refuses to start unless
+every production safeguard is on) requires an allowance on every caller with such a
+provider. `rotate` replaces the token and keeps
 the id and scopes, so `allowed_callers` lists and audit history stay valid. `revoke`
 removes the entry.
 
@@ -193,7 +215,8 @@ caller's token with one created elsewhere.
 ## What the file enforces
 
 The format is [clients.example.json](clients.example.json): a `clients` array of
-`{id, token_sha256, scopes}` and nothing else. Both the command and the daemon
+`{id, token_sha256, scopes}`, an optional `paid_seconds_per_day` (not negative), and
+nothing else. Both the command and the daemon
 reject unknown fields, trailing data, a missing or duplicate id, a `token_sha256`
 that is not 64 hex characters, two callers sharing a fingerprint, and a scope that
 is empty, repeated, or contains whitespace. Ids and fingerprints are trimmed and
@@ -214,7 +237,7 @@ The daemon picks how it checks tokens in this order: `PLIMSOLL_CLIENTS_FILE` (th
 file, one principal per caller), then `PLIMSOLL_TOKEN` (one shared bearer token for
 every caller, with no per-caller identity), then open development mode (no token
 checked), which a real provider refuses unless `PLIMSOLL_INSECURE=1` acknowledges it.
-<dfn>*Hardened mode*</dfn> (`PLIMSOLL_HARDENED=1`), under which the daemon refuses to
+Hardened mode (`PLIMSOLL_HARDENED=1`), under which the daemon refuses to
 start unless every production safeguard is configured, accepts only the clients file.
 Per-caller identity is what makes the `allowed_callers` lists and per-run token
 minting mean anything, so treat the shared token as a step on the way to the clients

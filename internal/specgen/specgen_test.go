@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -224,6 +225,7 @@ func TestGeneratedProfileLoads(t *testing.T) {
 				"allow":           res.AllowStrings(), // <- generated
 				"preamble_file":   "preamble.js",      // <- generated
 				"health_check":    res.HealthCheck,    // <- generated
+				"batch_of":        res.BatchOf,        // <- generated
 			},
 		},
 	}
@@ -258,6 +260,11 @@ func TestGeneratedProfileLoads(t *testing.T) {
 	}
 	if got := grant.HealthCheck.Method + " " + grant.HealthCheck.Path; got != res.HealthCheck {
 		t.Errorf("loaded health_check = %q, generated %q", got, res.HealthCheck)
+	}
+	// The spec marks listLights as the batch form of getLight, and that loads as the
+	// profile's declared relation.
+	if got := p.BatchOf()[sandbox.HostRoute{Method: "GET", Path: "/lights/*"}]; got != (sandbox.HostRoute{Method: "GET", Path: "/lights"}) {
+		t.Errorf("loaded batch_of for GET /lights/* = %+v, want GET /lights (generated %v)", got, res.BatchOf)
 	}
 }
 
@@ -315,6 +322,63 @@ func TestHealthRouteDetection(t *testing.T) {
 			// The absence of a probe is always explained, and a resolved one never is.
 			if (res.HealthNote != "") != (tc.wantHealth == "") {
 				t.Errorf("HealthNote = %q with HealthCheck = %q", res.HealthNote, res.HealthCheck)
+			}
+		})
+	}
+}
+
+// TestBatchOfFromMarker: x-plimsoll-batch-of on a collection operation becomes the
+// profile's batch_of, operationIds resolved to grant routes (path parameters to "*").
+// With no marker there is none, so no finding names a route to the caller.
+func TestBatchOfFromMarker(t *testing.T) {
+	spec := `{"openapi":"3.1.0","info":{"title":"t"},"paths":{
+	  "/items":{"get":{"operationId":"listItems","x-plimsoll-batch-of":["getItem","getItemTags"]}},
+	  "/items/{id}":{"get":{"operationId":"getItem"},"put":{"operationId":"putItem"}},
+	  "/items/{id}/tags":{"get":{"operationId":"getItemTags"}}}}`
+	res, err := Generate([]byte(spec), Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	want := map[string][]string{"GET /items": {"GET /items/*", "GET /items/*/tags"}}
+	if !reflect.DeepEqual(res.BatchOf, want) {
+		t.Errorf("BatchOf = %v, want %v", res.BatchOf, want)
+	}
+	plain, err := Generate([]byte(strings.Replace(spec, `,"x-plimsoll-batch-of":["getItem","getItemTags"]`, "", 1)), Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if plain.BatchOf != nil {
+		t.Errorf("BatchOf = %v with no marker, want nil", plain.BatchOf)
+	}
+}
+
+// TestBatchOfMarkerErrors: a marker that cannot become a batch_of a profile would load
+// fails generation, rather than emit a relation grants.Load refuses or one that names
+// the wrong operation.
+func TestBatchOfMarkerErrors(t *testing.T) {
+	spec := func(paths string) string {
+		return `{"openapi":"3.1.0","info":{"title":"t"},"paths":{` + paths + `}}`
+	}
+	item := `"/items/{id}":{"get":{"operationId":"getItem"}}`
+	for name, tc := range map[string]struct{ spec, want string }{
+		"an unknown operationId": {spec(`"/items":{"get":{"operationId":"l","x-plimsoll-batch-of":["nope"]}},` + item), "no operation has it"},
+		"an ambiguous operationId": {spec(`"/items":{"get":{"operationId":"l","x-plimsoll-batch-of":["getItem"]}},"/items/{id}":{"get":{"operationId":"getItem"},"head":{"operationId":"getItem"}}`),
+			"2 operations have it"},
+		"a target a grant cannot express": {spec(`"/items":{"get":{"operationId":"l","x-plimsoll-batch-of":["getItem"]}},"/items/{id}":{"get":{"operationId":"getItem","parameters":[{"name":"v","in":"query","required":true}]}}`),
+			"but that operation requires"},
+		"a write target": {spec(`"/items":{"get":{"operationId":"l","x-plimsoll-batch-of":["putItem"]}},"/items/{id}":{"put":{"operationId":"putItem"}}`), "only GET"},
+		"a write batch":  {spec(`"/items":{"post":{"operationId":"l","x-plimsoll-batch-of":["getItem"]}},` + item), "only GET"},
+		"a target with no path parameter": {spec(`"/items":{"get":{"operationId":"l","x-plimsoll-batch-of":["cfg"]}},"/config":{"get":{"operationId":"cfg"}}`),
+			"no fan-out could ever be on it"},
+		"a target two batch routes claim": {spec(`"/items":{"get":{"operationId":"l","x-plimsoll-batch-of":["getItem"]}},"/all":{"get":{"operationId":"a","x-plimsoll-batch-of":["getItem"]}},` + item),
+			"is served by both"},
+		"a marked operation a grant cannot express": {spec(`"/items":{"get":{"operationId":"l","x-plimsoll-batch-of":["getItem"],"parameters":[{"name":"q","in":"header","required":true}]}},` + item),
+			"is marked x-plimsoll-batch-of, but it requires"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Generate([]byte(tc.spec), Options{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Generate error = %v, want one containing %q", err, tc.want)
 			}
 		})
 	}

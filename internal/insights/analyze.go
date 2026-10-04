@@ -18,6 +18,16 @@ const (
 	repeatMinCalls = 4 // successful same-size reads of one fixed route before reuse is worth suggesting
 )
 
+// Routes is what a profile says about the host API's routes. The router reads it to
+// name a batch route for a read fan-out; the detectors never read it.
+type Routes struct {
+	Allow   []sandbox.HostRoute // the routes the grant allows
+	Catalog []sandbox.HostRoute // every route the API exposes (a superset of Allow); optional
+	// BatchOf maps a per-item route to the batch route the operator declares serves it
+	// (the profile's batch_of); optional. Methods are upper case.
+	BatchOf map[sandbox.HostRoute]sandbox.HostRoute
+}
+
 // Analyze runs the deterministic detectors over a bounded, metadata-only CallTrace
 // and returns findings sorted most-severe first (then by pattern, then route) so the
 // output is stable across runs. It never mutates the trace and reads only the
@@ -29,21 +39,10 @@ const (
 // Calls that did not succeed are named in a finding's sentence and never counted; a
 // trace that hit its row cap is reported with "at least".
 //
-// allow, when non-nil, lets the router annotate a GET fan-out finding with the
-// collection route the profile already exposes; pass nil to skip route suggestion. A
-// nil or empty trace yields no findings.
-func Analyze(trace *sandbox.CallTrace, allow []sandbox.HostRoute) []Finding {
-	return AnalyzeWithCatalog(trace, allow, nil)
-}
-
-// AnalyzeWithCatalog is Analyze plus a catalog of every route the host API exposes (for
-// plimsoll, generated from its OpenAPI spec by plimsoll-specgen). When a read fan-out's
-// collection route is NOT granted but the catalog shows the API offers it, the finding
-// is annotated with CatalogMatch — an operator action ("grant this route to enable the
-// batch") that never reaches the caller. The caller-facing Suggested split (a granted
-// sibling) is unchanged: a granted route always wins over a merely-cataloged one. Pass a
-// nil catalog to skip this; the result is then identical to Analyze.
-func AnalyzeWithCatalog(trace *sandbox.CallTrace, allow, catalog []sandbox.HostRoute) []Finding {
+// routes lets the router annotate a read fan-out with a batch route (Suggested,
+// GrantRoute or Candidate; see Finding). The zero Routes names none. A nil or empty
+// trace yields no findings.
+func Analyze(trace *sandbox.CallTrace, routes Routes) []Finding {
 	if trace == nil || len(trace.Calls) == 0 {
 		return nil
 	}
@@ -54,7 +53,7 @@ func AnalyzeWithCatalog(trace *sandbox.CallTrace, allow, catalog []sandbox.HostR
 	findings = append(findings, detectFanOut(groups, partial)...)
 	findings = append(findings, detectRepeatedReads(groups, partial)...)
 	for i := range findings {
-		annotateRoute(&findings[i], allow, catalog)
+		annotateRoute(&findings[i], routes)
 	}
 	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].Severity != findings[j].Severity {
@@ -99,7 +98,7 @@ type group struct {
 	totalLat time.Duration
 	maxLat   time.Duration
 	bytes    int
-	sizes    map[int]*sizeStat // response bytes -> stat, successful calls only
+	sizes    map[int]*sizeStat // response bytes -> stat, successful calls that sent no body only
 }
 
 // sortedGroups folds the calls into per-(method,route) groups, returned in a stable
@@ -124,6 +123,11 @@ func sortedGroups(calls []sandbox.CallRow) []*group {
 			g.maxLat = c.Latency
 		}
 		g.bytes += c.ReqBytes + c.RespBytes
+		if c.ReqBytes > 0 {
+			// The trace holds a body's size, not its bytes, so two calls with bodies are
+			// not known to be the same request; only bodiless calls feed repeated reads.
+			continue
+		}
 		s := g.sizes[c.RespBytes]
 		if s == nil {
 			s = &sizeStat{}
@@ -207,10 +211,12 @@ func failedClause(failed int) string {
 }
 
 // detectRepeatedReads flags one fixed (no-wildcard) read route requested successfully
-// and repeatedly with same-size responses. Only a fixed route qualifies, because only
-// there does the trace establish that the calls were the same request: the broker
-// admits a route without a wildcard solely for the byte-exact approved path, with no
-// query, so N calls to it are N copies of one request. An unchanged response size
+// and repeatedly with same-size responses. Only a fixed route qualifies, and only calls
+// that sent no body, because only there does the trace establish that the calls were
+// the same request: the broker admits a route without a wildcard solely for the
+// byte-exact approved path, with no query, and a GET can still carry a body
+// (host.call("GET", path, body)) the trace records only the size of, so N bodiless
+// calls to it are N copies of one request. An unchanged response size
 // across them is then evidence, not proof, that the data did not change; the trace
 // holds sizes, not content, which is why severity is capped at medium and the remedy
 // is stated as a condition.
@@ -255,44 +261,64 @@ func detectRepeatedReads(groups []*group, partial bool) []Finding {
 	return out
 }
 
-// annotateRoute is the small router: for a GET fan-out on a trailing-wildcard per-item
-// route (/items/*), it looks for the collection route (/items). If the profile's Allow
-// list already grants it, that is a caller-fixable Suggested route. Otherwise, if the
-// endpoint catalog shows the API exposes it (but the profile does not grant it), that is
-// an operator-fixable CatalogMatch (widen the allow list). Only the trailing-wildcard
-// shape is handled; anything else leaves both nil, which later phases read as "no better
-// endpoint exists — the API itself needs a change."
+// annotateRoute is the small router. For a read fan-out it names a batch route, and
+// says on what basis:
 //
-// Only a read is routed. A collection GET is a plausible one-call replacement for many
-// per-item GETs (the finding states the condition: it must return the same items). A
-// collection PUT, POST, DELETE or PATCH has semantics its path does not reveal, and
-// telling an agent to call one on the strength of a path shape would be an instruction
-// to perform a write nobody verified, so a write fan-out gets neither Suggested nor
-// CatalogMatch until an explicit operation relationship exists.
-func annotateRoute(f *Finding, allow, catalog []sandbox.HostRoute) {
+//   - The profile's batch_of declares one for this route: Suggested when Allow grants
+//     it, GrantRoute (add it to Allow) when it does not. A declaration covers any route
+//     shape, since the operator, not the path, says what serves what.
+//   - Otherwise, for a trailing-wildcard route (/items/*) whose collection (/items) the
+//     profile grants or its catalog lists: Candidate, for the operator to check. A path
+//     says nothing about pagination, returned fields or scope, so a route found this way
+//     never reaches the caller.
+//
+// Anything else leaves all three nil: no route is known (which is not the same as the
+// API lacking one). Only a read is routed: telling an agent to call a collection write
+// would be an instruction to perform a write nobody verified, and batch_of refuses one.
+//
+// The sentence it appends names the basis, so the operator surfaces and the caller read
+// the same claim.
+func annotateRoute(f *Finding, routes Routes) {
 	if f.Pattern != PatternFanOut || !isReadMethod(f.Method) {
+		return
+	}
+	if batch, ok := routes.BatchOf[sandbox.HostRoute{Method: strings.ToUpper(f.Method), Path: f.Route}]; ok {
+		r := &Route{Method: strings.ToUpper(batch.Method), Path: batch.Path}
+		if hasRoute(routes.Allow, batch) {
+			f.Suggested = r
+			f.Detail += fmt.Sprintf(" The profile declares %s %s as this route's batch form and grants it; the declaration is the operator's, and plimsoll has not checked that it returns the same items.", r.Method, r.Path)
+		} else {
+			f.GrantRoute = r
+			f.Detail += fmt.Sprintf(" The profile declares %s %s as this route's batch form but does not grant it.", r.Method, r.Path)
+		}
 		return
 	}
 	collection, ok := trailingWildcardParent(f.Route)
 	if !ok {
 		return
 	}
-	// A granted sibling always wins: the agent can switch to it now.
-	for _, r := range allow {
-		if strings.EqualFold(r.Method, f.Method) && r.Path == collection {
-			f.Suggested = &Route{Method: strings.ToUpper(r.Method), Path: r.Path}
-			return
+	candidate := sandbox.HostRoute{Method: strings.ToUpper(f.Method), Path: collection}
+	var where string
+	switch {
+	case hasRoute(routes.Allow, candidate):
+		where = "is granted"
+	case hasRoute(routes.Catalog, candidate):
+		where = "is in the API's catalog but not granted"
+	default:
+		return
+	}
+	f.Candidate = &Route{Method: candidate.Method, Path: candidate.Path}
+	f.Detail += fmt.Sprintf(" %s %s %s and its path makes it this route's collection, but the profile does not declare it in batch_of, so whether it returns the same items (all pages, the same fields, the same scope) is unknown and it is not offered to the agent.", candidate.Method, candidate.Path, where)
+}
+
+// hasRoute reports whether routes holds r, the method compared without case.
+func hasRoute(routes []sandbox.HostRoute, r sandbox.HostRoute) bool {
+	for _, x := range routes {
+		if strings.EqualFold(x.Method, r.Method) && x.Path == r.Path {
+			return true
 		}
 	}
-	// Otherwise, if the API is known to expose the collection route but it is not
-	// granted, the fix is an operator action. Never surfaced to the caller (it cannot
-	// call it).
-	for _, r := range catalog {
-		if strings.EqualFold(r.Method, f.Method) && r.Path == collection {
-			f.CatalogMatch = &Route{Method: strings.ToUpper(r.Method), Path: r.Path}
-			return
-		}
-	}
+	return false
 }
 
 // severityForCount ranks a count-driven pattern: a big fan-out is high, a modest one

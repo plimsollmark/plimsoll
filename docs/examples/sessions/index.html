@@ -52,13 +52,13 @@
 <main>
 <nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>One sandbox, five calls: an OpenShell session with a signed chain of records</h1>
-<p class="sub">A session keeps one sandbox for many calls: the files a call writes are there for the next call, and no process a call starts outlives it. This page is one real session on an NVIDIA OpenShell sandbox, run through plimsolld with the official Go client on 2026-09-28. A harness outside the daemon checked and signed every call's record, and the records form a chain: each names the digest of the one before it.</p>
+<p class="sub">A session keeps one sandbox for many calls: the files a call writes are there for the next call, and no process a call starts outlives it. This page is one real session on an NVIDIA OpenShell sandbox, run through plimsolld with the official Go client on 2026-10-04. A harness outside the daemon checked and signed every call's record, and the records form a chain: each names the digest of the one before it.</p>
 
 <div class="tiles">
   <div class="tile"><div class="k">Sandbox</div><div class="v">openshell · container</div><div class="n">the tier measured when the session opened</div></div>
   <div class="tile"><div class="k">Calls</div><div class="v">5</div><div class="n">two projects and three snippets, one sandbox</div></div>
-  <div class="tile"><div class="k">Median call</div><div class="v">95 ms</div><div class="n">the client's round trip, including the read-back before the call and the sweep after it</div></div>
-  <div class="tile"><div class="k">Signed bundle</div><div class="v">verified</div><div class="n">and refused with one call dropped or one byte changed</div></div>
+  <div class="tile"><div class="k">Median call</div><div class="v">89 ms</div><div class="n">the client's round trip, including the read-back before the call and the sweep after it</div></div>
+  <div class="tile"><div class="k">Signed bundle</div><div class="v">verified</div><div class="n">and refused with one call dropped, one byte changed or its end cut</div></div>
 </div>
 
 <h2>The calls</h2>
@@ -70,8 +70,8 @@
 step:  node test.js</pre></td>
 <td><div class="intent">completed, step exited 1</div><pre>add(2, 3) = -1 but should be 5
 </pre></td>
-<td>132</td>
-<td class="rec">record 7ae4e55a3df8…<br>previous (none)<br>request 9cfd4d94da19…<br>result 051833a2c440…</td>
+<td>89</td>
+<td class="rec">record f92bd3df8d62…<br>previous (none)<br>request 34174104c576…<br>result 051833a2c440…</td>
 </tr>
 <tr>
 <td>2</td>
@@ -81,16 +81,16 @@ fs.writeFileSync(path, fs.readFileSync(path, &#34;utf8&#34;).replace(&#34;a - b&
 console.log(&#34;patched &#34; &#43; path);</pre></td>
 <td><div class="intent">exit 0</div><pre>patched /tmp/work/lib.js
 </pre></td>
-<td>67</td>
-<td class="rec">record ba552c65a2ac…<br>previous 7ae4e55a3df8…<br>request bb3d2745a5c9…<br>result d5581c0de798…</td>
+<td>72</td>
+<td class="rec">record c10fb80babf1…<br>previous f92bd3df8d62…<br>request 52941fb847cb…<br>result d5581c0de798…</td>
 </tr>
 <tr>
 <td>3</td>
 <td><div class="intent">project: Run the same test again. No files are sent: they persisted.</div><pre>step:  node test.js</pre></td>
 <td><div class="intent">completed, step exited 0</div><pre>test passed: add(2, 3) = 5
 </pre></td>
-<td>100</td>
-<td class="rec">record 9a36b82ac7b2…<br>previous ba552c65a2ac…<br>request 0bbd4330ca08…<br>result 6688830180f5…</td>
+<td>139</td>
+<td class="rec">record ce75fda50e87…<br>previous c10fb80babf1…<br>request 1e06c1ba6c08…<br>result 6688830180f5…</td>
 </tr>
 <tr>
 <td>4</td>
@@ -98,10 +98,10 @@ console.log(&#34;patched &#34; &#43; path);</pre></td>
 const child = spawn(&#34;sleep&#34;, [&#34;600&#34;], { detached: true, stdio: &#34;ignore&#34; });
 child.unref();
 console.log(&#34;started sleep 600 as pid &#34; &#43; child.pid &#43; &#34; and exited&#34;);</pre></td>
-<td><div class="intent">exit 0</div><pre>started sleep 600 as pid 136 and exited
+<td><div class="intent">exit 0</div><pre>started sleep 600 as pid 152 and exited
 </pre></td>
-<td>95</td>
-<td class="rec">record 49cfce401c88…<br>previous 9a36b82ac7b2…<br>request e49cd4820f33…<br>result 4f0756a2c9b5…</td>
+<td>68</td>
+<td class="rec">record d017ac7279c8…<br>previous ce75fda50e87…<br>request 8c0c97a3ddc7…<br>result 7473f7e23227…</td>
 </tr>
 <tr>
 <td>5</td>
@@ -118,26 +118,27 @@ console.log(&#34;lib.js now: &#34; &#43; fs.readFileSync(&#34;/tmp/work/lib.js&#
 <td><div class="intent">exit 0</div><pre>sleep 600 still running: none
 lib.js now: module.exports = (a, b) =&gt; a &#43; b;
 </pre></td>
-<td>72</td>
-<td class="rec">record 295aa158f4e8…<br>previous 49cfce401c88…<br>request d6a99598476b…<br>result 72bc024f2abe…</td>
+<td>98</td>
+<td class="rec">record adf08a4e4ffc…<br>previous d017ac7279c8…<br>request eb4b6b7d706d…<br>result 72bc024f2abe…</td>
 </tr>
 </table></div>
 <p class="note">Call 3 sent no files: the test and the patched library were still in the sandbox. Call 5 finds call 4's <code>sleep 600</code> gone: after every call the sandbox's processes are swept.</p>
 
 <h2>The chain</h2>
 <div class="panel">
-<svg viewBox="0 0 1094 140" width="100%" role="img" aria-label="The session's records as a chain: each record names the digest of the one before it, and the close states how many there are and which is last."><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5a5a5a"/></marker></defs><rect x="12" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="22" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 1 · project</text><text x="22" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="68" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">7ae4e55a3d…</text><text x="22" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="78" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">(none)</text><rect x="196" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="206" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 2 · snippet</text><text x="206" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="252" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">ba552c65a2…</text><text x="206" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="262" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">7ae4e55a3d…</text><line x1="196" y1="65" x2="164" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><rect x="380" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="390" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 3 · project</text><text x="390" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="436" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">9a36b82ac7…</text><text x="390" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="446" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">ba552c65a2…</text><line x1="380" y1="65" x2="348" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><rect x="564" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="574" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 4 · snippet</text><text x="574" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="620" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">49cfce401c…</text><text x="574" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="630" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">9a36b82ac7…</text><line x1="564" y1="65" x2="532" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><rect x="748" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="758" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 5 · snippet</text><text x="758" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="804" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">295aa158f4…</text><text x="758" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="814" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">49cfce401c…</text><line x1="748" y1="65" x2="716" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><rect x="932" y="26" width="150" height="78" rx="7" fill="#e6f4ea" stroke="#1baf7a" stroke-width="1.5"/><text x="942" y="46" font-size="13" font-weight="600" fill="#1e6b2f">close</text><text x="942" y="66" font-size="11.5" fill="#1e6b2f">5 calls</text><text x="942" y="86" font-size="11.5" fill="#1e6b2f">last </text><text x="972" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1e6b2f">295aa158f4…</text><line x1="932" y1="65" x2="900" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><text x="12" y="130" font-size="12" fill="#5a5a5a">Each arrow: a record names the digest of the one before it. The close fixes how many there are, so a cut tail shows.</text></svg>
-<p class="note">Session <span class="mono">7388fb93a024d2e80e7f2be09386994002a4a88768a5b2e78f2c09ae994f3d65</span> is the SHA-256 of the session ID; the ID itself is a capability, sent only to the daemon, and never recorded or logged. The daemon's close: closed after 5 calls; last record 295aa158f4e89eed5be69adf628cdccde23bfeb1c909877c566495ebeb2e44b1.</p>
+<svg viewBox="0 0 1094 140" width="100%" role="img" aria-label="The session's records as a chain: each record names the digest of the one before it, and the close states how many there are and which is last."><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5a5a5a"/></marker></defs><rect x="12" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="22" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 1 · project</text><text x="22" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="68" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">f92bd3df8d…</text><text x="22" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="78" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">(none)</text><rect x="196" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="206" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 2 · snippet</text><text x="206" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="252" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">c10fb80bab…</text><text x="206" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="262" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">f92bd3df8d…</text><line x1="196" y1="65" x2="164" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><rect x="380" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="390" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 3 · project</text><text x="390" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="436" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">ce75fda50e…</text><text x="390" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="446" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">c10fb80bab…</text><line x1="380" y1="65" x2="348" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><rect x="564" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="574" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 4 · snippet</text><text x="574" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="620" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">d017ac7279…</text><text x="574" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="630" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">ce75fda50e…</text><line x1="564" y1="65" x2="532" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><rect x="748" y="26" width="150" height="78" rx="7" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/><text x="758" y="46" font-size="13" font-weight="600" fill="#1a1a1a">call 5 · snippet</text><text x="758" y="66" font-size="11.5" fill="#5a5a5a">record</text><text x="804" y="66" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">adf08a4e4f…</text><text x="758" y="86" font-size="11.5" fill="#5a5a5a">previous</text><text x="814" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1a1a1a">d017ac7279…</text><line x1="748" y1="65" x2="716" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><rect x="932" y="26" width="150" height="78" rx="7" fill="#e6f4ea" stroke="#1baf7a" stroke-width="1.5"/><text x="942" y="46" font-size="13" font-weight="600" fill="#1e6b2f">close</text><text x="942" y="66" font-size="11.5" fill="#1e6b2f">5 calls</text><text x="942" y="86" font-size="11.5" fill="#1e6b2f">last </text><text x="972" y="86" font-size="11.5" font-family="ui-monospace, Menlo, Consolas, monospace" fill="#1e6b2f">adf08a4e4f…</text><line x1="932" y1="65" x2="900" y2="65" stroke="#5a5a5a" stroke-width="1.3" marker-end="url(#arrow)"/><text x="12" y="130" font-size="12" fill="#5a5a5a">Each arrow: a record names the digest of the one before it. The close fixes how many there are, so a cut tail shows.</text></svg>
+<p class="note">Session <span class="mono">c92f06904ddae5503b73cdfee68f984e2e0cd60285806c3287bde1fac264a4f8</span> is the SHA-256 of the session ID; the ID itself is a capability, sent only to the daemon, and never recorded or logged. The daemon's close: closed after 5 calls; last record adf08a4e4ffc058bcb8483fcc7557531f1891a89fcba84f5fdb12eebb2239ee2.</p>
 </div>
 
 <h2>The verifier</h2>
 <div class="wide"><table>
 <tr><th>Bundle</th><th>Verdict</th><th>What the verifier said</th></tr>
-<tr><td>The bundle as the harness wrote it</td><td><span class="badge ok">verified</span></td><td class="mono">6 entries; one session of 5 calls, every record signed, chained and closed</td></tr>
-<tr><td>The same bundle with call 3 removed</td><td><span class="badge no">refused</span></td><td class="mono">entry 3: attest: broken session chain: session 7388fb93a024d2e80e7f2be09386994002a4a88768a5b2e78f2c09ae994f3d65 call 4 follows call 2</td></tr>
-<tr><td>The same bundle with one byte of call 2&#39;s output changed</td><td><span class="badge no">refused</span></td><td class="mono">entry 2: attest: the stored request or response does not match the signed record: the result</td></tr>
+<tr><td>The bundle as the harness wrote it</td><td><span class="badge ok">verified</span></td><td class="mono">7 entries; one session of 5 calls, every record signed, chained and closed</td></tr>
+<tr><td>The same bundle with call 3 removed</td><td><span class="badge no">refused</span></td><td class="mono">entry 3: attest: broken bundle chain: the line says it is line 4</td></tr>
+<tr><td>The same bundle with one byte of call 2&#39;s output changed</td><td><span class="badge no">refused</span></td><td class="mono">entry 2: attest: broken bundle chain: the line&#39;s link signs other content</td></tr>
+<tr><td>The same bundle with its last two lines (the close and the checkpoint) cut</td><td><span class="badge no">refused</span></td><td class="mono">attest: the bundle does not end with a checkpoint</td></tr>
 </table></div>
-<p class="note">Every record is a DSSE envelope around an in-toto statement, signed with an Ed25519 key the harness held for this run (key ID <span class="mono">13a2affd2e0551725ef91ee535828c16b5bbd327143b40ec23b476a5bbcadf42</span>). The daemon holds no key: it only hashes. The bundle and the public key sit beside this page as <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/bundle.jsonl">bundle.jsonl</a> and <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/harness.pub">harness.pub</a>.</p>
+<p class="note">Every record is a DSSE envelope around an in-toto statement, signed with an Ed25519 key the harness held for this run (key ID <span class="mono">84338813b9ce78aa6c11cf59c1b5ef11f73971080b04c256a226fdded0afac50</span>). The daemon holds no key: it only hashes. Every line of the bundle also carries a link the harness signed, naming the line before it, and the bundle ends with a checkpoint stating how many lines come before it, so a line removed, moved or added anywhere in the file, or a cut end, is refused even when no session chain covers it. The bundle and the public key sit beside this page as <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/bundle.jsonl">bundle.jsonl</a> and <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/harness.pub">harness.pub</a>.</p>
 
 <h2>What happens around each call</h2>
 <ol>
@@ -153,6 +154,7 @@ lib.js now: module.exports = (a, b) =&gt; a &#43; b;
 <li>A session is only as private as its gateway: any other client of the same gateway can reach the sandbox between calls. Give plimsoll a gateway, or an OpenShell workspace, of its own.</li>
 <li>Processes never persist, by design, so a long-running service inside a session (a development server) is not supported.</li>
 <li>The key here was made for this run and discarded. In use, the harness's key is the caller's, kept outside the daemon.</li>
+<li>The links prove the bundle is the whole file the harness wrote, not that the harness was handed every call the caller made; <code>plimsoll-attest verify -expect</code> checks the bundle against the caller's own list of its calls' trace IDs (the five calls here carry <span class="mono">call-1</span> to <span class="mono">call-5</span>). A bundle cut back to an earlier checkpoint (one the harness was resumed after) verifies as whole: the caller's list catches that.</li>
 </ul>
 <p class="note">Reproduce: with an OpenShell gateway and its five <code>SANDBOX_OPENSHELL_*</code> settings in the environment, run <code>go run ./examples/sessions</code> in the plimsoll repository; the page, the bundle and the key are written from the run. Check the bundle: <code>go run ./cmd/plimsoll-attest verify -pub docs/examples/sessions/harness.pub docs/examples/sessions/bundle.jsonl</code>. plimsoll is an independent project, not affiliated with or endorsed by NVIDIA.</p>
 </main>

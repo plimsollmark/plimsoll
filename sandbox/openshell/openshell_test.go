@@ -336,7 +336,7 @@ func TestExitStatusBeatsSendFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.deleteLater(b)
+	defer p.deleteLater(context.Background(), b)
 	out, err := p.exec(ctx, b, []string{"node", "-"}, nil, make([]byte, 16<<20), 64, 64)
 	if err != nil || !out.exited || out.exitCode != 7 || string(out.stderr) != "bye" {
 		t.Fatalf("exec = %+v, %v; want exit 7", out, err)
@@ -770,8 +770,8 @@ func TestReconcileOrphans(t *testing.T) {
 	f.addAt("plp-no-created", run("crashed", "60"), ready, nil)
 	f.addAt("plp-no-run-label", map[string]string{instanceLabel: "crashed", lifetimeLabel: "60"}, ready, ago(24*time.Hour))
 	f.add("unlabelled", nil, ready)
-	p.track("plp-inflight")
-	defer p.untrack("plp-inflight")
+	p.leases.Track("plp-inflight")
+	defer p.leases.Untrack("plp-inflight")
 
 	n, err := p.ReconcileOrphans(context.Background())
 	if err != nil || n != 2 {
@@ -1280,5 +1280,78 @@ func (c lateTimer) Err() error                  { return nil }
 func TestDeadlineAwareDoesNotWaitForTheTimer(t *testing.T) {
 	if err := deadlineAware(lateTimer{context.Background(), time.Now().Add(-time.Millisecond)}, errors.New("stream reset")); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadlineAware in the late-timer window: %v, want it to wrap DeadlineExceeded", err)
+	}
+}
+
+// A run's capacity is held until its sandbox is deleted, not just until the run
+// returns (review F14): the delete runs off the result path, and the sandbox, with
+// anything the run left in it, lives until it is through.
+func TestRunHoldsItsCapacityUntilTheSandboxIsDeleted(t *testing.T) {
+	f, p := newFake(t)
+	f.run = echoScript
+	f.mu.Lock()
+	f.deletePolls = 3 // the gateway still has the record for three reads after accepting the delete
+	f.mu.Unlock()
+	released := make(chan bool, 1) // whether the gateway still had the sandbox at the release
+	var name string
+	ctx, callReturned := sandbox.WithCapacity(context.Background(), func() {
+		f.mu.Lock()
+		b := f.boxes[name]
+		released <- b != nil && b.deleted && b.pollsAfterGone <= 0
+		f.mu.Unlock()
+	})
+	if _, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	for n := range f.boxes {
+		name = n
+	}
+	f.mu.Unlock()
+	callReturned()
+	select {
+	case gone := <-released:
+		if !gone {
+			t.Fatal("the capacity came back while the gateway still had the sandbox")
+		}
+	case <-time.After(deleteBudget):
+		t.Fatal("the capacity never came back")
+	}
+}
+
+// The driver check before each dispatch runs detached from the caller: a request whose
+// own context ends during it (a 1 ms timeout, a hang-up) must not turn the provider's
+// tier to unknown, which would make the daemon refuse every other caller's request that
+// states a minimum isolation. A check the
+// gateway itself fails still does, and the refusal says nothing ran.
+func TestACallerCannotChangeTheTierByHangingUp(t *testing.T) {
+	f, p := newFake(t)
+	if _, err := p.checkDriver(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.info = func() (*openshellv1.GetGatewayInfoResponse, error) {
+		time.Sleep(300 * time.Millisecond)
+		return dockerInfo()
+	}
+	f.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, _ = p.ready(ctx, nil, sandbox.IsolationUnknown)
+	if got := p.IsolationClass(); got != sandbox.IsolationContainer {
+		t.Fatalf("a caller whose request ended during the driver check set the tier to %v", got)
+	}
+
+	f.mu.Lock()
+	f.info = func() (*openshellv1.GetGatewayInfoResponse, error) {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("gateway down"))
+	}
+	f.mu.Unlock()
+	_, err := p.ready(context.Background(), nil, sandbox.IsolationUnknown)
+	if got := p.IsolationClass(); got != sandbox.IsolationUnknown {
+		t.Errorf("a gateway that failed the check left the tier %v", got)
+	}
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalEnvironment {
+		t.Errorf("a failed driver check: %v (reason %q, marked %v); want not dispatched, environment", err, reason, ok)
 	}
 }

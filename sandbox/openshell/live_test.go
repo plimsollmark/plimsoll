@@ -233,7 +233,7 @@ func TestOpenShellReconcileLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	p.untrack(orphan.name)
+	p.leases.Untrack(orphan.name)
 	n, err := p.ReconcileOrphans(ctx)
 	if err != nil || n != 1 {
 		t.Fatalf("ReconcileOrphans = %d, %v; want 1", n, err)
@@ -250,7 +250,7 @@ func TestOpenShellReconcileLive(t *testing.T) {
 	if _, err := p.client.GetSandbox(ctx, connect.NewRequest(&openshellv1.GetSandboxRequest{WorkspaceScope: ws(), Name: inflight.name})); err != nil {
 		t.Fatalf("the tracked sandbox was touched: %v", err)
 	}
-	p.deleteLater(inflight)
+	p.deleteLater(context.Background(), inflight)
 }
 
 // TestOpenShellReconcileOtherInstanceLive: a sandbox another instance left behind (its
@@ -267,7 +267,7 @@ func TestOpenShellReconcileOtherInstanceLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reaper.deleteLater(own)
+	reaper.deleteLater(context.Background(), own)
 	if _, known := reaper.gatewaySkew(); !known {
 		t.Fatal("a create measured no clock skew")
 	}
@@ -277,7 +277,7 @@ func TestOpenShellReconcileOtherInstanceLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	crashed.untrack(b.name)
+	crashed.leases.Untrack(b.name)
 	if n, err := reaper.ReconcileOrphans(context.Background()); err != nil || n != 0 {
 		t.Fatalf("ReconcileOrphans within the declared lifetime = %d, %v; want nothing reaped", n, err)
 	}

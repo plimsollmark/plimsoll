@@ -3,13 +3,17 @@ package openshell
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1"
+	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1/openshellv1connect"
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
@@ -22,18 +26,23 @@ const freshListing = `{"ptrace":"1","procs":[{"pid":1,"ppid":0,"state":"S","star
 // call would: the boundary runs after a call has answered.
 func settled(t *testing.T, s *session) {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if release, err := s.life.Hold(ctx); err == nil {
+		release()
+		return
+	}
 	select {
-	case s.turn <- struct{}{}:
-		<-s.turn
-	case <-s.done:
-	case <-time.After(10 * time.Second):
+	case <-s.Done():
+	case <-ctx.Done():
 		t.Fatal("the boundary after the call did not finish")
 	}
 }
 
 // sessionScript answers a session's execs: the lister gets listing(), the sweep
 // exits with sweep(), and anything else is a payload that prints "ok". It records
-// every exec's argv[1] ("-e" for the two scripts) in order.
+// every exec's kind in order. A lister or sweep that does not start under
+// sessionkit.ControlArgv fails its exec: both are plimsoll's own programs.
 type sessionScript struct {
 	mu      sync.Mutex
 	listing func() string
@@ -45,7 +54,11 @@ type sessionScript struct {
 
 func (s *sessionScript) run(e *fakeExec) error {
 	e.readAll()
-	cmd := e.start.GetCommand()
+	cmd, clean := controlled(e.start.GetCommand())
+	script := len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && (cmd[2] == sessionkit.ListScript || cmd[2] == sessionkit.SweepScript)
+	if script && (!clean || len(e.start.GetEnvironment()) > 0) {
+		return fmt.Errorf("plimsoll's own program started with the exec's environment: %q, %v", e.start.GetCommand(), e.start.GetEnvironment())
+	}
 	s.mu.Lock()
 	switch {
 	case len(cmd) >= 3 && cmd[0] == "node" && cmd[1] == "-e" && cmd[2] == sessionkit.ListScript:
@@ -119,10 +132,10 @@ func TestOpenSessionCreatesAVerifiedSleepingSandbox(t *testing.T) {
 	if got := sc.seen(); !slices.Equal(got, []string{"list"}) {
 		t.Fatalf("execs at open: %v", got)
 	}
-	if !slices.Equal(s.baseline, []string{"1:100:2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800", "7:101:736c656570003231343734383336343700"}) {
-		t.Fatalf("baseline %v", s.baseline)
+	if !slices.Equal(s.life.Keep(), []string{"1:100:2f2e6f70656e7368656c6c2f72756e74696d652f6f70656e7368656c6c2d73616e64626f7800", "7:101:736c656570003231343734383336343700"}) {
+		t.Fatalf("baseline %v", s.life.Keep())
 	}
-	if !p.isTracked(s.b.name) {
+	if !p.leases.Tracked(s.b.name) {
 		t.Fatal("an open session's sandbox is not tracked, so the reaper could take it")
 	}
 	if s.Isolation() != sandbox.IsolationContainer {
@@ -236,7 +249,7 @@ func TestSessionEndsWhenTheRestartFails(t *testing.T) {
 		t.Fatalf("session: %v", s.Err())
 	}
 	waitGone(t, f)
-	if p.isTracked(s.b.name) {
+	if p.leases.Tracked(s.b.name) {
 		t.Fatal("the ended session's sandbox is still tracked")
 	}
 	_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "2"})
@@ -446,12 +459,273 @@ func TestCallsInOneSessionAreSerialized(t *testing.T) {
 // holds it, ran nothing: it is marked so, as the daemon's own busy refusal is.
 func TestSessionGivingUpOnTheTurnIsNotDispatched(t *testing.T) {
 	_, _, s, _ := openFake(t, sandbox.SessionOptions{})
-	s.turn <- struct{}{}
-	defer func() { <-s.turn }()
+	release, err := s.life.Hold(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	_, err := s.RunJavaScript(ctx, sandbox.Request{Code: "1", Timeout: time.Second})
+	_, err = s.RunJavaScript(ctx, sandbox.Request{Code: "1", Timeout: time.Second})
 	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalCapacity || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("a call behind a held turn: %v (reason %v, marked %v); want the deadline, not dispatched, capacity", err, reason, ok)
+	}
+}
+
+// Done closes only once the gateway no longer has the sandbox (review F9): a session
+// layer gives back the session's capacity on Done, and the sandbox holds its memory
+// until the delete is through. Err says the session ended at once.
+func TestSessionDoneWaitsForTheSandboxDelete(t *testing.T) {
+	f, _, s, _ := openFake(t, sandbox.SessionOptions{})
+	f.mu.Lock()
+	f.deletePolls = 3 // the gateway accepts the delete and still has the record for three reads
+	f.mu.Unlock()
+	if err := s.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if sandbox.SessionEndReason(s.Err()) != sandbox.SessionClosed {
+		t.Fatalf("Err right after Close: %v", s.Err())
+	}
+	select {
+	case <-s.Done():
+	case <-time.After(deleteBudget):
+		t.Fatal("Done was not closed within the delete budget")
+	}
+	f.mu.Lock()
+	b := f.boxes[s.b.name]
+	gone := b != nil && b.deleted && b.pollsAfterGone <= 0
+	f.mu.Unlock()
+	if !gone {
+		t.Fatal("Done closed while the gateway still had the sandbox")
+	}
+}
+
+// unansweredGet is a gateway whose GetSandbox fails as a restarting one does.
+type unansweredGet struct {
+	openshellv1connect.OpenShellClient
+}
+
+func (unansweredGet) GetSandbox(context.Context, *connect.Request[openshellv1.GetSandboxRequest]) (*connect.Response[openshellv1.SandboxResponse], error) {
+	return nil, connect.NewError(connect.CodeUnavailable, errors.New("gateway restarting"))
+}
+
+// A read-back the gateway cannot answer before a call refuses the call, not
+// dispatched, reason environment, and the session stays open (review F4): the call's
+// code never ran, as on docker, which marks the same failure the same way.
+func TestReadBackFailureBeforeACallIsNotDispatched(t *testing.T) {
+	f, p, s, _ := openFake(t, sandbox.SessionOptions{})
+	f.mu.Lock()
+	execs := len(f.execs)
+	f.mu.Unlock()
+	orig := p.client
+	p.client = unansweredGet{orig}
+	defer func() { p.client = orig }()
+	_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: `console.log(1)`})
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalEnvironment {
+		t.Fatalf("a call after a failed read-back: %v (reason %v, marked %v); want not dispatched, environment", err, reason, ok)
+	}
+	f.mu.Lock()
+	ran := len(f.execs) - execs
+	f.mu.Unlock()
+	if ran != 0 {
+		t.Fatalf("%d execs reached the gateway after the failed read-back", ran)
+	}
+	if s.Err() != nil {
+		t.Fatalf("a gateway that could not answer ended the session: %v", s.Err())
+	}
+}
+
+// An open that finishes after Drain has begun is refused and its sandbox deleted, so
+// Drain, which waits until no sandbox is left undeleted, returns. Before the shared
+// session core, OpenShell registered it anyway: the session stayed open, and Drain
+// waited out its whole context for a sandbox nothing would delete.
+func TestSessionOpenRacingDrainIsRefused(t *testing.T) {
+	f, p := newFake(t)
+	sc := &sessionScript{}
+	listing, release := make(chan struct{}), make(chan struct{})
+	sc.listing = func() string {
+		close(listing)
+		<-release
+		return freshListing
+	}
+	f.run = sc.run
+	opened := make(chan error, 1)
+	go func() {
+		s, err := p.OpenSession(context.Background(), sandbox.SessionOptions{Lifetime: time.Minute})
+		if err == nil {
+			_ = s.Close(context.Background())
+		}
+		opened <- err
+	}()
+	<-listing // the open is in flight: its sandbox exists and is being read
+	drained := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		drained <- p.Drain(ctx)
+	}()
+	for {
+		leave, ok := p.sessions.Enter()
+		if !ok {
+			break // Drain has begun
+		}
+		leave()
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
+	err := <-opened
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalCapacity || !errors.Is(err, sandbox.ErrAtCapacity) {
+		t.Fatalf("an open that finished during Drain: %v; want refused, not dispatched, capacity", err)
+	}
+	if err := <-drained; err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	waitGone(t, f)
+}
+
+// A configuration read-back the gateway does not answer refuses the call, not
+// dispatched, reason environment, and the session goes on (review F4's rule, which
+// docker already kept). Before the shared session core it ended the session as
+// changed.
+func TestSessionKeepsGoingWhenItsConfigurationCannotBeRead(t *testing.T) {
+	f, _, s, sc := openFake(t, sandbox.SessionOptions{})
+	f.mu.Lock()
+	f.configErr = connect.NewError(connect.CodeUnavailable, errors.New("the gateway is restarting"))
+	f.mu.Unlock()
+	_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalEnvironment {
+		t.Fatalf("a call whose read-back went unanswered: %v; want not dispatched, environment", err)
+	}
+	if s.Err() != nil {
+		t.Fatalf("the session ended: %v", s.Err())
+	}
+	if slices.Contains(sc.seen(), "payload") {
+		t.Fatal("the payload ran on a sandbox that was not read back")
+	}
+	f.mu.Lock()
+	f.configErr = nil
+	f.mu.Unlock()
+	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}); err != nil {
+		t.Fatalf("the next call: %v", err)
+	}
+}
+
+// A session's lifetime runs from the open's start, as on docker and as the sandbox
+// declares it, not from the end of a slow create.
+func TestSessionLifetimeRunsFromTheOpen(t *testing.T) {
+	f, p := newFake(t)
+	sc := &sessionScript{}
+	f.run = sc.run
+	f.createDelay = 300 * time.Millisecond
+	before := time.Now()
+	s, err := p.OpenSession(context.Background(), sandbox.SessionOptions{Lifetime: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	// What the open does before the create (the driver check) may count; the create
+	// may not.
+	if over := s.ExpiresAt().Sub(before.Add(time.Minute)); over >= f.createDelay/2 {
+		t.Fatalf("the session expires %v after its lifetime from the open; its lifetime runs from after the create", over)
+	}
+}
+
+// A grant refused before anything ran stays marked not dispatched in a session, as on
+// docker: here the credential's minting outlasts the call's deadline. Before the
+// shared session core OpenShell passed it through the call-error path, which reported
+// the deadline unmarked, as if the call might have run.
+func TestSessionGrantRefusalStaysNotDispatched(t *testing.T) {
+	_, _, s, sc := openFake(t, sandbox.SessionOptions{})
+	grant := &sandbox.HostAPIGrant{BaseURL: "https://api.example.com", Allow: []sandbox.HostRoute{{Method: "GET", Path: "/v1/items"}},
+		Minter: slowMinter{}, AllowInSessions: true}
+	_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1", Grant: grant, Timeout: 100 * time.Millisecond})
+	if _, ok := sandbox.NotDispatchedReason(err); !ok {
+		t.Fatalf("a call whose credential was never minted: %v; want it marked not dispatched", err)
+	}
+	if slices.Contains(sc.seen(), "payload") {
+		t.Fatal("the payload ran without its grant")
+	}
+}
+
+// slowMinter mints nothing before its context ends.
+type slowMinter struct{}
+
+func (slowMinter) Mint(ctx context.Context, _ sandbox.MintScope) (sandbox.MintedToken, error) {
+	<-ctx.Done()
+	return sandbox.MintedToken{}, ctx.Err()
+}
+
+// No sandbox is created after Drain returns, also by an operation that was still in
+// its driver check, before it tracked anything, when Drain began: it is refused at
+// its create. Found by the R2 review; before the fix the session open, and a run,
+// created a sandbox after Drain had reported none left.
+func TestDrainLeavesNoSandboxToCome(t *testing.T) {
+	for _, op := range []string{"session", "run"} {
+		t.Run(op, func(t *testing.T) {
+			f, p := newFake(t)
+			sc := &sessionScript{}
+			f.run = sc.run
+			info := f.info
+			checking, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			f.info = func() (*openshellv1.GetGatewayInfoResponse, error) {
+				once.Do(func() { close(checking) })
+				<-release
+				return info()
+			}
+			done := make(chan error, 1)
+			go func() {
+				var err error
+				if op == "session" {
+					var s sandbox.Session
+					if s, err = p.OpenSession(context.Background(), sandbox.SessionOptions{Lifetime: time.Minute}); err == nil {
+						_ = s.Close(context.Background())
+					}
+				} else {
+					_, err = p.RunJavaScript(context.Background(), sandbox.Request{Code: "1", Timeout: 5 * time.Second})
+				}
+				done <- err
+			}()
+			<-checking
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := p.Drain(ctx); err != nil {
+				t.Fatalf("Drain: %v", err)
+			}
+			close(release)
+			err := <-done
+			if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalCapacity {
+				t.Fatalf("an operation that reached its create after Drain: %v; want refused, not dispatched, capacity", err)
+			}
+			if n := f.called("CreateSandbox"); n != 0 {
+				t.Fatalf("%d sandboxes were created after Drain returned", n)
+			}
+		})
+	}
+}
+
+// Drain waits for a creation already past its check until the sandbox's name is
+// tracked: the wait for tracked names alone would miss a sandbox whose create has
+// begun and whose name is not tracked yet.
+func TestDrainWaitsForACreateInFlight(t *testing.T) {
+	_, p := newFake(t)
+	leave, ok := p.sessions.Enter() // a create between its check and tracking its name
+	if !ok {
+		t.Fatal("Enter refused before Drain")
+	}
+	drained := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		drained <- p.Drain(ctx)
+	}()
+	select {
+	case err := <-drained:
+		t.Fatalf("Drain returned (%v) while a create was in flight", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	leave()
+	if err := <-drained; err != nil {
+		t.Fatalf("Drain after the create was tracked: %v", err)
 	}
 }

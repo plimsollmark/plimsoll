@@ -16,7 +16,7 @@ func TestDockerLockdownHasNoNetwork(t *testing.T) {
 	d := DefaultDocker("")
 	for _, runtime := range []string{"", "runsc"} {
 		for _, workTmpfs := range []bool{false, true} {
-			args := d.lockdownArgs("c", workTmpfs, runtime)
+			args := d.lockdownArgs("c", time.Now(), workTmpfs, runtime)
 			n := 0
 			for i, a := range args {
 				if a == "--network" || strings.HasPrefix(a, "--network=") || a == "--net" || strings.HasPrefix(a, "--net=") {
@@ -120,7 +120,7 @@ func TestDockerRunHasNoEgress(t *testing.T) {
 func TestLockdownStatesUlimitsAndIPC(t *testing.T) {
 	d := DefaultDocker("")
 	for _, runtime := range []string{"runc", "runsc"} {
-		args := strings.Join(d.lockdownArgs("c", true, runtime), " ")
+		args := strings.Join(d.lockdownArgs("c", time.Now(), true, runtime), " ")
 		for _, want := range []string{"--ulimit core=0", "--ulimit nofile=4096:4096", "--ipc private", "--no-healthcheck"} {
 			if !strings.Contains(args, want) {
 				t.Errorf("%s: lockdown lacks %q: %s", runtime, want, args)

@@ -12,7 +12,7 @@ import (
 // prompt. It fails the test if the pattern was not detected or Prompt refused it.
 func promptFor(t *testing.T, tr *sandbox.CallTrace, allow []sandbox.HostRoute, p PatternID) (Finding, string) {
 	t.Helper()
-	f, ok := find(Analyze(tr, allow), p)
+	f, ok := find(Analyze(tr, Routes{Allow: allow}), p)
 	if !ok {
 		t.Fatalf("%s not detected", p)
 	}
@@ -171,7 +171,7 @@ func TestPromptListsAllDeclaredRoutesSorted(t *testing.T) {
 func TestPromptDeterministic(t *testing.T) {
 	allow := []sandbox.HostRoute{{Method: "GET", Path: "/items/*"}, {Method: "GET", Path: "/rooms"}}
 	build := func() Finding {
-		f, _ := find(Analyze(trace(fanoutRows("/items/*", 60, time.Millisecond)...), allow), PatternFanOut)
+		f, _ := find(Analyze(trace(fanoutRows("/items/*", 60, time.Millisecond)...), Routes{Allow: allow}), PatternFanOut)
 		return f
 	}
 	a, _ := Prompt(build(), allow)

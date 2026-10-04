@@ -93,6 +93,11 @@ func SessionLanguages(hint, stated []Language) ([]Language, error) {
 type Session interface {
 	// Isolation is the tier the provider measured when the session opened.
 	Isolation() IsolationClass
+	// Environments is what this session runs: its snippet and project environments,
+	// identities included, as of the artifact the sandbox was created from. A session
+	// layer checks a software rule against it after the open (review F10): what the
+	// provider stated before the open can name an earlier artifact.
+	Environments() Environments
 	// ExpiresAt is when the session's lifetime ends.
 	ExpiresAt() time.Time
 	RunJavaScript(ctx context.Context, req Request) (Result, error)
@@ -112,73 +117,50 @@ type Session interface {
 	// Close ends the session and deletes its sandbox (off the caller's path). It is
 	// idempotent, and a no-op on a session that already ended.
 	Close(ctx context.Context) error
-	// Done is closed when the session has ended, by Close or by itself.
+	// Done is closed once the session has ended, by Close or by itself, and its
+	// sandbox is deleted (or the delete gave up): what a session holds, its memory
+	// included, is released by then, so a session layer gives back the session's
+	// capacity on Done. It can trail the end by the provider's delete time. Whether the
+	// session has ended is Err, which is set at once.
 	Done() <-chan struct{}
-	// Err is nil while the session is open and a *SessionEndedError afterwards.
+	// Err is nil while the session is open and a *SessionEndedError from the moment it
+	// ends.
 	Err() error
 }
 
-// SessionEnd says why a session ended.
-type SessionEnd int
+// SessionEnd says why a session ended. The lifecycle every provider's sessions share
+// lives in sandbox/internal/sessionkit (Life), which defines it.
+type SessionEnd = sessionkit.End
 
 const (
-	SessionOpen SessionEnd = iota
+	SessionOpen = sessionkit.Open
 	// SessionClosed: its holder closed it.
-	SessionClosed
+	SessionClosed = sessionkit.Closed
 	// SessionExpired: its lifetime passed.
-	SessionExpired
+	SessionExpired = sessionkit.Expired
 	// SessionDiskExceeded: a call left more on disk than the session's budget.
-	SessionDiskExceeded
+	SessionDiskExceeded = sessionkit.DiskExceeded
 	// SessionMainProcessEnded: the sandbox's main process ended (code in the
 	// sandbox can kill it), so the sandbox can run nothing more.
-	SessionMainProcessEnded
+	SessionMainProcessEnded = sessionkit.MainProcessEnded
 	// SessionBoundaryFailed: the provider could not give the next call a clean
 	// sandbox: it could not prove that no process of a call outlived it and a
 	// restart failed too, or the sandbox could not be stopped or started. It ended
 	// the session rather than run the next call beside a leftover process.
-	SessionBoundaryFailed
+	SessionBoundaryFailed = sessionkit.BoundaryFailed
 	// SessionSandboxChanged: the sandbox no longer reads back as it was verified
 	// (its policy, settings or spec changed, or it disappeared).
-	SessionSandboxChanged
+	SessionSandboxChanged = sessionkit.SandboxChanged
 	// SessionShutdown: the provider was drained.
-	SessionShutdown
+	SessionShutdown = sessionkit.Shutdown
 )
 
-var sessionEndNames = map[SessionEnd]string{
-	SessionOpen:             "open",
-	SessionClosed:           "closed",
-	SessionExpired:          "expired",
-	SessionDiskExceeded:     "disk_exceeded",
-	SessionMainProcessEnded: "main_process_ended",
-	SessionBoundaryFailed:   "boundary_failed",
-	SessionSandboxChanged:   "sandbox_changed",
-	SessionShutdown:         "shutdown",
-}
-
-func (e SessionEnd) String() string {
-	if s, ok := sessionEndNames[e]; ok {
-		return s
-	}
-	return fmt.Sprintf("session_end(%d)", int(e))
-}
-
 // ErrSessionEnded matches every *SessionEndedError.
-var ErrSessionEnded = errors.New("sandbox: the session has ended")
+var ErrSessionEnded = sessionkit.ErrEnded
 
-// SessionEndedError is a session's end, with its reason and any detail.
-type SessionEndedError struct {
-	Reason SessionEnd
-	Detail string
-}
-
-func (e *SessionEndedError) Error() string {
-	if e.Detail == "" {
-		return fmt.Sprintf("sandbox: the session has ended (%s)", e.Reason)
-	}
-	return fmt.Sprintf("sandbox: the session has ended (%s): %s", e.Reason, e.Detail)
-}
-
-func (e *SessionEndedError) Is(target error) bool { return target == ErrSessionEnded }
+// SessionEndedError is a session's end, with its reason (Reason) and any detail
+// (Detail).
+type SessionEndedError = sessionkit.EndedError
 
 // SessionEndReason reads the reason from an error, SessionOpen when err is not a
 // session's end.
@@ -196,6 +178,18 @@ func RefuseEndedSession(end error) error {
 	return NotDispatched(RefusalRequest, end)
 }
 
+// RefuseUnreadable is the error a session call returns when the session's sandbox
+// could not be read back before it: nothing ran, the sandbox could not be shown to be
+// the one opened, and the session goes on (reason environment; review F4).
+func RefuseUnreadable(err error) error {
+	return NotDispatched(RefusalEnvironment, err)
+}
+
+// sessionRefusals are the refusals a session's lifecycle (sessionkit.Life) returns.
+func sessionRefusals() sessionkit.Refusals {
+	return sessionkit.Refusals{Ended: RefuseEndedSession, GaveUp: RefuseGaveUp, Unreadable: RefuseUnreadable}
+}
+
 // RefuseGaveUp is the error a session call returns when its context ends before any
 // of it ran: while it waited for the session's turn (held by a call in flight, or by
 // the sweep after the previous one), or while the sandbox was made ready for it. It
@@ -208,16 +202,19 @@ func RefuseGaveUp(ctx context.Context) error {
 // session's interpreters returned (end is the session's Err); ok is false for any
 // other error, which means the code may have run.
 //   - An interpreter that could not start (sessionkit.ErrLaunch): on a session that
-//     has ended the end is why, and is what the caller is told; otherwise the image
-//     cannot run the language.
+//     has ended the end is why, and is what the caller is told; when ctx, the call's
+//     context, has ended, the caller gave up; otherwise the image cannot run the
+//     language.
 //   - Files that could not be written (sessionkit.ErrFiles): a request this session's
 //     work directory cannot take. The interpreter and the session go on.
 //   - A deadline before the code was sent (sessionkit.ErrUnsent): DeadlineExceeded,
 //     marked; the next cell starts a fresh interpreter and says so.
-func RefuseCell(err, end error) (refusal error, ok bool) {
+func RefuseCell(ctx context.Context, err, end error) (refusal error, ok bool) {
 	switch {
 	case errors.Is(err, sessionkit.ErrLaunch) && end != nil:
 		return RefuseEndedSession(end), true
+	case errors.Is(err, sessionkit.ErrLaunch) && ctx.Err() != nil:
+		return RefuseGaveUp(ctx), true
 	case errors.Is(err, sessionkit.ErrLaunch):
 		return NotDispatched(RefusalEnvironment, fmt.Errorf("%w: %v", ErrUnsupported, err)), true
 	case errors.Is(err, sessionkit.ErrFiles):
@@ -228,4 +225,53 @@ func RefuseCell(err, end error) (refusal error, ok bool) {
 		return NotDispatched(RefusalCapacity, fmt.Errorf("%w: %v", context.DeadlineExceeded, err)), true
 	}
 	return nil, false
+}
+
+// SessionCellResult turns the interpreter driver's outcome into a session cell's
+// result, for every provider; ctx is the call's context. An interpreter that could not start ran none of the
+// cell's code: that refusal is marked not dispatched (RefuseCell, asking ended whether
+// the session's end caused it). A cell whose interpreter ended on a session that has
+// ended returns that end, unmarked, through callError: the teardown closing the relay
+// can reach the cell before the cancelled context does, so the interpreter's end is the
+// session's, not the cell's, and the code may have run. Otherwise a cell whose
+// interpreter ended is checked against the sandbox (stopped; nil where a provider has
+// no such check), since a sandbox that stopped ends the session and its exit status is
+// not the cell's.
+func SessionCellResult(ctx context.Context, fail CellResult, out sessionkit.CellOutcome, err error, took time.Duration, software, environment string,
+	ended, stopped func() error, callError func(error) error) (CellResult, error) {
+	if refusal, ok := RefuseCell(ctx, err, ended()); ok {
+		return fail, refusal
+	}
+	if err != nil {
+		return fail, callError(err)
+	}
+	if out.Ended && !out.TimedOut {
+		if end := ended(); end != nil {
+			return fail, callError(end)
+		}
+		if end := stopped(); end != nil {
+			return fail, end
+		}
+	}
+	res := CellResult{
+		Stdout:              out.Stdout,
+		Stderr:              out.Stderr,
+		StdoutTruncated:     out.StdoutTruncated,
+		StderrTruncated:     out.StderrTruncated,
+		TimedOut:            out.TimedOut,
+		InterpreterStarted:  out.Started,
+		InterpreterEnded:    out.Ended,
+		Duration:            took,
+		Sandbox:             fail.Sandbox,
+		Isolation:           fail.Isolation,
+		SoftwareIdentity:    software,
+		EnvironmentIdentity: environment,
+	}
+	switch {
+	case out.TimedOut:
+		res.ExitCode = 124
+	case out.Raised:
+		res.ExitCode = 1
+	}
+	return res, nil
 }

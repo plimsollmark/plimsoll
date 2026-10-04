@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func TestDockerWritableBudgetValidation(t *testing.T) {
 // daemon would otherwise provide as an unaccounted writable 64 MiB default.
 func TestDockerLockdownBoundsWritableMounts(t *testing.T) {
 	d := DefaultDocker("")
-	args := strings.Join(d.lockdownArgs("c", true, d.Runtime), " ")
+	args := strings.Join(d.lockdownArgs("c", time.Now(), true, d.Runtime), " ")
 	for _, want := range []string{
 		"--read-only",
 		"--tmpfs /tmp:rw,noexec,nosuid,size=16m",
@@ -64,7 +65,7 @@ func TestDockerLockdownBoundsWritableMounts(t *testing.T) {
 
 	d.DiskBudgetMB = 512
 	d.TmpDiskMB = 32
-	args = strings.Join(d.lockdownArgs("c", true, d.Runtime), " ")
+	args = strings.Join(d.lockdownArgs("c", time.Now(), true, d.Runtime), " ")
 	for _, want := range []string{
 		"--tmpfs /tmp:rw,noexec,nosuid,size=32m",
 		"--tmpfs /work:rw,noexec,nosuid,size=464m,mode=1777", // 512 - 32 - 16
@@ -102,19 +103,19 @@ func TestCheckTmpfsMount(t *testing.T) {
 // the ID binds the volume verdict to exact image content, so malformed output
 // must fail closed rather than degrade to an unverified tag run.
 func TestParseImageIDAndVolumes(t *testing.T) {
-	id, vols, err := parseImageIDAndVolumes([]byte(`{"Id":"sha256:abc","Config":{}}` + "\n"))
-	if err != nil || id != "sha256:abc" || len(vols) != 0 {
-		t.Fatalf("volume-free image: id=%q vols=%v err=%v", id, vols, err)
+	id, vols, env, err := parseImageIDAndVolumes([]byte(`{"Id":"sha256:abc","Config":{}}` + "\n"))
+	if err != nil || id != "sha256:abc" || len(vols) != 0 || len(env) != 0 {
+		t.Fatalf("volume-free image: id=%q vols=%v env=%q err=%v", id, vols, env, err)
 	}
-	id, vols, err = parseImageIDAndVolumes([]byte(`{"Id":"sha256:abc","Config":{"Volumes":{"/data":{},"/cache":{}}}}`))
-	if err != nil || id != "sha256:abc" {
-		t.Fatalf("volume image: id=%q err=%v", id, err)
+	id, vols, env, err = parseImageIDAndVolumes([]byte(`{"Id":"sha256:abc","Config":{"Volumes":{"/data":{},"/cache":{}},"Env":["PATH=/usr/bin","A=1"]}}`))
+	if err != nil || id != "sha256:abc" || !slices.Equal(env, []string{"PATH=/usr/bin", "A=1"}) {
+		t.Fatalf("volume image: id=%q env=%q err=%v", id, env, err)
 	}
 	if len(vols) != 2 || vols[0] != "/cache" || vols[1] != "/data" {
 		t.Fatalf("volumes = %v, want sorted [/cache /data]", vols)
 	}
-	for _, bad := range []string{"null", "", "{broken", `{"Config":{}}`, `{"Id":"abc","Config":{}}`} {
-		if _, _, err := parseImageIDAndVolumes([]byte(bad)); err == nil {
+	for _, bad := range []string{"null", "", "{broken", `{"Config":{}}`, `{"Id":"abc","Config":{}}`, `{"Id":"sha256:abc","Config":{"Env":["NOVALUE"]}}`} {
+		if _, _, _, err := parseImageIDAndVolumes([]byte(bad)); err == nil {
 			t.Errorf("parseImageIDAndVolumes(%q) accepted malformed inspect output", bad)
 		}
 	}
@@ -196,6 +197,7 @@ func TestDockerExecutionStateRequiresVerifiedImages(t *testing.T) {
 	d.ready = true
 	d.daemonHost = "unix:///run/docker.sock"
 	d.verifiedRuntime = d.Runtime
+	d.verifiedGuestUID = d.guestUID()
 	d.verifiedImageIDs = map[string]string{
 		d.Image:        "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		d.ProjectImage: "sha256:2222222222222222222222222222222222222222222222222222222222222222",

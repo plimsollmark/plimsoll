@@ -236,11 +236,42 @@ func TestDockerProjectStepTimeoutIsTimedOut(t *testing.T) {
 	t.Logf("classified as %s (%s), steps reported: %d", res.Outcome, res.Detail, len(res.Steps))
 }
 
+// TestDockerProjectStepIgnoringSIGTERMIsKilled: a step that ignores SIGTERM must
+// still end at its own budget, so the runner reports and the earlier steps' output
+// survives. The runner used to kill a timed-out step with Node's default SIGTERM; a
+// step that trapped it ran on until the outer backstop killed the container, and the
+// run came back with no steps at all (review F8, 2026-10-03).
+func TestDockerProjectStepIgnoringSIGTERMIsKilled(t *testing.T) {
+	d := testDocker()
+	requireProjectImage(t, d)
+	res, err := d.RunProject(context.Background(), ProjectRequest{
+		Files:   []File{{Path: "noop.txt", Content: "x"}},
+		Steps:   []string{"echo first", `trap "" TERM; sleep 30`},
+		Timeout: 3 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("RunProject: %v", err)
+	}
+	if res.Outcome != ProjectOutcomeTimedOut {
+		t.Fatalf("Outcome = %s (%s), want timed_out", res.Outcome, res.Detail)
+	}
+	if len(res.Steps) != 2 {
+		t.Fatalf("the runner reported %d steps (%s); the step ignoring SIGTERM outlived its budget and the outer backstop discarded the report",
+			len(res.Steps), res.Detail)
+	}
+	if got := strings.TrimSpace(res.Steps[0].Stdout); got != "first" {
+		t.Fatalf("first step's stdout = %q, want %q", got, "first")
+	}
+	if !res.Steps[1].TimedOut {
+		t.Fatalf("the step ignoring SIGTERM is not marked timed out: %+v", res.Steps[1])
+	}
+}
+
 // assertTimedOut checks the contract a hung run must satisfy, without depending
 // on which of the two timeout paths won.
 //
 // The per-step budget is req.Timeout and the outer backstop is req.Timeout+5s
-// (docker.go), so the step-timeout path only reports when container startup plus
+// (runPlan, docker_run.go), so the step-timeout path only reports when container startup plus
 // reporting fits in that fixed 5s margin. Under load the backstop fires first and
 // returns no steps. BOTH are correct: the top-level Outcome is timed_out either
 // way, which is the classification a caller keys on. When a step IS reported it

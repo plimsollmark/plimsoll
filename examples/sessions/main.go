@@ -145,7 +145,8 @@ func run(ctx context.Context, out string) error {
 		return err
 	}
 	var bundle bytes.Buffer
-	remote, err := client.New(d.BaseURL, client.WithToken(token), client.WithRecorder(attest.NewHarness(attest.NewSigner(key), &bundle)))
+	harness := attest.NewHarness(attest.NewSigner(key), &bundle)
+	remote, err := client.New(d.BaseURL, client.WithToken(token), client.WithRecorder(harness))
 	if err != nil {
 		return err
 	}
@@ -180,7 +181,7 @@ func run(ctx context.Context, out string) error {
 if (add(2, 3) !== 5) { console.error("add(2, 3) =", add(2, 3), "but should be 5"); process.exit(1); }
 console.log("test passed: add(2, 3) = 5");`
 	t0 := time.Now()
-	p1, err := s.RunProject(ctx, sandbox.ProjectRequest{
+	p1, err := s.RunProject(client.NewTraceContext(ctx, "call-1"), sandbox.ProjectRequest{
 		Files: []sandbox.File{{Path: "lib.js", Content: "module.exports = (a, b) => a - b;\n"}, {Path: "test.js", Content: test + "\n"}},
 		Steps: []string{"node test.js"},
 	})
@@ -195,14 +196,14 @@ const path = "/tmp/work/lib.js";
 fs.writeFileSync(path, fs.readFileSync(path, "utf8").replace("a - b", "a + b"));
 console.log("patched " + path);`
 	t0 = time.Now()
-	r2, err := s.RunJavaScript(ctx, sandbox.Request{Code: patch})
+	r2, err := s.RunJavaScript(client.NewTraceContext(ctx, "call-2"), sandbox.Request{Code: patch})
 	if err != nil {
 		return err
 	}
 	add("snippet", "Fix the bug in place: the file the first call wrote is still there.", patch, t0, fmt.Sprintf("exit %d", r2.ExitCode), r2.Stdout+r2.Stderr, r2.Record)
 
 	t0 = time.Now()
-	p3, err := s.RunProject(ctx, sandbox.ProjectRequest{Steps: []string{"node test.js"}})
+	p3, err := s.RunProject(client.NewTraceContext(ctx, "call-3"), sandbox.ProjectRequest{Steps: []string{"node test.js"}})
 	if err != nil {
 		return err
 	}
@@ -213,7 +214,7 @@ const child = spawn("sleep", ["600"], { detached: true, stdio: "ignore" });
 child.unref();
 console.log("started sleep 600 as pid " + child.pid + " and exited");`
 	t0 = time.Now()
-	r4, err := s.RunJavaScript(ctx, sandbox.Request{Code: leave})
+	r4, err := s.RunJavaScript(client.NewTraceContext(ctx, "call-4"), sandbox.Request{Code: leave})
 	if err != nil {
 		return err
 	}
@@ -230,7 +231,7 @@ for (const d of fs.readdirSync("/proc")) {
 console.log("sleep 600 still running: " + (left.length ? left.join(", ") : "none"));
 console.log("lib.js now: " + fs.readFileSync("/tmp/work/lib.js", "utf8").trim());`
 	t0 = time.Now()
-	r5, err := s.RunJavaScript(ctx, sandbox.Request{Code: look})
+	r5, err := s.RunJavaScript(client.NewTraceContext(ctx, "call-5"), sandbox.Request{Code: look})
 	if err != nil {
 		return err
 	}
@@ -244,6 +245,11 @@ console.log("lib.js now: " + fs.readFileSync("/tmp/work/lib.js", "utf8").trim())
 		return err
 	}
 	data.Close = fmt.Sprintf("closed after %d calls; last record %s", sum.Calls, sum.LastRecordSHA256)
+	// The checkpoint ends the bundle: without it the verifier cannot tell the file
+	// from a cut one.
+	if err := harness.Checkpoint(); err != nil {
+		return err
+	}
 	stopped = true
 	if err := d.Stop(2 * time.Minute); err != nil {
 		return err
@@ -267,8 +273,9 @@ console.log("lib.js now: " + fs.readFileSync("/tmp/work/lib.js", "utf8").trim())
 		return err
 	}
 	data.Checks = append(data.Checks, verify("The same bundle with one byte of call 2's output changed", edited, v))
-	if !data.Checks[0].Pass || data.Checks[1].Pass || data.Checks[2].Pass {
-		return fmt.Errorf("the verifier did not accept the bundle and refuse both edits: %+v", data.Checks)
+	data.Checks = append(data.Checks, verify("The same bundle with its last two lines (the close and the checkpoint) cut", entries[:len(entries)-2], v))
+	if !data.Checks[0].Pass || data.Checks[1].Pass || data.Checks[2].Pass || data.Checks[3].Pass {
+		return fmt.Errorf("the verifier did not accept the bundle and refuse the three edits: %+v", data.Checks)
 	}
 	data.Median = median(data.Calls)
 	data.Chain = chainSVG(data.Calls)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/plimsollmark/plimsoll/internal/clientconfig"
@@ -43,12 +44,28 @@ func LoadClients(path string) (*FileVerifier, error) {
 	}
 	v := &FileVerifier{clients: make(map[string]Principal, len(cf.Clients))}
 	for _, c := range cf.Clients {
-		v.clients[c.TokenSHA256] = Principal{UserID: c.ID, Scopes: c.Scopes}
+		v.clients[c.TokenSHA256] = Principal{UserID: c.ID, Scopes: c.Scopes, PaidSecondsPerDay: c.PaidSecondsPerDay}
 	}
 	if len(v.clients) == 0 {
 		return nil, fmt.Errorf("clients: %s defines no clients", path)
 	}
 	return v, nil
+}
+
+// Uncapped lists, sorted, the callers with no daily allowance on a metered provider
+// (no paid_seconds_per_day), which hardened mode refuses beside one.
+func (v *FileVerifier) Uncapped() []string {
+	if v == nil {
+		return nil
+	}
+	var out []string
+	for _, p := range v.clients {
+		if p.PaidSecondsPerDay <= 0 {
+			out = append(out, p.UserID)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Len reports how many clients are configured.

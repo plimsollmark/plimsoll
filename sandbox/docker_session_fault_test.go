@@ -17,9 +17,12 @@ import (
 
 // dockerFaults puts a docker CLI on PATH that runs the real one, except where a
 // trigger file in the returned directory makes it fail the way a daemon or another
-// operator can: a call's exec (the one whose last argument is "-", a snippet's node)
-// failing with the exit code the trigger holds (docker exec's own failures exit 1;
-// docker run's exit 125), alone or after pausing the container; a container inspect failing,
+// operator can: a call's exec (the one whose last argument is "-", a snippet's node, or
+// "/runner.mjs") failing with the exit code the trigger holds (docker exec's own
+// failures exit 1; docker run's exit 125), alone or after pausing the container; any
+// docker run failing the same way before the container's command starts, or hanging
+// (run-hang, a call's exec: call-exec-hang) without starting it for the seconds the
+// trigger holds; a docker rm taking that long first (rm-slow); a container inspect failing,
 // or removing the container first and then failing in words docker never used; a
 // container inspect taking 3 seconds. The faults are what the daemon does, not what
 // guest code does, so no other way to cause them from a test exists.
@@ -46,7 +49,20 @@ for a in "$@"; do
 done
 last=
 for a in "$@"; do last=$a; done
-if [ "$sub" = exec ] && [ "$last" = - ]; then
+if [ "$sub" = run ] && [ -e "$ctl/run-hang" ]; then
+  exec sleep "$(cat "$ctl/run-hang")"
+fi
+if [ "$sub" = rm ] && [ -e "$ctl/rm-slow" ]; then
+  sleep "$(cat "$ctl/rm-slow")"
+fi
+if [ "$sub" = run ] && [ -e "$ctl/run-fail" ]; then
+  echo "docker: Error response from daemon: injected failure" >&2
+  exit "$(cat "$ctl/run-fail")"
+fi
+if [ "$sub" = exec ] && { [ "$last" = - ] || [ "$last" = /runner.mjs ]; }; then
+  if [ -e "$ctl/call-exec-hang" ]; then
+    exec sleep "$(cat "$ctl/call-exec-hang")"
+  fi
   if [ -e "$ctl/call-exec-fail" ]; then
     echo "Error response from daemon: injected failure" >&2
     exit "$(cat "$ctl/call-exec-fail")"
@@ -113,6 +129,41 @@ func TestDockerSessionExecFailureIsNotTheCallsExit(t *testing.T) {
 		}
 		if _, marked := sandbox.NotDispatchedReason(err); marked {
 			t.Fatalf("an exec docker may have started is marked not dispatched: %v", err)
+		}
+	}
+}
+
+// docker's own failure before the container's command starts is an error, for a
+// snippet and a project, a single run and a session call alike, whatever docker exits
+// with and whatever it prints: no start marker, no result (review F6). Before, a
+// docker run exiting 1 with docker's words came back as the guest's exit 1, and a
+// project whose runner never started as a protocol error. A guest's own exit with the
+// same code and words stays a result (TestDockerGuestCannotFakeAnInfrastructureExit).
+func TestDockerFailureBeforeTheCommandIsNeverAResult(t *testing.T) {
+	d := sessionDocker(t)
+	trigger, clear := dockerFaults(t)
+	s := openDockerSession(t, d)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	for _, code := range []int{1, 125, 127} {
+		trigger("run-fail", fmt.Sprint(code))
+		res, err := d.RunJavaScript(ctx, sandbox.Request{Code: `console.log("never")`})
+		if err == nil {
+			t.Errorf("docker run failing with %d came back as a snippet's result: %+v", code, res)
+		}
+		pres, err := d.RunProject(ctx, sandbox.ProjectRequest{Steps: []string{"true"}})
+		if err == nil {
+			t.Errorf("docker run failing with %d came back as a project's result: %+v", code, pres)
+		}
+		clear("run-fail")
+		trigger("call-exec-fail", fmt.Sprint(code))
+		pres, err = s.RunProject(ctx, sandbox.ProjectRequest{Steps: []string{"true"}})
+		clear("call-exec-fail")
+		if err == nil {
+			t.Errorf("docker exec failing with %d before the runner started came back as a session project's result: %+v", code, pres)
+		}
+		if _, marked := sandbox.NotDispatchedReason(err); marked {
+			t.Errorf("an exec docker may have started is marked not dispatched: %v", err)
 		}
 	}
 }
@@ -268,4 +319,63 @@ func TestDockerReconcileOrphansRefusesAnUnboundedListing(t *testing.T) {
 	if err == nil {
 		t.Fatal("a 6 MB docker ps answer was read as a listing")
 	}
+}
+
+// What ended a run is read when docker returns, before its container is removed: a
+// docker failure that took milliseconds stays docker's failure when the removal
+// outlasts the run's deadline, for a snippet and a project (R6 review, 2026-10-03).
+// Before, both came back as a timed-out run (exit 124 for the snippet) with docker's
+// words as their output.
+func TestDockerCleanupPastTheDeadlineKeepsDockersFailure(t *testing.T) {
+	d := sessionDocker(t)
+	trigger, clear := dockerFaults(t)
+	trigger("run-fail", "125")
+	defer clear("run-fail")
+	defer clear("rm-slow")
+	trigger("rm-slow", "2")
+	res, err := d.RunJavaScript(context.Background(), sandbox.Request{Code: `console.log("never")`, Timeout: 500 * time.Millisecond})
+	if err == nil || res.TimedOut {
+		t.Errorf("docker run refusing at once, then a removal past the deadline: %+v, %v; want docker's failure, an error", res, err)
+	}
+	// A project's run ends at its budget plus the runner's 5 s grace.
+	trigger("rm-slow", "7")
+	pres, err := d.RunProject(context.Background(), sandbox.ProjectRequest{Steps: []string{"true"}, Timeout: time.Second})
+	if err == nil || pres.Outcome == sandbox.ProjectOutcomeTimedOut {
+		t.Errorf("a project whose docker run refused at once, then a removal past the deadline: %+v, %v; want docker's failure, an error", pres, err)
+	}
+}
+
+// A run that reaches its deadline before docker starts the container's command shows
+// no start marker, so it is not reported as the guest's timeout: no start marker, no
+// result, for a snippet and a project, a single run and a session call alike. Before,
+// a docker that never started the command was reported as the guest's timeout.
+func TestDockerDeadlineBeforeTheCommandStartsIsNotATimeout(t *testing.T) {
+	d := sessionDocker(t)
+	trigger, clear := dockerFaults(t)
+	s := openDockerSession(t, d)
+	check := func(what string, timedOut bool, err error) {
+		t.Helper()
+		if err == nil || timedOut {
+			t.Errorf("%s that never started before its deadline: timed out %v, error %v; want an error", what, timedOut, err)
+			return
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("%s: %v; want it to say the deadline passed", what, err)
+		}
+		if _, marked := sandbox.NotDispatchedReason(err); marked {
+			t.Errorf("%s: %v is marked not dispatched; a killed docker CLI may have started it", what, err)
+		}
+	}
+	trigger("run-hang", "60")
+	res, err := d.RunJavaScript(context.Background(), sandbox.Request{Code: "1", Timeout: time.Second})
+	check("a snippet", res.TimedOut, err)
+	pres, err := d.RunProject(context.Background(), sandbox.ProjectRequest{Steps: []string{"true"}, Timeout: time.Second})
+	check("a project", pres.Outcome == sandbox.ProjectOutcomeTimedOut, err)
+	clear("run-hang")
+	trigger("call-exec-hang", "60")
+	defer clear("call-exec-hang")
+	res, err = s.RunJavaScript(context.Background(), sandbox.Request{Code: "1", Timeout: time.Second})
+	check("a session snippet", res.TimedOut, err)
+	pres, err = s.RunProject(context.Background(), sandbox.ProjectRequest{Steps: []string{"true"}, Timeout: time.Second})
+	check("a session project", pres.Outcome == sandbox.ProjectOutcomeTimedOut, err)
 }

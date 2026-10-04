@@ -26,7 +26,9 @@ const (
 	// RefusalIsolation: the backend's current evidence is below the request's
 	// isolation floor. Another backend may meet it.
 	RefusalIsolation
-	// RefusalCapacity: shed by admission or a rate limit. Retry later or elsewhere.
+	// RefusalCapacity: shed by admission, a rate limit, or a spent daily allowance on
+	// a provider billed by the second (which the refusal's text says lasts until
+	// 00:00 UTC). Retry later or elsewhere.
 	RefusalCapacity
 	// RefusalEnvironment: the selected software cannot meet the caller's rule
 	// (another backend may have an approved image), or the sandbox a call was to run

@@ -8,7 +8,8 @@
     "/lights": {
       "get": {
         "operationId": "listLights",
-        "summary": "List every light with its current state."
+        "summary": "List every light with its current state.",
+        "x-plimsoll-batch-of": ["getLight"]
       },
       "post": {
         "operationId": "createLight",

@@ -18,7 +18,6 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/grants"
-	"github.com/plimsollmark/plimsoll/internal/quantise"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
@@ -76,9 +75,12 @@ func parseMinimumIsolation(raw string) (sandbox.IsolationClass, error) {
 type SandboxService struct {
 	plimsollv1connect.UnimplementedSandboxServiceHandler
 	Sandbox sandbox.Sandbox
-	Limiter *CodeLimiter     // optional; nil = unlimited
-	Grants  *grants.Registry // optional; nil/empty = no host-API profiles
-	Logger  *slog.Logger     // optional; nil = slog.Default()
+	Limiter *CodeLimiter // optional; nil = unlimited
+	// Spend bounds the daily use of a metered provider, per caller and in total
+	// (spend.go); nil = no bound.
+	Spend  *SpendCap
+	Grants *grants.Registry // optional; nil/empty = no host-API profiles
+	Logger *slog.Logger     // optional; nil = slog.Default()
 	// Resources is the per-run envelope the provider was built with, reported by
 	// Describe (sandbox.Build returns it as Provider.Resources). Zero = not stated.
 	Resources sandbox.Resources
@@ -286,15 +288,19 @@ type envelope struct {
 	software sandbox.SoftwareRule
 }
 
-// target is where a checked snippet or project runs: the provider itself for a
-// run, or a session for a session call. Validation, grants, the floor, audit,
-// advice and the response are the same code for both.
+// target is where a checked call runs: the provider itself for a run, or a session
+// for a session call. The request pipeline (pipeline.go) is the same code for both.
 type target struct {
 	provider string                 // for a failed run's audit line
 	tier     sandbox.IsolationClass // the evidence the request's floor is checked against
 	admit    func(context.Context) (func(), error)
 	js       func(context.Context, sandbox.Request) (sandbox.Result, error)
 	project  func(context.Context, sandbox.ProjectRequest) (sandbox.ProjectResult, error)
+	module   func(context.Context, sandbox.ModuleRequest) (sandbox.ModuleResult, error) // runs only
+	// teardown is the provider's BillingTeardown: positive when it bills by the second
+	// (sandbox.Metered), so a run draws on the daily allowances (SpendCap). Runs only:
+	// plimsolld refuses sessions on a provider that bills by the second.
+	teardown time.Duration
 	software sandbox.Environments
 	// session is set for a session call: software then holds the identities its
 	// sandbox was opened with, which every call runs on.
@@ -314,6 +320,8 @@ func (s *SandboxService) runTarget() target {
 		admit:    s.limit,
 		js:       s.Sandbox.RunJavaScript,
 		project:  s.Sandbox.RunProject,
+		module:   s.Sandbox.RunModule,
+		teardown: sandbox.MeteredTeardown(s.Sandbox),
 		software: software,
 	}
 }
@@ -367,14 +375,14 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 	if err != nil {
 		return nil, err
 	}
-	var resp *plimsollv1.RunResponse
+	var k kind
 	switch p := req.Msg.GetPayload().(type) {
 	case *plimsollv1.RunRequest_Javascript:
-		resp, err = s.runJavaScript(ctx, env, p.Javascript, s.runTarget())
+		k = &javascriptKind{p: p.Javascript}
 	case *plimsollv1.RunRequest_Project:
-		resp, err = s.runProject(ctx, env, p.Project, s.runTarget())
+		k = &projectKind{p: p.Project}
 	case *plimsollv1.RunRequest_Module:
-		resp, err = s.runModule(ctx, env, p.Module)
+		k = &moduleKind{p: p.Module}
 	case *plimsollv1.RunRequest_Cell:
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
 			fmt.Errorf("%w: a cell runs only in a session (SessionRun)", sandbox.ErrInvalidRequest))
@@ -382,6 +390,7 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
 			errors.New("payload must be exactly one of javascript, project, or module"))
 	}
+	resp, err := s.pipeline(ctx, env, k, s.runTarget())
 	if err != nil {
 		return nil, err
 	}
@@ -422,404 +431,6 @@ func (s *SandboxService) policy() string {
 		return d.Environments().Policy
 	}
 	return ""
-}
-
-// runJavaScript is the snippet kind. The envelope has been checked; the grant
-// profile is the payload's, because a module payload has no such field.
-func (s *SandboxService) runJavaScript(ctx context.Context, env envelope, p *plimsollv1.JavaScriptRun, t target) (*plimsollv1.RunResponse, error) {
-	code := p.GetCode()
-	sbReq := sandbox.Request{Code: code, Timeout: env.timeout, MinimumIsolation: env.minimum, Software: env.software}
-	if err := sandbox.ValidateRequest(sbReq); err != nil {
-		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
-	}
-	grant, err := s.grantFor(ctx, p.GetGrantProfile())
-	if err != nil {
-		return nil, err
-	}
-	// Before admission, so a refused call spends no rate token and takes no slot; the
-	// provider checks again before it dispatches.
-	if t.session {
-		if err := sandbox.CheckSessionGrant(grant); err != nil {
-			return nil, mapSandboxErr(err)
-		}
-	}
-	if grant != nil {
-		ctx, err = applyGrantSubject(ctx, grant) // per-session token minting; refuses anon subject-bound grants
-		if err != nil {
-			return nil, err
-		}
-	}
-	sbReq.Grant = grant
-	if err := sandbox.CheckMinimumIsolation(t.tier, sbReq.MinimumIsolation); err != nil {
-		return nil, mapSandboxErr(err)
-	}
-	if err := sbReq.Software.Check(t.software.JavaScript.SoftwareIdentity); err != nil {
-		return nil, mapSandboxErr(err)
-	}
-
-	release, err := t.admit(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
-	s.runsTotal.Add(1)
-	runCtx, cancel := runContext(ctx)
-	defer cancel()
-	started := time.Now()
-	res, err := t.js(runCtx, sbReq)
-	if err != nil {
-		if isInfraErr(err) {
-			s.runsFailed.Add(1)
-		}
-		failed := []slog.Attr{
-			slog.String("op", "javascript"),
-			slog.String("caller", auditCaller(ctx)),
-			slog.Int("code_bytes", len(code)),
-			slog.String("grant_profile", p.GetGrantProfile()),
-			slog.String("sandbox", t.provider),
-			slog.String("isolation", t.tier.String()),
-			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
-			slog.String("error", err.Error()),
-		}
-		// A failed run is exactly the one an operator will go looking for, so it
-		// carries the join key too.
-		// A run can fail after it brokered calls; they happened, so they are counted.
-		s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
-		failed = append(failed, hostCallAttrs(res.CallTrace)...)
-		failed = append(append(failed, traceAttrs(env.traceID)...), t.attrs...)
-		s.logger().LogAttrs(ctx, slog.LevelError, "code run failed", failed...)
-		return nil, mapSandboxErr(err)
-	}
-	attrs := []slog.Attr{
-		slog.String("op", "javascript"),
-		slog.String("caller", auditCaller(ctx)),
-		slog.Int("code_bytes", len(code)),
-		slog.String("grant_profile", p.GetGrantProfile()),
-		slog.String("sandbox", res.Sandbox),
-		slog.String("isolation", res.Isolation.String()),
-		slog.Int("exit_code", res.ExitCode),
-		slog.Bool("timed_out", res.TimedOut),
-		slog.Int64("duration_ms", res.Duration.Milliseconds()),
-	}
-	// The caller's opaque join key, so this metadata-only line can be matched to
-	// the caller's own record of the same request. Recorded, never interpreted.
-	attrs = append(append(attrs, traceAttrs(env.traceID)...), t.attrs...)
-	// Fold the run's brokered calls into the labeled /metrics series (metadata only:
-	// profile, method, route template). No-op when the run brokered nothing.
-	s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
-	// Bounded, metadata-only summary of the run's brokered host.* calls (never
-	// paths, bodies, or credentials). Emitted only when the run brokered something.
-	attrs = append(attrs, hostCallAttrs(res.CallTrace)...)
-	// Prospector advisory channel (Phase 2). Post-dispatch analysis over the
-	// immutable CallTrace: res is already final above, so computing advice cannot
-	// change ExitCode/Stdout/Stderr/Isolation — a run with advice is byte-identical
-	// in execution to one without. Findings go to the operator surface (audit) for
-	// operator|caller; only the agent-fixable subset is returned to the caller, and
-	// only for caller.
-	var allow []sandbox.HostRoute
-	if grant != nil {
-		allow = grant.Allow
-	}
-	mode := s.adviceFor(p.GetGrantProfile())
-	allFindings, callerFindings := computeAdvice(mode, res.CallTrace, allow, s.catalogFor(p.GetGrantProfile()))
-	// Fold the run's findings into the labeled advice/waste series for /metrics. No-op
-	// when advice is off (no findings computed) or the run tripped no detector. These
-	// aggregates carry no route templates and are not gated by advice_retention: they
-	// are the operator's bounded operational metric, not the durable finding record.
-	s.adviceStats.observe(p.GetGrantProfile(), allFindings)
-	// The durable audit-log record of the run's findings is gated by the profile's
-	// retention level (Phase 5); it is off by default, so advice can drive the live
-	// wire hint and /metrics without writing per-run findings to the log.
-	retention := s.adviceRetentionFor(p.GetGrantProfile())
-	attrs = append(attrs, adviceAuditAttrs(mode, retention, allFindings)...)
-	s.logger().LogAttrs(ctx, slog.LevelInfo, "code run", attrs...)
-	return &plimsollv1.RunResponse{
-		Sandbox:          wireString(res.Sandbox),
-		Isolation:        res.Isolation.String(),
-		DurationMs:       res.Duration.Milliseconds(),
-		SoftwareIdentity: t.ranSoftware(res.SoftwareIdentity, t.software.JavaScript.SoftwareIdentity),
-		Environment:      describedEnvironment(res.EnvironmentIdentity, t.software.JavaScript.Identity),
-		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{
-			Stdout:          []byte(res.Stdout),
-			Stderr:          []byte(res.Stderr),
-			StdoutTruncated: res.StdoutTruncated,
-			StderrTruncated: res.StderrTruncated,
-			ExitCode:        int32(res.ExitCode),
-			TimedOut:        res.TimedOut,
-			Advice:          adviceWire(callerFindings),
-		}},
-	}, nil
-}
-
-// runProject is the project kind: files written, steps run in order, artifacts
-// captured. Same envelope, same grant path as a snippet.
-func (s *SandboxService) runProject(ctx context.Context, env envelope, p *plimsollv1.ProjectRun, t target) (*plimsollv1.RunResponse, error) {
-	steps := p.GetSteps()
-	files := p.GetFiles()
-	total := 0
-	sbFiles := make([]sandbox.File, 0, len(files))
-	for _, f := range files {
-		total += len(f.GetContent())
-		sbFiles = append(sbFiles, sandbox.File{Path: f.GetPath(), Content: f.GetContent()})
-	}
-	artifacts := p.GetArtifacts()
-	sbReq := sandbox.ProjectRequest{
-		Files:            sbFiles,
-		Steps:            append([]string(nil), steps...),
-		Timeout:          env.timeout,
-		Artifacts:        append([]string(nil), artifacts...),
-		MinimumIsolation: env.minimum,
-		Software:         env.software,
-	}
-	if err := sandbox.ValidateProjectRequest(sbReq); err != nil {
-		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
-	}
-	grant, err := s.grantFor(ctx, p.GetGrantProfile())
-	if err != nil {
-		return nil, err
-	}
-	// Before admission, so a refused call spends no rate token and takes no slot; the
-	// provider checks again before it dispatches.
-	if t.session {
-		if err := sandbox.CheckSessionGrant(grant); err != nil {
-			return nil, mapSandboxErr(err)
-		}
-	}
-	if grant != nil {
-		ctx, err = applyGrantSubject(ctx, grant) // per-session token minting; refuses anon subject-bound grants
-		if err != nil {
-			return nil, err
-		}
-	}
-	sbReq.Grant = grant
-	if err := sandbox.CheckMinimumIsolation(t.tier, sbReq.MinimumIsolation); err != nil {
-		return nil, mapSandboxErr(err)
-	}
-	if err := sbReq.Software.Check(t.software.Project.SoftwareIdentity); err != nil {
-		return nil, mapSandboxErr(err)
-	}
-
-	release, err := t.admit(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
-	s.runsTotal.Add(1)
-	runCtx, cancel := runContext(ctx)
-	defer cancel()
-	started := time.Now()
-	res, err := t.project(runCtx, sbReq)
-	if err != nil {
-		if isInfraErr(err) {
-			s.runsFailed.Add(1)
-		}
-		failed := []slog.Attr{
-			slog.String("op", "project"),
-			slog.String("caller", auditCaller(ctx)),
-			slog.Int("files", len(files)),
-			slog.Int("steps", len(steps)),
-			slog.Int("total_bytes", total),
-			slog.String("grant_profile", p.GetGrantProfile()),
-			slog.String("sandbox", t.provider),
-			slog.String("isolation", t.tier.String()),
-			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
-			slog.String("error", err.Error()),
-		}
-		s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
-		failed = append(failed, hostCallAttrs(res.CallTrace)...)
-		failed = append(append(failed, traceAttrs(env.traceID)...), t.attrs...)
-		s.logger().LogAttrs(ctx, slog.LevelError, "project run failed", failed...)
-		return nil, mapSandboxErr(err)
-	}
-	exitCode, timedOut := 0, false
-	if len(res.Steps) > 0 {
-		last := res.Steps[len(res.Steps)-1]
-		exitCode, timedOut = last.ExitCode, last.TimedOut
-	}
-	attrs := []slog.Attr{
-		slog.String("op", "project"),
-		slog.String("caller", auditCaller(ctx)),
-		slog.Int("files", len(files)),
-		slog.Int("steps", len(steps)),
-		slog.Int("total_bytes", total),
-		slog.String("grant_profile", p.GetGrantProfile()),
-		slog.String("sandbox", res.Sandbox),
-		slog.String("isolation", res.Isolation.String()),
-		slog.String("outcome", res.Outcome.String()),
-		slog.String("outcome_detail", res.Detail),
-		slog.Int("steps_ran", len(res.Steps)),
-		slog.Int("exit_code", exitCode),
-		slog.Bool("timed_out", timedOut),
-		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
-	}
-	attrs = append(append(attrs, traceAttrs(env.traceID)...), t.attrs...)
-	// Prospector: a project run brokers host.* calls through the same core as a snippet,
-	// so it feeds the identical metadata-only surfaces. Fold the run's calls into the
-	// labeled /metrics series and summarize them on the audit line (never paths, bodies,
-	// or credentials). No-op when the run brokered nothing.
-	s.hostCalls.observe(p.GetGrantProfile(), res.CallTrace)
-	attrs = append(attrs, hostCallAttrs(res.CallTrace)...)
-	// Advisory channel (Phase 2), identical to the snippet kind: post-dispatch analysis
-	// over the immutable CallTrace. res is already final above, so computing advice
-	// cannot change any step's output/exit or the outcome — a project run with advice is
-	// byte-identical in execution to one without. Operator surface (audit/metrics) sees
-	// every finding; only the agent-fixable subset returns to the caller, and only for
-	// advice: caller.
-	var allow []sandbox.HostRoute
-	if grant != nil {
-		allow = grant.Allow
-	}
-	mode := s.adviceFor(p.GetGrantProfile())
-	allFindings, callerFindings := computeAdvice(mode, res.CallTrace, allow, s.catalogFor(p.GetGrantProfile()))
-	s.adviceStats.observe(p.GetGrantProfile(), allFindings)
-	retention := s.adviceRetentionFor(p.GetGrantProfile())
-	attrs = append(attrs, adviceAuditAttrs(mode, retention, allFindings)...)
-	s.logger().LogAttrs(ctx, slog.LevelInfo, "project run", attrs...)
-
-	result := &plimsollv1.ProjectResult{
-		Outcome:            outcomeWire(res.Outcome),
-		OutcomeDetail:      wireString(res.Detail),
-		ArtifactsTruncated: res.ArtifactsTruncated,
-		Advice:             adviceWire(callerFindings),
-	}
-	for _, st := range res.Steps {
-		result.Steps = append(result.Steps, &plimsollv1.StepResult{
-			Command:         wireString(st.Command),
-			Stdout:          []byte(st.Stdout),
-			Stderr:          []byte(st.Stderr),
-			StdoutTruncated: st.StdoutTruncated,
-			StderrTruncated: st.StderrTruncated,
-			ExitCode:        int32(st.ExitCode),
-			TimedOut:        st.TimedOut,
-			DurationMs:      st.Duration.Milliseconds(),
-		})
-	}
-	for _, a := range res.Artifacts {
-		result.Artifacts = append(result.Artifacts, &plimsollv1.Artifact{Path: wireString(a.Path), Content: a.Content})
-	}
-	return &plimsollv1.RunResponse{
-		Sandbox:          wireString(res.Sandbox),
-		Isolation:        res.Isolation.String(),
-		DurationMs:       time.Since(started).Milliseconds(),
-		SoftwareIdentity: t.ranSoftware(res.SoftwareIdentity, t.software.Project.SoftwareIdentity),
-		Environment:      describedEnvironment(res.EnvironmentIdentity, t.software.Project.Identity),
-		Result:           &plimsollv1.RunResponse_Project{Project: result},
-	}, nil
-}
-
-// runModule is the module kind: a compiled simulator once per parameter row. No
-// grant: a simulator has no host API and the payload cannot name one. The audit
-// line names the model (validated to a filename stem), counts rows, values per
-// row and the step bound, and records the outcome; a parameter value never
-// reaches a log.
-func (s *SandboxService) runModule(ctx context.Context, env envelope, p *plimsollv1.ModuleRun) (*plimsollv1.RunResponse, error) {
-	rows := make([][]float64, 0, len(p.GetRows()))
-	for _, r := range p.GetRows() {
-		rows = append(rows, append([]float64(nil), r.GetValues()...))
-	}
-	sbReq := sandbox.ModuleRequest{
-		Model:            p.GetModel(),
-		Rows:             rows,
-		EndTime:          p.GetEndTime(),
-		Step:             p.GetStep(),
-		Timeout:          env.timeout,
-		MinimumIsolation: env.minimum,
-		Software:         env.software,
-	}
-	if err := sandbox.ValidateModuleRequest(sbReq); err != nil {
-		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
-	}
-	if err := sandbox.CheckMinimumIsolation(s.Sandbox.IsolationClass(), sbReq.MinimumIsolation); err != nil {
-		return nil, mapSandboxErr(err)
-	}
-	var selected, outer string
-	if d, ok := s.Sandbox.(sandbox.Describer); ok {
-		kind := d.Environments().Module
-		selected, outer = kind.SoftwareIdentity, kind.Identity
-	}
-	if err := sbReq.Software.Check(selected); err != nil {
-		return nil, mapSandboxErr(err)
-	}
-
-	release, err := s.limit(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
-	s.runsTotal.Add(1)
-	runCtx, cancel := runContext(ctx)
-	defer cancel()
-	started := time.Now()
-	res, err := s.Sandbox.RunModule(runCtx, sbReq)
-	attrs := []slog.Attr{
-		slog.String("op", "module"),
-		slog.String("caller", auditCaller(ctx)),
-		slog.String("model", sbReq.Model),
-		slog.Int("rows", len(sbReq.Rows)),
-		slog.Int("row_width", sbReq.RowWidth()),
-		slog.Int("max_steps", sbReq.MaxSteps()),
-	}
-	if err != nil {
-		if isInfraErr(err) {
-			s.runsFailed.Add(1)
-		}
-		attrs = append(attrs,
-			slog.String("sandbox", s.Sandbox.Name()),
-			slog.String("isolation", s.Sandbox.IsolationClass().String()),
-			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
-			slog.String("error", err.Error()),
-		)
-		attrs = append(attrs, traceAttrs(env.traceID)...)
-		s.logger().LogAttrs(ctx, slog.LevelError, "module run failed", attrs...)
-		return nil, mapSandboxErr(err)
-	}
-	attrs = append(attrs,
-		slog.String("sandbox", res.Sandbox),
-		slog.String("isolation", res.Isolation.String()),
-		slog.String("outcome", res.Outcome.String()),
-		slog.String("outcome_detail", res.Detail),
-		slog.Int("runs", len(res.Runs)),
-		slog.Int("width", res.Width),
-		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
-	)
-	// Post-dispatch, over results already computed: no simulator is run, nothing
-	// about the result changes, and a caller paying for rows that return an
-	// answer it already has is worth an operator seeing. Counts only. The
-	// tread widths this derives are differences between the caller's parameter
-	// values, and the audit line carries no parameter value.
-	for _, f := range quantise.Analyze(sbReq.Rows, res.Runs) {
-		attrs = append(attrs,
-			slog.Int("tread_column", f.Column),
-			slog.Int("tread_distinct", f.Distinct),
-			slog.Int("tread_repeated", f.Repeated),
-			slog.Int("tread_flat", f.Flat),
-			slog.Bool("tread_covers_whole_sweep", f.WholeSweepInOneTread()),
-		)
-	}
-	attrs = append(attrs, traceAttrs(env.traceID)...)
-	s.logger().LogAttrs(ctx, slog.LevelInfo, "module run", attrs...)
-
-	result := &plimsollv1.ModuleResult{
-		Width:         int32(res.Width),
-		Outcome:       outcomeWire(res.Outcome),
-		OutcomeDetail: wireString(res.Detail),
-		Stdout:        []byte(res.Stdout),
-		Stderr:        []byte(res.Stderr),
-	}
-	for _, run := range res.Runs {
-		result.Runs = append(result.Runs, &plimsollv1.ModuleRowResult{Status: run.Status, Outputs: canonicalNaNs(run.Outputs)})
-	}
-	return &plimsollv1.RunResponse{
-		Sandbox:          wireString(res.Sandbox),
-		Isolation:        res.Isolation.String(),
-		DurationMs:       res.Duration.Milliseconds(),
-		SoftwareIdentity: res.SoftwareIdentity,
-		Environment:      describedEnvironment(res.EnvironmentIdentity, outer),
-		Result:           &plimsollv1.RunResponse_Module{Module: result},
-	}, nil
 }
 
 // ranSoftware is the software identity a response states: what the run reported,

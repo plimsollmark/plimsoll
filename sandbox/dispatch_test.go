@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 func wantRefusal(t *testing.T, name string, err error, want Refusal, sentinel error) {
@@ -83,4 +84,54 @@ func TestUnmarkedErrorsMayHaveRun(t *testing.T) {
 	// The mark survives further wrapping by callers.
 	wrapped := fmt.Errorf("rpc: %w", ValidateRequest(Request{}))
 	wantRefusal(t, "wrapped", wrapped, RefusalRequest, ErrInvalidRequest)
+}
+
+// A remote provider not configured to run refuses before anything is dispatched, and
+// says so (review R4): before, a missing key or token went out unmarked, as if the run
+// might have happened, so no caller could safely send it elsewhere.
+func TestUnconfiguredRemoteProvidersRefuseNotDispatched(t *testing.T) {
+	ctx := context.Background()
+	for name, p := range map[string]Sandbox{"e2b": &E2B{}, "dockercloud": &DockerCloud{}} {
+		_, err := p.RunJavaScript(ctx, Request{Code: `1`})
+		if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalEnvironment {
+			t.Errorf("%s snippet without credentials: %v; want not dispatched, environment", name, err)
+		}
+		_, err = p.RunProject(ctx, ProjectRequest{Steps: []string{"true"}})
+		if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalEnvironment {
+			t.Errorf("%s project without credentials: %v; want not dispatched, environment", name, err)
+		}
+	}
+}
+
+// A docker provider whose own checks fail before any container starts (an image
+// reference it cannot use, a daemon Preflight cannot reach) refuses not dispatched,
+// reason environment, as E2B and Docker Cloud do, so placement may send the call to
+// another backend; a session open alike. So does a wasm provider configured with a
+// limit it cannot enforce. Found by the pre-release review: they were unmarked.
+func TestProvidersOwnChecksRefuseNotDispatched(t *testing.T) {
+	ctx := context.Background()
+	want := func(what string, err error) {
+		t.Helper()
+		if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalEnvironment {
+			t.Errorf("%s: %v; want not dispatched, environment", what, err)
+		}
+	}
+	noImage := DefaultDocker("")
+	noImage.Image = ""
+	_, err := noImage.RunJavaScript(ctx, Request{Code: `1`})
+	want("docker snippet without an image", err)
+
+	t.Setenv("PATH", t.TempDir()) // no docker CLI: Preflight cannot reach a daemon
+	unreachable := DefaultDocker("")
+	_, err = unreachable.RunJavaScript(ctx, Request{Code: `1`})
+	want("docker snippet whose Preflight fails", err)
+	_, err = unreachable.RunProject(ctx, ProjectRequest{Steps: []string{"true"}})
+	want("docker project whose Preflight fails", err)
+	_, err = unreachable.OpenSession(ctx, SessionOptions{Lifetime: time.Minute})
+	want("docker session whose Preflight fails", err)
+
+	w := DefaultWasm()
+	Resources{CPUs: 1}.applyWasm(w)
+	_, err = w.RunJavaScript(ctx, Request{Code: `1`})
+	want("wasm with a limit it cannot enforce", err)
 }

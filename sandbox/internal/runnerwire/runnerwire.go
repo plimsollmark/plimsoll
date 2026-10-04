@@ -36,8 +36,11 @@ import (
 //
 //	\n<Marker> <body length in bytes> <hex HMAC-SHA256 of the body>\n<body>
 //
-// It must match MARKER in docker/runner.mjs.
-const Marker = "<<<PLIMSOLL_REPORT_V2>>>"
+// It must match MARKER in docker/runner.mjs. V3 came with Plan.Env (review F5): a
+// runner from before it would ignore the image's environment the plan hands its
+// steps, so it writes no report this side accepts, and the startup smoke test
+// refuses its image instead of running steps without that environment.
+const Marker = "<<<PLIMSOLL_REPORT_V3>>>"
 
 // KeySize is the length of a run's report key.
 const KeySize = 32
@@ -69,14 +72,18 @@ type File struct {
 
 // Plan is what the runner executes: write Files, run Steps in order (stopping on the
 // first failure), each under StepTimeout, then capture Artifacts. HostSDK, when set,
-// is the host-API client module the runner preloads into every step. ReportKey (from
-// NewKey) authenticates the report; the same key must be passed to Parse.
+// is the host-API client module the runner preloads into every step. Env (NAME=value
+// entries) is added to every step's environment over the runner's own: a provider
+// that starts the runner without the image's environment hands that environment to
+// the steps here. ReportKey (from NewKey) authenticates the report; the same key must
+// be passed to Parse.
 type Plan struct {
 	Files       []File
 	Steps       []string
 	StepTimeout time.Duration
 	Artifacts   []string
 	HostSDK     string
+	Env         []string
 	ReportKey   []byte
 }
 
@@ -96,9 +103,10 @@ func (p Plan) Encode() ([]byte, error) {
 		StepTimeoutMs int64    `json:"stepTimeoutMs"`
 		Artifacts     []string `json:"artifacts"`
 		HostSDK       string   `json:"hostSDK,omitempty"`
+		Env           []string `json:"env,omitempty"`
 		ReportKey     string   `json:"reportKey"`
 	}{Steps: p.Steps, StepTimeoutMs: p.StepTimeout.Milliseconds(), Artifacts: p.Artifacts, HostSDK: p.HostSDK,
-		ReportKey: hex.EncodeToString(p.ReportKey)}
+		Env: p.Env, ReportKey: hex.EncodeToString(p.ReportKey)}
 	for _, f := range p.Files {
 		wire.Files = append(wire.Files, file(f))
 	}

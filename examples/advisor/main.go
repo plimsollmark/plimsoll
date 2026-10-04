@@ -12,7 +12,8 @@
 //
 // It needs no docker, no credentials and no model. The daemon is started with
 // SANDBOX_PROVIDER=wasm and a grants file whose one profile opts in with
-// "advice": "caller", so the agent-fixable findings ride back on the run result and
+// "advice": "caller" and declares GET /items the batch form of GET /items/*
+// ("batch_of"), so the agent-fixable findings ride back on the run result and
 // the official client exposes them as Result.Advice. The findings are computed after
 // the run over the broker's metadata-only call trace, so nothing about execution
 // changes when they are on: same output, same exit code, same isolation tier.
@@ -75,7 +76,7 @@ const perItemLoop = `host.get("/items").then(function (list) {
 });`
 
 // collectionRead is the same question written the way the finding suggests: the
-// collection route the profile already grants carries the column.
+// batch route the profile declares and grants carries the column.
 const collectionRead = `host.get("/items").then(function (list) {
   var total = list.items.reduce(function (a, r) { return a + r.onHand; }, 0);
   console.log(JSON.stringify({ total: total, rows: list.items.length }));
@@ -113,6 +114,7 @@ func run(ctx context.Context, reportPath string) error {
 		return err
 	}
 	fmt.Printf("profile   | %q grants GET /items and GET /items/*, advice=caller, advice_retention=detailed\n", profile)
+	fmt.Printf("profile   | it declares GET /items the batch form of GET /items/* (batch_of): without that line the finding would name it to the operator only\n")
 	fmt.Printf("profile   | the API credential is read by the daemon from $%s and never enters the guest\n", tokenEnv)
 
 	binary, err := buildDaemon(ctx, workDir)
@@ -194,7 +196,7 @@ func run(ctx context.Context, reportPath string) error {
 	}
 	fmt.Println()
 	fmt.Println("summary   | same answer both times; the second run cost the API", second.requestCount(), "request instead of", first.requestCount())
-	fmt.Println("summary   | the finding named the granted route to switch to, so the fix needed no API change")
+	fmt.Println("summary   | the finding named the declared, granted batch route to switch to, so the fix needed no API change")
 	fmt.Println("summary   | the audit line is the operator's view: the same finding with its costs and, at advice_retention=detailed,")
 	fmt.Println("summary   | one metadata-only record per finding; nothing was withheld from the caller here, since the one finding was agent-fixable")
 	fmt.Printf("summary   | %d of the %d per-item responses were the same size, and none was flagged as a repeated read:\n", sameSize, perItem)
@@ -299,7 +301,7 @@ func show(ctx context.Context, remote *client.Remote, api *inventory, sink *line
 		fmt.Println("   advice | none returned to the caller")
 	}
 	for _, f := range o.advice {
-		fmt.Printf("   advice | %s (%s, remedy %s) on %s %s; suggested %s %s, already granted\n",
+		fmt.Printf("   advice | %s (%s, remedy %s) on %s %s; suggested %s %s, declared and granted\n",
 			f.Pattern, f.Severity, f.Remedy, f.Method, f.Route, f.SuggestedMethod, f.SuggestedRoute)
 		fmt.Printf("   advice | %d calls beyond one (measured count); about %s beyond one call (modelled); %d bytes moved in total (gross)\n",
 			f.ExtraCalls, f.AddedLatency.Round(time.Millisecond), f.BytesMoved)
@@ -511,6 +513,7 @@ func writeGrantsFile(dir, baseURL string) (string, error) {
 	body := fmt.Sprintf(`{"profiles":{%q:{
   "base_url": %q,
   "allow": ["GET /items", "GET /items/*"],
+  "batch_of": {"GET /items": ["GET /items/*"]},
   "allowed_callers": [%q],
   "token": {"type": "static", "env": %q},
   "advice": "caller",
@@ -669,12 +672,12 @@ var reportTemplate = template.Must(template.New("report").Funcs(template.FuncMap
 }).Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>13 requests became 1: plimsoll's efficiency advisor on one measured run</title>
-<meta name="description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
+<meta name="description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the declared, granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
 <link rel="canonical" href="{{.PageURL}}">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="plimsoll">
 <meta property="og:title" content="13 requests became 1: plimsoll's efficiency advisor on one measured run">
-<meta property="og:description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
+<meta property="og:description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the declared, granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
 <meta property="og:url" content="{{.PageURL}}">
 <meta property="og:image" content="{{.CardURL}}">
 <meta property="og:image:width" content="1280">
@@ -721,8 +724,8 @@ footer{margin-top:40px;padding-top:12px;border-top:1px solid #d1d9e0;color:#5963
 <p class="muted">One run of plimsoll's efficiency advisor, generated {{.Generated}} by <code>go run ./examples/advisor -report</code>. Every number on this page was measured by the API or read from the daemon's own log, or is labelled as a model.</p>
 
 <p><b>plimsoll</b> is an open source sandbox service for running code that an AI agent wrote. Its broker authorizes every call that code makes to your API, keeps the credential outside the sandbox, and records only route templates, verbs, status codes, byte counts and timings. A <b>route template</b> is the granted route with its variable segment left as a <code>*</code>, so a call to <code>/items/i-7</code> is recorded as <code>/items/*</code>: which route the code used, never which item it asked for. There is no field for a path, a body or a credential, so none can be recorded by accident.</p>
-<p><b>The efficiency advisor</b> reads that record after a run and reports where the call pattern cost the API more than the question needed. When the profile already grants a better route, the finding names it and comes back to the caller, who can rewrite. When it does not, the finding stays with the operator, because the agent cannot call a route that does not exist. plimsoll never calls a model to do any of this. It is a work in progress, and it is off unless a profile asks for it: a profile that does not set <code>advice</code> has its traffic left unanalyzed, and nothing is computed.</p>
-<p><b>This page</b> is one real run of the repository's advisor example: a fake inventory API with twelve items, a plimsoll daemon on the WASM provider, and one grant profile with <code>advice: caller</code>. The same question is asked twice, first the way an agent tends to write it, then the way the advice suggests.</p>
+<p><b>The efficiency advisor</b> reads that record after a run and reports where the call pattern cost the API more than the question needed. When the profile declares a batch route for the route the code looped over (its <code>batch_of</code>, the operator's statement that one request returns what the loop fetched) and grants it, the finding names that route and comes back to the caller, who can rewrite. Every other finding stays with the operator: a declared route the profile does not grant is one the agent cannot call, and a route found from its path alone may page, return fewer fields or cover another scope, so the operator checks it before declaring it. plimsoll never calls a model to do any of this. It is a work in progress, and it is off unless a profile asks for it: a profile that does not set <code>advice</code> has its traffic left unanalyzed, and nothing is computed.</p>
+<p><b>This page</b> is one real run of the repository's advisor example: a fake inventory API with twelve items, a plimsoll daemon on the WASM provider, and one grant profile with <code>advice: caller</code> that declares <code>GET /items</code> the batch form of <code>GET /items/*</code>. The same question is asked twice, first the way an agent tends to write it, then the way the advice suggests.</p>
 
 <div class="tiles">
 {{range .Runs}}<div class="tile"><span class="muted">run {{.N}} requests</span><b>{{.RequestCount}}</b></div>{{end}}
@@ -742,7 +745,7 @@ footer{margin-top:40px;padding-top:12px;border-top:1px solid #d1d9e0;color:#5963
 <dt>advice on the result</dt><dd>{{if .Advice}}{{len .Advice}} finding(s), below{{else}}none{{end}}</dd></dl>
 {{range .Advice}}
 <div class="card">detected an unnecessary <b>{{.Pattern}}</b> on {{.Method}} {{.Route}} (severity {{.Severity}}, remedy {{.Remedy}})<br>
-suggested: <b>{{.SuggestedMethod}} {{.SuggestedRoute}}</b>, already granted<br>
+suggested: <b>{{.SuggestedMethod}} {{.SuggestedRoute}}</b>, declared and granted<br>
 {{.ExtraCalls}} calls beyond one <span class="muted">(measured count minus one)</span> ·
 about {{ms .AddedLatency}} ms beyond one call <span class="muted">(modelled, not wall time)</span> ·
 {{.BytesMoved}} bytes moved in total <span class="muted">(gross, not a saving)</span><br>
@@ -760,7 +763,7 @@ about {{ms .AddedLatency}} ms beyond one call <span class="muted">(modelled, not
 <h3>The operator's view: the daemon's audit line</h3>
 <div class="card op">host_calls={{.Audit.HostCalls}} · advice_findings={{.Audit.AdviceFindings}} · advice_agent_fixable={{.Audit.AgentFixable}}
 {{range .Audit.Details}}<br>detected <b>{{.Pattern}}</b> on {{.Method}} {{.Route}} (severity {{.Severity}}, remedy {{.Remedy}}), and the finding was {{if .AgentFixable}}returned to the caller{{else}}kept operator only{{end}}{{end}}
-<br><span class="muted">A finding the agent could not act on (no granted route to switch to) would stay here, operator only, with a prompt the API owner can paste into their own AI. {{if .Audit.Details}}This run produced none of those: the profile already granted the collection route, so its one finding went back to the caller.{{else}}This run produced no finding at all, so there is nothing here for either audience.{{end}}</span></div>
+<br><span class="muted">A finding the agent could not act on (no declared, granted route to switch to) would stay here, operator only: a declared route to grant, a candidate route to check, or a prompt the API owner can paste into their own AI. {{if .Audit.Details}}This run produced none of those: the profile declares and grants the batch route, so its one finding went back to the caller.{{else}}This run produced no finding at all, so there is nothing here for either audience.{{end}}</span></div>
 </section>
 {{end}}
 
@@ -776,13 +779,13 @@ about {{ms .AddedLatency}} ms beyond one call <span class="muted">(modelled, not
 <pre>git clone {{.RepoURL}}.git && cd plimsoll
 go run ./examples/advisor                    # the run, in the terminal
 go run ./examples/advisor -report out.html   # the same run as a page like this one</pre>
-<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="{{.SourceURL}}">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="{{.AdvisorDocsURL}}">EXTERNAL · source repo ↗ efficiency advisor docs</a>.</p>
+<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the declared, granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="{{.SourceURL}}">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="{{.AdvisorDocsURL}}">EXTERNAL · source repo ↗ efficiency advisor docs</a>.</p>
 
 <h2>What this page claims, and what it does not</h2>
 <ul>
 <li><b>Advice never changes a run.</b> It is computed after the result is final, over metadata the broker already held. A run with advice is byte-identical in execution to one without; advice cannot gate admission or change an exit code, an output byte or the isolation tier.</li>
 <li><b>The trace is metadata only.</b> Route templates, verbs, status codes, byte counts, latency. The toggle above shows what that leaves out.</li>
-<li><b>No model is involved.</b> Two deterministic detectors (a fan-out over a per-item route, and repeated reads of one fixed route), counting only calls the broker delivered with a 2xx status, and one question against the granted routes. The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
+<li><b>No model is involved.</b> Two deterministic detectors (a fan-out over a per-item route, and repeated reads of one fixed route), counting only calls the broker delivered with a 2xx status, and one lookup of the profile's declared batch routes (plus, for the operator only, a route the path suggests). The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
 <li><b>The numbers are what they say.</b> The call count is measured. The latency and byte figures are a model of the pattern against an ideal of one call, and the table above puts them next to what the API measured.</li>
 <li><b>A finding claims only what the trace can support.</b> In run 1, {{.SameSize}} of the {{.PerItem}} per-item responses were the same size, and the API's log shows they were {{.PerItem}} distinct items. The trace holds the route template and the size, not the item, so it cannot tell same-size from same-item, and the repeated-read detector does not read a wildcard route at all. It reads only a route without a wildcard, where the broker admits exactly one path and every call is the same request; an unchanged size there is evidence the data did not change, and the finding says evidence, not proof.</li>
 <li><b>This run used the WASM provider</b>, which is process-tier isolation and fine for an example. The advisor is provider-independent: the same broker core records the trace under Docker, E2B and WASM, so the findings do not depend on the tier.</li>

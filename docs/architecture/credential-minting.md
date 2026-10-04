@@ -74,7 +74,7 @@ code.
   itself, the runtime must be registered to allow sockets from the guest to the host
   (`--host-uds=open`), and the startup smoke test proves the connection works before
   the daemon serves.
-  [INTERNAL · source: per-run socket and container mount →](../../sandbox/docker.go)
+  [INTERNAL · source: per-run socket and container mount →](../../sandbox/docker_broker.go)
 - **`wasm`: a function call, no sockets at all.** <dfn>*QuickJS*</dfn>, a small
   JavaScript engine, is compiled to <dfn>*WebAssembly*</dfn> (a portable bytecode format
   that can reach only what its host program hands it) with a shim, a small piece of

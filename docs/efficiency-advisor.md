@@ -37,7 +37,7 @@ the `CallTrace`, and everything built from it (findings, hints returned to the c
 audit records, metrics) comes from that trace plus the `Allow` list the operator
 configured. Findings are filled in from trusted inputs only: route templates from the
 profile, plus counts and timings. No text the guest controls is ever copied into one, so
-a finding cannot carry a prompt injection (instructions planted for whatever model reads
+a finding cannot carry a <dfn>*prompt injection*</dfn> (instructions planted for whatever model reads
 it) or become a hidden channel for data. This is the same rule as plimsoll's ordinary
 audit log, which writes one line per run: metadata yes, code and credentials never. One
 exception there: the audit line's `outcome_detail` can carry a project file path supplied
@@ -67,8 +67,9 @@ needed:
 - <dfn>*fan-out*</dfn>: calling a per-item route once for every item of a list (the N+1
   pattern);
 - **repeated reads** of one fixed route: the same request each time, since a route
-  without a `*` matches exactly one path, with same-size responses as evidence the data
-  did not change.
+  without a `*` matches exactly one path and only calls that sent no body are counted
+  (the trace records a body's size, not its bytes, so two GETs with bodies are not known
+  to be the same request), with same-size responses as evidence the data did not change.
 
 Both count only calls the broker delivered with a 2xx status; failed calls are named in
 the finding and never counted as records retrieved. Each finding's sentence claims only
@@ -80,17 +81,32 @@ only if the data really was unchanged. Two earlier detectors, aggregate-in-code 
 sequential calls, were removed because the trace cannot support them: it holds no call
 start times and no guest content.
 
-Then a small router asks the grant's `Allow` list one question, for a GET fan-out only:
-does the collection route already exist? The answer puts each finding in one of three
-classes, and the third is not a verdict:
+Then a small router names, for a GET fan-out only, a route that could answer the calls in
+one request, and says on what basis. The basis that counts is a declaration: the profile's
+`batch_of` maps a batch route to the per-item routes one request to it replaces.
 
-1. **Agent-fixable.** The collection route is on the list, and the finding names that
-   granted route to switch to.
-2. **One line for the operator.** The route is not on the list, but the profile declares
-   a `catalog` (the API's full list of routes) that has the batch route the grant leaves
-   out. The finding names that route as the **one line to add to the allow list**: an
-   operator action, carried on the audit line as `grant_route`, and no API change.
-3. **Neither is known.** `insights.Prompt` renders a paste-ready prompt for the API
+```json
+"batch_of": {"GET /items": ["GET /items/*"]}
+```
+
+It is the operator's statement that `GET /items` returns what the `GET /items/*` calls
+returned. plimsoll cannot check that: the trace has no bodies, so it cannot see whether
+the route returns every page, the same fields, or the same scope. `plimsoll-specgen`
+writes `batch_of` from an `x-plimsoll-batch-of` marker in the OpenAPI document
+([worked example](examples/specgen/README.md)). Each finding lands in one of four classes,
+and the last is not a verdict:
+
+1. **Agent-fixable.** The profile declares a batch route for this route and grants it.
+   The finding names that route, and it is the only route a finding ever hands the caller.
+2. **One line for the operator.** The profile declares a batch route but does not grant
+   it. The finding names it as the **one line to add to the allow list**, carried on the
+   audit line as `grant_route`; no API change is needed.
+3. **A candidate to check.** Nothing is declared, but the route's path suggests one: the
+   collection (`/items` for `/items/*`) is granted, or is in the profile's `catalog` (the
+   API's full list of routes). A path is not evidence that the route returns the same
+   items, so the finding names it to the operator only (`candidate_route` on the audit
+   line), who checks it and, if it holds, declares it.
+4. **No route is known.** `insights.Prompt` renders a paste-ready prompt for the API
    owner's own AI that asks for the smallest change that would remove the pattern **or a
    plain statement that none is warranted**: one run's trace cannot show that the API
    forces the pattern on every caller, the granted routes may be only part of the API,
@@ -98,13 +114,13 @@ classes, and the third is not a verdict:
    a server-side aggregate (the API computing the answer itself) as a conditional
    alternative.
 
-A fan-out that writes gets neither of the first two classes: plimsoll never suggests a
-collection route for it, granted or from the catalog, because what a collection write does
-cannot be read off its path. plimsoll never calls a model itself.
+A fan-out that writes gets none of the first three classes: `batch_of` refuses a write,
+and plimsoll never suggests a collection route for one, because what a collection write
+does cannot be read off its path. plimsoll never calls a model itself.
 
 Who sees what is set per profile. `advice: off | operator | caller` chooses the
 audience: `caller` returns the agent-fixable findings on the run result, which the Go
-client exposes as `Result.Advice`; findings with no granted route stay on the operator's
+client exposes as `Result.Advice`; findings with no declared, granted route stay on the operator's
 side (metrics and logs) whatever the mode. `advice_retention: none | aggregate |
 detailed` chooses what reaches the audit log the operator keeps, from nothing to one
 metadata-only record per finding; those records are what
@@ -183,9 +199,12 @@ of each other: `advice` decides **who can act** on a finding, `advice_retention`
 - `operator`: findings go to the operator's side only (`/metrics`, and the audit log as
   far as `advice_retention` allows). Nothing is returned to the caller.
 - `caller`: additionally returns the agent-fixable findings in the run result, so a
-  product may feed them to its model for self-correction. A finding with no granted route
-  stays operator-only regardless, whether its fix is an allow-list line (the catalog names
-  the route) or unknown (nothing names one).
+  product may feed them to its model for self-correction. A finding with no declared,
+  granted route stays operator-only regardless, whether its fix is an allow-list line (a
+  declared route is not granted), a check (a candidate the path suggests) or unknown
+  (nothing names one). A repeated-read finding also stays operator-only: one fixed
+  route read again and again is often a loop waiting for a change, where "cache the
+  result" would break the loop, and the trace cannot tell the two apart.
 
 `advice_retention` (controls the kept audit log only; no effect when `advice` is off):
 

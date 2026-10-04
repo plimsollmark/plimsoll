@@ -19,6 +19,10 @@ type Caller struct {
 	ID          string   `json:"id"`
 	TokenSHA256 string   `json:"token_sha256"`
 	Scopes      []string `json:"scopes"`
+	// PaidSecondsPerDay bounds the caller's use of a metered provider (E2B, Docker
+	// Cloud): seconds of microVM wall time per UTC day; 0 or absent = no bound of its
+	// own. Hardened mode with a metered provider requires one on every caller.
+	PaidSecondsPerDay int64 `json:"paid_seconds_per_day,omitempty"`
 }
 
 type File struct {
@@ -80,6 +84,9 @@ func (f *File) Validate() error {
 			return fmt.Errorf("clients: duplicate id %q", c.ID)
 		}
 		ids[c.ID] = true
+		if c.PaidSecondsPerDay < 0 {
+			return fmt.Errorf("clients: %q: paid_seconds_per_day must not be negative", c.ID)
+		}
 		c.TokenSHA256 = strings.ToLower(strings.TrimSpace(c.TokenSHA256))
 		if len(c.TokenSHA256) != 64 {
 			return fmt.Errorf("clients: %q: token_sha256 must be a 64-char hex SHA-256", c.ID)

@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -87,6 +88,22 @@ func TestAdmissionGivesAPoolReservationBackOnce(t *testing.T) {
 				t.Fatalf("the whole budget of 2 runs is free once the pool is gone, but a pool of 2 was refused: %v", err)
 			}
 		})
+	}
+}
+
+// A pool size whose memory charge overflows int is refused, not wrapped to a charge
+// the budget accepts: 1<<62 runs of 4 MiB multiply to zero on a 64-bit build.
+func TestAdmissionRefusesAPoolWhoseChargeOverflows(t *testing.T) {
+	gate := &poolStartGate{}
+	wrapped, err := WithAdmission(gate, AdmissionConfig{TotalMemoryMB: 512, PerRunMemoryMB: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wrapped.(SessionPool).StartSessionPool(context.Background(), 1<<(strconv.IntSize-2), time.Minute); err == nil {
+		t.Fatal("a pool whose charge overflows int was admitted")
+	}
+	if err := wrapped.(SessionPool).StartSessionPool(context.Background(), 128, time.Minute); err != nil {
+		t.Fatalf("a pool of exactly the budget was refused: %v", err)
 	}
 }
 

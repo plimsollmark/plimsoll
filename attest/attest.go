@@ -226,13 +226,10 @@ func (v *Verifier) Verify(env Envelope) (sandbox.RunRecord, error) {
 	}
 	rec := st.Predicate.record()
 	switch {
-	case rec.Version != 1 && rec.Version != record.Version && rec.Version != record.UnansweredVersion:
+	case rec.Version != record.Version && rec.Version != record.UnansweredVersion:
 		return sandbox.RunRecord{}, fmt.Errorf("%w: record version %d", ErrStatement, rec.Version)
 	case (rec.Version == record.UnansweredVersion) != (rec.Unanswered != ""):
 		return sandbox.RunRecord{}, fmt.Errorf("%w: only a version %d record names an unanswered call, and it must", ErrStatement, record.UnansweredVersion)
-	}
-	if rec.Version == 1 && (rec.SoftwareIdentity != "" || rec.SoftwareRuleID != "") {
-		return sandbox.RunRecord{}, fmt.Errorf("%w: version 1 cannot carry software admission fields", ErrStatement)
 	}
 	if st.Subject[0].Digest["sha256"] != rec.SHA256 || rec.SHA256 != record.Digest(rec) {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: the record's digest does not match its fields or the subject", ErrStatement)
@@ -250,12 +247,19 @@ func (v *Verifier) signedPayload(env Envelope) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: payload is not base64: %v", ErrStatement, err)
 	}
+	// The decoder skips line breaks; a payload that is not exactly the encoding of
+	// what it decodes to was changed after signing.
+	if base64.StdEncoding.EncodeToString(payload) != env.Payload {
+		return nil, fmt.Errorf("%w: payload is not canonical base64", ErrStatement)
+	}
 	for _, s := range env.Signatures {
 		if s.KeyID != "" && s.KeyID != v.keyID {
 			continue
 		}
 		sig, err := base64.StdEncoding.DecodeString(s.Sig)
-		if err == nil && ed25519.Verify(v.pub, PAE(env.PayloadType, payload), sig) {
+		// As for the payload: a signature not exactly the encoding of what it decodes
+		// to was changed after signing.
+		if err == nil && base64.StdEncoding.EncodeToString(sig) == s.Sig && ed25519.Verify(v.pub, PAE(env.PayloadType, payload), sig) {
 			return payload, nil
 		}
 	}

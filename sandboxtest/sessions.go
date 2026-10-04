@@ -2,6 +2,7 @@ package sandboxtest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -21,6 +22,17 @@ type Sessions struct {
 	// SuspendHoldsMemory is what every session's Suspend reports: true acts like a
 	// paused container, false (the default) like a stopped one.
 	SuspendHoldsMemory bool
+	// FailedSuspends is how many of each session's first Suspend calls fail without
+	// ending it, as one that gave up waiting for a busy turn does.
+	FailedSuspends int
+	// HoldDeletes, when set, leaves an ended session's Done open until its
+	// FinishDelete, as a real provider's Done waits for its sandbox's delete; unset,
+	// Done closes as the session ends (the fake has no sandbox to delete).
+	HoldDeletes bool
+	// OpenedEnvironments, when set, is what every opened session's Environments
+	// reports instead of SessionEnvironments: a provider whose image changed during
+	// the open.
+	OpenedEnvironments *sandbox.Environments
 
 	mu     sync.Mutex
 	opened []*FakeSession
@@ -61,7 +73,11 @@ func (p *Sessions) OpenSession(_ context.Context, opts sandbox.SessionOptions) (
 			return nil, err
 		}
 	}
-	s := &FakeSession{Options: opts, expires: time.Now().Add(opts.Lifetime), done: make(chan struct{}), holdsMemory: p.SuspendHoldsMemory}
+	s := &FakeSession{Options: opts, expires: time.Now().Add(opts.Lifetime), done: make(chan struct{}), holdsMemory: p.SuspendHoldsMemory,
+		failSuspends: p.FailedSuspends, holdDelete: p.HoldDeletes, environments: p.SessionEnvironments()}
+	if p.OpenedEnvironments != nil {
+		s.environments = *p.OpenedEnvironments
+	}
 	p.mu.Lock()
 	p.opened = append(p.opened, s)
 	p.mu.Unlock()
@@ -77,10 +93,14 @@ func (p *Sessions) Opened() []*FakeSession {
 
 // FakeSession is one session of Sessions.
 type FakeSession struct {
-	Options     sandbox.SessionOptions
-	expires     time.Time
-	done        chan struct{}
-	holdsMemory bool
+	Options      sandbox.SessionOptions
+	expires      time.Time
+	done         chan struct{}
+	holdsMemory  bool
+	failSuspends int
+	environments sandbox.Environments
+	holdDelete   bool
+	deleted      sync.Once
 
 	mu          sync.Mutex
 	calls       int
@@ -93,8 +113,12 @@ type FakeSession struct {
 var _ sandbox.Session = (*FakeSession)(nil)
 
 func (s *FakeSession) Isolation() sandbox.IsolationClass { return sandbox.IsolationContainer }
-func (s *FakeSession) ExpiresAt() time.Time              { return s.expires }
-func (s *FakeSession) Done() <-chan struct{}             { return s.done }
+
+// Environments is what the provider's SessionEnvironments said when the session
+// opened, or Sessions.OpenedEnvironments when that is set.
+func (s *FakeSession) Environments() sandbox.Environments { return s.environments }
+func (s *FakeSession) ExpiresAt() time.Time               { return s.expires }
+func (s *FakeSession) Done() <-chan struct{}              { return s.done }
 
 // Err is the session's end, or nil.
 func (s *FakeSession) Err() error {
@@ -107,14 +131,26 @@ func (s *FakeSession) Err() error {
 }
 
 // End ends the session for reason, as a provider does when a lifetime passes or a
-// budget is exceeded.
+// budget is exceeded. Done closes with it unless the provider holds deletes.
 func (s *FakeSession) End(reason sandbox.SessionEnd) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.end == nil {
+	ended := s.end == nil
+	if ended {
 		s.end = &sandbox.SessionEndedError{Reason: reason}
-		close(s.done)
 	}
+	s.mu.Unlock()
+	if ended && !s.holdDelete {
+		s.FinishDelete()
+	}
+}
+
+// FinishDelete closes Done, as a provider does once an ended session's sandbox is
+// deleted. It does nothing before the session ends, or a second time.
+func (s *FakeSession) FinishDelete() {
+	if s.Err() == nil {
+		return
+	}
+	s.deleted.Do(func() { close(s.done) })
 }
 
 // Suspends counts the Suspend calls the session received.
@@ -218,11 +254,15 @@ const (
 	CellEndsSession = "plimsoll-fake:ends-session"
 )
 
-// Suspend counts itself and reports the provider's SuspendHoldsMemory.
+// Suspend counts itself and reports the provider's SuspendHoldsMemory, or fails
+// without ending the session while it has had no more than FailedSuspends calls.
 func (s *FakeSession) Suspend(context.Context) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.suspended++
+	if s.suspended <= s.failSuspends {
+		return false, sandbox.NotDispatched(sandbox.RefusalCapacity, errors.New("sandboxtest: gave up waiting for the session's turn"))
+	}
 	return s.holdsMemory, nil
 }
 

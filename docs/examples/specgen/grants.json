@@ -29,6 +29,7 @@
       ],
       "preamble_file": "preamble.js",
       "health_check": "GET /status",
+      "batch_of": { "GET /lights": ["GET /lights/*"] },
 
       "advice": "caller",
       "advice_retention": "detailed"

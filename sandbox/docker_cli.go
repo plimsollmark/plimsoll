@@ -7,12 +7,14 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path"
+
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // WARNING: read this before changing how the docker provider starts the docker CLI,
@@ -25,14 +27,18 @@ import (
 //     container it starts, where guest code reads them. dockerCommand points the CLI
 //     at an empty config directory this process owns (--config), so no client setting
 //     of the host applies: no proxies, credential helpers, plugins or contexts.
-//  2. The image's environment. Every `docker exec` starts with the image's ENV. An
-//     image setting NODE_OPTIONS="--require /work/hook.js" ran a file guest code had
-//     written inside the next node process plimsoll started, which in a session is
-//     the sweep (whose exit status is the session's boundary) and the relay (whose
-//     frames carry results). noexec does not stop it: node reads the file. So
-//     plimsoll's own programs in the sandbox start under controlArgv (`env -i`, a fixed
-//     PATH), and checkImageEnv refuses an image whose ENV can load code from a place
-//     guest code can write.
+//  2. The image's environment. Every process docker starts in a container begins
+//     with the image's ENV. An image setting NODE_OPTIONS="--require /work/hook.js"
+//     ran a file guest code had written inside the next node process plimsoll
+//     started, which in a session is the sweep (whose exit status is the session's
+//     boundary) and the relay (whose frames carry results). noexec does not stop it:
+//     node reads the file. A denylist of such variables guarded it until review F5;
+//     now no program of plimsoll's starts with the image's environment at all. Each
+//     starts under sessionkit.ControlArgv (/usr/bin/env -i, a fixed PATH), and guest-facing
+//     processes get the image's environment handed to them explicitly (guestArgv, and
+//     the runner's plan), read from the verified image's config. Whatever the image
+//     declares then reaches guest processes alone, where it can load only the guest's
+//     own code.
 //
 // And one near miss: every child process inherits its parent's environment unless
 // told otherwise, and plimsolld's holds caller tokens and provider keys. The CLI
@@ -108,13 +114,29 @@ func dockerCommand(ctx context.Context, args ...string) *exec.Cmd {
 // without letting a daemon's answer grow without bound in plimsolld's memory.
 const dockerOutputCap = 4 << 20
 
+// dockerErrorCap bounds the stderr kept for an error: docker's own complaint is one
+// line, and 64 KiB keeps a long one whole without holding a runaway stream.
+const dockerErrorCap = 64 << 10
+
 // dockerOutput runs a docker command (through dockerCommand) and returns its stdout,
 // refusing an answer past dockerOutputCap rather than parsing part of one. A failure
-// carries docker's stderr, bounded.
+// carries docker's stderr, bounded. Only stdout is parsed: a warning docker prints on
+// stderr never lands inside the answer.
 func dockerOutput(ctx context.Context, args ...string) ([]byte, error) {
+	return cappedOutput(dockerCommand(ctx, args...))
+}
+
+// dockerResolveOutput is dockerOutput for dockerResolveCommand.
+func dockerResolveOutput(ctx context.Context, args ...string) ([]byte, error) {
+	return cappedOutput(dockerResolveCommand(ctx, args...))
+}
+
+// cappedOutput runs cmd with both streams bounded. Every docker answer the provider
+// reads whole goes through it; TestDockerCLIOutputIsAlwaysCapped fails the build on a
+// read that does not.
+func cappedOutput(cmd *exec.Cmd) ([]byte, error) {
 	var stdout, stderr cappedBuffer
-	stdout.limit, stderr.limit = dockerOutputCap, 64<<10
-	cmd := dockerCommand(ctx, args...)
+	stdout.limit, stderr.limit = dockerOutputCap, dockerErrorCap
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
@@ -161,85 +183,120 @@ func dockerEnvFlagPair(pair string) ([]string, error) {
 	return dockerEnvFlag(name, value)
 }
 
-// controlPath is the PATH plimsoll's own programs in a sandbox run with: the standard
-// system directories of every image plimsoll ships, all on the read-only root.
-const controlPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+// defaultGuestUID is the user every sandbox process runs as unless SANDBOX_GUEST_UID
+// says otherwise, with a group of the same number: a uid no host account uses.
+// Under runc without user-namespace
+// remapping a container's uid is the host's, and uid 1000, the old default, is the first
+// account most machines make, often its operator's; an escape, or any kernel check keyed
+// on uid, would land as that account. 61000 is below 65,536, since docker's userns-remap
+// and rootless docker map 65,536 container uids by default (docs.docker.com), so it
+// still starts under them; and it is in the band systemd leaves unused (60706 to 61183,
+// systemd.io/UIDS-GIDS): above the 60000 ceiling regular accounts get by default, below
+// the dynamic service users (61184 and up). The identity check runs as the next uid.
+const defaultGuestUID = 61000
 
-// controlArgv starts argv, one of plimsoll's own programs in the sandbox (the sweep,
-// the process lister, the identity check, a relay), with an empty environment plus
-// controlPath and env: nothing the image declares reaches it (see the warning
-// above). Guest-facing processes (snippets, project steps, interpreters) keep the
-// image's environment, which checkImageEnv has vetted.
-func controlArgv(env map[string]string, argv ...string) ([]string, error) {
-	out := []string{"env", "-i", "PATH=" + controlPath}
-	for k, v := range env {
-		if !envName.MatchString(k) {
-			return nil, fmt.Errorf("docker: %q is not an environment variable name", k)
-		}
-		out = append(out, k+"="+v)
+// maxGuestUID is the highest uid SANDBOX_GUEST_UID may name: 65532, so the guest and its
+// identity check (uid + 1) stay below nobody (65534) and inside a default user-namespace
+// mapping of 65,536 uids.
+const maxGuestUID = 65532
+
+// Every program of plimsoll's in a docker sandbox starts through
+// sessionkit.ControlArgv. Its first process, /usr/bin/env, is the one docker starts
+// with the image's environment: its dynamic loader and C library read that before -i
+// clears anything, so Preflight refuses an image that sets a variable they read at
+// startup (checkLoaderEnv), and the loader variables it could inherit load only from
+// the read-only root, since every writable mount is noexec.
+
+// startScript starts a guest-facing process (a snippet's node, the runner whose steps
+// are the guest's) with the environment docker gives a process it starts: HOME from
+// the passwd entry of the uid it runs as, read from /proc/self/status ("/" without one,
+// which a guest uid no account uses gets), HOSTNAME from /etc/hostname, then
+// the variables in its arguments, which override them as an image's own HOME would.
+// It runs under sessionkit.ControlArgv, so the image's environment cannot change what this shell
+// does; with a marker, it writes the marker to stderr first, before any process the
+// image's environment reaches exists. Arguments: the marker ("" for none), then
+// NAME=value entries, then the command.
+const startScript = `m=$1; shift
+[ -z "$m" ] || printf %s "$m" >&2
+u=
+{ while read -r k v _; do if [ "$k" = Uid: ]; then u=$v; break; fi; done < /proc/self/status; } 2>/dev/null
+h=/
+{ [ -n "$u" ] && while IFS=: read -r _ _ i _ _ d _ || [ -n "$i" ]; do if [ "$i" = "$u" ]; then h=$d; break; fi; done < /etc/passwd; } 2>/dev/null
+n=
+{ read -r n < /etc/hostname; } 2>/dev/null
+exec /usr/bin/env -i PATH=` + sessionkit.ControlPath + ` HOME="$h" HOSTNAME="$n" "$@"`
+
+// guestArgv starts argv as a guest-facing process through startScript, with env (the
+// image's environment, then the run's own variables) as its environment and marker,
+// when not empty, written to stderr before it starts.
+func guestArgv(marker string, env []string, argv ...string) ([]string, error) {
+	if err := checkEnvEntries(env); err != nil {
+		return nil, err
 	}
+	out, err := sessionkit.ControlArgv(nil, "/bin/sh", "-c", startScript, "sh", marker)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, env...)
 	return append(out, argv...), nil
 }
 
-// imageEnvLoaders make a program load code or a library, or change what it trusts,
-// whatever their value; an image declaring one is refused. A toolchain can bake such
-// a setting into its own files instead.
-var imageEnvLoaders = map[string]bool{
-	"NODE_OPTIONS": true, "NODE_REPL_EXTERNAL_MODULE": true, "NODE_EXTRA_CA_CERTS": true,
-	"NODE_TLS_REJECT_UNAUTHORIZED": true, "NODE_V8_COVERAGE": true, "NODE_ICU_DATA": true,
-	"BASH_ENV": true, "ENV": true, "GLIBC_TUNABLES": true, "GCONV_PATH": true, "LOCPATH": true,
-	"HOSTALIASES": true, "PERL5OPT": true, "RUBYOPT": true, "JAVA_TOOL_OPTIONS": true,
-	"_JAVA_OPTIONS": true, "JDK_JAVA_OPTIONS": true, "PYTHONSTARTUP": true, "PYTHONHOME": true,
-	"PYTHONUSERBASE": true, "PYTHONBREAKPOINT": true, "PYTHONINSPECT": true, "PYTHONEXECUTABLE": true,
-	"PYTHONPYCACHEPREFIX": true, "NODE_COMPILE_CACHE": true,
+// startMarker is a fresh marker for one call: startScript writes it to stderr before
+// the call's command starts, so it is never guest output.
+func startMarker() string { return "plimsoll-started:" + randID() + "\n" }
+
+// afterMarker reports whether stderr holds marker, which proves the call's start
+// script ran in the container, and returns what followed it: the call's own stderr.
+// Anything before it is not the guest's (a warning the docker CLI printed before the
+// container's output, or bytes another process of a session wrote into the new
+// process's stderr before the script did). Its absence, whatever the exit code, is never
+// the guest's result: almost always docker never started plimsoll's command, and no list
+// of docker's error wording decides it (review F6); since a broken attach stream can lose
+// the marker of a call that did start, it is an error never marked not dispatched.
+func afterMarker(stderr, marker string) (string, bool) {
+	i := strings.Index(stderr, marker)
+	if i < 0 {
+		return stderr, false
+	}
+	return stderr[i+len(marker):], true
 }
 
-// imageEnvEarlyStderr make node write to stderr before the preload that writes a
-// call's start marker (NODE_DEBUG=esm does, checked with node 22), so no call would
-// start with it: a failing session snippet would read as docker's failure, an error
-// that says it may have run, instead of its exit code.
-var imageEnvEarlyStderr = map[string]bool{"NODE_DEBUG": true, "NODE_DEBUG_NATIVE": true}
-
-// imageEnvPathLists are searched for code, one directory per entry; an image may set
-// them only to absolute directories on its read-only root.
-var imageEnvPathLists = map[string]bool{
-	"PATH": true, "NODE_PATH": true, "PYTHONPATH": true, "PERL5LIB": true, "PERLLIB": true, "RUBYLIB": true,
-}
-
-// guestWritable are the places guest code can write in any provider's sandbox: the
-// docker provider's tmpfs mounts and OpenShell's work directory, and the kernel's
-// virtual trees, whose paths name descriptors and processes rather than files.
-var guestWritable = []string{"/tmp", "/work", "/dev", "/proc", "/sys", "/run", "/var/tmp"}
-
-// checkImageEnv refuses an image environment that could load code guest code wrote:
-// a loader variable (imageEnvLoaders, or any LD_ or DYLD_ variable), or a search path
-// with an entry that is relative or inside a place guest code can write; and one that
-// makes node write before a call's start marker (imageEnvEarlyStderr).
-func checkImageEnv(env []string) error {
+// checkEnvEntries refuses an environment entry guestArgv could not hand on exactly:
+// one without "=" or with an empty name. Any other name is passed on as docker passes
+// it (spring.profiles.active, my-var): every entry follows a PATH= operand, after
+// which both GNU and busybox env read NAME=value as an assignment whatever NAME is
+// (checked 2026-10-03, "-x=1" included).
+func checkEnvEntries(env []string) error {
 	for _, kv := range env {
-		name, value, _ := strings.Cut(kv, "=")
-		if imageEnvLoaders[name] || strings.HasPrefix(name, "LD_") || strings.HasPrefix(name, "DYLD_") {
-			return fmt.Errorf("the image sets %s, which makes a program load code or change what it trusts before plimsoll's checks run; refused (bake the setting into the toolchain's own files instead)", name)
+		if name, _, ok := strings.Cut(kv, "="); !ok || name == "" {
+			return fmt.Errorf("the environment entry %q is not NAME=value; plimsoll hands the image's environment to guest processes explicitly and cannot pass this one on", kv)
 		}
-		if imageEnvEarlyStderr[name] {
-			return fmt.Errorf("the image sets %s, which makes node write to stderr before plimsoll's start marker, so a failing call could not be told from docker's own failure; refused", name)
-		}
-		if !imageEnvPathLists[name] {
-			continue
-		}
-		for _, dir := range strings.Split(value, ":") {
-			if !strings.HasPrefix(dir, "/") {
-				return fmt.Errorf("the image's %s has the entry %q, which is not an absolute directory; a relative entry resolves inside the work directory guest code writes; refused", name, dir)
-			}
-			// Compared as the place it names: //tmp, /usr/../tmp and /./tmp are /tmp. A
-			// link on the image's root is the image author's own statement and is not
-			// followed here.
-			clean := path.Clean(dir)
-			for _, w := range guestWritable {
-				if clean == w || strings.HasPrefix(clean, w+"/") {
-					return fmt.Errorf("the image's %s has the entry %q, inside %s, which guest code can write; refused", name, dir, w)
-				}
-			}
+	}
+	return nil
+}
+
+// libcStartupEnv are the variables the C library and dynamic loader of a program read
+// while it starts, before its main runs, to find files to load: glibc's own list of
+// variables unsafe in an environment someone else controls (UNSECURE_ENVVARS), cut to
+// those GNU or busybox env reads at startup; plus any LD_ name (musl reads
+// LD_PRELOAD and LD_LIBRARY_PATH).
+var libcStartupEnv = map[string]bool{"GLIBC_TUNABLES": true, "LOCPATH": true, "NLSPATH": true, "GCONV_PATH": true}
+
+// checkLoaderEnv refuses an image environment that sets a libcStartupEnv variable.
+// Docker gives the image's environment to the first process of every container
+// command, and that process is plimsoll's /usr/bin/env: its loader and C library read
+// these before env -i can clear anything. LD_DEBUG writes to stderr ahead of a call's
+// start marker, LD_TRACE_LOADED_OBJECTS makes every program exit 0 without running (0
+// is a clean sweep), LD_PRELOAD loads a library, and GNU env's setlocale reads locale
+// files from LOCPATH, which in a session could be files guest code wrote. It is the one
+// part of the image's environment no program of plimsoll's can start ahead of; every
+// other variable reaches guest processes alone (guestArgv). A toolchain that needs a
+// library or locale path can bake it into the image (ld.so.conf, an rpath) instead.
+func checkLoaderEnv(env []string) error {
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "LD_") || libcStartupEnv[name] {
+			return fmt.Errorf("the image sets %s, which the C library or dynamic loader reads before any program in the container runs, plimsoll's own included; refused (bake the setting into the image: ld.so.conf, an rpath)", name)
 		}
 	}
 	return nil

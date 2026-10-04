@@ -43,6 +43,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -115,6 +116,10 @@ type Result struct {
 	// HealthNote explains why no health route was emitted, so the absence is visible
 	// rather than silent. Empty when one was.
 	HealthNote string
+	// BatchOf is the profile's batch_of object, {"GET /items": ["GET /items/*"]}, from
+	// the operations marked x-plimsoll-batch-of; nil when none is. It has passed
+	// grants.ParseBatchOf, the check grants.Load applies.
+	BatchOf map[string][]string
 }
 
 // AllowStrings renders Allow as the "METHOD /path" lines a grants profile's `allow`
@@ -169,6 +174,12 @@ type oaOperation struct {
 	// operator marker designating THIS operation as the grant's backpressure health
 	// probe. It is the ONLY way to designate one, and must resolve to a concrete GET.
 	HealthCheck *bool `json:"x-plimsoll-health-check"`
+	// BatchOf is the `x-plimsoll-batch-of` OpenAPI extension on a collection operation:
+	// the operationIds of the per-item operations one request to this one can replace.
+	// It is the operator's assertion (plimsoll cannot check that the collection returns
+	// the same items) and the only basis on which an advisor finding names a route to
+	// the caller.
+	BatchOf []string `json:"x-plimsoll-batch-of"`
 }
 
 // oaParameter is one declared parameter, read only for its location and whether it is
@@ -296,7 +307,9 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 	seenMethod := map[string]bool{}   // JS method-name collision guard
 	routeSet := map[string]struct{}{} // dedupe method+route
 	var allow []sandbox.HostRoute
-	var explicitHealth []string // ops marked x-plimsoll-health-check ("GET /path")
+	var explicitHealth []string  // ops marked x-plimsoll-health-check ("GET /path")
+	byID := map[string][]opRef{} // raw operationId -> every operation carrying it
+	var batchMarks []batchMark   // ops marked x-plimsoll-batch-of
 
 	for _, path := range paths {
 		item := doc.Paths[path]
@@ -322,6 +335,19 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 			skipReason, warning, err := classifyParams(m.name, path, item.Parameters, op.Parameters)
 			if err != nil {
 				return nil, err
+			}
+			ref := opRef{route: m.name + " " + route, skip: skipReason}
+			if !m.supported {
+				ref.skip = "uses a verb host-API grants do not enforce (they enforce GET, PUT, POST, DELETE and PATCH)"
+			}
+			if op.OperationID != "" {
+				byID[op.OperationID] = append(byID[op.OperationID], ref)
+			}
+			if len(op.BatchOf) > 0 {
+				if ref.skip != "" {
+					return nil, fmt.Errorf("specgen: %s %s is marked x-plimsoll-batch-of, but it %s", m.name, path, ref.skip)
+				}
+				batchMarks = append(batchMarks, batchMark{route: ref.route, targets: op.BatchOf})
 			}
 			// An explicit health-check marker is checked before the verb-support gate so a
 			// marker on an unenforceable verb (HEAD/OPTIONS/TRACE) fails closed too: the
@@ -413,6 +439,11 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("specgen: %d operations are marked x-plimsoll-health-check (%s); a run has a single health probe, so mark exactly one", len(explicitHealth), strings.Join(explicitHealth, ", "))
 	}
 
+	batchOf, err := resolveBatchOf(batchMarks, byID)
+	if err != nil {
+		return nil, err
+	}
+
 	title, version := strings.TrimSpace(doc.Info.Title), strings.TrimSpace(doc.Info.Version)
 	if hasLineBreakOrControl(title) {
 		return nil, fmt.Errorf("specgen: info.title %q contains a control character or line terminator", title)
@@ -430,10 +461,55 @@ func Generate(spec []byte, opts Options) (*Result, error) {
 		Warnings:    warnings,
 		HealthCheck: health,
 		HealthNote:  healthNote,
+		BatchOf:     batchOf,
 	}
 	r.Preamble = buildPreamble(r)
 	r.Description = buildDescription(r)
 	return r, nil
+}
+
+// opRef is one operation as x-plimsoll-batch-of can name it: its "METHOD /route" and,
+// when the grant could not express it, why.
+type opRef struct {
+	route string
+	skip  string
+}
+
+// batchMark is one operation marked x-plimsoll-batch-of, before its targets resolve.
+type batchMark struct {
+	route   string   // "GET /items"
+	targets []string // raw operationIds
+}
+
+// resolveBatchOf turns the x-plimsoll-batch-of marks into a profile's batch_of object.
+// It resolves each operationId and refuses one it cannot pin to a single operation a
+// grant can express; the relation rules themselves (GET on both sides, a "*" segment on
+// the served route, one batch route per served route) are grants.ParseBatchOf's, so a
+// generated batch_of loads exactly as it would from a hand-written profile.
+func resolveBatchOf(marks []batchMark, byID map[string][]opRef) (map[string][]string, error) {
+	if len(marks) == 0 {
+		return nil, nil
+	}
+	out := map[string][]string{}
+	for _, m := range marks {
+		for _, id := range m.targets {
+			refs := byID[id]
+			switch {
+			case len(refs) == 0:
+				return nil, fmt.Errorf("specgen: %s names operationId %q in x-plimsoll-batch-of, and no operation has it", m.route, id)
+			case len(refs) > 1:
+				return nil, fmt.Errorf("specgen: %s names operationId %q in x-plimsoll-batch-of, and %d operations have it", m.route, id, len(refs))
+			case refs[0].skip != "":
+				return nil, fmt.Errorf("specgen: %s names operationId %q in x-plimsoll-batch-of, but that operation %s", m.route, id, refs[0].skip)
+			}
+			out[m.route] = append(out[m.route], refs[0].route)
+		}
+		sort.Strings(out[m.route])
+	}
+	if _, err := grants.ParseBatchOf(out); err != nil {
+		return nil, fmt.Errorf("specgen: x-plimsoll-batch-of: %w", err)
+	}
+	return out, nil
 }
 
 // bodyAllowed reports whether a body arg makes sense for the verb. The generic client

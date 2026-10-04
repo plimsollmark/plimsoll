@@ -53,7 +53,7 @@ func TestVerifyBundleRefusesTamperedResponseSoftware(t *testing.T) {
 	if _, err := record.Check(req, bad); !errors.Is(err, record.ErrMismatch) {
 		t.Fatalf("the live client must refuse this: %v", err)
 	}
-	if _, err := VerifyBundle([]Entry{entry}, verifier); err == nil {
+	if _, err := VerifyBundle(seal(t, signer, entry), verifier); err == nil {
 		t.Fatal("VerifyBundle accepted a response stating software the signed record does not")
 	}
 }
@@ -69,7 +69,7 @@ func TestVerifyBundleRefusesRuleIdentityMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyBundle([]Entry{entry}, verifier); err == nil {
+	if _, err := VerifyBundle(seal(t, signer, entry), verifier); err == nil {
 		t.Fatal("VerifyBundle accepted a record whose identity is outside the request's rule")
 	}
 }
@@ -92,49 +92,21 @@ func signV1(t *testing.T, key ed25519.PrivateKey, rec sandbox.RunRecord) Envelop
 			Sig: base64.StdEncoding.EncodeToString(sig)}}}
 }
 
-// A session is served by one daemon, so its chain has one record version. A version-1
-// link states no software, so a chain mixing versions could hold a call that says
-// nothing about what ran and still verify. Checking each stored exchange does not
-// catch this: each link is valid alone.
-func TestVerifyBundleRefusesMixedVersionChain(t *testing.T) {
+// A version-1 record states no software, and no bundle that verifies now (bundles
+// carry links since F7) can hold one, so none is accepted.
+func TestVerifyRefusesVersionOneRecords(t *testing.T) {
 	key := newKey(t)
-	signer, verifier := NewSigner(key), NewVerifier(key.Public().(ed25519.PublicKey))
-	fp := record.SessionFingerprint("a-session-id")
-
-	// Call 1: version 1, no software fields.
-	req1 := &plimsollv1.RunRequest{Protocol: 1,
+	verifier := NewVerifier(key.Public().(ed25519.PublicKey))
+	req := &plimsollv1.RunRequest{Protocol: 1,
 		Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "one()"}}}
-	resp1 := &plimsollv1.RunResponse{Sandbox: "docker", Isolation: "kernel",
+	resp := &plimsollv1.RunResponse{Sandbox: "docker", Isolation: "kernel",
 		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("1")}}}
-	rec1 := sandbox.RunRecord{Version: 1,
-		RequestSHA256: record.RunRequestDigest(req1), ResultSHA256: record.ResultDigest(resp1),
+	rec := sandbox.RunRecord{Version: 1,
+		RequestSHA256: record.RunRequestDigest(req), ResultSHA256: record.ResultDigest(resp),
 		Provider: "docker", Isolation: "kernel",
-		Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000100),
-		Session: fp, Sequence: 1}
-	rec1.SHA256 = record.Digest(rec1)
-	resp1.Record = record.ToWire(rec1)
-	rb, _ := proto.Marshal(req1)
-	pb, _ := proto.Marshal(resp1)
-	e1 := Entry{Request: rb, Response: pb, Envelope: signV1(t, key, rec1)}
-
-	// Call 2: version 2, under an exact rule, chained onto call 1.
-	req2, resp2 := softwareExchange(idA, idA, envA)
-	req2.Payload = &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "two()"}}
-	resp2.Record = record.Stamp(sandbox.RunRecord{
-		RequestSHA256:  record.RunRequestDigest(req2),
-		SoftwareRuleID: sandbox.SoftwareRule{Mode: sandbox.SoftwareExact, Identities: []string{idA}}.ID(),
-		Started:        time.UnixMilli(1790000000200), Ended: time.UnixMilli(1790000000300),
-		Session: fp, Sequence: 2, PreviousSHA256: rec1.SHA256}, resp2)
-	e2, err := signer.Call(req2, resp2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ce, err := signer.Close(SessionClose{Session: fp, Calls: 2,
-		LastRecordSHA256: resp2.GetRecord().GetRecordSha256()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := VerifyBundle([]Entry{e1, e2, ce}, verifier); err == nil {
-		t.Fatal("VerifyBundle accepted a session chain mixing record versions 1 and 2")
+		Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000100)}
+	rec.SHA256 = record.Digest(rec)
+	if _, err := verifier.Verify(signV1(t, key, rec)); !errors.Is(err, ErrStatement) {
+		t.Fatalf("a version 1 record: %v; want refused: a bundle signs version 2 and 3 only", err)
 	}
 }

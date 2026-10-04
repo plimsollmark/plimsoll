@@ -47,6 +47,8 @@ func TestSessionSoftwareRuleCannotBeDropped(t *testing.T) {
 func testSessionSoftwareRuleCannotBeDropped(t *testing.T, mode string) {
 	svc, p := sessionService()
 	svc.Sandbox = &softwareSessions{p}
+	described := svc.Sandbox.(sandbox.Describer).Environments()
+	p.OpenedEnvironments = &described
 	ctx := authenticatedContext("alice")
 	id := svc.Sandbox.(sandbox.Describer).Environments().JavaScript.SoftwareIdentity
 	wrong := openReq()
@@ -969,5 +971,132 @@ func TestSessionLanguageHint(t *testing.T) {
 	}
 	if len(p.Opened()) != 2 {
 		t.Fatal("a hint naming an unknown language reached the provider")
+	}
+}
+
+// A call that ends its session says so in its own answer, though the sandbox's delete
+// is still running, and the session keeps its concurrency slot until the delete is
+// through (Done), not merely until it ended (review F9).
+func TestEndedSessionKeepsItsSlotUntilItsSandboxIsGone(t *testing.T) {
+	svc, p := sessionService()
+	p.HoldDeletes = true
+	svc.Limiter = NewCodeLimiter(1, 0, 0, 0)
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number,
+		SessionId: open.Msg.GetSessionId(), Payload: &plimsollv1.SessionRunRequest_Cell{
+			Cell: &plimsollv1.CellRun{Language: "python", Code: sandboxtest.CellEndsSession}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Msg.GetEnded(); got != plimsollv1.SessionEnd_SESSION_END_DISK_EXCEEDED {
+		t.Fatalf("the call that ended the session answers ended = %v", got)
+	}
+	if _, err := svc.Run(ctx, jsReq("1")); connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("a run while the ended session's sandbox is still being deleted: %v", err)
+	}
+	p.Opened()[0].FinishDelete()
+	deadline := time.Now().Add(3 * time.Second)
+	for svc.Limiter.Stats().InFlight != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the slot was not given back once the sandbox was gone")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Admitted: the fake keeps no one-shot runs, so it refuses the run past admission.
+	if _, err := svc.Run(ctx, jsReq("1")); connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("a run once the sandbox is gone: %v", err)
+	}
+}
+
+// The software rule is checked again against what the opened session runs (review
+// F10): a provider that refreshed its image during the open would otherwise be bound
+// to a session stating the earlier image. The refusal is not dispatched, the session
+// is closed, and an accepted open states the opened session's identity.
+func TestSessionSoftwareRuleIsCheckedAgainstTheOpenedSession(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sandbox = &softwareSessions{p}
+	stated := svc.Sandbox.(sandbox.Describer).Environments()
+	rebuilt := stated
+	rebuilt.JavaScript.SoftwareIdentity = "oci-manifest:linux/amd64@sha256:bbbb"
+	rebuilt.Project.SoftwareIdentity = rebuilt.JavaScript.SoftwareIdentity
+	p.OpenedEnvironments = &rebuilt
+	ctx := authenticatedContext("alice")
+	req := openReq()
+	req.Msg.SoftwareRule = &plimsollv1.SoftwareRule{Mode: "exact", Identities: []string{stated.JavaScript.SoftwareIdentity}}
+	_, err := svc.OpenSession(ctx, req)
+	if !errors.Is(err, sandbox.ErrSoftwareMismatch) {
+		t.Fatalf("an open whose session runs another image: %v", err)
+	}
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalEnvironment {
+		t.Fatalf("the refusal is not marked not dispatched, environment: %v, %v", reason, ok)
+	}
+	if opened := p.Opened(); len(opened) != 1 || opened[0].Err() == nil {
+		t.Fatal("the refused session was not closed")
+	}
+	req = openReq()
+	req.Msg.SoftwareRule = &plimsollv1.SoftwareRule{Mode: "exact", Identities: []string{rebuilt.JavaScript.SoftwareIdentity}}
+	_, err = svc.OpenSession(ctx, req)
+	if !errors.Is(err, sandbox.ErrSoftwareMismatch) {
+		t.Fatalf("a rule naming the opened image is refused before the open, by what the provider states: %v", err)
+	}
+	resp, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Msg.GetSoftwareIdentity(); got != rebuilt.JavaScript.SoftwareIdentity {
+		t.Fatalf("the open states %q; want the opened session's %q", got, rebuilt.JavaScript.SoftwareIdentity)
+	}
+}
+
+// An idle suspend that fails without ending the session (it gave up waiting for a turn
+// the session's recovery held) is tried again after another idle period: otherwise an
+// abandoned session would keep its concurrency slot for its whole lifetime.
+func TestAFailedIdleSuspendIsTriedAgain(t *testing.T) {
+	svc, p := sessionService()
+	p.FailedSuspends = 1
+	svc.Limiter = NewCodeLimiter(1, 0, 0, 0)
+	svc.Sessions.IdleTimeout = 50 * time.Millisecond
+	if _, err := svc.OpenSession(authenticatedContext("alice"), openReq()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for svc.Limiter.Stats().InFlight != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("after a failed suspend the idle session never gave its slot back (%d suspends)", p.Opened()[0].Suspends())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := p.Opened()[0].Suspends(); n < 2 {
+		t.Fatalf("%d suspends; want the failed one and another", n)
+	}
+}
+
+// A provider that panics while opening a session gives back the session's place and
+// its concurrency slot, as a failed open does: before, the panic unwound past both, and
+// they stayed taken until a restart.
+func TestAPanickingOpenGivesItsPlaceBack(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sessions.MaxSessions = 1
+	svc.Limiter = NewCodeLimiter(1, 0, 0, 0)
+	svc.Logger = slog.New(slog.DiscardHandler)
+	p.BeforeOpen = func() error { panic("the provider broke while opening") }
+	ctx := authenticatedContext("alice")
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("OpenSession let the provider's panic through: %v", r)
+			}
+		}()
+		if _, err := svc.OpenSession(ctx, openReq()); err == nil {
+			t.Error("a panicking open succeeded")
+		}
+	}()
+	p.BeforeOpen = nil
+	if _, err := svc.OpenSession(ctx, openReq()); err != nil {
+		t.Fatalf("the open after a panicking one: %v; the place or the slot was not given back", err)
 	}
 }

@@ -99,6 +99,10 @@ const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the 
                              keeps docker's built-in default. Set it to the shipped
                              audited profile (docker/seccomp.json) to also deny
                              ptrace, io_uring, keyctl and similar; see docs/seccomp.md
+  SANDBOX_GUEST_UID          the uid (and gid) docker runs every guest as, default
+                             61000, which no account uses; 1 to 65533. Preflight
+                             refuses one this host's /etc/passwd or /etc/group has
+                             (it or one more, the session identity check's)
   SANDBOX_REQUIRE_PINNED_IMAGES
                              =1 to refuse mutable image tags (require @sha256:)
   E2B_API_KEY / E2B_TEMPLATE E2B credentials and toolchain template
@@ -143,6 +147,14 @@ const usageLimits = `
   SANDBOX_PER_KEY_CONCURRENT max in-flight runs per caller (default max/2)
   SANDBOX_RATE_PER_MIN       per-caller runs per minute (default 30; 0 = disabled)
   SANDBOX_RATE_BURST         per-caller token-bucket burst (default = rate)
+  SANDBOX_PAID_SECONDS_PER_DAY
+                             e2b and dockercloud, which bill by the second: the
+                             daemon's allowance of microVM wall time per UTC day
+                             (default 0: none); each caller's own is its
+                             paid_seconds_per_day in PLIMSOLL_CLIENTS_FILE, both per
+                             daemon. A run reserves its timeout plus the provider's
+                             teardown bound (33 s) and is charged what it took. Kept
+                             in memory: a restart forgets the day's spend
   SANDBOX_TOTAL_MEMORY_MB    aggregate host memory budget for runners; clamps
                              max-concurrent to total/per-run, less one run for
                              each SANDBOX_SESSION_POOL container, so concurrent
@@ -221,6 +233,22 @@ func main() {
 	}
 	sb, res := provider.Sandbox, provider.Resources
 
+	// A provider billed by the second: what is wrong with its allowances is refused
+	// before the smoke test below creates a billed microVM.
+	metered := sandbox.IsMetered(sb)
+	paidPerDay, err := loadPaidConfig(os.Getenv, metered)
+	if err != nil {
+		slog.Error("invalid paid-provider configuration", "error", err)
+		os.Exit(1)
+	}
+	if hardenedEarly, _ := sandbox.BoolFromEnv(os.Getenv, "PLIMSOLL_HARDENED"); hardenedEarly && metered {
+		if fv, err := rpc.LoadClientsFromEnv(); err == nil && fv != nil && len(fv.Uncapped()) > 0 {
+			slog.Error("hardened mode with a provider billed by the second requires a daily allowance on every caller; refusing before the smoke test",
+				"callers_without_paid_seconds_per_day", strings.Join(fv.Uncapped(), ", "))
+			os.Exit(1)
+		}
+	}
+
 	// Verify dependencies (Preflight) and prove the exact configured execution
 	// stack enforces its promised bounds (SmokeTest, throwaway sandboxes) before
 	// serving. The Docker provider reports the kernel tier only after Preflight has
@@ -283,6 +311,16 @@ func main() {
 	}
 	maxConcurrent, perKey, ratePerMin, burst := lc.MaxConcurrent, lc.PerKey, lc.RatePerMin, lc.Burst
 	svc.Limiter = rpc.NewCodeLimiter(maxConcurrent, perKey, ratePerMin, burst)
+	// A provider billed by the second draws each run on the caller's daily allowance
+	// (paid_seconds_per_day in PLIMSOLL_CLIENTS_FILE) and on the daemon's.
+	svc.Spend = rpc.NewSpendCap(paidPerDay)
+	switch {
+	case metered && paidPerDay == 0:
+		slog.Warn("paid provider with no daemon-wide allowance (SANDBOX_PAID_SECONDS_PER_DAY): only the callers' own paid_seconds_per_day bound what runs cost")
+	case metered:
+		slog.Info("paid provider: runs draw on daily allowances in seconds, per daemon, UTC days, kept in memory (a restart forgets the day's spend)",
+			"daemon_seconds_per_day", paidPerDay)
+	}
 
 	if sc.MaxSessions > 0 {
 		sp, ok := sb.(sandbox.SessionProvider)
@@ -348,6 +386,7 @@ func main() {
 
 	var verifier rpc.TokenVerifier
 	multiClientAuth := false
+	var uncapped []string // callers without a daily allowance on a metered provider
 	switch {
 	case strings.TrimSpace(os.Getenv("PLIMSOLL_CLIENTS_FILE")) != "":
 		// Multi-client: each caller authenticates as its own principal, so the
@@ -363,6 +402,7 @@ func main() {
 		}
 		verifier = fv
 		multiClientAuth = true
+		uncapped = fv.Uncapped()
 		slog.Info("multi-client auth enabled", "clients", fv.Len())
 	case os.Getenv("PLIMSOLL_TOKEN") != "":
 		if err := clientconfig.CheckToken(os.Getenv("PLIMSOLL_TOKEN")); err != nil {
@@ -421,6 +461,8 @@ func main() {
 			Burst:           burst,
 			PerCaller:       perKey,
 			Sessions:        sc,
+			Metered:         metered,
+			Uncapped:        uncapped,
 		}); err != nil {
 			slog.Error("hardened-mode policy violation; refusing to serve", "error", err)
 			os.Exit(1)
@@ -739,6 +781,9 @@ func writeMetrics(w http.ResponseWriter, svc *rpc.SandboxService) {
 	fmt.Fprintf(w, "plimsoll_shed_total{reason=\"at_capacity\"} %d\n", st.AtCapacity)
 	fmt.Fprintf(w, "plimsoll_shed_total{reason=\"per_key\"} %d\n", st.PerKeyFull)
 	fmt.Fprintf(w, "plimsoll_shed_total{reason=\"rate\"} %d\n", st.RateLimited)
+	paidCaller, paidDaemon := svc.Spend.Refused()
+	fmt.Fprintf(w, "plimsoll_shed_total{reason=\"paid_caller\"} %d\n", paidCaller)
+	fmt.Fprintf(w, "plimsoll_shed_total{reason=\"paid_daemon\"} %d\n", paidDaemon)
 	writeHostCallMetrics(w, svc.HostCallStats())
 	writeAdviceMetrics(w, svc.AdviceStats())
 }

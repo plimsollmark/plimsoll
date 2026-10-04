@@ -681,15 +681,16 @@ type AdviceFinding struct {
 	Method   string                 `protobuf:"bytes,4,opt,name=method,proto3" json:"method,omitempty"`     // route method the finding concerns (GET/PUT/POST/DELETE/PATCH)
 	Route    string                 `protobuf:"bytes,5,opt,name=route,proto3" json:"route,omitempty"`       // matched route TEMPLATE, never a raw path
 	Detail   string                 `protobuf:"bytes,6,opt,name=detail,proto3" json:"detail,omitempty"`     // one plain sentence, templated from metadata only
-	// suggested_method/suggested_route name a better route the profile already
-	// exposes (the agent-fixable case). Both empty means no better endpoint exists,
-	// so the fix is an API change and this finding is never returned to a caller.
+	// suggested_method/suggested_route name the batch route the profile declares for
+	// this route (batch_of) and grants: the agent-fixable case. The declaration is the
+	// operator's, unchecked by plimsoll. A finding without one is never returned to a
+	// caller.
 	SuggestedMethod string `protobuf:"bytes,7,opt,name=suggested_method,json=suggestedMethod,proto3" json:"suggested_method,omitempty"`
 	SuggestedRoute  string `protobuf:"bytes,8,opt,name=suggested_route,json=suggestedRoute,proto3" json:"suggested_route,omitempty"`
 	// The three numbers compare the measured pattern with an assumed ideal of one
 	// call; the ideal is never measured. extra_calls is the measured successful call
 	// count minus one, counting only calls the broker delivered with a 2xx status
-	// (rigorous when suggested_route is set). added_latency_ms is the summed measured
+	// (as rigorous as the operator's declaration when suggested_route is set). added_latency_ms is the summed measured
 	// round-trip time minus one call's: a model of time spent beyond one call, not wall
 	// time lost. bytes_moved is the measured gross bytes the flagged calls moved, not
 	// a saving.
@@ -1434,8 +1435,8 @@ type JavaScriptResult struct {
 	// only when the run's grant_profile set advice: caller AND at least one
 	// agent-fixable finding exists; it is empty otherwise. Advisory only: this field
 	// never changed the run's execution — a run is byte-identical with or without it.
-	// Only agent-fixable findings (a better route the profile exposes) appear here;
-	// API-change findings stay on the operator surface.
+	// Only agent-fixable findings (a batch route the profile declares and grants)
+	// appear here; every other finding stays on the operator surface.
 	Advice        []*AdviceFinding `protobuf:"bytes,10,rep,name=advice,proto3" json:"advice,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -1,7 +1,8 @@
 // Command plimsoll-attest is a harness for plimsoll's run records, run outside
 // the daemon: it makes a signing key, runs a request and signs its checked
-// record into a bundle, verifies a bundle (signatures, digests, session
-// chains), and replays a bundle's single runs to compare results.
+// record into a bundle, verifies a bundle (signatures, digests, the bundle's
+// chain of links, session chains, and with -expect the caller's own list of its
+// calls), and replays a bundle's single runs to compare results.
 //
 //	plimsoll-attest keygen -out harness
 //	plimsoll-attest run -daemon http://127.0.0.1:8080 -key harness.key -bundle runs.jsonl request.json
@@ -21,11 +22,14 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -37,9 +41,17 @@ import (
 
 const usage = `usage:
   plimsoll-attest keygen -out PREFIX            write PREFIX.key (mode 0600) and PREFIX.pub
-  plimsoll-attest run -daemon URL -key FILE -bundle FILE REQUEST.json
+  plimsoll-attest run -daemon URL -key FILE -bundle FILE [-shared-bundle] REQUEST.json
                                                 run one request, append its signed record
-  plimsoll-attest verify -pub FILE BUNDLE       check signatures, digests and session chains
+                                                (under a lock on the file, so runs take turns;
+                                                no lock on Windows, Solaris, illumos or AIX:
+                                                run one at a time there); a bundle other
+                                                users can read is refused without -shared-bundle
+  plimsoll-attest verify -pub FILE [-expect FILE | -expect-count N] BUNDLE
+                                                check signatures, digests, the bundle's chain
+                                                of links and session chains; with -expect, that
+                                                it holds exactly the requests your own log lists,
+                                                one request digest (request_sha256) per line
   plimsoll-attest replay -daemon URL -pub FILE BUNDLE
                                                 verify the bundle as verify does, then run each
                                                 single run again and each session in a fresh
@@ -134,7 +146,8 @@ func run(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	daemon := fs.String("daemon", "", "the daemon's base URL")
 	keyPath := fs.String("key", "", "the signing key (PEM PKCS #8 Ed25519)")
-	bundlePath := fs.String("bundle", "", "the bundle to append to (created if absent)")
+	bundlePath := fs.String("bundle", "", "the bundle to append to (created if absent, readable by its owner only)")
+	shared := fs.Bool("shared-bundle", false, "append even when the bundle is readable by other users: a bundle shared on purpose")
 	timeout := fs.Duration("timeout", 6*time.Minute, "how long to wait for the run")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -154,12 +167,15 @@ func run(args []string, stdout io.Writer) error {
 	if err := protojson.Unmarshal(raw, req); err != nil {
 		return fmt.Errorf("%s: %w", fs.Arg(0), err)
 	}
-	bundle, err := os.OpenFile(*bundlePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
+	// Before anything runs: a bundle this harness cannot continue (another key's, one
+	// cut, one in an older format) refuses the run, so no run's record is lost to it.
+	if err := checkAppendable(*bundlePath, signer, *shared); err != nil {
+		return fmt.Errorf("%w; nothing was run", err)
 	}
-	defer bundle.Close()
-	r, err := remote(*daemon, client.WithRecorder(attest.NewHarness(signer, bundle)))
+	// The exchange is kept in memory while the run takes its time, and appended once
+	// it is back: so two runs on one bundle take turns only for the append.
+	got := &captured{}
+	r, err := remote(*daemon, client.WithRecorder(got))
 	if err != nil {
 		return err
 	}
@@ -167,11 +183,190 @@ func run(args []string, stdout io.Writer) error {
 	defer cancel()
 	resp, rec, err := r.Exchange(ctx, req)
 	if err != nil {
+		return err // a run that failed has no record, and the bundle is unchanged
+	}
+	fmt.Fprintf(stdout, "ran on %s (%s): %s\n", resp.GetSandbox(), resp.GetIsolation(), summary(resp))
+	if err := appendRun(*bundlePath, signer, got.req, got.resp, *shared); err != nil {
+		// The run happened: its signed record is kept beside the bundle, unlinked,
+		// rather than lost.
+		side, serr := keepUnsealed(*bundlePath, signer, got.req, got.resp)
+		if serr != nil {
+			return fmt.Errorf("the run's record could not be appended (%w), nor kept beside the bundle (%v)", err, serr)
+		}
+		return fmt.Errorf("the run's record could not be appended (%w); its signed entry is in %s, without a link", err, side)
+	}
+	fmt.Fprintf(stdout, "record %s signed into %s; request %s (the line for verify -expect)\n", rec.SHA256, *bundlePath, rec.RequestSHA256)
+	return nil
+}
+
+// bundleMode is the mode a bundle, and a side file of unsealed records, is created
+// with: owner only. Each holds the requests and responses in full, the submitted code
+// and its output included, which other users of the machine have no business reading.
+const bundleMode = 0o600
+
+// refuseShared refuses a bundle its group or others can read or write (one made before
+// bundles were created owner-only, or loosened since), unless shared says it is shared
+// on purpose: a run would add its code and output to what other users can read. It
+// never changes the mode itself. On Windows, where Go reports every writable file as
+// 0666 and access is a matter of ACLs, it checks nothing.
+func refuseShared(f *os.File, shared bool) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	st, err := f.Stat()
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "ran on %s (%s): %s\nrecord %s signed into %s\n",
-		resp.GetSandbox(), resp.GetIsolation(), summary(resp), rec.SHA256, *bundlePath)
+	if m := st.Mode().Perm(); m&0o077 != 0 && !shared {
+		return fmt.Errorf("%s is open to other users (mode %v) and would hold this run's code and output too: chmod 600 it, or pass -shared-bundle if it is shared on purpose", f.Name(), m)
+	}
 	return nil
+}
+
+// lockWait bounds how long a run waits for another's append to the same bundle.
+const lockWait = 2 * time.Minute
+
+// resume reads the bundle in f and returns a harness that continues it at f's end.
+func resume(f *os.File, signer *attest.Signer) (*attest.Harness, error) {
+	existing, err := attest.ReadBundle(f)
+	if err != nil {
+		return nil, cannotContinue(err)
+	}
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		return nil, err
+	}
+	h, err := attest.ResumeHarness(signer, existing, bundleWriter(f))
+	if err != nil {
+		return nil, cannotContinue(err)
+	}
+	return h, nil
+}
+
+// bundleWriter is what a resumed harness writes the bundle through; a variable so a
+// test can make a write fail part way.
+var bundleWriter = func(f *os.File) io.Writer { return f }
+
+// bundleSync syncs the bundle to disk; a variable so a test can watch or fail it.
+var bundleSync = (*os.File).Sync
+
+// cannotContinue says what to do with a bundle this harness cannot continue.
+func cannotContinue(err error) error {
+	return fmt.Errorf("%w. A bundle signed by another key, or written before bundle links, cannot be continued: start a new one. One damaged by a crash while appending (a partial or unsealed last line) is whole again once cut back to its last checkpoint line, if the damage is after it", err)
+}
+
+// checkAppendable reports whether the bundle at path (absent: a new one) is one this
+// signer can continue, without taking the lock or writing.
+func checkAppendable(path string, signer *attest.Signer, shared bool) error {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := refuseShared(f, shared); err != nil {
+		return err
+	}
+	existing, err := attest.ReadBundle(f)
+	if err != nil {
+		return cannotContinue(err)
+	}
+	if _, err := attest.ResumeHarness(signer, existing, io.Discard); err != nil {
+		return cannotContinue(err)
+	}
+	return nil
+}
+
+// keepUnsealed writes the exchange's signed entry, without a link, to a new file
+// beside the bundle, owner-only and never an existing one (which could be readable by
+// others): a run's record the bundle could not take, kept rather than lost. It returns
+// the file's path.
+func keepUnsealed(bundle string, signer *attest.Signer, req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (string, error) {
+	e, err := signer.Call(req, resp)
+	if err != nil {
+		return "", err
+	}
+	var r [4]byte
+	if _, err := rand.Read(r[:]); err != nil {
+		return "", err
+	}
+	path := fmt.Sprintf("%s.unsealed-%s-%x.jsonl", bundle, time.Now().UTC().Format("20060102T150405Z"), r)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, bundleMode)
+	if err != nil {
+		return "", err
+	}
+	err = attest.WriteEntry(f, e)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+// captured is a client.Recorder that keeps the one exchange of a run.
+type captured struct {
+	req  *plimsollv1.RunRequest
+	resp *plimsollv1.RunResponse
+}
+
+func (c *captured) Record(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) error {
+	c.req, c.resp = req, resp
+	return nil
+}
+
+// appendRun signs the exchange into the bundle at path, continuing its chain and
+// ending with a checkpoint, under an exclusive lock on the file: it re-reads the
+// bundle, which must verify whole under this key (attest.ResumeHarness), then appends.
+func appendRun(path string, signer *attest.Signer, req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse, shared bool) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, bundleMode)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := refuseShared(f, shared); err != nil {
+		return err
+	}
+	unlock, err := lockFile(f, lockWait)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	h, err := resume(f, signer)
+	if err != nil {
+		return err
+	}
+	end, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+	// The entry, its checkpoint, and both on disk, or the bundle as it was: a write
+	// that fails part way would otherwise leave a cut line or an entry without its
+	// checkpoint, which no later run could continue. The caller keeps the run's record
+	// in a side file instead.
+	err = h.Record(req, resp)
+	if err == nil {
+		err = h.Checkpoint()
+	}
+	if err == nil {
+		err = bundleSync(f)
+	}
+	if err != nil {
+		// The cut is synced too: unsynced, a crash could bring the partial line back.
+		if terr := f.Truncate(end); terr != nil {
+			return fmt.Errorf("%w; cutting the bundle back to its last checkpoint failed too (%v), so it may hold part of a line: verify it before the next run", err, terr)
+		}
+		if serr := bundleSync(f); serr != nil {
+			return fmt.Errorf("%w; the bundle was cut back to its last checkpoint, but the cut could not be synced (%v), so after a crash it may hold part of a line: verify it before the next run", err, serr)
+		}
+	}
+	return err
 }
 
 func summary(resp *plimsollv1.RunResponse) string {
@@ -215,6 +410,8 @@ func readBundle(path string) ([]attest.Entry, error) {
 func verify(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	pubPath := fs.String("pub", "", "the harness's public key (PEM PKIX Ed25519)")
+	expectPath := fs.String("expect", "", "a file of the request digests (request_sha256 in each run record) of every call you made through this harness, one per line, from your own log; anything after the digest on a line is a label: the bundle must hold exactly those requests, each as many times as listed")
+	expectCount := fs.Int("expect-count", -1, "how many calls you made through this harness, from your own records: the bundle must hold exactly that many")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -233,7 +430,27 @@ func verify(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "verified %d entries signed by key %s: %d single runs", len(entries), attest.KeyID(pub), rep.Runs)
+	// The links prove the file is what the harness wrote; whether the harness was
+	// handed every call is the caller's own records' to say.
+	if *expectPath != "" {
+		raw, err := os.ReadFile(*expectPath)
+		if err != nil {
+			return err
+		}
+		var digests []string
+		for _, line := range strings.Split(string(raw), "\n") {
+			if f := strings.Fields(line); len(f) > 0 {
+				digests = append(digests, f[0])
+			}
+		}
+		if err := attest.VerifyExpected(entries, digests); err != nil {
+			return err
+		}
+	}
+	if *expectCount >= 0 && attest.CountCalls(entries) != *expectCount {
+		return fmt.Errorf("%w: the bundle holds %d calls, you expected %d", attest.ErrExpected, attest.CountCalls(entries), *expectCount)
+	}
+	fmt.Fprintf(stdout, "verified %d entries signed by key %s, whole to its last checkpoint: %d single runs", len(entries), attest.KeyID(pub), rep.Runs)
 	for _, s := range rep.Sessions {
 		fmt.Fprintf(stdout, "; session %s…, %d calls, chain closed", prefix(s.Session, 12), s.Calls)
 	}

@@ -39,10 +39,14 @@ type dcFake struct {
 	uploads  [][]dcFakeFile
 
 	// knobs
-	createStatus   int  // non-zero: CreateSandbox fails with this HTTP status
-	opPending      bool // CreateSandbox returns a not-done operation
-	waitUnimpl     bool // WaitOperation answers unimplemented, forcing GetOperation polling
-	opError        bool // the create operation finishes with an error
+	createStatus   int    // non-zero: CreateSandbox fails with this HTTP status
+	createCode     string // the Connect code it fails with; default resource_exhausted
+	createDrop     bool   // CreateSandbox reads the request and drops the connection
+	opNeverDone    bool   // the create operation never finishes
+	deleteNotFound bool   // DeleteSandbox answers not_found
+	opPending      bool   // CreateSandbox returns a not-done operation
+	waitUnimpl     bool   // WaitOperation answers unimplemented, forcing GetOperation polling
+	opError        bool   // the create operation finishes with an error
 	reportedCPUs   int
 	reportedMemMiB int
 	policyMode     string // default NETWORK_POLICY_MODE_DENY_ALL
@@ -65,6 +69,7 @@ type dcFake struct {
 	deleteOpFailures int    // this many delete operations finish with an error before one succeeds
 	echoSecret       string // CreateSandbox fails with a message echoing this value
 	opErrorEcho      string // the create operation fails with a message echoing this value
+	uploadEndEcho    string // the upload stream ends in an error echoing this value
 }
 
 type dcFakeFile struct {
@@ -316,8 +321,18 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.creates = append(f.creates, in)
 		f.mu.Unlock()
+		if f.createDrop {
+			if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+				conn.Close()
+			}
+			return
+		}
 		if f.createStatus != 0 {
-			connectError(w, f.createStatus, "resource_exhausted", "no capacity")
+			code := f.createCode
+			if code == "" {
+				code = "resource_exhausted"
+			}
+			connectError(w, f.createStatus, code, "no capacity")
 			return
 		}
 		if f.echoSecret != "" {
@@ -339,10 +354,18 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, f.deleteOp())
 			return
 		}
+		if f.opNeverDone {
+			writeJSON(w, map[string]any{"id": "op-1", "done": false})
+			return
+		}
 		writeJSON(w, f.doneOp(f.lastName()))
 	case dcProcGetOperation:
 		if id, _ := in["id"].(string); strings.HasPrefix(id, "op-del") {
 			writeJSON(w, f.deleteOp())
+			return
+		}
+		if f.opNeverDone {
+			writeJSON(w, map[string]any{"id": "op-1", "done": false})
 			return
 		}
 		writeJSON(w, f.doneOp(f.lastName()))
@@ -361,6 +384,10 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.deletes = append(f.deletes, in)
 		f.mu.Unlock()
+		if f.deleteNotFound {
+			connectError(w, http.StatusNotFound, "not_found", "no such sandbox")
+			return
+		}
 		writeJSON(w, map[string]any{"id": "op-del", "done": false})
 	case dcProcListSandboxes:
 		page := 0
@@ -431,6 +458,15 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.uploads = append(f.uploads, files)
 		f.mu.Unlock()
+		if f.uploadEndEcho != "" {
+			end, _ := json.Marshal(map[string]any{"error": map[string]any{
+				"code": "internal", "message": "upload refused for Bearer " + f.uploadEndEcho + " and " + f.uploadEndEcho}})
+			frame := connectEnvelope(end)
+			frame[0] = 0x02
+			w.Header().Set("Content-Type", "application/connect+json")
+			_, _ = w.Write(frame)
+			return
+		}
 		writeStream(w, map[string]any{"filesWritten": len(files)})
 	case "/ep" + dcProcDownload:
 		frames := readFrames(f.t, body)
@@ -494,7 +530,7 @@ func (f *dcFake) deletedRefs() []string {
 func (d *DockerCloud) inflightCount() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return len(d.inflight)
+	return d.leases.Len()
 }
 
 func TestDockerCloudCreateDeniesAllEgressAndWrapsTheSnippet(t *testing.T) {
@@ -954,7 +990,7 @@ func TestDockerCloudOrphanReconciliation(t *testing.T) {
 	d := f.provider()
 	d.instanceID = "inst1"
 	live := dcNamePrefix + "inst1-live"
-	d.track(live)
+	d.leases.Track(live)
 	sb := func(id, name string) map[string]any {
 		return map[string]any{"core": map[string]any{"id": id, "name": name, "createdAt": "2026-09-24T00:00:00Z"}}
 	}
@@ -1537,6 +1573,7 @@ func TestDockerCloudErrorsNeverCarryCredentials(t *testing.T) {
 	for name, tweak := range map[string]func(*dcFake, string){
 		"connect error":    func(f *dcFake, s string) { f.echoSecret = s },
 		"failed operation": func(f *dcFake, s string) { f.opErrorEcho = s },
+		"stream end error": func(f *dcFake, s string) { f.uploadEndEcho = s },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newDCFake(t)
@@ -1593,5 +1630,120 @@ func TestDockerCloudGrantEndsBeforeTheTeardown(t *testing.T) {
 	}
 	if late == -1 {
 		t.Fatal("the teardown made no guard call; the test proves nothing")
+	}
+}
+
+// A run that brokered a call and then failed returns its trace with the error (review
+// F11): the call happened, and the daemon counts calls from the returned result.
+func TestDockerCloudFailedRunKeepsItsCallTrace(t *testing.T) {
+	f := newDCFake(t)
+	d := f.provider()
+	d.GuardURL = "https://guard.example.com/v1/dockercloud/guard"
+	grant, _ := dcGrant(t)
+	served := -1
+	f.execHandler = func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		body := string(f.uploads[len(f.uploads)-1][0].content)
+		f.mu.Unlock()
+		i := strings.Index(body, `"X-Plimsoll-Guard":"`)
+		token := body[i+len(`"X-Plimsoll-Guard":"`):]
+		token = token[:strings.Index(token, `"`)]
+		req := httptest.NewRequest(http.MethodPost, d.EgressGuardPath(), strings.NewReader(`{"method":"GET","path":"/items/1"}`))
+		req.Header.Set(EgressGuardHeader, token)
+		rec := httptest.NewRecorder()
+		EgressGuardHTTPHandler(d, d.EgressGuardPath(), 4, 0).ServeHTTP(rec, req)
+		served = rec.Code
+		http.Error(w, "exec stream broke", http.StatusInternalServerError) // after the call: post-dispatch
+	}
+	res, err := d.RunJavaScript(context.Background(), Request{Code: `console.log("ok")`, Grant: grant})
+	if served != http.StatusOK {
+		t.Fatalf("the guard call during the run answered %d; the test proves nothing", served)
+	}
+	if err == nil {
+		t.Fatalf("the run with a broken exec returned no error: %+v", res)
+	}
+	if res.CallTrace.Len() != 1 {
+		t.Fatalf("the failed run's trace: %+v; want the one call it brokered", res.CallTrace)
+	}
+}
+
+// When every delete of a run's sandbox fails, the provider says so on the run's
+// context (TeardownGaveUp), so a caller that meters runs charges the run's whole
+// reservation: the sandbox bills until its TTL. A retry that succeeds says nothing.
+func TestDockerCloudReportsADeleteThatGaveUp(t *testing.T) {
+	for _, tc := range []struct {
+		failures int
+		want     bool
+	}{{1, false}, {meteredDeleteAttempts, true}} {
+		f := newDCFake(t)
+		f.deleteOpFailures = tc.failures
+		d := f.provider()
+		f.exec = func([]string) (int, string, string) { return 0, "", "" }
+		ctx, gaveUp := WatchTeardown(context.Background())
+		if _, err := d.RunJavaScript(ctx, Request{Code: "1"}); err != nil {
+			t.Fatal(err)
+		}
+		if gaveUp() != tc.want {
+			t.Errorf("%d failed deletes: reported gave up = %v; want %v", tc.failures, gaveUp(), tc.want)
+		}
+	}
+}
+
+// A create whose outcome is unknown (an answer that is not a refusal, an answer lost,
+// an operation still running when the run gives up), followed by a delete that finds
+// nothing, may still make a sandbox that bills: the run is charged as one whose delete
+// gave up. A refusal, a create never sent and a delete that removed the sandbox are
+// not charged, and a create never sent is not deleted either.
+func TestDockerCloudChargesACreateWhoseOutcomeIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		set     func(*dcFake)
+		timeout time.Duration
+		charged bool
+		deletes bool
+	}{
+		{"refused", func(f *dcFake) { f.createStatus = http.StatusTooManyRequests; f.deleteNotFound = true }, 0, false, true},
+		{"unavailable", func(f *dcFake) {
+			f.createStatus, f.createCode, f.deleteNotFound = http.StatusServiceUnavailable, "unavailable", true
+		}, 0, true, true},
+		{"internal", func(f *dcFake) {
+			f.createStatus, f.createCode, f.deleteNotFound = http.StatusInternalServerError, "internal", true
+		}, 0, true, true},
+		{"already exists", func(f *dcFake) {
+			f.createStatus, f.createCode, f.deleteNotFound = http.StatusConflict, "already_exists", true
+		}, 0, true, true},
+		{"answer lost", func(f *dcFake) { f.createDrop, f.deleteNotFound = true, true }, 0, true, true},
+		{"still running, delete finds nothing", func(f *dcFake) {
+			f.opPending, f.opNeverDone, f.waitUnimpl, f.deleteNotFound = true, true, true, true
+		}, 700 * time.Millisecond, true, true},
+		{"still running, delete removes it", func(f *dcFake) {
+			f.opPending, f.opNeverDone, f.waitUnimpl = true, true, true
+		}, 700 * time.Millisecond, false, true},
+		{"never sent", func(f *dcFake) { f.refuseExchange = true }, 0, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDCFake(t)
+			tc.set(f)
+			d := f.provider()
+			base := context.Background()
+			if tc.timeout > 0 {
+				var cancel context.CancelFunc
+				base, cancel = context.WithTimeout(base, tc.timeout)
+				defer cancel()
+			}
+			ctx, gaveUp := WatchTeardown(base)
+			if _, err := d.create(ctx, 10*time.Second); err == nil {
+				t.Fatal("create succeeded")
+			}
+			if gaveUp() != tc.charged {
+				t.Errorf("charged as a delete that gave up = %v; want %v", gaveUp(), tc.charged)
+			}
+			if got := f.called(dcProcDeleteSandbox) > 0; got != tc.deletes {
+				t.Errorf("deleted by name = %v; want %v", got, tc.deletes)
+			}
+			if d.leases.Len() != 0 {
+				t.Errorf("%d names left tracked; the reconciler could never reap a late sandbox", d.leases.Len())
+			}
+		})
 	}
 }

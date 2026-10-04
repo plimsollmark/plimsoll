@@ -35,12 +35,19 @@ type Config struct {
 	// The forged-identity case then requires its open to be refused; on a provider
 	// without the wall (docker) that case races the relay's start and only logs.
 	ExecsWalledOff bool
+	// Teardown is the longest the provider's delete of a session's sandbox takes,
+	// retries included: Done closes once the sandbox is gone, so it can trail the end
+	// by this much.
+	Teardown time.Duration
 }
 
 // Run runs every case against p, each in its own session.
 func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	if !p.SupportsSessions() {
 		t.Fatal("the provider does not support sessions")
+	}
+	if cfg.Teardown <= 0 {
+		t.Fatal("Config.Teardown is not set: Done waits for the sandbox's delete, so the suite needs its bound")
 	}
 	for _, c := range []struct {
 		name string
@@ -613,9 +620,10 @@ func closeEnds(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	if err := s.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// Done closes once the delete has returned; 5 s is scheduling slack on top.
 	select {
 	case <-s.Done():
-	case <-time.After(5 * time.Second):
+	case <-time.After(cfg.Teardown + 5*time.Second):
 		t.Fatal("Done was not closed after Close")
 	}
 	if sandbox.SessionEndReason(s.Err()) != sandbox.SessionClosed {
@@ -638,7 +646,7 @@ func lifetimeEnds(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	js(t, s, `console.log(1)`, 5*time.Second)
 	select {
 	case <-s.Done():
-	case <-time.After(time.Until(s.ExpiresAt()) + 30*time.Second):
+	case <-time.After(time.Until(s.ExpiresAt()) + 30*time.Second + cfg.Teardown):
 		t.Fatalf("the session outlived its lifetime (expires %v)", s.ExpiresAt())
 	}
 	if sandbox.SessionEndReason(s.Err()) != sandbox.SessionExpired {

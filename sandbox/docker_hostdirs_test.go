@@ -8,12 +8,21 @@ import (
 	"time"
 )
 
+// shortSocketRoot moves the test into a fresh temporary directory and returns ".",
+// so every socket path it binds is relative and short however deep TMPDIR is (Unix
+// caps a socket path at 108 bytes; t.TempDir adds the test's long name) and nothing
+// is created in the source tree.
+func shortSocketRoot(t *testing.T) string {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	return "."
+}
+
 // A broker socket directory left by a process that died (older than a minute, its
 // socket refusing connections) is removed; a live one, a young one and anything not
-// plimsoll's are not. The name is short because the test's directory is in every
-// socket path, which Unix caps at 108 bytes.
+// plimsoll's are not.
 func TestReapDeadHostDirs(t *testing.T) {
-	root := t.TempDir()
+	root := shortSocketRoot(t)
 	old := time.Now().Add(-2 * time.Minute)
 	mk := func(name string, listen bool, mtime time.Time) string {
 		t.Helper()
@@ -62,7 +71,7 @@ func TestReapDeadHostDirs(t *testing.T) {
 // one this version left (its liveness socket refusing) and one an earlier version left
 // (no socket at all).
 func TestReapRemovesConfigDirsDeadProcessesLeft(t *testing.T) {
-	root := t.TempDir()
+	root := shortSocketRoot(t)
 	old := time.Now().Add(-2 * time.Minute)
 	withSocket := filepath.Join(root, "plimsoll-docker-config-111")
 	bare := filepath.Join(root, "plimsoll-docker-config-222")

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,9 +36,14 @@ type stub struct {
 	floors      []string // minimum_isolation of every Run and OpenSession that reached it
 	ranIn       string   // the environment its records state, when not what Describe says
 	ranSoftware string   // selected software, when different from Describe
+	// describeHook, when set, answers Describe instead of describe, and may block.
+	describeHook func() *plimsollv1.DescribeResponse
 }
 
 func (s *stub) Describe(context.Context, *connect.Request[plimsollv1.DescribeRequest]) (*connect.Response[plimsollv1.DescribeResponse], error) {
+	if s.describeHook != nil {
+		return connect.NewResponse(s.describeHook()), nil
+	}
 	return connect.NewResponse(s.describe), nil
 }
 
@@ -412,6 +418,41 @@ func TestADescriptionIsRefreshed(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if _, _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}, Requirement{MinimumIsolation: sandbox.IsolationVM}); !errors.Is(err, ErrNoBackend) {
 		t.Fatalf("a stale description was used: %v", err)
+	}
+}
+
+// A slow Refresh that finishes after an on-demand Describe does not put its older
+// answer back (review F12): the pool keeps the answer asked for last.
+func TestASlowRefreshKeepsTheNewerDescription(t *testing.T) {
+	asked, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	st := &stub{name: "b", answer: ok("1\n")}
+	st.describeHook = func() *plimsollv1.DescribeResponse {
+		if calls.Add(1) == 1 { // Refresh's: asked first, answers last, with the older tier
+			close(asked)
+			<-release
+			return describeAs("docker", "container")
+		}
+		return describeAs("docker", "vm")
+	}
+	backend := serve(t, st)
+	p, err := New([]Backend{backend}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed := make(chan error, 1)
+	go func() { refreshed <- p.Refresh(context.Background()) }()
+	<-asked
+	info, err := p.Describe(context.Background(), backend.Name)
+	if err != nil || info.Isolation != sandbox.IsolationVM {
+		t.Fatalf("the on-demand description: %+v, %v", info, err)
+	}
+	close(release)
+	if err := <-refreshed; err != nil {
+		t.Fatal(err)
+	}
+	if info, err := p.Describe(context.Background(), backend.Name); err != nil || info.Isolation != sandbox.IsolationVM {
+		t.Fatalf("after the slow refresh: %+v, %v; want the newer vm description kept", info, err)
 	}
 }
 

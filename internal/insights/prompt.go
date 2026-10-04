@@ -12,11 +12,12 @@ import (
 // Prospector Phase 3: AI remediation prompts. Prompt turns a Finding plus the
 // profile's declared routes into a paste-ready prompt for the customer's OWN AI to
 // consider the API change the finding points at. It is meant for the narrowest case:
-// a finding the agent cannot fix by calling a route it already has (Finding.Suggested
-// nil) and whose route the profile's catalog does not name either (Finding.CatalogMatch
-// nil) — the only case where "this may need a new server-side capability" is even a
-// candidate answer. A caller that hands it the other two classes is asking a model to
-// invent an endpoint that already exists; cmd/prospector-report filters accordingly.
+// a finding for which no batch route is known: none declared (Finding.Suggested and
+// Finding.GrantRoute nil) and none the path suggests among the granted or catalogued
+// routes (Finding.Candidate nil), the only case where "this may need a new server-side
+// capability" is even a candidate answer. A caller that hands it the other classes is
+// asking a model to invent an endpoint that may already exist; cmd/prospector-report
+// filters accordingly.
 //
 // Two decisions are explicit and load-bearing:
 //

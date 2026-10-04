@@ -44,7 +44,8 @@ func TestOpenShellDaemonSessionLive(t *testing.T) {
 
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	var bundle bytes.Buffer
-	remote, err := client.New("http://"+d.addr, client.WithToken(token), client.WithRecorder(attest.NewHarness(attest.NewSigner(key), &bundle)))
+	harness := attest.NewHarness(attest.NewSigner(key), &bundle)
+	remote, err := client.New("http://"+d.addr, client.WithToken(token), client.WithRecorder(harness))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +77,9 @@ func TestOpenShellDaemonSessionLive(t *testing.T) {
 	sum, err := s.Close(ctx)
 	if err != nil || sum.Calls != 2 || sum.End != sandbox.SessionClosed {
 		t.Fatalf("close: %+v, %v", sum, err)
+	}
+	if err := harness.Checkpoint(); err != nil {
+		t.Fatal(err)
 	}
 	entries, err := attest.ReadBundle(&bundle)
 	if err != nil {

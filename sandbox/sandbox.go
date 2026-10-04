@@ -263,15 +263,16 @@ type ProjectResult struct {
 }
 
 // AdviceFinding is post-dispatch efficiency evidence supplied by an RPC service.
-// Routes are templates, and suggested routes are already granted to the caller.
-// Operator-only findings and ungranted catalog routes are never included. This
+// Routes are templates. A suggested route is one the operator's profile declares as
+// the batch form of the finding's route (batch_of) and grants; plimsoll has not
+// checked that it returns the same items. Operator-only findings, declared routes the
+// profile does not grant, and routes suggested by their path alone are never included. This
 // transport-independent value carries no protobuf or detector types.
 //
 // The three numbers compare the measured pattern with an assumed ideal of one call;
 // the ideal itself is never measured. ExtraCalls is the measured successful call
 // count minus one (only calls the broker delivered with a 2xx status are counted),
-// rigorous when SuggestedRoute is set (a granted collection route exists, if it
-// returns the same items). AddedLatency is the summed measured round-trip time minus
+// as rigorous as the operator's declaration when SuggestedRoute is set. AddedLatency is the summed measured round-trip time minus
 // one call's: a model of time spent beyond one call, not wall time lost. BytesMoved
 // is the measured gross bytes the counted calls moved, not a saving. Quote
 // ExtraCalls; treat the other two as order-of-magnitude context.
@@ -282,7 +283,7 @@ type AdviceFinding struct {
 	Method          string        // route method the finding concerns
 	Route           string        // matched route template, never a raw path
 	Detail          string        // one sentence templated from metadata only
-	SuggestedMethod string        // a better route the profile already grants, or ""
+	SuggestedMethod string        // the declared, granted batch route's method, or ""
 	SuggestedRoute  string        // the agent-fixable case; both empty never reaches a caller
 	ExtraCalls      int           // measured successful calls beyond one
 	AddedLatency    time.Duration // modelled: summed round trips minus one call's
@@ -458,6 +459,38 @@ type Preflighter interface {
 type OrphanReconciler interface {
 	ReconcileOrphans(ctx context.Context) (int, error)
 }
+
+// Metered is a provider whose runs the operator pays for by the second: each creates a
+// billed microVM (E2B, Docker Cloud). A daemon bounds callers' daily use of one
+// (internal/rpc SpendCap: a caller's paid_seconds_per_day, SANDBOX_PAID_SECONDS_PER_DAY),
+// and hardened mode requires a bound on every caller.
+type Metered interface {
+	// BillingTeardown is the longest a run's microVM can still bill after the run's
+	// deadline: its delete, retried (meteredTeardown); 0 for a provider that does not
+	// bill by the second. A run reserves its timeout plus this.
+	BillingTeardown() time.Duration
+}
+
+// IsMetered reports whether p bills by the second.
+func IsMetered(p any) bool { return MeteredTeardown(p) > 0 }
+
+// MeteredTeardown is p's BillingTeardown, 0 when p is not Metered.
+func MeteredTeardown(p any) time.Duration {
+	if m, ok := p.(Metered); ok {
+		return m.BillingTeardown()
+	}
+	return 0
+}
+
+// meteredDeleteAttempts and meteredDeleteBudget bound how E2B and Docker Cloud delete a
+// run's microVM: that many tries of that long each, a pause of one second after the
+// first and two after the second. meteredTeardown is the sum, the BillingTeardown both
+// report, so the reservation and the loops cannot drift apart.
+const (
+	meteredDeleteAttempts = 3
+	meteredDeleteBudget   = 10 * time.Second
+	meteredTeardown       = meteredDeleteAttempts*meteredDeleteBudget + (meteredDeleteAttempts-1)*meteredDeleteAttempts/2*time.Second
+)
 
 // Drainer is an optional interface a provider implements when a run can leave
 // work behind after it returns, such as a sandbox deleted off the result path.

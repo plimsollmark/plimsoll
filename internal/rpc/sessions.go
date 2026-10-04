@@ -168,6 +168,11 @@ func errSessionNotFound() error {
 // bound, one caller could park any number of requests on its own session, each holding
 // a handler and a connection. The returned function gives the turn back.
 func (e *sessionEntry) takeTurn(ctx context.Context) (func(), error) {
+	if ctx.Err() != nil {
+		// A caller that has gone takes no turn, so it spends no rate token and takes
+		// no slot for a session it will not use.
+		return nil, busy(ctx)
+	}
 	select {
 	case e.turn <- struct{}{}:
 		return func() { <-e.turn }, nil
@@ -268,9 +273,23 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		idle = minSessionIdle
 	}
 	started := time.Now()
-	sess, err := sp.OpenSession(ctx, sandbox.SessionOptions{MinimumIsolation: env.minimum, Lifetime: lifetime, DiskBytes: s.Sessions.DiskBytes, Languages: languages})
+	// A failed open's slot comes back once whatever sandbox it made is gone, which a
+	// provider that deletes it off the result path holds past the return (HoldCapacity).
+	openCtx, openFailed := sandbox.WithCapacity(ctx, release)
+	sess, err := func() (sess sandbox.Session, err error) {
+		// A provider that panics while opening is a failed open, so its place and its
+		// slot come back below instead of staying taken until a restart. Unmarked: it may
+		// have made a sandbox.
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger().LogAttrs(ctx, slog.LevelError, "session open panicked", slog.Any("panic", r))
+				sess, err = nil, errors.New("the provider failed while opening the session")
+			}
+		}()
+		return sp.OpenSession(openCtx, sandbox.SessionOptions{MinimumIsolation: env.minimum, Lifetime: lifetime, DiskBytes: s.Sessions.DiskBytes, Languages: languages})
+	}()
 	if err != nil {
-		release()
+		openFailed()
 		s.sessions.unreserve(principal)
 		attrs := []slog.Attr{
 			slog.String("caller", auditCaller(ctx)),
@@ -287,17 +306,35 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
 		_ = sess.Close(closeCtx)
 		cancel()
-		release()
+		go releaseOnDone(sess, release)
 		s.sessions.unreserve(principal)
 		return nil, mapSandboxErr(sandbox.RefuseGaveUp(ctx))
 	}
-	id := make([]byte, 16)
-	if _, err := rand.Read(id); err != nil {
-		release()
+	// The rule again, against what the opened session runs: the provider can refresh
+	// its image during the open, so what it stated before may name an earlier one
+	// (review F10). Nothing has run in the session, so the refusal is not dispatched,
+	// and the session's identity, not the earlier statement, is what the entry, the
+	// answer and every call's record carry.
+	software = sess.Environments()
+	err = env.software.Check(software.JavaScript.SoftwareIdentity)
+	if err == nil {
+		err = env.software.Check(software.Project.SoftwareIdentity)
+	}
+	if err != nil {
 		s.sessions.unreserve(principal)
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
 		_ = sess.Close(closeCtx)
 		cancel()
+		go releaseOnDone(sess, release)
+		return nil, mapSandboxErr(err)
+	}
+	id := make([]byte, 16)
+	if _, err := rand.Read(id); err != nil {
+		s.sessions.unreserve(principal)
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionOrphanCloseBudget)
+		_ = sess.Close(closeCtx)
+		cancel()
+		go releaseOnDone(sess, release)
 		return nil, mapSandboxErr(err)
 	}
 	e := &sessionEntry{
@@ -343,6 +380,12 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		IdleTimeoutMs:    uint32(idle / time.Millisecond),
 		SoftwareIdentity: software.JavaScript.SoftwareIdentity,
 	}), nil
+}
+
+// releaseOnDone gives back a closed session's slot once its sandbox is gone (Done).
+func releaseOnDone(sess sandbox.Session, release func()) {
+	<-sess.Done()
+	release()
 }
 
 // watch waits for the session to end, however it ends, and gives back its slot.
@@ -401,7 +444,14 @@ func (s *SandboxService) suspend(e *sessionEntry) {
 	holdsMemory, err := e.sess.Suspend(ctx)
 	if err != nil {
 		if e.sess.Err() == nil {
+			// The session goes on (the suspend gave up waiting for a turn its recovery
+			// held): try again after another idle period, or an abandoned session would
+			// keep its slot for its whole lifetime. A failure the session cannot survive
+			// ends it, so this cannot repeat faster than the idle timeout.
 			s.logger().Warn("session suspend failed", "session", e.fingerprint, "error", err.Error())
+			e.mu.Lock()
+			e.armIdle(s)
+			e.mu.Unlock()
 		}
 		return
 	}
@@ -428,7 +478,15 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	if !ok {
 		return nil, errSessionNotFound()
 	}
-	if m.GetPayload() == nil {
+	var k kind
+	switch p := m.GetPayload().(type) {
+	case *plimsollv1.SessionRunRequest_Javascript:
+		k = &javascriptKind{p: p.Javascript}
+	case *plimsollv1.SessionRunRequest_Project:
+		k = &projectKind{p: p.Project}
+	case *plimsollv1.SessionRunRequest_Cell:
+		k = &cellKind{p: p.Cell, runner: e.sess}
+	default:
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("payload must be exactly one of javascript, project or cell"))
 	}
 	// The open's rule cannot be silently dropped by a raw session caller. The
@@ -440,6 +498,22 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	if effective.ID() != env.software.ID() {
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
 			fmt.Errorf("%w: session call omitted the software rule established at open", sandbox.ErrInvalidRequest))
+	}
+	t := target{
+		provider: s.Sandbox.Name(),
+		tier:     e.sess.Isolation(),
+		admit:    func(ctx context.Context) (func(), error) { return s.admitCall(ctx, e) },
+		js:       e.sess.RunJavaScript,
+		project:  e.sess.RunProject,
+		software: e.software,
+		session:  true,
+	}
+	// Checked before the turn: a call that can never run is refused as what it is, at
+	// once, not after waiting behind the call in progress (and never as busy, which
+	// invites a retry).
+	ctx, err = s.check(ctx, env, k, t)
+	if err != nil {
+		return nil, err
 	}
 	// One call at a time, in arrival order, so the chain numbers calls as they ran.
 	give, err := e.takeTurn(ctx)
@@ -464,16 +538,7 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	e.mu.Lock()
 	seq := e.calls + 1
 	e.mu.Unlock()
-	t := target{
-		provider: s.Sandbox.Name(),
-		tier:     e.sess.Isolation(),
-		admit:    func(ctx context.Context) (func(), error) { return s.admitCall(ctx, e) },
-		js:       e.sess.RunJavaScript,
-		project:  e.sess.RunProject,
-		software: e.software,
-		session:  true,
-		attrs:    []slog.Attr{slog.String("session", e.fingerprint), slog.Uint64("session_call", seq)},
-	}
+	t.attrs = []slog.Attr{slog.String("session", e.fingerprint), slog.Uint64("session_call", seq)}
 	resp, err := func() (resp *plimsollv1.RunResponse, err error) {
 		// A provider that panics may already have run the call. Recovered here, the
 		// panic is an unmarked error, so the call is chained as unanswered like any
@@ -484,18 +549,12 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 				resp, err = nil, mapSandboxErr(errors.New("the provider failed during the call")) // unmarked: it may have run
 			}
 		}()
-		switch p := m.GetPayload().(type) {
-		case *plimsollv1.SessionRunRequest_Javascript:
-			return s.runJavaScript(ctx, env, p.Javascript, t)
-		case *plimsollv1.SessionRunRequest_Project:
-			return s.runProject(ctx, env, p.Project, t)
-		case *plimsollv1.SessionRunRequest_Cell:
-			return s.runCell(ctx, env, p.Cell, e.sess, t)
-		}
-		return nil, nil
+		return s.run(ctx, env, k, t)
 	}()
 	if err != nil {
-		if _, marked := sandbox.NotDispatchedReason(err); marked {
+		// The mark as the client reads it: an admission refusal (the caller's rate, no
+		// slot) is marked by refuse, on the wire only.
+		if _, marked := notDispatchedOf(err); marked {
 			return nil, err // nothing ran, so the chain does not count it
 		}
 		return nil, s.unanswered(ctx, e, m, env, seq, received, err)
@@ -508,94 +567,13 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	e.calls, e.last = seq, resp.Record.GetRecordSha256()
 	e.mu.Unlock()
 	out := &plimsollv1.SessionRunResponse{Run: resp}
-	select {
-	case <-e.sess.Done():
-		var se *sandbox.SessionEndedError
-		if errors.As(e.sess.Err(), &se) {
-			out.Ended, out.EndDetail = sessionEndWire(se.Reason), wireString(se.Detail)
-		}
-	default:
+	// Err, not Done: Done waits for the sandbox's delete, and a call that ended the
+	// session must say so in its own answer.
+	var se *sandbox.SessionEndedError
+	if errors.As(e.sess.Err(), &se) {
+		out.Ended, out.EndDetail = sessionEndWire(se.Reason), wireString(se.Detail)
 	}
 	return connect.NewResponse(out), nil
-}
-
-// runCell is the cell kind: code handed to the session's interpreter for its
-// language, after the cell's files are written. A cell carries no grant.
-func (s *SandboxService) runCell(ctx context.Context, env envelope, p *plimsollv1.CellRun, runner sandbox.CellRunner, t target) (*plimsollv1.RunResponse, error) {
-	files := make([]sandbox.File, 0, len(p.GetFiles()))
-	for _, f := range p.GetFiles() {
-		files = append(files, sandbox.File{Path: f.GetPath(), Content: f.GetContent()})
-	}
-	sbReq := sandbox.CellRequest{
-		Language: sandbox.Language(p.GetLanguage()), Code: p.GetCode(), Files: files,
-		Timeout: env.timeout, MinimumIsolation: env.minimum, Software: env.software,
-	}
-	if err := sandbox.ValidateCellRequest(sbReq); err != nil {
-		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, err)
-	}
-	if err := sandbox.CheckMinimumIsolation(t.tier, sbReq.MinimumIsolation); err != nil {
-		return nil, mapSandboxErr(err)
-	}
-	if err := sbReq.Software.Check(t.software.Project.SoftwareIdentity); err != nil {
-		return nil, mapSandboxErr(err)
-	}
-	release, err := t.admit(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	s.runsTotal.Add(1)
-	runCtx, cancel := runContext(ctx)
-	defer cancel()
-	started := time.Now()
-	res, err := runner.RunCell(runCtx, sbReq)
-	attrs := []slog.Attr{
-		slog.String("op", "cell"),
-		slog.String("caller", auditCaller(ctx)),
-		slog.String("language", string(sbReq.Language)),
-		slog.Int("code_bytes", len(sbReq.Code)),
-		slog.Int("files", len(files)),
-	}
-	if err != nil {
-		if isInfraErr(err) {
-			s.runsFailed.Add(1)
-		}
-		attrs = append(attrs,
-			slog.String("sandbox", t.provider),
-			slog.String("isolation", t.tier.String()),
-			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
-			slog.String("error", err.Error()))
-		attrs = append(append(attrs, traceAttrs(env.traceID)...), t.attrs...)
-		s.logger().LogAttrs(ctx, slog.LevelError, "code run failed", attrs...)
-		return nil, mapSandboxErr(err)
-	}
-	attrs = append(attrs,
-		slog.String("sandbox", res.Sandbox),
-		slog.String("isolation", res.Isolation.String()),
-		slog.Int("exit_code", res.ExitCode),
-		slog.Bool("timed_out", res.TimedOut),
-		slog.Bool("interpreter_started", res.InterpreterStarted),
-		slog.Bool("interpreter_ended", res.InterpreterEnded),
-		slog.Int64("duration_ms", res.Duration.Milliseconds()))
-	attrs = append(append(attrs, traceAttrs(env.traceID)...), t.attrs...)
-	s.logger().LogAttrs(ctx, slog.LevelInfo, "code run", attrs...)
-	return &plimsollv1.RunResponse{
-		Sandbox:          wireString(res.Sandbox),
-		Isolation:        res.Isolation.String(),
-		DurationMs:       res.Duration.Milliseconds(),
-		SoftwareIdentity: t.ranSoftware(res.SoftwareIdentity, t.software.Project.SoftwareIdentity),
-		Environment:      describedEnvironment(res.EnvironmentIdentity, t.software.Project.Identity),
-		Result: &plimsollv1.RunResponse_Cell{Cell: &plimsollv1.CellResult{
-			Stdout:             []byte(res.Stdout),
-			Stderr:             []byte(res.Stderr),
-			ExitCode:           int32(res.ExitCode),
-			TimedOut:           res.TimedOut,
-			StdoutTruncated:    res.StdoutTruncated,
-			StderrTruncated:    res.StderrTruncated,
-			InterpreterStarted: res.InterpreterStarted,
-			InterpreterEnded:   res.InterpreterEnded,
-		}},
-	}, nil
 }
 
 // admitCall is a session call's admission: a slot first when the session is
@@ -662,9 +640,9 @@ func (s *SandboxService) CloseSession(ctx context.Context, req *connect.Request[
 	}
 	e.mu.Unlock()
 	_ = e.sess.Close(ctx)
-	// Close starts the end and Done says it has happened; nothing requires the two
-	// to coincide. The wait is the caller's to bound: a provider slow to finish must
-	// not hold the session's turn past it. The entry stays until Done, so closing
+	// Close starts the end and Done says the sandbox is gone, which takes the
+	// provider's delete. The wait is the caller's to bound: a provider slow to finish
+	// must not hold the session's turn past it. The entry stays until Done, so closing
 	// again collects the count. Unmarked, because the close has begun.
 	select {
 	case <-e.sess.Done():

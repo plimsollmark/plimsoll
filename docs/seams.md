@@ -85,8 +85,8 @@ different way, by <dfn>*pinning*</dfn>: fixing each image to one exact version. 
 must be named by its `@sha256:` <dfn>*digest*</dfn>, a SHA-256 hash of its content
 (`RequirePinnedImages`), and every run launches the exact image ID that
 <dfn>*preflight*</dfn>, the check a provider runs at startup and on each readiness poll,
-inspected (`verifyImageForRun` and `verifiedImageIDs` in
-[sandbox/docker.go](../sandbox/docker.go)). So a tag moved to another image after startup
+inspected (`verifyImageForRun` in
+[sandbox/docker_preflight.go](../sandbox/docker_preflight.go), recorded in `verifiedImageIDs`). So a tag moved to another image after startup
 cannot slip an unchecked image into a run.
 
 **What buildpacks are.** A buildpack is a build tool (Cloud Native Buildpacks is the
@@ -113,7 +113,7 @@ by hand, that model should plug in without weakening the guarantee that a run la
 only content the provider verified.
 
 **Attach point.** The image check in preflight, in
-[sandbox/docker.go](../sandbox/docker.go): `Preflight` calls `verifyImageForRun`, which
+[sandbox/docker_preflight.go](../sandbox/docker_preflight.go): `Preflight` calls `verifyImageForRun`, which
 today enforces the digest pin and resolves the image ID, which docker derives from the
 image's content. Another provenance check (verifying a signature, or resolving the base
 image a buildpack builder currently names) would attach here, as an extra or alternative

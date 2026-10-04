@@ -59,3 +59,42 @@ func TestBundleJSONIncludesHealthCheck(t *testing.T) {
 		t.Fatalf("health_note = %#v, want %q", bundle["health_note"], "example note")
 	}
 }
+
+// batch_of.json is written only when the spec declares a relation, and regeneration
+// removes one the spec no longer declares: a stale file would keep naming a route to
+// callers.
+func TestWriteDirBatchOfLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	with := &specgen.Result{Preamble: "// sdk\n", Description: "d\n", BatchOf: map[string][]string{"GET /items": {"GET /items/*"}}}
+	if err := writeDir(dir, with); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "batch_of.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string][]string
+	if err := json.Unmarshal(raw, &got); err != nil || len(got["GET /items"]) != 1 || got["GET /items"][0] != "GET /items/*" {
+		t.Fatalf("batch_of.json = %s (%v)", raw, err)
+	}
+	if err := writeDir(dir, &specgen.Result{Preamble: "// sdk\n", Description: "d\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stale batch_of.json remains after regeneration: %v", err)
+	}
+}
+
+func TestBundleJSONIncludesBatchOf(t *testing.T) {
+	var got bytes.Buffer
+	if err := printBundleJSON(&got, &specgen.Result{BatchOf: map[string][]string{"GET /items": {"GET /items/*"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var bundle struct {
+		BatchOf map[string][]string `json:"batch_of"`
+	}
+	if err := json.Unmarshal(got.Bytes(), &bundle); err != nil || len(bundle.BatchOf["GET /items"]) != 1 {
+		t.Fatalf("bundle batch_of = %v (%v)", bundle.BatchOf, err)
+	}
+}

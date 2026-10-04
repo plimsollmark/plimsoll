@@ -33,11 +33,18 @@ option is intentionally only process-tier.
     (returns `Provider{Sandbox, Resources}` plus an explicit error; `EnsureReady`
     bundles Preflight + SmokeTest for local embedders).
   - [sandbox/wasm.go](sandbox/wasm.go) — in-process QuickJS/WASM provider.
-  - [sandbox/docker.go](sandbox/docker.go) — locked-down `docker run` provider.
+  - [sandbox/docker.go](sandbox/docker.go) — locked-down `docker run` provider: its type,
+    configuration and lockdown flags; [docker_preflight.go](sandbox/docker_preflight.go)
+    (daemon and image verification), [docker_smoke.go](sandbox/docker_smoke.go) (the
+    startup smoke test), [docker_run.go](sandbox/docker_run.go) (admission and the
+    snippet, project and module runs), [docker_broker.go](sandbox/docker_broker.go) (the
+    per-run grant socket), beside docker_cli.go, docker_session.go and docker_pool.go.
   - [sandbox/e2b.go](sandbox/e2b.go) — E2B Firecracker microVM provider.
   - [sandbox/dockercloud.go](sandbox/dockercloud.go): Docker Cloud Sandboxes
-    microVM provider, written against Docker's published API contract and verified
-    against the live service (2026-09-24).
+    microVM provider, written against Docker's sandboxes-api v0.36.0 (Connect) and verified
+    against the live service (2026-09-24; Docker now documents a different REST API, see
+    [docs/dockercloud.md](docs/dockercloud.md)); its runs, exec, network guard, API client and
+    sandbox lifecycle are in the `dockercloud_*.go` files beside it.
   - [sandbox/openshell/](sandbox/openshell/openshell.go): NVIDIA OpenShell provider
     (the gateway's docker driver, container tier), in its own package because its
     generated gRPC client registers protobuf names OpenShell's Go SDK also registers.
@@ -115,7 +122,7 @@ option is intentionally only process-tier.
   request succeeding under a separate per-run grant that lists it), `daemon` (the
   full service path with auth, `Describe`, and an isolation floor being refused),
   `advisor` (the efficiency advisor over a loopback daemon: a per-item loop,
-  the finding that names the granted collection route, the rewrite, and the API's
+  the finding that names the declared, granted batch route, the rewrite, and the API's
   own request count as the witness), `oracle` (needs docker: an agent-written
   controller run against the module image's cart-pole simulator and checked by its
   trajectory fingerprint, through the ordinary project API; the page it writes replays the
@@ -187,7 +194,9 @@ calls, so it can start a process the next sweep kills); surviving a call is opti
 `OpenSession`
 returns a `sandbox.Session` (snippet, project and cell calls, serialized; `Suspend`, `Close`,
 `Done`, `Err`), and a session's end is a typed `SessionEndedError`; a call on an ended
-session is refused not-dispatched. A **cell** (`RunCell`, wire payload `cell`, only in a
+session is refused not-dispatched. `Err` is set as the session ends; `Done` closes only once
+its sandbox is deleted, and capacity (the daemon's slot, `WithAdmission`'s reservation) is
+given back on `Done`, since the sandbox holds its memory until then. A **cell** (`RunCell`, wire payload `cell`, only in a
 session; `Run` refuses one, which exists there as the stored form a harness replays) runs
 code in a Node or Python interpreter the session keeps alive, so state survives calls as in
 a notebook; its files are written into the work directory first (a cell whose files cannot
@@ -202,7 +211,7 @@ write into a docker relay's or launcher's output while it starts, so nothing the
 a not-dispatched mark, a second send or what the sweep keeps: a cell is two steps (files and
 the interpreter's connection, then the code), only the first can refuse it, every relay line
 carries the cell's nonce, and on docker an identity is kept only once a check run as a second
-uid (`2000:2000`) confirms it (a relay started by `docker exec`, so parent PID 0; the one
+uid (the guest's plus one) confirms it (a relay started by `docker exec`, so parent PID 0; the one
 process with the interpreter's command line). Which languages an
 image runs is found by each provider's smoke test (the interpreter starts and prints) and stated
 on `PayloadEnvironment.languages`; with sessions on, the session smoke test then runs a cell that
@@ -277,12 +286,17 @@ stdout/stderr are protobuf `bytes`, so arbitrary guest bytes survive verbatim
 instead of being lossily repaired into UTF-8. An E2B guest that floods its
 output stream past the transfer budget is classified as a failed user run
 (exit 153, both streams marked truncated), not an infrastructure error. Nor can guest
-code pass its own exit for docker's: a docker snippet's node, in a run or a session
-call, writes a per-call start marker to stderr from an `--import` preload before the
-script runs (stripped from the result), and a call whose stderr starts with it is a
-result whatever its exit code; only one without it can be docker's (125, 126 or 127 for
-`docker run`; in a session any non-zero exit, since `docker exec`'s own failures exit 1, so
-Preflight refuses an image whose ENV makes node write first, `NODE_DEBUG`). A
+code pass its own exit for docker's: a docker snippet or project runner, in a run or a
+session call, starts through a shell under `env -i` that writes a per-call start marker to
+stderr before node exists (stripped, with anything the docker CLI printed before it, from
+the result). A call whose stderr holds the marker ran, and its exit is the guest's; one
+without it is never a result, whatever docker exited with or printed (no list of docker's
+wording decides it): almost always docker failed before plimsoll's command started, but a
+broken attach stream can lose the marker of a call that did start, so the error is never
+marked not dispatched. A docker CLI killed by a signal is an infrastructure error, never an
+exit code. A run that reached its deadline timed out only if the marker is there; without
+it, it is that same unmarked error. What ended a run is read when docker returns, before
+its container's removal, which can outlast the deadline. A
 session call whose exit may be docker's is also checked against the container: paused,
 stopped, gone or unreadable ends the session. A docker session finds its container gone
 by an ID-filtered listing, never by docker's wording, and a read-back docker cannot
@@ -302,10 +316,10 @@ and its hardened-mode envelope.
 | Value     | Provider | Isolation | Notes |
 |-----------|----------|-----------|-------|
 | `wasm`    | in-process QuickJS via wazero | process tier, lowest latency | JS snippets and snippet grants through a direct host function; no projects. An engine escape lands in plimsolld. |
-| `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. |
-| `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. No redirect from envd or the control plane is followed (a followed one would carry the envd and traffic tokens, or the API key, wherever a guest answering on envd's port pointed it), with the default HTTP client or an embedder's. A sandbox ID that is not letters, digits and dashes is never put in envd's host name or a path, and a vendor's error body is cut to 512 bytes with credentials scrubbed before it enters an error. Sandboxes are stamped with a per-instance metadata ID; `ReconcileOrphans` (run periodically by the daemon) reaps stamped, untracked microVMs that leaked past a malformed create response or failed teardown. |
-| `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | written against Docker's published API contract; live suite passed 2026-09-24. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
-| `openshell` | NVIDIA OpenShell sandbox through a gateway | container (the gateway's docker driver; any other driver is refused) | built by plimsolld, not `Build`. Keeps sessions (a sweep of every non-own process after each call, `sleep` as the main process, a read-back before each call). Each run creates a sandbox with no network rules (the gateway's deny-all default) and `/tmp` as the only writable directory (a `noexec` tmpfs of `SANDBOX_DISK_MB` when that is set), reads it back and refuses any difference, runs the payload over the streamed exec (the deadline cancels the stream, which kills the command's process group; a `setsid` descendant lives until the delete), and deletes the sandbox off the result path; `Drain` waits for those deletes at shutdown. Every sandbox declares its lifetime, so `ReconcileOrphans` also reaps what a crashed instance left behind, once that lifetime plus 5 minutes has passed. Grants keep the no-grant policy: a relay in the sandbox pairs the guest's socket connections with connections plimsoll dials in through `ForwardTcp` (session tokens revoked at the run's end), and plimsoll serves the shared broker on them. Module runs: `ErrUnsupported`. Operator setup, grants and the smoke test: [docs/openshell.md](docs/openshell.md). |
+| `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. Every container declares its lifetime as a label (a run's is its deadline); a run whose `docker run` does not exit 0 has its container removed at once, and `ReconcileOrphans` removes any container past its lifetime plus 5 minutes that no open session or pool holds. |
+| `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. No redirect from envd or the control plane is followed (a followed one would carry the envd and traffic tokens, or the API key, wherever a guest answering on envd's port pointed it), with the default HTTP client or an embedder's. A sandbox ID that is not letters, digits and dashes is never put in envd's host name or a path, and a vendor's error body is cut to 512 bytes with credentials scrubbed before it enters an error. Sandboxes are stamped with a per-instance metadata ID and a lease key tracked from before the create request until the kill has finished ([sandbox/internal/lease](sandbox/internal/lease/), the rule E2B, Docker Cloud and OpenShell share); `ReconcileOrphans` (run periodically by the daemon) reaps stamped microVMs whose key is not tracked, at any age, so a slow create is never reaped and a leak from a malformed or lost create response or failed teardown waits for no clock. |
+| `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | written against Docker's sandboxes-api v0.36.0 (Connect); live suite passed 2026-09-24, and Docker's documentation now describes a different REST API it does not speak. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
+| `openshell` | NVIDIA OpenShell sandbox through a gateway | container (the gateway's docker driver; any other driver is refused) | built by plimsolld, not `Build`. Keeps sessions (a sweep of every non-own process after each call, `sleep` as the main process, a read-back before each call). Each run creates a sandbox with no network rules (the gateway's deny-all default) and `/tmp` as the only writable directory (a `noexec` tmpfs of `SANDBOX_DISK_MB` when that is set), reads it back and refuses any difference, runs the payload over the streamed exec (the deadline cancels the stream, which kills the command's process group; a `setsid` descendant lives until the delete), and deletes the sandbox off the result path, holding the run's capacity until the delete is through (`sandbox.HoldCapacity`; admitters wrap their release with `sandbox.WithCapacity`); `Drain` waits for those deletes at shutdown. Every sandbox declares its lifetime, so `ReconcileOrphans` also reaps what a crashed instance left behind, once that lifetime plus 5 minutes has passed. Grants keep the no-grant policy: a relay in the sandbox pairs the guest's socket connections with connections plimsoll dials in through `ForwardTcp` (session tokens revoked at the run's end), and plimsoll serves the shared broker on them. Module runs: `ErrUnsupported`. Operator setup, grants and the smoke test: [docs/openshell.md](docs/openshell.md). |
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
 
 Relevant env: `SANDBOX_DOCKER_IMAGE`, `SANDBOX_DOCKER_PROJECT_IMAGE`,
@@ -315,6 +329,11 @@ unsupported),
 `SANDBOX_DOCKER_SECCOMP` (path to a syscall-filter profile; set it
 to the shipped audited allowlist `docker/seccomp.json` to deny non-cap-gated attack
 surface like `ptrace`/`io_uring`/`keyctl` — see [docs/seccomp.md](docs/seccomp.md)),
+`SANDBOX_GUEST_UID` (the uid and gid docker runs every guest as; default 61000, a uid no
+account uses: below 65,536 so it starts under userns-remap and rootless docker, in the band
+systemd leaves unused; Preflight refuses one, or the session identity check's uid + 1, that
+this host's `/etc/passwd` or `/etc/group` has; under runc without remapping a container's
+uid is the host's, so an escape lands as no account),
 `SANDBOX_REQUIRE_PINNED_IMAGES` (`=1` to require both images to be
 `@sha256:`-pinned),
 `E2B_API_KEY`, `E2B_TEMPLATE`, `E2B_GUARD_URL` (the guard is **process-local**: a run's
@@ -331,7 +350,7 @@ pinning is required; dockercloud honors `SANDBOX_MEMORY_MB` and whole `SANDBOX_C
 requested at create and verified after it, and rejects `SANDBOX_PIDS`/`SANDBOX_DISK_MB`),
 `SANDBOX_OPENSHELL_GATEWAY_URL`, `SANDBOX_OPENSHELL_CA_FILE`, `SANDBOX_OPENSHELL_CERT_FILE`
 and `SANDBOX_OPENSHELL_KEY_FILE` (the gateway and its mutual TLS files),
-`SANDBOX_OPENSHELL_IMAGE` (must carry `node`, `sh`, `/runner.mjs` and
+`SANDBOX_OPENSHELL_IMAGE` (must carry `node`, `sh`, `/usr/bin/env`, `/runner.mjs` and
 `/usr/local/lib/plimsoll-runner-guard.so`; openshell honors
 `SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` (plus an equal amount of swap on a host with swap:
 OpenShell sets no swap limit), rejects `SANDBOX_PIDS`, and with `SANDBOX_DISK_MB`
@@ -365,11 +384,29 @@ remainder, and every writable mount is a sized `noexec` tmpfs — images declari
 `VOLUME`s are rejected at Preflight because docker would auto-create unbounded
 writable host volumes for them, and every run launches the content-addressed
 image ID that Preflight actually inspected, so re-pointing a mutable tag cannot
-smuggle an unverified image past that check), the
+smuggle an unverified image past that check; once the startup smoke test has run, only
+the IDs it proved: a tag re-pointed later fails Preflight, so `/readyz`, and its runs are
+refused, not dispatched, reason `environment`, until a restart proves the new content), the
 limiter `SANDBOX_MAX_CONCURRENT`/`SANDBOX_PER_KEY_CONCURRENT`/`SANDBOX_RATE_PER_MIN`/
 `SANDBOX_RATE_BURST`, and the aggregate budget `SANDBOX_TOTAL_MEMORY_MB` (clamps
 max-concurrent to total/per-run so concurrent runners cannot oversubscribe the host;
-ignored for e2b and dockercloud, whose runners live off-host). Each provider reports its boundary via
+ignored for e2b and dockercloud, whose runners live off-host), and for a provider billed by
+the second (`sandbox.Metered`: e2b, dockercloud) the daily allowances in seconds of microVM
+wall time, `SANDBOX_PAID_SECONDS_PER_DAY` for the daemon and `paid_seconds_per_day` per
+caller in `PLIMSOLL_CLIENTS_FILE` (internal/rpc/spend.go: a run the provider supports
+reserves its clamped timeout plus the provider's `BillingTeardown` before admission,
+refused not dispatched, reason `capacity`, when either allowance would go over, and is
+charged the wall time of the provider call, or its whole reservation when the provider
+could not delete the microVM (`sandbox.TeardownGaveUp`: the delete gave up, or a create's
+outcome is unknown: on E2B an error that does not prove the request never left, an answer
+neither a success nor a 4xx refusal, or a success without a usable ID; on Docker Cloud an
+answer that is not a refusal or an operation still running, unless the cleanup delete
+removed the sandbox), since the microVM then bills until
+the provider's own lifetime for it ends; UTC days, a run crossing midnight counted in the new
+day for the part after it; per daemon, so placement's retry on
+a capacity refusal lets a caller spend its allowance once per daemon; the counters live
+in memory, so a restart forgets the day's spend; refusals are counted in
+`plimsoll_shed_total`). Each provider reports its boundary via
 `IsolationClass()` and in the RPC response `isolation` field, and the **`Describe`
 RPC** reports the active provider, tier, project and module support, and
 operation-specific grant support (via `ProjectCapable` / `ModuleCapable` /
@@ -491,7 +528,7 @@ rejected), TLS on any non-loopback listener (the metrics listener included), an 
 (docker: `SANDBOX_REQUIRE_PINNED_IMAGES=1`, no `unconfined` seccomp; e2b: an
 explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1`), an explicit
 per-run resource envelope (memory and CPU only for dockercloud, which has no disk
-control) plus, for docker, whose runners share the daemon's host, the aggregate memory budget, per-caller rate limiting with a burst no larger than a minute's rate, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive and below `SANDBOX_MAX_CONCURRENT`: a rate limit bounds what a caller starts, not the slots its long runs or running sessions hold), and with sessions on a per-caller session cap (`SANDBOX_MAX_SESSIONS_PER_CALLER` positive). Every violation is reported at once
+control) plus, for docker, whose runners share the daemon's host, the aggregate memory budget, per-caller rate limiting with a burst no larger than a minute's rate, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive and below `SANDBOX_MAX_CONCURRENT`: a rate limit bounds what a caller starts, not the slots its long runs or running sessions hold), and with sessions on a per-caller session cap (`SANDBOX_MAX_SESSIONS_PER_CALLER` positive), and with a provider billed by the second a daily allowance on every caller (`paid_seconds_per_day`). Every violation is reported at once
 (one fix pass, not a startup loop). TLS itself is configured with
 `PLIMSOLL_TLS_CERT`/`PLIMSOLL_TLS_KEY` (both-or-neither; loaded and validated
 at startup); with them the daemon serves HTTP/1.1 + HTTP/2 over TLS instead of
@@ -600,7 +637,11 @@ generated SDK is **executed in QuickJS by the tests**, so a preamble that does n
 throws on its first call fails the build. `-emit catalog` gives the full route list for a
 profile's `catalog` (see the advisory channel). It emits an optional concrete `health_check`
 recovery probe only for the operation explicitly marked `x-plimsoll-health-check: true`;
-`-emit health` outputs that profile line. Worked example:
+`-emit health` outputs that profile line. A collection GET marked
+`x-plimsoll-batch-of: [operationId, ...]`, naming the per-item GETs one request to it
+replaces, becomes the profile's `batch_of` (`-emit batch`; see the advisory channel); an
+operationId that is unknown, ambiguous or names an operation a grant cannot express fails
+generation, and the result passes `grants.ParseBatchOf`, the check `grants.Load` applies. Worked example:
 [docs/examples/specgen](docs/examples/specgen/).
 
 **Backpressure.** A grant's optional concrete `HealthCheck` GET route (profile
@@ -685,7 +726,7 @@ into development-only `client.WithInsecureHTTP()`.
 Connect/h2c. Auth is **fail-closed** when configured (callers need the `code:run`
 scope; see [internal/rpc/auth.go](internal/rpc/auth.go)). Verifier precedence:
 `PLIMSOLL_CLIENTS_FILE` (multi-client — each caller is its own principal, a JSON
-list of `{id, token_sha256, scopes}`; see
+list of `{id, token_sha256, scopes, paid_seconds_per_day}`, the last optional; see
 [docs/clients.example.json](docs/clients.example.json) and
 [internal/rpc/clients.go](internal/rpc/clients.go)) → `PLIMSOLL_TOKEN` (one shared
 token) → open dev mode (logs a warning). The multi-client verifier is what makes
@@ -740,32 +781,36 @@ path into guest content. The pipeline:
    its own (method, route) group, so a run's findings never describe the same call
    twice and their costs sum without double counting. A finding's cost compares the
    measured pattern with an assumed ideal of one call, never a measured one:
-   `ExtraCalls` is the successful count minus one (rigorous when a granted collection
-   route is named and returns the same items), `AddedLatency` is summed round trips
-   beyond one call (a model, not wall time lost), `BytesMoved` is the gross bytes the
+   `ExtraCalls` is the successful count minus one (as rigorous as the operator's
+   declaration when a declared, granted batch route is named), `AddedLatency` is summed
+   round trips beyond one call (a model, not wall time lost), `BytesMoved` is the gross bytes the
    pattern moved (not a saving). Do not reintroduce the removed aggregate-in-code or
    sequential-calls detectors: the trace holds no call start times and no guest content,
-   so it cannot support them (docs/efficiency-advisor.md). A small router asks one question
-   from the profile's `Allow` list, for a **GET** fan-out only: does the collection
-   route already exist? If so the finding is **agent-fixable** (`Finding.Suggested`
-   set) and states its condition, that the collection route must return the same
-   items, which plimsoll does not verify. A write fan-out is never routed, granted or
-   catalogued: a collection write's semantics cannot be read off its path, so it stays
-   unrouted until an explicit operation relationship exists. When a profile also declares
-   a `catalog` (its full endpoint list, e.g. `plimsoll-specgen -emit catalog`), a finding
-   whose batch route the catalog exposes but the grant omits is annotated with the concrete
-   route to add (`Finding.CatalogMatch`, audit `grant_route`) — an **operator action**,
-   never returned to the caller, since the agent cannot call an ungranted route.
-   **A finding is therefore one of three things, and the third is not a verdict:** a
-   granted route covers it, the catalog names one the profile omits, or *neither is
-   known*. Only in that third case does `insights.Prompt` render a paste-ready prompt for
-   the customer's own AI, and it asks for the smallest change **or for a plain statement
-   that none is warranted** — one run's trace cannot show that an API forces a pattern on
-   every caller, the granted routes may be a subset of what the API offers, and a profile
-   need not declare a catalog at all. For a read fan-out the prompt also offers a
-   server-side aggregate as a conditional alternative, which is where the aggregate idea
-   now lives. plimsoll emits text and **never calls an LLM itself**. The HTML report keeps
-   the three classes distinct (`report.Class`) and carries the WIP notice the advisor
+   so it cannot support them (docs/efficiency-advisor.md). A small router names a batch
+   route for a **GET** fan-out only, and says on what basis. A profile's `batch_of`
+   (`{"GET /items": ["GET /items/*"]}`, or specgen's `x-plimsoll-batch-of`) is the
+   operator's statement that one request to the batch route returns what the per-item
+   calls did; plimsoll cannot check it, since pagination, returned fields and scope are
+   outside the trace. A declared route the profile grants makes the finding
+   **agent-fixable** (`Finding.Suggested`), the only route a finding ever hands the
+   caller; a declared route it does not grant is the operator's one line to add
+   (`Finding.GrantRoute`, audit `grant_route`). Without a declaration, the per-item
+   route's collection (`/items` for `/items/*`), granted or listed in the profile's
+   `catalog` (its full endpoint list, e.g. `plimsoll-specgen -emit catalog`), is a
+   **candidate** (`Finding.Candidate`, audit `candidate_route`): operator-only, to check
+   and then declare, because a path shape is no evidence that the route returns the same
+   items. A write fan-out is never routed: `batch_of` refuses a write, and a collection
+   write's semantics cannot be read off its path.
+   **A finding is therefore one of four things, and the last is not a verdict:** a
+   declared, granted route covers it; a declared route needs granting; a candidate needs
+   checking; or *no route is known*. Only in that last case does `insights.Prompt` render
+   a paste-ready prompt for the customer's own AI, and it asks for the smallest change
+   **or for a plain statement that none is warranted** — one run's trace cannot show that
+   an API forces a pattern on every caller, the granted routes may be a subset of what the
+   API offers, and a profile need not declare a catalog at all. For a read fan-out the
+   prompt also offers a server-side aggregate as a conditional alternative, which is
+   where the aggregate idea now lives. plimsoll emits text and **never calls an LLM itself**. The HTML report keeps
+   the four classes distinct (`report.Class`) and carries the WIP notice the advisor
    example page carries.
 3. **Routing by audience.** Per-profile `advice: off|operator|caller`
    (`grants.AdviceMode`) decides who can act: `off` computes nothing; `operator` keeps
@@ -776,7 +821,7 @@ path into guest content. The pipeline:
    route template, suggested route, and the cost numbers); direct in-process
    providers leave it nil, since advice is a service-side computation. The `javascript`
    and `project` payload kinds compute and route advice the same way over their run's `CallTrace`.
-   Findings with no granted route stay operator-only regardless.
+   Findings with no declared, granted route stay operator-only regardless.
 4. **Retention of durable telemetry.** Per-profile `advice_retention: none|aggregate|detailed`
    (`grants.AdviceRetention`) gates only what reaches the **durable audit log**, orthogonal
    to the audience: `none` (default) writes nothing, `aggregate` writes per-run totals,
@@ -896,12 +941,28 @@ a specific gVisor release and checksum rather than tracking `latest`.
   process left, as it does dead broker socket directories), so neither a daemon
   secret nor the host's client settings (a `proxies` entry puts proxy URLs, credentials
   included, into every container `docker run` starts) reach a container. An `-e` flag is
-  built only by `dockerEnvFlag`, always `NAME=value`. plimsoll's own programs in a session
-  (sweep, process lister, identity check, relays) start under `env -i` with a fixed PATH,
-  and Preflight refuses an image whose ENV can load code (`NODE_OPTIONS`, any `LD_`
-  variable, a search path into a writable mount): such a variable made node run a file
-  guest code wrote inside plimsoll's own processes. `TestDockerCLIIsStartedOnlyThroughDockerCommand`
-  fails the build on a new direct call.
+  built only by `dockerEnvFlag`, always `NAME=value`. No program of plimsoll's in a docker
+  sandbox starts with the image's environment: the runner, the smoke probes, a session's
+  main process, and in a session the sweep, process lister, identity check, relays and
+  interpreter launcher start under `/usr/bin/env -i` with a fixed PATH
+  (`sessionkit.ControlArgv`), and every container command is plimsoll's own
+  (`--entrypoint`), never the image's.
+  Guest-facing processes (a snippet's node, a project's steps, a cell's interpreter) get
+  the image's environment, read from the verified image's config, handed to them
+  explicitly (`guestArgv`, the plan's `env`), with HOME and HOSTNAME as docker sets them.
+  An image variable that loads code (`NODE_OPTIONS`, a search path into `/work`) therefore
+  reaches guest processes alone, where it can load only the guest's own code; it once
+  made node run a guest-written file inside plimsoll's sweep. The one exception is the
+  first process of each command, plimsoll's `/usr/bin/env`, whose dynamic loader and C
+  library read the environment docker gives it before `-i` clears anything, so Preflight
+  refuses an image that sets a variable they read at startup (any `LD_` name,
+  `GLIBC_TUNABLES`, `LOCPATH`, `NLSPATH`, `GCONV_PATH`). The startup smoke test runs a
+  snippet exactly as runs do, since its start marker is written before node starts.
+  `TestDockerCLIIsStartedOnlyThroughDockerCommand` fails the build on a new direct docker
+  call, and `TestDockerImageEnvReachesOnlyGuestProcesses` proves the split with an image
+  whose `NODE_OPTIONS` loads a hook from `/work`. On openshell, whose exec hands a fixed
+  set of the gateway's variables and never the image's (measured on v0.1.2), the process
+  lister, the sweep and both relays start under `sessionkit.ControlArgv` too.
 - **Advisory-as-evidence (non-authoritative).** Advice is computed post-dispatch over
   the already-final `Result`, so a run with advice is **byte-identical in execution** to
   one without. A finding is evidence attached to a run, like the isolation tier: it must

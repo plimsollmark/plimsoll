@@ -33,31 +33,37 @@ type Finding struct {
 	AgentFixable    bool   `json:"agent_fixable"`
 	SuggestedMethod string `json:"suggested_method"`
 	SuggestedRoute  string `json:"suggested_route"`
-	// GrantRouteMethod/GrantRoute name a route the API already exposes (per the
-	// profile's catalog) that the profile does not grant. plimsoll writes them on the
-	// audit line as grant_route_method/grant_route; dropping them here is what used to
-	// turn "add one line to the allow list" into "the API needs a change".
+	// GrantRouteMethod/GrantRoute name the batch route the profile declares (batch_of)
+	// but does not grant: the operator adds one line to the allow list.
 	GrantRouteMethod string `json:"grant_route_method"`
 	GrantRoute       string `json:"grant_route"`
-	ExtraCalls       int    `json:"extra_calls"`
-	AddedLatencyMs   int64  `json:"added_latency_ms"`
-	BytesMoved       int    `json:"bytes_moved"`
+	// CandidateMethod/CandidateRoute name a route found from the path alone (the
+	// per-item route's collection, granted or catalogued) with no declaration: the
+	// operator checks whether it returns the same items before declaring it.
+	CandidateMethod string `json:"candidate_method"`
+	CandidateRoute  string `json:"candidate_route"`
+	ExtraCalls      int    `json:"extra_calls"`
+	AddedLatencyMs  int64  `json:"added_latency_ms"`
+	BytesMoved      int    `json:"bytes_moved"`
 	// DesignPrompt is an optional design prompt for an operator to paste into their own
 	// AI. It is filled in by the caller (which holds the profile's route list); the
 	// audit stream never carries it. Rendered only when set.
 	DesignPrompt string `json:"-"`
 }
 
-// Class is what the report can say about a finding's fix, and it is deliberately three
-// values rather than two. plimsoll knows a route is granted (the agent can switch to it
-// now) or catalogued but ungranted (the operator adds one allow line). Knowing NEITHER is
-// not the same as knowing the API must change: the profile may simply declare no catalog,
-// or expose an equivalent endpoint under a name this run never touched.
+// Class is what the report can say about a finding's fix. The first two rest on the
+// operator's batch_of declaration: the declared route is granted (the agent can switch
+// to it now) or not (the operator adds one allow line). A candidate rests on the path
+// alone, which cannot say whether the route pages, returns fewer fields or covers
+// another scope, so the operator checks it first. Knowing none of these is not the same
+// as knowing the API must change: the profile may declare no catalog, or the API may
+// expose an equivalent endpoint under a name this run never touched.
 type Class string
 
 const (
-	ClassAgentFixable Class = "agent-fixable" // a granted route covers it
-	ClassGrantRoute   Class = "grant-route"   // the API has it; the profile does not grant it
+	ClassAgentFixable Class = "agent-fixable" // a declared batch route is granted
+	ClassGrantRoute   Class = "grant-route"   // a declared batch route is not granted
+	ClassCandidate    Class = "candidate"     // the path suggests a route; nothing declares it
 	ClassNoKnownRoute Class = "no-known-route"
 )
 
@@ -68,6 +74,8 @@ func (f Finding) Class() Class {
 		return ClassAgentFixable
 	case f.GrantRoute != "":
 		return ClassGrantRoute
+	case f.CandidateRoute != "":
+		return ClassCandidate
 	default:
 		return ClassNoKnownRoute
 	}

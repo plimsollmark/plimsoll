@@ -31,6 +31,12 @@ unless all of the following are verifiably in force:
 - a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive and below
   `SANDBOX_MAX_CONCURRENT`, since a cap equal to the global one lets one caller hold
   every slot). A rate limit bounds what a caller starts, not the slots its long runs or
-  open <dfn>*sessions*</dfn> hold; a session is one sandbox kept open for many calls.
+  open <dfn>*sessions*</dfn> hold; a session is one sandbox kept open for many calls;
+- with a <dfn>*provider*</dfn> (the backend that runs the code) billed by the second
+  (E2B, Docker Cloud), a daily allowance on every
+  caller, its `paid_seconds_per_day` in the clients file ([callers.md](callers.md)): a
+  rate limit bounds runs per minute, not the seconds of virtual machine the operator
+  pays for. This one is checked before the startup smoke test, which creates a billed
+  virtual machine.
 
 Every violation is reported at once, so it is one fix pass rather than a startup loop.

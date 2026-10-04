@@ -34,11 +34,11 @@ func TestVerifyBundleChecksTheStoredResponsesRecord(t *testing.T) {
 	if e.Response, err = proto.Marshal(stored); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyBundle([]Entry{e}, v); err == nil {
+	if _, err := VerifyBundle(seal(t, s, e), v); err == nil {
 		t.Error("VerifyBundle accepted a stored response whose record was edited")
 	}
 	sent := false
-	_, err = Replay(context.Background(), []Entry{e}, v, func(context.Context, *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error) {
+	_, err = Replay(context.Background(), seal(t, s, e), v, func(context.Context, *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error) {
 		sent = true
 		return resp, nil
 	})

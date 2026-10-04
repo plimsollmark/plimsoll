@@ -176,6 +176,10 @@ type hardenedFacts struct {
 	Burst           int                    // effective per-caller rate burst
 	PerCaller       int                    // effective per-caller concurrency cap; 0 = none
 	Sessions        rpc.SessionConfig      // the session settings in force
+	// Metered: the provider bills by the second (sandbox.Metered); Uncapped names the
+	// callers in PLIMSOLL_CLIENTS_FILE without a paid_seconds_per_day.
+	Metered  bool
+	Uncapped []string
 }
 
 // enforceHardenedPolicy is the production policy PLIMSOLL_HARDENED=1 turns on.
@@ -315,6 +319,11 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	if f.Sessions.MaxSessions > 0 && f.Sessions.MaxPerCaller <= 0 {
 		fail("hardened mode requires a per-caller session cap with sessions on: SANDBOX_MAX_SESSIONS_PER_CALLER must be positive")
 	}
+	// Every run on a metered provider is billed by the second, and a rate limit bounds
+	// runs per minute, not seconds per day: each caller needs its own daily allowance.
+	if f.Metered && len(f.Uncapped) > 0 {
+		fail("hardened mode with a provider billed by the second requires a daily allowance on every caller: set paid_seconds_per_day (plimsoll-clients limit) for %s", strings.Join(f.Uncapped, ", "))
+	}
 
 	if len(violations) > 0 {
 		return errors.Join(violations...)
@@ -439,4 +448,28 @@ func envIntWith(getenv func(string) string, key string, def int) (int, error) {
 		return 0, fmt.Errorf("%s=%q must be an integer", key, v)
 	}
 	return n, nil
+}
+
+// loadPaidConfig reads SANDBOX_PAID_SECONDS_PER_DAY and checks what needs no running
+// sandbox about a provider billed by the second (metered), so a misconfigured daemon
+// is refused before its smoke test creates a billed microVM: the allowance set for a
+// provider that does not bill (a setting that does nothing must not look applied),
+// and sessions on one that does, which nothing meters.
+func loadPaidConfig(getenv func(string) string, metered bool) (int64, error) {
+	paid, err := envIntWith(getenv, "SANDBOX_PAID_SECONDS_PER_DAY", 0)
+	if err != nil {
+		return 0, err
+	}
+	if paid < 0 {
+		return 0, fmt.Errorf("SANDBOX_PAID_SECONDS_PER_DAY=%d must not be negative", paid)
+	}
+	if paid > 0 && !metered {
+		return 0, errors.New("SANDBOX_PAID_SECONDS_PER_DAY applies only to a provider billed by the second (e2b, dockercloud): leave it unset")
+	}
+	if metered {
+		if n, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS", 0); err == nil && n > 0 {
+			return 0, errors.New("SANDBOX_MAX_SESSIONS on a provider billed by the second: session calls draw on no allowance, so they are refused")
+		}
+	}
+	return int64(paid), nil
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1"
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1/openshellv1connect"
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // fakeGateway is an in-process OpenShell gateway: the generated handler served over
@@ -41,6 +43,10 @@ type fakeGateway struct {
 	// deletion was accepted; deleteErr fails every DeleteSandbox.
 	deletePolls int
 	deleteErr   error
+	// configErr, when set, fails every GetSandboxConfig; createDelay delays every
+	// CreateSandbox.
+	configErr   error
+	createDelay time.Duration
 	run         func(e *fakeExec) error
 	forward     *fakeForwarding // SSH sessions and ForwardTcp (grant_test.go); nil refuses them
 	// allowDriverConfig is the gateway's allow_driver_config: off, a create carrying a
@@ -220,6 +226,10 @@ func (f *fakeGateway) CreateSandbox(_ context.Context, req *connect.Request[open
 	if err := requireWorkspace(req.Msg.GetWorkspaceScope()); err != nil {
 		return nil, err
 	}
+	f.mu.Lock()
+	delay := f.createDelay
+	f.mu.Unlock()
+	time.Sleep(delay)
 	if len(req.Msg.GetName()) > 19 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("name exceeds maximum length"))
 	}
@@ -274,7 +284,11 @@ func (f *fakeGateway) GetSandboxConfig(_ context.Context, req *connect.Request[s
 	f.record("GetSandboxConfig")
 	f.mu.Lock()
 	b, ok := f.boxes[req.Msg.GetName()]
+	configErr := f.configErr
 	f.mu.Unlock()
+	if configErr != nil {
+		return nil, configErr
+	}
 	if !ok {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("sandbox not found"))
 	}
@@ -425,3 +439,19 @@ func (e *fakeExec) hang() error {
 	e.mu.Unlock()
 	return e.ctx.Err()
 }
+
+// controlled is cmd without the sessionkit.ControlArgv prefix plimsoll's own programs
+// start under (/usr/bin/env -i, the control PATH, then NAME=value arguments), and
+// whether it had one.
+func controlled(cmd []string) ([]string, bool) {
+	if len(cmd) < 3 || cmd[0] != "/usr/bin/env" || cmd[1] != "-i" || cmd[2] != "PATH="+sessionkit.ControlPath {
+		return cmd, false
+	}
+	cmd = cmd[3:]
+	for len(cmd) > 0 && envAssignment.MatchString(cmd[0]) {
+		cmd = cmd[1:]
+	}
+	return cmd, true
+}
+
+var envAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)

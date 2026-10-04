@@ -88,17 +88,25 @@ type dockerPool struct {
 	size     int
 	lifetime time.Duration // the longest lifetime a member may be given
 	now      func() time.Time
-	discard  func(*dockerSession) // removes a member nobody will claim (remove; a test's recorder)
+	// discard removes a member nobody will claim and calls gone once its container is
+	// removed (remove; a test's recorder). Only drop calls it.
+	discard func(s *dockerSession, gone func())
 
 	wake     chan struct{} // a claim asks for a refill
 	stop     chan struct{}
 	stopOnce sync.Once
 	done     chan struct{} // closed when the filler has returned
 
-	mu       sync.Mutex
-	ready    []*dockerSession // oldest first
-	lastMove time.Time        // when rebalance last moved a member
-	stated   []Language       // the languages the image runs, as next last saw them
+	mu    sync.Mutex
+	ready []*dockerSession // oldest first
+	// retiring counts members taken out of ready whose containers are still being
+	// removed. They count against size (short): admission charged the pool size runs'
+	// memory, and a removed member's container holds its share until it is gone, so a
+	// replacement waits for it (review F9). A member leaves ready and enters retiring
+	// under one hold of mu.
+	retiring int
+	lastMove time.Time  // when rebalance last moved a member
+	stated   []Language // the languages the image runs, as next last saw them
 	// demand is the decaying weight of each language set (languageSetKey) opens asked
 	// for. The weights sum to at most 1, and a set whose weight falls below a quarter
 	// of one open's is forgotten (about 22 opens after it was last asked for, in a pool
@@ -216,11 +224,8 @@ func (d *DockerSandbox) StartSessionPool(ctx context.Context, size int, lifetime
 	p.discard = p.remove
 	// Under the lock Drain sets draining with, so a Drain either finds this pool and
 	// stops it or has already begun, and the pool is refused.
-	d.sessions.mu.Lock()
-	draining := d.sessions.draining
-	installed := !draining && d.pool.CompareAndSwap(nil, p)
-	d.sessions.mu.Unlock()
-	if draining {
+	installed := false
+	if !d.sessions.Unless(func() { installed = d.pool.CompareAndSwap(nil, p) }) {
 		return errDraining
 	}
 	if !installed {
@@ -266,21 +271,23 @@ func (p *dockerPool) add(ctx context.Context) error {
 	}
 	s.born = born
 	for _, l := range langs {
-		if err := s.interps.Warm(ctx, s.execFunc, s.attach, string(l), dockerSessionWork); err != nil {
+		if err := s.life.Interps.Warm(ctx, s.execFunc, s.attach, string(l), dockerSessionWork); err != nil {
 			s.abandon()
 			return fmt.Errorf("starting the %s interpreter: %w", l, err)
 		}
 		s.warm = append(s.warm, string(l))
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	select {
 	case <-p.stop:
-		p.discard(s)
+		p.retiring++
+		p.mu.Unlock()
+		p.drop(s)
 		return errPoolStopped
 	default:
 	}
 	p.ready = append(p.ready, s)
+	p.mu.Unlock()
 	return nil
 }
 
@@ -340,7 +347,7 @@ func (p *dockerPool) usable(s *dockerSession, key string, expires time.Time) boo
 		return false
 	}
 	for _, l := range s.warm {
-		if !s.interps.Attached(l) {
+		if !s.life.Interps.Attached(l) {
 			return false
 		}
 	}
@@ -374,10 +381,9 @@ func (p *dockerPool) claim(state dockerExecutionState, expires time.Time, want [
 		kept = slices.Delete(kept, i, i+1)
 	}
 	p.ready = kept
+	p.retiring += len(stale)
 	p.mu.Unlock()
-	for _, s := range stale {
-		p.discard(s)
-	}
+	p.drop(stale...)
 	select {
 	case p.wake <- struct{}{}:
 	default:
@@ -418,6 +424,7 @@ func (p *dockerPool) rebalance() bool {
 			if languageSetKey(s.warm) == spare {
 				gone = s
 				p.ready = slices.Delete(p.ready, i, i+1)
+				p.retiring++
 				p.lastMove = p.now()
 				break
 			}
@@ -427,7 +434,7 @@ func (p *dockerPool) rebalance() bool {
 	if gone == nil {
 		return false
 	}
-	p.discard(gone)
+	p.drop(gone)
 	return true
 }
 
@@ -452,27 +459,49 @@ func (p *dockerPool) retire() {
 		}
 	}
 	p.ready = kept
+	p.retiring += len(stale)
 	p.mu.Unlock()
-	for _, s := range stale {
-		p.discard(s)
+	p.drop(stale...)
+}
+
+// drop discards members the caller took out of ready and counted in retiring. It is
+// called without mu held, since a discard may report the removal at once.
+func (p *dockerPool) drop(members ...*dockerSession) {
+	for _, s := range members {
+		p.discard(s, p.retired)
 	}
 }
 
-// remove removes a member's container off the caller's path; Drain waits for it.
-func (p *dockerPool) remove(s *dockerSession) {
-	p.d.sessions.mu.Lock()
-	p.d.sessions.deletes.Add(1)
-	p.d.sessions.mu.Unlock()
+// retired is a removal's report that a retiring member's container is gone: the pool
+// is short by one more, and the filler is woken to make the replacement.
+func (p *dockerPool) retired() {
+	p.mu.Lock()
+	p.retiring--
+	p.mu.Unlock()
+	select {
+	case p.wake <- struct{}{}:
+	default:
+	}
+}
+
+// remove removes a member's container off the caller's path, then reports it gone;
+// Drain waits for it. A removal that gives up (forceRemove logs it) is reported gone
+// too: the container's lifetime label then bounds it, and ReconcileOrphans reaps it.
+func (p *dockerPool) remove(s *dockerSession, gone func()) {
+	removed := p.d.sessions.Removal()
 	go func() {
-		defer p.d.sessions.deletes.Done()
+		defer removed()
 		s.abandon()
+		gone()
 	}()
 }
 
+// short reports whether the pool may make a member: members ready and members still
+// being removed together hold fewer than size containers.
 func (p *dockerPool) short() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return len(p.ready) < p.size
+	return len(p.ready)+p.retiring < p.size
 }
 
 // run is the filler: it keeps the pool at its size, one member at a time so a burst
@@ -547,10 +576,9 @@ func (p *dockerPool) close(ctx context.Context) error {
 	p.mu.Lock()
 	ready := p.ready
 	p.ready = nil
+	p.retiring += len(ready)
 	p.mu.Unlock()
-	for _, s := range ready {
-		p.discard(s)
-	}
+	p.drop(ready...)
 	return err
 }
 

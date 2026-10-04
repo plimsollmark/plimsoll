@@ -1,6 +1,8 @@
 package rpc
 
 import (
+	"errors"
+
 	"connectrpc.com/connect"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
@@ -42,4 +44,25 @@ func reasonWire(r sandbox.Refusal) plimsollv1.NotDispatchedReason {
 	default:
 		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_UNSPECIFIED
 	}
+}
+
+// notDispatchedOf reads the not-dispatched mark off an error the handler returns, as
+// a client reads it: from the error detail, which refuse and mapSandboxErr both add.
+// sandbox.NotDispatchedReason does not see a mark refuse made, since refuse marks
+// only the wire.
+func notDispatchedOf(err error) (plimsollv1.NotDispatchedReason, bool) {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return 0, false
+	}
+	for _, d := range ce.Details() {
+		v, derr := d.Value()
+		if derr != nil {
+			continue
+		}
+		if nd, ok := v.(*plimsollv1.NotDispatched); ok {
+			return nd.GetReason(), true
+		}
+	}
+	return 0, false
 }

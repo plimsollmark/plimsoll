@@ -17,9 +17,8 @@ import (
 
 // fanOutTrace builds a metadata-only CallTrace that trips the fan-out detector two
 // ways, one finding per route group:
-//   - GET /v1/lights/* hit 8 times, with a collection sibling (GET /v1/lights) in
-//     the profile's Allow -> a fan-out the router can suggest a batch for
-//     (agent-fixable).
+//   - GET /v1/lights/* hit 8 times, with GET /v1/lights granted and declared its batch
+//     form (batch_of) -> a fan-out the router can suggest a batch for (agent-fixable).
 //   - GET /v1/sensors/* hit 8 times, with NO sibling in Allow -> a fan-out the router
 //     cannot fix (API-change, operator-only).
 //
@@ -52,20 +51,28 @@ func adviceService(t *testing.T, logw *bytes.Buffer) *SandboxService {
 	t.Helper()
 	t.Setenv("HUE_TOKEN", "tok")
 	base := `"base_url":"https://h","allow":["GET /v1/lights/*","GET /v1/lights","GET /v1/sensors/*"],"allowed_callers":["mcp-a"],"token":{"type":"static","env":"HUE_TOKEN"}`
-	// catalog exposes GET /v1/sensors — the batch sibling for the sensors fan-out that the
-	// allow list omits — so a p-catalog profile can name the ungranted route to add.
+	// Every profile but p-undeclared-caller declares GET /v1/lights the batch form of
+	// GET /v1/lights/*; without that declaration the granted route is only a candidate.
+	lights := `,"batch_of":{"GET /v1/lights":["GET /v1/lights/*"]}`
+	// catalog exposes GET /v1/sensors, the sensors fan-out's collection that the allow
+	// list omits, so a p-catalog profile names it as an operator's candidate.
 	catalog := `,"catalog":["GET /v1/lights/*","GET /v1/lights","GET /v1/sensors/*","GET /v1/sensors"]`
+	// p-declared-ungranted declares GET /v1/sensors the sensors batch form without
+	// granting it: the operator's one-line fix (grant_route).
+	both := `,"batch_of":{"GET /v1/lights":["GET /v1/lights/*"],"GET /v1/sensors":["GET /v1/sensors/*"]}`
 	// p-operator/p-caller keep detailed retention so the Phase 4 per-finding assertions
 	// hold; p-agg and p-caller-quiet exercise the Phase 5 retention gate (aggregate-only
 	// and the default none, which stays silent in the audit log).
 	body := `{"profiles":{
-	  "p-off":{` + base + `},
-	  "p-operator":{` + base + `,"advice":"operator","advice_retention":"detailed"},
-	  "p-caller":{` + base + `,"advice":"caller","advice_retention":"detailed"},
-	  "p-agg":{` + base + `,"advice":"operator","advice_retention":"aggregate"},
-	  "p-caller-quiet":{` + base + `,"advice":"caller"},
-	  "p-catalog":{` + base + catalog + `,"advice":"operator","advice_retention":"detailed"},
-	  "p-catalog-caller":{` + base + catalog + `,"advice":"caller","advice_retention":"detailed"}
+	  "p-off":{` + base + lights + `},
+	  "p-operator":{` + base + lights + `,"advice":"operator","advice_retention":"detailed"},
+	  "p-caller":{` + base + lights + `,"advice":"caller","advice_retention":"detailed"},
+	  "p-agg":{` + base + lights + `,"advice":"operator","advice_retention":"aggregate"},
+	  "p-caller-quiet":{` + base + lights + `,"advice":"caller"},
+	  "p-catalog":{` + base + lights + catalog + `,"advice":"operator","advice_retention":"detailed"},
+	  "p-catalog-caller":{` + base + lights + catalog + `,"advice":"caller","advice_retention":"detailed"},
+	  "p-declared-ungranted":{` + base + both + `,"advice":"caller","advice_retention":"detailed"},
+	  "p-undeclared-caller":{` + base + `,"advice":"caller","advice_retention":"detailed"}
 	}}`
 	path := filepath.Join(t.TempDir(), "grants.json")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -394,51 +401,87 @@ func TestAdviceOffComputesNothing(t *testing.T) {
 	}
 }
 
-// TestAdviceCatalogNamesUngrantedRoute proves the specgen->Prospector follow-on: when a
-// fan-out's batch route is not granted but the profile's endpoint catalog shows the API
-// exposes it, the operator surface names the concrete route to grant (grant_route), and
-// that operator action never leaks to the caller.
-func TestAdviceCatalogNamesUngrantedRoute(t *testing.T) {
+// findingFor returns the audit line's detailed record for one route, failing the test
+// when there is none.
+func findingFor(t *testing.T, entry map[string]any, route string) map[string]any {
+	t.Helper()
+	details, ok := entry["advice_finding_details"].([]any)
+	if !ok {
+		t.Fatalf("advice_finding_details missing: %v", entry["advice_finding_details"])
+	}
+	for _, d := range details {
+		if m := d.(map[string]any); m["route"] == route {
+			return m
+		}
+	}
+	t.Fatalf("no finding for %s: %+v", route, details)
+	return nil
+}
+
+// TestAdviceCatalogNamesACandidate: when the profile's catalog lists a fan-out's
+// collection route that the profile neither grants nor declares, the operator surface
+// names it as a candidate to check, and the caller never sees it.
+func TestAdviceCatalogNamesACandidate(t *testing.T) {
 	var logbuf bytes.Buffer
 	svc := adviceService(t, &logbuf)
 	runWithProfile(t, svc, "p-catalog")
 
 	entry := lastCodeRunLog(t, &logbuf)
-	if got := int(entry["advice_ungranted_routes"].(float64)); got < 1 {
-		t.Fatalf("advice_ungranted_routes = %d, want >=1", got)
+	if got := int(entry["advice_candidate_routes"].(float64)); got != 1 {
+		t.Fatalf("advice_candidate_routes = %d, want 1", got)
 	}
-	details, ok := entry["advice_finding_details"].([]any)
-	if !ok {
-		t.Fatalf("advice_finding_details missing: %v", entry["advice_finding_details"])
-	}
-	var named bool
-	for _, d := range details {
-		m := d.(map[string]any)
-		if m["route"] == "/v1/sensors/*" {
-			if m["grant_route"] != "/v1/sensors" || m["grant_route_method"] != "GET" {
-				t.Errorf("sensors fan-out did not name the ungranted batch route: %+v", m)
-			}
-			if m["agent_fixable"].(bool) {
-				t.Errorf("ungranted-route finding must not be agent_fixable: %+v", m)
-			}
-			named = true
-		}
-	}
-	if !named {
-		t.Fatalf("no finding named the ungranted route for /v1/sensors/*: %+v", details)
+	m := findingFor(t, entry, "/v1/sensors/*")
+	if m["candidate_route"] != "/v1/sensors" || m["candidate_method"] != "GET" || m["grant_route"] != nil || m["agent_fixable"].(bool) {
+		t.Errorf("sensors fan-out should name GET /v1/sensors as a candidate only: %+v", m)
 	}
 
-	// The operator action never reaches the caller: caller mode returns only the granted
-	// lights fan-out, and no caller finding carries a grant_route (that field is not on
-	// the caller wire at all).
 	callerMsg := runWithProfile(t, svc, "p-catalog-caller")
 	for _, f := range callerMsg.GetJavascript().GetAdvice() {
 		if f.GetRoute() == "/v1/sensors/*" {
-			t.Errorf("ungranted sensors route leaked to the caller: %+v", f)
+			t.Errorf("the catalogued sensors candidate leaked to the caller: %+v", f)
 		}
-		if f.GetSuggestedRoute() == "" {
-			t.Errorf("caller finding is not agent-fixable: %+v", f)
-		}
+	}
+}
+
+// TestAdviceDeclaredUngrantedRouteIsTheOperators: a batch route the profile declares
+// but does not grant is the operator's one-line fix (grant_route) and never reaches the
+// caller, who cannot call it.
+func TestAdviceDeclaredUngrantedRouteIsTheOperators(t *testing.T) {
+	var logbuf bytes.Buffer
+	svc := adviceService(t, &logbuf)
+	msg := runWithProfile(t, svc, "p-declared-ungranted")
+
+	entry := lastCodeRunLog(t, &logbuf)
+	if got := int(entry["advice_ungranted_routes"].(float64)); got != 1 {
+		t.Fatalf("advice_ungranted_routes = %d, want 1", got)
+	}
+	m := findingFor(t, entry, "/v1/sensors/*")
+	if m["grant_route"] != "/v1/sensors" || m["grant_route_method"] != "GET" || m["candidate_route"] != nil || m["agent_fixable"].(bool) {
+		t.Errorf("sensors fan-out should name GET /v1/sensors as the route to grant: %+v", m)
+	}
+	advice := msg.GetJavascript().GetAdvice()
+	if len(advice) != 1 || advice[0].GetRoute() != "/v1/lights/*" || advice[0].GetSuggestedRoute() != "/v1/lights" {
+		t.Errorf("caller advice = %+v, want only the declared, granted lights batch", advice)
+	}
+}
+
+// TestAdviceUndeclaredRouteNeverReachesTheCaller is the 2026-10-03 review's finding: a
+// granted route whose path makes it the fan-out's collection is not evidence that it
+// returns the same items (it may page, return fewer fields, or cover another scope),
+// so without a batch_of declaration it goes to the operator as a candidate and the
+// caller gets nothing.
+func TestAdviceUndeclaredRouteNeverReachesTheCaller(t *testing.T) {
+	var logbuf bytes.Buffer
+	svc := adviceService(t, &logbuf)
+	msg := runWithProfile(t, svc, "p-undeclared-caller")
+
+	if advice := msg.GetJavascript().GetAdvice(); len(advice) != 0 {
+		t.Errorf("an undeclared route reached the caller: %+v", advice)
+	}
+	entry := lastCodeRunLog(t, &logbuf)
+	m := findingFor(t, entry, "/v1/lights/*")
+	if m["candidate_route"] != "/v1/lights" || m["agent_fixable"].(bool) || m["suggested_route"] != nil {
+		t.Errorf("the lights fan-out should carry GET /v1/lights as a candidate only: %+v", m)
 	}
 }
 

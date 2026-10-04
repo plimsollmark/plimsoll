@@ -33,6 +33,7 @@ func (s *smokeScript) SessionEnvironments() Environments {
 	return Environments{Project: PayloadEnvironment{Languages: s.langs}}
 }
 func (s *smokeScript) Isolation() IsolationClass             { return IsolationContainer }
+func (s *smokeScript) Environments() Environments            { return Environments{} }
 func (s *smokeScript) ExpiresAt() time.Time                  { return time.Now().Add(time.Hour) }
 func (s *smokeScript) Suspend(context.Context) (bool, error) { return true, nil }
 func (s *smokeScript) Done() <-chan struct{}                 { return s.done }
@@ -151,7 +152,7 @@ func TestSessionSmokeTestRunsEveryStatedLanguage(t *testing.T) {
 // A deadline before a cell's code was sent is a refusal marked not dispatched, read
 // as DeadlineExceeded (v0.15.0 review, L3).
 func TestUnsentCellIsARefusal(t *testing.T) {
-	err, ok := RefuseCell(fmt.Errorf("x: %w", sessionkit.ErrUnsent), nil)
+	err, ok := RefuseCell(context.Background(), fmt.Errorf("x: %w", sessionkit.ErrUnsent), nil)
 	if !ok || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("RefuseCell = %v, %v", err, ok)
 	}

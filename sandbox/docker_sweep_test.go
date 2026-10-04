@@ -14,7 +14,7 @@ import (
 func sweepIn(t *testing.T, script string, docker ...string) string {
 	t.Helper()
 	d := sessionDocker(t) // the same skip-or-require rules as the session tests
-	args := append([]string{"run", "--rm", "--network", "none", "--user", "1000:1000", "-e", "SWEEP=" + sessionkit.SweepScript}, docker...)
+	args := append([]string{"run", "--rm", "--network", "none", "--user", "61000:61000" /* the provider's default guest uid */, "-e", "SWEEP=" + sessionkit.SweepScript}, docker...)
 	args = append(args, "--entrypoint", "sh", d.ProjectImage, "-c", script)
 	out, err := exec.Command("docker", args...).CombinedOutput()
 	if err != nil {

@@ -111,6 +111,54 @@ func TestLoadCatalog(t *testing.T) {
 	}
 }
 
+func TestLoadBatchOf(t *testing.T) {
+	t.Setenv("HUE_TOKEN", "tok-123")
+	p := writeGrants(t, `{"profiles": {"hue-control": {"base_url": "https://hue.internal", "allow": ["GET /v1/lights/*"],
+	  "batch_of": {"get /v1/lights": ["GET /v1/lights/*", "GET /v1/rooms/*/lights/*"]},
+	  "allowed_callers": ["mcp-a"], "token": {"type": "static", "env": "HUE_TOKEN"}}}}`)
+	r, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	profile, _ := r.Get("hue-control")
+	got := profile.BatchOf()
+	want := sandbox.HostRoute{Method: "GET", Path: "/v1/lights"}
+	if len(got) != 2 || got[sandbox.HostRoute{Method: "GET", Path: "/v1/lights/*"}] != want || got[sandbox.HostRoute{Method: "GET", Path: "/v1/rooms/*/lights/*"}] != want {
+		t.Fatalf("batch_of parsed wrong: %+v", got)
+	}
+	// The relation grants nothing: the batch route is not added to Allow.
+	if len(profile.Grant().Allow) != 1 {
+		t.Errorf("batch_of must not widen Allow: %+v", profile.Grant().Allow)
+	}
+	// BatchOf hands out a copy.
+	delete(got, sandbox.HostRoute{Method: "GET", Path: "/v1/lights/*"})
+	if len(profile.BatchOf()) != 2 {
+		t.Error("a caller's edit reached the profile's relations")
+	}
+}
+
+// A declaration that could never match a finding, or that is ambiguous, fails the load
+// rather than sit there doing nothing.
+func TestLoadRejectsBatchOfThatCannotApply(t *testing.T) {
+	t.Setenv("HUE_TOKEN", "tok-123")
+	for name, batchOf := range map[string]string{
+		"a write batch route":      `{"PUT /v1/lights": ["GET /v1/lights/*"]}`,
+		"a write served route":     `{"GET /v1/lights": ["PUT /v1/lights/*"]}`,
+		"no wildcard served":       `{"GET /v1/lights": ["GET /v1/config"]}`,
+		"serves itself":            `{"GET /v1/lights/*": ["GET /v1/lights/*"]}`,
+		"serves nothing":           `{"GET /v1/lights": []}`,
+		"two batch routes":         `{"GET /v1/lights": ["GET /v1/lights/*"], "GET /v1/all": ["GET /v1/lights/*"]}`,
+		"a route no grant holds":   `{"GET /v1/../admin": ["GET /v1/lights/*"]}`,
+		"a malformed served route": `{"GET /v1/lights": ["/v1/lights/*"]}`,
+	} {
+		p := writeGrants(t, `{"profiles": {"hue-control": {"base_url": "https://hue.internal", "allow": ["GET /v1/lights/*"],
+		  "batch_of": `+batchOf+`, "allowed_callers": ["mcp-a"], "token": {"type": "static", "env": "HUE_TOKEN"}}}}`)
+		if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "batch_of") {
+			t.Errorf("%s: loaded: %v", name, err)
+		}
+	}
+}
+
 // A catalog route is named to an operator as the route to add, so one a grant could
 // never hold is refused at load (v0.15.0 review, M2).
 func TestLoadRejectsCatalogRoutesAGrantCannotHold(t *testing.T) {

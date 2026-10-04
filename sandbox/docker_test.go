@@ -66,18 +66,18 @@ func testDocker() *DockerSandbox {
 func TestDockerLockdownAppliesSeccomp(t *testing.T) {
 	d := DefaultDocker("")
 	d.Seccomp = "/etc/crsbx/seccomp.json"
-	if !strings.Contains(strings.Join(d.lockdownArgs("c", false, d.Runtime), " "), "--security-opt seccomp=/etc/crsbx/seccomp.json") {
+	if !strings.Contains(strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime), " "), "--security-opt seccomp=/etc/crsbx/seccomp.json") {
 		t.Error("configured seccomp profile not applied under runc")
 	}
 	d.Runtime = "runsc"
-	if strings.Contains(strings.Join(d.lockdownArgs("c", false, d.Runtime), " "), "seccomp=") {
+	if strings.Contains(strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime), " "), "seccomp=") {
 		t.Error("gVisor run should not also apply a host seccomp profile")
 	}
 }
 
 func TestDockerLockdownDisablesDaemonLogStorage(t *testing.T) {
 	d := DefaultDocker("")
-	args := strings.Join(d.lockdownArgs("c", false, d.Runtime), " ")
+	args := strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime), " ")
 	if !strings.Contains(args, "--log-driver none") {
 		t.Fatalf("lockdown args do not disable daemon-side storage of hostile output: %s", args)
 	}
@@ -512,6 +512,7 @@ func TestDockerPreflightWaitsForInFlightProbe(t *testing.T) {
 		d.ready = true
 		d.daemonHost = "unix:///run/docker.sock"
 		d.verifiedRuntime = d.Runtime
+		d.verifiedGuestUID = d.guestUID()
 		d.lastVerified = now
 		d.stateMu.Unlock()
 		d.preflightMu.Unlock()
@@ -553,6 +554,7 @@ func TestDockerConcurrentPreflightRejectsExpiredEvidence(t *testing.T) {
 	d.ready = true
 	d.daemonHost = "unix:///run/docker.sock"
 	d.verifiedRuntime = d.Runtime
+	d.verifiedGuestUID = d.guestUID()
 	d.lastVerified = now.Add(-dockerPreflightCacheTTL)
 	d.stateMu.Unlock()
 	d.preflightWait = 100 * time.Millisecond // bound the wait; this test is about expiry, not latency
@@ -606,21 +608,23 @@ func TestDockerRejectsRemoteDaemonAtPreflight(t *testing.T) {
 	}
 }
 
-func TestDockerInfraExitClassification(t *testing.T) {
-	for _, tc := range []struct {
-		code   int
-		stderr string
-		want   bool
+// afterMarker finds the start marker wherever it is in stderr: after a warning the
+// docker CLI printed first, which is dropped with it, and before guest output that
+// repeats it, which is kept. No marker, no start.
+func TestAfterMarker(t *testing.T) {
+	const m = "plimsoll-started:ab12\n"
+	for _, c := range []struct {
+		in, want string
+		ran      bool
 	}{
-		{125, "docker: Error response from daemon: no such image", true},
-		{126, "OCI runtime create failed: exec: not executable", true},
-		{127, "docker: executable file not found in $PATH", true},
-		{127, "MyError: process.exit(127) from user code", false}, // guest exit, no docker marker
-		{1, "docker: Error response from daemon", false},          // ordinary non-zero code
-		{125, "", false}, // 125 but no docker diagnostic
+		{m + "guest\n", "guest\n", true},
+		{"WARNING: Your kernel does not support swap limit capabilities.\n" + m + "guest", "guest", true},
+		{m + "guest wrote " + m, "guest wrote " + m, true},
+		{"docker: Error response from daemon: x\n", "docker: Error response from daemon: x\n", false},
+		{"", "", false},
 	} {
-		if got := dockerInfraExit(tc.code, tc.stderr); got != tc.want {
-			t.Errorf("dockerInfraExit(%d, %q) = %v, want %v", tc.code, tc.stderr, got, tc.want)
+		if got, ran := afterMarker(c.in, m); got != c.want || ran != c.ran {
+			t.Errorf("afterMarker(%q) = %q, %v; want %q, %v", c.in, got, ran, c.want, c.ran)
 		}
 	}
 }
@@ -664,7 +668,9 @@ func TestDockerTimeout(t *testing.T) {
 
 	d := testDocker()
 	requireSnippetImage(t, d)
-	d.DefaultTimeout = 1 * time.Second
+	// Long enough for the container to start even under runsc on a loaded host: a run
+	// whose deadline passes before the guest starts is docker's failure, not a timeout.
+	d.DefaultTimeout = 3 * time.Second
 	res, err := d.RunJavaScript(context.Background(), Request{Code: `setTimeout(() => {}, 60000)`})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -915,5 +921,76 @@ func TestDockerGuestCannotFakeAnInfrastructureExit(t *testing.T) {
 		if res.ExitCode != code || res.Stderr != "docker: Error response from daemon: OCI runtime create failed\n" {
 			t.Fatalf("exit %d: result %+v", code, res)
 		}
+	}
+}
+
+// containerGone tells forceRemove it may stop retrying, so it says "gone" only for a
+// name docker has no container under: never for a live container, and a name that is
+// only a prefix of a live one's is a different name. Checked against the daemon.
+func TestDockerContainerGoneByExactName(t *testing.T) {
+	d := testDocker()
+	requireSnippetImage(t, d)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := d.ensurePreflight(ctx); err != nil {
+		t.Fatal(err)
+	}
+	state, err := d.verifiedState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "crsbx-gonetest-" + randID()
+	args, err := dockerArgs(state.host, "run", "-d", "--rm", "--name", name, "--entrypoint", "sleep", state.imageID, "60")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dockerOutput(ctx, args...); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.forceRemove(state.host, name) })
+	if containerGone(state.host, name) {
+		t.Fatal("a running container reads as gone")
+	}
+	if !containerGone(state.host, name[:len(name)-1]) {
+		t.Fatal("a name that is only a prefix of a live container's reads as present")
+	}
+	d.forceRemove(state.host, name)
+	if !containerGone(state.host, name) {
+		t.Fatal("a removed container reads as present")
+	}
+}
+
+// Every guest process runs as the guest uid and gid, a uid no host account uses, in a
+// run's snippet and project step alike.
+func TestDockerGuestRunsAsTheGuestUID(t *testing.T) {
+	d := testDocker()
+	requireSnippetImage(t, d)
+	ctx := context.Background()
+	want := fmt.Sprintf("%d %d", defaultGuestUID, defaultGuestUID)
+	res, err := d.RunJavaScript(ctx, Request{Code: `console.log(process.getuid(), process.getgid())`})
+	if err != nil || strings.TrimSpace(res.Stdout) != want {
+		t.Fatalf("snippet: %+v, %v; want %q", res, err, want)
+	}
+	pres, err := d.RunProject(ctx, ProjectRequest{Steps: []string{`node -e 'console.log(process.getuid(), process.getgid())'`}})
+	if err != nil || len(pres.Steps) != 1 || strings.TrimSpace(pres.Steps[0].Stdout) != want {
+		t.Fatalf("project step: %+v, %v; want %q", pres, err, want)
+	}
+
+	// A uid the image names gets its passwd home, as docker gives it: the start
+	// script's lookup, read from the kernel's /proc/self/status. Here uid 1000, node
+	// in the image; this host's accounts are taken out of the check.
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prev, prevGroup := hostPasswdPath, hostGroupPath
+	hostPasswdPath, hostGroupPath = empty, empty
+	defer func() { hostPasswdPath, hostGroupPath = prev, prevGroup }()
+	named := testDocker()
+	named.GuestUID = 1000
+	res, err = named.RunJavaScript(ctx, Request{Code: `console.log(process.getuid(), process.env.HOME)`})
+	if err != nil || strings.TrimSpace(res.Stdout) != "1000 /home/node" {
+		t.Fatalf("a uid the image names: %+v, %v; want 1000 /home/node", res, err)
 	}
 }

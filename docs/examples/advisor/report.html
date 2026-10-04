@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>13 requests became 1: plimsoll's efficiency advisor on one measured run</title>
-<meta name="description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
+<meta name="description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the declared, granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
 <link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/advisor/report.html">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="plimsoll">
 <meta property="og:title" content="13 requests became 1: plimsoll's efficiency advisor on one measured run">
-<meta property="og:description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
+<meta property="og:description" content="An agent spent 13 requests on one number. plimsoll's efficiency advisor named the declared, granted route to use instead, and the rewrite cost 1. Every number is measured, or labelled as a model.">
 <meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/advisor/report.html">
 <meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/advisor-example.png">
 <meta property="og:image:width" content="1280">
@@ -50,11 +50,11 @@ footer{margin-top:40px;padding-top:12px;border-top:1px solid #d1d9e0;color:#5963
 <a href="https://plimsollmark.github.io/plimsoll/trainers/">INTERNAL · trainer site → all lessons</a></nav>
 
 <h1>13 requests became 1, and the sandbox is what said so</h1>
-<p class="muted">One run of plimsoll's efficiency advisor, generated 2026-09-17 by <code>go run ./examples/advisor -report</code>. Every number on this page was measured by the API or read from the daemon's own log, or is labelled as a model.</p>
+<p class="muted">One run of plimsoll's efficiency advisor, generated 2026-10-03 by <code>go run ./examples/advisor -report</code>. Every number on this page was measured by the API or read from the daemon's own log, or is labelled as a model.</p>
 
 <p><b>plimsoll</b> is an open source sandbox service for running code that an AI agent wrote. Its broker authorizes every call that code makes to your API, keeps the credential outside the sandbox, and records only route templates, verbs, status codes, byte counts and timings. A <b>route template</b> is the granted route with its variable segment left as a <code>*</code>, so a call to <code>/items/i-7</code> is recorded as <code>/items/*</code>: which route the code used, never which item it asked for. There is no field for a path, a body or a credential, so none can be recorded by accident.</p>
-<p><b>The efficiency advisor</b> reads that record after a run and reports where the call pattern cost the API more than the question needed. When the profile already grants a better route, the finding names it and comes back to the caller, who can rewrite. When it does not, the finding stays with the operator, because the agent cannot call a route that does not exist. plimsoll never calls a model to do any of this. It is a work in progress, and it is off unless a profile asks for it: a profile that does not set <code>advice</code> has its traffic left unanalyzed, and nothing is computed.</p>
-<p><b>This page</b> is one real run of the repository's advisor example: a fake inventory API with twelve items, a plimsoll daemon on the WASM provider, and one grant profile with <code>advice: caller</code>. The same question is asked twice, first the way an agent tends to write it, then the way the advice suggests.</p>
+<p><b>The efficiency advisor</b> reads that record after a run and reports where the call pattern cost the API more than the question needed. When the profile declares a batch route for the route the code looped over (its <code>batch_of</code>, the operator's statement that one request returns what the loop fetched) and grants it, the finding names that route and comes back to the caller, who can rewrite. Every other finding stays with the operator: a declared route the profile does not grant is one the agent cannot call, and a route found from its path alone may page, return fewer fields or cover another scope, so the operator checks it before declaring it. plimsoll never calls a model to do any of this. It is a work in progress, and it is off unless a profile asks for it: a profile that does not set <code>advice</code> has its traffic left unanalyzed, and nothing is computed.</p>
+<p><b>This page</b> is one real run of the repository's advisor example: a fake inventory API with twelve items, a plimsoll daemon on the WASM provider, and one grant profile with <code>advice: caller</code> that declares <code>GET /items</code> the batch form of <code>GET /items/*</code>. The same question is asked twice, first the way an agent tends to write it, then the way the advice suggests.</p>
 
 <div class="tiles">
 <div class="tile"><span class="muted">run 1 requests</span><b>13</b></div><div class="tile"><span class="muted">run 2 requests</span><b>1</b></div>
@@ -75,15 +75,15 @@ footer{margin-top:40px;padding-top:12px;border-top:1px solid #d1d9e0;color:#5963
 });</pre>
 <h3>What came back</h3>
 <dl><dt>guest output</dt><dd><code>{&#34;total&#34;:132,&#34;rows&#34;:12}</code></dd>
-<dt>guest wall time</dt><dd>311 ms, engine start included</dd>
+<dt>guest wall time</dt><dd>304 ms, engine start included</dd>
 <dt>advice on the result</dt><dd>1 finding(s), below</dd></dl>
 
 <div class="card">detected an unnecessary <b>fan_out</b> on GET /items/* (severity low, remedy batch)<br>
-suggested: <b>GET /items</b>, already granted<br>
+suggested: <b>GET /items</b>, declared and granted<br>
 11 calls beyond one <span class="muted">(measured count minus one)</span> ·
 about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> ·
 490 bytes moved in total <span class="muted">(gross, not a saving)</span><br>
-<span class="muted">This run made 12 successful GET /items/* calls to one per-item route (the trace holds the template, not the item); a collection or batch read would cover them in one request if it returns the same items.</span><br>
+<span class="muted">This run made 12 successful GET /items/* calls to one per-item route (the trace holds the template, not the item); a collection or batch read would cover them in one request if it returns the same items. The profile declares GET /items as this route&#39;s batch form and grants it; the declaration is the operator&#39;s, and plimsoll has not checked that it returns the same items.</span><br>
 <span class="muted"><b>severity</b> ranks nothing but the size of the pattern, for display: <b>low</b> under 25 calls, <b>medium</b> from 25, <b>high</b> from 100. A low finding is the same mistake as a high one over a smaller collection, so it is worth the same rewrite. Severity never gates a run or changes a result.</span></div>
 
 
@@ -97,7 +97,7 @@ about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> 
 <h3>The operator's view: the daemon's audit line</h3>
 <div class="card op">host_calls=13 · advice_findings=1 · advice_agent_fixable=1
 <br>detected <b>fan_out</b> on GET /items/* (severity low, remedy batch), and the finding was returned to the caller
-<br><span class="muted">A finding the agent could not act on (no granted route to switch to) would stay here, operator only, with a prompt the API owner can paste into their own AI. This run produced none of those: the profile already granted the collection route, so its one finding went back to the caller.</span></div>
+<br><span class="muted">A finding the agent could not act on (no declared, granted route to switch to) would stay here, operator only: a declared route to grant, a candidate route to check, or a prompt the API owner can paste into their own AI. This run produced none of those: the profile declares and grants the batch route, so its one finding went back to the caller.</span></div>
 </section>
 
 <section class="panel" id="run-2" role="tabpanel" hidden>
@@ -108,7 +108,7 @@ about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> 
 });</pre>
 <h3>What came back</h3>
 <dl><dt>guest output</dt><dd><code>{&#34;total&#34;:132,&#34;rows&#34;:12}</code></dd>
-<dt>guest wall time</dt><dd>294 ms, engine start included</dd>
+<dt>guest wall time</dt><dd>302 ms, engine start included</dd>
 <dt>advice on the result</dt><dd>none</dd></dl>
 <div class="card ok">No finding. The collection route carried the column, so one request answered the question.</div>
 
@@ -122,14 +122,14 @@ about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> 
 <h3>The operator's view: the daemon's audit line</h3>
 <div class="card op">host_calls=1 · advice_findings=0 · advice_agent_fixable=0
 
-<br><span class="muted">A finding the agent could not act on (no granted route to switch to) would stay here, operator only, with a prompt the API owner can paste into their own AI. This run produced no finding at all, so there is nothing here for either audience.</span></div>
+<br><span class="muted">A finding the agent could not act on (no declared, granted route to switch to) would stay here, operator only: a declared route to grant, a candidate route to check, or a prompt the API owner can paste into their own AI. This run produced no finding at all, so there is nothing here for either audience.</span></div>
 </section>
 
 
 <h2>Predicted next to measured</h2>
 <p>The finding's numbers compare the measured pattern with an assumed ideal of one call. The ideal is never measured, so the second run is the measurement.</p>
 <div class="scroll"><table><thead><tr><th>number</th><th>the finding said</th><th>the API measured</th></tr></thead><tbody>
-<tr><td>calls</td><td>11 beyond one on GET /items/* (measured count minus one)</td><td>the API served 13 requests, then 1: 12 fewer</td></tr><tr><td>latency</td><td>about 1ms beyond one call (a model, not wall time)</td><td>guest wall time 311ms, then 294ms (includes engine start; not the same quantity)</td></tr><tr><td>bytes</td><td>490 moved in total by the flagged calls (gross)</td><td>the API moved 992 bytes, then 502: 490 fewer</td></tr>
+<tr><td>calls</td><td>11 beyond one on GET /items/* (measured count minus one)</td><td>the API served 13 requests, then 1: 12 fewer</td></tr><tr><td>latency</td><td>about 1ms beyond one call (a model, not wall time)</td><td>guest wall time 304ms, then 302ms (includes engine start; not the same quantity)</td></tr><tr><td>bytes</td><td>490 moved in total by the flagged calls (gross)</td><td>the API moved 992 bytes, then 502: 490 fewer</td></tr>
 </tbody></table></div>
 <p class="muted">Bytes matched here only because the collection call was already being made in run 1; in general the replacement call moves bytes of its own, which is why the number is a gross total and not a saving.</p>
 
@@ -138,13 +138,13 @@ about 1 ms beyond one call <span class="muted">(modelled, not wall time)</span> 
 <pre>git clone https://github.com/plimsollmark/plimsoll.git && cd plimsoll
 go run ./examples/advisor                    # the run, in the terminal
 go run ./examples/advisor -report out.html   # the same run as a page like this one</pre>
-<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/advisor/main.go">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/efficiency-advisor.md">EXTERNAL · source repo ↗ efficiency advisor docs</a>.</p>
+<p>The program checks its own claims: it fails if the two answers differ, if the loop does not come back with a fan-out finding naming the declared, granted route, if the rewrite comes back with any finding at all, if the per-item loop is flagged as a repeated read, or if the audit line carries anything but that one finding with its 11 calls beyond one. Source: <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/advisor/main.go">EXTERNAL · source repo ↗ examples/advisor/main.go</a>. How the advisor fits the rest: <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/efficiency-advisor.md">EXTERNAL · source repo ↗ efficiency advisor docs</a>.</p>
 
 <h2>What this page claims, and what it does not</h2>
 <ul>
 <li><b>Advice never changes a run.</b> It is computed after the result is final, over metadata the broker already held. A run with advice is byte-identical in execution to one without; advice cannot gate admission or change an exit code, an output byte or the isolation tier.</li>
 <li><b>The trace is metadata only.</b> Route templates, verbs, status codes, byte counts, latency. The toggle above shows what that leaves out.</li>
-<li><b>No model is involved.</b> Two deterministic detectors (a fan-out over a per-item route, and repeated reads of one fixed route), counting only calls the broker delivered with a 2xx status, and one question against the granted routes. The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
+<li><b>No model is involved.</b> Two deterministic detectors (a fan-out over a per-item route, and repeated reads of one fixed route), counting only calls the broker delivered with a 2xx status, and one lookup of the profile's declared batch routes (plus, for the operator only, a route the path suggests). The paste-ready prompt for an API-change finding is text the operator may choose to hand to their own AI.</li>
 <li><b>The numbers are what they say.</b> The call count is measured. The latency and byte figures are a model of the pattern against an ideal of one call, and the table above puts them next to what the API measured.</li>
 <li><b>A finding claims only what the trace can support.</b> In run 1, 8 of the 12 per-item responses were the same size, and the API's log shows they were 12 distinct items. The trace holds the route template and the size, not the item, so it cannot tell same-size from same-item, and the repeated-read detector does not read a wildcard route at all. It reads only a route without a wildcard, where the broker admits exactly one path and every call is the same request; an unchanged size there is evidence the data did not change, and the finding says evidence, not proof.</li>
 <li><b>This run used the WASM provider</b>, which is process-tier isolation and fine for an example. The advisor is provider-independent: the same broker core records the trace under Docker, E2B and WASM, so the findings do not depend on the tier.</li>

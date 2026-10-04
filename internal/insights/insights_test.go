@@ -40,7 +40,7 @@ func find(fs []Finding, p PatternID) (Finding, bool) {
 
 func TestFanOutDetected(t *testing.T) {
 	tr := trace(fanoutRows("/items/*", 12, 5*time.Millisecond)...)
-	got := Analyze(tr, nil)
+	got := Analyze(tr, Routes{})
 
 	f, ok := find(got, PatternFanOut)
 	if !ok {
@@ -77,17 +77,17 @@ func TestFanOutDetected(t *testing.T) {
 }
 
 func TestFanOutSeverityScales(t *testing.T) {
-	if got := Analyze(trace(fanoutRows("/items/*", 30, time.Millisecond)...), nil); severityOf(got, PatternFanOut) != SeverityMedium {
+	if got := Analyze(trace(fanoutRows("/items/*", 30, time.Millisecond)...), Routes{}); severityOf(got, PatternFanOut) != SeverityMedium {
 		t.Errorf("30 calls: fan-out severity = %s, want medium", severityOf(got, PatternFanOut))
 	}
-	if got := Analyze(trace(fanoutRows("/items/*", 120, time.Millisecond)...), nil); severityOf(got, PatternFanOut) != SeverityHigh {
+	if got := Analyze(trace(fanoutRows("/items/*", 120, time.Millisecond)...), Routes{}); severityOf(got, PatternFanOut) != SeverityHigh {
 		t.Errorf("120 calls: fan-out severity = %s, want high", severityOf(got, PatternFanOut))
 	}
 }
 
 func TestFanOutBelowThresholdIsClean(t *testing.T) {
 	// 5 calls is under fanOutMinCalls (6): no findings at all.
-	if got := Analyze(trace(fanoutRows("/items/*", 5, time.Millisecond)...), nil); len(got) != 0 {
+	if got := Analyze(trace(fanoutRows("/items/*", 5, time.Millisecond)...), Routes{}); len(got) != 0 {
 		t.Errorf("5 calls produced %d findings, want none: %+v", len(got), got)
 	}
 }
@@ -104,7 +104,7 @@ func TestFailedCallsAreNotCounted(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		notFound = append(notFound, sandbox.CallRow{Method: "GET", Route: "/items/*", Status: 404, Delivered: true, RespBytes: 30 + i, Latency: time.Millisecond})
 	}
-	if got := Analyze(trace(notFound...), allow); len(got) != 0 {
+	if got := Analyze(trace(notFound...), Routes{Allow: allow}); len(got) != 0 {
 		t.Errorf("eight 404s produced findings, want none: %+v", got)
 	}
 
@@ -113,7 +113,7 @@ func TestFailedCallsAreNotCounted(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		mixed = append(mixed, sandbox.CallRow{Method: "GET", Route: "/items/*", Status: 500, Delivered: true, RespBytes: 12, Latency: time.Millisecond})
 	}
-	got := Analyze(trace(mixed...), allow)
+	got := Analyze(trace(mixed...), Routes{Allow: allow})
 	f, ok := find(got, PatternFanOut)
 	if !ok || len(got) != 1 {
 		t.Fatalf("mixed trace: want exactly one fan-out, got %+v", got)
@@ -131,7 +131,7 @@ func TestFailedCallsAreNotCounted(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		unanswered = append(unanswered, sandbox.CallRow{Method: "GET", Route: "/v1/config", Status: 0, Delivered: false, RespBytes: 0, Latency: 50 * time.Millisecond})
 	}
-	if got := Analyze(trace(unanswered...), nil); len(got) != 0 {
+	if got := Analyze(trace(unanswered...), Routes{}); len(got) != 0 {
 		t.Errorf("unanswered reads produced findings, want none: %+v", got)
 	}
 }
@@ -145,14 +145,14 @@ func TestUndeliveredResponsesAreNotSuccesses(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		capped = append(capped, sandbox.CallRow{Method: "GET", Route: "/items/*", Status: 200, Delivered: false, RespBytes: 0, Latency: time.Millisecond})
 	}
-	if got := Analyze(trace(capped...), []sandbox.HostRoute{{Method: "GET", Path: "/items"}}); len(got) != 0 {
+	if got := Analyze(trace(capped...), Routes{Allow: []sandbox.HostRoute{{Method: "GET", Path: "/items"}}}); len(got) != 0 {
 		t.Errorf("eight undelivered 200s produced findings, want none: %+v", got)
 	}
 
 	// Six delivered successes among six undelivered 200s: the fan-out counts six.
 	mixed := fanoutRows("/items/*", 6, time.Millisecond)
 	mixed = append(mixed, capped[:6]...)
-	got := Analyze(trace(mixed...), nil)
+	got := Analyze(trace(mixed...), Routes{})
 	f, ok := find(got, PatternFanOut)
 	if !ok || f.Cost.ExtraCalls != 5 || !strings.Contains(f.Detail, "6 more calls to this route did not succeed") {
 		t.Errorf("mixed delivered/undelivered: got %+v, want a fan-out over the six delivered calls naming six failures", got)
@@ -164,7 +164,7 @@ func TestUndeliveredResponsesAreNotSuccesses(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		empty = append(empty, sandbox.CallRow{Method: "GET", Route: "/v1/flags", Status: 204, Delivered: true, RespBytes: 0, Latency: time.Millisecond})
 	}
-	if _, ok := find(Analyze(trace(empty...), nil), PatternRepeatedRead); !ok {
+	if _, ok := find(Analyze(trace(empty...), Routes{}), PatternRepeatedRead); !ok {
 		t.Error("four delivered empty 2xx reads of a fixed route should still be a repeated read")
 	}
 }
@@ -174,14 +174,14 @@ func TestUndeliveredResponsesAreNotSuccesses(t *testing.T) {
 func TestIncompleteTraceIsQualified(t *testing.T) {
 	tr := trace(fanoutRows("/items/*", 12, time.Millisecond)...)
 	tr.Dropped = 300
-	f, ok := find(Analyze(tr, nil), PatternFanOut)
+	f, ok := find(Analyze(tr, Routes{}), PatternFanOut)
 	if !ok {
 		t.Fatal("fan-out not detected on a partial trace")
 	}
 	if f.Cost.ExtraCalls != 11 || !strings.Contains(f.Detail, "at least 12 successful") {
 		t.Errorf("partial trace: ExtraCalls=%d detail=%q, want 11 and an 'at least 12' sentence", f.Cost.ExtraCalls, f.Detail)
 	}
-	full, _ := find(Analyze(trace(fanoutRows("/items/*", 12, time.Millisecond)...), nil), PatternFanOut)
+	full, _ := find(Analyze(trace(fanoutRows("/items/*", 12, time.Millisecond)...), Routes{}), PatternFanOut)
 	if strings.Contains(full.Detail, "at least") {
 		t.Errorf("a complete trace must not hedge its count: %q", full.Detail)
 	}
@@ -194,7 +194,7 @@ func TestRepeatedReadsDetected(t *testing.T) {
 	for i := range rows {
 		rows[i] = sandbox.CallRow{Method: "GET", Route: "/v1/config", Status: 200, Delivered: true, RespBytes: 512, Latency: 10 * time.Millisecond}
 	}
-	got := Analyze(trace(rows...), nil)
+	got := Analyze(trace(rows...), Routes{})
 
 	f, ok := find(got, PatternRepeatedRead)
 	if !ok {
@@ -223,6 +223,28 @@ func TestRepeatedReadsDetected(t *testing.T) {
 	}
 }
 
+// TestRepeatedReadIgnoresCallsWithBodies: a GET may carry a body (host.call("GET",
+// path, body)), and the trace holds its size, not its bytes, so six same-size GETs with
+// bodies to one fixed route are not known to be one request repeated (a search route
+// read with six different queries looks exactly like this). Only the bodiless calls
+// count, and here there are too few of them.
+func TestRepeatedReadIgnoresCallsWithBodies(t *testing.T) {
+	var rows []sandbox.CallRow
+	for i := 0; i < 6; i++ {
+		rows = append(rows, sandbox.CallRow{Method: "GET", Route: "/v1/search", Status: 200, Delivered: true, ReqBytes: 24, RespBytes: 512, Latency: time.Millisecond})
+	}
+	if f, ok := find(Analyze(trace(rows...), Routes{}), PatternRepeatedRead); ok {
+		t.Errorf("same-size GETs with bodies must not be a repeated read: %+v", f)
+	}
+	for i := 0; i < repeatMinCalls; i++ {
+		rows = append(rows, sandbox.CallRow{Method: "GET", Route: "/v1/search", Status: 200, Delivered: true, RespBytes: 512, Latency: time.Millisecond})
+	}
+	f, ok := find(Analyze(trace(rows...), Routes{}), PatternRepeatedRead)
+	if !ok || f.Cost.ExtraCalls != repeatMinCalls-1 {
+		t.Errorf("the bodiless calls alone are the repeat: got %+v, want ExtraCalls %d", f, repeatMinCalls-1)
+	}
+}
+
 // TestRepeatedReadIgnoresWildcardRoutes is the advisor example's case: twelve
 // per-item reads of /items/* where eight responses happen to be the same size. The
 // trace holds the template and the size, not the item, so it cannot tell one item
@@ -237,7 +259,7 @@ func TestRepeatedReadIgnoresWildcardRoutes(t *testing.T) {
 		}
 		rows[i] = sandbox.CallRow{Method: "GET", Route: "/items/*", Status: 200, Delivered: true, RespBytes: size, Latency: time.Millisecond}
 	}
-	got := Analyze(trace(rows...), nil)
+	got := Analyze(trace(rows...), Routes{})
 	if f, ok := find(got, PatternRepeatedRead); ok {
 		t.Errorf("same-size reads of a wildcard route must not be a repeated read: %+v", f)
 	}
@@ -253,7 +275,7 @@ func TestRepeatedReadHeuristicSeverityCap(t *testing.T) {
 	for i := range rows {
 		rows[i] = sandbox.CallRow{Method: "GET", Route: "/v1/config", Status: 200, Delivered: true, RespBytes: 8, Latency: time.Millisecond}
 	}
-	if got := severityOf(Analyze(trace(rows...), nil), PatternRepeatedRead); got != SeverityMedium {
+	if got := severityOf(Analyze(trace(rows...), Routes{}), PatternRepeatedRead); got != SeverityMedium {
 		t.Errorf("repeated-read severity = %s, want it capped at medium", got)
 	}
 }
@@ -270,86 +292,103 @@ func TestMultiRouteLatencyIsNotAFinding(t *testing.T) {
 		{Method: "GET", Route: "/c", Status: 200, Delivered: true, RespBytes: 12, Latency: 200 * time.Millisecond},
 		{Method: "GET", Route: "/a", Status: 200, Delivered: true, RespBytes: 13, Latency: 200 * time.Millisecond},
 	}
-	if got := Analyze(trace(rows...), nil); len(got) != 0 {
+	if got := Analyze(trace(rows...), Routes{}); len(got) != 0 {
 		t.Errorf("multi-route latency produced findings, want none: %+v", got)
 	}
 }
 
-func TestRouterSuggestsCollectionRoute(t *testing.T) {
-	allow := []sandbox.HostRoute{
-		{Method: "GET", Path: "/items/*"},
-		{Method: "GET", Path: "/items"}, // the batch/collection sibling
+// TestRouterSuggestsOnlyADeclaredBatchRoute: a granted collection route reaches the
+// caller only when the profile declares it as the per-item route's batch form. Found by
+// its path alone it is an operator's candidate, since a path cannot say whether the
+// route pages, returns fewer fields or covers another scope.
+func TestRouterSuggestsOnlyADeclaredBatchRoute(t *testing.T) {
+	allow := []sandbox.HostRoute{{Method: "GET", Path: "/items/*"}, {Method: "GET", Path: "/items"}}
+	rows := fanoutRows("/items/*", 8, time.Millisecond)
+
+	guessed, _ := find(Analyze(trace(rows...), Routes{Allow: allow}), PatternFanOut)
+	if guessed.Suggested != nil || guessed.GrantRoute != nil {
+		t.Errorf("an undeclared route reached the caller: Suggested=%v GrantRoute=%v", guessed.Suggested, guessed.GrantRoute)
 	}
-	got := Analyze(trace(fanoutRows("/items/*", 8, time.Millisecond)...), allow)
-	f, _ := find(got, PatternFanOut)
-	if f.Suggested == nil {
-		t.Fatal("router should suggest the collection route when the profile grants it")
+	if guessed.Candidate == nil || *guessed.Candidate != (Route{Method: "GET", Path: "/items"}) {
+		t.Fatalf("Candidate = %v, want GET /items", guessed.Candidate)
 	}
-	if f.Suggested.Method != "GET" || f.Suggested.Path != "/items" {
-		t.Errorf("Suggested = %+v, want GET /items", *f.Suggested)
+	if !strings.Contains(guessed.Detail, "GET /items is granted") || !strings.Contains(guessed.Detail, "does not declare it in batch_of") || !strings.Contains(guessed.Detail, "not offered to the agent") {
+		t.Errorf("a candidate's sentence must say it is undeclared and withheld: %q", guessed.Detail)
 	}
 
-	// No Allow list -> no suggestion (Phase 2 reads nil as "API change needed").
-	f2, _ := find(Analyze(trace(fanoutRows("/items/*", 8, time.Millisecond)...), nil), PatternFanOut)
-	if f2.Suggested != nil {
-		t.Errorf("without an Allow list Suggested must be nil, got %+v", *f2.Suggested)
+	declared := Routes{Allow: allow, BatchOf: map[sandbox.HostRoute]sandbox.HostRoute{
+		{Method: "GET", Path: "/items/*"}: {Method: "GET", Path: "/items"},
+	}}
+	f, _ := find(Analyze(trace(rows...), declared), PatternFanOut)
+	if f.Suggested == nil || *f.Suggested != (Route{Method: "GET", Path: "/items"}) || f.GrantRoute != nil || f.Candidate != nil {
+		t.Fatalf("a declared, granted batch route: Suggested=%v GrantRoute=%v Candidate=%v, want only Suggested GET /items", f.Suggested, f.GrantRoute, f.Candidate)
 	}
-
-	// Collection sibling absent from the grant -> no suggestion (agent cannot fix it).
-	f3, _ := find(Analyze(trace(fanoutRows("/items/*", 8, time.Millisecond)...), allow[:1]), PatternFanOut)
-	if f3.Suggested != nil {
-		t.Errorf("no granted sibling should mean no suggestion, got %+v", *f3.Suggested)
+	if !strings.Contains(f.Detail, "declares GET /items as this route's batch form and grants it") || !strings.Contains(f.Detail, "has not checked") {
+		t.Errorf("a suggestion's sentence must name the declaration as the operator's: %q", f.Detail)
 	}
 }
 
-func TestRouterUsesCatalogForUngrantedBatchRoute(t *testing.T) {
-	// The profile grants only the per-item route; the batch collection exists in the API
-	// (catalog) but is not granted.
-	allow := []sandbox.HostRoute{{Method: "GET", Path: "/items/*"}}
-	catalog := []sandbox.HostRoute{
-		{Method: "GET", Path: "/items/*"},
-		{Method: "GET", Path: "/items"}, // the batch sibling the API offers but the grant omits
+// A declared batch route the profile does not grant is the operator's one-line fix;
+// the caller is never told about a route it cannot call.
+func TestRouterNamesADeclaredUngrantedRouteToTheOperator(t *testing.T) {
+	routes := Routes{
+		Allow: []sandbox.HostRoute{{Method: "GET", Path: "/items/*"}},
+		BatchOf: map[sandbox.HostRoute]sandbox.HostRoute{
+			{Method: "GET", Path: "/items/*"}: {Method: "GET", Path: "/items:batchGet"},
+		},
 	}
-	f, _ := find(AnalyzeWithCatalog(trace(fanoutRows("/items/*", 8, time.Millisecond)...), allow, catalog), PatternFanOut)
-	if f.Suggested != nil {
-		t.Errorf("an ungranted route must not be a caller Suggested, got %+v", *f.Suggested)
+	f, _ := find(Analyze(trace(fanoutRows("/items/*", 8, time.Millisecond)...), routes), PatternFanOut)
+	if f.Suggested != nil || f.Candidate != nil || f.GrantRoute == nil || *f.GrantRoute != (Route{Method: "GET", Path: "/items:batchGet"}) {
+		t.Fatalf("Suggested=%v GrantRoute=%v Candidate=%v, want only GrantRoute GET /items:batchGet", f.Suggested, f.GrantRoute, f.Candidate)
 	}
-	if f.CatalogMatch == nil {
-		t.Fatal("router should name the ungranted batch route from the catalog")
+	if !strings.Contains(f.Detail, "but does not grant it") {
+		t.Errorf("detail should say the declared route is not granted: %q", f.Detail)
 	}
-	if f.CatalogMatch.Method != "GET" || f.CatalogMatch.Path != "/items" {
-		t.Errorf("CatalogMatch = %+v, want GET /items", *f.CatalogMatch)
+}
+
+// The catalog only ever yields a candidate: it lists what the API exposes, not what
+// serves what.
+func TestRouterTakesACandidateFromTheCatalog(t *testing.T) {
+	routes := Routes{
+		Allow:   []sandbox.HostRoute{{Method: "GET", Path: "/items/*"}},
+		Catalog: []sandbox.HostRoute{{Method: "GET", Path: "/items/*"}, {Method: "GET", Path: "/items"}},
+	}
+	f, _ := find(Analyze(trace(fanoutRows("/items/*", 8, time.Millisecond)...), routes), PatternFanOut)
+	if f.Suggested != nil || f.GrantRoute != nil || f.Candidate == nil || *f.Candidate != (Route{Method: "GET", Path: "/items"}) {
+		t.Fatalf("Suggested=%v GrantRoute=%v Candidate=%v, want only Candidate GET /items", f.Suggested, f.GrantRoute, f.Candidate)
+	}
+	if !strings.Contains(f.Detail, "is in the API's catalog but not granted") {
+		t.Errorf("detail should say where the candidate came from: %q", f.Detail)
 	}
 
-	// A GRANTED sibling always wins: it stays a caller-fixable Suggested, never CatalogMatch.
-	grantedAllow := []sandbox.HostRoute{{Method: "GET", Path: "/items/*"}, {Method: "GET", Path: "/items"}}
-	g, _ := find(AnalyzeWithCatalog(trace(fanoutRows("/items/*", 8, time.Millisecond)...), grantedAllow, catalog), PatternFanOut)
-	if g.Suggested == nil || g.CatalogMatch != nil {
-		t.Errorf("granted sibling should be Suggested (not CatalogMatch): Suggested=%v CatalogMatch=%v", g.Suggested, g.CatalogMatch)
-	}
-
-	// No catalog and no granted sibling -> neither is set (the API itself needs a change).
-	n, _ := find(Analyze(trace(fanoutRows("/items/*", 8, time.Millisecond)...), allow), PatternFanOut)
-	if n.Suggested != nil || n.CatalogMatch != nil {
-		t.Errorf("without a catalog or granted sibling both must be nil: %+v / %+v", n.Suggested, n.CatalogMatch)
+	// Nothing granted, catalogued or declared: no route is known.
+	n, _ := find(Analyze(trace(fanoutRows("/items/*", 8, time.Millisecond)...), Routes{Allow: routes.Allow}), PatternFanOut)
+	if n.Suggested != nil || n.GrantRoute != nil || n.Candidate != nil {
+		t.Errorf("with no route known all must be nil: %v / %v / %v", n.Suggested, n.GrantRoute, n.Candidate)
 	}
 }
 
 func TestRouterIgnoresNonTrailingWildcard(t *testing.T) {
-	// /v1/lights/*/state has a middle wildcard: no simple collection sibling, so even
-	// with a plausible Allow list the router suggests nothing (GET, so the verb rule
-	// below is not what stops it).
+	// /v1/lights/*/state has a middle wildcard: its path suggests no collection, so even
+	// with a plausible Allow list the router names nothing (GET, so the verb rule below
+	// is not what stops it). A declaration covers it, since it does not rest on the path.
 	allow := []sandbox.HostRoute{{Method: "GET", Path: "/v1/lights/*/state"}, {Method: "GET", Path: "/v1/lights"}}
 	rows := make([]sandbox.CallRow, 8)
 	for i := range rows {
 		rows[i] = sandbox.CallRow{Method: "GET", Route: "/v1/lights/*/state", Status: 200, Delivered: true, RespBytes: i, Latency: time.Millisecond}
 	}
-	f, ok := find(Analyze(trace(rows...), allow), PatternFanOut)
+	f, ok := find(Analyze(trace(rows...), Routes{Allow: allow}), PatternFanOut)
 	if !ok {
 		t.Fatal("fan-out on a middle-wildcard route should still fire")
 	}
-	if f.Suggested != nil {
-		t.Errorf("non-trailing wildcard must not get a suggestion, got %+v", *f.Suggested)
+	if f.Suggested != nil || f.Candidate != nil {
+		t.Errorf("non-trailing wildcard must not get a route from its path: Suggested=%v Candidate=%v", f.Suggested, f.Candidate)
+	}
+	declared := Routes{Allow: allow, BatchOf: map[sandbox.HostRoute]sandbox.HostRoute{
+		{Method: "GET", Path: "/v1/lights/*/state"}: {Method: "GET", Path: "/v1/lights"},
+	}}
+	if g, _ := find(Analyze(trace(rows...), declared), PatternFanOut); g.Suggested == nil || g.Suggested.Path != "/v1/lights" {
+		t.Errorf("a declared batch route for a middle-wildcard route should be suggested, got %v", g.Suggested)
 	}
 }
 
@@ -365,12 +404,15 @@ func TestRouterSuggestsReadsOnly(t *testing.T) {
 	for i := range rows {
 		rows[i] = sandbox.CallRow{Method: "PUT", Route: "/items/*", Status: 200, Delivered: true, ReqBytes: 40, RespBytes: 10 + i, Latency: time.Millisecond}
 	}
-	f, ok := find(AnalyzeWithCatalog(trace(rows...), allow, catalog), PatternFanOut)
+	// An embedder can hand Analyze a write relation directly (grants.Load refuses one);
+	// the router still names nothing for a write.
+	batchOf := map[sandbox.HostRoute]sandbox.HostRoute{{Method: "PUT", Path: "/items/*"}: {Method: "PUT", Path: "/items"}}
+	f, ok := find(Analyze(trace(rows...), Routes{Allow: allow, Catalog: catalog, BatchOf: batchOf}), PatternFanOut)
 	if !ok {
 		t.Fatal("fan-out on a PUT per-item route should still fire")
 	}
-	if f.Suggested != nil || f.CatalogMatch != nil {
-		t.Errorf("a write fan-out must get no replacement route: Suggested=%v CatalogMatch=%v", f.Suggested, f.CatalogMatch)
+	if f.Suggested != nil || f.GrantRoute != nil || f.Candidate != nil {
+		t.Errorf("a write fan-out must get no replacement route: Suggested=%v GrantRoute=%v Candidate=%v", f.Suggested, f.GrantRoute, f.Candidate)
 	}
 	if !strings.Contains(f.Detail, "no replacement route is guessed") {
 		t.Errorf("write fan-out detail should say why nothing is suggested: %q", f.Detail)
@@ -378,10 +420,10 @@ func TestRouterSuggestsReadsOnly(t *testing.T) {
 }
 
 func TestNilAndEmptyTrace(t *testing.T) {
-	if got := Analyze(nil, nil); got != nil {
+	if got := Analyze(nil, Routes{}); got != nil {
 		t.Errorf("nil trace = %+v, want nil", got)
 	}
-	if got := Analyze(&sandbox.CallTrace{}, nil); got != nil {
+	if got := Analyze(&sandbox.CallTrace{}, Routes{}); got != nil {
 		t.Errorf("empty trace = %+v, want nil", got)
 	}
 }
@@ -393,7 +435,7 @@ func TestFindingsSortedBySeverityThenPattern(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		rows = append(rows, sandbox.CallRow{Method: "GET", Route: "/v1/config", Status: 200, Delivered: true, RespBytes: 4, Latency: time.Millisecond})
 	}
-	got := Analyze(trace(rows...), nil)
+	got := Analyze(trace(rows...), Routes{})
 	if len(got) < 2 {
 		t.Fatalf("expected several findings, got %d: %+v", len(got), got)
 	}
@@ -420,7 +462,7 @@ func TestFindingsAreMetadataOnly(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		rows = append(rows, sandbox.CallRow{Method: "GET", Route: "/v1/rooms", Status: 200, Delivered: true, RespBytes: 9, Latency: 300 * time.Millisecond})
 	}
-	got := Analyze(trace(rows...), []sandbox.HostRoute{{Method: "GET", Path: "/items"}})
+	got := Analyze(trace(rows...), Routes{Allow: []sandbox.HostRoute{{Method: "GET", Path: "/items"}}})
 	if len(got) < 2 {
 		t.Fatalf("expected a fan-out and a repeated read, got %+v", got)
 	}
@@ -446,8 +488,8 @@ func TestAnalyzeIsDeterministic(t *testing.T) {
 		}
 		return trace(rows...)
 	}
-	a := Analyze(build(), nil)
-	b := Analyze(build(), nil)
+	a := Analyze(build(), Routes{})
+	b := Analyze(build(), Routes{})
 	if len(a) != len(b) {
 		t.Fatalf("nondeterministic finding count: %d vs %d", len(a), len(b))
 	}

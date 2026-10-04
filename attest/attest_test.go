@@ -142,7 +142,8 @@ func TestVersionOneRecordIsNotSignedByNewHarness(t *testing.T) {
 	}
 }
 
-func TestPublishedVersionOneBundleRemainsVerifiable(t *testing.T) {
+// The bundle published beside the sessions example verifies, links and all.
+func TestPublishedSessionsBundleVerifies(t *testing.T) {
 	data, err := os.ReadFile("../docs/examples/sessions/bundle.jsonl")
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +162,7 @@ func TestPublishedVersionOneBundleRemainsVerifiable(t *testing.T) {
 	}
 	report, err := VerifyBundle(entries, NewVerifier(publicKey))
 	if err != nil || len(report.Sessions) != 1 || report.Sessions[0].Calls != 5 {
-		t.Fatalf("published version 1 bundle: report %+v, err %v", report, err)
+		t.Fatalf("published sessions bundle: report %+v, err %v", report, err)
 	}
 }
 
@@ -226,7 +227,7 @@ func TestVerifyBundle(t *testing.T) {
 	b := session(t, s, "session-b", 2)
 	// Two sessions interleaved with a single run verify as long as each chain holds.
 	good := []Entry{a[0], b[0], single, a[1], b[1], b[2], a[2], a[3]}
-	rep, err := VerifyBundle(good, v)
+	rep, err := VerifyBundle(seal(t, s, good...), v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +258,7 @@ func TestVerifyBundle(t *testing.T) {
 		"another session's call":      {[]Entry{a[0], b[1], a[1], a[2], a[3]}, ErrChain},
 		"signed by another key":       {session(t, NewSigner(newKey(t)), "session-c", 1), ErrSignature},
 	} {
-		if _, err := VerifyBundle(c.entries, v); !errors.Is(err, c.want) {
+		if _, err := VerifyBundle(seal(t, s, c.entries...), v); !errors.Is(err, c.want) {
 			t.Errorf("%s: got %v, want %v", name, err, c.want)
 		}
 	}
@@ -280,7 +281,7 @@ func TestVerifyBundleEmptySession(t *testing.T) {
 	}
 	empty := closeOf("empty", 0, "")
 	a := session(t, s, "session-a", 2)
-	rep, err := VerifyBundle([]Entry{a[0], empty, a[1], a[2]}, v)
+	rep, err := VerifyBundle(seal(t, s, a[0], empty, a[1], a[2]), v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ func TestVerifyBundleEmptySession(t *testing.T) {
 		"a second close":               {empty, empty},
 		"a call after the close":       {empty, session(t, s, "empty", 1)[0]},
 	} {
-		if _, err := VerifyBundle(bundle, v); !errors.Is(err, ErrChain) {
+		if _, err := VerifyBundle(seal(t, s, bundle...), v); !errors.Is(err, ErrChain) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -303,10 +304,14 @@ func TestBundleRoundTripsThroughJSONLines(t *testing.T) {
 	key := newKey(t)
 	s := NewSigner(key)
 	var buf bytes.Buffer
+	h := NewHarness(s, &buf)
 	for _, e := range session(t, s, "s", 2) {
-		if err := WriteEntry(&buf, e); err != nil {
+		if err := h.write(e); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := h.Checkpoint(); err != nil {
+		t.Fatal(err)
 	}
 	entries, err := ReadBundle(&buf)
 	if err != nil {
@@ -327,7 +332,7 @@ func TestReplayComparesResultDigests(t *testing.T) {
 	req2, resp2 := exchange("b()", "drifts\n", sandbox.RunRecord{})
 	e1, _ := s.Call(req1, resp1)
 	e2, _ := s.Call(req2, resp2)
-	entries := append([]Entry{e1, e2}, session(t, s, "s", 1)...)
+	entries := seal(t, s, append([]Entry{e1, e2}, session(t, s, "s", 1)...)...)
 	send := func(_ context.Context, req *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error) {
 		out := "same\n"
 		if req.GetJavascript().GetCode() == "b()" {
@@ -356,7 +361,8 @@ func TestHarnessRecordsThroughTheClient(t *testing.T) {
 
 	key := newKey(t)
 	var bundle bytes.Buffer
-	remote, err := client.New(srv.URL, client.WithRecorder(NewHarness(NewSigner(key), &bundle)))
+	harness := NewHarness(NewSigner(key), &bundle)
+	remote, err := client.New(srv.URL, client.WithRecorder(harness))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,6 +370,9 @@ func TestHarnessRecordsThroughTheClient(t *testing.T) {
 		if _, err := remote.RunJavaScript(context.Background(), sandbox.Request{Code: code}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := harness.Checkpoint(); err != nil {
+		t.Fatal(err)
 	}
 	entries, err := ReadBundle(&bundle)
 	if err != nil {
@@ -413,7 +422,8 @@ func TestSessionRecordsVerifyAndReplay(t *testing.T) {
 
 	key := newKey(t)
 	var bundle bytes.Buffer
-	remote, err := client.New(srv.URL, client.WithRecorder(NewHarness(NewSigner(key), &bundle)))
+	harness := NewHarness(NewSigner(key), &bundle)
+	remote, err := client.New(srv.URL, client.WithRecorder(harness))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,6 +437,9 @@ func TestSessionRecordsVerifyAndReplay(t *testing.T) {
 		}
 	}
 	if _, err := s.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := harness.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := ReadBundle(&bundle)
@@ -458,7 +471,8 @@ func TestSessionRecordsVerifyAndReplay(t *testing.T) {
 
 	// A session closed before any call leaves a bundle that verifies.
 	var emptyBundle bytes.Buffer
-	recorded, err := client.New(srv.URL, client.WithRecorder(NewHarness(NewSigner(key), &emptyBundle)))
+	emptyHarness := NewHarness(NewSigner(key), &emptyBundle)
+	recorded, err := client.New(srv.URL, client.WithRecorder(emptyHarness))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,6 +481,9 @@ func TestSessionRecordsVerifyAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := unused.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := emptyHarness.Checkpoint(); err != nil {
 		t.Fatal(err)
 	}
 	entries, err = ReadBundle(&emptyBundle)
@@ -492,13 +509,16 @@ func TestBundleKeepsNaNBits(t *testing.T) {
 		Provider: "docker", Isolation: "kernel", Started: time.UnixMilli(1), Ended: time.UnixMilli(2)}
 	r.SHA256 = record.Digest(r)
 	resp.Record = record.ToWire(r)
-	e, err := NewSigner(key).Call(req, resp)
+	signer := NewSigner(key)
+	e, err := signer.Call(req, resp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := WriteEntry(&buf, e); err != nil {
-		t.Fatal(err)
+	for _, line := range seal(t, signer, e) {
+		if err := WriteEntry(&buf, line); err != nil {
+			t.Fatal(err)
+		}
 	}
 	entries, err := ReadBundle(&buf)
 	if err != nil {
@@ -527,7 +547,7 @@ func TestUnansweredEntryVerifiesInItsChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep, err := VerifyBundle([]Entry{call, closed}, v); err != nil || rep.Sessions[0].Calls != 1 {
+	if rep, err := VerifyBundle(seal(t, s, call, closed), v); err != nil || rep.Sessions[0].Calls != 1 {
 		t.Fatalf("a chain of one unanswered call: %+v, %v", rep, err)
 	}
 	withResponse := call
@@ -535,7 +555,7 @@ func TestUnansweredEntryVerifiesInItsChain(t *testing.T) {
 	other := call
 	other.Request, _ = proto.Marshal(&plimsollv1.RunRequest{Protocol: 2, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "2"}}})
 	for name, e := range map[string]Entry{"a stored response": withResponse, "another request": other} {
-		if _, err := VerifyBundle([]Entry{e, closed}, v); !errors.Is(err, ErrStored) {
+		if _, err := VerifyBundle(seal(t, s, e, closed), v); !errors.Is(err, ErrStored) {
 			t.Errorf("%s: %v; want ErrStored", name, err)
 		}
 	}
@@ -565,7 +585,7 @@ func TestFloorViolationIsNotSignedOrVerified(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyBundle([]Entry{forged}, v); !errors.Is(err, sandbox.ErrIsolationEvidenceMismatch) {
+	if _, err := VerifyBundle(seal(t, s, forged), v); !errors.Is(err, sandbox.ErrIsolationEvidenceMismatch) {
 		t.Fatalf("VerifyBundle accepted a container answer to a vm floor: %v", err)
 	}
 }

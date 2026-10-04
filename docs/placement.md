@@ -105,7 +105,11 @@ the not-dispatched mark with reason `unsupported`, `isolation`, `environment` or
 `request`, `permission` or `protocol` would fail the same way everywhere, and an error
 with no mark at all may have executed, so neither is re-sent
 ([run results](run-results.md#did-anything-run-the-error-says-so)). The refusals that
-came before the answer are in `Choice.Retried`.
+came before the answer are in `Choice.Retried`. One consequence for a provider billed by the
+second: a caller's daily allowance (`paid_seconds_per_day`) is counted by each daemon on
+its own, and a refusal for a spent allowance is a capacity refusal, so placement sends the
+call to the next backend; with the same allowance on K daemons a caller can spend K times
+it.
 
 ## Descriptions
 

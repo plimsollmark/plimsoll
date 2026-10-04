@@ -106,9 +106,13 @@
     with the count, and the cost compares the pattern with one ideal call.</p>
     <p>Pick a run, and pick what the run's <dfn>grant profile</dfn>, the named grant
     stored on the server, knows about a collection route (a route such as
-    <code>GET /items</code> that returns every item in one call). A profile may also
-    declare a catalog: the API's full list of routes, including ones the grant leaves
-    out.</p>
+    <code>GET /items</code> that returns every item in one call). The profile can say, in
+    its <code>batch_of</code> setting, that one call to <code>GET /items</code> returns
+    what the calls to <code>GET /items/*</code> did. That is the operator's statement:
+    plimsoll cannot check it, because the trace holds no response bodies, so it cannot see
+    whether the route returns every page, the same fields, or the same items. A profile
+    may also list the API's full set of routes in its catalog, including ones the grant
+    leaves out.</p>
 
     <div class="controls-2">
       <div class="control">
@@ -123,9 +127,10 @@
       <div class="control">
         <p class="control-label">What the profile knows about a collection route</p>
         <div class="seg" role="group" aria-label="The profile" data-key="profile">
-          <button type="button" data-value="granted">GET /items is granted<small>on the Allow list</small></button>
-          <button type="button" data-value="catalog">GET /items is in the catalog only<small>the API has it, the profile omits it</small></button>
-          <button type="button" data-value="neither">neither is known<small>no such route, or no catalog declared</small></button>
+          <button type="button" data-value="declared">declared and granted<small>in batch_of and on the Allow list</small></button>
+          <button type="button" data-value="ungranted">declared, not granted<small>in batch_of, missing from the Allow list</small></button>
+          <button type="button" data-value="candidate">granted, not declared<small>on the Allow list or in the catalog only</small></button>
+          <button type="button" data-value="neither">nothing known<small>no such route, or no catalog declared</small></button>
         </div>
       </div>
     </div>
@@ -230,7 +235,7 @@
 (function () {
   'use strict';
   function el(id) { return document.getElementById(id); }
-  var state = { run: 'fan128', profile: 'granted', advice: 'caller', retention: 'aggregate' };
+  var state = { run: 'fan128', profile: 'declared', advice: 'caller', retention: 'aggregate' };
   var TRACE_CAP = 256;
 
   // Rows invented for the lesson; the numbers are deterministic so the page is stable.
@@ -318,13 +323,15 @@
       '</div>';
     var cls;
     if (f.pattern === 'repeated_read') {
-      cls = '<div class="class agent"><span class="who">agent-fixable, on a condition</span><p>Read once and reuse the result, if the data really was unchanged. No route lookup is needed: the fix is the caller’s loop. Returned on the result’s <code>advice</code> field when the profile’s <code>advice</code> is <code>caller</code>.</p></div>';
-    } else if (profile === 'granted') {
-      cls = '<div class="class agent"><span class="who">agent-fixable · Suggested: GET /items</span><p>The collection route is on the profile’s Allow list, so the agent can switch to it on its next turn. The finding states its condition, that the route returns the same items, which plimsoll does not verify. Returned to the caller when <code>advice</code> is <code>caller</code>.</p></div>';
-    } else if (profile === 'catalog') {
-      cls = '<div class="class operator"><span class="who">operator action · CatalogMatch: GET /items</span><p>The API has the route and the profile omits it. One Allow-list line enables the batch; no API change. Surfaced as <code>grant_route</code> on the audit record and never returned to the caller, because the agent cannot call an ungranted route.</p></div>';
+      cls = '<div class="class operator"><span class="who">operator only, on a condition</span><p>Read once and reuse the result, if the data really was unchanged. No route lookup applies: the fix is in the caller’s loop, but it stays on the operator’s side even when <code>advice</code> is <code>caller</code>, on purpose: one fixed route read again and again is often a loop waiting for a change, where caching would break the loop, and the trace cannot tell the two apart.</p></div>';
+    } else if (profile === 'declared') {
+      cls = '<div class="class agent"><span class="who">agent-fixable · Suggested: GET /items</span><p>The profile declares <code>GET /items</code> as the batch form of this route and grants it, so the agent can switch to it on its next turn. The finding says the declaration is the operator’s and that plimsoll has not checked it. Returned to the caller when <code>advice</code> is <code>caller</code>.</p></div>';
+    } else if (profile === 'ungranted') {
+      cls = '<div class="class operator"><span class="who">operator action · GrantRoute: GET /items</span><p>The profile declares the route but its Allow list omits it. One Allow-list line enables the batch; no API change. Surfaced as <code>grant_route</code> on the audit record and never returned to the caller, because the agent cannot call an ungranted route.</p></div>';
+    } else if (profile === 'candidate') {
+      cls = '<div class="class operator"><span class="who">operator check · Candidate: GET /items</span><p>The route’s path makes it this route’s collection, and the profile grants it or lists it in its catalog, but nothing declares it. A path cannot say whether the route pages, returns fewer fields or covers other items, so the agent is not told. Surfaced as <code>candidate_route</code> on the audit record: the operator checks it and, if it holds, adds it to <code>batch_of</code>.</p></div>';
     } else {
-      cls = '<div class="class prompt"><span class="who">neither known · a design prompt, not a verdict</span><p>No granted route covers it and no catalog names one. The advisor renders a paste-ready prompt for the customer’s own AI that asks for the smallest change, <b>or for a plain statement that none is warranted</b>: one run’s trace cannot show that the API forces this pattern on every caller, and the profile may declare no catalog at all. plimsoll never runs the prompt.</p></div>';
+      cls = '<div class="class prompt"><span class="who">nothing known · a design prompt, not a verdict</span><p>No batch route is declared and no granted or catalogued route matches the path. The advisor renders a paste-ready prompt for the customer’s own AI that asks for the smallest change, <b>or for a plain statement that none is warranted</b>: one run’s trace cannot show that the API forces this pattern on every caller, and the profile may declare no catalog at all. plimsoll never runs the prompt.</p></div>';
     }
     box.innerHTML = head + sentence + cost + cls;
   }
@@ -350,8 +357,8 @@
     });
     var note;
     if (!computed) note = '<p><b>Nothing is computed.</b> The trace still exists for the run’s duration, because the broker needs it to enforce budgets; it is discarded with the response.</p>';
-    else if (a === 'operator') note = '<p><b>The agent sees nothing.</b> Findings reach the operator\'s report and audit log only; the retention setting decides how much of that is kept. Findings with no granted route are operator-only regardless of this setting.</p>';
-    else note = '<p><b>The caller gets the subset it can act on.</b> Only findings with a granted suggested route, or a cache remedy, ride on the result. The hint on the result and the metrics are set by <code>advice</code> alone; retention changes only what the audit log keeps.</p>';
+    else if (a === 'operator') note = '<p><b>The agent sees nothing.</b> Findings reach the operator\'s report and audit log only; the retention setting decides how much of that is kept. Findings with no declared, granted route are operator-only regardless of this setting.</p>';
+    else note = '<p><b>The caller gets the subset it can act on.</b> Only findings with a declared, granted batch route ride on the result. The hint on the result and the metrics are set by <code>advice</code> alone; retention changes only what the audit log keeps.</p>';
     el('flowNote').innerHTML = note;
   }
 

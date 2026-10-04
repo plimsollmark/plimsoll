@@ -171,7 +171,18 @@ func (p *Provider) create(ctx context.Context) (box, error) {
 // createBox is create with the lifetime to declare, the main process (nil leaves the
 // gateway's default, a login shell), extra labels and the driver config (the sized
 // /tmp; nil sends none).
+//
+// Every sandbox comes from here, and only from an operation counted before Drain
+// began, which tracks the name before its count ends: Drain waits for the count, then
+// for every tracked name, so no create this process sends starts after Drain returns.
+// Not proven: that the gateway never completes a create whose request was cancelled
+// after the delete for its name found nothing and the name was untracked. Such a
+// sandbox would outlive Drain until another instance's ReconcileOrphans reaps it.
 func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, command []string, extra map[string]string, disk *structpb.Struct) (box, map[string]string, error) {
+	leave, entered := p.sessions.Enter()
+	if !entered {
+		return box{}, nil, sandbox.NotDispatched(sandbox.RefusalCapacity, errDraining)
+	}
 	b := box{name: namePrefix + randHex(7)}
 	labels := map[string]string{
 		instanceLabel: p.instance,
@@ -181,11 +192,12 @@ func (p *Provider) createBox(ctx context.Context, lifetime time.Duration, comman
 	for k, v := range extra {
 		labels[k] = v
 	}
-	p.track(b.name)
+	p.leases.Track(b.name)
+	leave()
 	ok := false
 	defer func() {
 		if !ok {
-			p.deleteLater(b)
+			p.deleteLater(ctx, b)
 		}
 	}()
 	issued := time.Now()
@@ -325,11 +337,25 @@ func unsetFields(spec *openshellv1.SandboxSpec) string {
 // sent, equal it field for field, and be admitted; and the setting that lets code
 // inside the sandbox propose policy changes must be off.
 func (p *Provider) verifyConfig(ctx context.Context, name string) error {
+	cfg, err := p.readConfig(ctx, name)
+	if err != nil {
+		return err
+	}
+	return p.checkConfig(cfg)
+}
+
+// readConfig reads the sandbox's effective configuration. Its error says the gateway
+// did not answer, not that the configuration differs.
+func (p *Provider) readConfig(ctx context.Context, name string) (*sandboxv1.GetSandboxConfigResponse, error) {
 	resp, err := p.client.GetSandboxConfig(ctx, connect.NewRequest(&sandboxv1.GetSandboxConfigRequest{WorkspaceScope: ws(), Name: name}))
 	if err != nil {
-		return fmt.Errorf("openshell read policy back: %w", err)
+		return nil, fmt.Errorf("openshell read policy back: %w", err)
 	}
-	cfg := resp.Msg
+	return resp.Msg, nil
+}
+
+// checkConfig is verifyConfig's comparison, of a configuration readConfig read.
+func (p *Provider) checkConfig(cfg *sandboxv1.GetSandboxConfigResponse) error {
 	switch {
 	case cfg.GetPolicySource() != sandboxv1.PolicySource_POLICY_SOURCE_SANDBOX:
 		return fmt.Errorf("openshell read policy back: the effective policy comes from %v, not from the sandbox; a gateway-wide policy replaces the one plimsoll sent", cfg.GetPolicySource())
@@ -509,9 +535,16 @@ func (c *capture) write(p []byte) {
 
 // deleteLater deletes b off the caller's path: the delete call takes about 5 s once a
 // sandbox is a second old, and a run's result does not wait for it. The name stays
-// tracked until the delete has finished or given up.
-func (p *Provider) deleteLater(b box) {
-	go p.destroy(b)
+// tracked until the delete has finished or given up, and the capacity admitted for the
+// call ctx belongs to is held until then (sandbox.HoldCapacity, review F14): the
+// sandbox, and any process the run left in it, lives until the delete. Call it before
+// the call returns.
+func (p *Provider) deleteLater(ctx context.Context, b box) {
+	gone := sandbox.HoldCapacity(ctx)
+	go func() {
+		defer gone()
+		p.destroy(b)
+	}()
 }
 
 // destroy deletes a sandbox on its own context, so it still runs after the run's
@@ -519,7 +552,7 @@ func (p *Provider) deleteLater(b box) {
 // is untracked whatever happens: anything still alive under this instance's label
 // after that is an orphan, and ReconcileOrphans reaps it.
 func (p *Provider) destroy(b box) {
-	defer p.untrack(b.name)
+	defer p.leases.Untrack(b.name)
 	ctx, cancel := context.WithTimeout(context.Background(), deleteBudget)
 	defer cancel()
 	const attempts = 3
@@ -567,41 +600,24 @@ func (p *Provider) deleteAndWait(ctx context.Context, name string) error {
 	}
 }
 
-func (p *Provider) track(name string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.tracked[name] = struct{}{}
-}
-
-func (p *Provider) untrack(name string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.tracked, name)
-}
-
-func (p *Provider) isTracked(name string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	_, ok := p.tracked[name]
-	return ok
-}
-
-func (p *Provider) trackedCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.tracked)
-}
-
 // Drain ends every open session, then waits until no sandbox this provider created is
 // left undeleted (every run has ended and every background delete has finished or
 // given up), or ctx ends. A daemon calls it on shutdown, after it stops accepting runs.
 func (p *Provider) Drain(ctx context.Context) error {
-	for _, s := range p.openSessions() {
-		s.finish(sandbox.SessionShutdown, "")
+	// From here no sandbox is created and no session handed over: an open that already
+	// has its sandbox deletes it, which the wait below covers, since a name stays
+	// tracked until its delete.
+	p.sessions.Drain()
+	p.sessions.EndAll(sandbox.SessionShutdown)
+	// A create already past its check is waited for until its name is tracked.
+	select {
+	case <-p.sessions.Opened():
+	case <-ctx.Done():
+		return fmt.Errorf("openshell: sandboxes still being created: %w", ctx.Err())
 	}
-	for p.trackedCount() > 0 {
+	for p.leases.Len() > 0 {
 		if err := sleepCtx(ctx, 50*time.Millisecond); err != nil {
-			return fmt.Errorf("openshell: %d sandboxes still undeleted: %w", p.trackedCount(), err)
+			return fmt.Errorf("openshell: %d sandboxes still undeleted: %w", p.leases.Len(), err)
 		}
 	}
 	return nil
@@ -661,7 +677,7 @@ func (p *Provider) orphaned(sb *openshellv1.Sandbox, now time.Time) bool {
 		return false
 	}
 	if labels[instanceLabel] == p.instance {
-		return !p.isTracked(meta.GetName())
+		return !p.leases.Tracked(meta.GetName())
 	}
 	// Unsigned and 32-bit: no sign, and seconds times a nanosecond cannot overflow.
 	secs, err := strconv.ParseUint(labels[lifetimeLabel], 10, 32)

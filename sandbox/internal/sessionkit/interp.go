@@ -149,6 +149,11 @@ type Interpreters struct {
 	// the others' (a cell could not open its relay's stdout, measured 2026-10-01;
 	// sandbox.SessionSmokeTest refuses sessions where a call can).
 	Checker ExecFunc
+	// Start, when set, is put before an interpreter's command: how the provider starts
+	// a guest-facing process with the guest's environment, while the launcher, one of
+	// plimsoll's own programs, starts with none of it. It must exec the command
+	// without forking, so the process the launcher started is the interpreter.
+	Start []string
 
 	mu     sync.Mutex
 	live   map[string]string
@@ -226,7 +231,7 @@ var identityPattern = regexp.MustCompile(`^[0-9]+:-?[0-9]+:[0-9a-f]+$`)
 // trusts no file for it: a PID read from a writable file let a cell make the sweep
 // keep a process of its choosing.
 func (in *Interpreters) launch(ctx context.Context, exec ExecFunc, lang, work string) error {
-	argv := append([]string{"sh", "-c", launchScript, "sh"}, command[lang]...)
+	argv := append(append([]string{"sh", "-c", launchScript, "sh"}, in.Start...), command[lang]...)
 	env := map[string]string{"PLIMSOLL_INTERP_DIR": interpRoot + lang, "PLIMSOLL_WORK": work}
 	out, err := exec(ctx, argv, env, nil, 1<<20, 4096)
 	if err != nil {

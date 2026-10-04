@@ -41,7 +41,7 @@ func TestDockerStatesVerifiedImageIDs(t *testing.T) {
 	}
 
 	d.ModuleImage = "plimsoll/sandbox-sim:latest"
-	d.ready, d.daemonHost = true, "unix:///var/run/docker.sock"
+	d.ready, d.daemonHost, d.verifiedGuestUID = true, "unix:///var/run/docker.sock", d.guestUID()
 	d.verifiedImageIDs = map[string]string{d.Image: "sha256:aa", d.ProjectImage: "sha256:bb", d.ModuleImage: "sha256:cc"}
 	env = d.Environments()
 	if env.JavaScript.Identity != "docker-image:sha256:aa" || env.Project.Identity != "docker-image:sha256:bb" ||

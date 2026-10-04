@@ -43,18 +43,23 @@ func (s *SandboxService) adviceRetentionFor(profile string) grants.AdviceRetenti
 	return p.AdviceRetention()
 }
 
-// catalogFor resolves a run's grant_profile to its known host-API endpoints (a superset
-// of the grant's Allow), which Prospector uses to name an ungranted route worth adding.
-// An empty or unknown profile knows no catalog.
-func (s *SandboxService) catalogFor(profile string) []sandbox.HostRoute {
+// adviceRoutes gathers what the run's profile says about the host API's routes, for
+// the router: the grant's Allow list, the profile's catalog (every route the API
+// exposes) and its batch_of declarations. An empty or unknown profile contributes only
+// the grant's Allow list.
+func (s *SandboxService) adviceRoutes(profile string, grant *sandbox.HostAPIGrant) insights.Routes {
+	var routes insights.Routes
+	if grant != nil {
+		routes.Allow = grant.Allow
+	}
 	if profile == "" {
-		return nil
+		return routes
 	}
-	p, ok := s.Grants.Get(profile)
-	if !ok {
-		return nil
+	if p, ok := s.Grants.Get(profile); ok {
+		routes.Catalog = p.Catalog()
+		routes.BatchOf = p.BatchOf()
 	}
-	return p.Catalog()
+	return routes
 }
 
 // computeAdvice runs the Prospector detectors over a run's CallTrace and splits the
@@ -62,28 +67,27 @@ func (s *SandboxService) catalogFor(profile string) []sandbox.HostRoute {
 //
 //   - all: every finding, for the operator surface (audit/logs/dashboards). Computed
 //     for both operator and caller modes.
-//   - caller: the agent-fixable subset — findings whose remedy is a better route the
-//     profile already exposes (Finding.Suggested set). Populated only in caller mode;
-//     API-change findings (no suggested route) never leave the operator surface.
-//
-// catalog, when set (the profile's known API endpoints, e.g. from its OpenAPI spec via
-// plimsoll-specgen), lets a finding name the concrete ungranted route the operator
-// should add (Finding.CatalogMatch) instead of a vague "the API needs a change." That
-// annotation is operator-only: it is never in the caller subset, since the agent cannot
-// call an ungranted route.
+//   - caller: the agent-fixable subset, the findings whose batch route the profile
+//     declares (batch_of) and grants (Finding.Suggested set). Populated only in caller
+//     mode. A route the operator must grant (GrantRoute) or check and declare
+//     (Candidate, found from the path alone) never leaves the operator surface: the
+//     agent cannot call the first, and nobody has said the second returns the same
+//     items. A repeated-read finding has no Suggested route and stays operator-only by
+//     design: one fixed route read again and again is often a loop waiting for a
+//     change, and "cache it" would break that loop.
 //
 // It reads only the metadata the broker recorded and never mutates the trace, so it
 // cannot change ExitCode, output, or isolation.
-func computeAdvice(mode grants.AdviceMode, trace *sandbox.CallTrace, allow, catalog []sandbox.HostRoute) (all, caller []insights.Finding) {
+func computeAdvice(mode grants.AdviceMode, trace *sandbox.CallTrace, routes insights.Routes) (all, caller []insights.Finding) {
 	if mode == grants.AdviceOff {
 		return nil, nil
 	}
-	all = insights.AnalyzeWithCatalog(trace, allow, catalog)
+	all = insights.Analyze(trace, routes)
 	if mode != grants.AdviceCaller {
 		return all, nil
 	}
 	for _, f := range all {
-		if f.Suggested != nil { // a better route exists -> the agent can fix it now
+		if f.Suggested != nil { // a declared, granted batch route -> the agent can fix it now
 			caller = append(caller, f)
 		}
 	}
@@ -126,8 +130,8 @@ func adviceWire(findings []insights.Finding) []*plimsollv1.AdviceFinding {
 // sentence templated from those plus numbers, or a count/timing/size — so a summary
 // can neither leak a path/body/credential nor carry a prompt-injection payload. The
 // json tags are the wire contract the HTML report parser (internal/report) reads, so
-// treat them as an API. AgentFixable is the router's split (a better route exists);
-// SuggestedMethod/Route name it when it does.
+// treat them as an API. AgentFixable is the router's split (a declared, granted batch
+// route exists); SuggestedMethod/Route name it when it does.
 type findingSummary struct {
 	Pattern         string `json:"pattern"`
 	Severity        string `json:"severity"`
@@ -138,14 +142,19 @@ type findingSummary struct {
 	AgentFixable    bool   `json:"agent_fixable"`
 	SuggestedMethod string `json:"suggested_method,omitempty"`
 	SuggestedRoute  string `json:"suggested_route,omitempty"`
-	// GrantRouteMethod/Route name a route the API exposes but the profile does not grant
-	// (from the endpoint catalog): the operator action is to add it to the allow list.
-	// Operator-only; never sent to the caller.
+	// GrantRouteMethod/Route name the batch route the profile declares but does not
+	// grant: the operator action is to add it to the allow list. Operator-only; never
+	// sent to the caller.
 	GrantRouteMethod string `json:"grant_route_method,omitempty"`
 	GrantRoute       string `json:"grant_route,omitempty"`
-	ExtraCalls       int    `json:"extra_calls,omitempty"`
-	AddedLatencyMs   int64  `json:"added_latency_ms,omitempty"`
-	BytesMoved       int    `json:"bytes_moved,omitempty"`
+	// CandidateMethod/Route name a route found from the path alone (the per-item
+	// route's collection, granted or catalogued) with no batch_of declaration: the
+	// operator checks it returns the same items and, if so, declares it. Operator-only.
+	CandidateMethod string `json:"candidate_method,omitempty"`
+	CandidateRoute  string `json:"candidate_route,omitempty"`
+	ExtraCalls      int    `json:"extra_calls,omitempty"`
+	AddedLatencyMs  int64  `json:"added_latency_ms,omitempty"`
+	BytesMoved      int    `json:"bytes_moved,omitempty"`
 }
 
 // adviceAuditAttrs summarizes the operator-surface findings for the audit line, gated
@@ -167,7 +176,7 @@ func adviceAuditAttrs(mode grants.AdviceMode, retention grants.AdviceRetention, 
 	if len(all) == 0 || retention == grants.RetentionNone {
 		return nil
 	}
-	var agentFixable, ungranted, extraCalls, bytesMoved int
+	var agentFixable, ungranted, candidates, extraCalls, bytesMoved int
 	var addedLatency time.Duration
 	var details []findingSummary
 	if retention == grants.RetentionDetailed {
@@ -177,8 +186,11 @@ func adviceAuditAttrs(mode grants.AdviceMode, retention grants.AdviceRetention, 
 		if f.Suggested != nil {
 			agentFixable++
 		}
-		if f.CatalogMatch != nil {
+		if f.GrantRoute != nil {
 			ungranted++
+		}
+		if f.Candidate != nil {
+			candidates++
 		}
 		extraCalls += f.Cost.ExtraCalls
 		addedLatency += f.Cost.AddedLatency
@@ -202,9 +214,13 @@ func adviceAuditAttrs(mode grants.AdviceMode, retention grants.AdviceRetention, 
 			fs.SuggestedMethod = f.Suggested.Method
 			fs.SuggestedRoute = f.Suggested.Path
 		}
-		if f.CatalogMatch != nil {
-			fs.GrantRouteMethod = f.CatalogMatch.Method
-			fs.GrantRoute = f.CatalogMatch.Path
+		if f.GrantRoute != nil {
+			fs.GrantRouteMethod = f.GrantRoute.Method
+			fs.GrantRoute = f.GrantRoute.Path
+		}
+		if f.Candidate != nil {
+			fs.CandidateMethod = f.Candidate.Method
+			fs.CandidateRoute = f.Candidate.Path
 		}
 		details = append(details, fs)
 	}
@@ -214,6 +230,7 @@ func adviceAuditAttrs(mode grants.AdviceMode, retention grants.AdviceRetention, 
 		slog.Int("advice_findings", len(all)),
 		slog.Int("advice_agent_fixable", agentFixable),
 		slog.Int("advice_ungranted_routes", ungranted),
+		slog.Int("advice_candidate_routes", candidates),
 		slog.Int("advice_extra_calls", extraCalls),
 		slog.Int64("advice_added_latency_ms", addedLatency.Milliseconds()),
 		slog.Int("advice_bytes_moved", bytesMoved),

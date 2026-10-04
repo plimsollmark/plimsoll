@@ -49,7 +49,8 @@ func TestSessionThroughTheClientVerifiesAsABundle(t *testing.T) {
 	url, _ := sessionServer(t)
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	var bundle bytes.Buffer
-	r := newRemote(t, url, WithRecorder(attest.NewHarness(attest.NewSigner(key), &bundle)))
+	harness := attest.NewHarness(attest.NewSigner(key), &bundle)
+	r := newRemote(t, url, WithRecorder(harness))
 	info, err := r.Describe(context.Background())
 	if err != nil || !info.SupportsSessions || info.SessionLifetime != time.Minute {
 		t.Fatalf("describe: %+v, %v", info, err)
@@ -87,6 +88,9 @@ func TestSessionThroughTheClientVerifiesAsABundle(t *testing.T) {
 	sum, err := s.Close(context.Background())
 	if err != nil || sum.Calls != 6 || sum.End != sandbox.SessionClosed {
 		t.Fatalf("close: %+v, %v", sum, err)
+	}
+	if err := harness.Checkpoint(); err != nil {
+		t.Fatal(err)
 	}
 	entries, err := attest.ReadBundle(&bundle)
 	if err != nil {
@@ -344,7 +348,8 @@ func TestUnansweredCallIsSignedAndTheSessionGoesOn(t *testing.T) {
 	t.Cleanup(srv.Close)
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	var bundle bytes.Buffer
-	r := newRemote(t, srv.URL, WithRecorder(attest.NewHarness(attest.NewSigner(key), &bundle)))
+	harness := attest.NewHarness(attest.NewSigner(key), &bundle)
+	r := newRemote(t, srv.URL, WithRecorder(harness))
 	s, err := r.OpenSession(context.Background(), SessionOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -367,6 +372,9 @@ func TestUnansweredCallIsSignedAndTheSessionGoesOn(t *testing.T) {
 	sum, err := s.Close(context.Background())
 	if ran := p.Opened()[0].Calls(); err != nil || sum.Calls != uint64(ran) {
 		t.Fatalf("close: %+v, %v; the session ran %d calls", sum, err, ran)
+	}
+	if err := harness.Checkpoint(); err != nil {
+		t.Fatal(err)
 	}
 	entries, err := attest.ReadBundle(&bundle)
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -23,12 +24,16 @@ import (
 const usage = `Usage: plimsoll-clients COMMAND -file clients.json [options]
 
 Commands:
-  create  -id NAME [-scope SCOPE ...] -token-stdout
+  create  -id NAME [-scope SCOPE ...] [-paid-seconds-per-day N] -token-stdout
           Generate a token and add a caller. Default scope: code:run.
-  import  -id NAME [-scope SCOPE ...]
+  import  -id NAME [-scope SCOPE ...] [-paid-seconds-per-day N]
           Read an existing token from stdin and add a caller.
+  limit   -id NAME -paid-seconds-per-day N
+          Set the caller's daily allowance on a metered provider (E2B, Docker
+          Cloud): seconds of microVM wall time per UTC day; 0 removes it.
   list    [-json]
-          List configured caller IDs and scopes, without tokens or fingerprints.
+          List configured caller IDs, scopes and allowances, without tokens or
+          fingerprints.
   rotate  -id NAME (-token-stdout | -token-stdin)
           Replace a caller's token, preserving its identity and permissions.
   revoke  -id NAME
@@ -68,7 +73,7 @@ func run(args []string, input io.Reader, output, diagnostic io.Writer) error {
 		return err
 	}
 	command := args[0]
-	if !slices.Contains([]string{"create", "import", "list", "rotate", "revoke"}, command) {
+	if !slices.Contains([]string{"create", "import", "limit", "list", "rotate", "revoke"}, command) {
 		return errors.New("unknown command; run plimsoll-clients help")
 	}
 	flags := flag.NewFlagSet("plimsoll-clients "+command, flag.ContinueOnError)
@@ -78,11 +83,15 @@ func run(args []string, input io.Reader, output, diagnostic io.Writer) error {
 	var id string
 	var scopes scopesFlag
 	var tokenStdout, tokenStdin, asJSON bool
+	var paid int64
 	if command != "list" {
 		flags.StringVar(&id, "id", "", "caller ID (required)")
 	}
 	if command == "create" || command == "import" {
 		flags.Var(&scopes, "scope", "permission name; repeat for multiple scopes (default code:run)")
+	}
+	if command == "create" || command == "import" || command == "limit" {
+		flags.Int64Var(&paid, "paid-seconds-per-day", 0, "daily allowance on a metered provider, in seconds of microVM wall time per UTC day (0 = none of its own)")
 	}
 	if command == "create" || command == "rotate" {
 		flags.BoolVar(&tokenStdout, "token-stdout", false, "explicitly send a newly generated secret token to stdout")
@@ -120,6 +129,18 @@ func run(args []string, input io.Reader, output, diagnostic io.Writer) error {
 	if command == "create" && !tokenStdout {
 		return errors.New("create requires -token-stdout; route stdout to your secret manager")
 	}
+	if paid < 0 {
+		return errors.New("-paid-seconds-per-day must not be negative")
+	}
+	if command == "limit" && !flagSet(flags, "paid-seconds-per-day") {
+		return errors.New("limit requires -paid-seconds-per-day (0 removes the caller's allowance)")
+	}
+	if paid > 0 && paid < 60 {
+		fmt.Fprintf(diagnostic, "warning: an allowance of %d seconds admits few runs or none: each run reserves its timeout plus the provider's teardown bound (33 seconds on E2B and Docker Cloud).\n", paid)
+	}
+	if command == "limit" {
+		fmt.Fprintln(diagnostic, "A daemon counts allowances in memory: the restart that applies this change gives every caller, and the daemon, a fresh day.")
+	}
 	if command == "rotate" && tokenStdout == tokenStdin {
 		return errors.New("rotate requires exactly one of -token-stdout or -token-stdin")
 	}
@@ -153,7 +174,9 @@ func run(args []string, input io.Reader, output, diagnostic io.Writer) error {
 		}
 		switch command {
 		case "create", "import":
-			f.Clients = append(f.Clients, clientconfig.Caller{ID: id, TokenSHA256: clientconfig.Fingerprint(token), Scopes: []string(scopes)})
+			f.Clients = append(f.Clients, clientconfig.Caller{ID: id, TokenSHA256: clientconfig.Fingerprint(token), Scopes: []string(scopes), PaidSecondsPerDay: paid})
+		case "limit":
+			f.Clients[index].PaidSecondsPerDay = paid
 		case "rotate":
 			fingerprint := clientconfig.Fingerprint(token)
 			if fingerprint == f.Clients[index].TokenSHA256 {
@@ -208,12 +231,13 @@ func readToken(input io.Reader) (string, error) {
 
 func list(f clientconfig.File, output io.Writer, asJSON bool) error {
 	type metadata struct {
-		ID     string   `json:"id"`
-		Scopes []string `json:"scopes"`
+		ID                string   `json:"id"`
+		Scopes            []string `json:"scopes"`
+		PaidSecondsPerDay int64    `json:"paid_seconds_per_day,omitempty"`
 	}
 	callers := make([]metadata, 0, len(f.Clients))
 	for _, c := range f.Clients {
-		callers = append(callers, metadata{c.ID, c.Scopes})
+		callers = append(callers, metadata{c.ID, c.Scopes, c.PaidSecondsPerDay})
 	}
 	slices.SortFunc(callers, func(a, b metadata) int { return strings.Compare(a.ID, b.ID) })
 	if asJSON {
@@ -222,9 +246,20 @@ func list(f clientconfig.File, output io.Writer, asJSON bool) error {
 		return enc.Encode(callers)
 	}
 	w := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "CALLER\tSCOPES")
+	fmt.Fprintln(w, "CALLER\tSCOPES\tPAID SECONDS/DAY")
 	for _, c := range callers {
-		fmt.Fprintf(w, "%s\t%s\n", c.ID, strings.Join(c.Scopes, ", "))
+		paid := "none"
+		if c.PaidSecondsPerDay > 0 {
+			paid = strconv.FormatInt(c.PaidSecondsPerDay, 10)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", c.ID, strings.Join(c.Scopes, ", "), paid)
 	}
 	return w.Flush()
+}
+
+// flagSet reports whether the command line set the named flag.
+func flagSet(flags *flag.FlagSet, name string) bool {
+	set := false
+	flags.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
 }

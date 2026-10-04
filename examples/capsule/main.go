@@ -124,14 +124,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("plimsoll's verifier refused the bundle, so nothing was stated: %w", err)
 	}
-	checks = append(checks, ran("plimsoll attest (Go)", "the published session bundle: every signature, every record against its stored request and response, the chain and its close statement",
+	checks = append(checks, ran("plimsoll attest (Go)", "the published session bundle: every signature, every record against its stored request and response, the bundle's chain of links and its checkpoint, the session's chain and its close statement",
 		"accepted", fmt.Sprintf("accepted: %s, %s", plural(rep.Runs, "single run"), plural(len(rep.Sessions), "session")), true))
 	tail, err := dropLastCall(entries)
 	if err != nil {
 		return err
 	}
 	_, terr := attest.VerifyBundle(tail, attest.NewVerifier(pub))
-	checks = append(checks, ran("plimsoll attest (Go)", "the bundle with its last call removed (the close statement still says how many calls there were and names the last record)",
+	checks = append(checks, ran("plimsoll attest (Go)", "the bundle with its last call removed (the next line's link names the removed line, and the close statement still counts the call)",
 		"refused", verdictText(terr == nil, errText(terr)), terr != nil))
 
 	src := publishedSource(bundleBytes, at.UTC())

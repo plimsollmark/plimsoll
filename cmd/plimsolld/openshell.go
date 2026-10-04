@@ -27,9 +27,9 @@ const openshellUsage = `
   SANDBOX_OPENSHELL_CA_FILE  PEM CA the gateway's certificate must chain to
   SANDBOX_OPENSHELL_CERT_FILE / SANDBOX_OPENSHELL_KEY_FILE
                              PEM client certificate and key
-  SANDBOX_OPENSHELL_IMAGE    the image every sandbox boots; it must carry node, sh
-                             and /runner.mjs, as plimsoll/sandbox does (@sha256:
-                             when SANDBOX_REQUIRE_PINNED_IMAGES=1). openshell
+  SANDBOX_OPENSHELL_IMAGE    the image every sandbox boots; it must carry node, sh,
+                             /usr/bin/env and /runner.mjs, as plimsoll/sandbox does
+                             (@sha256: when SANDBOX_REQUIRE_PINNED_IMAGES=1). openshell
                              honors SANDBOX_MEMORY_MB and SANDBOX_CPUS (default 256
                              MiB and 1 CPU, since OpenShell's own default is no
                              limit). SANDBOX_DISK_MB mounts each run's /tmp, the

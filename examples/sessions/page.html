@@ -58,7 +58,7 @@
   <div class="tile"><div class="k">Sandbox</div><div class="v">{{.Provider}} · {{.Tier}}</div><div class="n">the tier measured when the session opened</div></div>
   <div class="tile"><div class="k">Calls</div><div class="v">{{len .Calls}}</div><div class="n">two projects and three snippets, one sandbox</div></div>
   <div class="tile"><div class="k">Median call</div><div class="v">{{.Median}} ms</div><div class="n">the client's round trip, including the read-back before the call and the sweep after it</div></div>
-  <div class="tile"><div class="k">Signed bundle</div><div class="v">verified</div><div class="n">and refused with one call dropped or one byte changed</div></div>
+  <div class="tile"><div class="k">Signed bundle</div><div class="v">verified</div><div class="n">and refused with one call dropped, one byte changed or its end cut</div></div>
 </div>
 
 <h2>The calls</h2>
@@ -85,7 +85,7 @@
 <tr><th>Bundle</th><th>Verdict</th><th>What the verifier said</th></tr>
 {{range .Checks}}<tr><td>{{.What}}</td><td>{{if .Pass}}<span class="badge ok">{{.Verdict}}</span>{{else}}<span class="badge no">{{.Verdict}}</span>{{end}}</td><td class="mono">{{.Detail}}</td></tr>
 {{end}}</table></div>
-<p class="note">Every record is a DSSE envelope around an in-toto statement, signed with an Ed25519 key the harness held for this run (key ID <span class="mono">{{.KeyID}}</span>). The daemon holds no key: it only hashes. The bundle and the public key sit beside this page as <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/bundle.jsonl">bundle.jsonl</a> and <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/harness.pub">harness.pub</a>.</p>
+<p class="note">Every record is a DSSE envelope around an in-toto statement, signed with an Ed25519 key the harness held for this run (key ID <span class="mono">{{.KeyID}}</span>). The daemon holds no key: it only hashes. Every line of the bundle also carries a link the harness signed, naming the line before it, and the bundle ends with a checkpoint stating how many lines come before it, so a line removed, moved or added anywhere in the file, or a cut end, is refused even when no session chain covers it. The bundle and the public key sit beside this page as <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/bundle.jsonl">bundle.jsonl</a> and <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/harness.pub">harness.pub</a>.</p>
 
 <h2>What happens around each call</h2>
 <ol>
@@ -101,6 +101,7 @@
 <li>A session is only as private as its gateway: any other client of the same gateway can reach the sandbox between calls. Give plimsoll a gateway, or an OpenShell workspace, of its own.</li>
 <li>Processes never persist, by design, so a long-running service inside a session (a development server) is not supported.</li>
 <li>The key here was made for this run and discarded. In use, the harness's key is the caller's, kept outside the daemon.</li>
+<li>The links prove the bundle is the whole file the harness wrote, not that the harness was handed every call the caller made; <code>plimsoll-attest verify -expect</code> checks the bundle against the caller's own list of its calls' trace IDs (the five calls here carry <span class="mono">call-1</span> to <span class="mono">call-5</span>). A bundle cut back to an earlier checkpoint (one the harness was resumed after) verifies as whole: the caller's list catches that.</li>
 </ul>
 <p class="note">Reproduce: with an OpenShell gateway and its five <code>SANDBOX_OPENSHELL_*</code> settings in the environment, run <code>go run ./examples/sessions</code> in the plimsoll repository; the page, the bundle and the key are written from the run. Check the bundle: <code>go run ./cmd/plimsoll-attest verify -pub docs/examples/sessions/harness.pub docs/examples/sessions/bundle.jsonl</code>. plimsoll is an independent project, not affiliated with or endorsed by NVIDIA.</p>
 </main>

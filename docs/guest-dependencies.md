@@ -65,9 +65,13 @@ Four choices in that file matter:
   in its own `RUN` step where you can read what it does.
 - **`WORKDIR /`** puts the tree at `/node_modules`, the one place every project file
   resolves.
-- **`USER node`** restores the unprivileged user the runner expects; the daemon also
-  enforces `--user` and drops Linux capabilities (the kernel's separate root privileges)
-  at run time.
+- **`USER node`** keeps the image's own default unprivileged. The daemon runs every
+  guest as its own uid anyway (`--user`, default 61000, `SANDBOX_GUEST_UID`), which has no
+  account in the image, and drops Linux capabilities (the kernel's separate root
+  privileges) at run time. So a file only `node` can read is unreadable to a run, `HOME`
+  is `/`, and `os.userInfo()` (and Python's `getpass.getuser()`) fails: give a package's
+  files to everyone (`chmod -R a+rX`), or add a passwd line for the guest uid if a tool
+  needs a user name.
 
 **A private registry** supplies its credential to the build only, through a BuildKit
 secret mount (a file docker makes available to one `RUN` step and never writes into the
@@ -138,10 +142,14 @@ ENV OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 USER node
 ```
 
-The base image carries what every project image inherits: its entrypoint loads
-`/usr/local/lib/plimsoll-runner-guard.so` into `node /runner.mjs` before the runner
-reads a plan, which stops a project step from reading the runner's plan, its report or
-its memory; `USER node`, no `VOLUME`, and a read-only root at run time also apply.
+The base image carries what every project image inherits: `/runner.mjs` and
+`/usr/local/lib/plimsoll-runner-guard.so`, which the docker provider loads into
+`node /runner.mjs` before the runner reads a plan, stopping a project step from reading
+the runner's plan, its report or its memory. The provider starts the runner itself, with
+none of the image's environment, and ignores the image's `ENTRYPOINT`; the image's `ENV`
+(here the one BLAS thread) reaches the project's steps. `USER node`, no `VOLUME`, and a
+read-only root at run time also apply, and an `ENV` that sets a dynamic-loader variable
+(any `LD_` name, `GLIBC_TUNABLES`, `LOCPATH`, `NLSPATH` or `GCONV_PATH`) is refused at startup.
 Point a daemon at the image with `SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest`
 and a project whose step is `python3 main.py` runs through `RunProject` unchanged.
 

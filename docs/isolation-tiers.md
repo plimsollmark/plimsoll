@@ -93,7 +93,7 @@ prove wrong is not worth reading.
   start a container) registered, and that `runsc` there is a program named `runsc`; runs
   then start under that runtime. That is evidence from docker's registration plus the
   startup test above. It is not proof that the wall actually running is gVisor, and the
-  code says so at [docker.go](../sandbox/docker.go) `Preflight`.
+  code says so at [docker_preflight.go](../sandbox/docker_preflight.go) `Preflight`.
 - For `e2b`, the vm tier follows from which provider it is: E2B runs each sandbox in a
   Firecracker microVM, and plimsoll reports that without measuring it. Its startup test
   proves the microVM behaves as promised, including blocked egress, not that a

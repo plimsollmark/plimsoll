@@ -90,10 +90,11 @@ func (s Severity) String() string {
 // status are counted; failed calls are named in the finding's sentence instead. Read
 // each field with that in mind, and never present the two derived ones as savings.
 type Cost struct {
-	// ExtraCalls is the measured successful call count minus one. Rigorous when a
-	// granted collection route exists (a fan-out with Suggested set: one call really
-	// would do, if that route returns the same items); an assumption when the finding
-	// says the API needs a new endpoint, since that endpoint's shape is unknown.
+	// ExtraCalls is the measured successful call count minus one. As rigorous as the
+	// operator's declaration when the profile declares and grants a batch route (a
+	// fan-out with Suggested set: one call would do if that route returns the same
+	// items, which is what the declaration asserts); an assumption otherwise, since
+	// the replacement's shape is unknown.
 	ExtraCalls int
 	// AddedLatency is the summed measured round-trip time minus one call's (the
 	// slowest for fan-out, the average for repeated reads). It is a model, "time
@@ -107,8 +108,8 @@ type Cost struct {
 	BytesMoved int
 }
 
-// Route is a (method, template) pair, never a raw path. Used for a Finding's
-// router-suggested better endpoint.
+// Route is a (method, template) pair, never a raw path. Used for the batch route a
+// Finding names.
 type Route struct {
 	Method string
 	Path   string
@@ -117,6 +118,12 @@ type Route struct {
 // Finding is one efficiency observation about a run's brokered host.* calls. Every
 // string field is trusted (a route template, an HTTP verb, or a sentence templated
 // from those plus numbers); none is guest-controlled.
+//
+// At most one of Suggested, GrantRoute and Candidate is set, and only on a read fan-out.
+// What separates them is the basis for naming the route: an operator's declaration in
+// the profile's batch_of (Suggested, GrantRoute) or the route's path alone (Candidate).
+// A path cannot say whether the route pages, returns fewer fields, or covers a different
+// scope, so only a declared route ever reaches the caller.
 type Finding struct {
 	Pattern  PatternID
 	Severity Severity
@@ -124,21 +131,19 @@ type Finding struct {
 	Route    string // matched route TEMPLATE, never a raw path
 	Remedy   RemedyClass
 	Cost     Cost
-	// Suggested is a better route the profile already exposes (from the Allow list),
-	// set by the router when one exists — e.g. a GET fan-out on /items/* whose profile
-	// also grants GET /items. Only a read fan-out is ever routed: a collection write's
-	// semantics cannot be inferred from its path. Nil when Analyze got no Allow list or
-	// found no sibling. Its presence is what later phases use to split agent-fixable
-	// from API-change.
+	// Suggested is the batch route the profile declares for this route (batch_of) and
+	// grants (Allow): the agent can switch to it now. It is the one route a finding
+	// hands the caller, and its presence is what makes a finding agent-fixable.
 	Suggested *Route
-	// CatalogMatch is a better route the host API EXPOSES (per the profile's endpoint
-	// catalog, e.g. generated from its OpenAPI spec) but the profile does NOT grant — so
-	// the fix is an operator action: widen the Allow list to enable the batch. It is set
-	// only when Suggested is not (a granted sibling always wins), only for a read
-	// fan-out, and is OPERATOR-ONLY: it never reaches the caller, since the agent cannot
-	// call an ungranted route. Nil when Analyze got no catalog or the API exposes no
-	// such endpoint.
-	CatalogMatch *Route
+	// GrantRoute is the batch route the profile declares for this route but does not
+	// grant: the operator action is to add it to the Allow list. OPERATOR-ONLY: the agent
+	// cannot call an ungranted route.
+	GrantRoute *Route
+	// Candidate is a route the path alone suggests: the per-item route's collection
+	// (/items for /items/*), granted or listed in the profile's catalog, with no batch_of
+	// declaration. OPERATOR-ONLY: plimsoll does not know it returns the same items, so the
+	// operator checks it and, if it does, declares it.
+	Candidate *Route
 	// Detail is one plain sentence for a human or an agent, templated from trusted
 	// metadata only (route template, method, counts, timings). It states the remedy
 	// as a condition, names calls that did not succeed, and says "at least" when the

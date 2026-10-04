@@ -40,7 +40,7 @@ func guardedRunnerCommand(t *testing.T, node, work string) *exec.Cmd {
 		// The guard makes the runner non-dumpable, so a same-uid step cannot open its
 		// /proc descriptors or memory, and the runner proves that before reading a
 		// plan. Root keeps CAP_DAC_OVERRIDE and opens them anyway, so the runner
-		// correctly refuses every plan. In the image it runs as USER node, where the
+		// correctly refuses every plan. In a sandbox it runs as the guest uid, where the
 		// docker suite's runner integrity tests prove the guard.
 		t.Skip("the runner guard cannot prove isolation for uid 0 (root keeps CAP_DAC_OVERRIDE); run the gate as a non-root user")
 	}

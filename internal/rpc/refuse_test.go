@@ -19,23 +19,6 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
-func notDispatchedOf(err error) (plimsollv1.NotDispatchedReason, bool) {
-	var ce *connect.Error
-	if !errors.As(err, &ce) {
-		return 0, false
-	}
-	for _, d := range ce.Details() {
-		v, derr := d.Value()
-		if derr != nil {
-			continue
-		}
-		if nd, ok := v.(*plimsollv1.NotDispatched); ok {
-			return nd.GetReason(), true
-		}
-	}
-	return 0, false
-}
-
 func wantNotDispatched(t *testing.T, name string, err error, want plimsollv1.NotDispatchedReason) {
 	t.Helper()
 	got, ok := notDispatchedOf(err)
@@ -155,19 +138,25 @@ func TestConnectErrorsAreBuiltOnlyWhereTheMarkIsDecided(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Every declaration: a function's body, and a package-level var or const whose
+		// value is a function literal (a table of payload kinds, say), which a scan
+		// of function declarations alone would miss.
 		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || allowed[fn.Name.Name] {
-				continue
+			where := "a package-level declaration"
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				if allowed[fn.Name.Name] {
+					continue
+				}
+				where = fn.Name.Name
 			}
-			ast.Inspect(fn, func(n ast.Node) bool {
+			ast.Inspect(decl, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
 				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "NewError" {
 					if id, ok := sel.X.(*ast.Ident); ok && id.Name == "connect" {
-						t.Errorf("%s: %s builds a Connect error without deciding the NotDispatched mark; use refuse", fset.Position(call.Pos()), fn.Name.Name)
+						t.Errorf("%s: %s builds a Connect error without deciding the NotDispatched mark; use refuse", fset.Position(call.Pos()), where)
 					}
 				}
 				return true
