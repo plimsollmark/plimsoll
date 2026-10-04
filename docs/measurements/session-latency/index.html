@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session latency: what an agent's code tool pays per call</title>
+<style>
+:root{color-scheme:light;--ink:#1d2330;--muted:#5b6475;--rule:#d9dde5;--bg:#ffffff;--tile:#f4f6f9}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto;padding:28px 22px 60px}
+h1{font-size:24px;margin:0 0 6px} h2{font-size:18px;margin:30px 0 8px}
+p.sub{color:var(--muted);margin:0 0 18px}
+table{border-collapse:collapse;width:100%;font-size:14px} th,td{border-bottom:1px solid var(--rule);padding:6px 8px;text-align:right;vertical-align:top}
+th:first-child,td:first-child{text-align:left} td small{color:var(--muted)}
+.legend span{display:inline-block;margin-right:16px} .legend i{display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:-1px}
+svg{max-width:100%;height:auto} .note{background:var(--tile);border-radius:8px;padding:12px 14px;margin:14px 0}
+code{background:var(--tile);padding:1px 4px;border-radius:4px} .scroll{overflow-x:auto}
+pre{overflow-x:auto;background:var(--tile);padding:10px 12px;border-radius:6px} pre code{padding:0}
+</style></head><body><main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html">Warm pool</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
+<h1>Session latency: what an agent's code tool pays per call</h1>
+<p class="sub">Measured docker, runc (container tier, 15 repetitions, 2026-10-01 22:35 UTC); docker, gVisor (kernel tier, 15 repetitions, 2026-10-01 22:36 UTC); openshell (container tier, 15 repetitions, 2026-10-01 23:02 UTC).
+Machine: Intel(R) Core(TM) Ultra 9 275HX, 24 CPUs, linux/amd64. Image for plimsoll: plimsoll/sandbox-python:latest. plimsoll's providers were called directly, not through
+the daemon, whose overhead plus the client's was about 3 to 4 ms a round trip in the TypeScript client's tests. Each timed call
+followed an untimed pause of 250 ms, because an agent's calls are seconds apart (its model thinks between them) and a docker
+session finishes its cleanup after answering.</p>
+
+<p><strong>No network is in these numbers:</strong> the providers ran beside the program timing them. A daemon hosted
+away from its caller adds that network round trip to every call. The terms session, cell and relay are defined in
+<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md">the sessions guide (EXTERNAL · source repo ↗)</a>;
+the time a warm pool takes off a session's first call is on <a href="../warm-pool/index.html">the warm-pool page
+(INTERNAL · measurement →)</a>.</p>
+
+<h2>What keeping state buys</h2>
+<p>A call that uses an array of 10 million values (80 MB) an earlier call loaded, against a call that has to build it again:</p>
+<ul><li><strong>docker, runc</strong>: 18.1x faster (20 ms against 352 ms)</li><li><strong>docker, gVisor</strong>: 31.3x faster (23 ms against 714 ms)</li><li><strong>openshell</strong>: 91.8x faster (10 ms against 939 ms)</li></ul>
+<p>The more an agent's data costs to load, the larger the difference; building this array takes about 0.1 s of plain
+compute, and parsing a real file of that size takes longer.</p>
+
+<h2>Every operation</h2>
+<div class="legend"><span><i style="background:#2f6db5"></i>docker, runc</span><span><i style="background:#c2702b"></i>docker, gVisor</span><span><i style="background:#3f8f5a"></i>openshell</span></div>
+<svg viewBox="0 0 880 702" role="img" aria-label="Median milliseconds per operation and provider">
+<text x="0" y="24" font-size="12" fill="#1d2330">fresh snippet</text>
+<rect x="230" y="10" width="132.06701150575714" height="14" fill="#2f6db5"><title>docker, runc: 221 ms</title></rect>
+<text x="230" dx="132.06701150575714" dy="11" y="10" font-size="11" fill="#5b6475"> 221 ms</text>
+<rect x="230" y="26" width="162.45439116167046" height="14" fill="#c2702b"><title>docker, gVisor: 272 ms</title></rect>
+<text x="230" dx="162.45439116167046" dy="11" y="26" font-size="11" fill="#5b6475"> 272 ms</text>
+<rect x="230" y="42" width="330.42541275279973" height="14" fill="#3f8f5a"><title>openshell: 554 ms</title></rect>
+<text x="230" dx="330.42541275279973" dy="11" y="42" font-size="11" fill="#5b6475"> 554 ms</text>
+<text x="0" y="86" font-size="12" fill="#1d2330">fresh Python run</text>
+<rect x="230" y="72" width="148.46843316843805" height="14" fill="#2f6db5"><title>docker, runc: 249 ms</title></rect>
+<text x="230" dx="148.46843316843805" dy="11" y="72" font-size="11" fill="#5b6475"> 249 ms</text>
+<rect x="230" y="88" width="255.70881895095943" height="14" fill="#c2702b"><title>docker, gVisor: 429 ms</title></rect>
+<text x="230" dx="255.70881895095943" dy="11" y="88" font-size="11" fill="#5b6475"> 429 ms</text>
+<rect x="230" y="104" width="354.8835475978032" height="14" fill="#3f8f5a"><title>openshell: 595 ms</title></rect>
+<text x="230" dx="354.8835475978032" dy="11" y="104" font-size="11" fill="#5b6475"> 595 ms</text>
+<text x="0" y="148" font-size="12" fill="#1d2330">session open</text>
+<rect x="230" y="134" width="135.840763558075" height="14" fill="#2f6db5"><title>docker, runc: 228 ms</title></rect>
+<text x="230" dx="135.840763558075" dy="11" y="134" font-size="11" fill="#5b6475"> 228 ms</text>
+<rect x="230" y="150" width="154.80492598878598" height="14" fill="#c2702b"><title>docker, gVisor: 260 ms</title></rect>
+<text x="230" dx="154.80492598878598" dy="11" y="150" font-size="11" fill="#5b6475"> 260 ms</text>
+<rect x="230" y="166" width="330.13503240053575" height="14" fill="#3f8f5a"><title>openshell: 554 ms</title></rect>
+<text x="230" dx="330.13503240053575" dy="11" y="166" font-size="11" fill="#5b6475"> 554 ms</text>
+<text x="0" y="210" font-size="12" fill="#1d2330">session snippet call</text>
+<rect x="230" y="196" width="57.14351424963426" height="14" fill="#2f6db5"><title>docker, runc: 96 ms</title></rect>
+<text x="230" dx="57.14351424963426" dy="11" y="196" font-size="11" fill="#5b6475"> 96 ms</text>
+<rect x="230" y="212" width="54.90037074816169" height="14" fill="#c2702b"><title>docker, gVisor: 92 ms</title></rect>
+<text x="230" dx="54.90037074816169" dy="11" y="212" font-size="11" fill="#5b6475"> 92 ms</text>
+<rect x="230" y="228" width="21.67179524309452" height="14" fill="#3f8f5a"><title>openshell: 36 ms</title></rect>
+<text x="230" dx="21.67179524309452" dy="11" y="228" font-size="11" fill="#5b6475"> 36 ms</text>
+<text x="0" y="272" font-size="12" fill="#1d2330">first JavaScript cell</text>
+<rect x="230" y="258" width="130.9883707311256" height="14" fill="#2f6db5"><title>docker, runc: 220 ms</title></rect>
+<text x="230" dx="130.9883707311256" dy="11" y="258" font-size="11" fill="#5b6475"> 220 ms</text>
+<rect x="230" y="274" width="179.92014327361466" height="14" fill="#c2702b"><title>docker, gVisor: 302 ms</title></rect>
+<text x="230" dx="179.92014327361466" dy="11" y="274" font-size="11" fill="#5b6475"> 302 ms</text>
+<rect x="230" y="290" width="63.45138641924569" height="14" fill="#3f8f5a"><title>openshell: 106 ms</title></rect>
+<text x="230" dx="63.45138641924569" dy="11" y="290" font-size="11" fill="#5b6475"> 106 ms</text>
+<text x="0" y="334" font-size="12" fill="#1d2330">warm JavaScript cell</text>
+<rect x="230" y="320" width="8.234399722311544" height="14" fill="#2f6db5"><title>docker, runc: 14 ms</title></rect>
+<text x="230" dx="8.234399722311544" dy="11" y="320" font-size="11" fill="#5b6475"> 14 ms</text>
+<rect x="230" y="336" width="9.506229889414405" height="14" fill="#c2702b"><title>docker, gVisor: 16 ms</title></rect>
+<text x="230" dx="9.506229889414405" dy="11" y="336" font-size="11" fill="#5b6475"> 16 ms</text>
+<rect x="230" y="352" width="3.340864709928427" height="14" fill="#3f8f5a"><title>openshell: 6 ms</title></rect>
+<text x="230" dx="3.340864709928427" dy="11" y="352" font-size="11" fill="#5b6475"> 6 ms</text>
+<text x="0" y="396" font-size="12" fill="#1d2330">first Python cell</text>
+<rect x="230" y="382" width="127.95875559795653" height="14" fill="#2f6db5"><title>docker, runc: 215 ms</title></rect>
+<text x="230" dx="127.95875559795653" dy="11" y="382" font-size="11" fill="#5b6475"> 215 ms</text>
+<rect x="230" y="398" width="222.05331873907292" height="14" fill="#c2702b"><title>docker, gVisor: 372 ms</title></rect>
+<text x="230" dx="222.05331873907292" dy="11" y="398" font-size="11" fill="#5b6475"> 372 ms</text>
+<rect x="230" y="414" width="60.150471367636946" height="14" fill="#3f8f5a"><title>openshell: 101 ms</title></rect>
+<text x="230" dx="60.150471367636946" dy="11" y="414" font-size="11" fill="#5b6475"> 101 ms</text>
+<text x="0" y="458" font-size="12" fill="#1d2330">warm Python cell</text>
+<rect x="230" y="444" width="8.270771799289168" height="14" fill="#2f6db5"><title>docker, runc: 14 ms</title></rect>
+<text x="230" dx="8.270771799289168" dy="11" y="444" font-size="11" fill="#5b6475"> 14 ms</text>
+<rect x="230" y="460" width="9.032796625148265" height="14" fill="#c2702b"><title>docker, gVisor: 15 ms</title></rect>
+<text x="230" dx="9.032796625148265" dy="11" y="460" font-size="11" fill="#5b6475"> 15 ms</text>
+<rect x="230" y="476" width="3.0975891786682452" height="14" fill="#3f8f5a"><title>openshell: 5 ms</title></rect>
+<text x="230" dx="3.0975891786682452" dy="11" y="476" font-size="11" fill="#5b6475"> 5 ms</text>
+<text x="0" y="520" font-size="12" fill="#1d2330">reload: fresh run per call</text>
+<rect x="230" y="506" width="210.11612232772774" height="14" fill="#2f6db5"><title>docker, runc: 352 ms</title></rect>
+<text x="230" dx="210.11612232772774" dy="11" y="506" font-size="11" fill="#5b6475"> 352 ms</text>
+<rect x="230" y="522" width="425.68209356652915" height="14" fill="#c2702b"><title>docker, gVisor: 714 ms</title></rect>
+<text x="230" dx="425.68209356652915" dy="11" y="522" font-size="11" fill="#5b6475"> 714 ms</text>
+<rect x="230" y="538" width="560" height="14" fill="#3f8f5a"><title>openshell: 939 ms</title></rect>
+<text x="230" dx="560" dy="11" y="538" font-size="11" fill="#5b6475"> 939 ms</text>
+<text x="0" y="582" font-size="12" fill="#1d2330">reload: kept in the interpreter</text>
+<rect x="230" y="568" width="11.639660896397077" height="14" fill="#2f6db5"><title>docker, runc: 20 ms</title></rect>
+<text x="230" dx="11.639660896397077" dy="11" y="568" font-size="11" fill="#5b6475"> 20 ms</text>
+<rect x="230" y="584" width="13.618063378557084" height="14" fill="#c2702b"><title>docker, gVisor: 23 ms</title></rect>
+<text x="230" dx="13.618063378557084" dy="11" y="584" font-size="11" fill="#5b6475"> 23 ms</text>
+<rect x="230" y="600" width="6.09858366110083" height="14" fill="#3f8f5a"><title>openshell: 10 ms</title></rect>
+<text x="230" dx="6.09858366110083" dy="11" y="600" font-size="11" fill="#5b6475"> 10 ms</text>
+<text x="0" y="644" font-size="12" fill="#1d2330">call after a suspend</text>
+<rect x="230" y="630" width="89.7537644460818" height="14" fill="#2f6db5"><title>docker, runc: 151 ms</title></rect>
+<text x="230" dx="89.7537644460818" dy="11" y="630" font-size="11" fill="#5b6475"> 151 ms</text>
+<rect x="230" y="646" width="85.693805886399" height="14" fill="#c2702b"><title>docker, gVisor: 144 ms</title></rect>
+<text x="230" dx="85.693805886399" dy="11" y="646" font-size="11" fill="#5b6475"> 144 ms</text>
+<rect x="230" y="662" width="521.5648511151194" height="14" fill="#3f8f5a"><title>openshell: 875 ms</title></rect>
+<text x="230" dx="521.5648511151194" dy="11" y="662" font-size="11" fill="#5b6475"> 875 ms</text>
+</svg>
+
+<h2>Medians, with the 10th and 90th percentiles</h2>
+<div class="scroll"><table><thead><tr><th>Operation</th><th>docker, runc</th><th>docker, gVisor</th><th>openshell</th></tr></thead><tbody>
+<tr><td>fresh snippet<br><small>a new sandbox per call: console.log(1)</small></td><td>221 ms<br><small>186 to 229</small></td><td>272 ms<br><small>246 to 306</small></td><td>554 ms<br><small>551 to 608</small></td></tr>
+<tr><td>fresh Python run<br><small>a new sandbox per call: project, python3 main.py</small></td><td>249 ms<br><small>235 to 426</small></td><td>429 ms<br><small>404 to 617</small></td><td>595 ms<br><small>545 to 602</small></td></tr>
+<tr><td>session open<br><small>create, verify and list a session&#39;s sandbox</small></td><td>228 ms<br><small>204 to 240</small></td><td>260 ms<br><small>233 to 436</small></td><td>554 ms<br><small>550 to 556</small></td></tr>
+<tr><td>session snippet call<br><small>console.log(1) in an open session (openshell sweeps before answering, docker after)</small></td><td>96 ms<br><small>84 to 106</small></td><td>92 ms<br><small>88 to 115</small></td><td>36 ms<br><small>35 to 63</small></td></tr>
+<tr><td>first JavaScript cell<br><small>starts the interpreter (a new session, opened untimed)</small></td><td>220 ms<br><small>200 to 235</small></td><td>302 ms<br><small>283 to 326</small></td><td>106 ms<br><small>104 to 108</small></td></tr>
+<tr><td>warm JavaScript cell<br><small>n = (globalThis.n ?? 0) &#43; 1 in a live interpreter</small></td><td>14 ms<br><small>13 to 18</small></td><td>16 ms<br><small>15 to 18</small></td><td>6 ms<br><small>5 to 10</small></td></tr>
+<tr><td>first Python cell<br><small>starts the interpreter (a new session, opened untimed)</small></td><td>215 ms<br><small>197 to 225</small></td><td>372 ms<br><small>369 to 389</small></td><td>101 ms<br><small>98 to 117</small></td></tr>
+<tr><td>warm Python cell<br><small>n = globals().get(&#39;n&#39;, 0) &#43; 1 in a live interpreter</small></td><td>14 ms<br><small>12 to 15</small></td><td>15 ms<br><small>14 to 18</small></td><td>5 ms<br><small>4 to 6</small></td></tr>
+<tr><td>reload: fresh run per call<br><small>every call builds a 10-million-value array (80 MB) and takes its mean</small></td><td>352 ms<br><small>326 to 538</small></td><td>714 ms<br><small>700 to 885</small></td><td>939 ms<br><small>884 to 1095</small></td></tr>
+<tr><td>reload: kept in the interpreter<br><small>the array from an earlier cell: a.mean()</small></td><td>20 ms<br><small>18 to 23</small></td><td>23 ms<br><small>21 to 25</small></td><td>10 ms<br><small>9 to 12</small></td></tr>
+<tr><td>call after a suspend<br><small>Suspend, then console.log(1): the resume is in the call</small></td><td>151 ms<br><small>134 to 159</small></td><td>144 ms<br><small>136 to 164</small></td><td>875 ms<br><small>794 to 1014</small></td></tr>
+</tbody></table></div>
+
+<div class="note"><strong>Where a docker session call's time goes.</strong> One <code>docker inspect</code> that reads the
+container's settings back, then, for a snippet, one <code>docker exec</code> that starts a <code>node</code> process. A cell starts
+no process: it goes as one line to a relay the session keeps attached beside the interpreter (since 2026-10-01). The sweep that
+proves no process of the call is left, a second <code>docker exec</code>, runs after the answer has gone back; a call that arrives
+while it runs waits for it. OpenShell does the same since 2026-10-01: a relay on an exec stream held open, and the sweep after
+answering.</div>
+
+<div class="note"><strong>How to read it.</strong> A "fresh" row creates a sandbox for the call and deletes it afterwards. A
+"session" row is a call in a sandbox kept open; the sweep that kills the call's leftover processes runs after the answer on
+both providers. A "cell" runs in an interpreter the session keeps alive, so variables survive between calls; the "first" cell includes
+starting that interpreter. The two "reload" rows are the case keeping state is for: an array of 10 million values built
+on every call, against the same array kept in the interpreter and only averaged.</div>
+
+<h2>The data and how to rerun it</h2>
+<p>Raw samples beside this page: <a href="docker.json">docker.json</a>, <a href="docker-runsc.json">docker-runsc.json</a>, <a href="openshell.json">openshell.json</a>. The
+programs are in <a href="https://github.com/plimsollmark/plimsoll/tree/main/measurements/session-latency">measurements/session-latency
+(EXTERNAL · source repo ↗)</a>. From a checkout, with the images <code>make docker-images</code> builds (gVisor installed for
+the runsc run, and an OpenShell gateway with the <code>SANDBOX_OPENSHELL_*</code> settings in the environment for the
+openshell run):</p>
+<pre><code>go run ./measurements/session-latency -provider docker
+go run ./measurements/session-latency -provider docker -runtime runsc
+go run ./measurements/session-latency -provider openshell
+go run ./measurements/session-latency/report &gt; docs/measurements/session-latency/index.html</code></pre>
+<p>Your numbers will differ from these: they are one machine's. What should carry over is the order of the rows and the
+ratios between them.</p>
+</main></body></html>

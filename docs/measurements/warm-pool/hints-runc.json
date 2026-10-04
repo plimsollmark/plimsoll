@@ -1,0 +1,74 @@
+{
+  "runtime": "runc",
+  "tier": "container",
+  "image": "plimsoll/sandbox-python:latest",
+  "when": "2026-10-02T19:19:49.892308566Z",
+  "size": 4,
+  "phases": [
+    {
+      "hint": "",
+      "opens": 0,
+      "split": {
+        "javascript,python": 4
+      },
+      "firstCellMs": null
+    },
+    {
+      "hint": "python",
+      "opens": 16,
+      "split": {
+        "javascript,python": 1,
+        "python": 3
+      },
+      "firstCellMs": [
+        52.73,
+        35.246,
+        35.166,
+        34.836,
+        34.328,
+        31.468,
+        34.57,
+        36.791,
+        39.123,
+        31.907,
+        31.494,
+        30.501,
+        34.969,
+        35.219,
+        32.222,
+        36.015
+      ]
+    },
+    {
+      "hint": "javascript",
+      "opens": 16,
+      "split": {
+        "javascript": 3,
+        "python": 1
+      },
+      "firstCellMs": [
+        37.176,
+        36.037,
+        41.169,
+        38.568,
+        42.429,
+        40.85,
+        38.401,
+        40.255,
+        43.283,
+        33.39,
+        42.877,
+        46.139,
+        34.055,
+        41.21,
+        40.194,
+        35.872
+      ]
+    }
+  ],
+  "mib": {
+    "javascript": 18.32,
+    "javascript,python": 38.41,
+    "python": 20.63
+  }
+}

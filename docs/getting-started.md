@@ -20,8 +20,7 @@ part needs root. Nothing on this page costs money, because it uses no cloud serv
 You need git and Go 1.26.6 or newer. On 1.26.6, Go's vulnerability scanner
 (`govulncheck`) reports no known vulnerabilities in the standard library code the daemon
 calls; earlier 1.26 releases had published vulnerabilities in its reverse proxy and
-HTTP/2 code. The module itself declares Go 1.26.2 as its minimum, so a project that only
-imports plimsoll still builds on those releases. Step 5 needs Linux.
+HTTP/2 code. Step 5 needs Linux.
 
 ## 1. Clone and build
 

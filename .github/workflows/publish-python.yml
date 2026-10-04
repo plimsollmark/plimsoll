@@ -1,0 +1,67 @@
+# Publishes the Python client (clients/python, distribution `plimsoll-client`) to PyPI
+# through trusted publishing: PyPI accepts this workflow's short-lived GitHub identity
+# token in place of a password or API token, so no PyPI credential exists to store or
+# leak, and PyPI records which repository and workflow run uploaded each file.
+#
+# It runs when a GitHub release is published, and by hand (workflow_dispatch) for a
+# release made before this file existed. Either way it publishes only what a release
+# tag names: the client's version must have a tag `v<version>`, a release's tag must be
+# that tag, and clients/python must be byte-identical to it at the commit being built.
+# The release itself is gated by audit.yml on the tagged commit, so no test run here.
+#
+# PyPI side, once: a pending publisher (owner plimsollmark, repository plimsoll,
+# workflow publish-python.yml, environment pypi). Actions are pinned by commit SHA.
+name: publish-python
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: The client's version is a release tag, and the files are the tag's
+        run: |
+          version="$(python3 -c "import tomllib; print(tomllib.load(open('clients/python/pyproject.toml', 'rb'))['project']['version'])")"
+          tag="v$version"
+          if [ "$GITHUB_EVENT_NAME" = release ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::release $GITHUB_REF_NAME does not match the client version $version"
+            exit 1
+          fi
+          git rev-parse -q --verify "refs/tags/$tag" >/dev/null || { echo "::error::no tag $tag"; exit 1; }
+          git diff --quiet "$tag" HEAD -- clients/python || { echo "::error::clients/python differs from $tag"; exit 1; }
+          grep -qx "__version__ = \"$version\"" clients/python/src/plimsoll_client/_version.py ||
+            { echo "::error::_version.py does not say $version"; exit 1; }
+      - run: python3 -m pip install build==1.6.1
+      - run: python3 -m build --outdir dist clients/python
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/plimsoll-client
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

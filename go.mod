@@ -4,10 +4,9 @@ go 1.26.2
 
 // The canonical build uses the security-patched 1.26.6 toolchain (govulncheck is
 // clean there; earlier 1.26.x had stdlib advisories in the reverse-proxy and
-// HTTP/2 paths this TCB calls). The `go` floor stays at 1.26.2 so sibling
-// consumers that resolve this module through a local go.work still build
-// unchanged: a `toolchain` line binds only this module's own build, not the
-// version it requires of dependents. Build plimsolld with >= 1.26.6.
+// HTTP/2 paths this TCB calls). A `toolchain` line binds only this module's own
+// build, not the version it requires of dependents, so build plimsolld with
+// >= 1.26.6.
 toolchain go1.26.6
 
 require (

@@ -1,0 +1,246 @@
+{
+  "provider": "openshell",
+  "tier": "container",
+  "image": "plimsoll/sandbox-python:latest",
+  "machine": "Intel(R) Core(TM) Ultra 9 275HX, 24 CPUs, linux/amd64",
+  "when": "2026-10-01T23:02:37.835780885Z",
+  "reps": 15,
+  "gapMs": 250,
+  "samples": [
+    {
+      "name": "fresh snippet",
+      "detail": "a new sandbox per call: console.log(1)",
+      "ms": [
+        607.963,
+        552.378,
+        620.217,
+        552.33,
+        601.509,
+        551.957,
+        552.335,
+        555.937,
+        554.16,
+        551.727,
+        554.44,
+        550.719,
+        551.232,
+        554.6,
+        554.787
+      ]
+    },
+    {
+      "name": "fresh Python run",
+      "detail": "a new sandbox per call: project, python3 main.py",
+      "ms": [
+        651.262,
+        596.844,
+        543.677,
+        597.311,
+        593.972,
+        595.179,
+        598.18,
+        596.507,
+        544.524,
+        593.849,
+        597.139,
+        593.301,
+        593.622,
+        595.125,
+        601.658
+      ]
+    },
+    {
+      "name": "session open",
+      "detail": "create, verify and list a session's sandbox",
+      "ms": [
+        556.464,
+        556.72,
+        553.489,
+        553.673,
+        552.576,
+        552.441,
+        556.381,
+        551.339,
+        553.915,
+        549.751,
+        555.019,
+        553.46,
+        555.225,
+        555.655,
+        502.903
+      ]
+    },
+    {
+      "name": "session snippet call",
+      "detail": "console.log(1) in an open session (openshell sweeps before answering, docker after)",
+      "ms": [
+        36.065,
+        34.504,
+        35.633,
+        34.572,
+        33.523,
+        36.346,
+        56.007,
+        43.637,
+        46.453,
+        39.981,
+        67.09,
+        62.869,
+        54.183,
+        35.285,
+        35.579
+      ]
+    },
+    {
+      "name": "first JavaScript cell",
+      "detail": "starts the interpreter (a new session, opened untimed)",
+      "ms": [
+        107.441,
+        103.965,
+        103.535,
+        106.415,
+        107.453,
+        108.251,
+        106.962,
+        103.697,
+        103.518,
+        105.586,
+        107.06,
+        107.956,
+        105.975,
+        105.595,
+        109.343
+      ]
+    },
+    {
+      "name": "warm JavaScript cell",
+      "detail": "n = (globalThis.n ?? 0) + 1 in a live interpreter",
+      "ms": [
+        128.666,
+        5.859,
+        6.313,
+        6.053,
+        5.525,
+        5.369,
+        5.2,
+        6.269,
+        5.444,
+        5.119,
+        5.484,
+        5.603,
+        6.273,
+        10.24,
+        4.773
+      ]
+    },
+    {
+      "name": "first Python cell",
+      "detail": "starts the interpreter (a new session, opened untimed)",
+      "ms": [
+        103.751,
+        103.523,
+        102.354,
+        96.438,
+        99.545,
+        100.879,
+        99.848,
+        100.746,
+        99.866,
+        191.737,
+        101.233,
+        116.933,
+        101.835,
+        97.662,
+        98.302
+      ]
+    },
+    {
+      "name": "warm Python cell",
+      "detail": "n = globals().get('n', 0) + 1 in a live interpreter",
+      "ms": [
+        101.432,
+        5.195,
+        4.73,
+        4.877,
+        5.432,
+        5.695,
+        4.491,
+        5.421,
+        5.227,
+        4.883,
+        4.387,
+        5.496,
+        6.418,
+        4.968,
+        4.489
+      ]
+    },
+    {
+      "name": "reload: fresh run per call",
+      "detail": "every call builds a 10-million-value array (80 MB) and takes its mean",
+      "ms": [
+        842.883,
+        987.406,
+        948.346,
+        914.848,
+        917.694,
+        933.99,
+        1095.112,
+        1079.547,
+        918.543,
+        955.009,
+        884.196,
+        992.432,
+        1116.525,
+        927.621,
+        939.182
+      ]
+    },
+    {
+      "name": "reload: kept in the interpreter",
+      "detail": "the array from an earlier cell: a.mean()",
+      "ms": [
+        11.269,
+        9.594,
+        9.284,
+        11.597,
+        9.196,
+        9.379,
+        10.228,
+        11.582,
+        12.788,
+        8.664,
+        10.903,
+        10.249,
+        9.522,
+        9.588,
+        10.305
+      ]
+    },
+    {
+      "name": "call after a suspend",
+      "detail": "Suspend, then console.log(1): the resume is in the call",
+      "ms": [
+        929.4,
+        897.327,
+        802.803,
+        965.127,
+        1064.614,
+        1014.39,
+        866.396,
+        941.576,
+        853.532,
+        782.787,
+        902.518,
+        874.722,
+        794.21,
+        795.86,
+        829.009
+      ]
+    }
+  ],
+  "languages": [
+    "javascript",
+    "python"
+  ]
+}

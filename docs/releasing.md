@@ -51,7 +51,7 @@ the exemption to that work and remove it with the tag.
 ## The client packages
 
 The TypeScript client (`@plimsollmark/client` on npm) and the Python client
-(`plimsoll-client`, installed from a checkout; it is not on PyPI) carry the version of
+(`plimsoll-client` on PyPI, from its first upload; until then installed from a checkout) carry the version of
 the plimsoll release they ship in, without the `v`. `TestClientVersionsAgree` in
 `clients/typescript` fails when `package.json`, its lockfile, `pyproject.toml` and the
 Python client's `_version.py` disagree, so a release sets all four before its tag.
@@ -68,3 +68,12 @@ npm publish --access public
 npm requires two-factor authentication for every publish made after `npm login`; an
 unattended publish uses a granular access token with publish rights on the
 `@plimsollmark` scope.
+
+The Python client is published by
+[publish-python.yml](../.github/workflows/publish-python.yml) when a GitHub release is
+published. It uses PyPI's trusted publishing: PyPI accepts the workflow's short-lived
+GitHub identity token, so no PyPI password or API token exists to store, and PyPI records
+which repository and workflow run uploaded each file. The workflow publishes only a tagged version: the
+release's tag must be `v` plus the client's version, and `clients/python` must be the same
+as at that tag. A release made before the workflow existed is published by running the
+workflow by hand on `main`.

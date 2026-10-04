@@ -1,0 +1,247 @@
+{
+  "provider": "docker",
+  "runtime": "runsc",
+  "tier": "kernel",
+  "image": "plimsoll/sandbox-python:latest",
+  "machine": "Intel(R) Core(TM) Ultra 9 275HX, 24 CPUs, linux/amd64",
+  "when": "2026-10-01T22:36:44.904482308Z",
+  "reps": 15,
+  "gapMs": 250,
+  "samples": [
+    {
+      "name": "fresh snippet",
+      "detail": "a new sandbox per call: console.log(1)",
+      "ms": [
+        271.797,
+        269.839,
+        272.454,
+        279.311,
+        299.73,
+        275.823,
+        447.813,
+        282.903,
+        306.323,
+        270.749,
+        245.922,
+        244.954,
+        251.487,
+        296.159,
+        271.388
+      ]
+    },
+    {
+      "name": "fresh Python run",
+      "detail": "a new sandbox per call: project, python3 main.py",
+      "ms": [
+        413.999,
+        633.812,
+        467.964,
+        442.257,
+        417.039,
+        404.353,
+        428.324,
+        396.755,
+        414.744,
+        616.562,
+        442.302,
+        428.132,
+        432.084,
+        434.736,
+        428.852
+      ]
+    },
+    {
+      "name": "session open",
+      "detail": "create, verify and list a session's sandbox",
+      "ms": [
+        266.701,
+        267.018,
+        436.092,
+        238.889,
+        233.278,
+        238.629,
+        252.877,
+        244.75,
+        266.289,
+        226.605,
+        259.625,
+        259.155,
+        435.885,
+        267.591,
+        279.988
+      ]
+    },
+    {
+      "name": "session snippet call",
+      "detail": "console.log(1) in an open session (openshell sweeps before answering, docker after)",
+      "ms": [
+        91.731,
+        91.594,
+        92.069,
+        93.739,
+        88.659,
+        115.751,
+        115.347,
+        99.715,
+        93.448,
+        100.805,
+        88.039,
+        89.906,
+        86.581,
+        92.358,
+        92.074
+      ]
+    },
+    {
+      "name": "first JavaScript cell",
+      "detail": "starts the interpreter (a new session, opened untimed)",
+      "ms": [
+        283.422,
+        282.508,
+        315.237,
+        312.912,
+        369.794,
+        276.247,
+        322.59,
+        301.746,
+        293.521,
+        287.668,
+        293.6,
+        292.778,
+        307.782,
+        325.507,
+        315.607
+      ]
+    },
+    {
+      "name": "warm JavaScript cell",
+      "detail": "n = (globalThis.n ?? 0) + 1 in a live interpreter",
+      "ms": [
+        302.077,
+        17.622,
+        15.19,
+        16.962,
+        15.943,
+        15.131,
+        14.395,
+        15.697,
+        16.629,
+        14.916,
+        15.791,
+        17.487,
+        16.422,
+        15.916,
+        16.928
+      ]
+    },
+    {
+      "name": "first Python cell",
+      "detail": "starts the interpreter (a new session, opened untimed)",
+      "ms": [
+        392.647,
+        371.962,
+        366.239,
+        371.152,
+        375.061,
+        368.777,
+        369.927,
+        372.408,
+        369.577,
+        373.374,
+        381.884,
+        370.94,
+        377.323,
+        385.416,
+        388.676
+      ]
+    },
+    {
+      "name": "warm Python cell",
+      "detail": "n = globals().get('n', 0) + 1 in a live interpreter",
+      "ms": [
+        438.262,
+        18.034,
+        13.183,
+        15.927,
+        14.018,
+        14.203,
+        15.97,
+        14.099,
+        14.935,
+        15.762,
+        14.133,
+        15.563,
+        14.594,
+        15.149,
+        15.482
+      ]
+    },
+    {
+      "name": "reload: fresh run per call",
+      "detail": "every call builds a 10-million-value array (80 MB) and takes its mean",
+      "ms": [
+        885.096,
+        718.972,
+        713.398,
+        707.149,
+        703.547,
+        705.196,
+        958.829,
+        712.924,
+        675.938,
+        713.916,
+        719.341,
+        735.181,
+        876.684,
+        729.832,
+        700.051
+      ]
+    },
+    {
+      "name": "reload: kept in the interpreter",
+      "detail": "the array from an earlier cell: a.mean()",
+      "ms": [
+        25.081,
+        22.138,
+        20.992,
+        23.263,
+        21.511,
+        23.779,
+        22.989,
+        20.451,
+        22.984,
+        20.652,
+        21.561,
+        25.058,
+        24.095,
+        22.839,
+        22.574
+      ]
+    },
+    {
+      "name": "call after a suspend",
+      "detail": "Suspend, then console.log(1): the resume is in the call",
+      "ms": [
+        155.996,
+        176.918,
+        156.155,
+        163.572,
+        143.44,
+        138.521,
+        148.914,
+        135.558,
+        142.096,
+        142.49,
+        137.22,
+        131.013,
+        148.287,
+        143.718,
+        161.102
+      ]
+    }
+  ],
+  "languages": [
+    "javascript",
+    "python"
+  ]
+}

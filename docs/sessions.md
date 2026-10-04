@@ -267,7 +267,8 @@ output back. A warm cell's code therefore reaches its interpreter without a new 
 the call still runs the docker read-back on the host and, after the answer, the sweep. With the sweep after answering
 too, a warm cell took about 5 ms on `openshell`, 14 ms under runc and 15 ms under gVisor,
 against 73 to 107 ms with a process per cell and the sweep before answering (measured
-2026-10-01). The sweep keeps the relay as it keeps the interpreter.
+2026-10-01; every operation, with the data and the program, on the
+[session latency page](https://plimsollmark.github.io/plimsoll/measurements/session-latency/index.html)). The sweep keeps the relay as it keeps the interpreter.
 
 What the relay says is not trusted with anything that matters, because code of the session
 can reach it on docker. The relay loads the same small library as the sweep, which makes it
@@ -415,7 +416,9 @@ A docker session is the container a project run gets, kept for the session:
   hands one over instead of creating a container, so the first cell sends its code at
   once. On a laptop (measured 2026-10-02), opening a session and running its first
   cell took 22 ms (JavaScript) and 18 ms (Python) under runc instead of 740 and 789 ms, and
-  51 and 32 ms under gVisor instead of 817 and 891 ms.
+  51 and 32 ms under gVisor instead of 817 and 891 ms
+  ([warm pool page](https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html),
+  with the data and the programs).
   - A waiting container has run only plimsoll's own programs: init, `sleep`, and the
     interpreters with their relays. It goes to one session, and its first cell in each
     language still says its interpreter is new. Closing that session removes the

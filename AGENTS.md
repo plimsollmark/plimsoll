@@ -11,11 +11,10 @@ agent-authored code with an explicitly reported isolation tier, callable over RP
 Hostile production deployments require the verified kernel or VM tiers; the WASM
 option is intentionally only process-tier.
 
-- Go module `github.com/plimsollmark/plimsoll`. The go.mod **floor is 1.26.2** (so
-  sibling consumers that `replace` this module build unchanged), but the **canonical
-  build pins the 1.26.6 toolchain** (`toolchain go1.26.6`): `govulncheck ./...` is
-  clean there, while earlier 1.26.x had stdlib advisories in the reverse-proxy and
-  HTTP/2 paths this TCB actually calls. Build plimsolld with >= 1.26.6.
+- Go module `github.com/plimsollmark/plimsoll`. The **canonical build pins the 1.26.6
+  toolchain** (`toolchain go1.26.6`): `govulncheck ./...` is clean there, while earlier
+  1.26.x had stdlib advisories in the reverse-proxy and HTTP/2 paths this TCB actually
+  calls. Build plimsolld with >= 1.26.6.
 - Direct dependencies are Connect, protobuf, wazero, and `golang.org/x/net`;
   `x/sys` and `x/text` are indirect. Do not add dependencies casually: this is a
   hostile-code TCB.
@@ -162,6 +161,10 @@ option is intentionally only process-tier.
   draft-mih-scitt-agent-action-capsule-05 and checked by that project's Go and Python
   verifiers; the page it writes is `docs/examples/capsule/`). The examples that run the daemon build it from source
   through [examples/internal/daemonproc](examples/internal/daemonproc/).
+- [measurements/](measurements/): timing programs (`session-latency`, `warm-pool`) that call
+  the providers directly and write their raw samples and page into
+  [docs/measurements/](docs/measurements/); each page says how to rerun it. Not tests: the
+  gate builds and vets them and never runs them.
 - [clients/typescript/](clients/typescript/): `@plimsollmark/client`, a dependency-free
   TypeScript client (Connect JSON over `fetch`) that keeps the Go client's checks: the
   protocol number, every run record recomputed (golden vectors shared with
