@@ -11,6 +11,7 @@
 package sandboxtest
 
 import (
+	"context"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -18,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -55,11 +57,20 @@ const WasmTestTimeout = 60 * time.Second
 // plimsoll's own sandbox package cannot import this package (it would be an import
 // cycle), so it keeps a private equivalent. Every other package, in this module and
 // in consumers, should use this.
+//
+// The first Wasm call in a process also runs one snippet, which compiles QuickJS
+// into the process-wide cache every later run reuses. That compile takes seconds
+// under the race detector on a loaded machine, and a test that sets its own budget
+// would otherwise pay it inside that budget: a client suite's first 10-second
+// snippet timed out on it (exit 124 at 10.3 s, on a hosted runner).
 func Wasm() *sandbox.WasmSandbox {
 	w := sandbox.DefaultWasm()
 	w.DefaultTimeout = WasmTestTimeout
+	warmWasm.Do(func() { _, _ = w.RunJavaScript(context.Background(), sandbox.Request{Code: "0"}) })
 	return w
 }
+
+var warmWasm sync.Once
 
 // RequireNoImport fails t if modulePath (or a subpackage of it) is imported by the
 // module under test. It locates the calling module via `go env GOMOD` and checks
