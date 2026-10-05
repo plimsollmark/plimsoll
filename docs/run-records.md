@@ -33,9 +33,13 @@ What a record proves, and what it does not:
   tests agent-written code that balances a simulated pole, already reproduces its
   <dfn>*trajectory*</dfn> (the record of every step of the simulation) to the bit on five
   providers ([the providers example](example-programs.md)).
-- A refused or failed run returns an error, not a response, so it has no record. A
-  refusal marked as not <dfn>*dispatched*</dfn>, meaning the code was never handed over
-  to start running, ran nothing ([run results](run-results.md)).
+- A nonzero exit from code sent by the caller is an answered result with a record. A refusal marked
+  as not <dfn>*dispatched*</dfn> has no record, because the code was never handed over
+  to start running ([INTERNAL · run results →](run-results.md)). An independent run that ends in an
+  infrastructure error has no answered result to record. A call in a <dfn>*session*</dfn>
+  (one sandbox kept for many calls) that may have
+  run but ended without an answer instead has a version 3 record with its outcome
+  marked unknown ([INTERNAL · unanswered session calls →](#a-session-call-that-may-have-run-but-got-no-result)).
 
 The Go client checks every record it receives against the request it sent and the
 response it got (`record.Check`); a mismatch is `DataLoss` wrapping
@@ -64,7 +68,7 @@ field changes what a daemon may execute.
 | `software_rule_id` | The software rule the caller required, which the daemon checks before the run starts: `exact:<identity>` or `approved:sha256:<digest of approved identities>`. Empty when the caller set no rule. The request digest covers the complete approved list. |
 | `policy` | The sandbox policy the provider verified before the run, by digest. For <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, it is the policy that sets the sandbox's network and filesystem rules, and `openshell-policy:sha256:...` is the hash its gateway itself reports. Empty for providers without one. |
 | `started_unix_ms`, `ended_unix_ms` | When the daemon received the request and when it finished the result. |
-| `session`, `sequence`, `previous_sha256` | A call's place in its <dfn>*session*</dfn> (one sandbox kept open for many calls) and its chain: the SHA-256 of the session ID (the ID works like a password for the session, so it is never recorded), the call's number counting from 1, and the previous call's `record_sha256`. Empty or zero for a single run. |
+| `session`, `sequence`, `previous_sha256` | A call's place in its session and its chain: the SHA-256 of the session ID (the ID works like a password for the session, so it is never recorded), the call's number counting from 1, and the previous call's `record_sha256`. Empty or zero for a single run. |
 | `unanswered` | Version 3 only: the status code of the error the call ended with (`unknown`, `deadline_exceeded`, `unavailable`, ...), the daemon's own word, never error text. `result_sha256` is then empty. |
 | `record_sha256` | Digest of every field above. |
 

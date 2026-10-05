@@ -566,8 +566,10 @@ simulator is an AOT-compiled WebAssembly module (a source-form FMU or any C behi
 worker (`docker/sim/worker.c`, a C program on WasmEdge's C API, vendored from the
 sister repository) loads it once and runs one fresh instance per row. Register a
 simulator = build an image: an AOT module is machine code that must be mapped
-executable, every writable mount is `noexec`, and the image root is the only place
-it can load from. plimsoll supervises the worker as a process inside its container
+executable, every writable mount is `noexec`, so the worker's loader opens it only from
+the image root (a copy under `/work` is refused). `noexec` is not a barrier against native
+code a run brings itself, which can run from memory (an in-memory file, an executable
+mapping) inside the same container; the container stays the boundary. plimsoll supervises the worker as a process inside its container
 tier and **never links the runtime**: the Go TCB stays pure Go, wazero keeps the
 snippet tier.
 

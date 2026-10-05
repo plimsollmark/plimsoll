@@ -72,8 +72,9 @@ lack of any network API, and its startup check reads only its settings.
 - The docker test starts a throwaway container. From the container's own list of mounted
   filesystems, and by trying a real write at every mount point, it proves that the root
   filesystem is read-only and that the only writable places are the promised
-  <dfn>*tmpfs*</dfn> mounts (filesystems held in memory) marked `noexec` (nothing on them
-  can run). It lists the container's network interfaces and refuses to serve unless
+  <dfn>*tmpfs*</dfn> mounts (filesystems held in memory) marked `noexec` (a file written
+  there cannot be started or loaded as a program by its path; code a run places in memory
+  is not stopped by it, so `noexec` is a second layer, not the boundary). It lists the container's network interfaces and refuses to serve unless
   loopback is the only one, which is what having no network means inside a container.
   It also reads the container's process limit, `pids.max`, and refuses to serve
   unless it equals the configured limit, because a runtime can accept `--pids-limit`

@@ -156,10 +156,15 @@ and a project whose step is `python3 main.py` runs through `RunProject` unchange
 Three things in that file matter:
 
 - **NumPy and SciPy live in the image root.** A native extension is compiled machine
-  code (a shared object, `.so`) that must be mapped into memory as executable, and the
-  run's writable mounts (`/work`, `/tmp`, `/dev/shm`) are `noexec` tmpfs, where nothing
-  can be executed. The read-only image root is the only place a native library can load
-  from, which is the same reason `/node_modules` is built into the image.
+  code (a shared object, `.so`) that the loader maps into memory as executable, and the
+  run's writable mounts (`/work`, `/tmp`, `/dev/shm`) are `noexec` tmpfs, so the loader
+  refuses a library written there. The read-only image root is therefore where native
+  libraries load from by path, which is the same reason `/node_modules` is built into
+  the image. `noexec` is not a wall against native code itself: a run's own code can
+  still put machine code in memory (an in-memory file, or an executable mapping like the
+  ones a JavaScript engine's compiler makes) and run it. That code runs inside the same
+  container, and the container (or the virtual machine, on providers that use one) is
+  the boundary.
   `sandbox/docker_python_test.go` proves the extensions load under the shipped
   <dfn>*seccomp*</dfn> profile (seccomp is the Linux feature that limits which kernel
   requests a process may make; the profile lists the ones plimsoll's containers may use):
@@ -287,7 +292,9 @@ and `out.bin` comes back as an artifact. Three things in that file matter:
   `sandbox/docker_sim_test.go` proves both halves under the shipped seccomp
   profile: the sweeps run from `/models`, and a byte-identical copy of the simulator
   under `/work` is refused by the loader. Registering a simulator means building an
-  image, by design rather than as a workaround.
+  image, by design rather than as a workaround. That rule is about where the worker
+  loads trusted simulators from, not a barrier: native code a run brings itself can still
+  run from memory, inside the same container (see NumPy above).
 - **Bit-identity is the test, not a tolerance.** The test compares the SHA-256 of
   each sweep's artifact with a native C run of the same adapter code: 100 parameter
   sets of each Reference FMU, state events (the moments a model switches behaviour,
