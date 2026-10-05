@@ -101,6 +101,21 @@ func (d *DockerCloud) create(ctx context.Context, budget time.Duration) (dcVM, e
 		var ce *dcCreateError
 		if errors.As(err, &ce) {
 			vm.id = ce.id // the cleanup deletes by ID when the service named one
+			if ce.stage == dcCreateSend && dcRefused(ce.err) {
+				// The service refused the create by a code that says it did nothing, so no
+				// code ran: marked, not left to read as "may have run". Its quota answer
+				// ("Maximum running sandboxes quota reached (10)", resource_exhausted over
+				// HTTP 429, 2026-10-05) is a capacity refusal a caller may retry later;
+				// any other refusal is about this configuration or account.
+				if dcCodeIs(ce.err, "resource_exhausted") {
+					// Shed like the daemon's own admission: ErrAtCapacity, so the caller
+					// gets ResourceExhausted in plimsoll's words and the daemon does not count
+					// a fault; the service's own text stays in this log line.
+					slog.Warn("dockercloud: create refused for capacity", "sandbox", vm.name, "error", err.Error())
+					return dcVM{}, NotDispatched(RefusalCapacity, dcQuotaFull{})
+				}
+				return dcVM{}, NotDispatched(RefusalEnvironment, err)
+			}
 		}
 		return dcVM{}, err
 	}
@@ -119,6 +134,15 @@ func (d *DockerCloud) create(ctx context.Context, budget time.Duration) (dcVM, e
 	ok = true
 	return vm, nil
 }
+
+// dcQuotaFull is a create Docker Cloud refused for capacity: it is ErrAtCapacity to the
+// daemon (ResourceExhausted, not a fault) and says so in plimsoll's words.
+type dcQuotaFull struct{}
+
+func (dcQuotaFull) Error() string {
+	return "dockercloud: Docker Cloud refused the sandbox because the account's quota of running sandboxes is full; retry shortly"
+}
+func (dcQuotaFull) Is(target error) bool { return target == ErrAtCapacity }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)

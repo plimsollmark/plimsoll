@@ -107,6 +107,13 @@ account can boot.
    `ReconcileOrphans` deletes any sandbox carrying this instance's prefix that the
    process is not tracking.
 
+A create the service refuses by a code that says it did nothing ran no code, so the run is
+refused with the mark that says nothing ran: the account's quota of running sandboxes (10 on 2026-10-05, answered
+`resource_exhausted` over HTTP 429, "Maximum running sandboxes quota reached") as reason
+`capacity`, answered `ResourceExhausted` as when the daemon itself is full, and not counted as a
+fault, which a caller may retry once a sandbox is gone; any other refusal as reason `environment`. Keep `SANDBOX_MAX_CONCURRENT` under that quota, leaving room for sandboxes
+still being deleted.
+
 Resources: `SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` (whole CPUs only) are requested at
 create and verified after it. `SANDBOX_PIDS` and `SANDBOX_DISK_MB` are rejected,
 since the service has no control for them.

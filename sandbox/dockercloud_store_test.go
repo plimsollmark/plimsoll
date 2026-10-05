@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -109,4 +111,41 @@ func TestDockerCloudStoreImageConfig(t *testing.T) {
 			t.Errorf("image %q store %q api %q: err = %v, want %q", c.image, c.store, c.api, err, c.want)
 		}
 	}
+}
+
+// A create the service refused by a code that says it did nothing ran no code, so it is
+// marked: the account's sandbox quota (resource_exhausted over HTTP 429, live 2026-10-05)
+// as capacity, a caller's cue to retry later; another refusal as environment. A create
+// whose outcome is open stays unmarked.
+func TestDockerCloudRefusedCreateIsNotDispatched(t *testing.T) {
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		for _, tc := range []struct {
+			status int
+			code   string
+			want   Refusal
+			marked bool
+		}{
+			{http.StatusTooManyRequests, "resource_exhausted", RefusalCapacity, true},
+			{http.StatusBadRequest, "invalid_argument", RefusalEnvironment, true},
+			{http.StatusServiceUnavailable, "unavailable", RefusalUnknown, false},
+		} {
+			f := newDCFakeAPI(t, api)
+			f.createStatus, f.createCode, f.deleteNotFound = tc.status, tc.code, true
+			f.exec = func([]string) (int, string, string) {
+				t.Error("guest code ran after a refused create")
+				return 0, "", ""
+			}
+			_, err := f.provider().RunJavaScript(context.Background(), Request{Code: `1`})
+			got, marked := NotDispatchedReason(err)
+			if marked != tc.marked || got != tc.want {
+				t.Errorf("%s %s: NotDispatchedReason = %v, %v; want %v, %v (err %v)", api, tc.code, got, marked, tc.want, tc.marked, err)
+			}
+			// The quota is shed like admission: ErrAtCapacity (ResourceExhausted over RPC,
+			// not counted as a fault), in plimsoll's words rather than the service's.
+			if atCap := errors.Is(err, ErrAtCapacity); atCap != (tc.want == RefusalCapacity) || atCap && strings.Contains(err.Error(), "no capacity") {
+				t.Errorf("%s %s: errors.Is(ErrAtCapacity) = %v, err %q", api, tc.code, atCap, err)
+			}
+		}
+	})
 }

@@ -940,7 +940,9 @@ func TestDockerCloudDeletesOnEveryExitPath(t *testing.T) {
 				name:  "create rejected",
 				setup: func(f *dcFake) { f.createStatus = http.StatusTooManyRequests },
 				check: func(t *testing.T, _ Result, err error) {
-					if err == nil || !strings.Contains(err.Error(), "resource_exhausted") {
+					// The quota refusal is shed as ErrAtCapacity in plimsoll's words; the
+					// service's text goes to the log (TestDockerCloudRefusedCreateIsNotDispatched).
+					if !errors.Is(err, ErrAtCapacity) {
 						t.Fatalf("err = %v", err)
 					}
 				},
