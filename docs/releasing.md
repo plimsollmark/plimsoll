@@ -51,7 +51,7 @@ the exemption to that work and remove it with the tag.
 ## The client packages
 
 The TypeScript client (`@plimsollmark/client` on npm) and the Python client
-(`plimsoll-client` on PyPI, from its first upload; until then installed from a checkout) carry the version of
+(`plimsoll-client` on PyPI, first uploaded at 0.19.0 on 2026-10-05) carry the version of
 the plimsoll release they ship in, without the `v`. `TestClientVersionsAgree` in
 `clients/typescript` fails when `package.json`, its lockfile, `pyproject.toml` and the
 Python client's `_version.py` disagree, so a release sets all four before its tag.

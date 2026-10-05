@@ -4,11 +4,14 @@ built), and hints-runc.json (hints/main.go, the language hints) when it exists. 
 theme, inline SVG, no dependencies.
 
     python3 measurements/warm-pool/report.py
+    python3 measurements/warm-pool/report.py --check
 """
 
+import argparse
 import html
 import json
 import os
+import sys
 
 HERE = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs", "measurements", "warm-pool"))
 p2 = json.load(open(os.path.join(HERE, "pass-2.json")))
@@ -313,5 +316,21 @@ python3 measurements/warm-pool/report.py</code></pre>
 a cold start, and where the time goes.</p>
 </main></body></html>
 """
-open(os.path.join(HERE, "index.html"), "w").write(page)
-print("wrote", os.path.join(HERE, "index.html"))
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--check", action="store_true", help="check the committed page without writing it")
+args = parser.parse_args()
+output = os.path.join(HERE, "index.html")
+rendered = page.encode("utf-8")
+if args.check:
+    try:
+        with open(output, "rb") as file:
+            committed = file.read()
+    except FileNotFoundError:
+        committed = None
+    if rendered != committed:
+        print(f"{output} differs from the rendered measurement data", file=sys.stderr)
+        sys.exit(1)
+else:
+    with open(output, "wb") as file:
+        file.write(rendered)
+    print("wrote", output)

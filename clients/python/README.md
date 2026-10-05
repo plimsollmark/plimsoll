@@ -15,11 +15,13 @@ The messages are defined in [proto/plimsoll/v1/sandbox.proto](https://github.com
 
 ## Install
 
-From a checkout of this repository:
+From PyPI ([plimsoll-client (EXTERNAL · package index ↗)](https://pypi.org/project/plimsoll-client/)):
 
 ```sh
-pip install ./clients/python
+pip install plimsoll-client
 ```
+
+Or from a checkout of this repository: `pip install ./clients/python`.
 
 The distribution is `plimsoll-client`; the import package is `plimsoll_client`.
 

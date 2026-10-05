@@ -153,6 +153,16 @@ const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the 
                              account's cloud network policy must default to
                              deny-all (sbx --cloud policy init deny-all); every run
                              verifies it. Verified live on 2026-09-24.
+  SANDBOX_DOCKERCLOUD_STORE_IMAGE
+                             instead of SANDBOX_DOCKERCLOUD_IMAGE: an image in the
+                             account's own Cloud Sandboxes image store, as
+                             <image id>@sha256:<digest>. Booted by ID with no
+                             registry pull, so it can stay private to the account;
+                             every sandbox's booted digest must equal the one given.
+                             Its size and start command are the image's own (create
+                             it with the start command tail -f /dev/null), so
+                             SANDBOX_CPUS and SANDBOX_MEMORY_MB only cap them.
+                             connect only. Verified live on 2026-10-05.
 `
 
 const usageLimits = `

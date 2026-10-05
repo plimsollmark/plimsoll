@@ -75,14 +75,27 @@ func (d *DockerCloud) create(ctx context.Context, budget time.Duration) (dcVM, e
 	}()
 
 	cpus, memMiB := d.requestedSize()
-	reported, err := d.wire().createSandbox(ctx, dcCreateSpec{
+	spec := dcCreateSpec{
 		name:      vm.name,
 		image:     strings.TrimSpace(d.Image),
 		startCmd:  dcStartCmd,
 		ttl:       budget + dcTTLSlack,
 		cpus:      cpus,
 		memoryMiB: memMiB,
-	})
+	}
+	if s := strings.TrimSpace(d.StoreImage); s != "" {
+		id, _, err := parseStoreImage(s)
+		if err == nil && d.rest() {
+			// validateConfig refuses this pairing: REST reports no booted digest.
+			err = errors.New("dockercloud: a store image needs the Connect API")
+		}
+		if err != nil {
+			unsent = true
+			return dcVM{}, err
+		}
+		spec.image, spec.storeImage = "", id
+	}
+	reported, err := d.wire().createSandbox(ctx, spec)
 	if err != nil {
 		unsent, unknown = dcCreateOutcome(err)
 		var ce *dcCreateError
@@ -145,8 +158,8 @@ func (d *DockerCloud) verifySandbox(reported dcReported) error {
 	if *sb.memoryMiB == 0 || uint64(*sb.memoryMiB) > uint64(wantMiB) {
 		return fmt.Errorf("dockercloud sandbox exceeds memory cap: reported %v MiB, requested %d", derefUint(sb.memoryMiB), wantMiB)
 	}
-	if image := strings.TrimSpace(d.Image); isDigestPinned(image) {
-		want := image[strings.LastIndex(image, "@")+1:]
+	if want, pinned := d.pinnedDigest(); pinned {
+		image := d.imageName()
 		if !sb.reportsBootedDigest {
 			// The REST API reports no booted digest (probe 2026-10-04), so the most it
 			// can show is that the service recorded the pinned reference it was sent.
@@ -289,7 +302,7 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 	if out.exitCode != 0 {
 		// 127 is the missing-tool signature: sh could not find node or timeout.
 		return fmt.Errorf("dockercloud smoke: probe exited %d on image %q (an image missing node, timeout or head cannot serve runs): %s",
-			out.exitCode, d.Image, strings.TrimSpace(out.stderr))
+			out.exitCode, d.imageName(), strings.TrimSpace(out.stderr))
 	}
 	var report struct {
 		Node       string   `json:"node"`

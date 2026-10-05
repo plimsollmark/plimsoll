@@ -32,12 +32,12 @@ func dockerCloudLive(t *testing.T) *DockerCloud {
 		}
 		t.Skip("DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME and (unless the API is rest) SANDBOX_DOCKERCLOUD_API_URL not set")
 	}
-	image := os.Getenv("SANDBOX_DOCKERCLOUD_IMAGE")
-	if image == "" {
-		t.Fatal("SANDBOX_DOCKERCLOUD_IMAGE must name the toolchain image for the live suite")
+	image, store := os.Getenv("SANDBOX_DOCKERCLOUD_IMAGE"), os.Getenv("SANDBOX_DOCKERCLOUD_STORE_IMAGE")
+	if (image == "") == (store == "") {
+		t.Fatal("exactly one of SANDBOX_DOCKERCLOUD_IMAGE and SANDBOX_DOCKERCLOUD_STORE_IMAGE must name the toolchain image for the live suite")
 	}
-	t.Logf("api %q", api)
-	return &DockerCloud{API: api, Token: token, Username: user, AuthURL: os.Getenv("SANDBOX_DOCKERCLOUD_AUTH_URL"), APIURL: apiURL, Image: image, DefaultTimeout: 60 * time.Second, MaxTimeout: 90 * time.Second,
+	t.Logf("api %q, image %q, store image %q", api, image, store)
+	return &DockerCloud{API: api, Token: token, Username: user, AuthURL: os.Getenv("SANDBOX_DOCKERCLOUD_AUTH_URL"), APIURL: apiURL, Image: image, StoreImage: store, DefaultTimeout: 60 * time.Second, MaxTimeout: 90 * time.Second,
 		MaxVCPU: 1, MaxMemoryMB: 2048} // Micro, the smallest and cheapest size
 }
 

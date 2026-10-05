@@ -288,6 +288,18 @@ func (d dcConnect) createSandbox(ctx context.Context, spec dcCreateSpec) (dcRepo
 			"memoryMib": strconv.Itoa(spec.memoryMiB), // uint64: a string in protojson
 		},
 	}
+	if spec.storeImage != "" {
+		// A store image boots by its ID. The service refuses a start command or a size
+		// beside it ("'startCmd' can only be specified with 'imageRef' (inline mode),
+		// not with 'template'", and the same for cpus; 2026-10-05): both come from the
+		// image. The lifetime, delete-on-timeout, no auto-resume and the platform are
+		// accepted and honored (a 600 s timeout read back as expiresAt 10 minutes on).
+		in["image"] = spec.storeImage
+		delete(in, "resources")
+		cloud := in["cloud"].(map[string]any)
+		delete(cloud, "imageRef")
+		delete(cloud, "startCmd")
+	}
 
 	var op dcOperation
 	if err := d.call(ctx, dcProcCreateSandbox, in, &op); err != nil {

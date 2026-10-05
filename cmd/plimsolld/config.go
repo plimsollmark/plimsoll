@@ -244,10 +244,12 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	case "dockercloud":
 		// The sandbox boots a raw OCI reference, so the same pinning rule as docker
 		// applies: a mutable tag could be repushed under a running deployment.
+		// A store image (SANDBOX_DOCKERCLOUD_STORE_IMAGE) always carries its digest,
+		// checked against every sandbox's booted digest, so it needs no flag.
 		pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
 		if err != nil {
 			violations = append(violations, err)
-		} else if !pinned {
+		} else if !pinned && strings.TrimSpace(getenv("SANDBOX_DOCKERCLOUD_STORE_IMAGE")) == "" {
 			fail("hardened mode requires SANDBOX_REQUIRE_PINNED_IMAGES=1 so SANDBOX_DOCKERCLOUD_IMAGE is an immutable @sha256 digest")
 		}
 		// A pin is only evidence where the API reports the digest each sandbox

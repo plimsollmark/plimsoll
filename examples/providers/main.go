@@ -16,8 +16,8 @@
 //
 // Needs docker. E2B runs when E2B_API_KEY is set (a paid service; one run costs a
 // fraction of a cent). Docker Cloud Sandboxes runs when DOCKER_SBX_TOKEN,
-// DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL and SANDBOX_DOCKERCLOUD_IMAGE are
-// set (billed per second). OpenShell runs when SANDBOX_OPENSHELL_GATEWAY_URL and the
+// DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_API_URL and SANDBOX_DOCKERCLOUD_IMAGE (or
+// _STORE_IMAGE) are set (billed per second). OpenShell runs when SANDBOX_OPENSHELL_GATEWAY_URL and the
 // gateway's mutual TLS files (SANDBOX_OPENSHELL_CA_FILE, _CERT_FILE, _KEY_FILE) are
 // set, on SANDBOX_OPENSHELL_IMAGE or plimsoll/sandbox:latest (free, but it needs a
 // gateway: docs/openshell.md). gVisor runs when docker has the runsc runtime. Providers
@@ -192,14 +192,15 @@ func targets() []target {
 		{Key: "e2b", Name: "E2B Firecracker microVM", Where: "E2B's cloud", Env: map[string]string{
 			"SANDBOX_PROVIDER": "e2b", "E2B_API_KEY": os.Getenv("E2B_API_KEY"), "E2B_TEMPLATE": os.Getenv("E2B_TEMPLATE")}},
 		{Key: "dockercloud", Name: "Docker Cloud Sandboxes", Where: "Docker's cloud", Env: map[string]string{
-			"SANDBOX_PROVIDER":             "dockercloud",
-			"DOCKER_SBX_TOKEN":             os.Getenv("DOCKER_SBX_TOKEN"),
-			"DOCKER_SBX_USERNAME":          os.Getenv("DOCKER_SBX_USERNAME"),
-			"SANDBOX_DOCKERCLOUD_API_URL":  os.Getenv("SANDBOX_DOCKERCLOUD_API_URL"),
-			"SANDBOX_DOCKERCLOUD_AUTH_URL": os.Getenv("SANDBOX_DOCKERCLOUD_AUTH_URL"),
-			"SANDBOX_DOCKERCLOUD_IMAGE":    os.Getenv("SANDBOX_DOCKERCLOUD_IMAGE"),
-			"SANDBOX_CPUS":                 "1",
-			"SANDBOX_MEMORY_MB":            "2048",
+			"SANDBOX_PROVIDER":                "dockercloud",
+			"DOCKER_SBX_TOKEN":                os.Getenv("DOCKER_SBX_TOKEN"),
+			"DOCKER_SBX_USERNAME":             os.Getenv("DOCKER_SBX_USERNAME"),
+			"SANDBOX_DOCKERCLOUD_API_URL":     os.Getenv("SANDBOX_DOCKERCLOUD_API_URL"),
+			"SANDBOX_DOCKERCLOUD_AUTH_URL":    os.Getenv("SANDBOX_DOCKERCLOUD_AUTH_URL"),
+			"SANDBOX_DOCKERCLOUD_IMAGE":       os.Getenv("SANDBOX_DOCKERCLOUD_IMAGE"),
+			"SANDBOX_DOCKERCLOUD_STORE_IMAGE": os.Getenv("SANDBOX_DOCKERCLOUD_STORE_IMAGE"),
+			"SANDBOX_CPUS":                    "1",
+			"SANDBOX_MEMORY_MB":               "2048",
 		}},
 		{Key: "wasm", Name: "WebAssembly (in-process QuickJS)", Where: "inside the daemon",
 			Skip: "snippets only: the process tier runs no multi-file projects, so it cannot host the runner"},
@@ -219,7 +220,7 @@ func targets() []target {
 				ts[i].Skip = "E2B_API_KEY was not set"
 			}
 		case "dockercloud":
-			if ts[i].Env["DOCKER_SBX_TOKEN"] == "" || ts[i].Env["SANDBOX_DOCKERCLOUD_IMAGE"] == "" {
+			if ts[i].Env["DOCKER_SBX_TOKEN"] == "" || (ts[i].Env["SANDBOX_DOCKERCLOUD_IMAGE"] == "" && ts[i].Env["SANDBOX_DOCKERCLOUD_STORE_IMAGE"] == "") {
 				ts[i].Skip = "Docker Cloud credentials or image were not set"
 			}
 		}

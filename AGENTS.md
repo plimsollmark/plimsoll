@@ -358,6 +358,10 @@ defaults to the documented `https://connect.docker.com/sandboxes`),
 `SANDBOX_DOCKERCLOUD_IMAGE` (the raw OCI image each sandbox boots; `@sha256:` when
 pinning is required; dockercloud honors `SANDBOX_MEMORY_MB` and whole `SANDBOX_CPUS`,
 requested at create and verified after it, and rejects `SANDBOX_PIDS`/`SANDBOX_DISK_MB`),
+`SANDBOX_DOCKERCLOUD_STORE_IMAGE` (instead of the image: one in the account's own Cloud
+Sandboxes image store, `<image id>@sha256:<digest>`, booted by ID with no registry pull and its
+booted digest checked on every run; its size and start command are the image's, so the envelope
+only caps them; Connect only; [docs/dockercloud.md](docs/dockercloud.md#an-image-kept-in-the-accounts-own-store)),
 `SANDBOX_OPENSHELL_GATEWAY_URL`, `SANDBOX_OPENSHELL_CA_FILE`, `SANDBOX_OPENSHELL_CERT_FILE`
 and `SANDBOX_OPENSHELL_KEY_FILE` (the gateway and its mutual TLS files),
 `SANDBOX_OPENSHELL_IMAGE` (must carry `node`, `sh`, `/usr/bin/env`, `/runner.mjs` and
@@ -536,7 +540,7 @@ every advertised production property is verifiably in force — `vm` or verified
 multi-client auth (`PLIMSOLL_CLIENTS_FILE`; a shared token or open dev mode is
 rejected), TLS on any non-loopback listener (the metrics listener included), an immutable execution surface
 (docker: `SANDBOX_REQUIRE_PINNED_IMAGES=1`, no `unconfined` seccomp; e2b: an
-explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1`), an explicit
+explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1` or a store image, which always carries its digest), an explicit
 per-run resource envelope (memory and CPU only for dockercloud, which has no disk
 control) plus, for docker, whose runners share the daemon's host, the aggregate memory budget, per-caller rate limiting with a burst no larger than a minute's rate, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive and below `SANDBOX_MAX_CONCURRENT`: a rate limit bounds what a caller starts, not the slots its long runs or running sessions hold), and with sessions on a per-caller session cap (`SANDBOX_MAX_SESSIONS_PER_CALLER` positive), and with a provider billed by the second a daily allowance on every caller (`paid_seconds_per_day`). Every violation is reported at once
 (one fix pass, not a startup loop). TLS itself is configured with

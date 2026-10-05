@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -105,16 +106,25 @@ type group struct {
 var colors = []string{"#2f6db5", "#c2702b", "#3f8f5a", "#8a4fa8"}
 
 func main() {
-	paths, _ := filepath.Glob("docs/measurements/session-latency/*.json")
+	if err := render(os.Stdout); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func render(w io.Writer) error {
+	paths, err := filepath.Glob("docs/measurements/session-latency/*.json")
+	if err != nil {
+		return err
+	}
 	var runs []run
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		var r run
 		if err := json.Unmarshal(b, &r); err != nil {
-			log.Fatal(err)
+			return err
 		}
 		r.File = filepath.Base(p)
 		runs = append(runs, r)
@@ -169,11 +179,12 @@ func main() {
 		"color": func(i int) string { return colors[i%len(colors)] },
 		"join":  strings.Join,
 	}).Parse(pageHTML))
-	if err := page.Execute(os.Stdout, map[string]any{
+	if err := page.Execute(w, map[string]any{
 		"Runs": runs, "Rows": rows, "Groups": groups, "Height": y + 10, "Left": left, "Width": width + left + 90,
 	}); err != nil {
-		log.Fatal(err)
+		return err
 	}
+	return nil
 }
 
 const pageHTML = `<!doctype html>

@@ -68,7 +68,17 @@ type DockerCloud struct {
 	// normally the plimsoll toolchain image published to a registry the service
 	// can pull.
 	Image string
-	// RequirePinnedImage refuses an Image that is not an @sha256: digest.
+	// StoreImage is an image in the account's own Docker Cloud Sandboxes image store
+	// (SANDBOX_DOCKERCLOUD_STORE_IMAGE), named "<image id>@sha256:<manifest digest>",
+	// instead of Image. The service boots it by ID with no registry pull, so the image
+	// can stay private to the account with no registry credential; the digest is
+	// required, and every sandbox's booted digest is checked against it. The image's
+	// own size and start command apply (the service refuses either beside an image
+	// ID), so it is created with plimsoll's start command, `tail -f /dev/null`.
+	// Connect only. Verified live on 2026-10-05.
+	StoreImage string
+	// RequirePinnedImage refuses an Image that is not an @sha256: digest (a StoreImage
+	// always carries one).
 	RequirePinnedImage bool
 	// GuardURL is the public HTTPS endpoint of this process's egress guard
 	// (SANDBOX_DOCKERCLOUD_GUARD_URL). Set, it enables host-API grants: a grant run's
@@ -220,9 +230,20 @@ func (d *DockerCloud) validateConfig() error {
 	if d.rest() && runCeiling(d.MaxTimeout) > dcRESTMaxRun {
 		return fmt.Errorf("dockercloud on the REST API cannot run past %s (an exec ends with its endpoint credential); the configured ceiling is %s", dcRESTMaxRun, runCeiling(d.MaxTimeout))
 	}
-	image := strings.TrimSpace(d.Image)
-	if image == "" {
-		return errors.New("SANDBOX_DOCKERCLOUD_IMAGE is not set (the raw OCI image each sandbox boots)")
+	image, store := strings.TrimSpace(d.Image), strings.TrimSpace(d.StoreImage)
+	switch {
+	case image != "" && store != "":
+		return errors.New("SANDBOX_DOCKERCLOUD_IMAGE and SANDBOX_DOCKERCLOUD_STORE_IMAGE are both set; set one")
+	case store != "":
+		if _, _, err := parseStoreImage(store); err != nil {
+			return err
+		}
+		if d.rest() {
+			return errors.New("SANDBOX_DOCKERCLOUD_STORE_IMAGE needs SANDBOX_DOCKERCLOUD_API=connect: the REST API reports no booted digest, so a store image's digest could not be checked")
+		}
+		return d.validateResourceConfig()
+	case image == "":
+		return errors.New("SANDBOX_DOCKERCLOUD_IMAGE is not set (the raw OCI image each sandbox boots), nor SANDBOX_DOCKERCLOUD_STORE_IMAGE")
 	}
 	if d.RequirePinnedImage && !isDigestPinned(image) {
 		return fmt.Errorf("SANDBOX_DOCKERCLOUD_IMAGE %q is not pinned to an immutable @sha256: digest (SANDBOX_REQUIRE_PINNED_IMAGES is on)", image)
@@ -244,6 +265,48 @@ func (d *DockerCloud) validateResourceConfig() error {
 		return errors.New("dockercloud cannot enforce SANDBOX_PIDS; leave it unset or choose docker")
 	}
 	return nil
+}
+
+// parseStoreImage splits "<image id>@sha256:<64 hex>" into the store's image ID and the
+// digest. An ID is what the store assigns (tmpl_ and 26 more letters and digits on
+// 2026-10-05); any letters, digits, '_' and '-' up to 128 are accepted, since the ID
+// is sent as a JSON string and never put in a URL or a host name.
+func parseStoreImage(s string) (id, digest string, err error) {
+	at := strings.Index(s, "@")
+	if at <= 0 || !isDigestPinned(s) || strings.Count(s, "@") != 1 {
+		return "", "", fmt.Errorf("SANDBOX_DOCKERCLOUD_STORE_IMAGE %q: want <image id>@sha256:<64 hex digits>", truncateForError(s))
+	}
+	id, digest = s[:at], strings.ToLower(s[at+1:])
+	if len(id) > 128 {
+		return "", "", fmt.Errorf("SANDBOX_DOCKERCLOUD_STORE_IMAGE: image ID longer than 128 characters")
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return "", "", fmt.Errorf("SANDBOX_DOCKERCLOUD_STORE_IMAGE %q: an image ID is letters, digits, '_' and '-'", truncateForError(s))
+		}
+	}
+	return id, digest, nil
+}
+
+// imageName is the configured image as an operator wrote it, for messages.
+func (d *DockerCloud) imageName() string {
+	if s := strings.TrimSpace(d.StoreImage); s != "" {
+		return "store image " + s
+	}
+	return strings.TrimSpace(d.Image)
+}
+
+// pinnedDigest is the digest every sandbox must report having booted: a store image's,
+// always, or Image's when it is pinned.
+func (d *DockerCloud) pinnedDigest() (string, bool) {
+	if s := strings.TrimSpace(d.StoreImage); s != "" {
+		_, digest, err := parseStoreImage(s)
+		return digest, err == nil
+	}
+	if image := strings.TrimSpace(d.Image); isDigestPinned(image) {
+		return image[strings.LastIndex(image, "@")+1:], true
+	}
+	return "", false
 }
 
 // parseDockerCloudURL accepts an absolute HTTPS URL (HTTP only on loopback, for

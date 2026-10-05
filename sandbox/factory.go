@@ -118,14 +118,15 @@ func Build(getenv func(string) string) (Provider, error) {
 		return Provider{Sandbox: e, Resources: res}, nil
 	case "dockercloud":
 		d := &DockerCloud{
-			Token:     getenv("DOCKER_SBX_TOKEN"),
-			Username:  getenv("DOCKER_SBX_USERNAME"),
-			AuthURL:   getenv("SANDBOX_DOCKERCLOUD_AUTH_URL"),
-			API:       getenv("SANDBOX_DOCKERCLOUD_API"),
-			APIURL:    getenv("SANDBOX_DOCKERCLOUD_API_URL"),
-			Image:     getenv("SANDBOX_DOCKERCLOUD_IMAGE"),
-			GuardURL:  getenv("SANDBOX_DOCKERCLOUD_GUARD_URL"),
-			PolicyURL: getenv("SANDBOX_DOCKERCLOUD_POLICY_URL"),
+			Token:      getenv("DOCKER_SBX_TOKEN"),
+			Username:   getenv("DOCKER_SBX_USERNAME"),
+			AuthURL:    getenv("SANDBOX_DOCKERCLOUD_AUTH_URL"),
+			API:        getenv("SANDBOX_DOCKERCLOUD_API"),
+			APIURL:     getenv("SANDBOX_DOCKERCLOUD_API_URL"),
+			Image:      getenv("SANDBOX_DOCKERCLOUD_IMAGE"),
+			StoreImage: getenv("SANDBOX_DOCKERCLOUD_STORE_IMAGE"),
+			GuardURL:   getenv("SANDBOX_DOCKERCLOUD_GUARD_URL"),
+			PolicyURL:  getenv("SANDBOX_DOCKERCLOUD_POLICY_URL"),
 		}
 		requirePinned, err := BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
 		if err != nil {

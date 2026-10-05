@@ -53,10 +53,42 @@ That live run surfaced three requirements the published contract does not state:
   platform). The cloud reports the manifest it booted, and the provider compares
   against that.
 
+## An image kept in the account's own store
+
+`SANDBOX_DOCKERCLOUD_IMAGE` names an image the service pulls from a registry, so a
+private image needs a registry the service can read. Instead,
+`SANDBOX_DOCKERCLOUD_STORE_IMAGE` names an image in the account's own Cloud Sandboxes
+image store, as `<image id>@sha256:<manifest digest>`: the service boots it by its ID
+with no pull, and nothing outside the account can boot it. Set one of the two, never
+both. What was verified live on 2026-10-05, with the Connect API:
+
+- **Putting an image there.** `ImageService.CreateImage` with `from_image` answers a
+  push target: a registry reference the service owns and a short-lived token
+  that may push to that one reference, logging in with the reference's first path segment (the owning organization) as its
+  user name. After the push the image reads `IMAGE_STATUS_COMPLETED` and reports the
+  pushed manifest digest. The request must name a size the service offers (Micro, 1 CPU and
+  2 GiB, is the smallest) and no platform, which it takes from the push, and it should set
+  the start command `tail -f /dev/null`, plimsoll's for raw images, because a sandbox
+  booted from the store runs the image's own start command.
+- **Booting it.** A create naming the ID boots it (running in 1.4 s), with the run's
+  lifetime, delete on timeout, no automatic resume and the linux/amd64 platform honored.
+  The service refuses a start command or a size beside an image ID: both are the image's.
+  So `SANDBOX_CPUS` and `SANDBOX_MEMORY_MB` only cap the image's size here; a sandbox
+  larger than they allow (or than Micro, when they are unset) is refused before any code
+  runs. Naming the push target's reference instead is refused ("image not found or access
+  denied").
+- **Evidence.** The sandbox reports the digest it booted, and every run is refused unless
+  it equals the configured one, so the digest is required and no pinning flag is needed,
+  in the strict production check either. The REST API reports no booted digest, so a store
+  image needs `SANDBOX_DOCKERCLOUD_API=connect`.
+
+Whoever holds the account's token can boot the image and read it, as with any image the
+account can boot.
+
 ## What each run does
 
 1. Creates a sandbox from the one configured image, a plain OCI image (the standard
-   container image format), pinned to linux/amd64. Its name starts with a prefix
+   container image format) or a store image, pinned to linux/amd64. Its name starts with a prefix
    unique to this daemon instance, and the daemon records the sandbox as its own
    before making the create call.
 2. Reads back, through the published contract, the network policy actually in force

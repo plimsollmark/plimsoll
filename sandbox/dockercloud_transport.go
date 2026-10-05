@@ -48,9 +48,13 @@ type dcTransport interface {
 type dcCreateSpec struct {
 	// name is ours, chosen before the request is sent: the lease key and, while the
 	// service has not answered, the only handle on the sandbox.
-	name     string
-	image    string
-	startCmd []string
+	name  string
+	image string
+	// storeImage is a store image's ID, booted instead of image; the service takes its
+	// size and start command from the image, so cpus, memoryMiB and startCmd are not
+	// sent with it.
+	storeImage string
+	startCmd   []string
 	// ttl is the sandbox's own lifetime: the service deletes it when ttl runs out, the
 	// backstop if every delete fails.
 	ttl       time.Duration
