@@ -58,6 +58,13 @@ const sessionSuspendBudget = 90 * time.Second
 // within it.
 const sessionOpenCharge = 2 * time.Minute
 
+// sessionClaimWindow is how long a session that never suspends (idle timeout 0) waits
+// for a request naming it before the daemon closes it as unclaimed; a session that
+// suspends waits its idle timeout. It is SANDBOX_SESSION_IDLE's default, the time the
+// daemon already gives an unused session before it stops paying for it. A variable for
+// tests.
+var sessionClaimWindow = 5 * time.Minute
+
 // sessionOrphanCloseBudget bounds closing a session opened for a caller that gave up:
 // nobody waits for that close, but its handler, slot and place do, so it gets the
 // suspend's bound, which covers a provider's stop.
@@ -91,27 +98,47 @@ type sessionEntry struct {
 	// replaced: the daemon is closing it for a newer session of its owner. It no
 	// longer counts against any cap, and its calls are refused as replaced.
 	replaced bool
-	used     uint64        // the registry's clock at open and at the end of each call
-	gone     chan struct{} // closed once the session has ended and given back its slot
+	// claimed: a request naming the session reached the daemon from its principal, so
+	// its client holds the ID. A session nobody claimed by its first idle timeout is
+	// closed (unclaimed) rather than suspended: one whose open answer never reached its
+	// client looks exactly like that, and nobody can use or close it.
+	claimed   bool
+	unclaimed bool
+	used      uint64        // the registry's clock at open and at the end of each call
+	gone      chan struct{} // closed once the session has ended and given back its slot
 	// paid charges the session's running time on a provider billed by the second
 	// (spend.go); nil otherwise.
 	paid *sessionMeter
 }
 
 // endErr is the session's end as its calls and its close report it: replaced when
-// the daemon took it for a newer session of its owner, whatever the provider says.
+// the daemon took it for a newer session of its owner, unclaimed when it closed it
+// because no request named it, whatever the provider says.
 func (e *sessionEntry) endErr() error {
 	e.mu.Lock()
-	replaced := e.replaced
+	replaced, unclaimed := e.replaced, e.unclaimed
 	e.mu.Unlock()
 	err := e.sess.Err()
 	// An end the provider reached by itself (an expiry between the choice and the
-	// close, say) is that end; only the close the replacement made is a replacement.
-	if replaced && (err == nil || sandbox.SessionEndReason(err) == sandbox.SessionClosed) {
-		return &sandbox.SessionEndedError{Reason: sandbox.SessionReplaced,
-			Detail: "the daemon closed it to open a newer session for the same owner, which was at its cap"}
+	// close, say) is that end; only the close the daemon made is its own end.
+	if err == nil || sandbox.SessionEndReason(err) == sandbox.SessionClosed {
+		switch {
+		case replaced:
+			return &sandbox.SessionEndedError{Reason: sandbox.SessionReplaced,
+				Detail: "the daemon closed it to open a newer session for the same owner, which was at its cap"}
+		case unclaimed:
+			return &sandbox.SessionEndedError{Reason: sandbox.SessionUnclaimed,
+				Detail: "no request named it before its first idle timeout, so the daemon closed it; nothing ran in it, so a new session loses nothing"}
+		}
 	}
 	return err
+}
+
+// claim records that a request naming the session reached the daemon.
+func (e *sessionEntry) claim() {
+	e.mu.Lock()
+	e.claimed = true
+	e.mu.Unlock()
 }
 
 type sessionRegistry struct {
@@ -748,15 +775,25 @@ func (e *sessionEntry) stopIdle() {
 	e.idleGen++
 }
 
+// idleWait is how long the idle timer waits: the idle timeout, or, for a session that
+// never suspends, sessionClaimWindow until a request names it; 0 = no timer. e.mu is
+// held.
+func (e *sessionEntry) idleWait() time.Duration {
+	if e.idleTimeout <= 0 && !e.claimed {
+		return sessionClaimWindow
+	}
+	return e.idleTimeout
+}
+
 // armIdle starts the idle timer for a full idle period from now; e.mu is held.
 func (e *sessionEntry) armIdle(s *SandboxService) {
-	e.armIdleAt(s, time.Now().Add(e.idleTimeout))
+	e.armIdleAt(s, time.Now().Add(e.idleWait()))
 }
 
 // armIdleAt starts the idle timer to fire at at, at once when at has passed; e.mu is
 // held.
 func (e *sessionEntry) armIdleAt(s *SandboxService, at time.Time) {
-	if e.idleTimeout <= 0 || e.ended || e.replaced {
+	if e.idleWait() <= 0 || e.ended || e.replaced {
 		return
 	}
 	e.stopIdle()
@@ -768,7 +805,8 @@ func (e *sessionEntry) armIdleAt(s *SandboxService, at time.Time) {
 // suspend suspends an idle session and gives back its slot, unless a call has
 // taken the turn in the meantime. A session whose suspended sandbox still holds its
 // memory (a paused container) keeps its slot: the slot is its share of the host's
-// memory budget, and that memory is still in use.
+// memory budget, and that memory is still in use. A session no request has named is
+// closed instead (closeUnclaimed).
 func (s *SandboxService) suspend(e *sessionEntry, gen uint64) {
 	select {
 	case e.turn <- struct{}{}:
@@ -788,7 +826,18 @@ func (s *SandboxService) suspend(e *sessionEntry, gen uint64) {
 	// A timer that fired, then waited while a call took the turn, ran and armed a fresh
 	// one, is stale: the session was used since, and suspending it now would end the
 	// interpreters (on e2b) of a call that just finished (round-3 review).
-	if gen != e.idleGen || e.ended || e.release == nil || e.sess.Err() != nil {
+	if gen != e.idleGen || e.ended || e.sess.Err() != nil {
+		e.mu.Unlock()
+		return
+	}
+	if !e.claimed {
+		e.unclaimed = true
+		e.mu.Unlock()
+		s.closeUnclaimed(e)
+		return
+	}
+	// Suspended already, or a session that never suspends.
+	if e.release == nil || e.idleTimeout <= 0 {
 		e.mu.Unlock()
 		return
 	}
@@ -843,6 +892,52 @@ func (s *SandboxService) suspend(e *sessionEntry, gen uint64) {
 	s.logger().Info("session suspended", "session", e.fingerprint, "idle_ms", e.idleTimeout.Milliseconds(), "holds_memory", holdsMemory)
 }
 
+// closeUnclaimed closes a session no request named by its first idle timeout, holding
+// its turn, with e.unclaimed set. Its client either never got the answer to its open (a
+// dropped connection, an answer the client refused as not bound to its request, a client
+// that crashed after sending), and then nobody can use or close it, or opened it ahead of
+// calls that have not come; the daemon cannot tell which. Kept, it would hold its place,
+// and until a suspend its slot and any paid time, for its whole lifetime; nothing ran in
+// it, so closing it loses nothing. A close that fails without ending the session keeps
+// it, as claimable as before, and tries again after another period.
+func (s *SandboxService) closeUnclaimed(e *sessionEntry) {
+	ctx, cancel := context.WithTimeout(context.Background(), sessionOrphanCloseBudget)
+	defer cancel()
+	err := func() (err error) {
+		// On a timer's goroutine a panic would end the daemon: a provider that panics
+		// while closing has failed to close.
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("the provider panicked while closing: %v", r)
+			}
+		}()
+		return e.sess.Close(ctx)
+	}()
+	if err != nil && e.sess.Err() == nil {
+		s.logger().Warn("unclaimed session close failed; it stays open", "session", e.fingerprint, "error", err.Error())
+		e.mu.Lock()
+		e.unclaimed = false
+		wait := e.idleWait()
+		e.mu.Unlock()
+		// Still running and still billing: another period is reserved, as after a failed
+		// suspend. The close is tried again either way, since nobody else will make it.
+		if e.paid != nil {
+			if perr := e.paid.cover(wait + s.meteredTeardown()); perr != nil {
+				s.logger().Warn("unclaimed session: its paid allowance cannot cover another period", "session", e.fingerprint, "error", perr.Error())
+			}
+		}
+		e.mu.Lock()
+		e.armIdle(s)
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Lock()
+	wait := e.idleWait()
+	e.mu.Unlock()
+	s.logger().Info("session closed unclaimed: no request named it before its first idle timeout (its open's answer was lost, or it was opened ahead of calls that did not come)",
+		"caller", e.principal, "session", e.fingerprint, "waited_ms", wait.Milliseconds())
+}
+
 // SessionRun runs one call in the caller's session.
 func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {
 	received := time.Now()
@@ -855,6 +950,9 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	if !ok {
 		return nil, errSessionNotFound()
 	}
+	// Any call naming the session claims it, one refused below included: its client
+	// holds the ID.
+	e.claim()
 	var k kind
 	switch p := m.GetPayload().(type) {
 	case *plimsollv1.SessionRunRequest_Javascript:
@@ -1041,6 +1139,7 @@ func (s *SandboxService) CloseSession(ctx context.Context, req *connect.Request[
 	if !ok {
 		return nil, errSessionNotFound()
 	}
+	e.claim()
 	// Wait for a call in flight, so the count covers it.
 	give, err := e.takeTurn(ctx)
 	if err != nil {
@@ -1099,6 +1198,7 @@ var sessionEnds = map[sandbox.SessionEnd]plimsollv1.SessionEnd{
 	sandbox.SessionShutdown:         plimsollv1.SessionEnd_SESSION_END_SHUTDOWN,
 	sandbox.SessionReplaced:         plimsollv1.SessionEnd_SESSION_END_REPLACED,
 	sandbox.SessionNotFound:         plimsollv1.SessionEnd_SESSION_END_NOT_FOUND,
+	sandbox.SessionUnclaimed:        plimsollv1.SessionEnd_SESSION_END_UNCLAIMED,
 }
 
 func sessionEndWire(e sandbox.SessionEnd) plimsollv1.SessionEnd {

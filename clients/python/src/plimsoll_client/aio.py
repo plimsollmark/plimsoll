@@ -210,6 +210,10 @@ class AsyncSession:
         return self.sync.ended
 
     @property
+    def stopped(self) -> Optional[str]:
+        return self.sync.stopped
+
+    @property
     def calls(self) -> int:
         return self.sync.calls
 

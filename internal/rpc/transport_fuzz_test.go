@@ -20,7 +20,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
-	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/protocol"
 )
 
@@ -43,7 +42,7 @@ func validRun() *plimsollv1.RunRequest {
 func newFuzzEdge() (http.Handler, *SandboxService) {
 	verifier := fakeVerifier{token: "good", scopes: []string{ScopeCodeRun}}
 	svc := NewSandboxService(&fakeSandbox{})
-	path, h := plimsollv1connect.NewSandboxServiceHandler(svc,
+	path, h := NewHandler(svc,
 		connect.WithInterceptors(AuthInterceptor(verifier)),
 		connect.WithReadMaxBytes(1<<20),
 	)

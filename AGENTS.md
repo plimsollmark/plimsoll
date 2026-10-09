@@ -281,8 +281,10 @@ Over RPC the procedures are `OpenSession`, `SessionRun` (its own request message
 daemon that predates sessions refuses it instead of dropping the ID) and `CloseSession`;
 the daemon binds each 128-bit session ID to its principal (an unknown and a foreign ID are
 the same NotFound), never logs it, serializes calls, chains their records, suspends an idle
-session and gives back its concurrency slot, and keeps an ended session's final count
-collectable for 10 minutes. Sessions are off unless `SANDBOX_MAX_SESSIONS` is positive.
+session and gives back its concurrency slot, closes instead a session no request has named by
+its first idle timeout (5 minutes when it never suspends; end `unclaimed`: a session whose open
+answer never reached its client looks the same, and nobody could use or close it), and keeps
+an ended session's final count collectable for 10 minutes. Sessions are off unless `SANDBOX_MAX_SESSIONS` is positive.
 On docker, `SANDBOX_SESSION_POOL` keeps never-used session containers ready
 ([sandbox/docker_pool.go](sandbox/docker_pool.go), the `sandbox.SessionPool` interface): a
 member is created and read back as a session's container is, gets an interpreter and its
@@ -313,7 +315,18 @@ grant issuance (an invalid grant or a failed mint, reason `permission`) and
 every `ErrUnsupported`/`ErrDisabled` site at the source; the RPC layer builds every
 handler-side refusal through `refuse` (a test fails on a Connect error built anywhere
 else) and sends the mark as the `plimsoll.v1.NotDispatched` error detail, which the
-client restores into the same Go error. **No mark means execution may have occurred**
+client restores into the same Go error. An answer written before any procedure's handler
+was reached (connect-go's refusal of a malformed or oversized body or a content type,
+net/http's 404) has no detail, so `rpc.BindAnswers` marks it with the
+`Plimsoll-Not-Dispatched` header instead (`unsupported` for a 404, else `request`),
+which every client reads when the body has no detail. **A mark counts only on an answer
+bound to its request:** every client sends a fresh random `Plimsoll-Request-Id` (32
+lowercase hex digits) and `BindAnswers`, around the RPC listener and every server built
+by `rpc.NewHandler`, echoes it on every answer; an answer whose echo is missing or
+differs (another request's answer served by an intermediary, or a daemon older than
+protocol 3) is believed in nothing: a success is DataLoss (`client.ErrAnswerNotBound`)
+and an error keeps its code but loses its mark, its session end and its unanswered-call
+record. **No mark means execution may have occurred**
 (the module worker's exit 4 is `ErrInvalidRequest` after its container ran, and stays
 unmarked), so an unmarked error is never a safe automatic retry. For projects,
 per-step failures live in `Steps` and the top-level conclusion is the typed
@@ -429,7 +442,8 @@ default 0, at most `SANDBOX_MAX_SESSIONS`; one goes to one session and is remove
 close, never reused; each is charged one run's memory against `SANDBOX_TOTAL_MEMORY_MB`, in
 plimsolld's clamp and in `WithAdmission`; [docs/sessions.md](docs/sessions.md#docker)), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
 12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends, which startup refuses with a provider
-billed by the second; otherwise 1s to 12h, and a request may ask for less but not under 1s), `SANDBOX_SESSION_DISK_MB`
+billed by the second; otherwise 1s to 12h, and a request may ask for less but not under 1s; a
+session no request has named by its first idle timeout is closed instead, end `unclaimed`), `SANDBOX_SESSION_DISK_MB`
 (default 1024; 0 disables the check and measures nothing; disk use is measured after each call,
 on docker as the used space of the session's tmpfs mounts (`statfs`), on openshell by a walk
 the session's code can hide files from;
@@ -509,7 +523,9 @@ the official client stamps as `client.Protocol`) and a daemon serves exactly one
 request that omits it is InvalidArgument and a request on another number is
 Unimplemented, both before the payload is read. `Describe` reports the daemon's
 number. Bump `protocol.Number` when a request field is added whose omission would
-change what a daemon may execute; an informational field does not bump it. Every answered
+change what a daemon may execute, or when the clients start requiring something of the
+daemon's answers (3: the request ID's echo), so an older daemon refuses before running
+anything; an informational field does not bump it. Every answered
 `Run` carries a **run record** (`RunResponse.record`, package [record](record/)): SHA-256
 digests of the request as sent and the result as returned, the evidence (provider, tier,
 outer environment, selected software identity, caller's admission rule, verified
@@ -686,8 +702,11 @@ decoded, canonical paths whose Go HTTP request target is byte-identical to the
 approved string; queries, traversal, percent encodings, and characters that would
 be wire-encoded are rejected before upstream dispatch, and so are `;` and all-dot
 segments, which some upstream servers reinterpret after the match (`/a/..;/b`
-reads as `/b` on Tomcat and Spring), and a `*` never binds a segment containing `:`
-(`/items/a:setIamPolicy` is another operation on AIP-136 APIs). An optional `Preamble` lets
+reads as `/b` on Tomcat and Spring), and a `*` binds only a segment of RFC 3986's
+unreserved characters (letters, digits, `-._~`), so never `:` (`/items/a:setIamPolicy` is
+another operation on AIP-136 APIs), `$` (`/odata/$batch` runs other requests on OData) or
+another character an upstream may read as syntax; a segment that needs one is granted as
+a literal. An optional `Preamble` lets
 an embedder layer a domain SDK on top of the generic client.
 
 The `allow` list, the `Preamble`, and the model-facing tool description a gateway
@@ -755,8 +774,10 @@ response; a profile's `max_calls` raises the call budget for a workload that is 
 loop by design, never past `MaxHostCallsCeiling` of 100,000, and its `route_max_calls`
 caps one allowed route within it, for a route whose call spends (a GPU job's submit),
 answered 429 past the cap (a call counts against every capped entry it matches, compared
-without regard to case, all or nothing, so neither an overlapping wildcard, a case variant
-nor the order of `allow` routes around one; in a session the count is the session's, a
+without regard to case, all or nothing, so neither a case variant nor the order of `allow`
+routes around one, and `Validate` refuses an entry of the same method that puts a `*` over
+a capped entry's fixed segment, since an upstream may serve `ep1.json`, `0123` or `ep1.`
+as the capped `ep1` or `123`; in a session the count is the session's, a
 `sandbox.RouteBudget` every granted call's broker charges, since code a session keeps can
 use each call's grant), and the metadata trace
 stays capped at the default 256 rows either way, counting the rest as `Dropped`;

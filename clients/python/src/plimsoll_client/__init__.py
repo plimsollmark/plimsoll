@@ -18,6 +18,7 @@ from ._version import __version__
 from .aio import AsyncClient, AsyncSession
 from .client import PROTOCOL, Client, Session
 from .errors import (
+    AnswerNotBoundError,
     AtCapacityError,
     ChainError,
     DataLossError,
@@ -109,6 +110,7 @@ __all__ = [
     "ResponseTooLargeError",
     "MalformedResponseError",
     "DataLossError",
+    "AnswerNotBoundError",
     "RecordMismatchError",
     "NoRecordError",
     "RecordVersionError",

@@ -10,7 +10,6 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -41,7 +40,7 @@ func startModuleServer(t *testing.T, fake *moduleFake) string {
 	t.Helper()
 	svc := rpc.NewSandboxService(fake)
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

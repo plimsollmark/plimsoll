@@ -353,7 +353,7 @@ func TestReplayComparesResultDigests(t *testing.T) {
 // whose recorder is a Harness; the bundle it writes verifies.
 func TestHarnessRecordsThroughTheClient(t *testing.T) {
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(rpc.NewSandboxService(sandboxtest.Wasm()),
+	path, h := rpc.NewHandler(rpc.NewSandboxService(sandboxtest.Wasm()),
 		connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
@@ -415,7 +415,7 @@ func TestSessionRecordsVerifyAndReplay(t *testing.T) {
 	svc := rpc.NewSandboxService(p)
 	svc.Sessions = rpc.SessionConfig{MaxSessions: 2, Lifetime: time.Minute, IdleTimeout: time.Minute}
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

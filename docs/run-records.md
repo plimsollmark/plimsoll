@@ -329,7 +329,7 @@ go run ./cmd/plimsoll-attest replay -daemon http://127.0.0.1:8746 -pub harness.p
 ```
 
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as
-`{"protocol": 2, "javascript": {"code": "console.log(1)"}}`. The token comes from the
+`{"protocol": 3, "javascript": {"code": "console.log(1)"}}`. The token comes from the
 environment and the key from a file or `PLIMSOLL_ATTEST_KEY`, so neither appears in a
 process listing. A bundle holds every run's request and response in full, the submitted
 code and its output included, so on Unix `run` creates it readable by its owner only

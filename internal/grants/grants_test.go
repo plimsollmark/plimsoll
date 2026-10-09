@@ -552,6 +552,14 @@ func TestLoadRouteMaxCalls(t *testing.T) {
 			t.Errorf("Load accepted route_max_calls %s; want a refusal", bad)
 		}
 	}
+	// An uncapped "*" over the capped route's fixed segment would carry "ep1.json" or
+	// "0123" past the cap to an upstream that serves it as the capped route.
+	wide := `{"profiles": {"gpu": {"base_url": "https://gpu.internal",
+	  "allow": ["POST /v2/ep1/run", "POST /v2/*/run"], "allowed_callers": ["agent-a"],
+	  "token": {"type": "static", "env": "GPU_KEY"}, "route_max_calls": {"POST /v2/ep1/run": 2}}}}`
+	if _, err := Load(writeGrants(t, wide)); err == nil || !strings.Contains(err.Error(), "in place of a fixed segment") {
+		t.Errorf("Load of a capped route beside a wildcard over it: %v; want the refusal", err)
+	}
 }
 
 // TestOpenToEveryCallerNamesWildcardProfiles: "*" in allowed_callers opens a profile

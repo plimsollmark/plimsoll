@@ -14,10 +14,20 @@ import { CodeSandboxes, PlimsollClient, PlimsollError } from "../src/index.ts";
 import { ownerDigest } from "../src/client.ts";
 import { RUNNERS, keyDigest, snippetRunner } from "../src/sandboxes.ts";
 
+// The rewritten answer keeps the daemon's echo of the request ID, as a proxy that edits
+// a body would; without it the client refuses the answer as another request's.
+function rewritten(res: Response, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json", "Plimsoll-Request-Id": res.headers.get("Plimsoll-Request-Id") ?? "" },
+  });
+}
+
 const wasmUrl = process.env.PLIMSOLL_WASM_URL;
 const sessionsUrl = process.env.PLIMSOLL_SESSIONS_URL;
 const echoUrl = process.env.PLIMSOLL_ECHO_URL;
 const ownerCapUrl = process.env.PLIMSOLL_OWNER_CAP_URL;
+const quickIdleUrl = process.env.PLIMSOLL_QUICK_IDLE_URL;
 const skip = !wasmUrl || !sessionsUrl || !echoUrl ? "run through `go test ./clients/typescript`" : false;
 
 // A client that counts the procedures it calls.
@@ -118,6 +128,37 @@ test("an ended sandbox is replaced once, and the output says what is new", { ski
   await s.disposeAll();
 });
 
+// A warmed sandbox nobody used by the daemon's first idle timeout (1 s here) is closed
+// by the daemon as unclaimed; the key's first call is refused, not dispatched, with that
+// end, and runs once more in a new sandbox.
+test("a warmed sandbox the daemon closed as unclaimed is replaced on the key's first call", { skip }, async () => {
+  assert.ok(quickIdleUrl, "run through `go test ./clients/typescript`");
+  const answered: string[] = [];
+  const client = new PlimsollClient({
+    baseUrl: quickIdleUrl,
+    fetch: async (input, init) => {
+      const res = await fetch(input, init);
+      answered.push(String(input).split("/").pop()!);
+      return res;
+    },
+  });
+  const s = new CodeSandboxes({ minimumIsolation: "container", client });
+  s.warm("w");
+  const deadline = Date.now() + 3000;
+  while (!answered.includes("OpenSession")) {
+    assert.ok(Date.now() < deadline, "the warm never opened a session");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal((await fetch(`${quickIdleUrl}/test/wait-ended`, { method: "POST" })).status, 200);
+  const r = await s.run("w", { code: "1" });
+  assert.equal(r.stdout, "python 1: 1", "a new sandbox answered");
+  assert.equal(r.freshSandbox, true);
+  const count = (p: string) => answered.filter((x) => x === p).length;
+  assert.equal(count("OpenSession"), 2, "the warm's open and the new sandbox's");
+  assert.equal(count("SessionRun"), 2, "the refused call and the one that ran");
+  await s.disposeAll();
+});
+
 // stateKept and filesPersist promise the next call what this one left, so a call
 // whose interpreter or sandbox ended during it promises nothing.
 test("a call whose interpreter or sandbox ended does not say its state is kept", { skip }, async () => {
@@ -151,7 +192,7 @@ test("a call whose session ended for a reason this client cannot name does not s
       const body = await res.json();
       body.ended = "SESSION_END_HOST_LOST"; // the envelope's end is outside the record
       body.endDetail = "the host went away";
-      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      return rewritten(res, body);
     },
   });
   const s = new CodeSandboxes({ minimumIsolation: "container", client, onCloseError: () => undefined });
@@ -180,7 +221,7 @@ test("a session that ends under two calls at once is closed once, and a failed c
         if (!closeFails || !String(input).endsWith("/CloseSession") || !res.ok) return res;
         const body = await res.json();
         body.calls = "9"; // a count this client never saw: the close fails its check
-        return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+        return rewritten(res, body);
       },
     });
     const s = new CodeSandboxes({ minimumIsolation: "container", client, onCloseError: (_k, e) => closeErrors.push(e) });
@@ -234,7 +275,7 @@ test("a failure before the code is sent says nothing ran, whatever failed", { sk
       if (!String(input).endsWith("/OpenSession") || !res.ok) return res;
       const body = await res.json();
       body.session = "00".repeat(32); // a fingerprint that is not the ID's: the client closes it
-      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      return rewritten(res, body);
     },
   });
   const cases: [string, CodeSandboxes, string][] = [
@@ -263,7 +304,7 @@ test("a failure before the code is sent says nothing ran, whatever failed", { sk
       assert.ok(e instanceof PlimsollError, name);
       assert.equal(e.notDispatched, "environment", name);
       assert.equal(e.code, code, name);
-      assert.match(e.message, /^Nothing ran \(environment\): (plimsoll: |HTTP 503$)/, name);
+      assert.match(e.message, /^Nothing ran \(environment\): (plimsoll: |HTTP 503( \(the answer does not carry|$))/, name);
       return true;
     });
     await s.disposeAll();
@@ -314,7 +355,7 @@ test("an onCloseError that throws or rejects breaks no close and no open", { ski
       if (!String(input).endsWith("/CloseSession") || !res.ok) return res;
       const body = await res.json();
       body.calls = "9"; // every close fails the client's check
-      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      return rewritten(res, body);
     },
   });
   const warned: string[] = [];
@@ -365,7 +406,7 @@ test("a refusal that says the daemon may have changed reads its Describe again",
       // The first answer is a daemon started without sessions; later ones, the same
       // daemon restarted with them on.
       if (describes === 1) body.supportsSessions = false;
-      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      return rewritten(res, body);
     },
   });
   const s = new CodeSandboxes({ minimumIsolation: "container", client, maxSessionsPerOwner: 1 });
@@ -505,7 +546,7 @@ test("a close that finds calls this client did not make is reported, not swallow
       if (!String(input).endsWith("/CloseSession") || !res.ok) return res;
       const body = await res.json();
       body.calls = "9";
-      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      return rewritten(res, body);
     },
   });
   const s = new CodeSandboxes({ minimumIsolation: "container", client, onCloseError: (_k, e) => errors.push(e) });
@@ -901,7 +942,7 @@ test("the default close warning names the key by a digest, never its IDs", { ski
       if (!String(input).endsWith("/CloseSession") || !res.ok) return res;
       const body = await res.json();
       body.calls = "9";
-      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      return rewritten(res, body);
     },
   });
   const key = { owner: "alice@example.com", conversation: "chat-1" };

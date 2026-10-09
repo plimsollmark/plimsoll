@@ -128,11 +128,51 @@ func TestGrantRouteMaxCallsValidation(t *testing.T) {
 	}
 }
 
+// A cap compares segments as written, while an upstream may serve "ep1.json", "0123" or
+// "ep1." as "ep1" or "123". So a grant is refused when another entry of the same method
+// matches a capped entry's calls with a "*" where the capped entry has a fixed segment
+// (the 9 October scan, F2 and F3): a call spelled for the wildcard alone would reach the
+// capped route uncounted. Entries that cannot carry such a call stay accepted.
+func TestGrantRefusesAWildcardAroundACap(t *testing.T) {
+	r := func(method, path string) HostRoute { return HostRoute{Method: method, Path: path} }
+	ep1 := r("POST", "/v2/ep1/run")
+	cases := []struct {
+		name   string
+		allow  []HostRoute
+		caps   map[HostRoute]int
+		refuse bool
+	}{
+		{"an uncapped wildcard over the capped segment", []HostRoute{ep1, r("POST", "/v2/*/run")}, map[HostRoute]int{ep1: 2}, true},
+		{"its method spelled in lower case", []HostRoute{ep1, r("post", "/v2/*/run")}, map[HostRoute]int{ep1: 2}, true},
+		{"a wildcard over another fixed segment", []HostRoute{ep1, r("POST", "/*/ep1/run")}, map[HostRoute]int{ep1: 2}, true},
+		{"fixed segments equal but for case", []HostRoute{ep1, r("POST", "/V2/*/run")}, map[HostRoute]int{ep1: 2}, true},
+		{"a wider route with a cap of its own", []HostRoute{ep1, r("POST", "/v2/*/run")}, map[HostRoute]int{ep1: 2, r("POST", "/v2/*/run"): 100}, true},
+		{"crossing wildcards, each capped", []HostRoute{r("POST", "/a/*/c"), r("POST", "/a/b/*")}, map[HostRoute]int{r("POST", "/a/*/c"): 1, r("POST", "/a/b/*"): 2}, true},
+		{"the wider route capped, the narrower not", []HostRoute{ep1, r("POST", "/v2/*/run")}, map[HostRoute]int{r("POST", "/v2/*/run"): 2}, false},
+		{"another method", []HostRoute{ep1, r("GET", "/v2/*/run")}, map[HostRoute]int{ep1: 2}, false},
+		{"another number of segments", []HostRoute{ep1, r("POST", "/v2/*")}, map[HostRoute]int{ep1: 2}, false},
+		{"a fixed segment that differs", []HostRoute{ep1, r("POST", "/v3/*/run")}, map[HostRoute]int{ep1: 2}, false},
+		{"a case variant of the capped route", []HostRoute{ep1, r("POST", "/v2/EP1/run")}, map[HostRoute]int{ep1: 2}, false},
+	}
+	for _, tc := range cases {
+		g := &HostAPIGrant{BaseURL: "https://api.example.com", Allow: tc.allow, Minter: StaticToken("t"), RouteMaxCalls: tc.caps}
+		err := g.Validate()
+		if tc.refuse && err == nil {
+			t.Errorf("%s: accepted", tc.name)
+		}
+		if !tc.refuse && err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+		}
+	}
+}
+
 // A route cap holds whatever order allow is written in. The 8 October security review
-// found that the broker charged only the first entry a call matched, so "POST
-// /v2/*/run" written before a capped "POST /v2/ep1/run" let every call to ep1 through.
-// Each case runs with allow in both orders, and the concurrent case shows that calls
-// arriving together cannot share a cap's last call.
+// found that the broker charged only the first entry a call matched, so an uncapped
+// entry written before a capped one let calls through. Each case runs with allow in
+// both orders, and the concurrent case shows that calls arriving together cannot
+// share a cap's last call. (A wildcard that widens a capped entry's fixed segment is
+// refused by Validate, TestGrantRefusesAWildcardAroundACap, so the overlaps left are a
+// capped wildcard over narrower entries and spellings of one route.)
 func TestRouteCapHoldsWhateverEntryMatchesFirst(t *testing.T) {
 	t.Parallel()
 	type call struct {
@@ -144,17 +184,16 @@ func TestRouteCapHoldsWhateverEntryMatchesFirst(t *testing.T) {
 		caps  map[HostRoute]int
 		calls []call
 	}{
-		"a wildcard beside a capped exact route": {
+		"a capped wildcard beside an exact route it covers": {
 			allow: []HostRoute{{Method: "POST", Path: "/v2/*/run"}, {Method: "POST", Path: "/v2/ep1/run"}},
-			caps:  map[HostRoute]int{{Method: "POST", Path: "/v2/ep1/run"}: 1},
-			calls: []call{{"/v2/ep1/run", 200}, {"/v2/ep1/run", 429}, {"/v2/ep1/run", 429}, {"/v2/ep2/run", 200}},
+			caps:  map[HostRoute]int{{Method: "POST", Path: "/v2/*/run"}: 2},
+			calls: []call{{"/v2/ep1/run", 200}, {"/v2/ep2/run", 200}, {"/v2/ep1/run", 429}, {"/v2/ep3/run", 429}},
 		},
-		"crossing wildcards, each capped": {
-			allow: []HostRoute{{Method: "POST", Path: "/a/*/c"}, {Method: "POST", Path: "/a/b/*"}},
-			caps:  map[HostRoute]int{{Method: "POST", Path: "/a/*/c"}: 1, {Method: "POST", Path: "/a/b/*"}: 2},
-			// /a/b/c spends from both caps; the refused second call spends from neither,
-			// so /a/b/* still has one call for /a/b/d.
-			calls: []call{{"/a/b/c", 200}, {"/a/b/c", 429}, {"/a/x/c", 429}, {"/a/b/d", 200}, {"/a/b/e", 429}},
+		"two spellings of one route, each capped": {
+			allow: []HostRoute{{Method: "POST", Path: "/a/*/c"}, {Method: "POST", Path: "/A/*/c"}},
+			caps:  map[HostRoute]int{{Method: "POST", Path: "/a/*/c"}: 1, {Method: "POST", Path: "/A/*/c"}: 3},
+			// Either spelling spends from both caps, so the tighter one decides.
+			calls: []call{{"/a/b/c", 200}, {"/A/x/c", 429}, {"/a/y/c", 429}},
 		},
 	}
 	for name, tc := range cases {
@@ -201,7 +240,7 @@ func TestRouteCapHoldsWhateverEntryMatchesFirst(t *testing.T) {
 			var reached atomic.Int64
 			core, err := newBrokerSession(&HostAPIGrant{
 				BaseURL: "https://api.internal", Allow: allow,
-				RouteMaxCalls: map[HostRoute]int{{Method: "POST", Path: "/v2/ep1/run"}: 5},
+				RouteMaxCalls: map[HostRoute]int{{Method: "POST", Path: "/v2/*/run"}: 5},
 			}, "", brokerRoundTripFunc(func(*http.Request) (*http.Response, error) {
 				reached.Add(1)
 				return jsonResp(http.StatusOK, "", `{}`), nil

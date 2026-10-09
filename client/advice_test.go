@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -61,7 +62,7 @@ func TestRemotePreservesAdviceAndExecutionResults(t *testing.T) {
 			expected = []sandbox.AdviceFinding{want}
 		}
 		t.Run(name, func(t *testing.T) {
-			_, handler := plimsollv1connect.NewSandboxServiceHandler(adviceResponseServer{advice: findings})
+			_, handler := rpc.NewHandler(adviceResponseServer{advice: findings})
 			server := httptest.NewServer(handler)
 			defer server.Close()
 			remote := newRemote(t, server.URL)

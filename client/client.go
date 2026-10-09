@@ -192,8 +192,10 @@ func New(baseURL string, opts ...Option) (*Remote, error) {
 	}
 	connectOpts := []connect.ClientOption{connect.WithReadMaxBytes(maxResponseBytes)}
 	connectOpts = append(connectOpts, cfg.opts...)
+	// Last, so innermost: the binding sees each HTTP request and its answer.
+	connectOpts = append(connectOpts, connect.WithInterceptors(bindAnswers()))
 	return &Remote{
-		client:       plimsollv1connect.NewSandboxServiceClient(cfg.httpClient, checkedURL, connectOpts...),
+		client:       plimsollv1connect.NewSandboxServiceClient(bindingHTTPClient{cfg.httpClient}, checkedURL, connectOpts...),
 		token:        cfg.token,
 		jsGrant:      cfg.jsGrant,
 		projectGrant: cfg.projectGrant,
@@ -735,6 +737,8 @@ func sessionEndFromWire(e plimsollv1.SessionEnd) sandbox.SessionEnd {
 		return sandbox.SessionReplaced
 	case plimsollv1.SessionEnd_SESSION_END_NOT_FOUND:
 		return sandbox.SessionNotFound
+	case plimsollv1.SessionEnd_SESSION_END_UNCLAIMED:
+		return sandbox.SessionUnclaimed
 	case plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED:
 		return sandbox.SessionOpen
 	default:

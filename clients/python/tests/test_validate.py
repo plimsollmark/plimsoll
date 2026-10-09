@@ -39,9 +39,12 @@ class BaseURL(unittest.TestCase):
             "https://plimsoll.example:notaport",
             "https://[::1",
             "https://plimsoll.example/a b",
+            "https://" + "a" * 64 + ".example",  # a label the resolver's IDNA encoding refuses
+            "https://plimsoll..example",
         ):
             with self.subTest(raw), self.assertRaises(InvalidBaseURLError):
                 Client(raw)
+        Client("https://" + "a" * 63 + ".example.")  # the longest label, and a trailing dot
 
     def test_cleartext_off_loopback_needs_the_opt_in(self) -> None:
         with self.assertRaises(InsecureHTTPError):

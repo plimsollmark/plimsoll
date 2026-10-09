@@ -75,7 +75,10 @@ type Session struct {
 	mu    sync.Mutex
 	calls uint64
 	last  string
-	end   *sandbox.SessionEndedError
+
+	// State accessors must not wait for mu, held across a network exchange.
+	stateMu sync.Mutex
+	end     *sandbox.SessionEndedError
 	// unanswered is the first call that ended without an answer this client could
 	// check: an error without a not-dispatched mark and without the record the daemon
 	// chains for such a call (lost with the answer, or failing its check). That call
@@ -213,12 +216,35 @@ func (s *Session) IdleTimeout() time.Duration { return s.idle }
 
 // Ended returns the session's end once a response has reported it, else nil.
 func (s *Session) Ended() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
 	if s.end == nil {
 		return nil
 	}
 	return s.end
+}
+
+// Stopped returns why this client sends no more calls after an answer it could not
+// check, or nil until it stops. It wraps ErrSessionUnanswered and the original cause;
+// it is distinct from Ended, which reports an end the daemon stated.
+func (s *Session) Stopped() error {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	return s.unanswered
+}
+
+func (s *Session) setStopped(cause error) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.unanswered == nil {
+		s.unanswered = fmt.Errorf("%w: %w; open a new session", ErrSessionUnanswered, cause)
+	}
+}
+
+func (s *Session) setEnd(end *sandbox.SessionEndedError) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.end = end
 }
 
 // RunJavaScript runs a snippet in the session.
@@ -326,8 +352,8 @@ func (s *Session) envelope(ctx context.Context, timeout time.Duration, minimum s
 func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (*plimsollv1.RunResponse, *sandbox.RunRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.unanswered != nil {
-		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w (%v); open a new session", ErrSessionUnanswered, s.unanswered))
+	if stopped := s.Stopped(); stopped != nil {
+		return nil, nil, sandbox.NotDispatched(sandbox.RefusalRequest, stopped)
 	}
 	req := connect.NewRequest(msg)
 	s.r.auth(req)
@@ -337,13 +363,13 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 		err = restoreSandboxError(err)
 		var se *sandbox.SessionEndedError
 		if errors.As(err, &se) {
-			s.end = se
+			s.setEnd(se)
 		}
 		if _, marked := sandbox.NotDispatchedReason(err); marked {
 			return nil, nil, err
 		}
 		if rec == nil {
-			s.unanswered = err
+			s.setStopped(err)
 			return nil, nil, err
 		}
 		r, cerr := record.CheckUnanswered(msg, rec, s.fingerprint, s.calls, s.last)
@@ -354,7 +380,7 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 				record.ErrMismatch, r.Provider, r.Isolation, r.SoftwareIdentity, s.provider, s.isolation, s.identity)
 		}
 		if cerr != nil {
-			s.unanswered = cerr
+			s.setStopped(cerr)
 			return nil, nil, connect.NewError(connect.CodeDataLoss, cerr)
 		}
 		s.calls, s.last = r.Sequence, r.SHA256
@@ -367,15 +393,15 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 	}
 	run := resp.Msg.GetRun()
 	if run == nil {
-		s.unanswered = ErrResultKindMismatch
+		s.setStopped(ErrResultKindMismatch)
 		return nil, nil, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
 	if e := resp.Msg.GetEnded(); e != plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED {
-		s.end = &sandbox.SessionEndedError{Reason: sessionEndFromWire(e), Detail: resp.Msg.GetEndDetail()}
+		s.setEnd(&sandbox.SessionEndedError{Reason: sessionEndFromWire(e), Detail: resp.Msg.GetEndDetail()})
 	}
 	rec, err := record.CheckSessionCall(msg, run, s.fingerprint, s.calls, s.last)
 	if err != nil {
-		s.unanswered = err
+		s.setStopped(err)
 		return run, nil, connect.NewError(connect.CodeDataLoss, err)
 	}
 	s.calls, s.last = rec.Sequence, rec.SHA256

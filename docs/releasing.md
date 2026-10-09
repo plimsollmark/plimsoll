@@ -56,18 +56,26 @@ the plimsoll release they ship in, without the `v`. `TestClientVersionsAgree` in
 `clients/typescript` fails when `package.json`, its lockfile, `pyproject.toml` and the
 Python client's `_version.py` disagree, so a release sets all four before its tag.
 
-The npm package is published from the commit the release tag names, after that
-commit's checks are green, so the package and the tagged source are the same code:
+The npm package is published by
+[publish-npm.yml](../.github/workflows/publish-npm.yml) when a GitHub release is
+published, from the commit the release tag names, so the package and the tagged source
+are the same code. It uses npm's trusted publishing: npm accepts the workflow's
+short-lived GitHub identity token, so no npm access token exists to store or expire, and
+npm attaches a <dfn>*provenance*</dfn> statement, a signed record naming the repository,
+commit and workflow run that built the package. Its
+checks match the Python workflow's (the release's tag is `v` plus the client's version,
+and `clients/typescript` is the same as at that tag). One job runs the compiler and packs
+the package; a second job, the only one holding the identity token, publishes that packed
+file after checking its SHA-256.
 
-```sh
-cd clients/typescript
-npm ci          # installs the compiler; `prepare` builds dist/ during the publish
-npm publish --access public
-```
-
-npm requires two-factor authentication for every publish made after `npm login`; an
-unattended publish uses a granular access token with publish rights on the
-`@plimsollmark` scope.
+npm's side is a trusted publisher on the package (owner `plimsollmark`, repository
+`plimsoll`, workflow `publish-npm.yml`, environment `npm`). Its allowed actions must include
+`npm publish`: npm always allows a trusted publisher `npm stage publish`, which waits for a
+maintainer's approval, and the workflow publishes directly. npm expires a trusted
+publisher whose first publish has not succeeded within 2 days, so add it shortly before
+the first release that uses it. Once a publish has gone through it, npm recommends setting
+the package's publishing access to "Require two-factor authentication and disallow
+tokens", which leaves trusted publishing working.
 
 The Python client is published by
 [publish-python.yml](../.github/workflows/publish-python.yml) when a GitHub release is

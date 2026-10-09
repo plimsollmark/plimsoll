@@ -75,7 +75,9 @@ Every refusal that ran nothing is marked as one, with a reason (`request`, `perm
 `protocol`, `unsupported`, `isolation`, `environment`, `capacity`). `sandbox.NotDispatchedReason(err)`
 reads the mark, whether the <dfn>*provider*</dfn> (the backend that runs the code) is in
 your own process or behind the daemon. An error without the mark may have come after the
-code started, so it is never safe to retry automatically
+code started, so it is never safe to retry automatically. A mark counts only on an answer
+that carries the client's request ID back, so a proxy that serves one request's answer
+for another cannot make a call that ran read "nothing ran"
 ([what comes back, and what it means](docs/run-results.md#did-anything-run-the-error-says-so)).
 
 The tier is evidence the daemon collected: its configuration and its own startup checks.

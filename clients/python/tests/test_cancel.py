@@ -17,6 +17,7 @@ import threading
 import time
 import unittest
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from unittest.mock import patch
 
 from plimsoll_client import (
     AsyncClient,
@@ -26,7 +27,9 @@ from plimsoll_client import (
     PlimsollError,
     RequestCanceledError,
     RequestTimeoutError,
+    TransportError,
 )
+from plimsoll_client import _transport
 from plimsoll_client._record import session_fingerprint
 
 # Seconds a cut request may take to return. The work it stands for is a socket
@@ -104,6 +107,7 @@ class Server:
                 return
             name = line.split()[1].decode().rsplit("/", 1)[-1]
             length = 0
+            rid = ""
             while True:
                 header = f.readline()
                 if header in (b"\r\n", b""):
@@ -111,6 +115,8 @@ class Server:
                 key, _, value = header.decode().partition(":")
                 if key.strip().lower() == "content-length":
                     length = int(value)
+                elif key.strip().lower() == "plimsoll-request-id":
+                    rid = value.strip()
             f.read(length)
             with self._lock:
                 self.requests.append(name)
@@ -125,7 +131,9 @@ class Server:
                 if hung_up:
                     return
             status, body = self.answers.get(name, (200, b"{}"))
-            head = f"HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+            # Echoes the request ID, as the daemon does.
+            head = (f"HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n"
+                    f"Plimsoll-Request-Id: {rid}\r\nConnection: close\r\n\r\n")
             try:
                 conn.sendall(head.encode() + body)
             except OSError:
@@ -289,6 +297,111 @@ class Handle(unittest.TestCase):
         self.assertTrue(closed.wait(PROMPT))
         self.assertEqual(got[0], 0x16, "the bytes sent were not a TLS handshake record")
         self.assertNotIn(b"POST", bytes(got))
+
+
+class NameResolution(unittest.TestCase):
+    """The daemon's name is looked up in a thread of its own, so the deadline and a
+    cancel stop waiting for a resolver that does not answer (failure-injection review,
+    finding 5); the request is then marked not dispatched, since it had no socket."""
+
+    NAME = "daemon.plimsoll.test"
+    # The longest a lookup of NAME waits for release: far past every deadline here, so
+    # a client that waits for the resolver fails its test instead of hanging the suite.
+    STUCK = 10.0
+
+    def setUp(self) -> None:
+        self.server = Server()
+        self.addCleanup(self.server.close)
+        self.server.answers["Describe"] = describe_answer()
+        self.url = self.server.url.replace("127.0.0.1", self.NAME)
+        self.release = threading.Event()  # a lookup of NAME waits for it
+        self.entered = threading.Event()  # set once a lookup of NAME is waiting
+        self.lookup_error: Optional[OSError] = None
+        real = socket.getaddrinfo
+
+        def lookup(host: Any, *args: Any, **kwargs: Any) -> Any:
+            if host != self.NAME:
+                return real(host, *args, **kwargs)
+            self.entered.set()
+            self.release.wait(self.STUCK)
+            if self.lookup_error is not None:
+                raise self.lookup_error
+            return real("127.0.0.1", *args, **kwargs)
+
+        patcher = patch("socket.getaddrinfo", lookup)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # Cleanups run last first: release every lookup left waiting, then wait for
+        # their threads to finish, so no test leaves one counted for the next.
+        self.addCleanup(lambda: self.assertTrue(wait_for(lambda: _transport._abandoned == 0)))
+        self.addCleanup(self.release.set)
+
+    def client(self, **kwargs: Any) -> Client:
+        return Client(self.url, insecure_http=True, **kwargs)
+
+    def test_the_deadline_covers_a_name_lookup(self) -> None:
+        start = time.monotonic()
+        with self.assertRaises(RequestTimeoutError) as cm:
+            self.client(request_timeout=0.5).describe()
+        self.assertLess(time.monotonic() - start, 0.5 + PROMPT)
+        self.assertTrue(self.entered.is_set(), "the lookup never started, so this case tests nothing")
+        self.assertEqual(cm.exception.not_dispatched, "environment")
+        self.assertEqual(self.server.count("Describe"), 0)
+
+    def test_a_cancel_ends_a_name_lookup(self) -> None:
+        h = CancelHandle()
+        call = Call(lambda: self.client().describe(cancel=h))
+        call.start()
+        self.assertTrue(self.entered.wait(PROMPT), "the lookup never started")
+        h.cancel()
+        call.join(PROMPT)
+        self.assertFalse(call.is_alive(), "the cancel did not end the wait for the resolver")
+        self.assertIsInstance(call.error, RequestCanceledError)
+        assert isinstance(call.error, PlimsollError)
+        self.assertEqual(call.error.not_dispatched, "request")
+        self.assertEqual(self.server.count("Describe"), 0)
+
+    def test_a_lookup_that_answers_in_time_is_used(self) -> None:
+        self.release.set()
+        self.assertEqual(self.client().describe().provider, "stub")
+        self.assertTrue(self.entered.is_set())
+
+    def test_a_resolver_failure_is_marked_not_dispatched(self) -> None:
+        self.lookup_error = socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        self.release.set()
+        with self.assertRaises(TransportError) as cm:
+            self.client().describe()
+        self.assertNotIsInstance(cm.exception, RequestTimeoutError)
+        self.assertEqual(cm.exception.not_dispatched, "environment")
+        self.assertIn("Name or service not known", str(cm.exception))
+
+    def test_lookups_left_waiting_are_capped(self) -> None:
+        with patch.object(_transport, "_MAX_ABANDONED_LOOKUPS", 1):
+            with self.assertRaises(RequestTimeoutError):
+                self.client(request_timeout=0.3).describe()
+            self.assertEqual(_transport._abandoned, 1)
+            start = time.monotonic()
+            with self.assertRaises(TransportError) as cm:
+                self.client(request_timeout=30).describe()
+            self.assertLess(time.monotonic() - start, PROMPT, "the refusal waited for the resolver")
+            self.assertNotIsInstance(cm.exception, RequestTimeoutError)
+            self.assertEqual(cm.exception.not_dispatched, "environment")
+            self.assertIn("still waiting on the resolver", str(cm.exception))
+            self.release.set()
+            self.assertTrue(wait_for(lambda: _transport._abandoned == 0))
+            self.assertEqual(self.client().describe().provider, "stub")
+
+    def test_an_ip_literal_is_not_looked_up_in_a_thread(self) -> None:
+        threads: List[threading.Thread] = []
+        patched = socket.getaddrinfo
+
+        def lookup(host: Any, *args: Any, **kwargs: Any) -> Any:
+            threads.append(threading.current_thread())
+            return patched(host, *args, **kwargs)
+
+        with patch("socket.getaddrinfo", lookup):
+            self.assertEqual(Client(self.server.url).describe().provider, "stub")
+        self.assertEqual(threads, [threading.current_thread()])
 
 
 class Async(unittest.TestCase):

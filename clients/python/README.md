@@ -313,6 +313,11 @@ anything ran:
   same request again, here or to another daemon, cannot run it twice.
 - `err.not_dispatched is None` means the run may have executed, whatever the class or
   code. It is never a safe automatic retry of a request that is not idempotent.
+- `err.answer_not_bound` is true when the answer did not carry this request's
+  `Plimsoll-Request-Id` back: an intermediary served another request's answer, or the
+  daemon is older than protocol 3. Nothing it said is believed, so it has no
+  `not_dispatched`; a success answer of that kind raises `AnswerNotBoundError`, a
+  `DataLossError`.
 
 Refusals. The class comes from the status code and the reason; the daemon marks these
 refusals, but read `not_dispatched` rather than the class, since a daemon that predates
@@ -328,7 +333,7 @@ a procedure (sessions, for one) answers it `unimplemented` without the mark:
 | `UnsupportedError`, `DisabledError` | The daemon's provider cannot do this, or runs nothing. |
 | `ProtocolMismatchError` | The daemon serves another protocol number. |
 | `AtCapacityError` | Shed by the daemon's admission or rate limit; retry later or elsewhere. |
-| `SessionEndedError` | The session has ended; `reason` says why (`closed`, `expired`, `disk_exceeded`, `main_process_ended`, `boundary_failed`, `sandbox_changed`, `shutdown`, or `replaced`: the daemon closed it to open a newer session for the same `owner`, at its `SANDBOX_MAX_SESSIONS_PER_OWNER`). |
+| `SessionEndedError` | The session has ended; `reason` says why (`closed`, `expired`, `disk_exceeded`, `main_process_ended`, `boundary_failed`, `sandbox_changed`, `shutdown`; `replaced`: the daemon closed it to open a newer session for the same `owner`, at its `SANDBOX_MAX_SESSIONS_PER_OWNER`; `not_found`: the daemon has no such session, after a restart, say; `unclaimed`: no request named it before its first idle timeout, so the daemon closed it, as it does a session whose open answer was lost; or `unknown`: an end a newer daemon has). Nothing of the refused call ran: open a new session. |
 
 A plain `PlimsollError` carries any other Connect status in `code` (for example
 `unauthenticated`), marked or not as the daemon sent it.

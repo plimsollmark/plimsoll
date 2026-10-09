@@ -60,7 +60,10 @@ class PlimsollError(Exception):
     run but ended in an error (a version 3 record, in its proto3 JSON form): the
     Session checks it and keeps it in its chain, so the session goes on. ``record``
     is that record once the Session has checked it (Go: ``UnansweredCallError.Record``),
-    else ``None``.
+    else ``None``. ``answer_not_bound`` is true for an error built from an answer that
+    did not carry this request's ``Plimsoll-Request-Id`` back (Go:
+    ``client.ErrAnswerNotBound``): nothing it said about the call was believed, so it
+    has no ``not_dispatched`` and no ``unanswered``.
     """
 
     default_code = "unknown"
@@ -73,6 +76,7 @@ class PlimsollError(Exception):
         not_dispatched: Optional[str] = None,
         http_status: Optional[int] = None,
         unanswered: Optional[Dict[str, Any]] = None,
+        answer_not_bound: bool = False,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -80,6 +84,7 @@ class PlimsollError(Exception):
         self.not_dispatched: Optional[str] = not_dispatched
         self.http_status: Optional[int] = http_status
         self.unanswered: Optional[Dict[str, Any]] = unanswered
+        self.answer_not_bound: bool = answer_not_bound
         self.record: Optional["RunRecord"] = None
 
 
@@ -243,6 +248,17 @@ class DataLossError(PlimsollError):
     def __init__(self, message: str, *, result: Any = None, **kwargs: Any) -> None:
         super().__init__(message, **kwargs)
         self.result = result
+
+
+class AnswerNotBoundError(DataLossError):
+    """A success answer did not carry this request's ``Plimsoll-Request-Id`` back: a
+    daemon older than protocol 3, or something between that answered with another
+    request's answer or dropped the header. The call may have run (Go:
+    ``client.ErrAnswerNotBound`` under ``connect.CodeDataLoss``)."""
+
+    def __init__(self, message: str, **kwargs: Any) -> None:
+        kwargs.setdefault("answer_not_bound", True)
+        super().__init__(message, **kwargs)
 
 
 class RecordMismatchError(DataLossError):

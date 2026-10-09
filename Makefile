@@ -262,9 +262,9 @@ e2b-guard-live:
 # conformance suite and the guest's privileges, against the real service. It spends
 # (a microVM per case, about 2 cents a pass at the template's size), so it runs only
 # here, never in e2b-suite or the gate. E2B_TEMPLATE picks the template (default base).
-## e2b-session-live: prove E2B sessions against the live service (paid; needs E2B_API_KEY)
+## e2b-session-live: prove E2B sessions against the live service, the daemon's unclaimed close included (paid; needs E2B_API_KEY)
 e2b-session-live:
-	E2B_SESSION_LIVE=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'TestLiveE2BSessions' -count=1 -v -timeout 40m
+	E2B_SESSION_LIVE=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'TestLiveE2BSessions|TestLiveE2BDaemonClosesAnUnclaimedSession' -count=1 -v -timeout 40m
 
 # The website targets that used to sit here drove the commercial site's local stack
 # through scripts/ , which is private and does not ship. In a public clone they were

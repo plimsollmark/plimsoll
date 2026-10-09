@@ -57,6 +57,7 @@ SESSION_ENDS: Dict[str, int] = {
     "SESSION_END_SHUTDOWN": 7,
     "SESSION_END_REPLACED": 8,
     "SESSION_END_NOT_FOUND": 9,
+    "SESSION_END_UNCLAIMED": 10,
 }
 SESSION_END_NAMES = (
     "open",
@@ -69,6 +70,7 @@ SESSION_END_NAMES = (
     "shutdown",
     "replaced",
     "not_found",
+    "unclaimed",
 )
 
 # plimsoll.v1.NotDispatchedReason, by number.
@@ -500,6 +502,18 @@ def _decode_record(b: bytes) -> Dict[str, Any]:
     return out
 
 
+# The request ID a client sends on every request and the daemon copies onto its
+# answer, and the mark the daemon puts on an answer written before any procedure's
+# handler was reached (Go: protocol.RequestIDHeader, protocol.NotDispatchedHeader).
+REQUEST_ID_HEADER = "Plimsoll-Request-Id"
+NOT_DISPATCHED_HEADER = "Plimsoll-Not-Dispatched"
+NOT_BOUND = (
+    "the answer does not carry this request's Plimsoll-Request-Id back (a daemon older than "
+    "protocol 3, or an intermediary that answered with another request's answer or dropped "
+    "the header), so what it says about the call is ignored"
+)
+
+
 def _http_code(status: int) -> str:
     # Connect's mapping for an answer without a Connect error body.
     if status == 400:
@@ -515,10 +529,12 @@ def _http_code(status: int) -> str:
     return "unknown"
 
 
-def error_from_wire(status: int, body: bytes) -> PlimsollError:
+def error_from_wire(status: int, body: bytes, *, bound: bool, mark: Optional[str] = None) -> PlimsollError:
     """The error a Connect error answer describes, restored the way the Go client's
     restoreSandboxError restores it: the NotDispatched detail marks it, a
-    SessionEnded detail types it, and the code with the reason picks the class."""
+    SessionEnded detail types it, and the code with the reason picks the class.
+    Without a detail, ``mark`` (the answer's NotDispatched header) marks it. An
+    answer that is not ``bound`` to the request keeps only its code and message."""
     parsed: Any = None
     try:
         parsed = loads(body) if body else None
@@ -560,7 +576,12 @@ def error_from_wire(status: int, body: bytes) -> PlimsollError:
             # An undecodable detail states nothing; in particular not that nothing ran.
             continue
 
-    kwargs: Dict[str, Any] = {"code": code, "not_dispatched": refusal, "http_status": status}
+    if not bound:
+        refusal, end, unanswered = None, None, None
+        message = f"{message} ({NOT_BOUND})"
+    elif refusal is None and mark in REFUSAL_NAMES and mark != "unknown":
+        refusal = mark
+    kwargs: Dict[str, Any] = {"code": code, "not_dispatched": refusal, "http_status": status, "answer_not_bound": not bound}
     if refusal is None and unanswered is not None:
         kwargs["unanswered"] = unanswered
     message = f"plimsoll: {code}: {message}"

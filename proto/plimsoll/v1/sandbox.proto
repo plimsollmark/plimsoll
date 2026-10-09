@@ -487,7 +487,9 @@ message OpenSessionResponse {
   string sandbox = 3; // the provider
   string isolation = 4; // the tier measured at open
   int64 expires_unix_ms = 5;
-  uint32 idle_timeout_ms = 6; // after this long without a call the sandbox is suspended
+  // After this long without a call the sandbox is suspended; a session no request has
+  // named by then is closed instead (SESSION_END_UNCLAIMED).
+  uint32 idle_timeout_ms = 6;
   string software_identity = 7; // selected image, when the provider can establish it
 }
 
@@ -581,6 +583,11 @@ enum SessionEnd {
   // the ID is not this caller's (both get the same answer, so it says nothing about an
   // ID's existence). Nothing of the call ran; a client opens a new session.
   SESSION_END_NOT_FOUND = 9;
+  // No request named the session before its first idle timeout (5 minutes when it
+  // never suspends), so the daemon closed it: the answer to its open never reached the
+  // client, which then can neither use nor close it, or the client opened it ahead of
+  // calls that did not come in time; the daemon cannot tell which. Nothing ran in it.
+  SESSION_END_UNCLAIMED = 10;
 }
 
 // SessionEnded is attached as an error detail to a SessionRun refused because

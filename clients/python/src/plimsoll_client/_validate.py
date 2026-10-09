@@ -82,6 +82,11 @@ def validate_base_url(raw: Any, insecure_http: bool) -> str:
     if not raw.isascii():
         # http.client sends the path as ASCII; anything else must be percent-encoded.
         raise InvalidBaseURLError("plimsoll: base URL must be ASCII (percent-encode the rest)")
+    try:
+        hostname.encode("idna")  # what socket.getaddrinfo does with it
+    except UnicodeError:
+        # Otherwise every call would fail with a UnicodeError, not a PlimsollError.
+        raise InvalidBaseURLError("plimsoll: base URL host has an empty label or one over 63 characters") from None
     if scheme == "http" and not _is_loopback(hostname) and not insecure_http:
         raise InsecureHTTPError("plimsoll: cleartext HTTP to a non-loopback plimsoll requires insecure_http=True")
     return urlunsplit((scheme, u.netloc, u.path.rstrip("/"), "", ""))

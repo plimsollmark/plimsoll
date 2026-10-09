@@ -32,11 +32,17 @@ import (
 // sessionServer is a real daemon handler over the fake session provider.
 func sessionServer(t *testing.T) (string, *sandboxtest.Sessions) {
 	t.Helper()
+	return sessionServerIdle(t, time.Minute)
+}
+
+// sessionServerIdle is sessionServer with the given idle timeout.
+func sessionServerIdle(t *testing.T, idle time.Duration) (string, *sandboxtest.Sessions) {
+	t.Helper()
 	p := &sandboxtest.Sessions{}
 	svc := rpc.NewSandboxService(p)
-	svc.Sessions = rpc.SessionConfig{MaxSessions: 4, MaxPerOwner: 1, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	svc.Sessions = rpc.SessionConfig{MaxSessions: 4, MaxPerOwner: 1, Lifetime: time.Minute, IdleTimeout: idle}
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -215,12 +221,29 @@ func TestSessionSendsNothingAfterAnUnansweredCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if s.Stopped() != nil || s.Ended() != nil {
+		t.Fatal("a newly opened session is stopped or ended")
+	}
+	_, err = s.RunJavaScript(context.Background(), sandbox.Request{Code: "refused", MinimumIsolation: sandbox.IsolationVM})
+	if reason, marked := sandbox.NotDispatchedReason(err); !marked || reason != sandbox.RefusalIsolation {
+		t.Fatalf("the marked refusal: %v, want isolation", err)
+	}
+	if s.Stopped() != nil || s.Ended() != nil {
+		t.Fatal("a marked refusal stopped or ended the session")
+	}
 	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	lossy.drop.Store(true)
-	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: "2"}); err == nil {
+	_, lost := s.RunJavaScript(context.Background(), sandbox.Request{Code: "2"})
+	if lost == nil {
 		t.Fatal("the call whose answer was dropped succeeded")
+	}
+	if stopped := s.Stopped(); !errors.Is(stopped, ErrSessionUnanswered) || !errors.Is(stopped, lost) {
+		t.Fatalf("Stopped = %v, want ErrSessionUnanswered wrapping %v", stopped, lost)
+	}
+	if s.Ended() != nil {
+		t.Fatalf("a dropped answer reported an end: %v", s.Ended())
 	}
 	lossy.drop.Store(false)
 	_, err = s.RunJavaScript(context.Background(), sandbox.Request{Code: "3"})
@@ -229,6 +252,51 @@ func TestSessionSendsNothingAfterAnUnansweredCall(t *testing.T) {
 	}
 	if n := p.Opened()[0].Calls(); n != 2 {
 		t.Fatalf("the daemon ran %d calls, want 2: the refused call was sent", n)
+	}
+}
+
+func TestSessionStateAccessorsDoNotWaitForAnInFlightCall(t *testing.T) {
+	url, _ := sessionServer(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	r := newRemote(t, url, WithHTTPClient(answerHTTPFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/SessionRun") {
+			close(entered)
+			<-release
+		}
+		return http.DefaultClient.Do(req)
+	})))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := r.OpenSession(ctx, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := s.RunJavaScript(ctx, sandbox.Request{Code: "1"})
+		callDone <- err
+	}()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("the call never entered the transport")
+	}
+	state := make(chan [2]error, 1)
+	go func() { state <- [2]error{s.Stopped(), s.Ended()} }()
+	select {
+	case got := <-state:
+		if got[0] != nil || got[1] != nil {
+			t.Fatalf("state during the call = %v, want no stop or end", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("the state accessors waited for the network exchange")
+	}
+	unblock()
+	if err := <-callDone; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -295,7 +363,7 @@ func (l *fingerprintLiar) CloseSession(context.Context, *connect.Request[plimsol
 func TestSessionFingerprintMismatchClosesTheSession(t *testing.T) {
 	liar := &fingerprintLiar{}
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(liar)
+	path, h := rpc.NewHandler(liar)
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -342,7 +410,7 @@ func TestUnansweredCallIsSignedAndTheSessionGoesOn(t *testing.T) {
 	svc := rpc.NewSandboxService(p)
 	svc.Sessions = rpc.SessionConfig{MaxSessions: 4, Lifetime: time.Minute, IdleTimeout: time.Minute}
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -443,7 +511,7 @@ func (l *sessionLiar) CloseSession(context.Context, *connect.Request[plimsollv1.
 func liarRemote(t *testing.T, l *sessionLiar, rec Recorder) *Remote {
 	t.Helper()
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(l)
+	path, h := rpc.NewHandler(l)
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -466,7 +534,7 @@ func TestAMismatchedCloseIsNotSigned(t *testing.T) {
 	}
 	liar := &fingerprintLiar{}
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(liar)
+	path, h := rpc.NewHandler(liar)
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -606,5 +674,31 @@ func TestAForgottenSessionIsAnEnd(t *testing.T) {
 	_, err = s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
 	if sandbox.SessionEndReason(err) != sandbox.SessionNotFound || sandbox.SessionEndReason(s.Ended()) != sandbox.SessionNotFound {
 		t.Fatalf("a call on a forgotten session: %v (Ended %v); want a not_found end", err, s.Ended())
+	}
+}
+
+// A session no request named by its first idle timeout is closed by the daemon (the
+// answer to its open was lost; here, the client waited): its next call comes back as a
+// typed, not-dispatched unclaimed end.
+func TestAnUnclaimedSessionIsAnEnd(t *testing.T) {
+	url, p := sessionServerIdle(t, time.Second) // the shortest the daemon takes
+	s, err := newRemote(t, url).OpenSession(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := p.WaitEnded(waitCtx); err != nil {
+		t.Fatal("the daemon never closed the unclaimed session")
+	}
+	_, err = s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+	if r, ok := sandbox.NotDispatchedReason(err); sandbox.SessionEndReason(err) != sandbox.SessionUnclaimed || !ok || r != sandbox.RefusalRequest {
+		t.Fatalf("a call on the unclaimed session: %v; want a not-dispatched unclaimed end", err)
+	}
+	if sandbox.SessionEndReason(s.Ended()) != sandbox.SessionUnclaimed {
+		t.Fatalf("Ended: %v; want unclaimed", s.Ended())
+	}
+	if got := sessionEndFromWire(plimsollv1.SessionEnd_SESSION_END_UNCLAIMED); got.String() != "unclaimed" {
+		t.Fatalf("end 10 is named %q; want unclaimed", got)
 	}
 }

@@ -34,7 +34,6 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/clientconfig"
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
@@ -254,7 +253,9 @@ const usageLimits = `
                              never, refused with a provider billed by the
                              second; otherwise 1s to 12h); its files are kept and
                              the next call resumes it; a request may ask for less,
-                             not under 1s. On a provider billed by the second a
+                             not under 1s. A session no request has named by its
+                             first idle timeout (5m if it never suspends) is
+                             closed instead (end unclaimed). On a provider billed by the second a
                              session's running time, open to suspend and resume
                              to suspend, draws on the paid allowances
   SANDBOX_SESSION_DISK_MB    end a session whose files exceed this after a call
@@ -897,10 +898,11 @@ func newHTTPServer(addr string, handler http.Handler, tlsConf *tls.Config) *http
 }
 
 // rpcMux is what the RPC listener serves: the SandboxService behind its pre-body
-// checks, and the operational endpoints.
-func rpcMux(svc *rpc.SandboxService, verifier rpc.TokenVerifier, maxConcurrent int, sb sandbox.Sandbox) *http.ServeMux {
+// checks, and the operational endpoints, every answer bound to its request
+// (rpc.BindAnswers): the pre-body checks' refusals and a 404 included.
+func rpcMux(svc *rpc.SandboxService, verifier rpc.TokenVerifier, maxConcurrent int, sb sandbox.Sandbox) http.Handler {
 	mux := http.NewServeMux()
-	path, handler := plimsollv1connect.NewSandboxServiceHandler(svc,
+	path, handler := rpc.NewHandler(svc,
 		// ReleaseDecodeSlot first: it gives back the decode slot guardRPC took, once
 		// Connect has decoded the request and before anything runs.
 		connect.WithInterceptors(rpc.ReleaseDecodeSlot(), rpc.AuthInterceptor(verifier)),
@@ -928,7 +930,7 @@ func rpcMux(svc *rpc.SandboxService, verifier rpc.TokenVerifier, maxConcurrent i
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("/readyz", readyzHandler(sb))
-	return mux
+	return rpc.BindAnswers(mux)
 }
 
 // egressGuardOf returns the provider's egress guard and the path it serves, or nil

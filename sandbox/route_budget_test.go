@@ -71,9 +71,9 @@ func TestRouteCapSpansTheSessionsCalls(t *testing.T) {
 func TestRouteCapIsSharedByGrantsOfTheSameRoute(t *testing.T) {
 	base, hits := jobsAPI(t)
 	submit := HostRoute{Method: "POST", Path: "/v2/ep1/run"}
-	wide := HostRoute{Method: "post", Path: "/v2/*/run"}
+	status := HostRoute{Method: "get", Path: "/v2/ep1/status/*"}
 	a := cappedGrant(base, map[HostRoute]int{submit: 2}, submit)
-	b := cappedGrant(base, map[HostRoute]int{submit: 2}, wide, submit)
+	b := cappedGrant(base, map[HostRoute]int{submit: 2}, status, submit)
 	session := NewRouteBudget()
 	calls(t, a, session, "/v2/ep1/run", 2)
 	if got := calls(t, b, session, "/v2/ep1/run", 1); got[0] != http.StatusTooManyRequests {
@@ -84,13 +84,13 @@ func TestRouteCapIsSharedByGrantsOfTheSameRoute(t *testing.T) {
 	}
 }
 
-// A case variant of a capped route that only an uncapped wildcard matches as written
+// A case variant of a capped route that only an uncapped entry matches as written
 // still counts against the cap: an upstream that routes without regard to case serves
 // it as the capped route.
 func TestRouteCapCountsCaseVariants(t *testing.T) {
 	base, hits := jobsAPI(t)
 	submit := HostRoute{Method: "POST", Path: "/v2/ep1/run"}
-	grant := cappedGrant(base, map[HostRoute]int{submit: 1}, HostRoute{Method: "POST", Path: "/v2/*/run"}, submit)
+	grant := cappedGrant(base, map[HostRoute]int{submit: 1}, HostRoute{Method: "POST", Path: "/v2/EP1/run"}, submit)
 	core, err := brokerSessionForGrant(context.Background(), grant, time.Minute, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -99,13 +99,13 @@ func TestRouteCapCountsCaseVariants(t *testing.T) {
 	for _, c := range []struct {
 		target string
 		status int
-	}{{"/v2/ep1/run", 200}, {"/v2/EP1/run", 429}, {"/v2/Ep1/run", 429}, {"/v2/ep2/run", 200}} {
+	}{{"/v2/ep1/run", 200}, {"/v2/EP1/run", 429}, {"/v2/Ep1/run", http.StatusForbidden}} {
 		if got := core.Call(context.Background(), brokerCall{Method: "POST", RawTarget: c.target}).Status; got != c.status {
 			t.Fatalf("%s = %d, want %d", c.target, got, c.status)
 		}
 	}
-	if n := hits.Load(); n != 2 {
-		t.Fatalf("the API was reached %d times, want 2 (ep1 once, ep2 once)", n)
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("the API was reached %d times, want 1", n)
 	}
 }
 
@@ -158,12 +158,11 @@ func TestRouteCapCountsSpellingsOfOneRouteOnce(t *testing.T) {
 	base, hits := jobsAPI(t)
 	lower := HostRoute{Method: "POST", Path: "/v2/ep1/run"}
 	upper := HostRoute{Method: "POST", Path: "/v2/EP1/run"}
-	wide := HostRoute{Method: "POST", Path: "/v2/*/run"}
 	a := cappedGrant(base, map[HostRoute]int{lower: 1}, lower)
-	b := cappedGrant(base, map[HostRoute]int{upper: 1}, upper, wide)
+	b := cappedGrant(base, map[HostRoute]int{upper: 1}, upper)
 	session := NewRouteBudget()
 	calls(t, a, session, "/v2/ep1/run", 1)
-	if got := calls(t, b, session, "/v2/ep1/run", 1); got[0] != http.StatusTooManyRequests {
+	if got := calls(t, b, session, "/v2/EP1/run", 1); got[0] != http.StatusTooManyRequests {
 		t.Fatalf("the second profile's call after the first spent the cap: %v, want 429", got)
 	}
 	if n := hits.Load(); n != 1 {

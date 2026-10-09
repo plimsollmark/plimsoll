@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -33,6 +34,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
+	"github.com/plimsollmark/plimsoll/internal/answertest"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
@@ -94,6 +96,10 @@ func TestPython(t *testing.T) {
 		}),
 		"PLIMSOLL_BREAKING_URL="+serve(t, breakingSvc(), nil, nil),
 		"PLIMSOLL_LOSSY_URL="+lossyProxy(t, serve(t, plainSessionSvc(), nil, nil)),
+		"PLIMSOLL_QUICK_IDLE_URL="+quickIdleURL(t),
+	)
+	env = append(env, bindingDaemons(t)...)
+	env = append(env,
 		"PLIMSOLL_TLS_URL="+tlsURL,
 		"PLIMSOLL_TLS_CA="+tlsCA,
 		"PLIMSOLL_SCRIPTED_SOFTWARE="+scriptedSoftware,
@@ -118,6 +124,39 @@ func TestPython(t *testing.T) {
 	}
 }
 
+// bindingDaemons are the daemons the answer-binding tests use (failure-injection
+// review, findings 1 and 3): two replaying proxies in front of one daemon, whose run
+// count PLIMSOLL_REPLAY_RUNS_URL reports so a test can show the daemon ran the call it
+// was given another answer for; a daemon that does not echo the request ID; one whose
+// read cap refuses a body before the handler; and one serving no procedure at all.
+func bindingDaemons(t *testing.T) []string {
+	svc := quiet(rpc.NewSandboxService(sandboxtest.Wasm()))
+	upstream := serve(t, svc, nil, func(mux *http.ServeMux) {
+		mux.HandleFunc("GET /runs", func(w http.ResponseWriter, _ *http.Request) {
+			total, _ := svc.RunCounts()
+			_, _ = fmt.Fprint(w, total)
+		})
+	})
+	unbound := http.NewServeMux()
+	unbound.Handle(plimsollv1connect.NewSandboxServiceHandler(quiet(rpc.NewSandboxService(sandboxtest.Wasm()))))
+	unboundSrv := httptest.NewServer(unbound)
+	t.Cleanup(unboundSrv.Close)
+	early := http.NewServeMux()
+	early.Handle(rpc.NewHandler(quiet(rpc.NewSandboxService(sandboxtest.Wasm())), connect.WithReadMaxBytes(256)))
+	earlySrv := httptest.NewServer(early)
+	t.Cleanup(earlySrv.Close)
+	none := httptest.NewServer(rpc.BindAnswers(http.NotFoundHandler()))
+	t.Cleanup(none.Close)
+	return []string{
+		"PLIMSOLL_REPLAY_REFUSAL_URL=" + answertest.Replay(t, upstream),
+		"PLIMSOLL_REPLAY_SUCCESS_URL=" + answertest.Replay(t, upstream),
+		"PLIMSOLL_REPLAY_RUNS_URL=" + upstream + "/runs",
+		"PLIMSOLL_UNBOUND_URL=" + unboundSrv.URL,
+		"PLIMSOLL_EARLY_REFUSAL_URL=" + earlySrv.URL,
+		"PLIMSOLL_NO_PROCEDURE_URL=" + none.URL,
+	}
+}
+
 func clientSkipOrFail(t *testing.T, format string, args ...any) {
 	t.Helper()
 	if os.Getenv("PLIMSOLL_REQUIRE_CLIENTS") == "1" {
@@ -137,7 +176,7 @@ func quiet(svc *rpc.SandboxService) *rpc.SandboxService {
 func serve(t *testing.T, h plimsollv1connect.SandboxServiceHandler, v rpc.TokenVerifier, extra func(*http.ServeMux)) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	path, handler := plimsollv1connect.NewSandboxServiceHandler(h, connect.WithInterceptors(rpc.AuthInterceptor(v)))
+	path, handler := rpc.NewHandler(h, connect.WithInterceptors(rpc.AuthInterceptor(v)))
 	mux.Handle(path, handler)
 	if extra != nil {
 		extra(mux)
@@ -152,7 +191,7 @@ func serve(t *testing.T, h plimsollv1connect.SandboxServiceHandler, v rpc.TokenV
 func serveTLS(t *testing.T, h plimsollv1connect.SandboxServiceHandler) (url, caFile string) {
 	t.Helper()
 	mux := http.NewServeMux()
-	path, handler := plimsollv1connect.NewSandboxServiceHandler(h, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	path, handler := rpc.NewHandler(h, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, handler)
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
@@ -473,6 +512,24 @@ func plainSessionSvc() *rpc.SandboxService {
 	svc := quiet(rpc.NewSandboxService(&sandboxtest.Sessions{}))
 	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
 	return svc
+}
+
+// quickIdleURL serves a daemon whose idle timeout is the shortest it takes, 1 s, so it
+// closes a session no request named by then as unclaimed. POST /test/wait-ended answers
+// once every session it opened has ended (200), or after 10 s (504).
+func quickIdleURL(t *testing.T) string {
+	p := &sandboxtest.Sessions{}
+	svc := quiet(rpc.NewSandboxService(p))
+	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Second}
+	return serve(t, svc, nil, func(mux *http.ServeMux) {
+		mux.HandleFunc("POST /test/wait-ended", func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			defer cancel()
+			if p.WaitEnded(ctx) != nil {
+				http.Error(w, "a session is still open", http.StatusGatewayTimeout)
+			}
+		})
+	})
 }
 
 func breakingSvc() *rpc.SandboxService {

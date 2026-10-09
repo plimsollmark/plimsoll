@@ -50,6 +50,24 @@ and the client turns it back into the same Go error. A failure while authenticat
 that is not a refusal (the caller cancelled, the token verifier was unreachable) is not
 marked either.
 
+A few refusals happen before the daemon's own code sees the request: the RPC library
+refuses a body it cannot parse, one over its size cap, or an unsupported content type,
+and the HTTP server answers 404 for a procedure it does not serve. Nothing can have run
+for any of them, but they carry no error detail, so the daemon marks them with the
+`Plimsoll-Not-Dispatched` response header instead (`unsupported` for a 404, `request`
+otherwise). The clients read the header when the error has no detail.
+
+**A mark counts only if the answer is the one to your request.** A proxy or cache that
+gets confused and serves one request's answer for another would otherwise make a call
+that ran read "nothing ran", and a retry would run it twice. So every official client
+sends a fresh random `Plimsoll-Request-Id` (32 lowercase hex digits) with each request,
+and the daemon copies it onto every answer. An answer without your ID, or with another
+one, is believed in nothing. A success becomes a data-loss error (the code may have run;
+Go: `client.ErrAnswerNotBound`), and an error keeps its code but loses its mark, its
+session end and anything else it said about the call. A daemon older than protocol 3
+does not echo the ID, and protocol 3 is what makes it refuse a newer client before
+running anything.
+
 For projects, per-step failures live in `Steps` and the run's conclusion is a typed
 `ProjectResult.Outcome`, a stable value to decide retries on rather than a message to
 match with a regular expression:

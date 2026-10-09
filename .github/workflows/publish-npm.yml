@@ -1,0 +1,105 @@
+# Publishes the TypeScript client (clients/typescript, package `@plimsollmark/client`) to
+# npm through trusted publishing: npm accepts this workflow's short-lived GitHub identity
+# token in place of an access token, so no npm credential exists to store, expire or leak,
+# and npm attaches a provenance statement naming this repository, commit and workflow run.
+#
+# It runs when a GitHub release is published, and by hand (workflow_dispatch) for a
+# release made before this file existed. Either way it publishes only what a release tag
+# names: the client's version must have a tag `v<version>`, a release's tag must be that
+# tag, and clients/typescript must be byte-identical to it at the commit being built.
+# The release itself is gated by audit.yml on the tagged commit, so no test run here.
+#
+# The build job runs the compiler and holds no identity token. The publish job holds the
+# token, installs and runs nothing of the package's, and publishes the packed file only
+# if its SHA-256 is the one the build job reported.
+#
+# npm side: a trusted publisher on the package (owner plimsollmark, repository plimsoll,
+# workflow publish-npm.yml, environment npm, and npm publish among its allowed actions,
+# since this job publishes directly rather than staging). npm expires a trusted
+# publisher whose first publish has not succeeded within 2 days, so it is added shortly
+# before a release (docs/releasing.md). Actions are pinned by commit SHA.
+name: publish-npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # npm 11.5.1 is the first with trusted publishing; Node 24.21.0 bundles 11.19.0.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      - name: The client's version is a release tag, and the files are the tag's
+        run: |
+          version="$(node -p "require('./clients/typescript/package.json').version")"
+          tag="v$version"
+          if [ "$GITHUB_EVENT_NAME" = release ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::release $GITHUB_REF_NAME does not match the client version $version"
+            exit 1
+          fi
+          git rev-parse -q --verify "refs/tags/$tag" >/dev/null || { echo "::error::no tag $tag"; exit 1; }
+          git diff --quiet "$tag" HEAD -- clients/typescript || { echo "::error::clients/typescript differs from $tag"; exit 1; }
+      # No dependency's install script runs; the package's own `prepare` (tsc) runs in
+      # `npm pack`, which builds dist/ into the packed file.
+      - run: npm ci --ignore-scripts
+        working-directory: clients/typescript
+      - id: pack
+        working-directory: clients/typescript
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          tarball="$(npm pack --json --pack-destination "$RUNNER_TEMP/dist" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s);if(p.length!==1)process.exit(1);console.log(p[0].filename)})')"
+          sha256="$(sha256sum "$RUNNER_TEMP/dist/$tarball" | cut -d' ' -f1)"
+          echo "$sha256  $tarball"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@plimsollmark/client
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+      # An older npm never attempts trusted publishing and fails on a missing token.
+      - name: npm supports trusted publishing
+        run: |
+          v="$(npm --version)"
+          printf '%s\n' 11.5.1 "$v" | sort -V -C || { echo "::error::npm $v predates trusted publishing (11.5.1)"; exit 1; }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package
+          path: dist/
+      - name: The file is the one the build job packed
+        env:
+          TARBALL: ${{ needs.build.outputs.tarball }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          [ "$(ls dist)" = "$TARBALL" ] || { echo "::error::dist/ holds $(ls dist), expected $TARBALL"; exit 1; }
+          echo "$SHA256  dist/$TARBALL" | sha256sum -c -
+      - name: Publish
+        env:
+          TARBALL: ${{ needs.build.outputs.tarball }}
+        run: npm publish "dist/$TARBALL" --access public

@@ -23,6 +23,10 @@ from plimsoll_client import (
 from plimsoll_client._wire import INT32, INT64, Msg, b64decode, decode_enum_and_string, error_from_wire, loads
 
 
+def bound_error(status: int, body: bytes, mark: "str | None" = None) -> PlimsollError:
+    return error_from_wire(status, body, bound=True, mark=mark)
+
+
 def unpadded(b: bytes) -> str:
     # Connect writes detail values as unpadded standard base64.
     return base64.b64encode(b).decode().rstrip("=")
@@ -93,7 +97,7 @@ class Errors(unittest.TestCase):
         ]
         for code, reason, cls, name in cases:
             with self.subTest(code=code, reason=reason):
-                e = error_from_wire(400, answer(code, not_dispatched(reason)))
+                e = bound_error(400, answer(code, not_dispatched(reason)))
                 self.assertIs(type(e), cls)
                 self.assertEqual(e.code, code)
                 self.assertEqual(e.not_dispatched, name)
@@ -110,33 +114,57 @@ class Errors(unittest.TestCase):
             b"",
         ):
             with self.subTest(body=body):
-                self.assertIsNone(error_from_wire(500, body).not_dispatched)
+                self.assertIsNone(bound_error(500, body).not_dispatched)
 
     def test_session_end(self) -> None:
-        e = error_from_wire(400, answer("failed_precondition", not_dispatched(1), session_ended(3, "over budget")))
+        e = bound_error(400, answer("failed_precondition", not_dispatched(1), session_ended(3, "over budget")))
         self.assertIsInstance(e, SessionEndedError)
         assert isinstance(e, SessionEndedError)
         self.assertEqual((e.reason, e.detail, e.not_dispatched), ("disk_exceeded", "over budget", "request"))
         # Other codes keep their own class, as the Go client's switch does.
-        self.assertIs(type(error_from_wire(400, answer("invalid_argument", session_ended(2, "")))), InvalidRequestError)
-        self.assertIsInstance(error_from_wire(404, answer("not_found", session_ended(2, ""))), SessionEndedError)
-        self.assertIs(type(error_from_wire(499, answer("canceled", session_ended(2, "")))), PlimsollError)
+        self.assertIs(type(bound_error(400, answer("invalid_argument", session_ended(2, "")))), InvalidRequestError)
+        self.assertIsInstance(bound_error(404, answer("not_found", session_ended(2, ""))), SessionEndedError)
+        self.assertIs(type(bound_error(499, answer("canceled", session_ended(2, "")))), PlimsollError)
         # An end a newer daemon has and this client does not is still an end.
-        e = error_from_wire(400, answer("failed_precondition", not_dispatched(1), session_ended(99, "")))
+        e = bound_error(400, answer("failed_precondition", not_dispatched(1), session_ended(99, "")))
         assert isinstance(e, SessionEndedError)
         self.assertEqual(e.reason, "unknown")
+
+    def test_header_mark_when_no_detail(self) -> None:
+        # The daemon's own refusals before the handler (a malformed body, a 404) carry
+        # no detail; their header says nothing ran.
+        e = bound_error(400, answer("invalid_argument"), mark="request")
+        self.assertIs(type(e), InvalidRequestError)
+        self.assertEqual(e.not_dispatched, "request")
+        self.assertEqual(bound_error(404, b"404 page not found", mark="unsupported").not_dispatched, "unsupported")
+        # A detail outranks the header; an unknown name marks nothing.
+        self.assertEqual(bound_error(401, answer("unauthenticated", not_dispatched(2)), mark="request").not_dispatched, "permission")
+        self.assertIsNone(bound_error(400, answer("invalid_argument"), mark="maybe").not_dispatched)
+        self.assertIsNone(bound_error(400, answer("invalid_argument"), mark="unknown").not_dispatched)
+
+    def test_an_unbound_answer_states_nothing(self) -> None:
+        # Another request's answer: its mark, session end and header mark are not this call's.
+        body = answer("failed_precondition", not_dispatched(5), session_ended(3, "over budget"))
+        e = error_from_wire(400, body, bound=False, mark="request")
+        self.assertIs(type(e), DisabledError)
+        self.assertIsNone(e.not_dispatched)
+        self.assertIsNone(e.unanswered)
+        self.assertTrue(e.answer_not_bound)
+        self.assertEqual(e.code, "failed_precondition")
+        self.assertIn("Plimsoll-Request-Id", e.message)
+        self.assertFalse(bound_error(400, body).answer_not_bound)
 
     def test_type_url_prefix_is_accepted(self) -> None:
         d = not_dispatched(6)
         d["type"] = "type.googleapis.com/" + d["type"]
-        self.assertEqual(error_from_wire(429, answer("resource_exhausted", d)).not_dispatched, "capacity")
+        self.assertEqual(bound_error(429, answer("resource_exhausted", d)).not_dispatched, "capacity")
 
     def test_http_status_without_a_connect_body(self) -> None:
         for status, code in ((400, "internal"), (401, "unauthenticated"), (403, "permission_denied"), (404, "unimplemented"),
                              (429, "unavailable"), (503, "unavailable"), (500, "unknown"), (302, "unknown")):
             with self.subTest(status):
-                self.assertEqual(error_from_wire(status, b"<html>").code, code)
-        self.assertEqual(error_from_wire(500, answer("no_such_code")).code, "unknown")
+                self.assertEqual(bound_error(status, b"<html>").code, code)
+        self.assertEqual(bound_error(500, answer("no_such_code")).code, "unknown")
 
 
 class Reader(unittest.TestCase):

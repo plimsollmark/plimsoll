@@ -5,7 +5,7 @@
 // isolation evidence against the caller's floor, and tracks a session's chain of
 // records so a call it did not make is caught.
 
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 
 import {
@@ -17,7 +17,7 @@ import {
   type DigestPayload,
   type RunRecord,
 } from "./record.ts";
-import { errorFromWire, PlimsollError, sessionEndFromWire, type SessionEnd } from "./errors.ts";
+import { errorFromWire, NOT_DISPATCHED_HEADER, PlimsollError, REQUEST_ID_HEADER, sessionEndFromWire, unboundSuccess, type SessionEnd } from "./errors.ts";
 import type {
   WireAdvice,
   WireCellRun,
@@ -33,7 +33,7 @@ import type {
 } from "./wire.ts";
 
 /** The wire protocol number this client speaks (protocol.Number in Go). */
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 
 const SERVICE = "plimsoll.v1.SandboxService";
 
@@ -447,6 +447,19 @@ function digestPayload(p: Payload): DigestPayload {
   return { kind: "project", grantProfile: p.project.grantProfile ?? "", files: p.project.files, steps: p.project.steps, artifacts: p.project.artifacts };
 }
 
+// Only codes reproduced before any HTTP request was sent by Node's bundled fetch.
+// No prefixes: other TLS errors can come from reading an answer after dispatch.
+function fetchDidNotSend(error: unknown): boolean {
+  const seen = new Set<object>();
+  while (error !== null && typeof error === "object" && !seen.has(error)) {
+    seen.add(error);
+    const cause = error as { code?: unknown; cause?: unknown };
+    if (cause.code === "ECONNREFUSED" || cause.code === "ERR_SSL_WRONG_VERSION_NUMBER" || cause.code === "DEPTH_ZERO_SELF_SIGNED_CERT") return true;
+    error = cause.cause;
+  }
+  return false;
+}
+
 export class PlimsollClient {
   private readonly base: string;
   private readonly token: string | undefined;
@@ -474,7 +487,9 @@ export class PlimsollClient {
     // this process, so it is a refusal, not a call that may have run.
     if (signal?.aborted) throw new PlimsollError("canceled", `plimsoll: ${method} was canceled before it was sent`, { notDispatched: "request", cause: signal.reason });
     refuseIllFormed(body, "the request");
-    const headers: Record<string, string> = { "Content-Type": "application/json", "Connect-Protocol-Version": "1" };
+    // A fresh ID per request; an answer counts only if it carries the ID back.
+    const requestId = randomBytes(16).toString("hex");
+    const headers: Record<string, string> = { "Content-Type": "application/json", "Connect-Protocol-Version": "1", [REQUEST_ID_HEADER]: requestId };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
     const deadline = AbortSignal.timeout(this.requestTimeoutMs);
     const both = signal ? AbortSignal.any([signal, deadline]) : deadline;
@@ -491,7 +506,9 @@ export class PlimsollClient {
       // drops the token only across origins). So a redirect is the answer, an error.
       res = await this.fetchImpl(`${this.base}/${SERVICE}/${method}`, { method: "POST", headers, body: JSON.stringify(body), signal: both, redirect: "manual" });
     } catch (e) {
-      throw cut(e) ?? new PlimsollError("unavailable", `plimsoll: ${(e as Error).message}`, { cause: e });
+      throw cut(e) ?? new PlimsollError("unavailable", `plimsoll: ${(e as Error).message}`, {
+        cause: e, notDispatched: fetchDidNotSend(e) ? "environment" : undefined,
+      });
     }
     if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
       void res.body?.cancel().catch(() => undefined);
@@ -510,7 +527,13 @@ export class PlimsollClient {
     } catch {
       parsed = undefined;
     }
-    if (!res.ok) throw errorFromWire(res.status, parsed as WireError | undefined);
+    // What an answer says about the call holds only for the request it answers: one
+    // without this request's ID (a daemon older than protocol 3, or an intermediary that
+    // served another request's answer or dropped the header) is believed in nothing.
+    // Two echoes come back joined, which never equals one ID.
+    const bound = res.headers.get(REQUEST_ID_HEADER) === requestId;
+    if (!res.ok) throw errorFromWire(res.status, parsed as WireError | undefined, { bound, mark: res.headers.get(NOT_DISPATCHED_HEADER) });
+    if (!bound) throw unboundSuccess(method);
     if (parsed === undefined || typeof parsed !== "object") throw new PlimsollError("internal", "plimsoll: the daemon's answer is not a JSON message");
     return parsed as T;
   }

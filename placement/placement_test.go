@@ -164,7 +164,7 @@ func failUnmarked(*plimsollv1.RunRequest) (*plimsollv1.RunResponse, error) {
 func serve(t *testing.T, s *stub) Backend {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(s))
+	mux.Handle(rpc.NewHandler(s))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	c, err := client.New(srv.URL, client.WithToken("token-"+s.name))
@@ -477,7 +477,7 @@ func TestNewChecksItsBackends(t *testing.T) {
 // choosing it by tier and the run's evidence checked by the client as usual.
 func TestAgainstARealDaemon(t *testing.T) {
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(rpc.NewSandboxService(sandboxtest.Wasm()),
+	path, h := rpc.NewHandler(rpc.NewSandboxService(sandboxtest.Wasm()),
 		connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
@@ -582,7 +582,7 @@ func TestEnvironmentIsCheckedWhenTheRecorderFails(t *testing.T) {
 	moved := &stub{name: "moved", describe: describeAs("docker", "kernel"), answer: ok("x"), ranIn: "docker-image:2"}
 	b := serve(t, moved)
 	mux := http.NewServeMux()
-	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(moved))
+	mux.Handle(rpc.NewHandler(moved))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	c, err := client.New(srv.URL, client.WithToken("token-moved"), client.WithRecorder(failingRecorder{}))

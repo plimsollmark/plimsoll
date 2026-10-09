@@ -98,6 +98,17 @@ func closeReq(id string) *connect.Request[plimsollv1.CloseSessionRequest] {
 	return connect.NewRequest(&plimsollv1.CloseSessionRequest{Protocol: protocol.Number, SessionId: id})
 }
 
+// claimSession names the session in a call the daemon refuses before anything runs (it
+// has no payload): that claims it, so its first idle timeout suspends it rather than
+// closing it as unclaimed, and spends no rate, slot or idle time.
+func claimSession(t *testing.T, svc *SandboxService, ctx context.Context, id string) {
+	t.Helper()
+	_, err := svc.SessionRun(ctx, connect.NewRequest(&plimsollv1.SessionRunRequest{Protocol: protocol.Number, SessionId: id}))
+	if _, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeInvalidArgument || !marked {
+		t.Fatalf("a call with no payload: %v; want InvalidArgument, not dispatched", err)
+	}
+}
+
 func TestSessionCallsChainTheirRecords(t *testing.T) {
 	svc, p := sessionService()
 	ctx := authenticatedContext("alice")
@@ -255,6 +266,7 @@ func TestSessionSlotsFollowSuspend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	claimSession(t, svc, ctx, open.Msg.GetSessionId())
 	if _, err := svc.Run(ctx, jsReq("1")); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("a run while the session holds the only slot: %v", err)
 	}
@@ -288,6 +300,7 @@ func TestPausedSessionKeepsItsSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	claimSession(t, svc, ctx, open.Msg.GetSessionId())
 	deadline := time.Now().Add(3 * time.Second)
 	for p.Opened()[0].Suspends() == 0 {
 		if time.Now().After(deadline) {
@@ -492,6 +505,7 @@ func TestARateRefusedCallGivesBackTheSlotItTook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	claimSession(t, svc, ctx, open.Msg.GetSessionId())
 	deadline := time.Now().Add(3 * time.Second)
 	for p.Opened()[0].Suspends() == 0 || svc.Limiter.Stats().InFlight != 0 {
 		if time.Now().After(deadline) {
@@ -606,6 +620,7 @@ func TestIdleSuspendFindingTheTurnBusyTriesAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	claimSession(t, svc, ctx, open.Msg.GetSessionId())
 	e, ok := svc.sessions.get(open.Msg.GetSessionId(), auditCaller(ctx))
 	if !ok {
 		t.Fatal("the session is not registered")
@@ -735,6 +750,7 @@ func TestSessionsPerCallerCap(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		claimSession(t, svc, alice, o.Msg.GetSessionId())
 		ids = append(ids, o.Msg.GetSessionId())
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -1097,9 +1113,11 @@ func TestAFailedIdleSuspendIsTriedAgain(t *testing.T) {
 	p.FailedSuspends = 1
 	svc.Limiter = NewCodeLimiter(1, 0, 0, 0)
 	svc.Sessions.IdleTimeout = 50 * time.Millisecond
-	if _, err := svc.OpenSession(authenticatedContext("alice"), openReq()); err != nil {
+	open, err := svc.OpenSession(authenticatedContext("alice"), openReq())
+	if err != nil {
 		t.Fatal(err)
 	}
+	claimSession(t, svc, authenticatedContext("alice"), open.Msg.GetSessionId())
 	deadline := time.Now().Add(3 * time.Second)
 	for svc.Limiter.Stats().InFlight != 0 {
 		if time.Now().After(deadline) {
@@ -1364,6 +1382,7 @@ func TestSessionsPerOwnerARefusedOpenClosesNothing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		claimSession(t, svc, alice, a.Msg.GetSessionId())
 		e, _ := svc.sessions.get(a.Msg.GetSessionId(), "alice")
 		e.mu.Lock()
 		gen := e.idleGen
@@ -1572,6 +1591,7 @@ func TestMeteredSessionThatCannotSuspendOrPayIsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	claimSession(t, svc, ctx, open.Msg.GetSessionId())
 	e, _ := svc.sessions.get(open.Msg.GetSessionId(), "alice")
 	clock = clock.Add(150 * time.Second) // 150 s ran: another 70 s does not fit in 190
 	e.mu.Lock()
@@ -1582,6 +1602,9 @@ func TestMeteredSessionThatCannotSuspendOrPayIsClosed(t *testing.T) {
 	case <-e.gone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the session that could neither suspend nor pay is still open")
+	}
+	if n := p.Opened()[0].Suspends(); n != 1 {
+		t.Fatalf("%d suspends; want the one that failed (an unclaimed session is closed without one)", n)
 	}
 }
 
@@ -1688,5 +1711,201 @@ func TestRefusedSessionCallKeepsTheSuspendDeadline(t *testing.T) {
 	}
 	if after := idleAt(); !after.After(before) {
 		t.Fatalf("a call that ran left the suspend at %v; want a fresh idle period after it", after)
+	}
+}
+
+// lockedLog is a log destination a timer's goroutine can write while a test reads it.
+type lockedLog struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lockedLog) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(b)
+}
+
+func (l *lockedLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+func waitGone(t *testing.T, e *sessionEntry, what string) {
+	t.Helper()
+	select {
+	case <-e.gone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s is still open", what)
+	}
+}
+
+// A session no request named by its first idle timeout is closed, not suspended: one
+// whose open answer never reached its client looks exactly like that, and nobody can use
+// or close it (failure-injection review, finding 7). Its slot and place come back, a late
+// call is refused, not dispatched, with the end unclaimed, and a close collects that end.
+func TestAnUnclaimedSessionIsClosedAtItsFirstIdleTimeout(t *testing.T) {
+	svc, p := sessionService()
+	var log lockedLog
+	svc.Logger = slog.New(slog.NewJSONHandler(&log, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	svc.Limiter = NewCodeLimiter(1, 0, 0, 0)
+	svc.Sessions.MaxPerCaller = 1
+	svc.Sessions.IdleTimeout = time.Second // the shortest the daemon takes (minSessionIdle)
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := open.Msg.GetSessionId()
+	e, _ := svc.sessions.get(id, "alice")
+	waitGone(t, e, "the unclaimed session")
+	if n := p.Opened()[0].Suspends(); n != 0 {
+		t.Fatalf("%d suspends; want the session closed without one", n)
+	}
+	if n := svc.Limiter.Stats().InFlight; n != 0 {
+		t.Fatalf("%d slots held after the close; want 0", n)
+	}
+	_, err = svc.SessionRun(ctx, callReq(id, "1"))
+	if end, ok := endedAs(err); !ok || end != plimsollv1.SessionEnd_SESSION_END_UNCLAIMED {
+		t.Fatalf("a call after the close: %v; want the end unclaimed", err)
+	}
+	if _, marked := notDispatchedOf(err); !marked || connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("a call after the close: %v; want FailedPrecondition, not dispatched", err)
+	}
+	if p.Opened()[0].Calls() != 0 {
+		t.Fatal("a call reached the closed session's provider")
+	}
+	closed, err := svc.CloseSession(ctx, closeReq(id))
+	if err != nil || closed.Msg.GetEnded() != plimsollv1.SessionEnd_SESSION_END_UNCLAIMED || closed.Msg.GetCalls() != 0 {
+		t.Fatalf("the close: %v, %v; want the end unclaimed and no calls", closed, err)
+	}
+	// The caller's one place came back.
+	if _, err := svc.OpenSession(ctx, openReq()); err != nil {
+		t.Fatalf("an open after the unclaimed session closed: %v", err)
+	}
+	out := log.String()
+	if !strings.Contains(out, `"msg":"session closed unclaimed`) || !strings.Contains(out, `"session":"`+open.Msg.GetSession()+`"`) {
+		t.Errorf("no log line names the unclaimed session by its fingerprint:\n%s", out)
+	}
+	if strings.Contains(out, id) {
+		t.Errorf("the session ID reached the log:\n%s", out)
+	}
+}
+
+// A call refused before it ran still claims the session, since its client holds the ID:
+// the first idle timeout suspends it, and nothing ends it as unclaimed.
+func TestACallRefusedBeforeItRanClaimsTheSession(t *testing.T) {
+	svc, p := sessionService()
+	svc.Limiter = NewCodeLimiter(1, 0, 1, 1) // the open spends the only run this minute
+	svc.Sessions.IdleTimeout = time.Second   // the shortest the daemon takes (minSessionIdle)
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); !refusedCapacity(err) {
+		t.Fatalf("a call past the caller's rate: %v; want refused, capacity", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for p.Opened()[0].Suspends() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the claimed session was never suspended")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := p.Opened()[0].Err(); err != nil {
+		t.Fatalf("the claimed session ended: %v", err)
+	}
+}
+
+// A session that never suspends (idle timeout 0) is closed unclaimed after
+// sessionClaimWindow; once claimed it has no timer at all, whether the claiming call
+// ran or was refused.
+func TestASessionThatNeverSuspendsHasAClaimWindow(t *testing.T) {
+	old := sessionClaimWindow
+	sessionClaimWindow = 50 * time.Millisecond
+	t.Cleanup(func() { sessionClaimWindow = old })
+	svc, p := sessionService()
+	svc.Sessions.IdleTimeout = 0
+	ctx := authenticatedContext("alice")
+	var entries []*sessionEntry
+	for i := 0; i < 3; i++ {
+		o, err := svc.OpenSession(ctx, openReq())
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, _ := svc.sessions.get(o.Msg.GetSessionId(), "alice")
+		entries = append(entries, e)
+	}
+	claimSession(t, svc, ctx, entries[1].id) // refused before it ran
+	if _, err := svc.SessionRun(ctx, callReq(entries[2].id, "1")); err != nil {
+		t.Fatal(err)
+	}
+	waitGone(t, entries[0], "the unclaimed session that never suspends")
+	if _, err := svc.SessionRun(ctx, callReq(entries[0].id, "1")); func() bool {
+		end, ok := endedAs(err)
+		return !ok || end != plimsollv1.SessionEnd_SESSION_END_UNCLAIMED
+	}() {
+		t.Fatalf("a call on it: %v; want the end unclaimed", err)
+	}
+	time.Sleep(4 * sessionClaimWindow)
+	for i, s := range p.Opened()[1:] {
+		if s.Err() != nil || s.Suspends() != 0 {
+			t.Fatalf("claimed session %d: ended %v, %d suspends; want it open and never suspended", i+1, s.Err(), s.Suspends())
+		}
+	}
+}
+
+// A close that fails without ending the unclaimed session keeps it, claimable, and is
+// tried again after another period, since nobody else will close it.
+func TestAFailedUnclaimedCloseIsTriedAgain(t *testing.T) {
+	svc, p := sessionService()
+	var log lockedLog
+	svc.Logger = slog.New(slog.NewJSONHandler(&log, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	svc.Sandbox = &closeFailing{p}
+	svc.Sessions.IdleTimeout = time.Hour // nothing fires by itself
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := svc.sessions.get(open.Msg.GetSessionId(), "alice")
+	e.mu.Lock()
+	e.idleTimeout = 20 * time.Millisecond // below the floor an open applies, so retries come quickly
+	gen := e.idleGen
+	e.mu.Unlock()
+	svc.suspend(e, gen) // the first idle timeout
+	deadline := time.Now().Add(10 * time.Second)
+	for strings.Count(log.String(), "unclaimed session close failed") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("a failed close of an unclaimed session was not tried again:\n%s", log.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
+		t.Fatalf("a call on the session whose close failed: %v", err)
+	}
+	if strings.Contains(log.String(), "session closed unclaimed") {
+		t.Fatalf("a close that failed was logged as done:\n%s", log.String())
+	}
+}
+
+// On a provider billed by the second, an unclaimed session's close stops its paid time:
+// the caller is charged what ran, not the open's reservation.
+func TestAnUnclaimedMeteredSessionStopsBilling(t *testing.T) {
+	svc, _, ctx := meteredSessionService(1000)
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := svc.sessions.get(open.Msg.GetSessionId(), "alice")
+	e.mu.Lock()
+	gen := e.idleGen
+	e.mu.Unlock()
+	svc.suspend(e, gen) // the first idle timeout
+	waitGone(t, e, "the unclaimed metered session")
+	if a, _ := svc.Spend.spent("alice"); a > 1 || e.paid.running() {
+		t.Fatalf("after the close: %v spent, running %v; want a fraction of a second, stopped", a, e.paid.running())
 	}
 }

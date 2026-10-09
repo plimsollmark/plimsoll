@@ -25,6 +25,7 @@ export type SessionEnd =
   | "shutdown"
   | "replaced"
   | "not_found"
+  | "unclaimed"
   | "unknown";
 
 /**
@@ -77,11 +78,25 @@ export class PlimsollError extends Error {
    * UnansweredCallError.Record); undefined otherwise.
    */
   record: RunRecord | undefined;
+  /**
+   * True when the error comes from an answer that did not carry this request's
+   * Plimsoll-Request-Id back (Go: client.ErrAnswerNotBound): nothing it said about the
+   * call was believed, so it has no notDispatched, sessionEnded or unanswered. On a
+   * success the code is "data_loss": the call may have run.
+   */
+  readonly answerNotBound: boolean;
 
   constructor(
     code: Code,
     message: string,
-    opts: { notDispatched?: Refusal; sessionEnded?: { reason: SessionEnd; detail: string }; result?: unknown; unanswered?: WireRecord; cause?: unknown } = {},
+    opts: {
+      notDispatched?: Refusal;
+      sessionEnded?: { reason: SessionEnd; detail: string };
+      result?: unknown;
+      unanswered?: WireRecord;
+      answerNotBound?: boolean;
+      cause?: unknown;
+    } = {},
   ) {
     super(message, opts.cause === undefined ? undefined : { cause: opts.cause });
     this.name = "PlimsollError";
@@ -90,7 +105,21 @@ export class PlimsollError extends Error {
     this.sessionEnded = opts.sessionEnded;
     this.result = opts.result;
     this.unanswered = opts.unanswered;
+    this.answerNotBound = opts.answerNotBound ?? false;
   }
+}
+
+/** The request ID a client sends and the daemon echoes (Go: protocol.RequestIDHeader). */
+export const REQUEST_ID_HEADER = "Plimsoll-Request-Id";
+/** The daemon's mark on an answer written before any handler ran (Go: protocol.NotDispatchedHeader). */
+export const NOT_DISPATCHED_HEADER = "Plimsoll-Not-Dispatched";
+const NOT_BOUND =
+  "the answer does not carry this request's Plimsoll-Request-Id back (a daemon older than protocol 3, or an intermediary " +
+  "that answered with another request's answer or dropped the header), so what it says about the call is ignored";
+
+/** The error for a success answer that is not bound to its request: the call may have run. */
+export function unboundSuccess(method: string): PlimsollError {
+  return new PlimsollError("data_loss", `plimsoll: ${method}: ${NOT_BOUND}; the call may have run`, { answerNotBound: true });
 }
 
 const REFUSALS: Refusal[] = ["unknown", "request", "permission", "protocol", "unsupported", "isolation", "capacity", "environment"];
@@ -106,6 +135,7 @@ const SESSION_ENDS: SessionEnd[] = [
   "shutdown",
   "replaced",
   "not_found",
+  "unclaimed",
 ];
 
 // Only an absent or unspecified end means open. Any other value says the session
@@ -229,10 +259,13 @@ const CODES: ReadonlySet<string> = new Set<Code>([
 
 // The body is whatever the daemon sent, so each field is used only in the shape Connect
 // gives it, and a code outside Connect's set is "unknown".
-export function errorFromWire(httpStatus: number, body: WireError | undefined): PlimsollError {
+// An answer that is not bound to its request keeps only its code and message; a bound
+// one without a NotDispatched detail is marked by the daemon's header (mark).
+export function errorFromWire(httpStatus: number, body: WireError | undefined, answer: { bound: boolean; mark?: string | null }): PlimsollError {
   const wire = body !== null && typeof body === "object" && !Array.isArray(body) ? body : undefined;
   const code: Code = wire?.code === undefined ? httpStatusCode(httpStatus) : CODES.has(wire.code) ? (wire.code as Code) : "unknown";
   const message = typeof wire?.message === "string" ? wire.message : `HTTP ${httpStatus}`;
+  if (!answer.bound) return new PlimsollError(code, `${message} (${NOT_BOUND})`, { answerNotBound: true });
   let notDispatched: Refusal | undefined;
   let sessionEnded: { reason: SessionEnd; detail: string } | undefined;
   let unanswered: WireRecord | undefined;
@@ -252,6 +285,10 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined): 
     } catch {
       // An undecodable detail states nothing; in particular not that nothing ran.
     }
+  }
+  if (notDispatched === undefined && answer.mark) {
+    const named = REFUSALS.find((r) => r !== "unknown" && r === answer.mark);
+    if (named) notDispatched = named;
   }
   return new PlimsollError(code, message, { notDispatched, sessionEnded, unanswered: notDispatched ? undefined : unanswered });
 }

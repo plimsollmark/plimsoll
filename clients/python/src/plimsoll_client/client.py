@@ -66,7 +66,7 @@ from .types import (
 
 __all__ = ["PROTOCOL", "Client", "Session"]
 
-PROTOCOL = 2
+PROTOCOL = 3
 """The wire protocol number this client speaks (Go: protocol.Number). It is stated
 on every request; a daemon serving another number refuses the request before
 reading its payload."""
@@ -590,6 +590,12 @@ class Session:
     def ended(self) -> Optional[SessionEnded]:
         """The session's end once an answer reported it, else None."""
         return self._ended
+
+    @property
+    def stopped(self) -> Optional[str]:
+        """Why this client sends no more calls after an answer it could not check,
+        or None until it stops. Separate from an end the daemon reported."""
+        return self._unanswered
 
     @property
     def calls(self) -> int:

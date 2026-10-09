@@ -29,7 +29,7 @@ func startServer(t *testing.T, verifier rpc.TokenVerifier) string {
 	t.Helper()
 	svc := rpc.NewSandboxService(sandboxtest.Wasm())
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(verifier)))
+	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(verifier)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -44,7 +44,7 @@ func startLoggingServer(t *testing.T, log *bytes.Buffer) string {
 	svc := rpc.NewSandboxService(sandboxtest.Wasm())
 	svc.Logger = slog.New(slog.NewJSONHandler(log, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -201,7 +201,7 @@ func TestDescribeReportsEnvironmentsAndResources(t *testing.T) {
 	svc := rpc.NewSandboxService(sandboxtest.Wasm())
 	svc.Resources = sandbox.Resources{MemoryMB: 128}
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -234,7 +234,7 @@ func TestDescribeReportsProtocol(t *testing.T) {
 func TestEveryRequestStatesProtocolAndOtherNumberRefusesBeforeDispatch(t *testing.T) {
 	backend := &otherProtocolServer{serves: Protocol + 1}
 	mux := http.NewServeMux()
-	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(backend))
+	mux.Handle(rpc.NewHandler(backend))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	r := newRemote(t, server.URL)
@@ -266,7 +266,7 @@ func TestEveryRequestStatesProtocolAndOtherNumberRefusesBeforeDispatch(t *testin
 
 func TestRemoteClassifiesWeakResponseEvidenceAsPostDispatchDataLoss(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(weakEvidenceServer{}))
+	mux.Handle(rpc.NewHandler(weakEvidenceServer{}))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	r := newRemote(t, server.URL)
@@ -613,7 +613,7 @@ func (s tamperingServer) Run(ctx context.Context, req *connect.Request[plimsollv
 
 func TestRemoteClassifiesAMismatchedRecordAsDataLoss(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(tamperingServer{inner: rpc.NewSandboxService(sandboxtest.Wasm())}))
+	mux.Handle(rpc.NewHandler(tamperingServer{inner: rpc.NewSandboxService(sandboxtest.Wasm())}))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	res, err := newRemote(t, server.URL).RunJavaScript(context.Background(), sandbox.Request{Code: `console.log(6*7)`})
@@ -653,7 +653,7 @@ func TestRemoteRecorder(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(unrecordedServer{}))
+	mux.Handle(rpc.NewHandler(unrecordedServer{}))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	seen = nil
@@ -704,7 +704,7 @@ func redirectNotFollowed(t *testing.T, opts []Option) {
 // DataLoss wrapping ErrIsolationEvidenceMismatch, and the recorder never sees it.
 func TestRecorderFailureKeepsTheIsolationCheck(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(weakEvidenceServer{}))
+	mux.Handle(rpc.NewHandler(weakEvidenceServer{}))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	var recorded int
@@ -738,7 +738,7 @@ func (unansweredV2Server) Run(_ context.Context, req *connect.Request[plimsollv1
 
 func TestVersion2RecordStatingUnansweredIsDataLoss(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle(plimsollv1connect.NewSandboxServiceHandler(unansweredV2Server{}))
+	mux.Handle(rpc.NewHandler(unansweredV2Server{}))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	_, err := newRemote(t, server.URL).RunJavaScript(context.Background(), sandbox.Request{Code: "x"})

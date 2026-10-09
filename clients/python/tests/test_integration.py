@@ -18,6 +18,7 @@ from plimsoll_client import (
     PROTOCOL,
     RECORD_VERSION,
     AsyncClient,
+    AsyncSession,
     ChainError,
     Client,
     InsufficientIsolationError,
@@ -406,6 +407,21 @@ class Sessions(unittest.TestCase):
         self.assertEqual((cm.exception.reason, cm.exception.not_dispatched), ("not_found", "request"))
         self.assertEqual(s.ended.reason if s.ended else None, "not_found")
 
+    def test_a_session_nobody_claimed_by_its_first_idle_timeout_is_an_end(self) -> None:
+        # The daemon suspends after 1 s, and closes a session no request named by then,
+        # as it does one whose open answer was lost; here, the client waited.
+        url = setting("PLIMSOLL_QUICK_IDLE_URL")
+        s = Client(url).open_session()
+        req = urllib.request.Request(f"{url}/test/wait-ended", method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            self.assertEqual(resp.status, 200)
+        with self.assertRaises(SessionEndedError) as cm:
+            s.run_javascript("1")
+        self.assertEqual((cm.exception.reason, cm.exception.not_dispatched), ("unclaimed", "request"))
+        self.assertEqual(s.ended.reason if s.ended else None, "unclaimed")
+        summary = s.close()
+        self.assertEqual((summary.calls, summary.end), (0, "unclaimed"))
+
     def test_an_ended_session(self) -> None:
         s = self.c.open_session()
         s.run_javascript("1")
@@ -446,6 +462,7 @@ class Sessions(unittest.TestCase):
             async with await c.open_session() as s:
                 await s.run_javascript("1")
                 await s.run_project(None, ["true"])
+                self.assertIsNone(s.stopped)
             return (await s.close()).calls
 
         self.assertEqual(asyncio.run(go()), 2)
@@ -493,12 +510,26 @@ class UnansweredCalls(unittest.TestCase):
     def test_a_lost_answer_stops_the_session(self) -> None:
         # A call whose answer never arrived may have run: the session sends nothing
         # more, and says the later call was not sent.
+        with Client(setting("PLIMSOLL_SESSIONS_URL")).open_session() as usable:
+            self.assertIsNone(usable.stopped)
+            self.assertIsNone(usable.ended)
+            with self.assertRaises(PlimsollError) as refused:
+                usable.run_javascript("refused", minimum_isolation="vm")
+            self.assertEqual(refused.exception.not_dispatched, "isolation")
+            self.assertIsNone(usable.stopped)
+            self.assertIsNone(usable.ended)
         c = Client(setting("PLIMSOLL_LOSSY_URL"))
         s = c.open_session()
+        self.assertIsNone(s.stopped)
+        self.assertIsNone(s.ended)
         s.run_javascript("1")
         with self.assertRaises(PlimsollError) as cm:
             s.run_javascript("2")
         self.assertIsNone(cm.exception.not_dispatched)
+        self.assertIsInstance(s.stopped, str)
+        self.assertTrue(s.stopped)
+        self.assertIsNone(s.ended)
+        self.assertEqual(AsyncSession(s).stopped, s.stopped)
         with self.assertRaises(PlimsollError) as cm:
             s.run_javascript("3")
         self.assertEqual(cm.exception.not_dispatched, "request")

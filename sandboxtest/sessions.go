@@ -91,6 +91,20 @@ func (p *Sessions) Opened() []*FakeSession {
 	return append([]*FakeSession(nil), p.opened...)
 }
 
+// WaitEnded waits until every session opened so far has ended and its Done has closed,
+// or ctx ends: a test of something the daemon ends by itself waits for it this way
+// rather than for a guessed time.
+func (p *Sessions) WaitEnded(ctx context.Context) error {
+	for _, s := range p.Opened() {
+		select {
+		case <-s.Done():
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
 // FakeSession is one session of Sessions.
 type FakeSession struct {
 	Options      sandbox.SessionOptions

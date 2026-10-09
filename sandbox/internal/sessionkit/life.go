@@ -34,6 +34,8 @@ const (
 	Replaced
 	// NotFound: the daemon had no such session for this caller (a restart forgot it).
 	NotFound
+	// Unclaimed: no request named it before its first idle timeout; the daemon closed it.
+	Unclaimed
 	// Unknown: an end a newer daemon named that this code has no name for.
 	Unknown
 )
@@ -49,6 +51,7 @@ var endNames = map[End]string{
 	Shutdown:         "shutdown",
 	Replaced:         "replaced",
 	NotFound:         "not_found",
+	Unclaimed:        "unclaimed",
 	Unknown:          "unknown",
 }
 

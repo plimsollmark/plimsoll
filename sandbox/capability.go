@@ -89,6 +89,10 @@ type HostAPIGrant struct {
 	// status a hundred times could start a hundred jobs. A route it does not name is
 	// bounded by MaxCalls alone. A call counts against every capped entry its path
 	// matches, so overlapping entries and their order cannot route a call around a cap.
+	// Validate refuses an entry of the same method that matches a capped entry's calls
+	// with a "*" in place of one of its fixed segments: an upstream may serve "ep1.json",
+	// "0123" or "ep1." as the capped "ep1" or "123", a spelling only it knows, so a call
+	// matched by the wildcard alone would reach the capped route uncounted.
 	RouteMaxCalls map[HostRoute]int
 	// AllowInSessions permits the grant on a call inside a session. It is off by
 	// default because a grant is a per-call permission and a session keeps code alive
@@ -298,6 +302,13 @@ func (g *HostAPIGrant) Validate() error {
 		if n < 1 || n > MaxHostCallsCeiling {
 			return fmt.Errorf("host-api grant: RouteMaxCalls for %s %q must be between 1 and %d", route.Method, route.Path, MaxHostCallsCeiling)
 		}
+		for _, w := range g.Allow {
+			if widensFixedSegment(w, route) {
+				return fmt.Errorf("host-api grant: RouteMaxCalls caps %s %q, but %s %q matches its calls with a \"*\" in place of a fixed segment, "+
+					"so a call spelled for the wildcard alone (\"ep1.json\" for \"ep1\") can reach the capped route uncounted; "+
+					"move the cap to the wider route, or list the routes it should reach instead of the \"*\"", route.Method, route.Path, w.Method, w.Path)
+			}
+		}
 	}
 	if hc := g.HealthCheck; hc != nil {
 		// A broker-operated probe must be a safe, idempotent read the broker can send as
@@ -458,10 +469,12 @@ func (g *HostAPIGrant) matchRoute(method, requestPath string) (HostRoute, bool) 
 
 // cappedRoutesMatching returns every RouteMaxCalls entry that method and requestPath
 // match, in no particular order. requestPath must already have passed matchRoute.
-// Literal segments are compared without regard to case: with an uncapped "/v2/*/run"
-// beside a capped "/v2/ep1/run", "/v2/EP1/run" matches only the wildcard as written,
-// and an upstream that routes without regard to case serves it as ep1. Charging a
-// cap a call may reach is safe; missing it is the bypass.
+// Literal segments are compared without regard to case: with an uncapped "/v2/EP1/run"
+// beside a capped "/v2/ep1/run", a call to the first matches only it as written, and
+// an upstream that routes without regard to case serves it as ep1. Charging a cap a
+// call may reach is safe; missing it is the bypass. Other spellings an upstream may
+// read as the capped route are known only to it, so Validate refuses the wildcard
+// entry that would let one through (widensFixedSegment).
 func (g *HostAPIGrant) cappedRoutesMatching(method, requestPath string) []HostRoute {
 	if len(g.RouteMaxCalls) == 0 {
 		return nil
@@ -502,11 +515,16 @@ func pathMatches(pattern string, segs []string) bool {
 	}
 	for i := range ps {
 		if ps[i] == "*" {
-			// A wildcard binds a non-empty segment, and never one with a ":": on APIs
-			// that follow Google's AIP-136 and on gRPC-JSON transcoders, "items/a:verb"
-			// is a custom method on item a, another operation than the route grants.
-			// It is refused for the same reason as ";" (upstreamNeutralSegments).
-			if segs[i] == "" || strings.Contains(segs[i], ":") {
+			// A wildcard binds a non-empty segment of RFC 3986's unreserved characters
+			// and nothing else. Upstreams give other characters meanings that make the
+			// segment another operation than the route grants: "items/a:verb" is a
+			// custom method on APIs that follow Google's AIP-136 and on gRPC-JSON
+			// transcoders, and "$batch" or "$each" is an OData system segment that runs
+			// other requests or acts on every entity of a set. A list of characters to
+			// refuse grew one framework at a time (";", then ":", then "$" from the
+			// 9 October scan), so the wildcard takes an allowlist instead; a route that
+			// needs another character grants that segment as a literal.
+			if !unreservedSegment(segs[i]) {
 				return false
 			}
 			continue
@@ -516,6 +534,40 @@ func pathMatches(pattern string, segs []string) bool {
 		}
 	}
 	return true
+}
+
+// unreservedChars are RFC 3986's unreserved characters, the only ones a "*" binds.
+const unreservedChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+
+// unreservedSegment reports whether s is non-empty and made only of unreservedChars.
+func unreservedSegment(s string) bool {
+	return s != "" && strings.Trim(s, unreservedChars) == ""
+}
+
+// widensFixedSegment reports whether route w matches calls that capped matches too
+// with a "*" where capped has a fixed segment: the same method, the same number of
+// segments, every pair of fixed segments equal without regard to case, and at least
+// one fixed segment of capped under a "*" of w. Such a w matches "ep1.json", "0123"
+// or "ep1." in that position, which an upstream may serve as capped's "ep1" or
+// "123", and the cap, compared as written, never sees the call.
+func widensFixedSegment(w, capped HostRoute) bool {
+	if !strings.EqualFold(w.Method, capped.Method) {
+		return false
+	}
+	ws, cs := strings.Split(w.Path, "/"), strings.Split(capped.Path, "/")
+	if len(ws) != len(cs) {
+		return false
+	}
+	wider := false
+	for i := range ws {
+		switch {
+		case ws[i] == "*" && cs[i] != "*":
+			wider = true
+		case ws[i] != "*" && cs[i] != "*" && !strings.EqualFold(ws[i], cs[i]):
+			return false
+		}
+	}
+	return wider
 }
 
 // withHostSDK prepends the Docker unix-socket client (and any embedder Preamble)

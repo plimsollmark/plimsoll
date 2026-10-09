@@ -36,12 +36,18 @@ doubled slashes or dot segments), and byte-identical to an approved route. Queri
 traversal (`..` segments that climb out of a route), and percent-encoding tricks are
 refused before anything is sent to the API, and so are `;` parameters inside a path
 segment and segments made only of dots, because some servers reinterpret them after the
-match: Tomcat and Spring read `/orgs/..;/repos/x` as `/repos/x`. A `*` never matches a
-segment containing `:` either: on APIs that follow Google's
+match: Tomcat and Spring read `/orgs/..;/repos/x` as `/repos/x`. A `*` matches only a
+segment made of letters, digits, `-`, `.`, `_` and `~`, the characters
+[RFC 3986 calls unreserved (EXTERNAL · official docs ↗)](https://www.rfc-editor.org/rfc/rfc3986.html#section-2.3),
+because servers give other characters meanings of their own. On APIs that follow Google's
 [custom-method convention (EXTERNAL · official docs ↗)](https://google.aip.dev/136) and on
 gRPC-JSON transcoders, `POST /v1/items/a:setIamPolicy` is a different operation on item
-`a`, so a grant of `POST /v1/items/*` must not reach it. An ID that contains a colon (a
-timestamp, say) cannot be passed through a wildcard.
+`a`. On an OData service, `POST /odata/$batch` carries a
+[batch of other requests (EXTERNAL · official docs ↗)](https://docs.oasis-open.org/odata/odata/v4.01/odata-v4.01-part1-protocol.html#sec_BatchRequests),
+and `/odata/Products/$each` acts on every product. A grant of `POST /v1/items/*` or
+`DELETE /odata/Products/*` reaches none of them. An ID that contains another character (a
+timestamp with a colon, an address with `@`, a `+`) cannot be passed through a wildcard;
+grant that segment as a literal route instead.
 
 Over RPC, a caller selects a <dfn>*grant profile*</dfn>, a grant stored on the server
 under a name, by that name. Raw grants supplied by the caller are intentionally not
@@ -167,12 +173,17 @@ routes together. On an API where one route costs money, such as a GPU job servic
 submit route starts a paid job while its status route can be polled for free, a run
 allowed to poll 200 times could also start 200 jobs. `route_max_calls` caps one `allow`
 entry, written as it is in `allow`; past the cap the broker answers 429 and the call never
-reaches the API. A call counts against every capped entry it matches, so a wider entry such
-as `POST /v2/*/run` beside a capped `POST /v2/abc123/run` does not let calls to `abc123`
-around the cap, in whichever order the two are written. The run's trace, and the advice and
-metrics built from it, still name each call by the first `allow` entry it matches, so there
-those calls appear under `POST /v2/*/run`; list the capped route first to see it by name.
-A capped route is compared without regard to letter case, so `/v2/ABC123/run` also counts
+reaches the API. A call counts against every capped entry it matches, in whichever order
+they are written, so a capped `POST /v2/*/run` also charges the calls an exact
+`POST /v2/abc123/run` beside it allows. The reverse is refused when the profile loads: a
+`POST /v2/*/run`, capped or not, beside a capped `POST /v2/abc123/run`. The broker compares
+path segments as written, while a server may serve `abc123.json` (Rails reads `.json` as a
+response format), `abc123.` or, for a numeric ID, `0123` for `123` as the capped route, so
+a call only the wildcard matched would reach it uncounted. Move the cap to the wider route,
+or list the routes it should reach in place of the `*`. The run's trace, and the advice and
+metrics built from it, name each call by the first `allow` entry it matches; list the
+capped route first to see it by name. A capped route is compared without regard to letter
+case, so a call to `/v2/ABC123/run`, allowed by an entry spelled that way, also counts
 against the cap on `/v2/abc123/run`, since many APIs route both to the same place. In a
 [session](sessions.md) the cap spans the whole session, not each call: code a session
 keeps can run between its calls and use each call's grant, so a cap that started over with

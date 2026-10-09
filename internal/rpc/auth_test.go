@@ -73,7 +73,7 @@ func newAuthTestClient(t *testing.T, verifier TokenVerifier) plimsollv1connect.S
 		modResult: sandbox.ModuleResult{Sandbox: "fake", Outcome: sandbox.ProjectOutcomeCompleted},
 	})
 	mux := http.NewServeMux()
-	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(AuthInterceptor(verifier)))
+	path, h := NewHandler(svc, connect.WithInterceptors(AuthInterceptor(verifier)))
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux) // Connect unary works over HTTP/1.1
 	t.Cleanup(srv.Close)

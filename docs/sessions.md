@@ -139,7 +139,7 @@ startup check proves its runs; this one proves what only a session does, on this
 | `SANDBOX_MAX_SESSIONS_PER_OWNER` | Open sessions one owner of one caller may hold: the end user an open names (`OpenSessionRequest.owner`, an opaque `[A-Za-z0-9._:-]{1,64}` name; anything else is refused, since dropping it would lift the cap). Default 0: no per-owner cap; an open with no owner counts against none. At the cap, the open closes that owner's least recently used session with no call in progress (a suspended one included) and takes its place, so a full daemon still serves it (the closed session stays closed if the new open then fails); the closed session's later calls are refused, not dispatched, with the end `replaced`. When every one is running a call, the open is refused, not dispatched, reason `capacity`. The official clients send hex(HMAC-SHA256(key = SHA-256(`"plimsoll session owner key v2\n"` + the caller's token), message = `"plimsoll session owner v2\n"` + owner)), never the name, and the daemon never logs it. The key is derived rather than the token itself because HMAC replaces a key longer than 64 bytes with its SHA-256, which for a long imported token is exactly the `token_sha256` the daemon's clients file holds; derived, it is 32 bytes and keyed by the token alone. Closing rather than refusing: a refused user would be locked out of new conversations until an old session expired. Counted per daemon, in memory: behind [placement](placement.md) across several daemons, one owner can hold that many on each. The open's rate and concurrency slot are checked before anything is closed, so a refused open closes nothing, and a victim whose close fails stays open and the open is refused. `Describe` states the cap as `max_sessions_per_owner` (with `max_sessions_per_caller`), so an app relying on it can check. |
 | `SANDBOX_SESSION_POOL` | Docker only: containers kept ready for sessions, each never used and with its interpreters already running ([Docker](#docker), "A warm pool"). Default 0: none. At most `SANDBOX_MAX_SESSIONS`. |
 | `SANDBOX_SESSION_LIFETIME` | Absolute lifetime from open. Default `30m`, at most `12h`. A request may ask for less. |
-| `SANDBOX_SESSION_IDLE` | A session with no call for this long is suspended: its sandbox is stopped (`openshell`) or paused (`docker`, `e2b`). Default `5m`; `0` never suspends, which the daemon refuses with a provider billed by the second (`e2b`), since such a session would bill until its lifetime. A request may ask for less. |
+| `SANDBOX_SESSION_IDLE` | A session with no call for this long is suspended: its sandbox is stopped (`openshell`) or paused (`docker`, `e2b`). Default `5m`; `0` never suspends, which the daemon refuses with a provider billed by the second (`e2b`), since such a session would bill until its lifetime. A request may ask for less, but not under 1 s. A session no request has named by its first idle timeout is closed instead, with the end `unclaimed` ([what the daemon guarantees](#what-the-daemon-guarantees)). |
 | `SANDBOX_SESSION_DISK_MB` | A call that leaves more than this in the session's files ends the session. Default 1024; 0 means no bound, and nothing is measured. It is measured after each call, not enforced during one ([openshell.md](openshell.md#sessions) says why the `openshell` provider's per-run disk cap does not apply to sessions). On docker it is the used space of the session's three size-capped in-memory filesystems, a file deleted while a process holds it open included. On `openshell` it is a walk of the session's files, which stops at 200,000 entries (counted as over the budget) and which code of the session can hide files from (a deleted file still held open, a directory swapped for a link during the walk), so there it is an estimate, not a bound. |
 
 The defaults are starting points, not measurements of real use:
@@ -341,9 +341,24 @@ whose step is `python3 main.py`.
   restores it as `sandbox.SessionEndedError` (`errors.Is(err, sandbox.ErrSessionEnded)`).
   A session ends when it is closed, when its lifetime runs out, when its files pass the disk
   budget, when its sandbox's main process ends, when the provider cannot give the next call
-  a clean sandbox, when the sandbox changed under it, or when the daemon shuts down. The
-  daemon keeps the final count of a session that ended by itself for 10 minutes, so its
-  owner's `CloseSession` still gets it.
+  a clean sandbox, when the sandbox changed under it, when the daemon closed it for a newer
+  session of its owner (`replaced`) or because nobody claimed it (`unclaimed`, below), or
+  when the daemon shuts down. The daemon keeps the final count of a session that ended by
+  itself for 10 minutes, so its owner's `CloseSession` still gets it.
+- **A session nobody claimed is closed.** If no request names a session before its first
+  idle timeout (a call, even one refused before it ran, or a close), the daemon closes it
+  instead of suspending it, with the end `unclaimed`. That is what a session looks like
+  when the answer to its open never reached the client (the connection dropped, the client
+  refused an answer that did not carry its request's ID back, the client crashed after
+  sending): nobody can then use or close it, and it would hold its place under the session
+  caps, and until a suspend its concurrency slot and any paid time, for its whole lifetime.
+  The daemon cannot tell that from a client that opened ahead of calls that have not come. A session that
+  never suspends (`SANDBOX_SESSION_IDLE=0`) waits 5 minutes, the idle timeout's default.
+  The cost falls on a client that opens a session ahead of use and makes its first call
+  after the idle timeout: that call is refused, not dispatched, with the end `unclaimed`.
+  Nothing ran in the closed session, so a new one loses nothing; `CodeSandboxes` opens it
+  by itself, so a `warm` that its conversation does not use within the idle timeout costs
+  one more open.
 - **Capacity.** A running session holds one of the daemon's concurrency slots (the runs
   allowed at once), and with it its share of the total memory budget,
   `SANDBOX_TOTAL_MEMORY_MB`. A suspended session whose sandbox was stopped holds none; the

@@ -3,15 +3,25 @@
 
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createTCPServer, type AddressInfo, type Socket } from "node:net";
 import { before, test } from "node:test";
 
 import { meets, PlimsollClient, PlimsollError, PROTOCOL } from "../src/index.ts";
 import { errorFromWire, sessionEndFromWire } from "../src/errors.ts";
 import { recordDigest, recordFromWire } from "../src/record.ts";
 
+// The rewritten answer keeps the daemon's echo of the request ID, as a proxy that edits
+// a body would; without it the client refuses the answer as another request's.
+function rewritten(res: Response, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json", "Plimsoll-Request-Id": res.headers.get("Plimsoll-Request-Id") ?? "" },
+  });
+}
+
 const wasmUrl = process.env.PLIMSOLL_WASM_URL;
 const sessionsUrl = process.env.PLIMSOLL_SESSIONS_URL;
+const quickIdleUrl = process.env.PLIMSOLL_QUICK_IDLE_URL;
 const skip = !wasmUrl || !sessionsUrl ? "run through `go test ./clients/typescript`" : false;
 
 let wasm: PlimsollClient;
@@ -31,7 +41,7 @@ function tampering(url: string, edit: (body: any) => void): PlimsollClient {
       if (!res.ok) return res;
       const body = await res.json();
       edit(body);
-      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      return rewritten(res, body);
     },
   });
 }
@@ -116,6 +126,99 @@ for (const afterHeaders of [false, true]) {
 test("requestTimeoutMs must be a positive number", () => {
   for (const bad of [0, -1, Number.NaN, 2 ** 31]) {
     assert.throws(() => new PlimsollClient({ baseUrl: "http://127.0.0.1:1", requestTimeoutMs: bad }), /requestTimeoutMs/);
+  }
+});
+
+// These inspect the real fetch cause as well as the public mark, so each code in
+// the client's closed list is witnessed on the Node running the suite.
+function unsentCode(code: string): (e: unknown) => boolean {
+  return (e) => {
+    assert.ok(e instanceof PlimsollError);
+    assert.equal(e.code, "unavailable");
+    assert.equal(e.notDispatched, "environment");
+    assert.equal((e.cause as Error & { cause: { code: string } }).cause.code, code);
+    return true;
+  };
+}
+
+test("a refused connection is marked environment by its ECONNREFUSED cause", async () => {
+  // Fetch blocks port 1 before connecting and supplies no code, so it cannot prove
+  // ECONNREFUSED. Keep that case conservative and use a closed port for the proof.
+  await assert.rejects(new PlimsollClient({ baseUrl: "http://127.0.0.1:1" }).describe(), (e: unknown) => {
+    assert.ok(e instanceof PlimsollError);
+    assert.equal(e.notDispatched, undefined);
+    assert.equal((e.cause as Error & { cause: { code?: string } }).cause.code, undefined);
+    return true;
+  });
+  const listener = createTCPServer();
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(listener.address() as AddressInfo).port}`;
+  await new Promise<void>((resolve) => listener.close(() => resolve()));
+  await assert.rejects(new PlimsollClient({ baseUrl: url }).describe(), unsentCode("ECONNREFUSED"));
+});
+
+test("TLS against a cleartext listener is marked by ERR_SSL_WRONG_VERSION_NUMBER", async () => {
+  const sockets = new Set<Socket>();
+  const listener = createTCPServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => undefined);
+    socket.on("close", () => sockets.delete(socket));
+    socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+  });
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  try {
+    const url = `https://127.0.0.1:${(listener.address() as AddressInfo).port}`;
+    await assert.rejects(new PlimsollClient({ baseUrl: url }).describe(), unsentCode("ERR_SSL_WRONG_VERSION_NUMBER"));
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+  }
+});
+
+test("an untrusted certificate is marked by DEPTH_ZERO_SELF_SIGNED_CERT", { skip }, async () => {
+  assert.ok(process.env.PLIMSOLL_TLS_URL);
+  await assert.rejects(new PlimsollClient({ baseUrl: process.env.PLIMSOLL_TLS_URL! }).describe(), unsentCode("DEPTH_ZERO_SELF_SIGNED_CERT"));
+});
+
+test("unknown fetch causes, aborts and answer-read failures remain unmarked", async () => {
+  for (const code of ["ECONNRESET", "ERR_SSL_UNPROVEN", "ERR_TLS_UNPROVEN", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT"]) {
+    const error = new TypeError("fetch failed", { cause: Object.assign(new Error("failure"), { code }) });
+    const c = new PlimsollClient({ baseUrl: "http://127.0.0.1", fetch: async () => { throw error; } });
+    await assert.rejects(c.describe(), (e: unknown) => e instanceof PlimsollError && e.notDispatched === undefined);
+  }
+  const error = new TypeError("fetch failed", { cause: Object.assign(new Error("failure"), { code: "ECONNREFUSED" }) });
+  const ac = new AbortController();
+  const canceled = new PlimsollClient({ baseUrl: "http://127.0.0.1", fetch: async () => { ac.abort(); throw error; } });
+  await assert.rejects(canceled.describe(ac.signal), (e: unknown) => e instanceof PlimsollError && e.code === "canceled" && e.notDispatched === undefined);
+  const expired = new PlimsollClient({ baseUrl: "http://127.0.0.1", requestTimeoutMs: 1, fetch: async (_input, init) => {
+    await new Promise<void>((resolve) => init!.signal!.addEventListener("abort", () => resolve(), { once: true }));
+    throw error;
+  } });
+  await assert.rejects(expired.describe(), (e: unknown) => e instanceof PlimsollError && e.code === "deadline_exceeded" && e.notDispatched === undefined);
+  const bodyFailed = new PlimsollClient({ baseUrl: "http://127.0.0.1", fetch: async () => new Response(new ReadableStream({
+    start(controller) { controller.error(error); },
+  })) });
+  await assert.rejects(bodyFailed.describe(), (e: unknown) => e instanceof PlimsollError && e.notDispatched === undefined);
+});
+
+test("a refused connection keeps the session usable", { skip }, async () => {
+  const listener = createTCPServer();
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(listener.address() as AddressInfo).port}`;
+  await new Promise<void>((resolve) => listener.close(() => resolve()));
+  let refused = false;
+  const c = new PlimsollClient({ baseUrl: sessionsUrl!, fetch: (input, init) => fetch(refused ? url : input, init) });
+  const s = await c.openSession();
+  try {
+    refused = true;
+    await assert.rejects(s.runJavaScript("1"), unsentCode("ECONNREFUSED"));
+    assert.equal(s.stopped, undefined);
+    assert.equal(s.ended, undefined);
+    refused = false;
+    assert.equal((await s.runJavaScript("1")).record.sequence, 1n);
+  } finally {
+    refused = false;
+    await s.close();
   }
 });
 
@@ -324,6 +427,24 @@ test("a call on an ended session is refused, marked not dispatched", { skip }, a
   await s.close();
 });
 
+// The daemon closes a session no request named by its first idle timeout (1 s on this
+// one), as it does one whose open answer was lost; here, the client waited.
+test("a session nobody claimed by its first idle timeout is an end", { skip }, async () => {
+  assert.ok(quickIdleUrl, "run through `go test ./clients/typescript`");
+  const s = await new PlimsollClient({ baseUrl: quickIdleUrl }).openSession();
+  assert.equal((await fetch(`${quickIdleUrl}/test/wait-ended`, { method: "POST" })).status, 200);
+  await assert.rejects(s.runJavaScript("1"), (e: unknown) => {
+    assert.ok(e instanceof PlimsollError);
+    assert.equal(e.notDispatched, "request");
+    assert.equal(e.sessionEnded?.reason, "unclaimed");
+    return true;
+  });
+  assert.equal(s.ended?.reason, "unclaimed");
+  const summary = await s.close();
+  assert.equal(summary.end, "unclaimed");
+  assert.equal(summary.calls, 0n);
+});
+
 // A daemon one enum value newer than this client can end a session for a reason the
 // client has no name for: that still says the session ended.
 test("a session end this client has no name for is an end, never open", { skip }, async () => {
@@ -334,14 +455,16 @@ test("a session end this client has no name for is an end, never open", { skip }
   assert.equal(sessionEndFromWire(8), "replaced");
   assert.equal(sessionEndFromWire(9), "not_found");
   assert.equal(sessionEndFromWire("SESSION_END_NOT_FOUND"), "not_found");
-  for (const v of [10, 99, -1, "SESSION_END_HOST_LOST", "SESSION_END_OPEN", "SESSION_END_UNKNOWN", "bogus"]) {
+  assert.equal(sessionEndFromWire(10), "unclaimed");
+  assert.equal(sessionEndFromWire("SESSION_END_UNCLAIMED"), "unclaimed");
+  for (const v of [11, 99, -1, "SESSION_END_HOST_LOST", "SESSION_END_OPEN", "SESSION_END_UNKNOWN", "bogus"]) {
     assert.equal(sessionEndFromWire(v), "unknown", String(v));
   }
   // A SessionEnded detail says the session ended, whatever reason it names.
   const detail = (reason: number) => ({ type: "plimsoll.v1.SessionEnded", value: Buffer.from(reason ? [8, reason] : []).toString("base64") });
-  assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(0)] }).sessionEnded?.reason, "unknown");
-  assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(42)] }).sessionEnded?.reason, "unknown");
-  assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(2)] }).sessionEnded?.reason, "expired");
+  assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(0)] }, { bound: true }).sessionEnded?.reason, "unknown");
+  assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(42)] }, { bound: true }).sessionEnded?.reason, "unknown");
+  assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(2)] }, { bound: true }).sessionEnded?.reason, "expired");
 
   const c = tampering(sessionsUrl!, (b) => {
     if (b.run) b.ended = "SESSION_END_HOST_LOST";

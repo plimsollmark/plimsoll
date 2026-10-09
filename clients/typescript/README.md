@@ -18,7 +18,11 @@ protocol over `fetch` and keeps the promises the Go client keeps:
 - in a **session** it tracks the chain of records, so a call made by anyone else who holds
   the session ID is caught at the next call, and at close;
 - an error says whether anything ran: `notDispatched` is set only when the daemon stated
-  that nothing did, and only then is a retry safe.
+  that nothing did, and only then is a retry safe;
+- every request carries a fresh `Plimsoll-Request-Id` and an answer counts only if it
+  carries the ID back: one that does not (another request's answer, served by an
+  intermediary, or a daemon older than protocol 3) has `answerNotBound` set and no
+  `notDispatched`, and a success of that kind is a `data_loss` error.
 
 The tier it reports is configuration and provider evidence, never runtime attestation
 (the README's provider table says what each tier means).
@@ -201,7 +205,12 @@ one user, or one app, from holding them all:
 A `warm` is a guess (Trigger.dev's recipe warms in every new run's `onTurnStart`, a chat the
 user opened and never typed in included), so it never closes a sandbox to make room: when
 either cap is reached it does nothing, and the conversation's first call opens its sandbox,
-closing the least recently used idle one as any call does.
+closing the least recently used idle one as any call does. The daemon closes a session no
+request has named by its first idle timeout (`SANDBOX_SESSION_IDLE`, default 5 minutes), since
+that is what a session whose open answer was lost looks like; a warmed sandbox its
+conversation does not use by then is closed that way, and the first call is refused with the
+end `unclaimed` (not dispatched) and runs once more in a new sandbox, saying
+`freshSandbox: true`.
 
 Both caps count what one process holds. A host that runs many processes (serverless
 functions, several Trigger.dev workers) keeps one count per process, so set the daemon's
@@ -313,7 +322,8 @@ set, caps the sandboxes one worker holds.
 What the hooks cannot cover: a run that dies without reaching `onChatSuspend` or
 `onComplete` (its process killed, a crash) leaves its sandbox open until the add-on's idle
 close (`idleCloseMs`, default 10 minutes) or, if the process is gone too, the daemon's own
-idle suspend and session lifetime (`SANDBOX_SESSION_IDLE`, `SANDBOX_SESSION_LIFETIME`). A
+idle suspend and session lifetime (`SANDBOX_SESSION_IDLE`, `SANDBOX_SESSION_LIFETIME`); a
+sandbox no call ever used is closed at the daemon's first idle timeout. A
 worker shutting down can close every sandbox it holds with `sandbox.sandboxes.disposeAll()`.
 
 ## Mastra

@@ -156,7 +156,8 @@ func TestHostAPIRouteAllowlist(t *testing.T) {
 		{http.MethodPut, "/v1/lights/abc/on"},
 		{http.MethodPut, "/v1/lights/abc/brightness"},
 		{http.MethodPut, "/v1/scenes/xyz/recall"},
-		{"get", "/v1/lights"}, // method match is case-insensitive
+		{"get", "/v1/lights"},                       // method match is case-insensitive
+		{http.MethodPut, "/v1/lights/a-B_9.x~y/on"}, // every unreserved character binds a wildcard
 	}
 	deny := []struct{ m, p string }{
 		{http.MethodPost, "/v1/code/run"},                // not in the allowlist
@@ -174,6 +175,19 @@ func TestHostAPIRouteAllowlist(t *testing.T) {
 		{http.MethodPut, "/v1/lights/abc;x=1/on"},        // path parameter an upstream strips
 		{http.MethodPut, "/v1/lights/.../on"},            // all-dot segment
 		{http.MethodPut, "/v1/lights/a:setIamPolicy/on"}, // a custom method (AIP-136) in a wildcard
+		// A wildcard binds only unreserved characters (the 9 October scan, F1): each of
+		// these passes the approve==wire check, since Go leaves it unescaped in a path.
+		{http.MethodPut, "/v1/lights/$batch/on"}, // an OData system segment
+		{http.MethodPut, "/v1/lights/$each/on"},  // an OData 4.01 set-wide operation
+		{http.MethodPut, "/v1/lights/@x/on"},
+		{http.MethodPut, "/v1/lights/a+b/on"},
+		{http.MethodPut, "/v1/lights/a=b/on"},
+		{http.MethodPut, "/v1/lights/a,b/on"},
+		{http.MethodPut, "/v1/lights/a&b/on"},
+		{http.MethodPut, "/v1/lights/a!b/on"},
+		{http.MethodPut, "/v1/lights/'a'/on"},
+		{http.MethodPut, "/v1/lights/(a)/on"},
+		{http.MethodPut, "/v1/lights/*/on"},
 	}
 	for _, c := range allow {
 		if !g.routeAllowed(c.m, c.p) {

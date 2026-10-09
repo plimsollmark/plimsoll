@@ -160,6 +160,10 @@ const (
 	// SessionNotFound: the daemon had no such session for this caller, which a restart
 	// does to every session (they live in its memory). Set by the daemon, never a provider.
 	SessionNotFound = sessionkit.NotFound
+	// SessionUnclaimed: no request named the session before its first idle timeout, so the
+	// daemon closed it (its open's answer was lost, or it was opened ahead of calls that did
+	// not come in time). Nothing ran in it. Set by the daemon, never a provider.
+	SessionUnclaimed = sessionkit.Unclaimed
 	// SessionUnknown: a client read an end a newer daemon has and this code does not.
 	// The session has ended all the same; no provider or daemon of this version uses it.
 	SessionUnknown = sessionkit.Unknown

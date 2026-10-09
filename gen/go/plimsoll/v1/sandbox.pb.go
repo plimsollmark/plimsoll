@@ -112,21 +112,27 @@ const (
 	// the ID is not this caller's (both get the same answer, so it says nothing about an
 	// ID's existence). Nothing of the call ran; a client opens a new session.
 	SessionEnd_SESSION_END_NOT_FOUND SessionEnd = 9
+	// No request named the session before its first idle timeout (5 minutes when it
+	// never suspends), so the daemon closed it: the answer to its open never reached the
+	// client, which then can neither use nor close it, or the client opened it ahead of
+	// calls that did not come in time; the daemon cannot tell which. Nothing ran in it.
+	SessionEnd_SESSION_END_UNCLAIMED SessionEnd = 10
 )
 
 // Enum value maps for SessionEnd.
 var (
 	SessionEnd_name = map[int32]string{
-		0: "SESSION_END_UNSPECIFIED",
-		1: "SESSION_END_CLOSED",
-		2: "SESSION_END_EXPIRED",
-		3: "SESSION_END_DISK_EXCEEDED",
-		4: "SESSION_END_MAIN_PROCESS_ENDED",
-		5: "SESSION_END_BOUNDARY_FAILED",
-		6: "SESSION_END_SANDBOX_CHANGED",
-		7: "SESSION_END_SHUTDOWN",
-		8: "SESSION_END_REPLACED",
-		9: "SESSION_END_NOT_FOUND",
+		0:  "SESSION_END_UNSPECIFIED",
+		1:  "SESSION_END_CLOSED",
+		2:  "SESSION_END_EXPIRED",
+		3:  "SESSION_END_DISK_EXCEEDED",
+		4:  "SESSION_END_MAIN_PROCESS_ENDED",
+		5:  "SESSION_END_BOUNDARY_FAILED",
+		6:  "SESSION_END_SANDBOX_CHANGED",
+		7:  "SESSION_END_SHUTDOWN",
+		8:  "SESSION_END_REPLACED",
+		9:  "SESSION_END_NOT_FOUND",
+		10: "SESSION_END_UNCLAIMED",
 	}
 	SessionEnd_value = map[string]int32{
 		"SESSION_END_UNSPECIFIED":        0,
@@ -139,6 +145,7 @@ var (
 		"SESSION_END_SHUTDOWN":           7,
 		"SESSION_END_REPLACED":           8,
 		"SESSION_END_NOT_FOUND":          9,
+		"SESSION_END_UNCLAIMED":          10,
 	}
 )
 
@@ -2321,12 +2328,14 @@ type OpenSessionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// session_id is 128 random bits in hex: a capability. Send it only to the
 	// daemon; it is never logged or recorded, and records carry its SHA-256.
-	SessionId        string `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Session          string `protobuf:"bytes,2,opt,name=session,proto3" json:"session,omitempty"`     // the SHA-256 of session_id, as records carry it
-	Sandbox          string `protobuf:"bytes,3,opt,name=sandbox,proto3" json:"sandbox,omitempty"`     // the provider
-	Isolation        string `protobuf:"bytes,4,opt,name=isolation,proto3" json:"isolation,omitempty"` // the tier measured at open
-	ExpiresUnixMs    int64  `protobuf:"varint,5,opt,name=expires_unix_ms,json=expiresUnixMs,proto3" json:"expires_unix_ms,omitempty"`
-	IdleTimeoutMs    uint32 `protobuf:"varint,6,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3" json:"idle_timeout_ms,omitempty"`       // after this long without a call the sandbox is suspended
+	SessionId     string `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Session       string `protobuf:"bytes,2,opt,name=session,proto3" json:"session,omitempty"`     // the SHA-256 of session_id, as records carry it
+	Sandbox       string `protobuf:"bytes,3,opt,name=sandbox,proto3" json:"sandbox,omitempty"`     // the provider
+	Isolation     string `protobuf:"bytes,4,opt,name=isolation,proto3" json:"isolation,omitempty"` // the tier measured at open
+	ExpiresUnixMs int64  `protobuf:"varint,5,opt,name=expires_unix_ms,json=expiresUnixMs,proto3" json:"expires_unix_ms,omitempty"`
+	// After this long without a call the sandbox is suspended; a session no request has
+	// named by then is closed instead (SESSION_END_UNCLAIMED).
+	IdleTimeoutMs    uint32 `protobuf:"varint,6,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3" json:"idle_timeout_ms,omitempty"`
 	SoftwareIdentity string `protobuf:"bytes,7,opt,name=software_identity,json=softwareIdentity,proto3" json:"software_identity,omitempty"` // selected image, when the provider can establish it
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -3313,7 +3322,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x19PROJECT_OUTCOME_COMPLETED\x10\x01\x12 \n" +
 	"\x1cPROJECT_OUTCOME_SETUP_FAILED\x10\x02\x12\x1d\n" +
 	"\x19PROJECT_OUTCOME_TIMED_OUT\x10\x03\x12\"\n" +
-	"\x1ePROJECT_OUTCOME_PROTOCOL_ERROR\x10\x04*\xae\x02\n" +
+	"\x1ePROJECT_OUTCOME_PROTOCOL_ERROR\x10\x04*\xc9\x02\n" +
 	"\n" +
 	"SessionEnd\x12\x1b\n" +
 	"\x17SESSION_END_UNSPECIFIED\x10\x00\x12\x16\n" +
@@ -3325,7 +3334,9 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x1bSESSION_END_SANDBOX_CHANGED\x10\x06\x12\x18\n" +
 	"\x14SESSION_END_SHUTDOWN\x10\a\x12\x18\n" +
 	"\x14SESSION_END_REPLACED\x10\b\x12\x19\n" +
-	"\x15SESSION_END_NOT_FOUND\x10\t*\xc0\x02\n" +
+	"\x15SESSION_END_NOT_FOUND\x10\t\x12\x19\n" +
+	"\x15SESSION_END_UNCLAIMED\x10\n" +
+	"*\xc0\x02\n" +
 	"\x13NotDispatchedReason\x12%\n" +
 	"!NOT_DISPATCHED_REASON_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dNOT_DISPATCHED_REASON_REQUEST\x10\x01\x12$\n" +

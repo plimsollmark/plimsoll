@@ -1,6 +1,6 @@
 {
   "name": "@plimsollmark/client",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "TypeScript client for plimsolld, with AI SDK, Trigger.dev and Mastra executeCode add-ons",
   "license": "Apache-2.0",
   "homepage": "https://github.com/plimsollmark/plimsoll/tree/main/clients/typescript#readme",

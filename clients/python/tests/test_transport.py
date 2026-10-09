@@ -4,6 +4,8 @@ answer can fail to be a Connect answer."""
 from __future__ import annotations
 
 import asyncio
+import http.client
+import io
 import json
 import socket
 import threading
@@ -11,10 +13,14 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional
+from unittest.mock import patch
+
+from plimsoll_client._transport import _read_capped
 
 from plimsoll_client import (
     MAX_RESPONSE_BYTES,
     PROTOCOL,
+    AnswerNotBoundError,
     AsyncClient,
     Client,
     MalformedResponseError,
@@ -30,11 +36,13 @@ Reply = Callable[[BaseHTTPRequestHandler], None]
 
 
 class Stub:
-    """A loopback HTTP server whose answer each test sets."""
+    """A loopback HTTP server whose answer each test sets. Like the daemon, it echoes
+    the request's Plimsoll-Request-Id on every answer, unless ``echo`` is false."""
 
     def __init__(self) -> None:
         self.reply: Reply = lambda h: None
         self.seen: List[Dict[str, Any]] = []
+        self.echo = True
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -42,6 +50,12 @@ class Stub:
                 n = int(self.headers.get("Content-Length") or 0)
                 stub.seen.append({"path": self.path, "headers": dict(self.headers), "body": self.rfile.read(n)})
                 stub.reply(self)
+
+            def send_response(self, code: int, message: Optional[str] = None) -> None:
+                super().send_response(code, message)
+                rid = self.headers.get("Plimsoll-Request-Id")
+                if stub.echo and rid:
+                    self.send_header("Plimsoll-Request-Id", rid)
 
             def log_message(self, *args: Any) -> None:
                 pass
@@ -71,6 +85,41 @@ def describe_answer(protocol: int = PROTOCOL) -> bytes:
     return json.dumps({"sandbox": "stub", "isolation": "process", "protocol": protocol}).encode()
 
 
+class CappedRead(unittest.TestCase):
+    @staticmethod
+    def read(headers: bytes, body: bytes) -> tuple[bytes, bool]:
+        class BufferedSocket:
+            def makefile(self, mode: str) -> io.BytesIO:
+                return io.BytesIO(b"HTTP/1.1 200 OK\r\n" + headers + b"\r\n\r\n" + body)
+
+        # The real stdlib parser over fixed bytes: no server, sleeps, or cancel race.
+        with http.client.HTTPResponse(BufferedSocket()) as resp:  # type: ignore[arg-type]
+            resp.begin()
+            conn = http.client.HTTPConnection("unused")
+            with patch("plimsoll_client._transport.time.monotonic", return_value=0):
+                return _read_capped(conn, resp, 1)
+
+    def test_a_cleanly_ended_chunked_answer_is_complete(self) -> None:
+        self.assertEqual(self.read(b"Transfer-Encoding: chunked", b"3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n"), (b"abcde", True))
+        self.assertEqual(self.read(b"Transfer-Encoding: Chunked", b"0\r\n\r\n"), (b"", True))
+
+    def test_an_answer_cut_inside_a_chunk_raises_incomplete_read(self) -> None:
+        with self.assertRaises(http.client.IncompleteRead):
+            self.read(b"Transfer-Encoding: chunked", b"5\r\nabc")
+
+    def test_an_answer_missing_its_final_chunk_raises_incomplete_read(self) -> None:
+        with self.assertRaises(http.client.IncompleteRead):
+            self.read(b"Transfer-Encoding: chunked", b"3\r\nabc\r\n")
+
+    def test_content_length_completeness_is_unchanged(self) -> None:
+        self.assertEqual(self.read(b"Content-Length: 5", b"abcde"), (b"abcde", True))
+        self.assertEqual(self.read(b"Content-Length: 6", b"abcde"), (b"abcde", False))
+        self.assertEqual(self.read(b"Content-Length: 0", b""), (b"", True))
+
+    def test_a_close_delimited_answer_is_not_known_complete(self) -> None:
+        self.assertEqual(self.read(b"Connection: close", b"abcde"), (b"abcde", False))
+
+
 class Transport(unittest.TestCase):
     def setUp(self) -> None:
         self.stub = Stub()
@@ -86,6 +135,23 @@ class Transport(unittest.TestCase):
         self.assertEqual(seen["headers"]["Connect-Protocol-Version"], "1")
         self.assertEqual(seen["headers"]["Authorization"], "Bearer tok")
         self.assertEqual(json.loads(seen["body"]), {})
+
+    def test_every_request_carries_a_fresh_id(self) -> None:
+        self.stub.reply = lambda h: send(h, 200, describe_answer())
+        c = Client(self.stub.url)
+        for _ in range(3):
+            c.describe()
+        ids = [seen["headers"]["Plimsoll-Request-Id"] for seen in self.stub.seen]
+        self.assertEqual(len(set(ids)), 3)
+        for rid in ids:
+            self.assertRegex(rid, r"\A[0-9a-f]{32}\Z")
+
+    def test_an_answer_without_the_echo_is_refused(self) -> None:
+        self.stub.echo = False
+        self.stub.reply = lambda h: send(h, 200, describe_answer())
+        with self.assertRaises(AnswerNotBoundError) as cm:
+            Client(self.stub.url).describe()
+        self.assertEqual((cm.exception.code, cm.exception.not_dispatched), ("data_loss", None))
 
     def test_no_token_sends_no_authorization(self) -> None:
         self.stub.reply = lambda h: send(h, 200, describe_answer())
