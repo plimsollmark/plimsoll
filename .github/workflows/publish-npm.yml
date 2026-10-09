@@ -4,7 +4,9 @@
 # and npm attaches a provenance statement naming this repository, commit and workflow run.
 #
 # It runs when a GitHub release is published, and by hand (workflow_dispatch) for a
-# release made before this file existed. Either way it publishes only what a release tag
+# release whose publish did not go through, or one made before this file existed; a
+# rerun of a failed run would use the workflow as it was at the release's tag, so a
+# fixed workflow is run by hand from main. Either way it publishes only what a release tag
 # names: the client's version must have a tag `v<version>`, a release's tag must be that
 # tag, and clients/typescript must be byte-identical to it at the commit being built.
 # The release itself is gated by audit.yml on the tagged commit, so no test run here.
@@ -99,7 +101,10 @@ jobs:
         run: |
           [ "$(ls dist)" = "$TARBALL" ] || { echo "::error::dist/ holds $(ls dist), expected $TARBALL"; exit 1; }
           echo "$SHA256  dist/$TARBALL" | sha256sum -c -
+      # "./" makes npm read the argument as a file: "dist/<file>.tgz" has the shape of
+      # GitHub's owner/repo shorthand, which npm tries as a git repository first (the
+      # v0.21.0 release's publish failed that way, before contacting the registry).
       - name: Publish
         env:
           TARBALL: ${{ needs.build.outputs.tarball }}
-        run: npm publish "dist/$TARBALL" --access public
+        run: npm publish "./dist/$TARBALL" --access public
