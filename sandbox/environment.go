@@ -98,13 +98,15 @@ func dockerImageIdentity(id string) string {
 	return "docker-image:" + id
 }
 
-// Environments states the E2B ceilings only. A template is addressed by name and
-// can be rebuilt under the same name, so it is not an identity.
+// Environments states the E2B ceilings and the languages the smoke test proved. A
+// template is addressed by name and can be rebuilt under the same name, so it is not
+// an identity.
 func (e *E2B) Environments() Environments {
 	ceiling := runCeiling(e.MaxTimeout)
+	langs := e.languages()
 	return Environments{
-		JavaScript: PayloadEnvironment{MaxTimeout: ceiling},
-		Project:    PayloadEnvironment{MaxTimeout: ceiling},
+		JavaScript: PayloadEnvironment{MaxTimeout: ceiling, Languages: langs},
+		Project:    PayloadEnvironment{MaxTimeout: ceiling, Languages: langs},
 	}
 }
 

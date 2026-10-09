@@ -1,0 +1,232 @@
+{
+  "one_turn": {
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. Daemon procedures counted by a fetch counter after turn 1: OpenSession 1, SessionRun 2, CloseSession 0.",
+    "daemon_calls": {
+      "OpenSession": 1,
+      "SessionRun": 2,
+      "CloseSession": 0
+    },
+    "steps": [
+      {
+        "call": {
+          "language": "python",
+          "code": "import csv\nrows = list(csv.DictReader(open('orders.csv')))",
+          "files": [
+            {
+              "path": "orders.csv",
+              "content": "id,total\n1,30\n2,12\n"
+            }
+          ]
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "freshInterpreter": true,
+          "filesPersist": true,
+          "freshSandbox": true,
+          "isolation": "container",
+          "recordSha256": "856e6583048537d74d71f607319f86bc313a5beb58a91784f159dbab03afebb2"
+        },
+        "turn": 1,
+        "user_message": "load the orders and count them",
+        "hook": "executeCode, inside the turn's streamText; the run's sandbox was warmed by onTurnStart"
+      },
+      {
+        "call": {
+          "language": "python",
+          "code": "len(rows)"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "2\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "filesPersist": true,
+          "isolation": "container",
+          "recordSha256": "23d1d6c7f585995aff761226707b7b7dd0c4a94d039a6c4b9a81a44e00235b10"
+        },
+        "turn": 1,
+        "user_message": "load the orders and count them",
+        "hook": "executeCode, inside the turn's streamText; the run's sandbox was warmed by onTurnStart"
+      }
+    ]
+  },
+  "next_turn": {
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. Daemon procedures counted by a fetch counter after turn 2: OpenSession 1, SessionRun 3, CloseSession 0.",
+    "daemon_calls": {
+      "OpenSession": 1,
+      "SessionRun": 3,
+      "CloseSession": 0
+    },
+    "steps": [
+      {
+        "call": {
+          "language": "python",
+          "code": "sum(float(r['total']) for r in rows)"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "42.0\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "filesPersist": true,
+          "isolation": "container",
+          "recordSha256": "cc4945ed37c7b9c5b9b55ac6a1e3d51bf4f87c1007e8c6cf2bbf25380b991e50"
+        },
+        "turn": 2,
+        "user_message": "and the total?",
+        "hook": "executeCode, inside the turn's streamText; the run's sandbox was warmed by onTurnStart"
+      }
+    ]
+  },
+  "suspend": {
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. After turn 2 nothing was sent for one idle window; onChatSuspend closed the sandbox: daemon procedures counted by a fetch counter once the run had suspended: OpenSession 1, SessionRun 3, CloseSession 1. Turn 3 was then sent to the suspended run, which resumed: daemon procedures counted by a fetch counter after turn 3: OpenSession 2, SessionRun 5, CloseSession 1.",
+    "daemon_calls": {
+      "after_turn_2": {
+        "OpenSession": 1,
+        "SessionRun": 3,
+        "CloseSession": 0
+      },
+      "after_suspend": {
+        "OpenSession": 1,
+        "SessionRun": 3,
+        "CloseSession": 1
+      },
+      "after_turn_3": {
+        "OpenSession": 2,
+        "SessionRun": 5,
+        "CloseSession": 1
+      }
+    },
+    "steps": [
+      {
+        "call": {
+          "language": "python",
+          "code": "len(rows)"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 1,
+          "timedOut": false,
+          "stdout": "",
+          "stderr": "Traceback (most recent call last):\n  File \"<cell 1>\", line 1, in <module>\n    len(rows)\n        ^^^^\nNameError: name 'rows' is not defined\n",
+          "truncated": false,
+          "stateKept": true,
+          "freshInterpreter": true,
+          "filesPersist": true,
+          "freshSandbox": true,
+          "isolation": "container",
+          "recordSha256": "4c549890da985fdab83d5e1140d4f7ba14a9a0856d417668b1425d53a71fa80e"
+        },
+        "turn": 3,
+        "user_message": "how many orders were there again?",
+        "hook": "executeCode, inside turn 3's streamText; after the run resumed, onTurnStart warmed a new sandbox, because onChatSuspend had closed the old one"
+      },
+      {
+        "call": {
+          "language": "python",
+          "code": "import csv\nrows = list(csv.DictReader(open('orders.csv')))\nlen(rows)",
+          "files": [
+            {
+              "path": "orders.csv",
+              "content": "id,total\n1,30\n2,12\n"
+            }
+          ]
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "2\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "filesPersist": true,
+          "isolation": "container",
+          "recordSha256": "775582945af2b3cd5763d1b3302a90221ee6c4f17badff06fb00a87439a40842"
+        },
+        "turn": 3,
+        "user_message": "how many orders were there again?",
+        "hook": "executeCode, inside turn 3's streamText; after the run resumed, onTurnStart warmed a new sandbox, because onChatSuspend had closed the old one"
+      }
+    ]
+  },
+  "guest_error": {
+    "call": {
+      "language": "python",
+      "code": "total = 42\nper_person = total / 0"
+    },
+    "answer": {
+      "language": "python",
+      "exitCode": 1,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"<cell 3>\", line 2, in <module>\n    per_person = total / 0\n                 ~~~~~~^~~\nZeroDivisionError: division by zero\n",
+      "truncated": false,
+      "stateKept": true,
+      "filesPersist": true,
+      "isolation": "container",
+      "recordSha256": "7120ef72247661aa01303542f7c44c71a70f8c1f2a5a3f6a54a4c5e773276710"
+    },
+    "turn": 4,
+    "user_message": "split the total between zero people",
+    "hook": "executeCode, inside the turn's streamText; the run's sandbox was warmed by onTurnStart",
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. Daemon procedures counted by a fetch counter after turn 5: OpenSession 2, SessionRun 7, CloseSession 1.",
+    "daemon_calls": {
+      "OpenSession": 2,
+      "SessionRun": 7,
+      "CloseSession": 1
+    }
+  },
+  "javascript": {
+    "call": {
+      "language": "javascript",
+      "code": "const totals = [30, 12];\ntotals.reduce((a, b) => a + b, 0)"
+    },
+    "answer": {
+      "language": "javascript",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "42\n",
+      "stderr": "",
+      "truncated": false,
+      "stateKept": true,
+      "freshInterpreter": true,
+      "filesPersist": true,
+      "isolation": "container",
+      "recordSha256": "9c2032e5a059f35c3ab5bf7a9426f10a81d9c6ea977533b3e01d9821f230cc5a"
+    },
+    "turn": 5,
+    "user_message": "now in JavaScript",
+    "hook": "executeCode, inside the turn's streamText; the run's sandbox was warmed by onTurnStart",
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. Daemon procedures counted by a fetch counter after turn 5: OpenSession 2, SessionRun 7, CloseSession 1. When the harness closed the chat the second sandbox was still open (CloseSession 1): the offline harness runs the agent's run function but not Trigger.dev's task lifecycle hooks. The recorder then called the agent's registered onComplete hook itself, with the run's id, as Trigger.dev's runtime does when a run ends, and it closed that sandbox: CloseSession 2.",
+    "daemon_calls": {
+      "after_turn_5": {
+        "OpenSession": 2,
+        "SessionRun": 7,
+        "CloseSession": 1
+      },
+      "after_harness_close": {
+        "OpenSession": 2,
+        "SessionRun": 7,
+        "CloseSession": 1
+      },
+      "after_on_complete": {
+        "OpenSession": 2,
+        "SessionRun": 7,
+        "CloseSession": 2
+      }
+    }
+  }
+}

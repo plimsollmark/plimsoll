@@ -29,7 +29,7 @@ func sessionBrokerFixture(t *testing.T, upstream http.HandlerFunc) (*dockerSessi
 	}
 	t.Cleanup(b.Close)
 	grant := &HostAPIGrant{BaseURL: api.URL, Allow: []HostRoute{{Method: "POST", Path: "/v1/items"}}, Minter: StaticToken("call-token")}
-	core, err := brokerSessionForGrant(context.Background(), grant, time.Minute)
+	core, err := brokerSessionForGrant(context.Background(), grant, time.Minute, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

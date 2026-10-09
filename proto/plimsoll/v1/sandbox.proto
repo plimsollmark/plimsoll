@@ -95,6 +95,13 @@ message DescribeResponse {
   // the project image, not the snippet image). Stated when supports_sessions is;
   // informational, like the other environments, and what a router filters sessions on.
   PayloadEnvironment session_environment = 18;
+  // The caps that bound one caller's sessions, 0 when there is none: how many it may
+  // hold (SANDBOX_MAX_SESSIONS_PER_CALLER) and how many one owner of it may
+  // (SANDBOX_MAX_SESSIONS_PER_OWNER, the per-user cap OpenSessionRequest.owner names).
+  // An app that relies on the per-owner cap across its processes checks it here.
+  // Stated with supports_sessions; informational.
+  uint32 max_sessions_per_caller = 19;
+  uint32 max_sessions_per_owner = 20;
 }
 
 // PayloadEnvironment is one payload kind's environment as the daemon states it.
@@ -458,6 +465,18 @@ message OpenSessionRequest {
   // Informational, so it did not move the protocol number: a daemon that predates it
   // drops it.
   repeated string languages = 7;
+  // The end user the session is for, as an opaque name the caller chooses
+  // ([A-Za-z0-9._:-], 1 to 64 characters; anything else is InvalidArgument, not
+  // dispatched, since dropping it would lift the cap without a word). A daemon with
+  // a per-owner cap (SANDBOX_MAX_SESSIONS_PER_OWNER) counts the caller's sessions
+  // per owner; at the cap it closes that owner's least recently used session with no
+  // call in progress (its later calls are refused with SESSION_END_REPLACED), or
+  // refuses the open, not dispatched, reason capacity, when every one is running a
+  // call. Owners of different callers never meet. The official clients send a keyed
+  // digest of the user, never the user's name; the daemon never logs it.
+  // Informational, so it did not move the protocol number: a daemon that predates it
+  // has no per-owner cap, as one with the cap unset.
+  string owner = 8;
 }
 
 message OpenSessionResponse {
@@ -555,6 +574,13 @@ enum SessionEnd {
   SESSION_END_BOUNDARY_FAILED = 5;
   SESSION_END_SANDBOX_CHANGED = 6;
   SESSION_END_SHUTDOWN = 7;
+  // The daemon closed it, between calls, to open a newer session for the same
+  // owner (OpenSessionRequest.owner), which was at the daemon's per-owner cap.
+  SESSION_END_REPLACED = 8;
+  // The daemon has no such session for this caller: it restarted and forgot it, or
+  // the ID is not this caller's (both get the same answer, so it says nothing about an
+  // ID's existence). Nothing of the call ran; a client opens a new session.
+  SESSION_END_NOT_FOUND = 9;
 }
 
 // SessionEnded is attached as an error detail to a SessionRun refused because

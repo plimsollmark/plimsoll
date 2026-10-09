@@ -20,6 +20,7 @@
 package runnerwire
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -211,9 +212,11 @@ func frameBody(rest string, key []byte) ([]byte, bool) {
 func decode(body []byte) (Report, error) {
 	var parsed struct {
 		Steps []struct {
-			Command         string `json:"command"`
-			Stdout          string `json:"stdout"`
-			Stderr          string `json:"stderr"`
+			Command string `json:"command"`
+			// The step's raw output bytes, base64 encoded by the runner and decoded by
+			// encoding/json: output that is not UTF-8 keeps its exact bytes.
+			Stdout          []byte `json:"stdoutBase64"`
+			Stderr          []byte `json:"stderrBase64"`
 			StdoutTruncated bool   `json:"stdoutTruncated"`
 			StderrTruncated bool   `json:"stderrTruncated"`
 			ExitCode        int    `json:"exitCode"`
@@ -227,8 +230,13 @@ func decode(body []byte) (Report, error) {
 		ArtifactsTruncated bool   `json:"artifactsTruncated"`
 		Error              string `json:"error"`
 	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return Report{}, err
+	// Unknown fields are refused: a runner from before the output became base64 sends
+	// "stdout" and "stderr" as text, and an image still carrying it must fail as a
+	// protocol mismatch, not be read as a run with no output.
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&parsed); err != nil {
+		return Report{}, fmt.Errorf("runner report (an image whose /runner.mjs predates this plimsoll fails here): %w", err)
 	}
 	rep := Report{ArtifactsTruncated: parsed.ArtifactsTruncated, Err: parsed.Error}
 	for _, a := range parsed.Artifacts {
@@ -237,8 +245,8 @@ func decode(body []byte) (Report, error) {
 	for _, s := range parsed.Steps {
 		rep.Steps = append(rep.Steps, Step{
 			Command:         s.Command,
-			Stdout:          s.Stdout,
-			Stderr:          s.Stderr,
+			Stdout:          string(s.Stdout),
+			Stderr:          string(s.Stderr),
 			StdoutTruncated: s.StdoutTruncated,
 			StderrTruncated: s.StderrTruncated,
 			ExitCode:        s.ExitCode,

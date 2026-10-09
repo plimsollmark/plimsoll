@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,34 +19,52 @@ import (
 
 // TestE2BOrphanReconcilerKillsOnlyUntrackedStampedSandboxes verifies the safety
 // properties of reconciliation (review F3): a sandbox carrying this instance's stamp
-// whose lease key is not tracked is killed at any age, a fresh one included; one whose
-// key is tracked (a create or run in flight) is spared at any age, an old one
-// included; one with no lease key is left to its create timeout; and sandboxes
-// belonging to a different instance are never touched even if the server-side
-// metadata filter mistakenly returns them.
+// whose lease key is not tracked is killed at any age and in any state, a fresh or
+// paused one included; one whose key is tracked (a create or run in flight) is spared
+// at any age; one with no lease key is left to its create timeout; and sandboxes
+// belonging to a different instance are never touched by that rule even if the
+// server-side metadata filter mistakenly returns them. A session sandbox of any
+// instance is killed once it is more than e2bReapMargin past the expiry it declares,
+// and spared before that, without a declaration, or while this instance tracks it.
 func TestE2BOrphanReconcilerKillsOnlyUntrackedStampedSandboxes(t *testing.T) {
 	var mu sync.Mutex
 	var deleted []string
-	old := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
-	young := time.Now().Add(-2 * time.Second).UTC().Format(time.RFC3339)
-
+	past := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
+	recent := strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/sandboxes":
+		case r.Method == http.MethodGet && r.URL.Path == "/v2/sandboxes":
 			if r.Header.Get("X-API-Key") != "k" {
 				http.Error(w, "no key", http.StatusUnauthorized)
 				return
 			}
-			// Deliberately include a foreign-instance sandbox to prove the
-			// client-side re-check.
-			fmt.Fprintf(w, `[
-				{"sandboxID":"sb-orphan","startedAt":%q,"metadata":{"sdk":"plimsoll","instance":"inst-1","lease":"l-orphan"}},
-				{"sandboxID":"sb-young-orphan","startedAt":%q,"metadata":{"sdk":"plimsoll","instance":"inst-1","lease":"l-young"}},
-				{"sandboxID":"sb-live","startedAt":%q,"metadata":{"sdk":"plimsoll","instance":"inst-1","lease":"l-live"}},
-				{"sandboxID":"sb-slow-create","startedAt":%q,"metadata":{"sdk":"plimsoll","instance":"inst-1","lease":"l-slow"}},
-				{"sandboxID":"sb-foreign","startedAt":%q,"metadata":{"sdk":"plimsoll","instance":"other","lease":"l-foreign"}},
-				{"sandboxID":"sb-no-lease","startedAt":%q,"metadata":{"sdk":"plimsoll","instance":"inst-1"}}
-			]`, old, young, old, young, old, old)
+			if got := r.URL.Query().Get("state"); got != "running,paused" {
+				http.Error(w, "state "+got, http.StatusBadRequest)
+				return
+			}
+			switch r.URL.Query().Get("metadata") {
+			case "instance=inst-1":
+				// Deliberately include a foreign-instance sandbox to prove the
+				// client-side re-check.
+				_, _ = io.WriteString(w, `[
+					{"sandboxID":"sb-orphan","state":"running","metadata":{"sdk":"plimsoll","instance":"inst-1","lease":"l-orphan"}},
+					{"sandboxID":"sb-paused-orphan","state":"paused","metadata":{"sdk":"plimsoll","instance":"inst-1","lease":"l-paused"}},
+					{"sandboxID":"sb-live","state":"running","metadata":{"sdk":"plimsoll","instance":"inst-1","lease":"l-live"}},
+					{"sandboxID":"sb-slow-create","state":"running","metadata":{"sdk":"plimsoll","instance":"inst-1","lease":"l-slow"}},
+					{"sandboxID":"sb-foreign","state":"running","metadata":{"sdk":"plimsoll","instance":"other","lease":"l-foreign"}},
+					{"sandboxID":"sb-no-lease","state":"running","metadata":{"sdk":"plimsoll","instance":"inst-1"}}
+				]`)
+			case "session=1":
+				fmt.Fprintf(w, `[
+					{"sandboxID":"sb-expired-session","state":"paused","metadata":{"sdk":"plimsoll","instance":"crashed","lease":"l-a","session":"1","expires":%q}},
+					{"sandboxID":"sb-in-margin","state":"paused","metadata":{"sdk":"plimsoll","instance":"crashed","lease":"l-b","session":"1","expires":%q}},
+					{"sandboxID":"sb-tracked-session","state":"running","metadata":{"sdk":"plimsoll","instance":"inst-1","lease":"l-live","session":"1","expires":%q}},
+					{"sandboxID":"sb-no-expiry","state":"paused","metadata":{"sdk":"plimsoll","instance":"crashed","lease":"l-c","session":"1"}},
+					{"sandboxID":"sb-not-ours","state":"paused","metadata":{"sdk":"other","instance":"crashed","lease":"l-d","session":"1","expires":%q}}
+				]`, past, recent, past, past)
+			default:
+				http.Error(w, "filter "+r.URL.Query().Get("metadata"), http.StatusBadRequest)
+			}
 		case r.Method == http.MethodDelete:
 			mu.Lock()
 			deleted = append(deleted, r.URL.Path)
@@ -69,28 +88,50 @@ func TestE2BOrphanReconcilerKillsOnlyUntrackedStampedSandboxes(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	slices.Sort(deleted)
-	if want := []string{"/sandboxes/sb-orphan", "/sandboxes/sb-young-orphan"}; killed != 2 || !slices.Equal(deleted, want) {
+	want := []string{"/sandboxes/sb-expired-session", "/sandboxes/sb-orphan", "/sandboxes/sb-paused-orphan"}
+	if killed != len(want) || !slices.Equal(deleted, want) {
 		t.Fatalf("killed=%d deleted=%v; want exactly %v", killed, deleted, want)
 	}
 }
 
-// TestE2BReconcileListFiltersByInstanceMetadata verifies the list request itself
-// asks the control plane to filter by this instance's stamp, so reconciliation
-// scales without downloading every sandbox on the account.
-func TestE2BReconcileListFiltersByInstanceMetadata(t *testing.T) {
-	var gotMetadata string
+// TestE2BReconcileListsBothStatesByMetadataAcrossPages verifies the listing asks the
+// control plane to filter by this instance's stamp (and, for sessions, by session=1),
+// for running and paused sandboxes, and follows every page.
+func TestE2BReconcileListsBothStatesByMetadataAcrossPages(t *testing.T) {
+	var mu sync.Mutex
+	var filters []string
+	var deleted []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMetadata = r.URL.Query().Get("metadata")
-		_, _ = io.WriteString(w, `[]`)
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodDelete {
+			deleted = append(deleted, r.URL.Path)
+			return
+		}
+		q := r.URL.Query()
+		filters = append(filters, q.Get("metadata")+" state="+q.Get("state")+" next="+q.Get("nextToken"))
+		if q.Get("metadata") != "instance=inst-42" {
+			_, _ = io.WriteString(w, `[]`)
+			return
+		}
+		if q.Get("nextToken") == "" {
+			w.Header().Set("X-Next-Token", "page-2")
+			_, _ = io.WriteString(w, `[{"sandboxID":"sb-1","metadata":{"instance":"inst-42","lease":"l-1"}}]`)
+			return
+		}
+		_, _ = io.WriteString(w, `[{"sandboxID":"sb-2","metadata":{"instance":"inst-42","lease":"l-2"}}]`)
 	}))
 	defer srv.Close()
 	e := &E2B{APIKey: "k", APIBase: srv.URL}
 	e.instanceID = "inst-42"
-	if _, err := e.ReconcileOrphans(context.Background()); err != nil {
-		t.Fatal(err)
+	if n, err := e.ReconcileOrphans(context.Background()); err != nil || n != 2 {
+		t.Fatalf("reconcile: killed=%d err=%v, want 2 (one per page)", n, err)
 	}
-	if gotMetadata != "instance=inst-42" {
-		t.Fatalf("metadata filter = %q, want instance=inst-42", gotMetadata)
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"instance=inst-42 state=running,paused next=", "instance=inst-42 state=running,paused next=page-2", "session=1 state=running,paused next="}
+	if !slices.Equal(filters, want) {
+		t.Fatalf("listings = %q, want %q", filters, want)
 	}
 }
 
@@ -100,6 +141,7 @@ func TestE2BReconcileListFiltersByInstanceMetadata(t *testing.T) {
 // untracks its key: the lifecycle the reconciler's kill decision depends on.
 func TestE2BCreateStampsInstanceAndTracksID(t *testing.T) {
 	var createBody []byte
+	var stampedMD map[string]string
 	var e *E2B
 	trackedAtCreate := false
 	fail := false
@@ -111,6 +153,7 @@ func TestE2BCreateStampsInstanceAndTracksID(t *testing.T) {
 				Metadata map[string]string `json:"metadata"`
 			}
 			_ = json.Unmarshal(createBody, &body)
+			stampedMD = body.Metadata
 			trackedAtCreate = e.leases.Tracked(body.Metadata["lease"])
 			if fail {
 				http.Error(w, "rate limited", http.StatusTooManyRequests)
@@ -118,6 +161,10 @@ func TestE2BCreateStampsInstanceAndTracksID(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusCreated)
 			_, _ = io.WriteString(w, `{"sandboxID":"sb-9","envdAccessToken":"a","trafficAccessToken":"t"}`)
+		case http.MethodGet:
+			// Every create reads its new sandbox back and requires its own stamps.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"sandboxID": strings.TrimPrefix(r.URL.Path, "/sandboxes/"), "state": "running", "metadata": stampedMD})
 		case http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
 		}
@@ -125,7 +172,7 @@ func TestE2BCreateStampsInstanceAndTracksID(t *testing.T) {
 	defer srv.Close()
 
 	e = &E2B{APIKey: "k", APIBase: srv.URL}
-	vm, err := e.create(context.Background(), 10*time.Second)
+	vm, err := e.create(context.Background(), 10*time.Second, e2bCreate{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -149,7 +196,7 @@ func TestE2BCreateStampsInstanceAndTracksID(t *testing.T) {
 		t.Fatal("killed sandbox's lease is still tracked; the reconciler could never reap a failed teardown")
 	}
 	fail = true
-	if _, err := e.create(context.Background(), 10*time.Second); err == nil {
+	if _, err := e.create(context.Background(), 10*time.Second, e2bCreate{}); err == nil {
 		t.Fatal("a refused create returned a sandbox")
 	}
 	if !trackedAtCreate || e.leases.Len() != 0 {
@@ -229,7 +276,7 @@ func TestE2BReportsACreateWithNoUsableID(t *testing.T) {
 		}))
 		e := &E2B{APIKey: "k", APIBase: srv.URL}
 		ctx, gaveUp := WatchTeardown(context.Background())
-		if _, err := e.create(ctx, 10*time.Second); err == nil {
+		if _, err := e.create(ctx, 10*time.Second, e2bCreate{}); err == nil {
 			t.Errorf("%s: create succeeded", name)
 		}
 		if !gaveUp() {
@@ -266,7 +313,7 @@ func TestE2BReportsACreateWhoseAnswerWasLost(t *testing.T) {
 	defer srv.Close()
 	e := &E2B{APIKey: "k", APIBase: srv.URL}
 	ctx, gaveUp := WatchTeardown(context.Background())
-	if _, err := e.create(ctx, 10*time.Second); err == nil {
+	if _, err := e.create(ctx, 10*time.Second, e2bCreate{}); err == nil {
 		t.Fatal("create succeeded with no answer")
 	}
 	if !gaveUp() {
@@ -292,7 +339,7 @@ func TestE2BReportsACreateWhoseAnswerWasLost(t *testing.T) {
 	closed.Close()
 	e = &E2B{APIKey: "k", APIBase: base}
 	ctx, gaveUp = WatchTeardown(context.Background())
-	if _, err := e.create(ctx, 10*time.Second); err == nil {
+	if _, err := e.create(ctx, 10*time.Second, e2bCreate{}); err == nil {
 		t.Fatal("create succeeded with nothing listening")
 	}
 	if gaveUp() {
@@ -304,7 +351,7 @@ func TestE2BReportsACreateWhoseAnswerWasLost(t *testing.T) {
 	done, cancel := context.WithCancel(context.Background())
 	cancel()
 	ctx, gaveUp = WatchTeardown(done)
-	if _, err := e.create(ctx, 10*time.Second); err == nil {
+	if _, err := e.create(ctx, 10*time.Second, e2bCreate{}); err == nil {
 		t.Fatal("create succeeded on a context already done")
 	}
 	if gaveUp() {
@@ -333,7 +380,7 @@ func TestE2BReportsALostCreateWithoutTraceHooks(t *testing.T) {
 	tr := &lostAnswerTransport{}
 	e := &E2B{APIKey: "k", APIBase: "https://api.example.invalid", HTTP: &http.Client{Transport: tr}}
 	ctx, gaveUp := WatchTeardown(context.Background())
-	if _, err := e.create(ctx, 10*time.Second); err == nil {
+	if _, err := e.create(ctx, 10*time.Second, e2bCreate{}); err == nil {
 		t.Fatal("create succeeded with its answer lost")
 	}
 	if tr.got.Load() != 1 {
@@ -373,7 +420,7 @@ func TestE2BCreateAnswerDecidesOnlyWhenARefusal(t *testing.T) {
 		}))
 		e := &E2B{APIKey: "k", APIBase: srv.URL}
 		ctx, gaveUp := WatchTeardown(context.Background())
-		if _, err := e.create(ctx, 10*time.Second); err == nil {
+		if _, err := e.create(ctx, 10*time.Second, e2bCreate{}); err == nil {
 			t.Errorf("HTTP %d: create succeeded", tc.status)
 		}
 		if gaveUp() != tc.lost {

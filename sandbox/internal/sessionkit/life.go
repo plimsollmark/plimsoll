@@ -31,6 +31,11 @@ const (
 	BoundaryFailed
 	SandboxChanged
 	Shutdown
+	Replaced
+	// NotFound: the daemon had no such session for this caller (a restart forgot it).
+	NotFound
+	// Unknown: an end a newer daemon named that this code has no name for.
+	Unknown
 )
 
 var endNames = map[End]string{
@@ -42,6 +47,9 @@ var endNames = map[End]string{
 	BoundaryFailed:   "boundary_failed",
 	SandboxChanged:   "sandbox_changed",
 	Shutdown:         "shutdown",
+	Replaced:         "replaced",
+	NotFound:         "not_found",
+	Unknown:          "unknown",
 }
 
 func (e End) String() string {
@@ -113,6 +121,14 @@ type Hooks struct {
 	// Sweep runs argv (SweepArgv) in the sandbox as one of plimsoll's own programs and
 	// returns what it exited with. Its exit status is the boundary between calls.
 	Sweep func(ctx context.Context, argv []string) (ExecResult, error)
+	// Quiesce, where the provider needs one, runs argv (QuiesceArgv) the same way,
+	// before plimsoll starts a process in the sandbox: its exit status says that
+	// nothing of the session's is left running. A provider needs it when a process of the
+	// session could read a starting process of plimsoll's own (docker: the same uid,
+	// until the runner guard has made it non-dumpable). One that keeps each exec's
+	// processes away from the others' (openshell, whose gateway does, proven by
+	// sandbox.SessionSmokeTest) leaves it nil.
+	Quiesce func(ctx context.Context, argv []string) (ExecResult, error)
 	// Measure and Dirs are how the sweep measures the session's files against its disk
 	// budget.
 	Measure Measure
@@ -400,6 +416,65 @@ func (l *Life) prepare(ctx context.Context) error {
 	return l.h.Refuse.Unreadable(err)
 }
 
+// Quiesce kills every process of the session's in the sandbox, the interpreters it
+// keeps alive on purpose included, so that none of it runs while plimsoll starts a
+// process of its own there (QuiesceScript says why that matters, and why killing is
+// the only lasting answer). It runs with the turn held, before the call, and:
+//
+//   - does nothing where the provider needs no quiesce, or where the session holds no
+//     process of its own: after a clean sweep with no interpreter alive and none given
+//     up since, nothing of the session's is left to run, and only a live interpreter
+//     can start one;
+//   - forgets the interpreters it killed, so the next cell starts a fresh one and says
+//     so: a session's cell state does not survive a call that quiesces;
+//   - refuses the call and keeps the session when it could not be run at all (nothing
+//     has been dispatched);
+//   - ends the session when it ran and did not prove the sandbox is clear, through
+//     Hooks.Unproven, as a sweep that does not prove the boundary does.
+func (l *Life) Quiesce(ctx context.Context) error {
+	if l.h.Quiesce == nil {
+		return nil
+	}
+	if len(l.Interps.Guests()) == 0 && !l.Interps.Stale() {
+		return nil
+	}
+	l.mu.Lock()
+	baseline := l.baseline
+	l.mu.Unlock()
+	qctx, cancel := context.WithTimeout(ctx, SweepBudget)
+	defer cancel()
+	out, err := l.h.Quiesce(qctx, QuiesceArgv(l.Interps.Own(baseline)))
+	switch {
+	case err == nil && out.Exited && out.ExitCode == QuiesceClean:
+		// Their processes are dead; what the host still holds is their relays, which
+		// the next cell gives up when it finds no interpreter alive.
+		l.Interps.DropAll()
+		l.Interps.Settled()
+		return nil
+	case !out.Exited:
+		// It never ran, or was killed: nothing of the call has been dispatched, and
+		// the session goes on, as for a sandbox that could not be read back.
+		if l.Err() != nil {
+			return l.h.Refuse.Ended(l.Err())
+		}
+		if ctx.Err() != nil {
+			return l.h.Refuse.GaveUp(ctx)
+		}
+		if err != nil {
+			return l.h.Refuse.Unreadable(fmt.Errorf("the session's own processes could not be cleared before the call: %w", err))
+		}
+		return l.h.Refuse.Unreadable(errors.New("the session's own processes could not be cleared before the call: the quiesce reported no exit status"))
+	}
+	detail := fmt.Sprintf("the quiesce before a call exited %d (err %v)", out.ExitCode, err)
+	if end := l.h.Unproven(l.ctx, detail); end != nil {
+		l.Finish(end.Reason, end.Detail)
+	}
+	if l.Err() != nil {
+		return l.h.Refuse.Ended(l.Err())
+	}
+	return l.h.Refuse.Unreadable(errors.New(detail))
+}
+
 // boundary runs after every call, with the turn held and whatever happened to the
 // caller's context: the sweep, and when it does not prove the boundary,
 // Hooks.Unproven. A session over its disk budget ends here too.
@@ -419,6 +494,7 @@ func (l *Life) boundary() {
 	if err == nil && out.Exited {
 		switch out.ExitCode {
 		case SweepClean:
+			l.Interps.Settled()
 			return
 		case SweepOverBudget:
 			l.Finish(DiskExceeded, l.overBudget(disk))

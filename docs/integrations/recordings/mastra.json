@@ -1,0 +1,356 @@
+{
+  "works": {
+    "call": {
+      "language": "python",
+      "code": "import csv\nsum(int(r['total']) for r in csv.DictReader(open('orders.csv')))",
+      "files": [
+        {
+          "path": "orders.csv",
+          "content": "id,total\n1,30\n2,12\n"
+        }
+      ]
+    },
+    "context": {
+      "threadId": "orders",
+      "resourceId": "alice"
+    },
+    "answer": {
+      "language": "python",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "42\n",
+      "stderr": "",
+      "truncated": false,
+      "stateKept": true,
+      "freshInterpreter": true,
+      "filesPersist": true,
+      "freshSandbox": true,
+      "isolation": "container",
+      "recordSha256": "0b1024cb0d2fe643f21e2c794ca32c0aa22897cc97c0ce7460a32aa1aca15559"
+    },
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+  },
+  "remember": {
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API.",
+    "steps": [
+      {
+        "call": {
+          "language": "python",
+          "code": "x = 40\nx"
+        },
+        "context": {
+          "threadId": "lesson",
+          "resourceId": "alice"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "40\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "freshInterpreter": true,
+          "filesPersist": true,
+          "freshSandbox": true,
+          "isolation": "container",
+          "recordSha256": "8da7fbe5bd624aa449ebf3a120831affb837790eb768cfe8e6b874a5b62e03c2"
+        },
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+      },
+      {
+        "call": {
+          "language": "python",
+          "code": "x + 2"
+        },
+        "context": {
+          "threadId": "lesson",
+          "resourceId": "alice"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "42\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "filesPersist": true,
+          "isolation": "container",
+          "recordSha256": "da2e2d3ab4730dd90266cf8d32518c47458896db1395f4441911da26701a183a"
+        },
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+      }
+    ]
+  },
+  "other_user": {
+    "call": {
+      "language": "python",
+      "code": "x + 2"
+    },
+    "context": {
+      "threadId": "lesson",
+      "resourceId": "bob"
+    },
+    "answer": {
+      "language": "python",
+      "exitCode": 1,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"<cell 1>\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n",
+      "truncated": false,
+      "stateKept": true,
+      "freshInterpreter": true,
+      "filesPersist": true,
+      "freshSandbox": true,
+      "isolation": "container",
+      "recordSha256": "be56ac19f87d624164776c2cb0b9db5f1959ee7011ab03e3fe617f2d2972dabd"
+    },
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+  },
+  "disposed": {
+    "call": {
+      "language": "python",
+      "code": "x + 2"
+    },
+    "context": {
+      "threadId": "lesson",
+      "resourceId": "alice"
+    },
+    "answer": {
+      "language": "python",
+      "exitCode": 1,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"<cell 1>\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n",
+      "truncated": false,
+      "stateKept": true,
+      "freshInterpreter": true,
+      "filesPersist": true,
+      "freshSandbox": true,
+      "isolation": "container",
+      "recordSha256": "fb25f78fe45742f62bfe4ee1198ead0033450926ea19155c0239375d7413bb9d"
+    },
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. dispose(\"lesson\", \"alice\") was awaited before this call."
+  },
+  "no_thread": {
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Three calls: the first two with no agent context (no thread, no user), the third with a threadId and no resourceId.",
+    "steps": [
+      {
+        "call": {
+          "language": "python",
+          "code": "x = 40\nx"
+        },
+        "context": {
+          "threadId": null,
+          "resourceId": null
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "40\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": false,
+          "filesPersist": false,
+          "isolation": "container",
+          "recordSha256": "768ea8589b6573f551410478900e679d662645946a1327f8bf336f80a9f50779"
+        },
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Called with no agent context: no thread, no user."
+      },
+      {
+        "call": {
+          "language": "python",
+          "code": "x + 2"
+        },
+        "context": {
+          "threadId": null,
+          "resourceId": null
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 1,
+          "timedOut": false,
+          "stdout": "",
+          "stderr": "Traceback (most recent call last):\n  File \"/work/.plimsoll/run.py\", line 14, in <module>\n    value = settle(eval(compile(last, 'cell', 'eval', flags=flags), ns))\n                   ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"cell\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n",
+          "truncated": false,
+          "stateKept": false,
+          "filesPersist": false,
+          "isolation": "container",
+          "recordSha256": "2bba3df85ac72609eed2a25285fa4fa1f551128a9c8c9c355f3951896a246b3f"
+        },
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Called with no agent context: no thread, no user."
+      },
+      {
+        "call": {
+          "language": "python",
+          "code": "x + 2"
+        },
+        "context": {
+          "threadId": "lesson",
+          "resourceId": null
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 1,
+          "timedOut": false,
+          "stdout": "",
+          "stderr": "Traceback (most recent call last):\n  File \"/work/.plimsoll/run.py\", line 14, in <module>\n    value = settle(eval(compile(last, 'cell', 'eval', flags=flags), ns))\n                   ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"cell\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n",
+          "truncated": false,
+          "stateKept": false,
+          "filesPersist": false,
+          "isolation": "container",
+          "recordSha256": "856b75ad9274361b27b7d2f351262214a08e89ef594a3ecbf0eb38db5ecfea47"
+        },
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Called with a threadId and no resourceId."
+      }
+    ]
+  },
+  "guest_error": {
+    "call": {
+      "language": "python",
+      "code": "total = 42\nper_person = total / 0"
+    },
+    "context": {
+      "threadId": "split",
+      "resourceId": "alice"
+    },
+    "answer": {
+      "language": "python",
+      "exitCode": 1,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"<cell 1>\", line 2, in <module>\n    per_person = total / 0\n                 ~~~~~~^~~\nZeroDivisionError: division by zero\n",
+      "truncated": false,
+      "stateKept": true,
+      "freshInterpreter": true,
+      "filesPersist": true,
+      "freshSandbox": true,
+      "isolation": "container",
+      "recordSha256": "cd71f90162b8f1660e412b7984d9badc005f1ed0a53c20db86a48c8e73f7db6b"
+    },
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+  },
+  "javascript": {
+    "call": {
+      "language": "javascript",
+      "code": "const totals = [30, 12];\ntotals.reduce((a, b) => a + b, 0)"
+    },
+    "context": {
+      "threadId": "js",
+      "resourceId": "alice"
+    },
+    "answer": {
+      "language": "javascript",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "42\n",
+      "stderr": "",
+      "truncated": false,
+      "stateKept": true,
+      "freshInterpreter": true,
+      "filesPersist": true,
+      "freshSandbox": true,
+      "isolation": "container",
+      "recordSha256": "f854454a36d2a52bc5e5ba91b30cd8c6bad3e9ed7b3da68f99ca7c97c83063d9"
+    },
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+  },
+  "agent_turns": {
+    "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"notebook\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. Two turns, one call each; each answer is the tool result agent.generate returned.",
+    "steps": [
+      {
+        "call": {
+          "language": "python",
+          "code": "x = 40\nx"
+        },
+        "context": {
+          "threadId": "notebook",
+          "resourceId": "alice"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "40\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "freshInterpreter": true,
+          "filesPersist": true,
+          "freshSandbox": true,
+          "isolation": "container",
+          "recordSha256": "95285b14c731b2206468f56d3c95e302bb3152c9f2db3a3b92a5a16db7c315a8"
+        },
+        "turn": 1,
+        "user_message": "set x to 40",
+        "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"notebook\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. Turn 1; the answer is the tool result agent.generate returned."
+      },
+      {
+        "call": {
+          "language": "python",
+          "code": "x + 2"
+        },
+        "context": {
+          "threadId": "notebook",
+          "resourceId": "alice"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "42\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "filesPersist": true,
+          "isolation": "container",
+          "recordSha256": "24f51fe388ea1c244c43aa9b2e1b17c0b68a8a6571c892e11926fdd6131e8b52"
+        },
+        "turn": 2,
+        "user_message": "now add 2 to x",
+        "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"notebook\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. Turn 2; the answer is the tool result agent.generate returned."
+      }
+    ]
+  },
+  "floor": {
+    "source": "Two calls of a tool built with minimumIsolation \"vm\", against a local plimsolld on Docker under runc (container tier), 2026-10-07T21:26:27.489Z. First: the tool's execute called directly (@mastra/core 1.73.0); the panel shows the thrown error's name, code, notDispatched mark and message. Second: the same tool in a real Mastra Agent run by agent.generate with a scripted model (MockLanguageModelV3; no model API); the panel shows, verbatim, the tool-result output Mastra put in the model's next prompt.",
+    "steps": [
+      {
+        "call": {
+          "language": "python",
+          "code": "print('should not run')"
+        },
+        "context": {
+          "threadId": "walls",
+          "resourceId": "alice"
+        },
+        "answer": {
+          "exception": {
+            "name": "PlimsollError",
+            "code": "failed_precondition",
+            "notDispatched": "isolation",
+            "message": "sandbox isolation requirement not met: provider isolation container is below requested minimum vm"
+          }
+        },
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. This scenario's tool was built with minimumIsolation \"vm\", which this daemon cannot meet. No model API. The tool threw; this is the thrown error's name, code, notDispatched mark and message."
+      },
+      {
+        "call": {
+          "language": "python",
+          "code": "print('should not run')"
+        },
+        "context": {
+          "threadId": "walls",
+          "resourceId": "alice"
+        },
+        "answer": {
+          "type": "error-text",
+          "value": "sandbox isolation requirement not met: provider isolation container is below requested minimum vm"
+        },
+        "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"walls\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. This scenario's tool was built with minimumIsolation \"vm\", which this daemon cannot meet. The tool threw as above; this is the tool-result output Mastra put in the model's next prompt, verbatim."
+      }
+    ]
+  }
+}

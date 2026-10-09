@@ -28,7 +28,9 @@ const openshellUsage = `
   SANDBOX_OPENSHELL_CERT_FILE / SANDBOX_OPENSHELL_KEY_FILE
                              PEM client certificate and key
   SANDBOX_OPENSHELL_IMAGE    the image every sandbox boots; it must carry node, sh,
-                             /usr/bin/env and /runner.mjs, as plimsoll/sandbox does
+                             /usr/bin/env, /runner.mjs and
+                             /usr/local/lib/plimsoll-runner-guard.so, as
+                             plimsoll/sandbox does
                              (@sha256: when SANDBOX_REQUIRE_PINNED_IMAGES=1). openshell
                              honors SANDBOX_MEMORY_MB and SANDBOX_CPUS (default 256
                              MiB and 1 CPU, since OpenShell's own default is no

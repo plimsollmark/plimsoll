@@ -61,7 +61,8 @@ Pick the <dfn>*provider*</dfn>, the backend that runs the code, with `SANDBOX_PR
 > point it at hostile code.
 
 The container tier, with docker's default runtime `runc`, shares the host's kernel. For
-hostile code in production, use `e2b`, or `docker` with `SANDBOX_DOCKER_RUNTIME=runsc`.
+hostile code in production, use a VM provider (`e2b`, `dockercloud`), or `docker` with
+`SANDBOX_DOCKER_RUNTIME=runsc`.
 
 Every provider whose walls depend on the host or on a remote service runs a startup
 **`SmokeTest`** that checks behaviour, not just configuration, and the daemon serves
@@ -85,6 +86,10 @@ lack of any network API, and its startup check reads only its settings.
 - The E2B test creates a real microVM with its access tokens, copies files into it, runs a
   test program through exactly the path a project step takes, and checks live that
   <dfn>*egress*</dfn>, traffic leaving the VM, is blocked.
+- The Docker Cloud test checks the token's permissions, then one throwaway sandbox proves
+  a network policy in force that blocks every connection, file upload, the command wrapper, the step's working
+  directory and egress denial from inside
+  ([dockercloud.md](dockercloud.md#startup-smoke-test)).
 
 **Exactly what the kernel and vm tiers rest on**, because a security claim nobody could
 prove wrong is not worth reading.
@@ -99,8 +104,11 @@ prove wrong is not worth reading.
   Firecracker microVM, and plimsoll reports that without measuring it. Its startup test
   proves the microVM behaves as promised, including blocked egress, not that a
   <dfn>*hypervisor*</dfn> (the program that runs virtual machines) is present.
+- For `dockercloud`, the vm tier also follows from which provider it is: Docker Cloud
+  Sandboxes runs each sandbox in a microVM, and its startup test proves the policy that
+  blocks every connection and the blocked egress, not the hypervisor.
 
-Both are stronger than a sentence in a datasheet and weaker than
+All three are stronger than a sentence in a datasheet and weaker than
 <dfn>*attestation*</dfn>, cryptographic proof from the hardware of what software is
 running. If your <dfn>*threat model*</dfn> (the attacks you must hold out against) needs
 attestation, neither tier here supplies it.

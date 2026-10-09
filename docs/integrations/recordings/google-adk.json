@@ -1,0 +1,168 @@
+{
+  "works": {
+    "call": {
+      "code": "import csv\nprint(sum(int(r['value']) for r in csv.DictReader(open('data.csv'))))",
+      "input_files": [
+        {
+          "name": "data.csv",
+          "content": "dmFsdWUKMjAKMjIK",
+          "mime_type": "text/csv"
+        }
+      ]
+    },
+    "answer": {
+      "outcome": "OUTCOME_OK",
+      "output": "Code execution result:\n42\n\n",
+      "id": null
+    },
+    "execution": {
+      "exit_code": 0,
+      "outcome": "completed",
+      "isolation": "kernel",
+      "record_sha256": "c13ba7b00814bb0ab8ee02c9342973d04a6ec4b8dd8d35179add332f5196711a",
+      "artifacts": []
+    },
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+  },
+  "artifact": {
+    "call": {
+      "code": "open('answer.bin', 'wb').write(bytes([0, 255]))\nprint('Two bytes saved')",
+      "input_files": []
+    },
+    "answer": {
+      "outcome": "OUTCOME_OK",
+      "output": "Code execution result:\nTwo bytes saved\n\n\n\nSaved artifacts:\n`answer.bin`",
+      "id": null
+    },
+    "execution": {
+      "exit_code": 0,
+      "outcome": "completed",
+      "isolation": "kernel",
+      "record_sha256": "5c6c36d21fafc93d9f43e4af06783b995c9501ad53f40e63254d8467a3c0f747",
+      "artifacts": [
+        {
+          "path": "answer.bin",
+          "hex": "00ff"
+        }
+      ]
+    },
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+  },
+  "guest_error": {
+    "call": {
+      "code": "raise ValueError('A confident neuron can still be wrong')",
+      "input_files": []
+    },
+    "answer": {
+      "outcome": "OUTCOME_FAILED",
+      "output": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import runpy; runpy.run_path(\".plimsoll/code.py\", run_name=\"__main__\")\n                  ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \".plimsoll/code.py\", line 1, in <module>\n    raise ValueError('A confident neuron can still be wrong')\nValueError: A confident neuron can still be wrong\n",
+      "id": null
+    },
+    "execution": {
+      "exit_code": 1,
+      "outcome": "completed",
+      "isolation": "kernel",
+      "record_sha256": "aadc7382750df412e13a3201389ed99f3ba4324c9aa7ff6d552c4f19e13281b5",
+      "artifacts": []
+    },
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+  },
+  "exit_no_stderr": {
+    "call": {
+      "code": "raise SystemExit(3)",
+      "input_files": []
+    },
+    "answer": {
+      "outcome": "OUTCOME_FAILED",
+      "output": "plimsoll: code exited with status 3",
+      "id": null
+    },
+    "execution": {
+      "exit_code": 3,
+      "outcome": "completed",
+      "isolation": "kernel",
+      "record_sha256": "636e73a443fe4728c087f13a35170c4351521fd67e79c692050a0c55a884b27c",
+      "artifacts": []
+    },
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+  },
+  "fresh": {
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation.",
+    "steps": [
+      {
+        "call": {
+          "code": "x = 40\nprint(x)",
+          "input_files": []
+        },
+        "answer": {
+          "outcome": "OUTCOME_OK",
+          "output": "Code execution result:\n40\n\n",
+          "id": null
+        },
+        "execution": {
+          "exit_code": 0,
+          "outcome": "completed",
+          "isolation": "kernel",
+          "record_sha256": "da8b9f3f424f286dff063497f5f36e02ac1cb866326c6cfc7d8af6d441d11d35",
+          "artifacts": []
+        },
+        "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+      },
+      {
+        "call": {
+          "code": "print(x + 2)",
+          "input_files": []
+        },
+        "answer": {
+          "outcome": "OUTCOME_FAILED",
+          "output": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import runpy; runpy.run_path(\".plimsoll/code.py\", run_name=\"__main__\")\n                  ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \".plimsoll/code.py\", line 1, in <module>\n    print(x + 2)\n          ^\nNameError: name 'x' is not defined\n",
+          "id": null
+        },
+        "execution": {
+          "exit_code": 1,
+          "outcome": "completed",
+          "isolation": "kernel",
+          "record_sha256": "91282c418b3d261a68cc93fd398e84a83a0d85b0c42c77031aac7d1be60f1d94",
+          "artifacts": []
+        },
+        "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+      }
+    ]
+  },
+  "floor": {
+    "call": {
+      "code": "print('should not run')",
+      "input_files": []
+    },
+    "answer": {
+      "exception": {
+        "name": "InsufficientIsolationError",
+        "code": "failed_precondition",
+        "not_dispatched": "isolation",
+        "message": "the daemon is below CodeExecutor's isolation floor"
+      }
+    },
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+  },
+  "bad_file": {
+    "call": {
+      "code": "print(42)",
+      "input_files": [
+        {
+          "name": "../secret.txt",
+          "content": "nope",
+          "mime_type": "text/plain"
+        }
+      ]
+    },
+    "answer": {
+      "exception": {
+        "name": "InvalidRequestError",
+        "code": "invalid_argument",
+        "not_dispatched": "request",
+        "message": "plimsoll: invalid request: unsafe file path '../secret.txt'"
+      }
+    },
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+  }
+}

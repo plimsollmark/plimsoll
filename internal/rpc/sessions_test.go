@@ -613,8 +613,11 @@ func TestIdleSuspendFindingTheTurnBusyTriesAgain(t *testing.T) {
 	e.mu.Lock()
 	e.idleTimeout = 20 * time.Millisecond
 	e.mu.Unlock()
+	e.mu.Lock()
+	gen := e.idleGen // the current timer's
+	e.mu.Unlock()
 	e.turn <- struct{}{} // a call holds the turn
-	svc.suspend(e)       // the idle timer fires now
+	svc.suspend(e, gen)  // the idle timer fires now
 	<-e.turn             // the call gives the turn back
 	deadline := time.Now().Add(3 * time.Second)
 	for p.Opened()[0].Suspends() == 0 {
@@ -622,6 +625,40 @@ func TestIdleSuspendFindingTheTurnBusyTriesAgain(t *testing.T) {
 			t.Fatal("an idle suspend that found the turn busy never tried again")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// An idle timer that fired, then waited while a call took the turn, ran and armed a
+// fresh timer, does nothing: the session was just used (round-3 review: a stale
+// callback suspended it at once, which on e2b ends the interpreters a cell just used).
+func TestStaleIdleTimerDoesNotSuspend(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sessions.IdleTimeout = time.Hour // nothing fires by itself
+	ctx := authenticatedContext("alice")
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := svc.sessions.get(open.Msg.GetSessionId(), auditCaller(ctx))
+	if !ok {
+		t.Fatal("the session is not registered")
+	}
+	e.mu.Lock()
+	stale := e.idleGen // the timer that fires, before the call below
+	e.mu.Unlock()
+	if _, err := svc.SessionRun(ctx, callReq(open.Msg.GetSessionId(), "1")); err != nil {
+		t.Fatal(err)
+	}
+	svc.suspend(e, stale) // its callback runs only now
+	if n := p.Opened()[0].Suspends(); n != 0 {
+		t.Fatalf("a stale idle callback suspended a session used since: %d suspends", n)
+	}
+	e.mu.Lock()
+	current := e.idleGen
+	e.mu.Unlock()
+	svc.suspend(e, current) // the current timer still suspends
+	if n := p.Opened()[0].Suspends(); n != 1 {
+		t.Fatalf("the current idle timer: %d suspends, want 1", n)
 	}
 }
 
@@ -1098,5 +1135,558 @@ func TestAPanickingOpenGivesItsPlaceBack(t *testing.T) {
 	p.BeforeOpen = nil
 	if _, err := svc.OpenSession(ctx, openReq()); err != nil {
 		t.Fatalf("the open after a panicking one: %v; the place or the slot was not given back", err)
+	}
+}
+
+func ownerOpen(owner string) *connect.Request[plimsollv1.OpenSessionRequest] {
+	r := openReq()
+	r.Msg.Owner = owner
+	return r
+}
+
+// endedAs reads the SessionEnded detail of a refused session call.
+func endedAs(err error) (plimsollv1.SessionEnd, bool) {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return 0, false
+	}
+	for _, d := range ce.Details() {
+		if v, derr := d.Value(); derr == nil {
+			if se, ok := v.(*plimsollv1.SessionEnded); ok {
+				return se.GetReason(), true
+			}
+		}
+	}
+	return 0, false
+}
+
+// An owner at its cap gets a new session by the daemon closing that owner's least
+// recently used one, whose later calls are refused, not dispatched, as replaced. The
+// cap counts one owner of one caller: another owner, and the same owner name under
+// another caller, are untouched.
+func TestSessionsPerOwnerCapReplacesTheLeastRecentlyUsed(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sessions.MaxSessions = 8
+	svc.Sessions.MaxPerOwner = 2
+	alice, bob := authenticatedContext("alice"), authenticatedContext("bob")
+	open := func(ctx context.Context, owner string) string {
+		t.Helper()
+		o, err := svc.OpenSession(ctx, ownerOpen(owner))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o.Msg.GetSessionId()
+	}
+	first, second := open(alice, "u1"), open(alice, "u1")
+	other, bobs := open(alice, "u2"), open(bob, "u1")
+	// first is used after second opened, so second is the least recently used.
+	if _, err := svc.SessionRun(alice, callReq(first, "1")); err != nil {
+		t.Fatal(err)
+	}
+	third := open(alice, "u1")
+	if p.Opened()[1].Err() == nil {
+		t.Fatal("the least recently used session of the owner was not closed")
+	}
+	for i, s := range p.Opened() {
+		if i != 1 && s.Err() != nil {
+			t.Fatalf("session %d ended: %v", i, s.Err())
+		}
+	}
+	_, err := svc.SessionRun(alice, callReq(second, "2"))
+	if reason, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeFailedPrecondition || !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST {
+		t.Fatalf("a call on the replaced session: %v; want FailedPrecondition, marked request", err)
+	}
+	if end, ok := endedAs(err); !ok || end != plimsollv1.SessionEnd_SESSION_END_REPLACED {
+		t.Fatalf("the replaced session's end: %v %v; want REPLACED", end, ok)
+	}
+	c, err := svc.CloseSession(alice, closeReq(second))
+	if err != nil || c.Msg.GetEnded() != plimsollv1.SessionEnd_SESSION_END_REPLACED {
+		t.Fatalf("closing the replaced session: %v %v; want REPLACED", c, err)
+	}
+	for _, id := range []string{first, third, other} {
+		if _, err := svc.SessionRun(alice, callReq(id, "3")); err != nil {
+			t.Fatalf("a session the cap left alone: %v", err)
+		}
+	}
+	if _, err := svc.SessionRun(bob, callReq(bobs, "3")); err != nil {
+		t.Fatalf("another caller's session of the same owner name: %v", err)
+	}
+}
+
+// When every session of an owner at its cap is running a call, the open is refused,
+// not dispatched, reason capacity, and nothing is closed.
+func TestSessionsPerOwnerCapRefusesWhenEveryOneIsBusy(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sessions.MaxPerOwner = 1
+	alice := authenticatedContext("alice")
+	o, err := svc.OpenSession(alice, ownerOpen("u1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := svc.sessions.get(o.Msg.GetSessionId(), "alice")
+	e.turn <- struct{}{} // a call in progress
+	_, err = svc.OpenSession(alice, ownerOpen("u1"))
+	if reason, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeResourceExhausted || !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY {
+		t.Fatalf("an open while the owner's one session runs a call: %v; want ResourceExhausted, marked capacity", err)
+	}
+	if p.Opened()[0].Err() != nil || len(p.Opened()) != 1 {
+		t.Fatal("a refused open closed or opened a session")
+	}
+	<-e.turn
+	if _, err := svc.OpenSession(alice, ownerOpen("u1")); err != nil {
+		t.Fatalf("an open once the call ended: %v", err)
+	}
+	if p.Opened()[0].Err() == nil {
+		t.Fatal("the idle session was not replaced")
+	}
+}
+
+// A replaced session's place passes to the open, so a full daemon still gives an
+// owner at its cap a new session; another caller is refused as before. The open
+// waits for the replaced sandbox's delete, which gives back its concurrency slot,
+// within the request's bound.
+func TestSessionsPerOwnerReplacedPlacePassesToTheOpen(t *testing.T) {
+	svc, p := sessionService()
+	p.HoldDeletes = true
+	svc.Limiter = NewCodeLimiter(2, 2, 0, 0)
+	svc.Sessions.MaxSessions = 2
+	svc.Sessions.MaxPerOwner = 2
+	alice, bob := authenticatedContext("alice"), authenticatedContext("bob")
+	var ids []string
+	for i := 0; i < 2; i++ {
+		o, err := svc.OpenSession(alice, ownerOpen("u1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, o.Msg.GetSessionId())
+	}
+	if _, err := svc.OpenSession(bob, ownerOpen("u1")); connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("another caller on a full daemon: %v", err)
+	}
+	gaveUp, cancel := context.WithTimeout(alice, 50*time.Millisecond)
+	defer cancel()
+	_, err := svc.OpenSession(gaveUp, ownerOpen("u1"))
+	if _, marked := notDispatchedOf(err); !marked {
+		t.Fatalf("an open whose caller gave up waiting for the delete: %v; want a marked refusal", err)
+	}
+	if p.Opened()[0].Err() == nil {
+		t.Fatal("the least recently used session was not closed")
+	}
+	p.Opened()[0].FinishDelete()
+	// The slot the open had taken over comes back once that sandbox is gone.
+	for deadline := time.Now().Add(5 * time.Second); svc.Limiter.Stats().InFlight != 1; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the slot never came back: %d in flight", svc.Limiter.Stats().InFlight)
+		}
+	}
+	// The owner now holds one session, so this open replaces none.
+	if _, err := svc.OpenSession(alice, ownerOpen("u1")); err != nil {
+		t.Fatalf("an open with room once the delete gave the slot back: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.OpenSession(alice, ownerOpen("u1"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("the open did not wait for the delete: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	p.Opened()[1].FinishDelete()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the open after the delete: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the open never finished")
+	}
+}
+
+// An owner is checked like a trace ID, but refused, never dropped: dropping it would
+// lift the cap without a word. Sessions with no owner count against none.
+func TestSessionOwnerIsCheckedAndOptional(t *testing.T) {
+	svc, _ := sessionService()
+	svc.Sessions.MaxPerOwner = 1
+	alice := authenticatedContext("alice")
+	for _, bad := range []string{"a/b", "a b", strings.Repeat("a", 65)} {
+		_, err := svc.OpenSession(alice, ownerOpen(bad))
+		if reason, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeInvalidArgument || !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST {
+			t.Fatalf("owner %q: %v; want InvalidArgument, marked request", bad, err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := svc.OpenSession(alice, openReq()); err != nil {
+			t.Fatalf("session %d with no owner: %v", i, err)
+		}
+	}
+}
+
+// An open the daemon refuses after choosing its victim closes nothing: a caller
+// already gone, a spent rate, no free slot. The owner keeps the session it had.
+func TestSessionsPerOwnerARefusedOpenClosesNothing(t *testing.T) {
+	cases := map[string]func(*SandboxService, *sandboxtest.Sessions) context.Context{
+		"caller gone": func(*SandboxService, *sandboxtest.Sessions) context.Context {
+			gone, cancel := context.WithCancel(authenticatedContext("alice"))
+			cancel()
+			return gone
+		},
+		"rate spent": func(svc *SandboxService, _ *sandboxtest.Sessions) context.Context {
+			svc.Limiter = NewCodeLimiter(4, 4, 1, 1) // the first open spends the one start a minute
+			return authenticatedContext("alice")
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc, p := sessionService()
+			svc.Sessions.MaxPerOwner = 1
+			ctx := setup(svc, p)
+			if _, err := svc.OpenSession(authenticatedContext("alice"), ownerOpen("u1")); err != nil {
+				t.Fatal(err)
+			}
+			_, err := svc.OpenSession(ctx, ownerOpen("u1"))
+			if _, marked := notDispatchedOf(err); err == nil || !marked {
+				t.Fatalf("the refused open: %v; want a not-dispatched refusal", err)
+			}
+			if p.Opened()[0].Err() != nil || len(p.Opened()) != 1 {
+				t.Fatalf("a refused open closed the owner's session (%v) or opened one (%d)", p.Opened()[0].Err(), len(p.Opened()))
+			}
+		})
+	}
+	t.Run("no slot", func(t *testing.T) {
+		svc, p := sessionService()
+		svc.Sessions.MaxSessions = 8
+		svc.Sessions.MaxPerOwner = 1
+		svc.Limiter = NewCodeLimiter(2, 2, 0, 0)
+		alice, bob := authenticatedContext("alice"), authenticatedContext("bob")
+		a, err := svc.OpenSession(alice, ownerOpen("u1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, _ := svc.sessions.get(a.Msg.GetSessionId(), "alice")
+		e.mu.Lock()
+		gen := e.idleGen
+		e.mu.Unlock()
+		svc.suspend(e, gen) // a stopped sandbox gives its slot back
+		for i := 0; i < 2; i++ {
+			if _, err := svc.OpenSession(bob, openReq()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err = svc.OpenSession(alice, ownerOpen("u1"))
+		if reason, marked := notDispatchedOf(err); !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY {
+			t.Fatalf("an open with no slot: %v; want refused, capacity", err)
+		}
+		if p.Opened()[0].Err() != nil {
+			t.Fatal("an open refused for want of a slot closed the owner's suspended session")
+		}
+	})
+}
+
+// closeFailing opens fake sessions whose Close fails and leaves them open, as a provider
+// whose delete the docker daemon did not answer does.
+type closeFailing struct{ *sandboxtest.Sessions }
+
+func (p *closeFailing) OpenSession(ctx context.Context, o sandbox.SessionOptions) (sandbox.Session, error) {
+	s, err := p.Sessions.OpenSession(ctx, o)
+	if err != nil {
+		return nil, err
+	}
+	return &closeFailingSession{Session: s}, nil
+}
+
+type closeFailingSession struct{ sandbox.Session }
+
+func (*closeFailingSession) Close(context.Context) error {
+	return errors.New("the delete was not answered")
+}
+
+// A victim whose close fails stays the owner's, open, counted and holding its slot, and
+// the open is refused: before, it was left out of every cap
+// and refused other callers' opens for a slot nobody counted.
+func TestSessionsPerOwnerAFailedCloseKeepsTheVictim(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sandbox = &closeFailing{p}
+	svc.Sessions.MaxSessions = 4
+	svc.Sessions.MaxPerOwner = 1
+	svc.Limiter = NewCodeLimiter(2, 2, 0, 0)
+	alice, bob := authenticatedContext("alice"), authenticatedContext("bob")
+	a, err := svc.OpenSession(alice, ownerOpen("u1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bounded, so an open that waits for a victim that never goes fails here, not by hanging.
+	bounded, cancel := context.WithTimeout(alice, 5*time.Second)
+	defer cancel()
+	_, err = svc.OpenSession(bounded, ownerOpen("u1"))
+	if reason, marked := notDispatchedOf(err); !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY {
+		t.Fatalf("an open whose victim would not close: %v; want refused, capacity", err)
+	}
+	e, _ := svc.sessions.get(a.Msg.GetSessionId(), "alice")
+	e.mu.Lock()
+	replaced, slot := e.replaced, e.release != nil
+	e.mu.Unlock()
+	if replaced || !slot {
+		t.Fatalf("the victim: replaced=%v, holds its slot=%v; want it the owner's again", replaced, slot)
+	}
+	if _, err := svc.SessionRun(alice, callReq(a.Msg.GetSessionId(), "1")); err != nil {
+		t.Fatalf("a call on the session that stayed open: %v", err)
+	}
+	if _, err := svc.OpenSession(bob, openReq()); err != nil {
+		t.Fatalf("another caller with a slot free: %v", err)
+	}
+	if svc.Limiter.Stats().InFlight != 2 {
+		t.Fatalf("slots in flight: %d; want the two sessions'", svc.Limiter.Stats().InFlight)
+	}
+}
+
+// A victim the provider had ended by itself reports that end, not a replacement, and is no victim at all once ended.
+func TestSessionsPerOwnerAnEndedSessionIsNoVictim(t *testing.T) {
+	svc, p := sessionService()
+	p.HoldDeletes = true
+	svc.Sessions.MaxPerOwner = 1
+	alice := authenticatedContext("alice")
+	a, err := svc.OpenSession(alice, ownerOpen("u1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Opened()[0].End(sandbox.SessionExpired) // its delete still pending, so not yet marked ended
+	if _, err := svc.OpenSession(alice, ownerOpen("u1")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.SessionRun(alice, callReq(a.Msg.GetSessionId(), "1"))
+	if end, ok := endedAs(err); !ok || end != plimsollv1.SessionEnd_SESSION_END_EXPIRED {
+		t.Fatalf("a call on the expired session: %v %v; want EXPIRED", end, ok)
+	}
+	p.Opened()[0].FinishDelete()
+	c, err := svc.CloseSession(alice, closeReq(a.Msg.GetSessionId()))
+	if err != nil || c.Msg.GetEnded() != plimsollv1.SessionEnd_SESSION_END_EXPIRED {
+		t.Fatalf("closing it: %v %v; want EXPIRED", c, err)
+	}
+}
+
+// An unknown session ID (a restart forgot it, or it is another caller's) is refused,
+// not dispatched, with a session end, so a client stops using it and opens a new one.
+func TestAnUnknownSessionIsRefusedAsEnded(t *testing.T) {
+	svc, _ := sessionService()
+	_, err := svc.SessionRun(authenticatedContext("alice"), callReq("00000000000000000000000000000000", "1"))
+	if reason, marked := notDispatchedOf(err); connect.CodeOf(err) != connect.CodeNotFound || !marked || reason != plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST {
+		t.Fatalf("a call on an unknown session: %v; want NotFound, marked request", err)
+	}
+	if end, ok := endedAs(err); !ok || end != plimsollv1.SessionEnd_SESSION_END_NOT_FOUND {
+		t.Fatalf("its end: %v %v; want NOT_FOUND", end, ok)
+	}
+}
+
+// meteredSessions is the fake session provider billed by the second.
+type meteredSessions struct{ *sandboxtest.Sessions }
+
+func (meteredSessions) BillingTeardown() time.Duration { return 10 * time.Second }
+
+func meteredSessionService(allowance int64) (*SandboxService, *sandboxtest.Sessions, context.Context) {
+	p := &sandboxtest.Sessions{}
+	svc := NewSandboxService(meteredSessions{p})
+	svc.Sessions = SessionConfig{MaxSessions: 4, Lifetime: 10 * time.Minute, IdleTimeout: time.Minute, DiskBytes: 1 << 20}
+	svc.Spend = NewSpendCap(0)
+	ctx := context.WithValue(context.Background(), principalKey{}, Principal{UserID: "alice", Scopes: []string{ScopeCodeRun}, PaidSecondsPerDay: allowance})
+	return svc, p, ctx
+}
+
+func timedCall(id string, ms int32) *connect.Request[plimsollv1.SessionRunRequest] {
+	r := callReq(id, "1")
+	r.Msg.TimeoutMs = ms
+	return r
+}
+
+// On a provider billed by the second, an open reserves its own time, the idle time
+// and the teardown (2 min + 1 min + 10 s) before anything is made, and is refused
+// without making anything when the allowance cannot cover it; a suspend stops the
+// charge, the call that resumes the session starts it again, and the end settles it.
+func TestMeteredSessionsDrawOnTheAllowance(t *testing.T) {
+	svc, p, ctx := meteredSessionService(100)
+	if _, err := svc.OpenSession(ctx, openReq()); !refusedCapacity(err) || len(p.Opened()) != 0 {
+		t.Fatalf("an open its allowance cannot cover: %v, %d opened; want refused, capacity, nothing made", err, len(p.Opened()))
+	}
+	svc, p, ctx = meteredSessionService(1000)
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := open.Msg.GetSessionId()
+	if a, _ := svc.Spend.spent("alice"); a != 190 {
+		t.Fatalf("held after the open: %v, want 190", a)
+	}
+	if _, err := svc.SessionRun(ctx, timedCall(id, 5000)); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := svc.sessions.get(id, "alice")
+	e.mu.Lock()
+	gen := e.idleGen
+	e.mu.Unlock()
+	svc.suspend(e, gen)
+	if a, _ := svc.Spend.spent("alice"); a > 1 || e.paid.running() {
+		t.Fatalf("after the suspend: %v spent, running %v; want the open's fraction of a second, stopped", a, e.paid.running())
+	}
+	if _, err := svc.SessionRun(ctx, timedCall(id, 5000)); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := svc.Spend.spent("alice"); a < 75 || a > 76 || !e.paid.running() {
+		t.Fatalf("after the call that resumed it: %v, running %v; want its 75 s (5 s, the idle minute, 10 s) held", a, e.paid.running())
+	}
+	if _, err := svc.CloseSession(ctx, closeReq(id)); err != nil {
+		t.Fatal(err)
+	}
+	<-e.gone
+	if a, _ := svc.Spend.spent("alice"); a > 1 {
+		t.Fatalf("after the end: %v spent; want what ran, a fraction of a second", a)
+	}
+	_ = p
+}
+
+// A call the allowance cannot cover is refused, not dispatched, and the session goes
+// on: a call within what it holds still runs.
+func TestMeteredSessionCallRefusedKeepsTheSession(t *testing.T) {
+	svc, _, ctx := meteredSessionService(190)
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := open.Msg.GetSessionId()
+	if _, err := svc.SessionRun(ctx, timedCall(id, 125000)); !refusedCapacity(err) { // 195 s of 190
+		t.Fatalf("a call past the allowance: %v; want refused, capacity", err)
+	}
+	if _, err := svc.SessionRun(ctx, timedCall(id, 5000)); err != nil {
+		t.Fatalf("a call within what is held after the refusal: %v", err)
+	}
+}
+
+// A suspend that fails leaves the sandbox running: another idle period is reserved,
+// and when the allowance cannot cover it the session is closed rather than run unpaid.
+func TestMeteredSessionThatCannotSuspendOrPayIsClosed(t *testing.T) {
+	svc, p, ctx := meteredSessionService(190)
+	p.FailedSuspends = 1
+	clock := time.Now()
+	svc.Spend.now = func() time.Time { return clock }
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := svc.sessions.get(open.Msg.GetSessionId(), "alice")
+	clock = clock.Add(150 * time.Second) // 150 s ran: another 70 s does not fit in 190
+	e.mu.Lock()
+	gen := e.idleGen
+	e.mu.Unlock()
+	svc.suspend(e, gen)
+	select {
+	case <-e.gone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the session that could neither suspend nor pay is still open")
+	}
+}
+
+// A session on a provider billed by the second must be able to stop billing.
+func TestMeteredSessionNeedsAnIdleTimeout(t *testing.T) {
+	svc, p, ctx := meteredSessionService(1000)
+	svc.Sessions.IdleTimeout = 0
+	_, err := svc.OpenSession(ctx, openReq())
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || len(p.Opened()) != 0 {
+		t.Fatalf("a metered session with no idle timeout: %v, %d opened; want failed precondition, nothing made", err, len(p.Opened()))
+	}
+}
+
+// leakySessions is the metered fake whose sessions' sandboxes outlive their deletes:
+// each reports, after its end, billing until until (sandbox.BillsUntiler). With
+// failOpen, every open fails having reported its delete given up until until.
+type leakySessions struct {
+	meteredSessions
+	until    time.Time
+	failOpen bool
+}
+
+type leakySession struct {
+	sandbox.Session
+	until time.Time
+}
+
+func (s leakySession) BillsUntil() time.Time { return s.until }
+
+func (p leakySessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	if p.failOpen {
+		sandbox.TeardownGaveUpUntil(ctx, p.until)
+		return nil, errors.New("the open failed and its sandbox's delete gave up")
+	}
+	s, err := p.meteredSessions.OpenSession(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return leakySession{Session: s, until: p.until}, nil
+}
+
+// A session whose sandbox outlives its delete is charged, after its end, until the
+// provider's own lifetime for the sandbox ends, and so is a failed open whose delete
+// gave up (round-3 review: neither reached the meter, so the sandbox billed on unseen).
+func TestLeakedSessionSandboxesAreCharged(t *testing.T) {
+	for _, failOpen := range []bool{false, true} {
+		svc, _, ctx := meteredSessionService(100000)
+		until := time.Now().Add(20 * time.Minute)
+		svc.Sandbox = leakySessions{meteredSessions: svc.Sandbox.(meteredSessions), until: until, failOpen: failOpen}
+		open, err := svc.OpenSession(ctx, openReq())
+		if failOpen {
+			if err == nil {
+				t.Fatal("the failing open succeeded")
+			}
+		} else {
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := open.Msg.GetSessionId()
+			e, _ := svc.sessions.get(id, "alice")
+			if _, err := svc.CloseSession(ctx, closeReq(id)); err != nil {
+				t.Fatal(err)
+			}
+			<-e.gone
+		}
+		if a, _ := svc.Spend.spent("alice"); a < 20*60-5 || a > 20*60+5 {
+			t.Fatalf("failOpen=%v: %v seconds charged; want the 1,200 the leaked sandbox bills", failOpen, a)
+		}
+	}
+}
+
+// A call refused before dispatch is not use: the session suspends when it would have
+// without it. A fresh idle period after each refusal let a caller keep a session billed
+// by the second running past its allowance, by sending calls the allowance refuses
+// (round-7 review, 2026-10-08). A call that runs still starts a fresh idle period.
+func TestRefusedSessionCallKeepsTheSuspendDeadline(t *testing.T) {
+	svc, _, ctx := meteredSessionService(190)
+	open, err := svc.OpenSession(ctx, openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := open.Msg.GetSessionId()
+	e, _ := svc.sessions.get(id, "alice")
+	idleAt := func() time.Time {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return e.idleAt
+	}
+	before := idleAt()
+	if before.IsZero() {
+		t.Fatal("the open armed no idle timer")
+	}
+	time.Sleep(20 * time.Millisecond)
+	for range 3 {
+		if _, err := svc.SessionRun(ctx, timedCall(id, 125000)); !refusedCapacity(err) {
+			t.Fatalf("a call past the allowance: %v; want refused, capacity", err)
+		}
+	}
+	if after := idleAt(); !after.Equal(before) {
+		t.Fatalf("three refused calls moved the suspend from %v to %v; want it where it was", before, after)
+	}
+	if _, err := svc.SessionRun(ctx, timedCall(id, 5000)); err != nil {
+		t.Fatalf("a call within what is held: %v", err)
+	}
+	if after := idleAt(); !after.After(before) {
+		t.Fatalf("a call that ran left the suspend at %v; want a fresh idle period after it", after)
 	}
 }

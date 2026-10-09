@@ -1,0 +1,11 @@
+# The CrewAI version this adapter's tests run against. Lock with:
+#   pip-compile --allow-unsafe --generate-hashes --no-emit-index-url \
+#     --output-file=requirements.txt --strip-extras requirements.in
+#
+# crewai installs chromadb, and every chromadb release from 1.0.0 to 1.5.9, the latest
+# on 2026-10-08, is affected by advisories with no fixed release (GHSA-f4j7-r4q5-qw2c,
+# GHSA-36p7-vc44-83pf, GHSA-2wm9-hf6c-p5cr, GHSA-xph7-9rjv-w5fr). All four are about a
+# running Chroma server's HTTP API; installing the library starts none, and this
+# adapter and its tests configure no CrewAI memory, knowledge or embedder, the features
+# that would use it. Recheck for a fixed release before each release of this client.
+crewai==1.15.23

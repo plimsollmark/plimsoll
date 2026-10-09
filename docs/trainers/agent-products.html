@@ -240,14 +240,15 @@
       <div class="card good">
         <h3>On a daemon that keeps sessions</h3>
         <p>Each conversation holds one <dfn>session</dfn>, one sandbox kept open for many
-        calls (<code>docker</code> with a project image, or <code>openshell</code>). Every
+        calls (<code>docker</code> with a project image, <code>openshell</code> or
+        <code>e2b</code>; an <code>e2b</code> suspend ends the interpreters). Every
         call is a <dfn>cell</dfn>, code run in a Python or Node.js interpreter the session
         keeps alive, so variables, imports and data loaded by earlier calls can still be
         there, and so can the files.</p>
       </div>
       <div class="card">
         <h3>Everywhere else</h3>
-        <p>On <code>e2b</code>, <code>dockercloud</code> and <code>wasm</code> every call runs
+        <p>On <code>dockercloud</code> and <code>wasm</code> every call runs
         in a fresh sandbox, as a small project whose runner prints the last expression the
         same way, and nothing persists. <code>wasm</code> runs no projects, so there a call
         is a JavaScript snippet; Python and files are refused before anything is sent.</p>

@@ -105,6 +105,13 @@ const (
 	SessionEnd_SESSION_END_BOUNDARY_FAILED    SessionEnd = 5
 	SessionEnd_SESSION_END_SANDBOX_CHANGED    SessionEnd = 6
 	SessionEnd_SESSION_END_SHUTDOWN           SessionEnd = 7
+	// The daemon closed it, between calls, to open a newer session for the same
+	// owner (OpenSessionRequest.owner), which was at the daemon's per-owner cap.
+	SessionEnd_SESSION_END_REPLACED SessionEnd = 8
+	// The daemon has no such session for this caller: it restarted and forgot it, or
+	// the ID is not this caller's (both get the same answer, so it says nothing about an
+	// ID's existence). Nothing of the call ran; a client opens a new session.
+	SessionEnd_SESSION_END_NOT_FOUND SessionEnd = 9
 )
 
 // Enum value maps for SessionEnd.
@@ -118,6 +125,8 @@ var (
 		5: "SESSION_END_BOUNDARY_FAILED",
 		6: "SESSION_END_SANDBOX_CHANGED",
 		7: "SESSION_END_SHUTDOWN",
+		8: "SESSION_END_REPLACED",
+		9: "SESSION_END_NOT_FOUND",
 	}
 	SessionEnd_value = map[string]int32{
 		"SESSION_END_UNSPECIFIED":        0,
@@ -128,6 +137,8 @@ var (
 		"SESSION_END_BOUNDARY_FAILED":    5,
 		"SESSION_END_SANDBOX_CHANGED":    6,
 		"SESSION_END_SHUTDOWN":           7,
+		"SESSION_END_REPLACED":           8,
+		"SESSION_END_NOT_FOUND":          9,
 	}
 )
 
@@ -311,8 +322,15 @@ type DescribeResponse struct {
 	// the project image, not the snippet image). Stated when supports_sessions is;
 	// informational, like the other environments, and what a router filters sessions on.
 	SessionEnvironment *PayloadEnvironment `protobuf:"bytes,18,opt,name=session_environment,json=sessionEnvironment,proto3" json:"session_environment,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// The caps that bound one caller's sessions, 0 when there is none: how many it may
+	// hold (SANDBOX_MAX_SESSIONS_PER_CALLER) and how many one owner of it may
+	// (SANDBOX_MAX_SESSIONS_PER_OWNER, the per-user cap OpenSessionRequest.owner names).
+	// An app that relies on the per-owner cap across its processes checks it here.
+	// Stated with supports_sessions; informational.
+	MaxSessionsPerCaller uint32 `protobuf:"varint,19,opt,name=max_sessions_per_caller,json=maxSessionsPerCaller,proto3" json:"max_sessions_per_caller,omitempty"`
+	MaxSessionsPerOwner  uint32 `protobuf:"varint,20,opt,name=max_sessions_per_owner,json=maxSessionsPerOwner,proto3" json:"max_sessions_per_owner,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *DescribeResponse) Reset() {
@@ -455,6 +473,20 @@ func (x *DescribeResponse) GetSessionEnvironment() *PayloadEnvironment {
 		return x.SessionEnvironment
 	}
 	return nil
+}
+
+func (x *DescribeResponse) GetMaxSessionsPerCaller() uint32 {
+	if x != nil {
+		return x.MaxSessionsPerCaller
+	}
+	return 0
+}
+
+func (x *DescribeResponse) GetMaxSessionsPerOwner() uint32 {
+	if x != nil {
+		return x.MaxSessionsPerOwner
+	}
+	return 0
 }
 
 // PayloadEnvironment is one payload kind's environment as the daemon states it.
@@ -2182,7 +2214,19 @@ type OpenSessionRequest struct {
 	// hint. A language plimsoll does not know is InvalidArgument, not dispatched.
 	// Informational, so it did not move the protocol number: a daemon that predates it
 	// drops it.
-	Languages     []string `protobuf:"bytes,7,rep,name=languages,proto3" json:"languages,omitempty"`
+	Languages []string `protobuf:"bytes,7,rep,name=languages,proto3" json:"languages,omitempty"`
+	// The end user the session is for, as an opaque name the caller chooses
+	// ([A-Za-z0-9._:-], 1 to 64 characters; anything else is InvalidArgument, not
+	// dispatched, since dropping it would lift the cap without a word). A daemon with
+	// a per-owner cap (SANDBOX_MAX_SESSIONS_PER_OWNER) counts the caller's sessions
+	// per owner; at the cap it closes that owner's least recently used session with no
+	// call in progress (its later calls are refused with SESSION_END_REPLACED), or
+	// refuses the open, not dispatched, reason capacity, when every one is running a
+	// call. Owners of different callers never meet. The official clients send a keyed
+	// digest of the user, never the user's name; the daemon never logs it.
+	// Informational, so it did not move the protocol number: a daemon that predates it
+	// has no per-owner cap, as one with the cap unset.
+	Owner         string `protobuf:"bytes,8,opt,name=owner,proto3" json:"owner,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2264,6 +2308,13 @@ func (x *OpenSessionRequest) GetLanguages() []string {
 		return x.Languages
 	}
 	return nil
+}
+
+func (x *OpenSessionRequest) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
 }
 
 type OpenSessionResponse struct {
@@ -3025,7 +3076,7 @@ var File_plimsoll_v1_sandbox_proto protoreflect.FileDescriptor
 const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"\x19plimsoll/v1/sandbox.proto\x12\vplimsoll.v1\"\x11\n" +
-	"\x0fDescribeRequest\"\xed\x06\n" +
+	"\x0fDescribeRequest\"\xd9\a\n" +
 	"\x10DescribeResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12)\n" +
@@ -3043,7 +3094,9 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x11supports_sessions\x18\x0f \x01(\bR\x10supportsSessions\x12.\n" +
 	"\x13session_lifetime_ms\x18\x10 \x01(\rR\x11sessionLifetimeMs\x125\n" +
 	"\x17session_idle_timeout_ms\x18\x11 \x01(\rR\x14sessionIdleTimeoutMs\x12P\n" +
-	"\x13session_environment\x18\x12 \x01(\v2\x1f.plimsoll.v1.PayloadEnvironmentR\x12sessionEnvironmentJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
+	"\x13session_environment\x18\x12 \x01(\v2\x1f.plimsoll.v1.PayloadEnvironmentR\x12sessionEnvironment\x125\n" +
+	"\x17max_sessions_per_caller\x18\x13 \x01(\rR\x14maxSessionsPerCaller\x123\n" +
+	"\x16max_sessions_per_owner\x18\x14 \x01(\rR\x13maxSessionsPerOwnerJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
 	"\x12PayloadEnvironment\x12\x1a\n" +
 	"\bidentity\x18\x01 \x01(\tR\bidentity\x12$\n" +
 	"\x0emax_timeout_ms\x18\x02 \x01(\rR\fmaxTimeoutMs\x12+\n" +
@@ -3184,7 +3237,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\aoutcome\x18\x05 \x01(\x0e2\x1b.plimsoll.v1.ProjectOutcomeR\aoutcome\x12%\n" +
 	"\x0eoutcome_detail\x18\x06 \x01(\tR\routcomeDetail\x12\x16\n" +
 	"\x06stdout\x18\a \x01(\fR\x06stdout\x12\x16\n" +
-	"\x06stderr\x18\b \x01(\fR\x06stderr\"\x9f\x02\n" +
+	"\x06stderr\x18\b \x01(\fR\x06stderr\"\xb5\x02\n" +
 	"\x12OpenSessionRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
@@ -3193,7 +3246,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"lifetimeMs\x12&\n" +
 	"\x0fidle_timeout_ms\x18\x05 \x01(\rR\ridleTimeoutMs\x12>\n" +
 	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12\x1c\n" +
-	"\tlanguages\x18\a \x03(\tR\tlanguages\"\x83\x02\n" +
+	"\tlanguages\x18\a \x03(\tR\tlanguages\x12\x14\n" +
+	"\x05owner\x18\b \x01(\tR\x05owner\"\x83\x02\n" +
 	"\x13OpenSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
@@ -3259,7 +3313,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x19PROJECT_OUTCOME_COMPLETED\x10\x01\x12 \n" +
 	"\x1cPROJECT_OUTCOME_SETUP_FAILED\x10\x02\x12\x1d\n" +
 	"\x19PROJECT_OUTCOME_TIMED_OUT\x10\x03\x12\"\n" +
-	"\x1ePROJECT_OUTCOME_PROTOCOL_ERROR\x10\x04*\xf9\x01\n" +
+	"\x1ePROJECT_OUTCOME_PROTOCOL_ERROR\x10\x04*\xae\x02\n" +
 	"\n" +
 	"SessionEnd\x12\x1b\n" +
 	"\x17SESSION_END_UNSPECIFIED\x10\x00\x12\x16\n" +
@@ -3269,7 +3323,9 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x1eSESSION_END_MAIN_PROCESS_ENDED\x10\x04\x12\x1f\n" +
 	"\x1bSESSION_END_BOUNDARY_FAILED\x10\x05\x12\x1f\n" +
 	"\x1bSESSION_END_SANDBOX_CHANGED\x10\x06\x12\x18\n" +
-	"\x14SESSION_END_SHUTDOWN\x10\a*\xc0\x02\n" +
+	"\x14SESSION_END_SHUTDOWN\x10\a\x12\x18\n" +
+	"\x14SESSION_END_REPLACED\x10\b\x12\x19\n" +
+	"\x15SESSION_END_NOT_FOUND\x10\t*\xc0\x02\n" +
 	"\x13NotDispatchedReason\x12%\n" +
 	"!NOT_DISPATCHED_REASON_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dNOT_DISPATCHED_REASON_REQUEST\x10\x01\x12$\n" +

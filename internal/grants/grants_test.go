@@ -530,6 +530,30 @@ func TestLoadMaxCalls(t *testing.T) {
 	}
 }
 
+// TestLoadRouteMaxCalls: route_max_calls caps an allow entry as written there, and
+// names nothing else.
+func TestLoadRouteMaxCalls(t *testing.T) {
+	t.Setenv("GPU_KEY", "key-123")
+	body := func(caps string) string {
+		return `{"profiles": {"gpu": {"base_url": "https://gpu.internal",
+	  "allow": ["post /v2/ep1/run", "GET /v2/ep1/status/*"], "allowed_callers": ["agent-a"],
+	  "token": {"type": "static", "env": "GPU_KEY"}, "route_max_calls": ` + caps + `}}}`
+	}
+	r, err := Load(writeGrants(t, body(`{"POST /v2/ep1/run": 2}`)))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	profile, _ := r.Get("gpu")
+	if got := profile.Grant().RouteMaxCalls; len(got) != 1 || got[sandbox.HostRoute{Method: "POST", Path: "/v2/ep1/run"}] != 2 {
+		t.Fatalf("RouteMaxCalls = %v", got)
+	}
+	for _, bad := range []string{`{"POST /v2/ep2/run": 2}`, `{"POST /v2/ep1/run": 0}`, `{"/v2/ep1/run": 2}`} {
+		if _, err := Load(writeGrants(t, body(bad))); err == nil {
+			t.Errorf("Load accepted route_max_calls %s; want a refusal", bad)
+		}
+	}
+}
+
 // TestOpenToEveryCallerNamesWildcardProfiles: "*" in allowed_callers opens a profile
 // to every authenticated caller, so the registry names such profiles for the daemon to
 // log at startup (external review of v0.10.0, finding 13, 2026-09-28).

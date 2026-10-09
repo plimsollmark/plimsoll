@@ -52,8 +52,11 @@ project's full local check), and the isolation evidence each run reports.
     proves that a real <dfn>*microVM*</dfn> (a small virtual machine made for one run)
     is created, receives the project files, runs a step, and is denied
     <dfn>*egress*</dfn> (network traffic leaving the VM).
+  - The Docker Cloud provider likewise reports VM tier from provider identity. Its smoke
+    test proves a network policy in force that blocks every connection, file upload, its command wrapper,
+    the step's working directory and egress denial from inside the sandbox.
 
-  **Neither cryptographically <dfn>*attests*</dfn> the runtime implementation.** To
+  **None of them cryptographically <dfn>*attests*</dfn> the runtime implementation.** To
   attest is to give cryptographic proof, usually rooted in the hardware, of exactly
   what software is running. A compromised Docker daemon, or an E2B control plane (the
   E2B servers that create and manage the microVMs) that did not do what it says,
@@ -67,7 +70,8 @@ project's full local check), and the isolation evidence each run reports.
   code out of the engine, lands in the daemon process. Do not deploy it against
   hostile code.
 - For hostile production workloads, use the VM tier (E2B, on
-  <dfn>*Firecracker*</dfn>, AWS's open-source virtual machine monitor) or the verified
+  <dfn>*Firecracker*</dfn>, AWS's open-source virtual machine monitor, or Docker Cloud,
+  Docker's hosted service) or the verified
   kernel tier (Docker under gVisor `runsc`). A Docker provider under stock `runc` is
   container-tier and shares the host kernel.
 - Isolation itself is delegated to gVisor and Firecracker. This project is the layer
@@ -129,7 +133,8 @@ Pre-1.0. Only the latest tagged release gets fixes. There are no backported patc
 The defaults are deliberately safe rather than convenient: no provider, no network,
 no grant. A deployment is only as isolated as its configuration. If you are running
 this against genuinely hostile input, set `PLIMSOLL_HARDENED=1`, which refuses to
-start unless all of these are verifiably in force:
+start unless all of these, and the rest listed in [docs/hardened-mode.md](docs/hardened-mode.md),
+are verifiably in force:
 
 - VM or verified kernel isolation;
 - multi-client auth, where each caller has its own token
@@ -143,6 +148,8 @@ start unless all of these are verifiably in force:
   operator sets;
 - per-caller rate limiting;
 - a per-caller concurrency cap;
+- a per-caller cap on open <dfn>*sessions*</dfn> (a session is one sandbox kept for many
+  calls) when sessions are on (`SANDBOX_MAX_SESSIONS_PER_CALLER`);
 - with a provider billed by the second (E2B, Docker Cloud), a daily allowance in seconds
   on every caller (`paid_seconds_per_day`).
 

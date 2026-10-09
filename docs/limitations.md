@@ -32,6 +32,18 @@ Part of the [plimsoll README](../README.md).
   guard URL must be the same process that launches the runs. Running more than one copy
   needs a separate guard address for each daemon (a distinct hostname or path), not
   requests spread across the copies in turn.
+- **The guard needs an address of its own, `PLIMSOLL_GUARD_ADDR`.** Code in a granted
+  E2B or Docker Cloud run may connect to the guard and nowhere else, so plimsolld serves
+  the guard on a listener that answers the guard path (`/v1/e2b/guard`,
+  `/v1/dockercloud/guard`) and nothing else, never on the address callers use for the
+  RPC procedures, `/healthz` and `/readyz`. Setting a guard URL without
+  `PLIMSOLL_GUARD_ADDR` fails startup, and the public guard URL must reach that address,
+  so a deployment with grants publishes two addresses: the guard to the provider's
+  network, and the RPC address to its callers. On E2B the guard's network rule names a
+  host, never an address (E2B refuses an address, so `E2B_GUARD_URL` must use a name):
+  E2B sends port 443 connections from code in a granted run to that name's own host, whatever
+  address the code asked for, and lets it reach port 80 of the same host. Serve nothing
+  else on ports 80 and 443 of the guard's host name.
 - **`/readyz` reports configuration and reachable dependencies, not a working run.** For
   `docker` it checks the docker daemon and runtime it is configured to use. For `e2b` it
   checks settings only, and does not prove the API is reachable, the key is valid, or the

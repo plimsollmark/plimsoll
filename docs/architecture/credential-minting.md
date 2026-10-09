@@ -85,23 +85,36 @@ code.
   from before the rename, because they are built into the <dfn>*pinned*</dfn>
   WebAssembly file, fixed to one exact version by its hash.)
   [INTERNAL · source: the exported host function →](../../sandbox/wasm.go)
-- **`e2b`: HTTPS to one address, nothing else allowed.** <dfn>*E2B*</dfn> is a hosted
+- **`e2b`: HTTPS to one host name, nothing else but that host's port 80.** <dfn>*E2B*</dfn> is a hosted
   service that runs each sandbox in a <dfn>*microVM*</dfn>, a small virtual machine made
   for one run. The microVM has real networking, but the sandbox is created
   <dfn>*deny-all*</dfn>, blocking every connection, with an exception for one host: the
-  configured `E2B_GUARD_URL`, an HTTPS endpoint served by plimsolld and called the
+  configured `E2B_GUARD_URL`, an HTTPS endpoint served by plimsolld on a listener of its
+  own (`PLIMSOLL_GUARD_ADDR`, which answers nothing else) and called the
   <dfn>*guard*</dfn>. The client makes a plain `fetch` to it. E2B's network layer, outside
   the VM, adds the per-run header that authenticates the request to the guard, so the
   guest holds neither the API credential nor the guard credential. The guard checks that
   header, then hands the message to the same broker.
   [INTERNAL · source: guard endpoint rules and header injection →](../../sandbox/e2b.go)
+- **`dockercloud`: the same guard, with the credential in the guest.**
+  <dfn>*Docker Cloud Sandboxes*</dfn> is Docker's hosted microVM service; its sandbox may
+  reach only the guard's host on 443. Docker's proxy adds credentials only for
+  its own fixed list of services, so the guest holds its run's guard credential, short-lived
+  and good for the guard alone; the API credential still never enters it.
+  [INTERNAL · source: the Docker Cloud guard rule →](../../sandbox/dockercloud_guard.go)
+- **`openshell`: a relay inside, the broker outside.** <dfn>*OpenShell*</dfn> is NVIDIA's
+  agent sandbox runtime, whose gateway server creates the sandboxes. The sandbox keeps the
+  gateway's deny-all policy. A relay in the sandbox pairs each connection the guest makes to its local
+  socket with a connection plimsoll opens into the sandbox through the gateway's port
+  forwarding, and plimsoll serves the shared broker on those.
+  [INTERNAL · source: the OpenShell grant relay →](../../sandbox/openshell/grant.go)
 
 Whichever channel carried it, the broker does the same work: match the exact route
 against the grant, count the call against the call and byte budgets, attach the bearer
 token, make the request to the API with redirects and proxies disabled, return a
-size-limited response, and record one metadata-only row in the call trace. Three narrow
+size-limited response, and record one metadata-only row in the call trace. Five narrow
 channels, one place where the rules are enforced.
-[INTERNAL · source: the injected client and its three transports →](../../sandbox/capability.go)
+[INTERNAL · source: the injected client and its transports →](../../sandbox/capability.go)
 
 ## Why the guest never holds the credential
 

@@ -2,15 +2,28 @@ package sandbox
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
-// These tests hit the real E2B API and only run when E2B_API_KEY is set.
+// paidOptIn skips a test that spends money unless flag is "1", which only its make
+// target sets. A credential in the environment is not consent to spend: a plain
+// `go test ./...`, or the export's test step, in a shell that holds one would
+// otherwise create billable microVMs.
+func paidOptIn(t *testing.T, flag string) {
+	t.Helper()
+	if os.Getenv(flag) != "1" {
+		t.Skipf("set %s=1 (its make target does): this test spends money", flag)
+	}
+}
+
+// These tests hit the real E2B API: make e2b-suite (E2B_LIVE=1 and E2B_API_KEY).
 func e2bClient(t *testing.T) *E2B {
 	t.Helper()
+	paidOptIn(t, "E2B_LIVE")
 	key := os.Getenv("E2B_API_KEY")
 	if key == "" {
 		t.Skip("E2B_API_KEY not set")
@@ -59,7 +72,7 @@ func TestE2BSecuredAccessLive(t *testing.T) {
 	e := e2bClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	vm, err := e.create(ctx, 60*time.Second)
+	vm, err := e.create(ctx, 60*time.Second, e2bCreate{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -193,13 +206,13 @@ func TestE2BOrphanListingLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	vm, err := e.create(ctx, 60*time.Second)
+	vm, err := e.create(ctx, 60*time.Second, e2bCreate{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	defer e.kill(ctx, vm)
 
-	listed, err := e.listInstanceSandboxes(ctx)
+	listed, err := e.listSandboxes(ctx, url.Values{"instance": {e.instance()}})
 	if err != nil {
 		t.Fatalf("list by instance stamp: %v", err)
 	}
@@ -207,8 +220,11 @@ func TestE2BOrphanListingLive(t *testing.T) {
 	for _, sb := range listed {
 		if sb.id == vm.id {
 			found = true
-			if sb.lease != vm.lease {
-				t.Fatalf("live listing carries lease %q, want %q: the control plane does not return the lease key, so reconciliation would never reap", sb.lease, vm.lease)
+			if sb.metadata["lease"] != vm.lease {
+				t.Fatalf("live listing carries lease %q, want %q: the control plane does not return the lease key, so reconciliation would never reap", sb.metadata["lease"], vm.lease)
+			}
+			if sb.state != "running" {
+				t.Fatalf("live listing says state %q for a running sandbox", sb.state)
 			}
 		}
 	}

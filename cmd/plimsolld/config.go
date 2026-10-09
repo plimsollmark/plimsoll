@@ -148,6 +148,30 @@ func metricsAddrWith(getenv func(string) string) (string, error) {
 	return raw, nil
 }
 
+// guardAddrWith resolves the egress guard's listen address; "" means the daemon
+// serves no guard. serves reports whether the provider has a guard to serve (E2B with
+// E2B_GUARD_URL, Docker Cloud with SANDBOX_DOCKERCLOUD_GUARD_URL). The guard is a
+// granted guest's one permitted destination, so it never shares the RPC listener,
+// where the guest would also reach the RPC procedures and the health endpoints. There
+// is no default: the guard must be reachable from the provider's VMs, and choosing an
+// address another network can reach is the operator's decision, not plimsolld's. A
+// value with no guard to serve is refused, so a set variable never does nothing.
+func guardAddrWith(getenv func(string) string, serves bool) (string, error) {
+	raw := strings.TrimSpace(getenv("PLIMSOLL_GUARD_ADDR"))
+	switch {
+	case serves && raw == "":
+		return "", errors.New("PLIMSOLL_GUARD_ADDR is required: the provider serves the egress guard (its guard URL is set), and the guard has a listener of its own; set host:port and point the public guard URL at it")
+	case !serves && raw != "":
+		return "", fmt.Errorf("PLIMSOLL_GUARD_ADDR=%q is set but the provider serves no egress guard (only e2b with E2B_GUARD_URL and dockercloud with SANDBOX_DOCKERCLOUD_GUARD_URL do); unset it", raw)
+	case !serves:
+		return "", nil
+	}
+	if _, _, err := net.SplitHostPort(raw); err != nil {
+		return "", fmt.Errorf("PLIMSOLL_GUARD_ADDR=%q must be host:port: %w", raw, err)
+	}
+	return raw, nil
+}
+
 // loopbackAddr reports whether a listen address can only be reached from this
 // host. An empty host (":8746") binds every interface and is NOT loopback.
 func loopbackAddr(addr string) bool {
@@ -171,11 +195,15 @@ type hardenedFacts struct {
 	TLS             bool                   // serving TLS
 	Addr            string                 // listen address
 	MetricsAddr     string                 // metrics listen address; "" = metrics off
-	MaxConcurrent   int                    // effective global concurrency cap
-	RatePerMin      int                    // effective per-caller rate limit
-	Burst           int                    // effective per-caller rate burst
-	PerCaller       int                    // effective per-caller concurrency cap; 0 = none
-	Sessions        rpc.SessionConfig      // the session settings in force
+	GuardAddr       string                 // egress guard listen address; "" = no guard
+	// IsolationPending skips the isolation rule: the early pass, before the smoke
+	// test has produced the evidence it needs, checks every other rule.
+	IsolationPending bool
+	MaxConcurrent    int               // effective global concurrency cap
+	RatePerMin       int               // effective per-caller rate limit
+	Burst            int               // effective per-caller rate burst
+	PerCaller        int               // effective per-caller concurrency cap; 0 = none
+	Sessions         rpc.SessionConfig // the session settings in force
 	// Metered: the provider bills by the second (sandbox.Metered); Uncapped names the
 	// callers in PLIMSOLL_CLIENTS_FILE without a paid_seconds_per_day.
 	Metered  bool
@@ -197,7 +225,7 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	// Boundary: only a hardware VM or a verified user-space kernel is a
 	// hostile-code boundary. f.Isolation is post-EnsureReady evidence, so for
 	// docker this is true only after the pinned daemon proved a runsc runtime.
-	if f.Isolation != sandbox.IsolationVM && f.Isolation != sandbox.IsolationKernel {
+	if !f.IsolationPending && f.Isolation != sandbox.IsolationVM && f.Isolation != sandbox.IsolationKernel {
 		fail("provider %q reports isolation %q; hardened mode requires vm (e2b, dockercloud) or verified kernel (docker with SANDBOX_DOCKER_RUNTIME=runsc)",
 			f.Provider, f.Isolation.String())
 	}
@@ -223,6 +251,13 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	// the firewall's job.
 	if f.MetricsAddr != "" && !f.TLS && !loopbackAddr(f.MetricsAddr) {
 		fail("hardened mode requires TLS on the non-loopback metrics listener %q: set PLIMSOLL_TLS_CERT/PLIMSOLL_TLS_KEY, bind a loopback address, or set PLIMSOLL_METRICS_ADDR=off", f.MetricsAddr)
+	}
+
+	// The guard listener carries each granted call's host-API request and response
+	// and the run's guard credential, so off this host it needs TLS too. A guard
+	// behind a TLS-terminating proxy on this host binds loopback and is exempt.
+	if f.GuardAddr != "" && !f.TLS && !loopbackAddr(f.GuardAddr) {
+		fail("hardened mode requires TLS on the non-loopback egress guard listener %q: set PLIMSOLL_TLS_CERT/PLIMSOLL_TLS_KEY or bind a loopback address behind a TLS-terminating proxy", f.GuardAddr)
 	}
 
 	// Immutable execution surface, per provider.
@@ -381,6 +416,10 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 	if err != nil {
 		return rpc.SessionConfig{}, err
 	}
+	perOwner, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS_PER_OWNER", 0)
+	if err != nil {
+		return rpc.SessionConfig{}, err
+	}
 	diskMB, err := envIntWith(getenv, "SANDBOX_SESSION_DISK_MB", 1024)
 	if err != nil {
 		return rpc.SessionConfig{}, err
@@ -398,6 +437,8 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_MAX_SESSIONS=%d must not be negative", max)
 	case perCaller < 0:
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_MAX_SESSIONS_PER_CALLER=%d must not be negative", perCaller)
+	case perOwner < 0:
+		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_MAX_SESSIONS_PER_OWNER=%d must not be negative", perOwner)
 	case diskMB < 0:
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_DISK_MB=%d must not be negative", diskMB)
 	case lifetime < time.Second || lifetime > maxSessionLifetime:
@@ -407,7 +448,7 @@ func loadSessionConfig(getenv func(string) string) (rpc.SessionConfig, error) {
 	case idle < 0 || (idle > 0 && idle < time.Second) || idle > maxSessionLifetime:
 		return rpc.SessionConfig{}, fmt.Errorf("SANDBOX_SESSION_IDLE=%v must be 0 (never suspend) or between 1s and %v", idle, maxSessionLifetime)
 	}
-	return rpc.SessionConfig{MaxSessions: max, MaxPerCaller: perCaller, Lifetime: lifetime, IdleTimeout: idle, DiskBytes: int64(diskMB) << 20}, nil
+	return rpc.SessionConfig{MaxSessions: max, MaxPerCaller: perCaller, MaxPerOwner: perOwner, Lifetime: lifetime, IdleTimeout: idle, DiskBytes: int64(diskMB) << 20}, nil
 }
 
 // loadSessionPool reads SANDBOX_SESSION_POOL, the sandboxes kept ready for sessions:

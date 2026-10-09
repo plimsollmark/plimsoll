@@ -503,7 +503,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	code, env := req.Code, map[string]string(nil)
 	var g *grantRun
 	if req.Grant != nil {
-		if g, err = p.startGrant(runCtx, b, req.Grant, timeout); err != nil {
+		if g, err = p.startGrant(runCtx, b, req.Grant, timeout, nil); err != nil {
 			return fail, deadlineAware(runCtx, err)
 		}
 		defer g.Close()
@@ -589,7 +589,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 	defer p.deleteLater(ctx, b)
 	var g *grantRun
 	if req.Grant != nil {
-		if g, err = p.startGrant(runCtx, b, req.Grant, timeout+runnerGrace); err != nil {
+		if g, err = p.startGrant(runCtx, b, req.Grant, timeout+runnerGrace, nil); err != nil {
 			return fail, deadlineAware(runCtx, err)
 		}
 		defer g.Close()

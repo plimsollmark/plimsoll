@@ -48,7 +48,7 @@ func newFuzzEdge() (http.Handler, *SandboxService) {
 		connect.WithReadMaxBytes(1<<20),
 	)
 	mux := http.NewServeMux()
-	mux.Handle(path, http.MaxBytesHandler(AuthenticateHTTP(verifier, LimitHTTPConcurrency(4, h)), 1<<20))
+	mux.Handle(path, AuthenticateHTTP(verifier, LimitBody(1<<20, LimitHTTPConcurrency(4, h))))
 	return mux, svc
 }
 

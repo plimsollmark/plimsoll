@@ -121,7 +121,9 @@ since the service has no control for them.
 ## Host-API grants
 
 Grants are supported when `SANDBOX_DOCKERCLOUD_GUARD_URL` is configured and return
-`ErrUnsupported` otherwise. They use the same shared guard as <dfn>*E2B*</dfn>, the
+`ErrUnsupported` otherwise. plimsolld serves the guard on a listener of its own,
+`PLIMSOLL_GUARD_ADDR` (required with a guard URL), which answers the guard path and
+nothing else; the guard URL must reach it. They use the same shared guard as <dfn>*E2B*</dfn>, the
 other hosted microVM service plimsoll supports. The guard hands each call to the
 shared <dfn>*broker*</dfn>, the part of plimsoll that makes the real API call and
 attaches the credential. There are two differences an operator must know:

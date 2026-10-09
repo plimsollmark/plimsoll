@@ -11,11 +11,13 @@ import (
 	"log/slog"
 	"math"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
 	pathpkg "path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +26,7 @@ import (
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/lease"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
 // E2B runs agent code in an E2B sandbox (Firecracker microVM) — the right
@@ -45,6 +48,11 @@ type E2B struct {
 	// only this host and inject the per-run guard header outside the guest. Empty
 	// disables E2B grants, preserving deny-all execution for unconfigured runs.
 	GuardURL string
+	// SessionGrants is how a session's granted call reaches the guard
+	// (e2b_session_grant.go): "" refuses granted session calls, "session" creates the
+	// sandbox with one credential for the session's life, "call" puts a fresh one on for
+	// each granted call. Not yet proven against the live service.
+	SessionGrants string
 
 	// Overridable for tests; empty uses the real E2B endpoints.
 	APIBase  string
@@ -64,6 +72,11 @@ type E2B struct {
 	MaxDiskMB   int
 	PidsLimit   int // unsupported by E2B; a non-zero value fails configuration
 
+	// GuestUID is the uid and gid a session's code runs as, one no account in the
+	// template has; 0 means 61000.
+	GuestUID int
+	sessions sessionkit.Registry
+
 	// Orphan-reconciliation state. Every sandbox this provider creates is stamped
 	// with control-plane metadata naming this exact provider instance and a lease
 	// key of its own, tracked before the create request is sent and until the kill
@@ -73,6 +86,7 @@ type E2B struct {
 	// create in flight or sandboxes owned by other instances sharing the API key.
 	mu         sync.Mutex
 	instanceID string
+	langs      []Language // the languages the smoke test proved
 	leases     lease.Set
 	guards     guardRegistry // live per-run guard credentials (guard_registry.go)
 }
@@ -124,8 +138,22 @@ type e2bGuardConfig struct {
 // e2bGuardDefaultPath is the guard route when E2B_GUARD_URL names no path.
 const e2bGuardDefaultPath = "/v1/e2b/guard"
 
+// parseE2BGuardURL adds E2B's own rule to the shared ones: the host must be a name,
+// not an address. E2B's egress rule names a domain, and its create refuses an address
+// ("Rule domain \"1.1.1.1\" is not a valid domain name", measured 2026-10-08), so an
+// address would pass startup and fail every granted run. A name is also what keeps the
+// rule narrow: E2B matches it by the TLS server name on 443 and routes the connection
+// to that name's own host (a guest announcing the guard's name to another address
+// reached the guard's host, measured the same day), and by the Host header on 80.
 func parseE2BGuardURL(raw string) (*guardEndpoint, error) {
-	return parseGuardURL(raw, "E2B_GUARD_URL", e2bGuardDefaultPath)
+	g, err := parseGuardURL(raw, "E2B_GUARD_URL", e2bGuardDefaultPath)
+	if err != nil || g == nil {
+		return g, err
+	}
+	if net.ParseIP(strings.Trim(g.Host, "[]")) != nil {
+		return nil, errors.New("E2B_GUARD_URL must name its host, not an IP address: E2B's network rule takes a domain name and refuses an address")
+	}
+	return g, nil
 }
 
 func (e *E2B) guardConfig() *guardEndpoint {
@@ -147,7 +175,7 @@ func (e *E2B) openGuard(ctx context.Context, grant *HostAPIGrant, timeout time.D
 	if endpoint == nil {
 		return nil, func() {}, refused(fmt.Errorf("%w: e2b host-API grants require E2B_GUARD_URL", ErrUnsupported))
 	}
-	token, core, cleanup, err := e.guards.open(ctx, grant, timeout)
+	token, core, cleanup, err := e.guards.open(ctx, grant, timeout, nil)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -206,7 +234,7 @@ func (e *E2B) SmokeTest(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, e2bSmokeTimeout)
 	defer cancel()
-	vm, err := e.create(ctx, remainingBudget(ctx, e2bSmokeTimeout))
+	vm, err := e.create(ctx, remainingBudget(ctx, e2bSmokeTimeout), e2bCreate{})
 	if err != nil {
 		return fmt.Errorf("e2b template smoke: create: %w", err)
 	}
@@ -252,7 +280,24 @@ func (e *E2B) SmokeTest(ctx context.Context) error {
 	if len(report.EgressOpen) > 0 {
 		return fmt.Errorf("e2b template smoke: egress is OPEN to %s — deny-all network policy is not in force", strings.Join(report.EgressOpen, ", "))
 	}
+	// The languages a project step or a session's cell can use: JavaScript, proved
+	// above, and Python where the template runs python3.
+	langs := []Language{LanguageJavaScript}
+	py, err := e.runProcess(ctx, vm, "sh", []string{"-c", `command -v python3 >/dev/null 2>&1 && exec python3 -I -c "print(6*7)"`}, "")
+	if err == nil && py.exitCode == 0 && strings.TrimSpace(py.stdout) == "42" {
+		langs = append(langs, LanguagePython)
+	}
+	e.mu.Lock()
+	e.langs = langs
+	e.mu.Unlock()
 	return nil
+}
+
+// languages are the languages the smoke test proved, none before it has run.
+func (e *E2B) languages() []Language {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return slices.Clone(e.langs)
 }
 
 func (e *E2B) validateResourceConfig() error {
@@ -377,7 +422,7 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (res Result, err e
 	}
 	defer closeGuard()
 
-	vm, err := e.create(runCtx, budget, guard)
+	vm, err := e.create(runCtx, budget, e2bCreate{guard: guard})
 	if err != nil {
 		return Result{Sandbox: "e2b"}, err
 	}
@@ -468,7 +513,7 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (res ProjectRe
 	}
 	defer closeGuard()
 
-	vm, err := e.create(runCtx, budget, guard)
+	vm, err := e.create(runCtx, budget, e2bCreate{guard: guard})
 	if err != nil {
 		return ProjectResult{Sandbox: "e2b"}, err
 	}
@@ -650,7 +695,8 @@ func (e *E2B) readFile(ctx context.Context, vm e2bVM, path string) ([]byte, bool
 // the sandbox ID during its lifetime.
 type e2bVM struct {
 	id                 string
-	lease              string // its lease key, stamped as metadata "lease"
+	lease              string    // its lease key, stamped as metadata "lease"
+	billEnd            time.Time // when E2B's own timeout set at create ends it
 	accessToken        string
 	trafficAccessToken string
 }
@@ -667,7 +713,33 @@ func (vm e2bVM) authorize(req *http.Request) {
 // at the template level. Immediately after create, verifyResources reads the live
 // allocation and rejects any configured maximum that is exceeded. The per-create
 // timeout below caps VM lifetime and is the leak safety net.
-func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGuardConfig) (vm e2bVM, err error) {
+// e2bCreate is what a create adds to a run's plain microVM: a guard (a granted run)
+// and metadata beyond the instance and lease stamps (a session's).
+type e2bCreate struct {
+	guard    *e2bGuardConfig
+	metadata map[string]string
+}
+
+// guardNetwork is a sandbox's egress: deny-all, and with cfg the guard's host allowed,
+// its requests given the guard credential by E2B's beta transform, which runs outside
+// the guest network namespace. The VM sees only the guard URL; the credential is never
+// staged in code or environment variables.
+func guardNetwork(cfg *e2bGuardConfig) map[string]any {
+	network := map[string]any{"denyOut": []string{"0.0.0.0/0"}}
+	if cfg != nil {
+		network["allowOut"] = []string{cfg.Endpoint.Host}
+		network["rules"] = map[string]any{
+			cfg.Endpoint.Host: []any{
+				map[string]any{"transform": map[string]any{
+					"headers": map[string]string{EgressGuardHeader: cfg.Token},
+				}},
+			},
+		}
+	}
+	return network
+}
+
+func (e *E2B) create(ctx context.Context, timeout time.Duration, opts e2bCreate) (vm e2bVM, err error) {
 	// The lease key is tracked before the request is sent, so ReconcileOrphans never
 	// reaps this create while it is in flight; it is untracked on every path that
 	// returns no sandbox (a sandbox that exists anyway is then the reconciler's) and by
@@ -679,40 +751,32 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGu
 			e.leases.Untrack(key)
 		}
 	}()
+	// E2B's own timeout for the sandbox, the leak safety net below, is what a delete
+	// that gives up charges until. E2B starts that clock when it makes the sandbox,
+	// which is never before the moment the create failed or answered, so every path
+	// below takes its end from then (billFor) rather than from here: a charge taken
+	// from before the request would end inside the time the sandbox was already
+	// billing (round-5 review, 2026-10-08).
+	vmTimeout := time.Duration(int(timeout.Seconds())+10) * time.Second
+	billFor := func() time.Time { return time.Now().Add(vmTimeout) }
 	create := map[string]any{
 		"templateID": e.template(),
 		// Give the sandbox a little longer than the run budget so a slow run is
 		// killed by our context, not by the sandbox expiring underneath it. This
 		// "timeout" is also the leak safety net: even if kill never lands, E2B
 		// auto-reaps the microVM when it elapses.
-		"timeout": int(timeout.Seconds()) + 10,
+		"timeout": int(vmTimeout.Seconds()),
 		// The instance stamp keys orphan reconciliation: ReconcileOrphans lists by
 		// it and kills whatever this exact provider instance created and no longer
 		// tracks the lease of, without touching other instances sharing the API key.
-		"metadata": map[string]string{"sdk": "plimsoll", "instance": e.instance(), "lease": key},
+		"metadata": createMetadata(e.instance(), key, opts.metadata),
 		// Secured access: envd requires the per-sandbox access token on every
 		// data-plane request, so the public https://49983-<id>.e2b.app URL is not an
 		// open door to anyone who learns the sandbox ID while it lives.
 		"secure": true,
 	}
-	network := map[string]any{
-		"denyOut":            []string{"0.0.0.0/0"},
-		"allowPublicTraffic": false,
-	}
-	if len(guard) > 0 && guard[0] != nil {
-		cfg := guard[0]
-		network["allowOut"] = []string{cfg.Endpoint.Host}
-		// E2B's beta transform runs outside the guest network namespace. The VM
-		// sees only the guard URL; the guard credential is never staged in code or
-		// environment variables.
-		network["rules"] = map[string]any{
-			cfg.Endpoint.Host: []any{
-				map[string]any{"transform": map[string]any{
-					"headers": map[string]string{EgressGuardHeader: cfg.Token},
-				}},
-			},
-		}
-	}
+	network := guardNetwork(opts.guard)
+	network["allowPublicTraffic"] = false
 	create["network"] = network
 	body, _ := json.Marshal(create)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.apiBase()+"/sandboxes", bytes.NewReader(body))
@@ -740,7 +804,7 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGu
 	resp, err := e.httpClient().Do(req)
 	if err != nil {
 		if sent.Load() || !requestNeverLeft(err) {
-			e.lostCreate(ctx, key, "the create request may have been sent and has no answer", err)
+			e.lostCreate(ctx, key, billFor(), "the create request may have been sent and has no answer", err)
 		}
 		return e2bVM{}, err
 	}
@@ -755,7 +819,7 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGu
 		// Any other answer proves nothing about creation: a 502 or 504 from a proxy
 		// whose upstream started the VM, a 500 after it, a 2xx this client does not
 		// expect.
-		e.lostCreate(ctx, key, fmt.Sprintf("the create was answered HTTP %d", resp.StatusCode), herr)
+		e.lostCreate(ctx, key, billFor(), fmt.Sprintf("the create was answered HTTP %d", resp.StatusCode), herr)
 		return e2bVM{}, herr
 	}
 	// Past this point the API returned success, so a microVM almost certainly EXISTS
@@ -770,7 +834,7 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGu
 	}
 	unmarshalErr := json.Unmarshal(raw, &out)
 	if out.SandboxID == "" {
-		e.lostCreate(ctx, key, "2xx response with no parseable sandbox ID", errors.Join(unmarshalErr, readErr))
+		e.lostCreate(ctx, key, billFor(), "2xx response with no parseable sandbox ID", errors.Join(unmarshalErr, readErr))
 		return e2bVM{}, errors.New("e2b create sandbox: unexpected response (no sandbox ID)")
 	}
 	if !e2bSandboxID.MatchString(out.SandboxID) {
@@ -778,30 +842,73 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGu
 		// letters, digits and dashes is never put in a URL, so this sandbox is left to
 		// its own timeout (which is the run's budget) rather than killed by ID.
 		slog.Error("e2b create sandbox: the control plane named a sandbox ID with other characters; not using it", "instance", e.instance())
-		TeardownGaveUp(ctx) // it bills until that timeout, the run's deadline plus 10 s
+		TeardownGaveUpUntil(ctx, billFor()) // it bills until that timeout, the run's deadline plus 10 s
 		return e2bVM{}, errors.New("e2b create sandbox: the control plane's sandbox ID is not letters, digits and dashes; refused")
 	}
-	made := e2bVM{id: out.SandboxID, lease: key}
+	// From the answer on, the sandbox's own timeout runs from no earlier than now, so
+	// this is the conservative end of its billing (round-4 review, 2026-10-08: a
+	// session recomputed a shorter one of its own).
+	made := e2bVM{id: out.SandboxID, lease: key, billEnd: billFor()}
 	// We have an ID, so any remaining problem is recoverable: reap the VM before
 	// returning the error. A short body read failure or malformed trailer means we
 	// cannot trust the rest of the response, so distrust the whole handle.
 	if unmarshalErr != nil || readErr != nil {
-		e.kill(ctx, made)
-		return e2bVM{}, fmt.Errorf("e2b create sandbox: malformed response (read=%v json=%v); reaped %s", readErr, unmarshalErr, out.SandboxID)
+		err := fmt.Errorf("e2b create sandbox: malformed response (read=%v json=%v)", readErr, unmarshalErr)
+		e.killIfOurs(ctx, made, err)
+		return e2bVM{}, err
 	}
 	// Fail closed: with secure=true the API must return the envd access token. A
 	// sandbox we could reach without one would be reachable by anyone — kill it
 	// rather than run on an unauthenticated data plane.
 	if out.EnvdAccessToken == "" {
-		e.kill(ctx, made)
-		return e2bVM{}, errors.New("e2b create sandbox: no envd access token in secure-mode response (template's envd too old for secured access?)")
+		err := errors.New("e2b create sandbox: no envd access token in secure-mode response (template's envd too old for secured access?)")
+		e.killIfOurs(ctx, made, err)
+		return e2bVM{}, err
 	}
 	if out.TrafficAccessToken == "" {
-		e.kill(ctx, made)
-		return e2bVM{}, errors.New("e2b create sandbox: no traffic access token with public traffic disabled")
+		err := errors.New("e2b create sandbox: no traffic access token with public traffic disabled")
+		e.killIfOurs(ctx, made, err)
+		return e2bVM{}, err
 	}
 	made.accessToken, made.trafficAccessToken = out.EnvdAccessToken, out.TrafficAccessToken
+	// The ID stays a claim until the control plane's own record of it carries this
+	// create's stamps. A well-formed answer naming a sandbox that is not ours would
+	// otherwise be run against and, on the way out, deleted: another caller's microVM
+	// destroyed by one odd answer (round-4 review, 2026-10-08). Proving it here is what
+	// lets every later delete go by ID.
+	if err := e.proveOurs(made); err != nil {
+		e.lostCreate(ctx, made.lease, made.billEnd, "a create named a sandbox whose record does not carry this create's stamps", err)
+		return e2bVM{}, err
+	}
 	return made, nil
+}
+
+// proveOurs reads the control plane's record of vm and requires this instance's and
+// this create's stamps on it. It reads under a context of its own, so a run whose
+// caller gave up still learns whether the sandbox is ours, and reports what it could
+// not prove rather than guessing.
+func (e *E2B) proveOurs(vm e2bVM) error {
+	ctx, cancel := context.WithTimeout(context.Background(), meteredDeleteBudget)
+	defer cancel()
+	rec, err := e.record(ctx, vm.id)
+	if err != nil {
+		return fmt.Errorf("the new sandbox could not be read back: %w", err)
+	}
+	if rec.Metadata["instance"] != e.instance() || rec.Metadata["lease"] != vm.lease {
+		return errors.New("the record of the new sandbox carries another instance or lease stamp")
+	}
+	return nil
+}
+
+// createMetadata is a sandbox's metadata: the sdk, instance and lease stamps, then
+// extra, which cannot replace them.
+func createMetadata(instance, lease string, extra map[string]string) map[string]string {
+	md := map[string]string{}
+	for k, v := range extra {
+		md[k] = v
+	}
+	md["sdk"], md["instance"], md["lease"] = "plimsoll", instance, lease
+	return md
 }
 
 // lostCreate handles a create that may have made a microVM whose ID never reached us. It
@@ -811,11 +918,27 @@ func (e *E2B) create(ctx context.Context, timeout time.Duration, guard ...*e2bGu
 // first. Until it is reaped it bills, at most until that timeout (the run's deadline
 // plus 10 s), so a caller that meters runs charges the whole reservation
 // (TeardownGaveUp).
-func (e *E2B) lostCreate(ctx context.Context, key, why string, cause error) {
+// killIfOurs deletes the sandbox a failed create's answer named only once the control
+// plane's record of it carries this create's stamp (instance and lease). An answer
+// already found malformed or incomplete names a sandbox by a claim, and deleting by an
+// unchecked ID could delete another run's sandbox (round-3 review). When the record does
+// not prove it, the create is treated as lost: its lease is let go, so orphan
+// reconciliation reaps by stamp whatever this create made, and the run is charged as one
+// whose delete gave up.
+func (e *E2B) killIfOurs(ctx context.Context, vm e2bVM, cause error) {
+	if err := e.proveOurs(vm); err != nil {
+		e.lostCreate(ctx, vm.lease, vm.billEnd, "a failed create named a sandbox its record does not show as this create's",
+			errors.Join(cause, err))
+		return
+	}
+	e.kill(ctx, vm)
+}
+
+func (e *E2B) lostCreate(ctx context.Context, key string, billEnd time.Time, why string, cause error) {
 	slog.Error("e2b create sandbox: "+why+"; scheduling orphan reconciliation by instance stamp",
 		"error", cause, "instance", e.instance())
 	e.leases.Untrack(key)
-	TeardownGaveUp(ctx)
+	TeardownGaveUpUntil(ctx, billEnd)
 	go func() {
 		rctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -896,7 +1019,7 @@ func (e *E2B) kill(ctx context.Context, vm e2bVM) {
 		if i == attempts-1 {
 			slog.Error("e2b: failed to kill sandbox; orphan reconciliation or its create timeout will reap it",
 				"sandbox", id, "attempts", attempts, "error", err)
-			TeardownGaveUp(ctx) // it bills until that timeout: the run's deadline plus 10 s
+			TeardownGaveUpUntil(ctx, vm.billEnd) // it bills until that timeout: the run's deadline plus 10 s
 			return
 		}
 		time.Sleep(time.Duration(i+1) * time.Second)
@@ -916,85 +1039,131 @@ func (e *E2B) instance() string {
 	return e.instanceID
 }
 
-// ReconcileOrphans lists this provider instance's live sandboxes on the control
-// plane (keyed by the metadata stamp create writes) and kills every one whose
-// lease key is no longer tracked (review F3: no age window, so a create whose
-// answer is slow is never killed and an orphan waits for no clock). It closes
-// the two leaks the per-run lifecycle cannot: a 2xx create response whose
-// sandbox ID never reached us, and a teardown whose retries all failed. It never
-// touches sandboxes created by other instances (even with the same API key),
-// so a fleet can reconcile independently. Returns the number of sandboxes killed.
+// ReconcileOrphans kills two kinds of leftover sandbox, running or paused, and
+// returns how many it killed:
+//
+//   - this provider instance's (keyed by the metadata stamp create writes) whose
+//     lease key is no longer tracked (review F3: no age window, so a create whose
+//     answer is slow is never killed and an orphan waits for no clock). It closes the
+//     two leaks the per-run lifecycle cannot: a 2xx create response whose sandbox ID
+//     never reached us, and a teardown whose retries all failed. It never touches
+//     another instance's sandbox by this rule, so a fleet reconciles independently.
+//   - any instance's session sandbox (metadata session=1) more than e2bReapMargin past
+//     the expiry it declares: a paused sandbox never expires on E2B and a restarted
+//     daemon has a new instance stamp, so nothing else would ever delete a crashed
+//     daemon's paused session. A session past its declared lifetime has ended, whoever
+//     opened it, so this is the rule docker and OpenShell use. Its lease is still
+//     checked: a session this instance still tracks is never killed by it.
 func (e *E2B) ReconcileOrphans(ctx context.Context) (int, error) {
 	if strings.TrimSpace(e.APIKey) == "" {
 		return 0, errors.New("E2B_API_KEY is not set")
 	}
-	listed, err := e.listInstanceSandboxes(ctx)
+	instance := e.instance()
+	mine, err := e.listSandboxes(ctx, url.Values{"instance": {instance}})
 	if err != nil {
 		return 0, err
 	}
+	sessions, err := e.listSandboxes(ctx, url.Values{"session": {"1"}})
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now()
+	doomed := map[string]string{} // ID → why
+	for _, sb := range mine {
+		// The server-side filter is an optimization only: re-checked here, so a filter
+		// regression can never widen the kill set to other instances' sandboxes. No lease
+		// key: not made by this instance's create (every create stamps one), so its create
+		// timeout reaps it, never this.
+		if sb.metadata["instance"] != instance || sb.metadata["lease"] == "" || e.leases.Tracked(sb.metadata["lease"]) {
+			continue
+		}
+		doomed[sb.id] = "untracked lease"
+	}
+	for _, sb := range sessions {
+		if sb.metadata["sdk"] != "plimsoll" || sb.metadata["session"] != "1" || e.leases.Tracked(sb.metadata["lease"]) {
+			continue
+		}
+		secs, err := strconv.ParseInt(sb.metadata["expires"], 10, 64)
+		if err != nil || now.Before(time.Unix(secs, 0).Add(e2bReapMargin)) {
+			continue
+		}
+		doomed[sb.id] = "session past its declared expiry"
+	}
 	killed := 0
-	for _, sb := range listed {
-		// No lease key: not made by this instance's create (every create stamps one),
-		// so its create timeout reaps it, never this.
-		if sb.lease == "" || e.leases.Tracked(sb.lease) {
+	for id, why := range doomed {
+		if err := e.deleteSandbox(ctx, id); err != nil {
+			slog.Error("e2b: failed to kill orphaned sandbox", "sandbox", id, "error", err)
 			continue
 		}
-		if err := e.deleteSandbox(ctx, sb.id); err != nil {
-			slog.Error("e2b: failed to kill orphaned sandbox", "sandbox", sb.id, "error", err)
-			continue
-		}
-		slog.Warn("e2b: killed orphaned sandbox", "sandbox", sb.id, "started_at", sb.startedAt)
+		slog.Warn("e2b: killed orphaned sandbox", "sandbox", id, "why", why)
 		killed++
 	}
 	return killed, nil
 }
 
+// e2bReapMargin is how long past its declared expiry a session sandbox must be before
+// any instance's ReconcileOrphans deletes it, so a clock difference between two
+// daemons sharing an API key never deletes a live one.
+const e2bReapMargin = 5 * time.Minute
+
 type e2bListedSandbox struct {
-	id        string
-	lease     string
-	startedAt time.Time
+	id       string
+	state    string
+	metadata map[string]string
 }
 
-// listInstanceSandboxes returns the control plane's live sandboxes carrying this
-// instance's metadata stamp. The server-side metadata filter is treated as an
-// optimization only: every returned entry is re-checked locally so a filter
-// regression can never widen the kill set to other instances' sandboxes.
-func (e *E2B) listInstanceSandboxes(ctx context.Context) ([]e2bListedSandbox, error) {
-	instance := e.instance()
-	q := url.Values{"metadata": {url.Values{"instance": {instance}}.Encode()}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.apiBase()+"/sandboxes?"+q.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-API-Key", e.APIKey)
-	resp, err := e.httpClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("e2b list sandboxes: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, fmt.Errorf("e2b list sandboxes: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("e2b list sandboxes: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
-	}
-	var out []struct {
-		SandboxID string            `json:"sandboxID"`
-		StartedAt time.Time         `json:"startedAt"`
-		Metadata  map[string]string `json:"metadata"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("e2b list sandboxes: unparseable response: %w", err)
-	}
-	listed := make([]e2bListedSandbox, 0, len(out))
-	for _, sb := range out {
-		if !e2bSandboxID.MatchString(sb.SandboxID) || sb.Metadata["instance"] != instance {
-			continue
+// e2bListPages bounds one listing: 100 sandboxes a page, the most E2B serves.
+const e2bListPages = 100
+
+// listSandboxes returns the control plane's sandboxes, running and paused, whose
+// metadata matches filter (v2, the only listing that includes paused ones), following
+// the pages. An ID that is not letters, digits and dashes is dropped: it is never put
+// in a path.
+func (e *E2B) listSandboxes(ctx context.Context, filter url.Values) ([]e2bListedSandbox, error) {
+	var listed []e2bListedSandbox
+	next := ""
+	for page := 0; ; page++ {
+		if page == e2bListPages {
+			return nil, fmt.Errorf("e2b list sandboxes: more than %d pages", e2bListPages)
 		}
-		listed = append(listed, e2bListedSandbox{id: sb.SandboxID, lease: sb.Metadata["lease"], startedAt: sb.StartedAt})
+		q := url.Values{"metadata": {filter.Encode()}, "state": {"running,paused"}, "limit": {"100"}}
+		if next != "" {
+			q.Set("nextToken", next)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.apiBase()+"/v2/sandboxes?"+q.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("X-API-Key", e.APIKey)
+		resp, err := e.httpClient().Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("e2b list sandboxes: %w", err)
+		}
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("e2b list sandboxes: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("e2b list sandboxes: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
+		}
+		var out []struct {
+			SandboxID string            `json:"sandboxID"`
+			State     string            `json:"state"`
+			Metadata  map[string]string `json:"metadata"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil, fmt.Errorf("e2b list sandboxes: unparseable response: %w", err)
+		}
+		for _, sb := range out {
+			if e2bSandboxID.MatchString(sb.SandboxID) {
+				listed = append(listed, e2bListedSandbox{id: sb.SandboxID, state: sb.State, metadata: sb.Metadata})
+			}
+		}
+		if next = resp.Header.Get("X-Next-Token"); next == "" || len(out) == 0 {
+			return listed, nil
+		}
 	}
-	return listed, nil
 }
 
 // deleteSandbox issues one DELETE. A 404 counts as success (already gone).
@@ -1032,6 +1201,11 @@ func (e *E2B) writeFile(ctx context.Context, vm e2bVM, path, content string) err
 // its multipart filename; the single-file query form (?path=) is used only when
 // exactly one file is sent, preserving the original behavior for snippets/steps.
 func (e *E2B) writeFiles(ctx context.Context, vm e2bVM, files []File) error {
+	return e.writeFilesAs(ctx, vm, "user", files)
+}
+
+// writeFilesAs is writeFiles as user, who owns what envd writes.
+func (e *E2B) writeFilesAs(ctx context.Context, vm e2bVM, user string, files []File) error {
 	if len(files) == 0 {
 		return nil
 	}
@@ -1048,7 +1222,7 @@ func (e *E2B) writeFiles(ctx context.Context, vm e2bVM, files []File) error {
 	}
 	_ = mw.Close()
 
-	q := url.Values{"username": {"user"}}
+	q := url.Values{"username": {user}}
 	if len(files) == 1 {
 		q.Set("path", files[0].Path)
 	}
@@ -1077,6 +1251,8 @@ type procOutput struct {
 	stdoutTruncated bool
 	stderrTruncated bool
 	exitCode        int
+	exited          bool   // envd's end event said the process exited by itself, not by a signal
+	status          string // envd's account of the end ("exit status 1", "signal: killed")
 }
 
 // exitOutputFlooded is the exit code reported when a run is aborted because its
@@ -1092,22 +1268,39 @@ func (e *E2B) runProcess(ctx context.Context, vm e2bVM, cmd string, args []strin
 }
 
 func (e *E2B) runProcessWithEnv(ctx context.Context, vm e2bVM, cmd string, args []string, cwd string, envs map[string]string) (procOutput, error) {
-	startReq := map[string]any{
-		"process": map[string]any{"cmd": cmd, "args": args},
-		"stdin":   false,
-	}
-	if cwd != "" {
-		startReq["process"].(map[string]any)["cwd"] = cwd
-	}
-	if len(envs) > 0 {
-		startReq["process"].(map[string]any)["envs"] = envs
-	}
-	payload, _ := json.Marshal(startReq)
+	max := e.maxOutput()
+	return e.envdRun(ctx, vm, envdProcess{cmd: cmd, args: args, cwd: cwd, envs: envs}, max, max)
+}
 
+// envdProcess is one process.Process/Start request: the command, and the user envd
+// starts it as ("" = the template's default user, as a run's processes start).
+type envdProcess struct {
+	user string
+	cmd  string
+	args []string
+	cwd  string
+	envs map[string]string
+	// stdin keeps the process's stdin open for process.Process/SendInput; otherwise
+	// envd gives it /dev/null.
+	stdin bool
+}
+
+// envdStart sends a process.Process/Start and returns the event stream. With a
+// deadline on ctx, envd kills the process when it passes; without one, the process
+// outlives the stream (envd detaches it), which a session's relay needs.
+func (e *E2B) envdStart(ctx context.Context, vm e2bVM, p envdProcess) (*http.Response, error) {
+	process := map[string]any{"cmd": p.cmd, "args": p.args}
+	if p.cwd != "" {
+		process["cwd"] = p.cwd
+	}
+	if len(p.envs) > 0 {
+		process["envs"] = p.envs
+	}
+	payload, _ := json.Marshal(map[string]any{"process": process, "stdin": p.stdin})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		e.envdHost(vm.id)+"/process.Process/Start", bytes.NewReader(connectEnvelope(payload)))
 	if err != nil {
-		return procOutput{}, err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/connect+json")
 	req.Header.Set("Connect-Protocol-Version", "1")
@@ -1123,20 +1316,33 @@ func (e *E2B) runProcessWithEnv(ctx context.Context, vm e2bVM, cmd string, args 
 		req.Header.Set("Connect-Timeout-Ms", strconv.FormatInt(int64(ms), 10))
 	}
 	vm.authorize(req)
+	if p.user != "" {
+		req.SetBasicAuth(p.user, "")
+	}
 	resp, err := e.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode/100 != 2 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		resp.Body.Close()
+		return nil, fmt.Errorf("envd start: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
+	}
+	return resp, nil
+}
+
+// envdRun runs p to its end and aggregates its output, keeping at most outCap and
+// errCap bytes.
+func (e *E2B) envdRun(ctx context.Context, vm e2bVM, p envdProcess, outCap, errCap int) (procOutput, error) {
+	resp, err := e.envdStart(ctx, vm, p)
 	if err != nil {
 		return procOutput{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return procOutput{}, fmt.Errorf("envd start: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
-	}
 
 	var out procOutput
-	max := e.maxOutput()
-	stdout := &cappedStream{max: max}
-	stderr := &cappedStream{max: max}
+	stdout := &cappedStream{max: outCap}
+	stderr := &cappedStream{max: errCap}
 	sawEnd := false
 	err = readConnectStream(resp.Body, func(msg []byte) error {
 		var ev procEvent
@@ -1149,6 +1355,8 @@ func (e *E2B) runProcessWithEnv(ctx context.Context, vm e2bVM, cmd string, args 
 			stderr.append(ev.Event.Data.Stderr)
 		case ev.Event.End != nil:
 			out.exitCode = ev.Event.End.ExitCode
+			out.exited = ev.Event.End.Exited
+			out.status = ev.Event.End.Status
 			sawEnd = true
 		}
 		return nil
@@ -1202,6 +1410,9 @@ func (c *cappedStream) append(data []byte) {
 
 type procEvent struct {
 	Event struct {
+		Start *struct {
+			PID uint32 `json:"pid"`
+		} `json:"start"`
 		Data *struct {
 			Stdout []byte `json:"stdout"`
 			Stderr []byte `json:"stderr"`
@@ -1247,8 +1458,15 @@ var errStreamOverBudget = errors.New("envd stream exceeded the transfer budget")
 // trailer; if it carries an error, that error is returned. Total bytes transferred
 // are bounded by maxStreamTransferBytes to cap a flooding process.
 func readConnectStream(r io.Reader, fn func(msg []byte) error) error {
+	return readEnvdFrames(r, maxStreamTransferBytes, fn)
+}
+
+// readEnvdFrames is readConnectStream with total as its transfer budget; 0 means
+// none, for a session relay's stream, which lives as long as the session and whose
+// every cell bounds its own output.
+func readEnvdFrames(r io.Reader, total int64, fn func(msg []byte) error) error {
 	header := make([]byte, 5)
-	var total int64
+	var read int64
 	for {
 		if _, err := io.ReadFull(r, header); err != nil {
 			if err == io.EOF {
@@ -1261,8 +1479,8 @@ func readConnectStream(r io.Reader, fn func(msg []byte) error) error {
 		if length > maxConnectFrameBytes {
 			return fmt.Errorf("envd stream frame too large: %d bytes", length)
 		}
-		total += int64(length)
-		if total > maxStreamTransferBytes {
+		read += int64(length)
+		if total > 0 && read > total {
 			return errStreamOverBudget
 		}
 		msg := make([]byte, length)

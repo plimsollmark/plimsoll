@@ -17,10 +17,10 @@ Steps 2 to 4 need only your machine: no docker, no cloud account, and no network
 `127.0.0.1`. Cloning and building may download code. Step 5 needs docker, and its last
 part needs root. Nothing on this page costs money, because it uses no cloud service.
 
-You need git and Go 1.26.6 or newer. On 1.26.6, Go's vulnerability scanner
+You need git and Go 1.26.9 or newer. On 1.26.9, Go's vulnerability scanner
 (`govulncheck`) reports no known vulnerabilities in the standard library code the daemon
-calls; earlier 1.26 releases had published vulnerabilities in its reverse proxy and
-HTTP/2 code. Step 5 needs Linux.
+calls; earlier 1.26 releases had published vulnerabilities in its HTTP/2 server, its
+HTTP/1 connection handling and its reverse proxy. Step 5 needs Linux.
 
 ## 1. Clone and build
 
@@ -73,8 +73,8 @@ That command makes three choices:
 Leave this terminal running. You should see:
 
 ```
-level=INFO msg="sandbox provider ready" provider=wasm
 level=INFO msg="multi-client auth enabled" clients=1
+level=INFO msg="sandbox provider ready" provider=wasm
 level=INFO msg="plimsolld listening" addr=127.0.0.1:8746 provider=wasm isolation=process auth=true ...
 ```
 

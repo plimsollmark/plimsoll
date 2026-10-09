@@ -1,0 +1,4 @@
+# The source distribution carries the package, its README and license, and no tests: the
+# tests need the daemons clients/python/client_test.go serves, which do not ship with it.
+prune tests
+prune frameworks

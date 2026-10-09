@@ -30,6 +30,25 @@ const path = require("node:path");
 
 const [dir, work] = process.argv.slice(1);
 
+// Where the provider starts the relay as root (E2B, whose guest could otherwise open a
+// relay of its own uid's pipes), PLIMSOLL_RELAY_UID names the guest, and the relay
+// becomes the guest before it reads or writes anything: a cell's files are then
+// written as the guest, never as root into a directory the guest controls. Changing
+// uid makes the process non-dumpable, so its /proc entries but the directory itself
+// (fd, mem, environ) are root's and the guest can neither open its pipes nor attach to
+// it; a relay whose fd directory is not root's exits before its ready.
+if (process.env.PLIMSOLL_RELAY_UID !== undefined) {
+  const guest = Number(process.env.PLIMSOLL_RELAY_UID);
+  if (!Number.isInteger(guest) || guest <= 0) process.exit(70);
+  process.setgroups([]);
+  process.setgid(guest);
+  process.setuid(guest);
+  const owner = fs.statSync("/proc/" + process.pid + "/fd").uid;
+  if (process.getuid() !== guest || process.getgid() !== guest || process.getgroups().some((g) => g !== guest) || owner !== 0) {
+    process.exit(70);
+  }
+}
+
 function send(frame) {
   process.stdout.write(JSON.stringify(frame) + "\n");
 }
@@ -149,8 +168,11 @@ function prepare(req) {
     try {
       fs.mkdirSync(path.dirname(dests[i]), { recursive: true });
       if (!inside(fs.realpathSync(path.dirname(dests[i])) + "/")) return refuse(req.nonce, i, "EPATH");
-      fd = fs.openSync(dests[i], fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o644);
+      // O_NONBLOCK: a fifo an earlier call left at this path would otherwise hold the
+      // open until a reader came; opened, it fails the isFile check.
+      fd = fs.openSync(dests[i], fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK, 0o644);
       if (!inside(fs.readlinkSync("/proc/self/fd/" + fd))) return refuse(req.nonce, i, "EPATH");
+      if (!fs.fstatSync(fd).isFile()) return refuse(req.nonce, i, "EFTYPE");
       fs.ftruncateSync(fd, 0);
       fs.writeFileSync(fd, f.content);
     } catch (e) {

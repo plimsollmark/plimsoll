@@ -100,7 +100,8 @@ func (d *DockerCloud) create(ctx context.Context, budget time.Duration) (dcVM, e
 		unsent, unknown = dcCreateOutcome(err)
 		var ce *dcCreateError
 		if errors.As(err, &ce) {
-			vm.id = ce.id // the cleanup deletes by ID when the service named one
+			vm.id = ce.id // the cleanup deletes by ID when the service named one under this create's name
+			unknown = unknown || ce.foreign
 			if ce.stage == dcCreateSend && dcRefused(ce.err) {
 				// The service refused the create by a code that says it did nothing, so no
 				// code ran: marked, not left to read as "may have run". Its quota answer
@@ -120,12 +121,17 @@ func (d *DockerCloud) create(ctx context.Context, budget time.Duration) (dcVM, e
 		return dcVM{}, err
 	}
 	sb := reported.view()
+	// The reported ID is used, for the run and for its delete, only once the same answer
+	// names the sandbox this create requested: an ID under another name could be
+	// another run's sandbox (round-3 review). On a mismatch vm.id stays empty, so the
+	// cleanup deletes by this create's own name, which only its own sandbox carries.
+	if sb.name != vm.name {
+		unknown = true // what this create made cannot be accounted for: charged as given up
+		return dcVM{}, fmt.Errorf("dockercloud create sandbox: service reports name %q, requested %q", truncateForError(sb.name), vm.name)
+	}
 	vm.id = sb.id
 	if vm.id == "" {
 		return dcVM{}, errors.New("dockercloud create sandbox: running sandbox has no id")
-	}
-	if sb.name != "" && sb.name != vm.name {
-		return dcVM{}, fmt.Errorf("dockercloud create sandbox: service reports name %q, requested %q", sb.name, vm.name)
 	}
 	if err := d.verifySandbox(reported); err != nil {
 		return dcVM{}, err

@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1031,5 +1032,27 @@ func TestDockerGuestRunsAsTheGuestUID(t *testing.T) {
 	res, err = named.RunJavaScript(ctx, Request{Code: `console.log(process.getuid(), process.env.HOME)`})
 	if err != nil || strings.TrimSpace(res.Stdout) != "1000 /home/node" {
 		t.Fatalf("a uid the image names: %+v, %v; want 1000 /home/node", res, err)
+	}
+}
+
+// A step's output reaches the result with its exact bytes, whatever they are: the
+// runner once decoded output as UTF-8, so a byte that is not UTF-8 came back as
+// U+FFFD, which the result, and the record signed over it, then stated as the
+// step's output (round-3 review). The runner now reports raw bytes as base64.
+func TestRunProjectStepOutputKeepsItsBytes(t *testing.T) {
+	t.Parallel()
+	d := testDocker()
+	requireProjectImage(t, d)
+	res, err := d.RunProject(context.Background(), ProjectRequest{
+		Steps: []string{`printf '\377\000\200'; printf '\376' >&2`},
+	})
+	if err != nil || res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 {
+		t.Fatalf("run: %+v, %v", res, err)
+	}
+	if got := []byte(res.Steps[0].Stdout); !bytes.Equal(got, []byte{0xff, 0x00, 0x80}) {
+		t.Fatalf("stdout = % x, want ff 00 80", got)
+	}
+	if got := []byte(res.Steps[0].Stderr); !bytes.Equal(got, []byte{0xfe}) {
+		t.Fatalf("stderr = % x, want fe", got)
 	}
 }

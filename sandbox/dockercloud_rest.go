@@ -282,6 +282,15 @@ func (d dcREST) createSandbox(ctx context.Context, spec dcCreateSpec) (dcReporte
 		return nil, &dcCreateError{stage: dcCreateSend, err: fmt.Errorf("dockercloud create sandbox: %w", err)}
 	}
 	var sb dcRESTSandbox
+	// mine is the ID an error carries for the cleanup's delete: only one the service
+	// shows under this create's name, since an ID under another name could be another
+	// run's sandbox (round-3 review); otherwise the cleanup deletes by name.
+	mine := func(sb dcRESTSandbox) string {
+		if sb.DisplayName == spec.name {
+			return sb.UID
+		}
+		return ""
+	}
 	if err := json.Unmarshal(ans.raw, &sb); err != nil || sb.UID == "" {
 		// Answered, but not with a sandbox this code can name: whatever it made is
 		// found by its display name, and until then the outcome is unknown.
@@ -289,25 +298,25 @@ func (d dcREST) createSandbox(ctx context.Context, spec dcCreateSpec) (dcReporte
 	}
 	for !sb.running() {
 		if sb.terminal() {
-			return nil, &dcCreateError{stage: dcCreateDone, id: sb.UID,
+			return nil, &dcCreateError{stage: dcCreateDone, id: mine(sb),
 				err: fmt.Errorf("dockercloud create sandbox: sandbox reached status %s instead of running%s", truncateForError(sb.Core.Status), sb.failure())}
 		}
 		if err := sleepCtx(ctx, 250*time.Millisecond); err != nil {
-			return nil, &dcCreateError{stage: dcCreateWait, id: sb.UID, err: fmt.Errorf("dockercloud create sandbox: %w", err)}
+			return nil, &dcCreateError{stage: dcCreateWait, id: mine(sb), err: fmt.Errorf("dockercloud create sandbox: %w", err)}
 		}
 		next, _, found, err := d.read(ctx, sb.UID)
 		if err == nil && !found {
 			err = errors.New("the sandbox disappeared while starting")
 		}
 		if err != nil {
-			return nil, &dcCreateError{stage: dcCreateWait, id: sb.UID, err: fmt.Errorf("dockercloud create sandbox: %w", err)}
+			return nil, &dcCreateError{stage: dcCreateWait, id: mine(sb), err: fmt.Errorf("dockercloud create sandbox: %w", err)}
 		}
 		sb = next
 	}
 	if sb.DisplayName != spec.name {
 		// Orphan reaping finds this instance's sandboxes by display name alone, so one
 		// recorded under another name could never be reaped.
-		return nil, &dcCreateError{stage: dcCreateDone, id: sb.UID,
+		return nil, &dcCreateError{stage: dcCreateDone, foreign: true,
 			err: fmt.Errorf("dockercloud create sandbox: service recorded display name %q, requested %q", truncateForError(sb.DisplayName), spec.name)}
 	}
 	return sb, nil

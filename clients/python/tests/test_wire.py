@@ -121,6 +121,10 @@ class Errors(unittest.TestCase):
         self.assertIs(type(error_from_wire(400, answer("invalid_argument", session_ended(2, "")))), InvalidRequestError)
         self.assertIsInstance(error_from_wire(404, answer("not_found", session_ended(2, ""))), SessionEndedError)
         self.assertIs(type(error_from_wire(499, answer("canceled", session_ended(2, "")))), PlimsollError)
+        # An end a newer daemon has and this client does not is still an end.
+        e = error_from_wire(400, answer("failed_precondition", not_dispatched(1), session_ended(99, "")))
+        assert isinstance(e, SessionEndedError)
+        self.assertEqual(e.reason, "unknown")
 
     def test_type_url_prefix_is_accepted(self) -> None:
         d = not_dispatched(6)
@@ -167,6 +171,32 @@ class Reader(unittest.TestCase):
         }.items():
             with self.subTest(name), self.assertRaises(MalformedResponseError):
                 f()
+
+
+class UnknownSessionEndTest(unittest.TestCase):
+    def test_a_newer_daemons_end_name_is_unknown_not_malformed(self) -> None:
+        from plimsoll_client._wire import SESSION_ENDS
+
+        m = Msg({"ended": "SESSION_END_FROM_A_NEWER_DAEMON"}, "m")
+        self.assertEqual(m.get_enum("ended", SESSION_ENDS, unknown=-1), -1)
+        with self.assertRaises(MalformedResponseError):
+            m.get_enum("ended", SESSION_ENDS)  # a field a digest covers stays strict
+
+
+class OwnerDigestTest(unittest.TestCase):
+    def test_the_golden_vector_every_client_shares(self) -> None:
+        # The same vector is in client/session_test.go and the TypeScript suite.
+        from plimsoll_client.client import _owner_digest
+
+        self.assertEqual(
+            _owner_digest("golden-token-0123456789abcdefghijklmnop", "alice@example.com"),
+            "a7305a43c4fad079f2784707cb25f3deee16b1c4d7da700ee664f5657084f80b",
+        )
+        self.assertEqual(_owner_digest(None, "alice@example.com"), "b261355cb5012097b8b4ca487cfe786bf9a7fcbc616c9c2fc38469a1c3e5bc8e")
+        # Past HMAC's 64-byte block, where a raw key would be replaced by the
+        # token_sha256 the clients file stores.
+        self.assertEqual(_owner_digest("x" * 96, "alice@example.com"), "8ba693de695d11b0bc31a1f6d91c883f07cceca84910df18d7fbb918ee799c8f")
+
 
 
 if __name__ == "__main__":

@@ -25,6 +25,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -36,6 +38,7 @@ import (
 	"github.com/plimsollmark/plimsoll/internal/clientconfig"
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/internal/unreadbody"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -43,7 +46,9 @@ import (
 // helpText generates: the SANDBOX_PROVIDER line and the daemon-built providers'
 // sections. Together they are the daemon's configuration reference; keep every
 // variable the package reads listed (TestUsageNamesEveryVariable enforces it).
-const usageHead = `plimsolld serves the plimsoll SandboxService over Connect (h2c).
+const usageHead = `plimsolld serves the plimsoll SandboxService over Connect: cleartext
+HTTP/2 ("h2c") and HTTP/1.1, or HTTP/1.1 and HTTP/2 over TLS when PLIMSOLL_TLS_CERT
+is set.
 
 Usage: plimsolld [-h]
 
@@ -59,6 +64,15 @@ The daemon takes no arguments. Configuration is by environment variable:
                              templates, so bind an address other hosts can reach
                              only behind a firewall rule that admits just the
                              scraper. It serves TLS when the daemon does
+  PLIMSOLL_GUARD_ADDR        listen address for the egress guard, a listener of
+                             its own that serves the guard path and nothing else;
+                             required when E2B_GUARD_URL or
+                             SANDBOX_DOCKERCLOUD_GUARD_URL is set, refused
+                             otherwise. Point the public guard URL at it. A guest's
+                             one permitted destination is the guard, so it never
+                             shares PLIMSOLL_ADDR, where the guest would also reach
+                             the RPC procedures and the health endpoints. It
+                             serves TLS when the daemon does
   PLIMSOLL_LOG_FORMAT       json (default) or text; the audit stream is a
                              machine-read record and prospector-report consumes
                              newline-delimited JSON. Use text only for eyeballing
@@ -74,12 +88,19 @@ The daemon takes no arguments. Configuration is by environment variable:
                              PEM certificate and key; when set the daemon serves
                              TLS (HTTP/1.1 + HTTP/2 via ALPN) instead of cleartext
   PLIMSOLL_HARDENED          =1 enforces the production policy at startup: vm or
-                             verified kernel isolation, multi-client auth, TLS off
-                             loopback, pinned images (docker, dockercloud) or an
+                             verified kernel isolation, multi-client auth, TLS on
+                             every non-loopback listener (RPC, metrics, guard),
+                             pinned images (docker; dockercloud, or a store image,
+                             with SANDBOX_DOCKERCLOUD_API=connect named) or an
                              explicit E2B template, no unconfined seccomp, an
-                             explicit resource envelope
-                             plus aggregate budget, and per-caller rate limiting.
-                             Any violation refuses to serve.
+                             explicit resource envelope plus (docker) the aggregate
+                             budget, per-caller rate limiting with a burst of at
+                             most one minute's rate, a per-caller concurrency cap
+                             below SANDBOX_MAX_CONCURRENT, a per-caller session cap
+                             with sessions on, and paid_seconds_per_day on every
+                             caller of e2b or dockercloud. Every rule but isolation
+                             is checked before the billed smoke test. Any violation
+                             refuses to serve.
   PLIMSOLL_GRANTS_FILE       JSON file of named host-API capability profiles a
                              caller may select via grant_profile
 
@@ -100,14 +121,25 @@ const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the 
                              audited profile (docker/seccomp.json) to also deny
                              ptrace, io_uring, keyctl and similar; see docs/seccomp.md
   SANDBOX_GUEST_UID          the uid (and gid) docker runs every guest as, default
-                             61000, which no account uses; 1 to 65533. Preflight
-                             refuses one this host's /etc/passwd or /etc/group has
-                             (it or one more, the session identity check's)
+                             61000, which no account uses; 1 to 65532, with
+                             neither it nor it + 1 in a band systemd assigns
+                             itself (60001-60513, 60578-60705, 61184-65519).
+                             Preflight refuses one this host's /etc/passwd or
+                             /etc/group has (it or one more, the session identity
+                             check's)
   SANDBOX_REQUIRE_PINNED_IMAGES
                              =1 to refuse mutable image tags (require @sha256:)
   E2B_API_KEY / E2B_TEMPLATE E2B credentials and toolchain template
-  E2B_GUARD_URL              absolute HTTPS egress-guard endpoint; enables E2B
-                             grants (allowlist plus beta header transform)
+  E2B_GUARD_URL              absolute HTTPS egress-guard URL on port 443 whose host
+                             is a name, never an IP address (E2B's network rule
+                             refuses one); enables E2B grants (allowlist plus beta
+                             header transform). It must reach this daemon's
+                             PLIMSOLL_GUARD_ADDR
+  E2B_SESSION_GRANTS         how a granted session call reaches the guard: unset
+                             refuses it; session = one credential for the
+                             session's life; call = a fresh one put on per call;
+                             both passed against the live service on 2026-10-08.
+                             Needs E2B_GUARD_URL
   DOCKER_SBX_TOKEN           Docker Cloud Sandboxes personal access token for
                              dockercloud (read from the environment only); it is
                              exchanged for a short-lived bearer, never sent to
@@ -120,7 +152,8 @@ const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the 
                              absolute HTTPS egress-guard endpoint on 443; enables
                              dockercloud grants (connect only). A grant run's sandbox may reach
                              only this host; the guest holds a per-run, guard-only
-                             credential (Docker's proxy cannot inject one)
+                             credential (Docker's proxy cannot inject one); served
+                             on PLIMSOLL_GUARD_ADDR
   SANDBOX_DOCKERCLOUD_POLICY_URL
                              per-sandbox network-policy REST base; default
                              https://api.sandboxes-cloud.docker.com/v1. Not in
@@ -189,8 +222,8 @@ const usageLimits = `
                              session keeps one sandbox for many calls: files
                              persist, processes do not, except the interpreters
                              it keeps for cells. Needs a provider with
-                             sessions (openshell, or docker with a project
-                             image); startup fails otherwise, and when one real
+                             sessions (docker with a project image, openshell
+                             or e2b); startup fails otherwise, and when one real
                              session opened at startup does not keep what a
                              session promises. A running session
                              holds one concurrency slot; a suspended one holds
@@ -201,6 +234,13 @@ const usageLimits = `
                              included (default 0: no cap beyond
                              SANDBOX_MAX_SESSIONS; required in hardened mode
                              with sessions on)
+  SANDBOX_MAX_SESSIONS_PER_OWNER
+                             open sessions one owner of a caller may hold (the
+                             end user an OpenSession names; default 0: no
+                             cap). At the cap an open closes that owner's least
+                             recently used session with no call in progress;
+                             its later calls are refused as replaced. Refused,
+                             not dispatched, when every one is running a call.
   SANDBOX_SESSION_POOL       sandboxes kept ready for sessions (default 0: none;
                              at most SANDBOX_MAX_SESSIONS; docker only). Each is
                              never used, has its interpreters already running,
@@ -211,16 +251,21 @@ const usageLimits = `
   SANDBOX_SESSION_LIFETIME   a session's absolute lifetime (default 30m, at most
                              12h); a request may ask for less
   SANDBOX_SESSION_IDLE       suspend a session idle this long (default 5m; 0 =
-                             never; otherwise 1s to 12h); its files are kept and
+                             never, refused with a provider billed by the
+                             second; otherwise 1s to 12h); its files are kept and
                              the next call resumes it; a request may ask for less,
-                             not under 1s
+                             not under 1s. On a provider billed by the second a
+                             session's running time, open to suspend and resume
+                             to suspend, draws on the paid allowances
   SANDBOX_SESSION_DISK_MB    end a session whose files exceed this after a call
                              (default 1024; 0 = no bound; at most 1048576);
                              measured after each call, not enforced during it
 
 Endpoints outside auth: GET /healthz (liveness) and GET /readyz (provider
-readiness) on PLIMSOLL_ADDR, and GET /metrics (Prometheus text: run, shed-load,
-host-call and advice counters) on PLIMSOLL_METRICS_ADDR only.
+readiness) on PLIMSOLL_ADDR, GET /metrics (Prometheus text: run, shed-load,
+host-call and advice counters) on PLIMSOLL_METRICS_ADDR only, and the egress
+guard (each call authenticated by its run's guard credential) on
+PLIMSOLL_GUARD_ADDR only.
 `
 
 // parseArgs accepts only a help request. Any other argument is refused rather
@@ -246,6 +291,12 @@ func main() {
 		return
 	}
 	configureLogging(os.Getenv)
+	for _, name := range unknownVariables(os.Environ(), helpText()) {
+		// A misspelling, or a setting a newer plimsolld has: either way this daemon runs
+		// without it, which an operator relying on it (a per-owner session cap, say)
+		// would otherwise learn only from its effects.
+		slog.Warn("unknown variable ignored: this plimsolld has no such setting", "name", name)
+	}
 
 	addr := getenv("PLIMSOLL_ADDR", ":8746")
 
@@ -256,6 +307,16 @@ func main() {
 	}
 	sb, res := provider.Sandbox, provider.Resources
 
+	// The egress guard's listener is settled before anything below can spend: a
+	// missing address fails here, not after the smoke test has created a billed
+	// microVM.
+	guard, guardPath := egressGuardOf(sb)
+	guardAddr, err := guardAddrWith(os.Getenv, guardPath != "")
+	if err != nil {
+		slog.Error("invalid egress guard listener", "error", err)
+		os.Exit(1)
+	}
+
 	// A provider billed by the second: what is wrong with its allowances is refused
 	// before the smoke test below creates a billed microVM.
 	metered := sandbox.IsMetered(sb)
@@ -264,32 +325,13 @@ func main() {
 		slog.Error("invalid paid-provider configuration", "error", err)
 		os.Exit(1)
 	}
-	if hardenedEarly, _ := sandbox.BoolFromEnv(os.Getenv, "PLIMSOLL_HARDENED"); hardenedEarly && metered {
-		if fv, err := rpc.LoadClientsFromEnv(); err == nil && fv != nil && len(fv.Uncapped()) > 0 {
-			slog.Error("hardened mode with a provider billed by the second requires a daily allowance on every caller; refusing before the smoke test",
-				"callers_without_paid_seconds_per_day", strings.Join(fv.Uncapped(), ", "))
-			os.Exit(1)
-		}
-	}
 
-	// Verify dependencies (Preflight) and prove the exact configured execution
-	// stack enforces its promised bounds (SmokeTest, throwaway sandboxes) before
-	// serving. The Docker provider reports the kernel tier only after Preflight has
-	// verified that the pinned local daemon actually registers runsc under a runsc
-	// executable path. Startup-only: smoke starts real sandboxes, so it must never
-	// sit on the unauthenticated /readyz poll path.
-	readyCtx, cancelReady := context.WithTimeout(context.Background(), 2*time.Minute)
-	if err := provider.EnsureReady(readyCtx); err != nil {
-		cancelReady()
-		slog.Error("sandbox provider is not ready; refusing to serve", "provider", sb.Name(), "error", err)
-		os.Exit(1)
-	}
-	cancelReady()
-	slog.Info("sandbox provider ready", "provider", sb.Name())
-	// The tier startup proved: the background loop below re-checks whenever the
-	// current evidence falls below it.
-	proven := sb.IsolationClass()
-
+	// Everything local is settled before anything below can spend: the smoke test
+	// creates a billed microVM on a paid provider, so a daemon restarting over a bad
+	// setting would otherwise pay for one on every restart. Settings, the caller
+	// registry, TLS, an early pass of the hardened policy and every listener's bind
+	// come first; the checks that need the smoke test's evidence come after it.
+	//
 	// Fail closed if the operator required a minimum isolation tier the selected
 	// provider cannot meet (e.g. SANDBOX_MIN_ISOLATION=vm but SANDBOX_PROVIDER=wasm):
 	// the whole point of the service is bounding hostile code, so a silent downgrade
@@ -299,22 +341,7 @@ func main() {
 		slog.Error("SANDBOX_MIN_ISOLATION is not a valid tier", "error", err, "want", "vm|kernel|container|process")
 		os.Exit(1)
 	}
-	if requireMinimum {
-		if !sb.IsolationClass().Meets(want) {
-			slog.Error("provider does not meet the required isolation tier",
-				"provider", sb.Name(), "provider_isolation", sb.IsolationClass().String(), "required", want.String())
-			os.Exit(1)
-		}
-	}
 
-	// The single most security-relevant fact is the boundary strength; make a weak
-	// default loud. docker under runc is namespaces only, NOT a hostile-code boundary.
-	if sb.Name() == "docker" && sb.IsolationClass() == sandbox.IsolationContainer {
-		slog.Warn("docker provider is running under runc (shared host kernel) — this is NOT a hostile-code boundary; set SANDBOX_DOCKER_RUNTIME=runsc (gVisor) for a real boundary")
-	}
-
-	svc := rpc.NewSandboxService(sb)
-	svc.Resources = res
 	// Resolve the effective limiter envelope (env parsing + aggregate-memory clamp +
 	// validation) in one typed, unit-tested function so main() only wires the result.
 	var poolSize int
@@ -333,67 +360,34 @@ func main() {
 		os.Exit(1)
 	}
 	maxConcurrent, perKey, ratePerMin, burst := lc.MaxConcurrent, lc.PerKey, lc.RatePerMin, lc.Burst
-	svc.Limiter = rpc.NewCodeLimiter(maxConcurrent, perKey, ratePerMin, burst)
-	// A provider billed by the second draws each run on the caller's daily allowance
-	// (paid_seconds_per_day in PLIMSOLL_CLIENTS_FILE) and on the daemon's.
-	svc.Spend = rpc.NewSpendCap(paidPerDay)
-	switch {
-	case metered && paidPerDay == 0:
-		slog.Warn("paid provider with no daemon-wide allowance (SANDBOX_PAID_SECONDS_PER_DAY): only the callers' own paid_seconds_per_day bound what runs cost")
-	case metered:
-		slog.Info("paid provider: runs draw on daily allowances in seconds, per daemon, UTC days, kept in memory (a restart forgets the day's spend)",
-			"daemon_seconds_per_day", paidPerDay)
-	}
-
+	// Session settings the provider cannot honor fail here too; the pool's start and
+	// the session smoke test, which create sandboxes, come after the run smoke test.
 	if sc.MaxSessions > 0 {
 		sp, ok := sb.(sandbox.SessionProvider)
 		if !ok || !sp.SupportsSessions() {
 			slog.Error("SANDBOX_MAX_SESSIONS is set but the provider keeps no sessions", "provider", sb.Name())
 			os.Exit(1)
 		}
-		// The pool starts first, so the session the smoke test opens is a claimed
-		// member: the warm path is the one startup proves.
-		if poolSize > 0 {
-			// The admission wrapper always has the method; a provider without a pool
-			// answers ErrUnsupported through it.
-			pool, ok := sb.(sandbox.SessionPool)
-			if !ok {
-				slog.Error("SANDBOX_SESSION_POOL is set but the provider keeps no session pool", "provider", sb.Name())
-				os.Exit(1)
-			}
-			poolCtx, cancelPool := context.WithTimeout(context.Background(), 3*time.Minute)
-			err := pool.StartSessionPool(poolCtx, poolSize, sc.Lifetime)
-			cancelPool()
-			if err != nil {
-				slog.Error("the session pool could not start; refusing to serve", "provider", sb.Name(), "error", err)
-				os.Exit(1)
-			}
-		}
-		// What only a session does (the sweep between calls, a suspend and its resume,
-		// an interpreter kept across calls, a close) is proven here, by one real
-		// session, as EnsureReady proved the provider's runs. Startup-only, like it.
-		smokeCtx, cancelSmoke := context.WithTimeout(context.Background(), 2*time.Minute)
-		err := sandbox.SessionSmokeTest(smokeCtx, sp, sandbox.SessionOptions{Lifetime: min(sc.Lifetime, 5*time.Minute), DiskBytes: sc.DiskBytes})
-		cancelSmoke()
-		if err != nil {
-			slog.Error("sessions are not ready; refusing to serve", "provider", sb.Name(), "error", err)
+		// A session's sandbox bills for every second it is not suspended, which the paid
+		// allowances charge (internal/rpc/spend.go); one that never suspended would bill
+		// for its whole lifetime.
+		if metered && sc.IdleTimeout == 0 {
+			slog.Error("SANDBOX_SESSION_IDLE=0 (never suspend) with a provider billed by the second: an idle session would bill until its lifetime ends; set an idle timeout", "provider", sb.Name())
 			os.Exit(1)
 		}
-		slog.Info("sessions enabled", "max_sessions", sc.MaxSessions, "max_sessions_per_caller", sc.MaxPerCaller, "pool", poolSize,
-			"lifetime", sc.Lifetime.String(), "idle", sc.IdleTimeout.String(), "disk_mb", sc.DiskBytes>>20)
-		if sb.Name() == "docker" && sc.MaxSessions >= maxConcurrent {
-			slog.Warn("SANDBOX_MAX_SESSIONS is at least SANDBOX_MAX_CONCURRENT: a paused docker session keeps its slot, so open sessions can leave no slot for single runs",
-				"max_sessions", sc.MaxSessions, "max_concurrent", maxConcurrent)
+		// The admission wrapper always has the method; a provider without a pool
+		// answers ErrUnsupported through it.
+		if _, ok := sb.(sandbox.SessionPool); poolSize > 0 && !ok {
+			slog.Error("SANDBOX_SESSION_POOL is set but the provider keeps no session pool", "provider", sb.Name())
+			os.Exit(1)
 		}
 	}
-	svc.Sessions = sc
 
 	gr, err := grants.LoadFromEnv()
 	if err != nil {
 		slog.Error("failed to load host-API grant profiles", "error", err)
 		os.Exit(1)
 	}
-	svc.Grants = gr
 	if gr.Len() > 0 {
 		gc, ok := sb.(sandbox.GrantCapable)
 		if !ok || (!gc.SupportsJavaScriptGrants() && !gc.SupportsProjectGrants()) {
@@ -462,86 +456,65 @@ func main() {
 	}
 
 	// Hardened mode: the deploy-time policy for serving hostile code in
-	// production. Everything it checks is already resolved evidence — provider
-	// isolation post-EnsureReady, the loaded verifier, the effective limiter, the
-	// actual transport — so a pass means the properties are in force, not merely
-	// configured.
+	// production. Everything it checks is resolved evidence (the loaded verifier,
+	// the effective limiter, the actual transport, and, after the smoke test, the
+	// provider's proven isolation), so a pass means the properties are in force, not
+	// merely configured. It runs twice: every rule but isolation now, before anything
+	// spends, and all of them once the smoke test has proven the tier.
 	hardened, err := sandbox.BoolFromEnv(os.Getenv, "PLIMSOLL_HARDENED")
 	if err != nil {
 		slog.Error("invalid PLIMSOLL_HARDENED", "error", err)
 		os.Exit(1)
 	}
+	facts := hardenedFacts{
+		Provider:        sb.Name(),
+		Isolation:       sb.IsolationClass(),
+		MultiClientAuth: multiClientAuth,
+		TLS:             tlsConf != nil,
+		Addr:            addr,
+		MetricsAddr:     metricsAddr,
+		GuardAddr:       guardAddr,
+		MaxConcurrent:   maxConcurrent,
+		RatePerMin:      ratePerMin,
+		Burst:           burst,
+		PerCaller:       perKey,
+		Sessions:        sc,
+		Metered:         metered,
+		Uncapped:        uncapped,
+	}
+	// The isolation rule waits for the smoke test's evidence; every other rule is
+	// checked now, so a violation costs nothing.
+	facts.IsolationPending = true
 	if hardened {
-		if err := enforceHardenedPolicy(os.Getenv, hardenedFacts{
-			Provider:        sb.Name(),
-			Isolation:       sb.IsolationClass(),
-			MultiClientAuth: multiClientAuth,
-			TLS:             tlsConf != nil,
-			Addr:            addr,
-			MetricsAddr:     metricsAddr,
-			MaxConcurrent:   maxConcurrent,
-			RatePerMin:      ratePerMin,
-			Burst:           burst,
-			PerCaller:       perKey,
-			Sessions:        sc,
-			Metered:         metered,
-			Uncapped:        uncapped,
-		}); err != nil {
-			slog.Error("hardened-mode policy violation; refusing to serve", "error", err)
+		if err := enforceHardenedPolicy(os.Getenv, facts); err != nil {
+			slog.Error("hardened-mode policy violation; refusing to serve before the smoke test", "error", err)
 			os.Exit(1)
 		}
-		slog.Info("hardened mode: production policy verified and enforced")
 	}
 
-	mux := http.NewServeMux()
-	path, handler := plimsollv1connect.NewSandboxServiceHandler(svc,
-		connect.WithInterceptors(rpc.AuthInterceptor(verifier)),
-		// Bound the request body BEFORE it is decompressed/unmarshalled. Without
-		// this, Connect's default ReadMaxBytes is 0 (unlimited), so the per-field
-		// size checks in the service run only after a hostile multi-GB or
-		// compression-bombed message is already buffered in memory. Every caller is
-		// untrusted; this is the real DoS backstop. Headroom over the 4 MiB project
-		// limit for proto framing and step/artifact metadata.
-		connect.WithReadMaxBytes(maxRequestBytes),
-	)
-	// Reject bad credentials before Connect reads/decompresses the body, then cap
-	// authenticated requests during decode before the run limiter is reachable.
-	// MaxBytesHandler independently caps raw HTTP bytes; Connect's limit is per
-	// decompressed message, so neither one substitutes for the other.
-	rpcHandler := rpc.AuthenticateHTTP(verifier, rpc.LimitHTTPConcurrency(maxConcurrent*2, handler))
-	mux.Handle(path, http.MaxBytesHandler(rpcHandler, maxRequestBytes))
-	// The guard URL is public by construction (a microVM must reach it from
-	// outside), so it gets the same treatment as the RPC path: it authenticates on
-	// the per-run guard credential and bounds concurrent decode work before reading
-	// a body. Its own admission lives inside the handler; the bound tracks live
-	// granted runs, since a guest awaits each host.* call rather than pipelining.
-	if guard, ok := sb.(sandbox.EgressGuardCapable); ok {
-		if guardPath := guard.EgressGuardPath(); guardPath != "" {
-			mux.Handle(guardPath, sandbox.EgressGuardHTTPHandler(guard, guardPath, maxConcurrent*2, 2))
-		}
-	}
-
-	// Operational endpoints, registered OUTSIDE the auth interceptor so probes need
-	// no token. Liveness is unconditional; readiness re-runs the provider's bounded
-	// Preflight. Docker probes its pinned daemon/runtime; E2B's current Preflight
-	// validates configuration only and does not prove API reachability. /metrics is
-	// not here: it has a listener of its own (metricsHandler).
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok\n"))
-	})
-	mux.HandleFunc("/readyz", readyzHandler(sb))
-
-	// Bind both listeners before serving either, so a taken port is a startup
-	// error rather than a goroutine exiting later, and so the log can name the bound
-	// address (":0", an ephemeral port, is how the tests run the daemon).
-	srv := newHTTPServer(addr, mux, tlsConf)
+	// Bind every listener now: an address that cannot be bound (taken, out of range,
+	// the same as another listener's) fails before anything spends, and the log can
+	// name the bound address (":0", an ephemeral port, is how the tests run the
+	// daemon). Nothing is served until startup has finished; a connection made in
+	// the meantime waits in the accept queue.
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("cannot listen", "addr", addr, "error", err)
 		os.Exit(1)
 	}
-	var metricsSrv *http.Server
+	rpcConns, guardConns := connectionCaps(guardAddr != "")
+	ln = limitConnections(ln, rpcConns)
+	var guardLn net.Listener
+	boundGuard := "none"
+	if guardAddr != "" {
+		guardLn, err = net.Listen("tcp", guardAddr)
+		if err != nil {
+			slog.Error("cannot listen for the egress guard; set PLIMSOLL_GUARD_ADDR to a free address", "addr", guardAddr, "error", err)
+			os.Exit(1)
+		}
+		guardLn = limitConnections(guardLn, guardConns)
+		boundGuard = guardLn.Addr().String()
+	}
 	var metricsLn net.Listener
 	boundMetrics := "off"
 	if metricsAddr != "" {
@@ -550,12 +523,111 @@ func main() {
 			slog.Error("cannot listen for metrics; set PLIMSOLL_METRICS_ADDR to a free address, or off", "addr", metricsAddr, "error", err)
 			os.Exit(1)
 		}
-		metricsSrv = newMetricsServer(metricsAddr, metricsHandler(svc), tlsConf)
+		metricsLn = limitConnections(metricsLn, metricsMaxConnections)
 		boundMetrics = metricsLn.Addr().String()
 		if !loopbackAddr(boundMetrics) {
 			slog.Warn("the metrics listener is reachable from other hosts and has no authentication; its labels name grant profiles and route templates, so admit only the scraper",
 				"metrics_addr", boundMetrics)
 		}
+	}
+
+	// Verify dependencies (Preflight) and prove the exact configured execution
+	// stack enforces its promised bounds (SmokeTest, throwaway sandboxes) before
+	// serving. The Docker provider reports the kernel tier only after Preflight has
+	// verified that the pinned local daemon actually registers runsc under a runsc
+	// executable path. Startup-only: smoke starts real sandboxes, so it must never
+	// sit on the unauthenticated /readyz poll path.
+	readyCtx, cancelReady := context.WithTimeout(context.Background(), 2*time.Minute)
+	if err := provider.EnsureReady(readyCtx); err != nil {
+		cancelReady()
+		slog.Error("sandbox provider is not ready; refusing to serve", "provider", sb.Name(), "error", err)
+		os.Exit(1)
+	}
+	cancelReady()
+	slog.Info("sandbox provider ready", "provider", sb.Name())
+	// The tier startup proved: the background loop below re-checks whenever the
+	// current evidence falls below it.
+	proven := sb.IsolationClass()
+
+	// SANDBOX_MIN_ISOLATION, parsed before the smoke test, against what it proved.
+	if requireMinimum {
+		if !sb.IsolationClass().Meets(want) {
+			slog.Error("provider does not meet the required isolation tier",
+				"provider", sb.Name(), "provider_isolation", sb.IsolationClass().String(), "required", want.String())
+			os.Exit(1)
+		}
+	}
+
+	// The single most security-relevant fact is the boundary strength; make a weak
+	// default loud. docker under runc is namespaces only, NOT a hostile-code boundary.
+	if sb.Name() == "docker" && sb.IsolationClass() == sandbox.IsolationContainer {
+		slog.Warn("docker provider is running under runc (shared host kernel) — this is NOT a hostile-code boundary; set SANDBOX_DOCKER_RUNTIME=runsc (gVisor) for a real boundary")
+	}
+
+	svc := rpc.NewSandboxService(sb)
+	svc.Resources = res
+	svc.Limiter = rpc.NewCodeLimiter(maxConcurrent, perKey, ratePerMin, burst)
+	// A provider billed by the second draws each run on the caller's daily allowance
+	// (paid_seconds_per_day in PLIMSOLL_CLIENTS_FILE) and on the daemon's.
+	svc.Spend = rpc.NewSpendCap(paidPerDay)
+	switch {
+	case metered && paidPerDay == 0:
+		slog.Warn("paid provider with no daemon-wide allowance (SANDBOX_PAID_SECONDS_PER_DAY): only the callers' own paid_seconds_per_day bound what runs cost")
+	case metered:
+		slog.Info("paid provider: runs draw on daily allowances in seconds, per daemon, UTC days, kept in memory (a restart forgets the day's spend)",
+			"daemon_seconds_per_day", paidPerDay)
+	}
+
+	if sc.MaxSessions > 0 {
+		sp := sb.(sandbox.SessionProvider) // checked before the smoke test
+		// The pool starts first, so the session the smoke test opens is a claimed
+		// member: the warm path is the one startup proves.
+		if poolSize > 0 {
+			poolCtx, cancelPool := context.WithTimeout(context.Background(), 3*time.Minute)
+			err := sb.(sandbox.SessionPool).StartSessionPool(poolCtx, poolSize, sc.Lifetime)
+			cancelPool()
+			if err != nil {
+				slog.Error("the session pool could not start; refusing to serve", "provider", sb.Name(), "error", err)
+				os.Exit(1)
+			}
+		}
+		// What only a session does (the sweep between calls, a suspend and its resume,
+		// an interpreter kept across calls, a close) is proven here, by one real
+		// session, as EnsureReady proved the provider's runs. Startup-only, like it.
+		smokeCtx, cancelSmoke := context.WithTimeout(context.Background(), 2*time.Minute)
+		err := sandbox.SessionSmokeTest(smokeCtx, sp, sandbox.SessionOptions{Lifetime: min(sc.Lifetime, 5*time.Minute), DiskBytes: sc.DiskBytes})
+		cancelSmoke()
+		if err != nil {
+			slog.Error("sessions are not ready; refusing to serve", "provider", sb.Name(), "error", err)
+			os.Exit(1)
+		}
+		slog.Info("sessions enabled", "max_sessions", sc.MaxSessions, "max_sessions_per_caller", sc.MaxPerCaller, "max_sessions_per_owner", sc.MaxPerOwner, "pool", poolSize,
+			"lifetime", sc.Lifetime.String(), "idle", sc.IdleTimeout.String(), "disk_mb", sc.DiskBytes>>20)
+		if sb.Name() == "docker" && sc.MaxSessions >= maxConcurrent {
+			slog.Warn("SANDBOX_MAX_SESSIONS is at least SANDBOX_MAX_CONCURRENT: a paused docker session keeps its slot, so open sessions can leave no slot for single runs",
+				"max_sessions", sc.MaxSessions, "max_concurrent", maxConcurrent)
+		}
+	}
+	svc.Sessions = sc
+	svc.Grants = gr
+
+	if hardened {
+		facts.Isolation, facts.IsolationPending = sb.IsolationClass(), false
+		if err := enforceHardenedPolicy(os.Getenv, facts); err != nil {
+			slog.Error("hardened-mode policy violation; refusing to serve", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("hardened mode: production policy verified and enforced")
+	}
+
+	srv := newHTTPServer(addr, rpcMux(svc, verifier, maxConcurrent, sb), tlsConf)
+	var guardSrv *http.Server
+	if guardLn != nil {
+		guardSrv = newHTTPServer(guardAddr, guardHandler(guard, guardPath, maxConcurrent), tlsConf)
+	}
+	var metricsSrv *http.Server
+	if metricsLn != nil {
+		metricsSrv = newMetricsServer(metricsAddr, metricsHandler(svc), tlsConf)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -608,7 +680,7 @@ func main() {
 		}()
 	}
 
-	go func() {
+	{
 		// Echo the EFFECTIVE (post-clamp) limiter and resource envelope so a
 		// fat-fingered env var is visible in the logs rather than silently
 		// defaulting. The resource envelope only applies to providers that enforce it
@@ -646,25 +718,26 @@ func main() {
 		default:
 			args = append(args, "mem_mb", res.MemoryMB, "cpus", res.CPUs, "pids", res.PidsLimit, "disk_mb", res.DiskMB)
 		}
-		args = append(args, "tls", tlsConf != nil, "metrics_addr", boundMetrics)
+		args = append(args, "tls", tlsConf != nil, "metrics_addr", boundMetrics, "guard_addr", boundGuard, "max_connections", rpcConns)
 		slog.Info("plimsolld listening", args...)
-		if err := serve(srv, ln); err != nil {
-			slog.Error("server failed", "error", err)
-			os.Exit(1)
-		}
-	}()
-	if metricsSrv != nil {
-		go func() {
-			if err := serve(metricsSrv, metricsLn); err != nil {
-				slog.Error("metrics server failed", "error", err)
-				os.Exit(1)
-			}
-		}()
 	}
-
-	<-ctx.Done()
+	listeners := []served{{"rpc", srv, ln}}
+	if guardSrv != nil {
+		listeners = append(listeners, served{"egress guard", guardSrv, guardLn})
+	}
+	if metricsSrv != nil {
+		listeners = append(listeners, served{"metrics", metricsSrv, metricsLn})
+	}
+	// A listener that fails ends the daemon through the same drain as a signal, so the
+	// runs in flight finish and their sandboxes are deleted; exiting on the spot would
+	// leave billed microVMs running until their own expiry.
+	serveErr := serveUntil(ctx, listeners)
 	stop() // restore default handling so a second signal force-quits the drain
-	slog.Info("shutdown signal received; draining in-flight runs")
+	if serveErr != nil {
+		slog.Error("a listener failed; draining in-flight runs before exiting", "error", serveErr)
+	} else {
+		slog.Info("shutdown signal received; draining in-flight runs")
+	}
 	// Drain rather than kill: in-flight runs finish on their own goroutines, so
 	// their deferred cleanup (containers, e2b microVMs, temp dirs) actually runs
 	// instead of leaking on an abrupt exit.
@@ -681,12 +754,45 @@ func main() {
 			slog.Error("provider cleanup did not finish before shutdown; a later reconciliation reaps what is left", "provider", sb.Name(), "error", err)
 		}
 	}
-	// Metrics stay up through the drain, so a scraper can watch the in-flight
-	// gauge fall; nothing is left to count once it is over.
+	// The guard stays up through the drain, since a run still in flight makes its
+	// host calls through it; metrics too, so a scraper can watch the in-flight gauge
+	// fall. Once the runs are over neither has anything left to serve.
+	if guardSrv != nil {
+		_ = guardSrv.Close()
+	}
 	if metricsSrv != nil {
 		_ = metricsSrv.Close()
 	}
 	slog.Info("plimsolld stopped")
+	if serveErr != nil {
+		os.Exit(1)
+	}
+}
+
+// served is one listener and the server that serves it.
+type served struct {
+	name string
+	srv  *http.Server
+	ln   net.Listener
+}
+
+// serveUntil serves every listener until ctx ends or one of them fails, and returns
+// that failure, or nil when ctx ended first. Either way the caller drains.
+func serveUntil(ctx context.Context, listeners []served) error {
+	failed := make(chan error, len(listeners))
+	for _, l := range listeners {
+		go func() {
+			if err := serve(l.srv, l.ln); err != nil {
+				failed <- fmt.Errorf("%s listener: %w", l.name, err)
+			}
+		}()
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-failed:
+		return err
+	}
 }
 
 // serve runs srv on ln until the server is shut down, over TLS when it has a
@@ -761,6 +867,10 @@ const readyzLogEvery = 30 * time.Second
 // request body entirely into memory before the handler runs, bypassing
 // AuthenticateHTTP and Connect's request-size limit. Native protocol selection
 // handles HTTP/2 prior knowledge without a pre-handler body read.
+// Every handler is wrapped by unreadbody: an HTTP/1.x answer that does not read its
+// request body (a refusal, a 404, a health check sent a body) closes the connection
+// instead of first waiting for that body, which a slow client could hold back until
+// the read timeout.
 func newHTTPServer(addr string, handler http.Handler, tlsConf *tls.Config) *http.Server {
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
@@ -770,16 +880,89 @@ func newHTTPServer(addr string, handler http.Handler, tlsConf *tls.Config) *http
 		protocols.SetUnencryptedHTTP2(true)
 	}
 	return &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		Protocols:         protocols,
-		TLSConfig:         tlsConf,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second, // includes bounded request body; stops slow uploads
-		WriteTimeout:      6 * time.Minute,  // above the RPC hard ceiling + response write
-		IdleTimeout:       2 * time.Minute,
-		MaxHeaderBytes:    32 << 10,
+		Addr:    addr,
+		Handler: unreadbody.Handler(handler),
+		// Without this, Go answers "OPTIONS *" itself, before the handler: it reads
+		// the request's body first (up to 4 KiB, waiting for it) and replies 200, so
+		// the guard's path check, the auth middleware and unreadbody never see it.
+		DisableGeneralOptionsHandler: true,
+		Protocols:                    protocols,
+		TLSConfig:                    tlsConf,
+		ReadHeaderTimeout:            5 * time.Second,
+		ReadTimeout:                  30 * time.Second, // includes bounded request body; stops slow uploads
+		WriteTimeout:                 6 * time.Minute,  // above the RPC hard ceiling + response write
+		IdleTimeout:                  2 * time.Minute,
+		MaxHeaderBytes:               32 << 10,
 	}
+}
+
+// rpcMux is what the RPC listener serves: the SandboxService behind its pre-body
+// checks, and the operational endpoints.
+func rpcMux(svc *rpc.SandboxService, verifier rpc.TokenVerifier, maxConcurrent int, sb sandbox.Sandbox) *http.ServeMux {
+	mux := http.NewServeMux()
+	path, handler := plimsollv1connect.NewSandboxServiceHandler(svc,
+		// ReleaseDecodeSlot first: it gives back the decode slot guardRPC took, once
+		// Connect has decoded the request and before anything runs.
+		connect.WithInterceptors(rpc.ReleaseDecodeSlot(), rpc.AuthInterceptor(verifier)),
+		// Bound the request body BEFORE it is decompressed/unmarshalled. Without
+		// this, Connect's default ReadMaxBytes is 0 (unlimited), so the per-field
+		// size checks in the service run only after a hostile multi-GB or
+		// compression-bombed message is already buffered in memory. Every caller is
+		// untrusted; this is the real DoS backstop. Headroom over the 4 MiB project
+		// limit for proto framing and step/artifact metadata.
+		connect.WithReadMaxBytes(maxRequestBytes),
+	)
+	// Reject bad credentials before Connect reads/decompresses the body, then cap
+	// authenticated requests during decode before the run limiter is reachable.
+	// LimitBody independently caps raw HTTP bytes; Connect's limit is per
+	// decompressed message, so neither one substitutes for the other.
+	mux.Handle(path, guardRPC(verifier, maxConcurrent, handler))
+	// The egress guard is not here: it has a listener of its own (guardHandler).
+	// Operational endpoints, registered OUTSIDE the auth interceptor so probes need
+	// no token. Liveness is unconditional; readiness re-runs the provider's bounded
+	// Preflight. Docker probes its pinned daemon/runtime; E2B's current Preflight
+	// validates configuration only and does not prove API reachability. /metrics is
+	// not here: it has a listener of its own (metricsHandler).
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("/readyz", readyzHandler(sb))
+	return mux
+}
+
+// egressGuardOf returns the provider's egress guard and the path it serves, or nil
+// and "" when the provider serves none (one without a guard, or E2B and Docker Cloud
+// without a guard URL).
+func egressGuardOf(sb sandbox.Sandbox) (sandbox.EgressGuardCapable, string) {
+	guard, ok := sb.(sandbox.EgressGuardCapable)
+	if !ok {
+		return nil, ""
+	}
+	path := guard.EgressGuardPath()
+	if path == "" {
+		return nil, ""
+	}
+	return guard, path
+}
+
+// guardHandler is everything the guard listener serves: the guard's one path, which
+// answers 404 to any other path or method. A guest's one permitted destination is
+// the guard, so the guard has a listener of its own: on the RPC listener a guest
+// could also reach the RPC procedures, /healthz and /readyz. The guard URL is public
+// by construction, so the handler authenticates on the per-run guard credential and
+// bounds concurrent decode work before reading a body; its admission lives inside
+// it, and the bound tracks live granted runs, since a guest awaits each host.* call
+// rather than pipelining.
+func guardHandler(guard sandbox.EgressGuardCapable, path string, maxConcurrent int) http.Handler {
+	return sandbox.EgressGuardHTTPHandler(guard, path, maxConcurrent*2, 2)
+}
+
+// guardRPC wraps the Connect handler in the checks that run before Connect reads the
+// body: credentials first, then the declared body size against the cap on raw request
+// bytes, then a decode slot for the authenticated caller.
+func guardRPC(verifier rpc.TokenVerifier, maxConcurrent int, handler http.Handler) http.Handler {
+	return rpc.AuthenticateHTTP(verifier, rpc.LimitBody(maxRequestBytes, rpc.LimitHTTPConcurrency(maxConcurrent*2, handler)))
 }
 
 // writeMetrics renders a minimal Prometheus text exposition. It covers the biggest
@@ -949,4 +1132,22 @@ func validateLimiterConfig(maxConcurrent, perKey, ratePerMin, burst int) error {
 		return fmt.Errorf("rate_per_min and rate_burst must be non-negative")
 	}
 	return nil
+}
+
+// unknownVariables lists the PLIMSOLL_ and SANDBOX_ variables in environ that the help
+// text does not name. The help text names every variable the daemon reads
+// (TestUsageNamesEveryVariable), so a name it lacks is one the daemon ignores.
+func unknownVariables(environ []string, help string) []string {
+	var out []string
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if !strings.HasPrefix(name, "PLIMSOLL_") && !strings.HasPrefix(name, "SANDBOX_") {
+			continue
+		}
+		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`).MatchString(help) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

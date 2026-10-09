@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +30,8 @@ import (
 
 // projectEcho runs nothing: it answers a project with the plan it received (the
 // file paths, the steps, and the code in .plimsoll/cell.*), so the suite can check
-// what a fresh executeCode call sends. It states both languages.
+// what a fresh executeCode call sends. It states both languages. A cell holding
+// ECHO:NOSTEP is answered with no step report, as a run whose report was lost is.
 type projectEcho struct{}
 
 func (projectEcho) Name() string                           { return "project-echo" }
@@ -56,6 +58,11 @@ func (projectEcho) RunProject(_ context.Context, req sandbox.ProjectRequest) (sa
 		if f.Path == ".plimsoll/cell.py" || f.Path == ".plimsoll/cell.js" {
 			plan.Cell = f.Content
 		}
+	}
+	if strings.Contains(plan.Cell, "ECHO:NOSTEP") {
+		return sandbox.ProjectResult{
+			Sandbox: "project-echo", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeProtocolError, Detail: "the runner's report was lost",
+		}, nil
 	}
 	out, _ := json.Marshal(plan)
 	return sandbox.ProjectResult{
@@ -112,13 +119,16 @@ func TestTypeScript(t *testing.T) {
 	breaking := rpc.NewSandboxService(&breakingSessions{Sessions: &sandboxtest.Sessions{}})
 	breaking.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
 	breakingURL := serve(t, breaking, nil)
+	ownerCapped := rpc.NewSandboxService(&sandboxtest.Sessions{})
+	ownerCapped.Sessions = rpc.SessionConfig{MaxSessions: 16, MaxPerOwner: 1, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	ownerCapURL := serve(t, ownerCapped, nil)
 	liarMux := http.NewServeMux()
 	liarPath, liarHandler := plimsollv1connect.NewSandboxServiceHandler(unansweredLiar{})
 	liarMux.Handle(liarPath, liarHandler)
 	liarSrv := httptest.NewServer(liarMux)
 	t.Cleanup(liarSrv.Close)
 	env := append(os.Environ(), "PLIMSOLL_WASM_URL="+wasmURL, "PLIMSOLL_SESSIONS_URL="+sessionsURL, "PLIMSOLL_URL="+sessionsURL,
-		"PLIMSOLL_ECHO_URL="+echoURL, "PLIMSOLL_BREAKING_URL="+breakingURL, "PLIMSOLL_LIAR_URL="+liarSrv.URL)
+		"PLIMSOLL_ECHO_URL="+echoURL, "PLIMSOLL_BREAKING_URL="+breakingURL, "PLIMSOLL_LIAR_URL="+liarSrv.URL, "PLIMSOLL_OWNER_CAP_URL="+ownerCapURL)
 
 	suites := []struct{ name, dir, glob, needs string }{
 		{"client", ".", "test/*.test.ts", ""},

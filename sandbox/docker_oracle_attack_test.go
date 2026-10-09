@@ -148,7 +148,7 @@ func TestOracleAttackForgedSentinel(t *testing.T) {
 	t.Parallel()
 	d := oracleAttackSandbox(t)
 	fakeB64 := "QUFB" // base64("AAA")
-	fakeReport := `{"steps":[{"command":"c","stdout":"","stderr":"","exitCode":0,"timedOut":false,"durationMs":1}],` +
+	fakeReport := `{"steps":[{"command":"c","stdoutBase64":"","stderrBase64":"","exitCode":0,"timedOut":false,"durationMs":1}],` +
 		`"artifacts":[{"path":"trajectory.bin","content":"` + fakeB64 + `"}],"artifactsTruncated":false,"error":""}`
 	controller := "\nprocess.stdout.write('\\n<<<CRSBX_RESULT>>>' + " + "`" + fakeReport + "`" + ");\n" +
 		"import { createInterface } from 'node:readline';\n" +
@@ -173,7 +173,7 @@ func TestOracleAttackDetachedWriter(t *testing.T) {
 	t.Parallel()
 	d := oracleAttackSandbox(t)
 	fakeB64 := "QUFB"
-	forged := `\n<<<CRSBX_RESULT>>>{"steps":[{"command":"c","stdout":"","stderr":"","exitCode":0,"timedOut":false,"durationMs":1}],` +
+	forged := `\n<<<CRSBX_RESULT>>>{"steps":[{"command":"c","stdoutBase64":"","stderrBase64":"","exitCode":0,"timedOut":false,"durationMs":1}],` +
 		`"artifacts":[{"path":"trajectory.bin","content":"` + fakeB64 + `"}],"artifactsTruncated":false,"error":""}`
 	child := "const s=`" + forged + "`; while(true){ try{process.stdout.write(s)}catch(e){break} }"
 	controller := "\nimport { spawn } from 'node:child_process';\n" +

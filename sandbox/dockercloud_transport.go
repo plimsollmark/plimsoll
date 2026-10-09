@@ -80,10 +80,14 @@ const (
 // dcCreateError is a failed createSandbox, with how far it got.
 type dcCreateError struct {
 	stage dcCreateStage
-	// id is the sandbox's ID when the service named it before the failure, so the
-	// cleanup deletes by ID rather than by name.
-	id  string
-	err error
+	// id is the sandbox's ID when the service named it, under this create's name,
+	// before the failure, so the cleanup deletes by ID rather than by name.
+	id string
+	// foreign: the service named a sandbox under another name. Its ID is not used, and
+	// what this create made cannot be accounted for, so the run is charged as one
+	// whose delete gave up.
+	foreign bool
+	err     error
 }
 
 func (e *dcCreateError) Error() string { return e.err.Error() }

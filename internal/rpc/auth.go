@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -106,7 +105,9 @@ func authenticatePrincipal(ctx context.Context, header string, verifier TokenVer
 // or unmarshals the request body. The unary interceptor alone runs after that work,
 // allowing unauthenticated slow-body and decode amplification against the daemon.
 // The interceptor remains the procedure-scope gate and fallback for handlers that
-// are embedded without this HTTP middleware.
+// are embedded without this HTTP middleware. A refusal leaves the body unread and
+// unclosed: closing it would read it (Go's HTTP/1.x server drains a small unread body
+// on Close), and the server's unreadbody wrapper closes the connection instead.
 func AuthenticateHTTP(verifier TokenVerifier, next http.Handler) http.Handler {
 	if verifier == nil {
 		return next
@@ -117,13 +118,11 @@ func AuthenticateHTTP(verifier TokenVerifier, next http.Handler) http.Handler {
 		p, err := authenticatePrincipal(r.Context(), r.Header.Get("Authorization"), verifier)
 		if err != nil {
 			failures.note()
-			_ = r.Body.Close() // do not drain attacker-controlled slow/large bodies
 			_ = errorWriter.Write(w, r, err)
 			return
 		}
 		scope, mapped := requiredScopes[r.URL.Path]
 		if !mapped || !p.HasScope(scope) {
-			_ = r.Body.Close()
 			_ = errorWriter.Write(w, r, refuse(connect.CodePermissionDenied, sandbox.RefusalPermission,
 				fmt.Errorf("token lacks required scope %q", scope)))
 			return
@@ -157,11 +156,15 @@ func (a *authFailureLog) note() {
 }
 
 // LimitHTTPConcurrency bounds authenticated requests while Connect is still
-// reading/decoding them, before the run limiter can be acquired. A slot covers the
-// body only: it is given back once the body has been read to its end (or closed),
-// so a long run or a session call waiting for its turn does not hold decode
-// capacity. One caller may hold at most half the slots at once, so one caller's
-// bodies, however slowly they arrive, always leave the other half for everyone else.
+// reading and decoding them, before the run limiter can be acquired. A slot covers
+// the body's reading, decompression and unmarshalling: it is given back once the
+// request has been decoded (ReleaseDecodeSlot, the first interceptor, which Connect
+// runs only on a decoded request) or the handler returns, so a long run or a session
+// call waiting for its turn does not hold decode capacity. Connect reads the whole
+// body before it decompresses and unmarshals it, so a slot given back at the body's
+// end let more decoding run at once than the slots allow (round-7 review,
+// 2026-10-08). One caller may hold at most half the slots at once, so one caller's
+// requests, however slowly they arrive, always leave the other half for everyone else.
 func LimitHTTPConcurrency(n int, next http.Handler) http.Handler {
 	if n < 1 {
 		n = 1
@@ -172,7 +175,6 @@ func LimitHTTPConcurrency(n int, next http.Handler) http.Handler {
 	held := map[string]int{}
 	errorWriter := connect.NewErrorWriter()
 	refuseFull := func(w http.ResponseWriter, r *http.Request) {
-		_ = r.Body.Close()
 		_ = errorWriter.Write(w, r, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
 			errors.New("RPC decode capacity exhausted, retry shortly")))
 	}
@@ -203,29 +205,46 @@ func LimitHTTPConcurrency(n int, next http.Handler) http.Handler {
 		var once sync.Once
 		release := func() { once.Do(func() { <-sem; leave() }) }
 		defer release()
-		r.Body = &decodeSlotBody{ReadCloser: r.Body, release: release}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), decodeSlotKey{}, release)))
 	})
 }
 
-// decodeSlotBody gives its request's decode slot back when the body ends: at EOF, on
-// a read error, or when it is closed.
-type decodeSlotBody struct {
-	io.ReadCloser
-	release func()
-}
+type decodeSlotKey struct{}
 
-func (b *decodeSlotBody) Read(p []byte) (int, error) {
-	n, err := b.ReadCloser.Read(p)
-	if err != nil {
-		b.release()
+// ReleaseDecodeSlot gives back the decode slot LimitHTTPConcurrency holds for the
+// request. It must come first among a handler's interceptors: Connect calls an
+// interceptor with the request already decoded, so this is the earliest point at which
+// the decoding the slot bounds is over. Without it the slot is held until the handler
+// returns, a whole run included.
+func ReleaseDecodeSlot() connect.UnaryInterceptorFunc {
+	return func(next connect.UnaryFunc) connect.UnaryFunc {
+		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+			if release, ok := ctx.Value(decodeSlotKey{}).(func()); ok {
+				release()
+			}
+			return next(ctx, req)
+		}
 	}
-	return n, err
 }
 
-func (b *decodeSlotBody) Close() error {
-	b.release()
-	return b.ReadCloser.Close()
+// LimitBody caps a request body at n bytes. A body that declares more is refused
+// before any of it is read, at the constant cost of a refused credential; without that
+// check the cap trips only once n bytes have arrived, so a caller declaring 100 MB and
+// sending two bytes held its handler, connection and decode slot until the read
+// timeout. A body that declares no length (chunked) is cut off once it passes n.
+func LimitBody(n int64, next http.Handler) http.Handler {
+	errorWriter := connect.NewErrorWriter()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > n {
+			_ = errorWriter.Write(w, r, refuse(connect.CodeResourceExhausted, sandbox.RefusalRequest,
+				fmt.Errorf("request body declares %d bytes, over the %d-byte limit", r.ContentLength, n)))
+			return
+		}
+		r2 := new(http.Request)
+		*r2 = *r
+		r2.Body = http.MaxBytesReader(w, r.Body, n)
+		next.ServeHTTP(w, r2)
+	})
 }
 
 func bearerToken(header string) string {

@@ -1,0 +1,7 @@
+# What publish-python.yml builds the client with, every file pinned by hash and installed
+# with --require-hashes --no-deps; the build then runs with --no-isolation, so nothing is
+# resolved at build time. Python 3.10 and 3.11 would also need tomli; the workflow uses 3.13.
+build==1.6.1 --hash=sha256:ecd351a4be9d35a9eaaba244a7687143c9c7d4aea6ac964e7e7ddab20cbcf4e7
+packaging==25.0 --hash=sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484
+pyproject_hooks==1.2.0 --hash=sha256:9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913
+setuptools==84.0.0 --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670

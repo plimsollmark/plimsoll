@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,15 +23,20 @@ import (
 // and with deny-all egress.
 func TestE2BCreateDeniesAllEgress(t *testing.T) {
 	var gotBody []byte
+	var stamp e2bStamp
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotBody, _ = io.ReadAll(r.Body)
+		if r.Method == http.MethodGet {
+			stamp.serveRecord(w, r) // every create reads its new sandbox back
+			return
+		}
+		gotBody = stamp.takeFrom(r)
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"sandboxID":"sb-1","envdAccessToken":"envd-tok","trafficAccessToken":"traffic-tok"}`))
 	}))
 	defer srv.Close()
 	e := &E2B{APIKey: "k", APIBase: srv.URL}
 
-	vm, err := e.create(context.Background(), 30*time.Second)
+	vm, err := e.create(context.Background(), 30*time.Second, e2bCreate{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -67,8 +73,13 @@ func TestE2BCreateDeniesAllEgress(t *testing.T) {
 
 func TestE2BCreateGrantUsesAllowlistAndBetaHeaderTransform(t *testing.T) {
 	var gotBody []byte
+	var stamp e2bStamp
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotBody, _ = io.ReadAll(r.Body)
+		if r.Method == http.MethodGet {
+			stamp.serveRecord(w, r)
+			return
+		}
+		gotBody = stamp.takeFrom(r)
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"sandboxID":"sb-guard","envdAccessToken":"envd","trafficAccessToken":"traffic"}`))
 	}))
@@ -78,7 +89,7 @@ func TestE2BCreateGrantUsesAllowlistAndBetaHeaderTransform(t *testing.T) {
 		Endpoint: &guardEndpoint{URL: "https://guard.example/v1/e2b/guard", Host: "guard.example", Path: "/v1/e2b/guard"},
 		Token:    "crg_test-token",
 	}
-	if _, err := e.create(context.Background(), 30*time.Second, cfg); err != nil {
+	if _, err := e.create(context.Background(), 30*time.Second, e2bCreate{guard: cfg}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	var body struct {
@@ -149,6 +160,9 @@ func TestParseE2BGuardURL(t *testing.T) {
 		"https://guard.example:8443/v1/e2b/guard",
 		"https://guard.example/v1/e2b/guard?x=1",
 		"https://guard.example/v1/../guard",
+		// E2B's rule takes a domain name and refuses an address at create.
+		"https://203.0.113.7/v1/e2b/guard",
+		"https://[2001:db8::7]/v1/e2b/guard",
 	} {
 		if _, err := parseE2BGuardURL(raw); err == nil {
 			t.Errorf("parseE2BGuardURL(%q) unexpectedly succeeded", raw)
@@ -202,14 +216,17 @@ func TestE2BReadFileDistinguishesMissingFromInfrastructureFailure(t *testing.T) 
 
 func TestE2BUsesEarlierCallerDeadlineForVM(t *testing.T) {
 	var createTimeout float64
+	var stamp e2bStamp
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/sandboxes" && r.Method == http.MethodPost:
 			var body map[string]any
-			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.Unmarshal(stamp.takeFrom(r), &body)
 			createTimeout, _ = body["timeout"].(float64)
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"sandboxID":"sb-1","envdAccessToken":"access","trafficAccessToken":"traffic"}`))
+		case strings.HasPrefix(r.URL.Path, "/sandboxes/") && r.Method == http.MethodGet:
+			stamp.serveRecord(w, r)
 		case r.URL.Path == "/process.Process/Start":
 			_, _ = w.Write(frame(0, []byte(`{"event":{"end":{"exitCode":0,"exited":true}}}`)))
 			_, _ = w.Write(frame(0x2, []byte(`{}`)))
@@ -259,19 +276,11 @@ func TestE2BRejectsHostAPIGrantsWithoutGuardBeforeCreatingVM(t *testing.T) {
 // killed), never as a usable VM with an unauthenticated data plane.
 func TestE2BCreateFailsClosedWithoutEnvdToken(t *testing.T) {
 	killed := make(chan string, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			killed <- r.URL.Path
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"sandboxID":"sb-2"}`))
-	}))
+	srv := httptest.NewServer(createAnswering(t, `{"sandboxID":"sb-2"}`, true, killed))
 	defer srv.Close()
 	e := &E2B{APIKey: "k", APIBase: srv.URL}
 
-	if _, err := e.create(context.Background(), 30*time.Second); err == nil {
+	if _, err := e.create(context.Background(), 30*time.Second, e2bCreate{}); err == nil {
 		t.Fatal("create without envdAccessToken must fail closed")
 	}
 	select {
@@ -286,19 +295,11 @@ func TestE2BCreateFailsClosedWithoutEnvdToken(t *testing.T) {
 
 func TestE2BCreateFailsClosedWithoutTrafficToken(t *testing.T) {
 	killed := make(chan string, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			killed <- r.URL.Path
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"sandboxID":"sb-traffic","envdAccessToken":"envd"}`))
-	}))
+	srv := httptest.NewServer(createAnswering(t, `{"sandboxID":"sb-traffic","envdAccessToken":"envd"}`, true, killed))
 	defer srv.Close()
 	e := &E2B{APIKey: "k", APIBase: srv.URL}
 
-	if _, err := e.create(context.Background(), 30*time.Second); err == nil || !strings.Contains(err.Error(), "traffic access token") {
+	if _, err := e.create(context.Background(), 30*time.Second, e2bCreate{}); err == nil || !strings.Contains(err.Error(), "traffic access token") {
 		t.Fatalf("err = %v, want a missing traffic-token failure", err)
 	}
 	select {
@@ -328,7 +329,7 @@ func TestE2BCreateNoSilentLeakOnUnparseableResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 	e := &E2B{APIKey: "k", APIBase: srv.URL}
-	vm, err := e.create(context.Background(), 30*time.Second)
+	vm, err := e.create(context.Background(), 30*time.Second, e2bCreate{})
 	if err == nil || !strings.Contains(err.Error(), "sandbox ID") {
 		t.Fatalf("err = %v, want an explicit no-sandbox-ID error", err)
 	}
@@ -430,6 +431,7 @@ type e2bSmokeCalls struct {
 	procCmd     string
 	procCwd     string
 	procEnvs    map[string]string
+	starts      int // every process started, the language probe included
 	deleted     bool
 }
 
@@ -438,11 +440,15 @@ type e2bSmokeCalls struct {
 func e2bSmokeFake(t *testing.T, report string, exitCode int) (*httptest.Server, *e2bSmokeCalls) {
 	t.Helper()
 	calls := &e2bSmokeCalls{}
+	var stamp e2bStamp
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/sandboxes" && r.Method == http.MethodPost:
+			stamp.takeFrom(r)
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"sandboxID":"sb-smoke","envdAccessToken":"envd","trafficAccessToken":"traffic"}`))
+		case strings.HasPrefix(r.URL.Path, "/sandboxes/") && r.Method == http.MethodGet:
+			stamp.serveRecord(w, r)
 		case strings.HasPrefix(r.URL.Path, "/sandboxes/") && r.Method == http.MethodDelete:
 			calls.deleted = true
 			w.WriteHeader(http.StatusOK)
@@ -468,6 +474,7 @@ func e2bSmokeFake(t *testing.T, report string, exitCode int) (*httptest.Server, 
 			var start struct {
 				Process struct {
 					Cmd  string            `json:"cmd"`
+					Args []string          `json:"args"`
 					Cwd  string            `json:"cwd"`
 					Envs map[string]string `json:"envs"`
 				} `json:"process"`
@@ -475,9 +482,15 @@ func e2bSmokeFake(t *testing.T, report string, exitCode int) (*httptest.Server, 
 			if len(raw) > 5 {
 				_ = json.Unmarshal(raw[5:], &start) // strip the connect envelope header
 			}
-			calls.procCmd, calls.procCwd, calls.procEnvs = start.Process.Cmd, start.Process.Cwd, start.Process.Envs
+			calls.starts++
+			out := report
+			if strings.Contains(strings.Join(start.Process.Args, " "), "python3") {
+				out = "42\n" // the language probe: this template runs Python
+			} else {
+				calls.procCmd, calls.procCwd, calls.procEnvs = start.Process.Cmd, start.Process.Cwd, start.Process.Envs
+			}
 			w.Header().Set("Content-Type", "application/connect+json")
-			stdout := base64.StdEncoding.EncodeToString([]byte(report))
+			stdout := base64.StdEncoding.EncodeToString([]byte(out))
 			_, _ = w.Write(frame(0, []byte(`{"event":{"data":{"stdout":"`+stdout+`"}}}`)))
 			_, _ = w.Write(frame(0, []byte(`{"event":{"end":{"exitCode":`+strconv.Itoa(exitCode)+`,"exited":true}}}`)))
 			_, _ = w.Write(frame(0x2, []byte(`{}`)))
@@ -516,6 +529,10 @@ func TestE2BSmokeTestVerifiesTemplateEndToEnd(t *testing.T) {
 	}
 	if !calls.deleted {
 		t.Error("smoke did not tear down its throwaway sandbox")
+	}
+	// The language probe found python3, so the provider states both languages.
+	if got := e.Environments().Project.Languages; len(got) != 2 || got[0] != LanguageJavaScript || got[1] != LanguagePython {
+		t.Errorf("languages after the smoke = %v, want javascript and python", got)
 	}
 }
 
@@ -732,5 +749,137 @@ func TestE2BSandboxIDAndErrorBodiesAreChecked(t *testing.T) {
 	_, err := e.RunJavaScript(context.Background(), Request{Code: "1"})
 	if err == nil || strings.Contains(err.Error(), key) || len(err.Error()) > 700 {
 		t.Fatalf("a vendor error body: %d bytes: %.200v", len(fmt.Sprint(err)), err)
+	}
+}
+
+// e2bStamp remembers the metadata a fake control plane's create was given and answers
+// the record read every create now makes: a create proves the new sandbox carries this
+// instance's and this create's stamps before its ID is used for anything (round-4
+// review, 2026-10-08), so every fake control plane has to answer GET /sandboxes/<id>.
+type e2bStamp struct {
+	mu sync.Mutex
+	md map[string]string
+}
+
+// takeFrom reads the create's metadata out of r's body and returns the raw body, so a
+// fake that parses the body itself can go on with it.
+func (s *e2bStamp) takeFrom(r *http.Request) []byte {
+	raw, _ := io.ReadAll(r.Body)
+	var req struct {
+		Metadata map[string]string `json:"metadata"`
+	}
+	_ = json.Unmarshal(raw, &req)
+	s.mu.Lock()
+	s.md = req.Metadata
+	s.mu.Unlock()
+	return raw
+}
+
+// serveRecord answers GET /sandboxes/<id> as the control plane does for a running
+// sandbox this instance created.
+func (s *e2bStamp) serveRecord(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	md := s.md
+	s.mu.Unlock()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"sandboxID": strings.TrimPrefix(r.URL.Path, "/sandboxes/"), "state": "running", "metadata": md})
+}
+
+// createAnswering is a control plane whose create answers answer. Its record of the
+// sandbox named there carries the create's own stamp when ours is true, and another
+// create's stamp otherwise; a delete is reported on killed; a listing is empty.
+func createAnswering(t *testing.T, answer string, ours bool, killed chan<- string) http.HandlerFunc {
+	var mu sync.Mutex
+	var stamp map[string]string
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/sandboxes":
+			var req struct {
+				Metadata map[string]string `json:"metadata"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			mu.Lock()
+			stamp = req.Metadata
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(answer))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/sandboxes/"):
+			mu.Lock()
+			md := map[string]string{"instance": stamp["instance"], "lease": stamp["lease"]}
+			mu.Unlock()
+			if !ours {
+				md["lease"] = "another-create"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"sandboxID": strings.TrimPrefix(r.URL.Path, "/sandboxes/"), "state": "running", "metadata": md})
+		case r.Method == http.MethodDelete:
+			killed <- r.URL.Path
+			w.WriteHeader(http.StatusOK)
+		default:
+			_, _ = w.Write([]byte("[]"))
+		}
+	}
+}
+
+// A failed create's answer that names a sandbox the control plane's record shows under
+// another create's stamp is not deleted by that ID: the answer was already found wrong,
+// and deleting by its ID could delete another run's sandbox (round-3 review). The create
+// is treated as lost instead, so orphan reconciliation reaps what it made by its stamp.
+func TestE2BCreateDoesNotDeleteASandboxThatIsNotItsOwn(t *testing.T) {
+	killed := make(chan string, 1)
+	srv := httptest.NewServer(createAnswering(t, `{"sandboxID":"sb-someone-else"}`, false, killed))
+	defer srv.Close()
+	e := &E2B{APIKey: "k", APIBase: srv.URL}
+	if _, err := e.create(context.Background(), 30*time.Second, e2bCreate{}); err == nil {
+		t.Fatal("create without envdAccessToken must fail closed")
+	}
+	select {
+	case path := <-killed:
+		t.Fatalf("deleted %s, which the control plane records as another create's", path)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+// A create whose answer is complete and well formed, but names a sandbox the control
+// plane records under another stamp, fails and deletes nothing: its ID would otherwise
+// be used to run code and, on the way out, to delete someone else's microVM (round-4
+// review, 2026-10-08). The create is treated as lost, so orphan reconciliation reaps
+// by stamp whatever it really made.
+func TestE2BCreateProvesTheSandboxIsItsOwn(t *testing.T) {
+	killed := make(chan string, 1)
+	answer := `{"sandboxID":"sb-someone-else","envdAccessToken":"envd","trafficAccessToken":"traffic"}`
+	srv := httptest.NewServer(createAnswering(t, answer, false, killed))
+	defer srv.Close()
+	e := &E2B{APIKey: "k", APIBase: srv.URL}
+	_, err := e.create(context.Background(), 30*time.Second, e2bCreate{})
+	if err == nil || !strings.Contains(err.Error(), "another instance or lease stamp") {
+		t.Fatalf("create = %v; want it refused because the record carries another stamp", err)
+	}
+	select {
+	case path := <-killed:
+		t.Fatalf("deleted %s, which the control plane records as another create's", path)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+// A leaked sandbox bills until E2B's own timeout for it, which the create asks for and
+// E2B starts no earlier than the answer, so the handle's billing end covers the
+// create's own time and the ten seconds the timeout carries past the run's budget. A
+// session used to recompute a shorter one of its own and so stopped charging early
+// (round-4 review, 2026-10-08); it now reads this.
+func TestE2BCreateBillsUntilTheTimeoutItAskedFor(t *testing.T) {
+	killed := make(chan string, 1)
+	answer := `{"sandboxID":"sb-1","envdAccessToken":"envd","trafficAccessToken":"traffic"}`
+	srv := httptest.NewServer(createAnswering(t, answer, true, killed))
+	defer srv.Close()
+	e := &E2B{APIKey: "k", APIBase: srv.URL}
+	const timeout = 30 * time.Second
+	before := time.Now()
+	vm, err := e.create(context.Background(), timeout, e2bCreate{})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if want := before.Add(timeout + 10*time.Second); vm.billEnd.Before(want) {
+		t.Fatalf("billEnd is %v before the timeout it asked for ends; it must not charge less",
+			want.Sub(vm.billEnd))
 	}
 }

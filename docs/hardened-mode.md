@@ -11,12 +11,15 @@ unless all of the following are verifiably in force:
 - VM or verified kernel isolation, the two strongest of the four levels described in
   [isolation-tiers.md](isolation-tiers.md);
 - multi-client auth, where each caller has its own token ([callers.md](callers.md));
-- TLS on any non-loopback listener (the metrics listener included), that is, any
+- TLS on any non-loopback listener (the metrics listener and the one hosted sandboxes call
+  for API access, `PLIMSOLL_GUARD_ADDR`, included), that is, any
   listener not bound to a loopback address such as `127.0.0.1`, `::1` or `localhost`,
   which only this machine can reach;
-- an execution surface that cannot change under the daemon. For docker and Docker Cloud
-  that means <dfn>*pinned*</dfn> images (`SANDBOX_REQUIRE_PINNED_IMAGES=1`), each fixed
-  to one exact version by a hash of its content, and for docker also no `unconfined`
+- an execution surface that cannot change under the daemon. For docker that means
+  <dfn>*pinned*</dfn> images (`SANDBOX_REQUIRE_PINNED_IMAGES=1`), each fixed to one exact
+  version by a hash of its content. For Docker Cloud it means a pinned image or an image
+  from the account's own store, with `SANDBOX_DOCKERCLOUD_API=connect` set explicitly,
+  since only that API reports which image a sandbox booted. For docker also no `unconfined`
   <dfn>*seccomp*</dfn>: seccomp is the kernel feature that limits which requests a
   container may make to the kernel, and `unconfined` switches it off.
   <dfn>*E2B*</dfn>, a hosted service that runs each sandbox in a small virtual machine,
@@ -32,11 +35,16 @@ unless all of the following are verifiably in force:
   `SANDBOX_MAX_CONCURRENT`, since a cap equal to the global one lets one caller hold
   every slot). A rate limit bounds what a caller starts, not the slots its long runs or
   open <dfn>*sessions*</dfn> hold; a session is one sandbox kept open for many calls;
+- with sessions on, a per-caller session cap (`SANDBOX_MAX_SESSIONS_PER_CALLER`
+  positive): a suspended session holds no concurrency slot, so the concurrency cap does
+  not bound how many one caller keeps open;
 - with a <dfn>*provider*</dfn> (the backend that runs the code) billed by the second
   (E2B, Docker Cloud), a daily allowance on every
   caller, its `paid_seconds_per_day` in the clients file ([callers.md](callers.md)): a
   rate limit bounds runs per minute, not the seconds of virtual machine the operator
-  pays for. This one is checked before the startup smoke test, which creates a billed
-  virtual machine.
+  pays for.
 
-Every violation is reported at once, so it is one fix pass rather than a startup loop.
+Every rule but isolation is checked before the startup smoke test, which on E2B and
+Docker Cloud creates a billed virtual machine; isolation is checked once the smoke test
+has proven the isolation level. Every violation is reported at once, so it is one fix pass rather
+than a startup loop.

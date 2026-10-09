@@ -43,7 +43,9 @@ and change what every earlier call did, because they all act for the same person
   user without one.
 - **The strongest setup is one plimsoll credential per customer** ([callers.md](callers.md)),
   with `SANDBOX_MAX_SESSIONS_PER_CALLER` bounding each, and one session per conversation or
-  job inside it.
+  job inside it. An app that serves many users on one credential names each session's user
+  (`owner`) and sets `SANDBOX_MAX_SESSIONS_PER_OWNER`, so one user cannot take every place
+  of the credential.
 - **A sandbox that has run code is never used for anyone else.** Closing a session, or its
   end, deletes its sandbox. plimsoll keeps no pool that hands a used sandbox to another
   session, and the cleanup between calls is not a way to make a used sandbox clean.
@@ -79,7 +81,8 @@ separate one call is from the next.
   (`sandbox.ErrGrantNotForSessions`). Turn it on only for an API whose access may be shared
   with every call of the session. The grant ends with its call; a request plimsoll had
   already checked when the call ended can still reach the API, and it is in that call's
-  trace.
+  trace. A `route_max_calls` cap counts every granted call of the session together, so a
+  cap of two jobs is two jobs per session; the `max_calls` budget is each call's own.
 - **A longer foothold.** Code has the session's lifetime (30 minutes by default, 12 hours
   at most) to probe the sandbox, instead of one run's timeout, so for code you do not trust
   choose the strongest sandbox you can run.
@@ -114,7 +117,8 @@ which every implementation runs. The suite checks that:
 |---|---|
 | `openshell` | Yes. How it keeps the boundary between calls: [docs/openshell.md](openshell.md#sessions). |
 | `docker` | Yes, with a project image configured, under either runtime: <dfn>*runc*</dfn>, docker's default, which shares the machine's kernel, or <dfn>*gVisor*</dfn>, which puts a kernel of its own between the code and the machine's. How: [Docker](#docker) below. |
-| `e2b`, `dockercloud` | Not yet. Each would need its own live proof, and their live suites spend money. |
+| `e2b` | Yes. <dfn>*E2B*</dfn> is a hosted service that runs each sandbox in a small virtual machine of its own. How it keeps the boundary between calls: [E2B](#e2b) below. |
+| `dockercloud` | Not yet. It would need its own live proof, and its live suite spends money. |
 | `wasm` | No. The engine runs in the daemon's own process, and keeping hostile code's state there between calls is the wrong direction. |
 
 ## Turning them on
@@ -132,9 +136,10 @@ startup check proves its runs; this one proves what only a session does, on this
 |---|---|
 | `SANDBOX_MAX_SESSIONS` | Open sessions at once, daemon-wide. Default 0: sessions off. |
 | `SANDBOX_MAX_SESSIONS_PER_CALLER` | Open sessions one caller may hold, suspended ones included. Default 0: no cap beyond `SANDBOX_MAX_SESSIONS`. `PLIMSOLL_HARDENED=1` requires it with sessions on: a suspended session holds no concurrency slot, so without it one caller with a short idle timeout could hold every place. With docker, keep `SANDBOX_MAX_SESSIONS` below `SANDBOX_MAX_CONCURRENT` (the daemon warns otherwise): a paused docker session keeps its slot. |
+| `SANDBOX_MAX_SESSIONS_PER_OWNER` | Open sessions one owner of one caller may hold: the end user an open names (`OpenSessionRequest.owner`, an opaque `[A-Za-z0-9._:-]{1,64}` name; anything else is refused, since dropping it would lift the cap). Default 0: no per-owner cap; an open with no owner counts against none. At the cap, the open closes that owner's least recently used session with no call in progress (a suspended one included) and takes its place, so a full daemon still serves it (the closed session stays closed if the new open then fails); the closed session's later calls are refused, not dispatched, with the end `replaced`. When every one is running a call, the open is refused, not dispatched, reason `capacity`. The official clients send hex(HMAC-SHA256(key = SHA-256(`"plimsoll session owner key v2\n"` + the caller's token), message = `"plimsoll session owner v2\n"` + owner)), never the name, and the daemon never logs it. The key is derived rather than the token itself because HMAC replaces a key longer than 64 bytes with its SHA-256, which for a long imported token is exactly the `token_sha256` the daemon's clients file holds; derived, it is 32 bytes and keyed by the token alone. Closing rather than refusing: a refused user would be locked out of new conversations until an old session expired. Counted per daemon, in memory: behind [placement](placement.md) across several daemons, one owner can hold that many on each. The open's rate and concurrency slot are checked before anything is closed, so a refused open closes nothing, and a victim whose close fails stays open and the open is refused. `Describe` states the cap as `max_sessions_per_owner` (with `max_sessions_per_caller`), so an app relying on it can check. |
 | `SANDBOX_SESSION_POOL` | Docker only: containers kept ready for sessions, each never used and with its interpreters already running ([Docker](#docker), "A warm pool"). Default 0: none. At most `SANDBOX_MAX_SESSIONS`. |
 | `SANDBOX_SESSION_LIFETIME` | Absolute lifetime from open. Default `30m`, at most `12h`. A request may ask for less. |
-| `SANDBOX_SESSION_IDLE` | A session with no call for this long is suspended: its sandbox is stopped (`openshell`) or paused (`docker`). Default `5m`; `0` never suspends. A request may ask for less. |
+| `SANDBOX_SESSION_IDLE` | A session with no call for this long is suspended: its sandbox is stopped (`openshell`) or paused (`docker`, `e2b`). Default `5m`; `0` never suspends, which the daemon refuses with a provider billed by the second (`e2b`), since such a session would bill until its lifetime. A request may ask for less. |
 | `SANDBOX_SESSION_DISK_MB` | A call that leaves more than this in the session's files ends the session. Default 1024; 0 means no bound, and nothing is measured. It is measured after each call, not enforced during one ([openshell.md](openshell.md#sessions) says why the `openshell` provider's per-run disk cap does not apply to sessions). On docker it is the used space of the session's three size-capped in-memory filesystems, a file deleted while a process holds it open included. On `openshell` it is a walk of the session's files, which stops at 200,000 entries (counted as over the budget) and which code of the session can hide files from (a deleted file still held open, a directory swapped for a link during the walk), so there it is an estimate, not a bound. |
 
 The defaults are starting points, not measurements of real use:
@@ -230,8 +235,8 @@ interpreter per language, a Python or Node.js process that stays alive between c
   dropped.
 - **What ends an interpreter.** The call's deadline (the interpreter is killed, since a
   cell stuck in a loop cannot be trusted to stop), code that exits it or kills it, and
-  anything that stops the sandbox: an `openshell` suspend or recovery. A docker pause
-  keeps it. The next cell then starts a fresh one and says so.
+  anything that stops the sandbox: an `openshell` suspend or recovery, or an `e2b`
+  suspend (its pause cuts the relays). A docker pause keeps it. The next cell then starts a fresh one and says so.
 - **No API access.** A cell carries no grant: the interpreter outlives the call, and its
   code with it. A snippet or project call in the same session can carry one if the grant
   allows sessions ([above](#what-a-session-gives-up)).
@@ -262,7 +267,7 @@ The interpreters and the programs that drive them are in
 [sandbox/internal/sessionkit](../sandbox/internal/sessionkit/); every provider with sessions
 runs them. Beside each interpreter the session keeps a relay: a small process attached to
 the daemon through one exec held open (`docker exec` on docker, an exec stream on
-`openshell`), which writes a cell's files, hands its code to the interpreter and streams its
+`openshell`, a process stream through E2B's in-sandbox agent on `e2b`), which writes a cell's files, hands its code to the interpreter and streams its
 output back. A warm cell's code therefore reaches its interpreter without a new process;
 the call still runs the docker read-back on the host and, after the answer, the sweep. With the sweep after answering
 too, a warm cell took about 5 ms on `openshell`, 14 ms under runc and 15 ms under gVisor,
@@ -273,9 +278,10 @@ against 73 to 107 ms with a process per cell and the sweep before answering (mea
 What the relay says is not trusted with anything that matters, because code of the session
 can reach it on docker. The relay loads the same small library as the sweep, which makes it
 unreadable to other processes of the session once it has started, but in the moment it
-starts, an interpreter the session keeps can open its input and output: a timer polling
+starts, an interpreter the session keeps could open its input and output: a timer polling
 every millisecond did in 3 of 3 tries (2026-10-01), and could then read later cells' code
-and write their answers. The interpreters' own pipes and control socket, under
+and write their answers. What follows is what keeps that
+from mattering, and it holds whether or not anything of the session's is running. The interpreters' own pipes and control socket, under
 `/tmp/.plimsoll-interp`, belong to the session's user, so every process of the session can
 reach them at any time. On `openshell` the relay cannot load the library (the gateway then
 refuses its connection to the interpreter), but the `openshell` sandbox walls each exec's processes off
@@ -373,13 +379,28 @@ A docker session is the container a project run gets, kept for the session:
   that forbids that once it has started, and in the moment before, only a host whose Yama
   `ptrace_scope` is 0 lets a process attach to one it did not start. When it cannot prove the boundary, the session ends: the one
   recovery that kills everything, a restart, would erase the files.
-- **A project's report can be forged inside a session.** A project call runs the same
-  runner as a run, and the runner signs its report with a key from the plan it reads on its
-  input. In a run nothing else is in the container, but in a session an interpreter it keeps
-  can open the runner's input and output while the runner starts, as with the relay above,
-  read the key and write a report of its own. So a grader whose verdict the graded code
-  must not be able to forge runs it in a single run, not in a session that also ran that
-  code's cells.
+- **A project call in a session starts with nothing of the session's running.** Every
+  program of plimsoll's starts in the container as the user the session's code runs as,
+  and until it has loaded the small library that makes it unreadable, a process of that
+  same user can open its input, its output and its memory; a descriptor opened in that
+  moment keeps working afterwards. A project call's input carries the plan, with the key
+  the runner signs its report with. So before a project call, plimsoll kills every
+  process of the session's, the interpreters it keeps included. **An interpreter is
+  killed, not paused: a session that runs cells loses their state at the next project
+  call,** and the next cell starts a fresh interpreter and says so
+  (`interpreter_started`); files in the work directory are untouched. Pausing them would
+  not do, because a paused process can arrange its own resume before it is paused (an
+  asynchronous notification on a descriptor of its own, a timer), and no filter can tell
+  that use apart from a language runtime's. If a process can be neither killed nor
+  accounted for, the project call does not start (nothing is dispatched) and the session
+  ends, as it does when the sweep cannot prove the boundary. A session with no
+  interpreter alive keeps no process of its own, so a session that runs only project
+  calls pays nothing for this and loses nothing.
+- **A snippet or a cell in a session is not protected that way,** and does not need to
+  be: neither carries a key. What the session's own code can do to its own later calls'
+  output is above, under what a cell's relay is trusted with. A grader whose verdict the
+  graded code must not be able to forge uses a project call, in a session or a single
+  run.
 - **A suspend is a pause.** `docker pause` freezes every process; the files and the
   processes' memory stay. That is why a paused session keeps its concurrency slot.
   Resuming takes about 20 milliseconds (measured 2026-10-01 under runc and gVisor).
@@ -485,6 +506,83 @@ A docker session is the container a project run gets, kept for the session:
 A session's snippets run in the project image, not the snippet image, because one
 container runs every call. The answer to `OpenSession` and every call's record state the project image.
 
+## E2B
+
+An E2B session is one E2B sandbox, booted from the configured template, kept for the
+session. E2B's base template gives its default user `sudo` without a password and leaves
+root reachable, so before any of the session's code runs, the open makes the machine one
+where that code cannot become root:
+
+- **The code runs as a user no account has.** Every call's code runs as uid and gid
+  61000, which the template's account files must not name (the open refuses one that
+  does), through util-linux's `setpriv` with the kernel's no-new-privileges flag set, under
+  which no setuid program, `sudo` and `su` included, can raise its privileges. The
+  open also locks the template's empty passwords, stops and masks its ssh server, refuses
+  the machine if anything still listens on port 22, and then proves from inside, as that
+  user, that `sudo`, `su` and an ssh login to root all fail. A template whose `setpriv` is
+  not util-linux's is refused at open (BusyBox's cannot change user).
+- **plimsoll's own programs run as root.** The process lister, the sweep after every call
+  and the check of each relay's identity run as root through the agent E2B runs
+  inside each machine, out of reach of the session's code. The sweep spares every
+  process the machine had when the session opened (its system services, E2B's agent included;
+  the open refuses a listing with a process already running as the session's user) and
+  the interpreters the session keeps, kills the rest, and skips kernel threads.
+- **Files are written as the session's user.** A call's files go into a staging
+  directory only root can read, and a helper that has dropped to the session's user
+  writes them under `/work`, refusing a path that leads out of it through a link, as
+  docker's runner does. A project's artifacts are read back as that user too.
+- **A relay belongs to root until it drops.** A cell's relay starts as root and changes
+  to the session's user itself; the kernel then marks it as a process another process of
+  the same user cannot inspect, so the session's code cannot open its pipes or read its
+  memory. Its identity is kept only when its parent is E2B's agent.
+- **A suspend is a pause, and it ends the interpreters.** E2B saves the machine, memory
+  included, and stops billing it, so the session gives back its concurrency slot. A pause
+  cuts every connection into the machine, the relays' included, so the session forgets
+  its interpreters first and the sweep after the resume kills them: files survive a
+  suspend, a cell's state does not, and the next cell says its interpreter is new.
+  Measured on 2026-10-07 on E2B's base template: an open took about 2.2 s, a call on a
+  running session about 0.4 to 0.5 s, a pause about 0.3 s, and the call that resumed a
+  paused session about 0.8 s.
+- **A read-back before every call.** Before each call the session reads the sandbox's
+  record from E2B and compares it, apart from its state, with the record at open: network
+  traffic out denied, no public traffic in, no proxy, and no allowed addresses or rules
+  other than, with `E2B_SESSION_GRANTS=session`, exactly the host and header rule a granted
+  call needs; no automatic resume. A difference, or a sandbox E2B no longer has, ends the session.
+- **Its time is paid.** E2B bills a running sandbox by the second, so a session draws on
+  the daily paid allowances (`SANDBOX_PAID_SECONDS_PER_DAY`, and a caller's
+  `paid_seconds_per_day`) for the time its sandbox runs: from the open, or the call that
+  resumes it, to its next suspend or its end. It reserves ahead the call's timeout, the
+  idle timeout and the time a delete takes; a call the allowances cannot cover is refused,
+  not dispatched, reason `capacity`, and the session goes on; a session that can neither
+  suspend nor pay for another idle period is closed.
+- **Grants are off unless chosen; both ways pass against the live service.** With
+  `E2B_GUARD_URL` and `E2B_SESSION_GRANTS` set, a granted call reaches its grant through
+  the [guard (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#guard),
+  as a run's does. `session` creates the sandbox with the guard's rule and one
+  credential for the session's life that serves only the grant of the call in progress:
+  between calls the guard is reachable and refuses, as docker's broker socket answers 503.
+  `call` creates it [deny-all (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#deny-all) and, for each granted call, puts the rule on with a fresh
+  credential through E2B's network update and takes it off after: between calls the guard
+  is unreachable, and each granted call costs two more requests to E2B. Unset, a call with
+  a grant is refused, not dispatched, reason `unsupported`. The live run (2026-10-08)
+  showed that a rule made at create survives a pause and that E2B's record of a sandbox
+  shows the rule's header.
+- **What a crash leaves.** Each session's sandbox declares its lifetime in its metadata,
+  and E2B's own timeout for it is that lifetime plus a minute. E2B kills a running
+  sandbox at its timeout, but never expires a paused one, and a sandbox that was paused
+  and then resumed goes back to its paused copy at its timeout instead of going away
+  (seen 2026-10-07). So a running daemon's cleanup deletes any plimsoll session sandbox
+  more than 5 minutes past its declared lifetime, paused ones included, whichever daemon
+  opened it.
+- **The account's plan can be shorter.** E2B caps how long a sandbox may run at a stretch
+  by plan (an hour on its Hobby plan when this was written). A session lifetime longer than
+  the cap was not tested: the open may be refused, or the sandbox may stop at the cap, and
+  then the session ends at its next call, which finds the sandbox gone.
+
+The conformance suite runs against E2B itself with `make e2b-session-live`, which spends
+money (it opens about 30 short-lived machines), and, for free, against a
+stand-in for E2B's agent that runs processes in a local container, in the docker suite.
+
 ## What sessions do not do
 
 - **Keep a process running between calls, other than the interpreters.** A development
@@ -496,7 +594,6 @@ container runs every call. The answer to `OpenSession` and every call's record s
   declared lifetime plus the 5-minute margin has passed.
 - **Spread across several copies of the daemon.** A session lives in one daemon. Several
   copies behind one address need session affinity: every call of a session must reach the
-  daemon that opened it. The <dfn>*guard*</dfn> of the <dfn>*E2B*</dfn> provider has the
-  same constraint ([limitations.md](limitations.md)): E2B is a hosted service that runs each
-  sandbox in a small virtual machine, and its guard, the one address such a machine may
-  call, works only in the daemon process that started the run.
+  daemon that opened it. The <dfn>*guard*</dfn> of the E2B provider has the
+  same constraint ([limitations.md](limitations.md)): its guard, the one address an E2B
+  machine may call, works only in the daemon process that started the run.

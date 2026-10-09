@@ -2,6 +2,7 @@ package sessionkit
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -180,6 +181,16 @@ func TestCheckScriptConfirmsOnlyTheProcessReported(t *testing.T) {
 	if got := check("relay:" + id); got != 1 {
 		t.Fatalf("a relay whose parent is not 0: exit %d, want 1", got)
 	}
+	// relay@N requires parent N: this test started the process, so it is the parent.
+	if got := check("relay@" + strconv.Itoa(os.Getpid()) + ":" + id); got != 0 {
+		t.Fatalf("a relay whose parent is the one named: exit %d, want 0", got)
+	}
+	if got := check("relay@1:" + id); got != 1 {
+		t.Fatalf("a relay whose parent is not the one named: exit %d, want 1", got)
+	}
+	if got := check("relay@:" + id); got != 1 {
+		t.Fatalf("a relay kind that names no parent: exit %d, want 1", got)
+	}
 	if got := check("other:" + id); got != 1 {
 		t.Fatalf("an unknown kind: exit %d, want 1", got)
 	}
@@ -208,11 +219,14 @@ func TestKernelJSRunsACellOnceWhateverTheChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = k.Process.Kill(); _ = k.Wait() })
-	for i := 0; ; i++ {
+	// node starts in well under a second on an idle machine and took over 5 s under
+	// the export's full parallel test run, which failed this at a 5 s bound; 30 s only
+	// bounds a kernel that never starts.
+	for deadline := time.Now().Add(30 * time.Second); ; {
 		if _, err := os.Stat(filepath.Join(dir, "ready")); err == nil {
 			break
 		}
-		if i > 200 {
+		if time.Now().After(deadline) {
 			t.Fatal("the kernel never became ready")
 		}
 		time.Sleep(25 * time.Millisecond)
@@ -296,4 +310,179 @@ func killInterpreterIn(dir string) {
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
 		}
 	}
+}
+
+// The lister reports each process's real uid and leaves out the kernel's own threads,
+// which a virtual machine's /proc shows (they ignore SIGKILL, so a sweep that counted
+// them would never finish). This machine's /proc shows kernel threads when it is not a
+// container; either way no listed process may carry the PF_KTHREAD flag.
+func TestListScriptReportsUIDsAndSkipsKernelThreads(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the lister reads /proc")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed")
+	}
+	argv := ListArgv()
+	out, err := exec.Command(argv[0], argv[1:]...).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := ParseListing(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := os.Getuid()
+	sawSelf := false
+	for _, p := range l.Procs {
+		stat, err := os.ReadFile("/proc/" + strconv.Itoa(p.PID) + "/stat")
+		if err != nil {
+			continue // gone since the listing
+		}
+		f := strings.Fields(string(stat[strings.LastIndex(string(stat), ")")+2:]))
+		flags, _ := strconv.ParseUint(f[6], 10, 64)
+		if flags&0x200000 != 0 {
+			t.Errorf("pid %d %q is a kernel thread and was listed", p.PID, p.Cmd)
+		}
+		if p.PID == os.Getpid() {
+			sawSelf = true // an ancestor of the lister: never listed
+		}
+		if p.UID < 0 {
+			t.Errorf("pid %d %q: uid not read", p.PID, p.Cmd)
+		}
+	}
+	if sawSelf {
+		t.Error("the lister listed its own ancestor, this test")
+	}
+	// This test's own child must be listed with this test's uid.
+	c := exec.Command("sleep", "30")
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Process.Kill(); _ = c.Wait() }()
+	out, err = exec.Command(argv[0], argv[1:]...).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l, err = ParseListing(out); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range l.Procs {
+		if p.PID == c.Process.Pid {
+			found = true
+			if p.UID != me {
+				t.Errorf("the child's uid: got %d, want %d", p.UID, me)
+			}
+		}
+	}
+	if !found {
+		t.Error("the lister did not list this test's child")
+	}
+}
+
+func TestBaselineAllKeepsEveryProcessButRefusesTheGuestUID(t *testing.T) {
+	listing := func(procs ...Process) []byte {
+		b, err := json.Marshal(Listing{Ptrace: "1", Procs: procs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	initP := Process{PID: 1, Start: "1", UID: 0, CmdHex: "2f696e6974"}
+	envd := Process{PID: 300, PPID: 1, Start: "90", UID: 0, CmdHex: "656e7664"}
+	chrony := Process{PID: 410, PPID: 1, Start: "95", UID: 104, CmdHex: "6368726f6e7964"}
+	keep, err := BaselineAll(listing(initP, envd, chrony), 61000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{initP.Identity(), envd.Identity(), chrony.Identity()}
+	if strings.Join(keep, ",") != strings.Join(want, ",") {
+		t.Fatalf("keep = %v, want %v", keep, want)
+	}
+	if _, err := BaselineAll(listing(envd, chrony), 61000); err == nil {
+		t.Error("a listing without PID 1 was accepted")
+	}
+	guestOwned := Process{PID: 500, PPID: 1, Start: "99", UID: 61000, CmdHex: "78"}
+	if _, err := BaselineAll(listing(initP, guestOwned), 61000); err == nil {
+		t.Error("a process already running as the guest uid was accepted")
+	}
+	unread := Process{PID: 501, PPID: 1, Start: "99", UID: -1, CmdHex: "78"}
+	if _, err := BaselineAll(listing(initP, unread), 61000); err == nil {
+		t.Error("a process whose uid could not be read was accepted")
+	}
+	if _, err := BaselineAll([]byte("not json"), 61000); err == nil {
+		t.Error("output that is not a listing was accepted")
+	}
+}
+
+// This machine's /proc may show no kernel thread (WSL2 and containers show none), so
+// the flag test is checked here on stat lines: a kworker's (flags 0x04208060, as Linux
+// 6.x reports one) and an ordinary process's (0x00400100).
+func TestKernelThreadFlag(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed")
+	}
+	script := `const fs=require("node:fs");` + clearFn + `
+for (const st of process.argv.slice(1)) {
+  const f = st.slice(st.lastIndexOf(")") + 2).split(" ");
+  process.stdout.write(kthread(f) ? "k" : "u");
+}`
+	worker := "57 (kworker/u8:3-events_unbound) I 2 0 0 0 -1 69238880 0 0 0 0 0 7 0 0 20 0 1 0 1200 0 0"
+	user := "812 (node) S 1 812 812 0 -1 4194560 120 0 0 0 4 1 0 0 20 0 11 0 5000 0 0"
+	out, err := exec.Command("node", "-e", script, worker, user).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "ku" {
+		t.Fatalf("kthread verdicts = %q, want %q (kworker, then a user process)", out, "ku")
+	}
+}
+
+// The liveness test answers "running" for a process it cannot read, so the kill loop
+// signals it instead of calling the round clean: a thread list that cannot be read, or
+// a thread that ends while it is read, proves nothing (round-5 review, 2026-10-08).
+// Only a process whose every readable thread is dead reads dead.
+func TestLivenessTreatsAnUnreadableProcessAsRunning(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the liveness test reads Linux procfs")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	// live() is read out of the shipped program, so this is the code the sandbox runs.
+	script := `const fs=require("node:fs");` + clearFn + `
+let statReadable = true;
+try { fs.readFileSync("/proc/999999/stat") } catch { statReadable = false }
+const answers = {
+  self: live(String(process.pid)),
+  init: live("1"),
+  goneStatReadable: statReadable,
+  unreadable: live("self/../proc-does-not-exist"),
+};
+process.stdout.write(JSON.stringify(answers));`
+	out, err := exec.Command(node, "-e", script).Output()
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	var got struct {
+		Self, Init, GoneStatReadable, Unreadable bool
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("answers %q: %v", out, err)
+	}
+	if !got.Self || !got.Init {
+		t.Fatalf("a running process reads dead: self %v, init %v", got.Self, got.Init)
+	}
+	if !got.Unreadable {
+		t.Fatal("a process whose threads cannot be listed reads dead; it must read as running, so it is killed")
+	}
+	// What keeps the loop converging is the step before the liveness test: a process
+	// that is gone has no stat to read, so the scan passes over it and never asks.
+	if got.GoneStatReadable {
+		t.Fatal("a PID that does not exist has a readable stat, so the scan could not pass over it")
+	}
+	// The kill loop itself is not run here: it kills every process that is not in its
+	// keep list, so it belongs inside a container of its own (sandbox/docker_sweep_test.go).
 }

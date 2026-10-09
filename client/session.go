@@ -2,6 +2,9 @@ package client
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -26,6 +29,30 @@ type SessionOptions struct {
 	// with a warm pool hands over a sandbox with those interpreters already running.
 	// A cell in any language the daemon states still runs.
 	Languages []sandbox.Language
+	// Owner names the end user the session is for (an account ID, an email), so a
+	// daemon with a per-owner cap (SANDBOX_MAX_SESSIONS_PER_OWNER) keeps each user to
+	// it across every process of the app: at the cap, the daemon closes that user's
+	// least recently used session with no call in progress. It never leaves this
+	// process: the daemon gets a digest keyed by the client's token (ownerDigest).
+	// Empty: the session counts against no owner.
+	Owner string
+}
+
+// ownerDigest is what an owner is sent as: hex(HMAC-SHA256(key = SHA-256("plimsoll
+// session owner key v2\n" + the client's token), message = "plimsoll session owner
+// v2\n" + owner)), the same in every official client, so the processes of one app
+// agree on a user. The daemon stores only a token's SHA-256, so it cannot test a
+// guessed name against a digest; without a token anyone can. The key is derived, not
+// the token itself: HMAC replaces a key longer than 64 bytes with its SHA-256, which
+// for a long imported token is exactly the token_sha256 the clients file holds.
+func ownerDigest(token, owner string) string {
+	if owner == "" {
+		return ""
+	}
+	key := sha256.Sum256([]byte("plimsoll session owner key v2\n" + token))
+	m := hmac.New(sha256.New, key[:])
+	m.Write([]byte("plimsoll session owner v2\n" + owner))
+	return hex.EncodeToString(m.Sum(nil))
 }
 
 // Session is an open session on a remote daemon: one sandbox for many calls, in
@@ -126,6 +153,7 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 		IdleTimeoutMs:    durationMs(opts.IdleTimeout),
 		SoftwareRule:     softwarewire.ToWire(opts.Software),
 		Languages:        wireLanguages,
+		Owner:            ownerDigest(r.token, opts.Owner),
 	})
 	r.auth(req)
 	resp, err := r.client.OpenSession(ctx, req)

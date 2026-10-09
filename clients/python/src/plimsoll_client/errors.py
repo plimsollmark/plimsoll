@@ -32,6 +32,7 @@ __all__ = [
     "ProtocolMismatchError",
     "AtCapacityError",
     "SessionEndedError",
+    "RequestCanceledError",
     "TransportError",
     "RequestTimeoutError",
     "ResponseTooLargeError",
@@ -187,10 +188,22 @@ class SessionEndedError(PlimsollError):
 # --- no Connect answer --------------------------------------------------------
 
 
+class RequestCanceledError(PlimsollError):
+    """A :class:`~plimsoll_client.CancelHandle` stopped the request (not asyncio's
+    ``CancelledError``, which an awaiting task raises). Marked not dispatched, reason
+    ``request``, when it stopped the request before any byte of it was sent; unmarked
+    when it cut the request after that, since the daemon may have received it and run
+    it."""
+
+    default_code = "canceled"
+
+
 class TransportError(PlimsollError):
     """No usable answer: the connection failed, or the response could not be
-    read as a Connect answer. Never marked not dispatched: the daemon may have
-    received the request and run it."""
+    read as a Connect answer. Marked not dispatched, reason ``environment``, only
+    when it failed before any byte of the request could leave (a refused or
+    hanging connect, a failed TLS handshake); otherwise unmarked, since the
+    daemon may have received the request and run it."""
 
     default_code = "unavailable"
 

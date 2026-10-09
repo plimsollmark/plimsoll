@@ -153,6 +153,16 @@ const (
 	SessionSandboxChanged = sessionkit.SandboxChanged
 	// SessionShutdown: the provider was drained.
 	SessionShutdown = sessionkit.Shutdown
+	// SessionReplaced: the daemon closed it to open a newer session for the same
+	// owner, which was at its cap (SANDBOX_MAX_SESSIONS_PER_OWNER). No provider
+	// ends a session this way; the daemon does, between calls.
+	SessionReplaced = sessionkit.Replaced
+	// SessionNotFound: the daemon had no such session for this caller, which a restart
+	// does to every session (they live in its memory). Set by the daemon, never a provider.
+	SessionNotFound = sessionkit.NotFound
+	// SessionUnknown: a client read an end a newer daemon has and this code does not.
+	// The session has ended all the same; no provider or daemon of this version uses it.
+	SessionUnknown = sessionkit.Unknown
 )
 
 // ErrSessionEnded matches every *SessionEndedError.

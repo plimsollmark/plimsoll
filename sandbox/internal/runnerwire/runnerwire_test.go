@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -237,7 +238,7 @@ func TestPlanEncodeIsTheRunnerWireFormat(t *testing.T) {
 // readable by every process in the sandbox, so only a frame whose MAC verifies under
 // the run's key counts, wherever it sits and whatever else is around it.
 func TestParseAcceptsOnlyAuthenticatedFrames(t *testing.T) {
-	honest := `{"steps":[{"command":"node x","stdout":"hi ` + Marker + `","exitCode":3,"timedOut":false,"durationMs":1500}],` +
+	honest := `{"steps":[{"command":"node x","stdoutBase64":"` + base64.StdEncoding.EncodeToString([]byte("hi "+Marker)) + `","exitCode":3,"timedOut":false,"durationMs":1500}],` +
 		`"artifacts":[{"path":"o.txt","content":"aGk="}],"artifactsTruncated":true}`
 	forgedBody := `{"steps":[{"command":"trusted","exitCode":0}],"artifacts":[{"path":"o.txt","content":"QUFB"}]}`
 	otherKey := bytes.Repeat([]byte{9}, KeySize)
@@ -325,4 +326,56 @@ func FuzzParse(f *testing.F) {
 			t.Fatalf("parse error must return a zero report, got %+v", report)
 		}
 	})
+}
+
+// A report keeps a step's output bytes exactly, UTF-8 or not, and a report in the old
+// form (output as text under "stdout") is refused as a protocol mismatch rather than
+// read as a step with no output: an image whose runner predates the base64 fields
+// fails visibly.
+func TestDecodeKeepsOutputBytesAndRefusesTheOldForm(t *testing.T) {
+	rep, err := decode([]byte(`{"steps":[{"command":"c","stdoutBase64":"/wCA","stderrBase64":"/g==","exitCode":0}]}`))
+	if err != nil || len(rep.Steps) != 1 || rep.Steps[0].Stdout != "\xff\x00\x80" || rep.Steps[0].Stderr != "\xfe" {
+		t.Fatalf("decode = %+v, %v; want stdout ff 00 80 and stderr fe", rep, err)
+	}
+	if _, err := decode([]byte(`{"steps":[{"command":"c","stdout":"hi","exitCode":0}]}`)); err == nil {
+		t.Fatal("a report with the old text field decoded")
+	}
+}
+
+// Node counts a step's two output streams against one buffer, so a step can overflow
+// it with neither stream at the cap: 600 KiB on each against a 1 MiB buffer. The child
+// is killed there, so from that point neither stream is complete and both are reported
+// cut. Flagging only a stream that reached the cap reported both as complete, and a
+// caller could not tell a whole answer from an interrupted one (the round-4 review,
+// 2026-10-08).
+func TestProjectRunnerMarksBothStreamsCutWhenTheirTotalOverflows(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	work := t.TempDir()
+	cmd := guardedRunnerCommand(t, node, work)
+	// Each stream stays under the 1 MiB cap; together they pass it.
+	step := `node -e 'const b="x".repeat(600*1024); process.stdout.write(b); process.stderr.write(b)'`
+	plan, err := (Plan{Steps: []string{step}, StepTimeout: 30 * time.Second, ReportKey: testKey}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdin = bytes.NewReader(plan)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	report, found, err := Parse(string(out), testKey)
+	if !found || err != nil {
+		t.Fatalf("report: found=%v err=%v", found, err)
+	}
+	if len(report.Steps) != 1 {
+		t.Fatalf("%d steps, want 1", len(report.Steps))
+	}
+	s := report.Steps[0]
+	if !s.StdoutTruncated || !s.StderrTruncated {
+		t.Fatalf("stdout cut %v, stderr cut %v, with %d and %d bytes kept; want both marked cut",
+			s.StdoutTruncated, s.StderrTruncated, len(s.Stdout), len(s.Stderr))
+	}
 }

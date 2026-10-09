@@ -106,6 +106,7 @@ func TestHardenedPolicyFailsClosedPerViolation(t *testing.T) {
 		{"cleartext off loopback", nil, func(f *hardenedFacts) { f.TLS = false }, "requires TLS"},
 		{"cleartext on all interfaces", nil, func(f *hardenedFacts) { f.TLS, f.Addr = false, ":8746" }, "requires TLS"},
 		{"cleartext metrics off loopback", nil, func(f *hardenedFacts) { f.TLS, f.Addr, f.MetricsAddr = false, "127.0.0.1:8746", ":9464" }, "metrics listener"},
+		{"cleartext guard off loopback", nil, func(f *hardenedFacts) { f.TLS, f.Addr, f.GuardAddr = false, "127.0.0.1:8746", ":8443" }, "egress guard listener"},
 		{"unpinned images", func(e map[string]string) { e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "" }, nil, "SANDBOX_REQUIRE_PINNED_IMAGES"},
 		{"malformed pin flag", func(e map[string]string) { e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "yes" }, nil, "SANDBOX_REQUIRE_PINNED_IMAGES"},
 		{"seccomp unconfined", func(e map[string]string) { e["SANDBOX_DOCKER_SECCOMP"] = "unconfined" }, nil, "unconfined"},

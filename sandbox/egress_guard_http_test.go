@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -197,4 +198,43 @@ func TestEgressGuardBodyDeadline(t *testing.T) {
 		t.Fatalf("after the deadline: %v %v", resp, err)
 	}
 	resp.Body.Close()
+}
+
+// The guard URL is public, so its refusals must not wait on a caller's body. Go's
+// HTTP/1.1 server reads a small unread body before it writes the response; a caller
+// with no credential that declares 100 bytes and sends 2 held each 401 until the
+// server's read timeout, while the handler's own comment said it bought one map
+// lookup. Real sockets, because a recorder has no body to drain.
+func TestEgressGuardRefusalsAnswerBeforeAHeldBackBody(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewUnstartedServer(EgressGuardHTTPHandler(&fakeE2BGuard{token: "run-token"}, "/v1/e2b/guard", 0, 0))
+	srv.Config.ReadTimeout = 30 * time.Second
+	srv.Start()
+	defer srv.Close()
+	for name, head := range map[string]string{
+		"no credential":      "POST /v1/e2b/guard HTTP/1.1\r\nHost: guard\r\n",
+		"unknown credential": "POST /v1/e2b/guard HTTP/1.1\r\nHost: guard\r\n" + EgressGuardHeader + ": wrong-token\r\n",
+		"wrong path":         "POST /v1/e2b/other HTTP/1.1\r\nHost: guard\r\n" + EgressGuardHeader + ": run-token\r\n",
+		"declared over the cap": "POST /v1/e2b/guard HTTP/1.1\r\nHost: guard\r\n" + EgressGuardHeader + ": run-token\r\n" +
+			fmt.Sprintf("Content-Length: %d\r\n", maxEgressGuardEnvelopeBytes+1),
+	} {
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(head, "Content-Length") {
+			head += "Content-Length: 100\r\n"
+		}
+		_, _ = io.WriteString(conn, head+"\r\n{}")
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		_ = conn.Close()
+		if err != nil {
+			t.Fatalf("%s: no answer while the body was held back: %v", name, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode/100 != 4 || !resp.Close {
+			t.Fatalf("%s: got %d (close %v), want a 4xx that closes the connection", name, resp.StatusCode, resp.Close)
+		}
+	}
 }

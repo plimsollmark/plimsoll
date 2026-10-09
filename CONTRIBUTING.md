@@ -91,7 +91,10 @@ SANDBOX_OPENSHELL_GATEWAY_URL=... make audit OPENSHELL=1  # adds the live OpenSh
 
 The E2B and <dfn>*Docker Cloud Sandboxes*</dfn> (Docker's hosted microVM service)
 suites create billable microVMs, so the ordinary targets strip both credentials from
-the environment and no CI job runs either suite. The <dfn>*OpenShell*</dfn> suite
+the environment and no CI job runs either suite. Every paid test also skips unless the
+flag only its make target sets is `1` (`E2B_LIVE`, `E2B_GUARD_LIVE_REQUIRED`,
+`E2B_SESSION_LIVE`, `DOCKERCLOUD_LIVE_REQUIRED`), so a key in your shell does not make a
+plain `go test ./...` spend. The <dfn>*OpenShell*</dfn> suite
 (NVIDIA's agent sandbox runtime) is free but needs a running OpenShell gateway, so no CI
 job runs it either; its settings are in [docs/openshell.md](docs/openshell.md).
 
@@ -109,7 +112,7 @@ fails.
 
 ## What this project is
 
-A <dfn>*trusted computing base*</dfn> for running untrusted code written by AI agents:
+A <dfn>*trusted computing base*</dfn> (TCB) for running untrusted code written by AI agents:
 code that has to be correct for a security promise to hold. That shapes what gets
 merged more than style preferences do.
 

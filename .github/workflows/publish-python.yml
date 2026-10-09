@@ -44,8 +44,8 @@ jobs:
           git diff --quiet "$tag" HEAD -- clients/python || { echo "::error::clients/python differs from $tag"; exit 1; }
           grep -qx "__version__ = \"$version\"" clients/python/src/plimsoll_client/_version.py ||
             { echo "::error::_version.py does not say $version"; exit 1; }
-      - run: python3 -m pip install build==1.6.1
-      - run: python3 -m build --outdir dist clients/python
+      - run: python3 -m pip install --require-hashes --no-deps -r clients/python/build-requirements.txt
+      - run: python3 -m build --no-isolation --outdir dist clients/python
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist

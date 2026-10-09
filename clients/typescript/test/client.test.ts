@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import { before, test } from "node:test";
 
 import { meets, PlimsollClient, PlimsollError, PROTOCOL } from "../src/index.ts";
+import { errorFromWire, sessionEndFromWire } from "../src/errors.ts";
 import { recordDigest, recordFromWire } from "../src/record.ts";
 
 const wasmUrl = process.env.PLIMSOLL_WASM_URL;
@@ -283,6 +284,25 @@ test("a language hint is sent and checked", { skip }, async () => {
   await assert.rejects(sessions.openSession({ languages: ["cobol" as never] }), { code: "invalid_argument", notDispatched: "request" });
 });
 
+// An owner read from an optional field arrives as "" for a request without one; sent as
+// no owner, it would escape the daemon's per-owner cap.
+test("an empty owner is refused before anything is sent; an owner is sent as its digest", { skip }, async () => {
+  const bodies: string[] = [];
+  const c = new PlimsollClient({
+    baseUrl: sessionsUrl!,
+    fetch: (input, init) => {
+      bodies.push(String(init?.body));
+      return fetch(input, init);
+    },
+  });
+  await assert.rejects(c.openSession({ owner: "" }), { code: "invalid_argument", notDispatched: "request" });
+  await assert.rejects(c.openSession({ owner: 7 as never }), { code: "invalid_argument", notDispatched: "request" });
+  assert.equal(bodies.length, 0, "nothing was sent");
+  const s = await c.openSession({ owner: "alice" });
+  await s.close();
+  assert.match(JSON.parse(bodies[0]!).owner, /^[0-9a-f]{64}$/);
+});
+
 test("concurrent calls on one session are serialized and keep the chain", { skip }, async () => {
   const s = await sessions.openSession();
   const results = await Promise.all([1, 2, 3, 4].map((n) => s.runJavaScript(String(n))));
@@ -302,6 +322,33 @@ test("a call on an ended session is refused, marked not dispatched", { skip }, a
   });
   assert.equal(s.ended?.reason, "expired");
   await s.close();
+});
+
+// A daemon one enum value newer than this client can end a session for a reason the
+// client has no name for: that still says the session ended.
+test("a session end this client has no name for is an end, never open", { skip }, async () => {
+  assert.equal(sessionEndFromWire(undefined), "open");
+  assert.equal(sessionEndFromWire(0), "open");
+  assert.equal(sessionEndFromWire("SESSION_END_UNSPECIFIED"), "open");
+  assert.equal(sessionEndFromWire("SESSION_END_REPLACED"), "replaced");
+  assert.equal(sessionEndFromWire(8), "replaced");
+  assert.equal(sessionEndFromWire(9), "not_found");
+  assert.equal(sessionEndFromWire("SESSION_END_NOT_FOUND"), "not_found");
+  for (const v of [10, 99, -1, "SESSION_END_HOST_LOST", "SESSION_END_OPEN", "SESSION_END_UNKNOWN", "bogus"]) {
+    assert.equal(sessionEndFromWire(v), "unknown", String(v));
+  }
+  // A SessionEnded detail says the session ended, whatever reason it names.
+  const detail = (reason: number) => ({ type: "plimsoll.v1.SessionEnded", value: Buffer.from(reason ? [8, reason] : []).toString("base64") });
+  assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(0)] }).sessionEnded?.reason, "unknown");
+  assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(42)] }).sessionEnded?.reason, "unknown");
+  assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(2)] }).sessionEnded?.reason, "expired");
+
+  const c = tampering(sessionsUrl!, (b) => {
+    if (b.run) b.ended = "SESSION_END_HOST_LOST";
+  });
+  const s = await c.openSession();
+  await s.runJavaScript("1");
+  assert.equal(s.ended?.reason, "unknown", "the answer said the session ended");
 });
 
 test("a session call whose record skips a call is data loss", { skip }, async () => {
@@ -369,6 +416,33 @@ test("an unanswered session call is in the chain and the session goes on", { ski
   assert.equal(r.record.sequence, 3n);
   const sum = await s.close();
   assert.equal(sum.calls, 3n);
+});
+
+// Every holder of a session can close it; the daemon forgets it at the first close and
+// answers a second NotFound, which would read as a failed close.
+test("a session closes once, however many holders close it", { skip }, async () => {
+  const procedures: string[] = [];
+  const c = new PlimsollClient({
+    baseUrl: sessionsUrl!,
+    fetch: (input, init) => {
+      procedures.push(String(input).split("/").pop()!);
+      return fetch(input, init);
+    },
+  });
+  const s = await c.openSession();
+  await s.runJavaScript("1");
+  const [a, b] = await Promise.all([s.close(), s.close()]);
+  assert.equal(a, b, "the second close is the first one's answer");
+  assert.equal(a.calls, 1n);
+  assert.equal(await s.close(), a, "and so is a later one");
+  assert.equal(procedures.filter((p) => p === "CloseSession").length, 1);
+  // A close refused before it was sent closed nothing, so a later close tries again.
+  const t = await c.openSession();
+  const aborted = new AbortController();
+  aborted.abort();
+  await assert.rejects(t.close(aborted.signal), { code: "canceled", notDispatched: "request" });
+  assert.equal((await t.close()).calls, 0n);
+  assert.equal(procedures.filter((p) => p === "CloseSession").length, 2);
 });
 
 // An unanswered call's record must meet the session's floor, which every call carries,

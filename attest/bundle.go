@@ -502,6 +502,14 @@ func ReadBundle(r io.Reader) ([]Entry, error) {
 		if err != nil || !bytes.Equal(canonical, line) {
 			return nil, fmt.Errorf("bundle line %d: %w", n, ErrLine)
 		}
+		// Every line the harness writes carries its signed link, and verification
+		// refuses a line without one, so it is refused here, as it is read: a file of
+		// empty entries ("{}" lines) would otherwise be kept whole before verification
+		// began, each costing far more memory than its three bytes. With a link required,
+		// what is kept grows with the file's own size.
+		if e.Link == nil {
+			return nil, fmt.Errorf("bundle line %d: %w: the line has no link", n, ErrLink)
+		}
 		out = append(out, e)
 	}
 	return out, sc.Err()

@@ -9,7 +9,11 @@ import type { WireError, WireRecord } from "./wire.ts";
 /** Why a request was refused before any code ran (plimsoll.v1.NotDispatchedReason). */
 export type Refusal = "request" | "permission" | "protocol" | "unsupported" | "isolation" | "capacity" | "environment" | "unknown";
 
-/** Why a session ended (plimsoll.v1.SessionEnd), "open" while it has not. */
+/**
+ * Why a session ended (plimsoll.v1.SessionEnd), "open" while it has not. "unknown" is
+ * an end this client has no name for (a daemon newer than the client): the session
+ * ended, for a reason it cannot name.
+ */
 export type SessionEnd =
   | "open"
   | "closed"
@@ -18,7 +22,10 @@ export type SessionEnd =
   | "main_process_ended"
   | "boundary_failed"
   | "sandbox_changed"
-  | "shutdown";
+  | "shutdown"
+  | "replaced"
+  | "not_found"
+  | "unknown";
 
 /**
  * Connect's status codes, plus the two this client raises itself:
@@ -53,9 +60,10 @@ export class PlimsollError extends Error {
   /** Set when a session call was refused because its session had ended. */
   readonly sessionEnded: { reason: SessionEnd; detail: string } | undefined;
   /**
-   * The result the daemon returned, on a "data_loss" error raised after it
-   * answered: the record or the isolation evidence did not check, the run may
-   * have executed, and this is what came back.
+   * The result the daemon returned, on an error raised after it answered, so the
+   * run may have executed: "data_loss" when the record or the isolation evidence
+   * did not check, and "unknown" from CodeSandboxes when a fresh run came back
+   * with no step report. This is what came back.
    */
   readonly result: unknown;
   /**
@@ -96,13 +104,20 @@ const SESSION_ENDS: SessionEnd[] = [
   "boundary_failed",
   "sandbox_changed",
   "shutdown",
+  "replaced",
+  "not_found",
 ];
 
+// Only an absent or unspecified end means open. Any other value says the session
+// ended, so one this client has no name for is "unknown", never "open": read as open,
+// an ended session would be reported as still holding its state and files. The
+// refusal decode below keeps its mark the same way.
 export function sessionEndFromWire(v: string | number | undefined): SessionEnd {
-  if (v === undefined) return "open";
-  if (typeof v === "number") return SESSION_ENDS[v] ?? "open";
+  if (v === undefined || v === 0) return "open";
+  if (typeof v === "number") return SESSION_ENDS[v] ?? "unknown";
   const name = v.replace(/^SESSION_END_/, "").toLowerCase();
-  return name === "unspecified" ? "open" : ((SESSION_ENDS as string[]).includes(name) ? (name as SessionEnd) : "open");
+  if (name === "unspecified") return "open";
+  return name !== "open" && name !== "unknown" && (SESSION_ENDS as string[]).includes(name) ? (name as SessionEnd) : "unknown";
 }
 
 // Reads one varint at b[i]; returns [value, next index].
@@ -227,8 +242,10 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined): 
       if (d.type === "plimsoll.v1.NotDispatched") {
         notDispatched = REFUSALS[decodeDetail(bytes).reason] ?? "unknown";
       } else if (d.type === "plimsoll.v1.SessionEnded") {
+        // The detail itself says the session ended, so an unspecified reason is not "open".
         const m = decodeDetail(bytes);
-        sessionEnded = { reason: sessionEndFromWire(m.reason), detail: m.detail };
+        const reason = sessionEndFromWire(m.reason);
+        sessionEnded = { reason: reason === "open" ? "unknown" : reason, detail: m.detail };
       } else if (d.type === "plimsoll.v1.UnansweredCall") {
         unanswered = decodeUnanswered(bytes);
       }

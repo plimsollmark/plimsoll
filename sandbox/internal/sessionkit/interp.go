@@ -154,9 +154,16 @@ type Interpreters struct {
 	// plimsoll's own programs, starts with none of it. It must exec the command
 	// without forking, so the process the launcher started is the interpreter.
 	Start []string
+	// RelayParent is the PID the Checker requires as every relay's parent: 0, the
+	// default, for one docker exec started; envd's on E2B.
+	RelayParent int
 
-	mu     sync.Mutex
-	live   map[string]string
+	mu   sync.Mutex
+	live map[string]string
+	// stale: an interpreter was given up while its process may still be running, so
+	// the sandbox can hold a process of the session's that nothing keeps. The next
+	// quiesce or sweep kills it, and says so by settling.
+	stale  bool
 	relays map[string]*relay // only for a provider that relays (RunRelayed)
 	// unreported: languages whose interpreter was started for a cell that answered
 	// with an error (its files failed), so no result has said it is new.
@@ -194,12 +201,67 @@ func (in *Interpreters) Keep(baseline []string) []string {
 	return keep
 }
 
+// Guests is every live interpreter's identity: the session's own processes, the only
+// ones a sweep keeps that its code controls. The quiesce before a call kills these.
+func (in *Interpreters) Guests() []string {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	guests := make([]string, 0, len(in.live))
+	for _, id := range in.live {
+		guests = append(guests, id)
+	}
+	return guests
+}
+
+// Own is baseline plus every relay: the processes in the sandbox that are plimsoll's
+// own, which the quiesce leaves alone (a relay holds a stream the host is reading).
+func (in *Interpreters) Own(baseline []string) []string {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	own := append([]string(nil), baseline...)
+	for _, r := range in.relays {
+		own = append(own, r.id)
+	}
+	return own
+}
+
+// DropAll forgets every interpreter, keeping the relays the host holds: the quiesce
+// killed the interpreters, so the next cell of each language starts one, gives up the
+// relay that was attached to the dead one, and reports a fresh interpreter.
+func (in *Interpreters) DropAll() {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if len(in.live) > 0 {
+		in.stale = true
+	}
+	in.live = nil
+}
+
 // Clear forgets every interpreter and relay: the sandbox was stopped or restarted,
 // which killed them.
 func (in *Interpreters) Clear() { in.Close() }
 
+// Stale reports whether an interpreter was given up whose process may still run, so
+// a quiesce has something to do even with no interpreter left to stop.
+func (in *Interpreters) Stale() bool {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.stale
+}
+
+// Settled records that everything of the session's but its live interpreters is gone:
+// a clean quiesce or a clean sweep proved it.
+func (in *Interpreters) Settled() {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.stale = false
+}
+
 func (in *Interpreters) drop(lang string) {
 	in.mu.Lock()
+	if _, was := in.live[lang]; was {
+		in.stale = true
+	}
 	delete(in.live, lang)
 	in.mu.Unlock()
 }

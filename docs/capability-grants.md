@@ -159,7 +159,47 @@ it is limited evidence, not a complete ledger, and the calls past the cap are co
 
 **The scope is one run.** This does not protect your API from overload across all runs,
 and runs happening at the same time do not coordinate; it stops a single agent loop from
-hammering an endpoint that is already struggling.
+hammering an endpoint that is already struggling. In a
+[session](sessions.md), a run is one call: each granted call gets the full call budget.
+
+**A route whose call spends gets a cap of its own.** `max_calls` bounds all of a run's
+routes together. On an API where one route costs money, such as a GPU job service whose
+submit route starts a paid job while its status route can be polled for free, a run
+allowed to poll 200 times could also start 200 jobs. `route_max_calls` caps one `allow`
+entry, written as it is in `allow`; past the cap the broker answers 429 and the call never
+reaches the API. A call counts against every capped entry it matches, so a wider entry such
+as `POST /v2/*/run` beside a capped `POST /v2/abc123/run` does not let calls to `abc123`
+around the cap, in whichever order the two are written. The run's trace, and the advice and
+metrics built from it, still name each call by the first `allow` entry it matches, so there
+those calls appear under `POST /v2/*/run`; list the capped route first to see it by name.
+A capped route is compared without regard to letter case, so `/v2/ABC123/run` also counts
+against the cap on `/v2/abc123/run`, since many APIs route both to the same place. In a
+[session](sessions.md) the cap spans the whole session, not each call: code a session
+keeps can run between its calls and use each call's grant, so a cap that started over with
+every call would bound nothing. Two profiles that cap the same route of the same API share
+that count within a session. A profile for a RunPod serverless endpoint, two jobs a run
+(or a session):
+
+```json
+"gpu-jobs": {
+  "base_url": "https://api.runpod.ai",
+  "allow": ["POST /v2/abc123/run", "GET /v2/abc123/status/*", "POST /v2/abc123/cancel/*"],
+  "route_max_calls": {"POST /v2/abc123/run": 2},
+  "allowed_callers": ["agent-a"],
+  "token": {"type": "static", "env": "RUNPOD_API_KEY"}
+}
+```
+
+The endpoint ID is written into each route, so the run reaches that one endpoint, and the
+account's API key stays in the daemon. What the cap cannot bound, the service must: a job
+keeps running after the run that started it ends, and the broker never reads a request
+body, so an API whose body chooses the machine and its running time can only be bounded
+on the service's side. A RunPod endpoint fixes its GPU type, its worker count and a job's
+execution timeout (10 minutes unless changed) in the endpoint's settings, outside the
+run's reach. This profile is tested against a stand-in shaped like RunPod's API
+(`TestGrantGPUJobRouteCap`); against RunPod itself (2026-10-08), code in a docker sandbox started one job through the broker, its
+second submission in the same run was refused by the cap before it reached RunPod (RunPod counted one
+job), and the job's status was polled to completion.
 
 ### Prior art, and what differs here
 

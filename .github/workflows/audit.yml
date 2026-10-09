@@ -53,8 +53,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # go.mod's `go` directive is the floor (1.26.2), not the canonical build. The
-      # `toolchain go1.26.6` line is, because govulncheck is clean there and earlier
-      # 1.26.x carried stdlib advisories in the reverse-proxy and HTTP/2 paths this
+      # `toolchain go1.26.9` line is, because govulncheck is clean there and earlier
+      # 1.26.x carried stdlib advisories in the HTTP/2 and reverse-proxy paths this
       # TCB calls. Whatever version setup-go lands, GOTOOLCHAIN=auto then honors that
       # toolchain line, so the gate runs on the pinned compiler either way.
       - name: Set up Go

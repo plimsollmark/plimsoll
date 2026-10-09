@@ -21,7 +21,9 @@ import { resolve, dirname } from "node:path";
 const WORK = resolve(process.env.PLIMSOLL_WORK || "/work");
 const MARKER = "<<<PLIMSOLL_REPORT_V3>>>"; // must match runnerwire.Marker
 let reportKey = null; // set from the plan; a frame without it cannot verify
-const MAX_STEP_OUTPUT = 1 << 20; // 1 MiB per step stream
+// Node's spawnSync counts both streams against one buffer, so this is the cap on a
+// step's output in all, not per stream (round-4 review, 2026-10-08).
+const MAX_STEP_OUTPUT = 1 << 20;
 const MAX_ARTIFACT_BYTES = 8 << 20; // 8 MiB total across all captured artifacts
 const MAX_STEPS_JSON = 3 << 20; // encoded step metadata/output across the run
 const MAX_RESULT_JSON = 15 << 20; // host cap is 16 MiB; reserve framing headroom
@@ -73,37 +75,22 @@ function emit(payload) {
   process.stdout.write(Buffer.concat([Buffer.from("\n" + MARKER + " " + body.length + " " + mac + "\n"), body]));
 }
 
-function capEncodedSteps(steps, step) {
+function capEncodedSteps(steps, step, stdout, stderr) {
   if (Buffer.byteLength(JSON.stringify({ steps })) <= MAX_STEPS_JSON) return;
 
   // Preserve the command/outcome, then fit stdout and stderr into the remaining
-  // ENCODED JSON budget. JSON escaping can expand a control byte to six bytes,
-  // so raw string lengths are not a safe cap. Truncation is reported via the
-  // step's stdoutTruncated/stderrTruncated flags, never an in-band marker.
-  const values = { stdout: step.stdout, stderr: step.stderr };
-  step.stdout = "";
-  step.stderr = "";
+  // encoded budget. Base64 needs no JSON escaping and is 4 characters per 3 bytes,
+  // so the bytes that fit are computed, not searched for. Truncation is reported via
+  // the step's stdoutTruncated/stderrTruncated flags, never an in-band marker.
+  step.stdoutBase64 = "";
+  step.stderrBase64 = "";
   let encodedSize = Buffer.byteLength(JSON.stringify({ steps }));
-  for (const field of ["stdout", "stderr"]) {
-    const value = values[field] ?? "";
-    let low = 0;
-    let high = value.length;
-    let best = "";
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      const candidate = value.slice(0, mid);
-      // The empty string's JSON encoding ("") is already in encodedSize.
-      const delta = Buffer.byteLength(JSON.stringify(candidate)) - 2;
-      if (encodedSize + delta <= MAX_STEPS_JSON) {
-        best = candidate;
-        low = mid + 1;
-      } else {
-        high = mid - 1;
-      }
-    }
-    if (best.length < value.length) step[field + "Truncated"] = true;
-    step[field] = best;
-    encodedSize += Buffer.byteLength(JSON.stringify(best)) - 2;
+  for (const [field, raw] of [["stdout", stdout], ["stderr", stderr]]) {
+    const room = Math.max(0, MAX_STEPS_JSON - encodedSize);
+    const kept = raw.subarray(0, Math.min(raw.length, Math.floor(room / 4) * 3));
+    if (kept.length < raw.length) step[field + "Truncated"] = true;
+    step[field + "Base64"] = kept.toString("base64");
+    encodedSize += step[field + "Base64"].length;
   }
 }
 
@@ -125,7 +112,9 @@ function captureArtifacts(paths) {
     try { real = realpathSync(dest); } catch { continue; } // missing
     if (real !== workReal && !real.startsWith(workReal + "/")) continue; // a link out of WORK
     let fd;
-    try { fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { continue; }
+    // O_NONBLOCK: a fifo a step left at an artifact path would otherwise block this
+    // open until the run's deadline; opened, it fails the isFile check below.
+    try { fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch { continue; }
     try {
       // O_NOFOLLOW guards only the last component: a step left running can swap a
       // parent directory for a link between realpathSync and openSync. The kernel
@@ -146,6 +135,20 @@ function captureArtifacts(paths) {
   return { artifacts: out, truncated: false };
 }
 
+// writeOwnedFile is how the runner writes every file it writes. In a session the
+// sandbox holds what earlier calls left, so the path may already be a link (refused by
+// O_NOFOLLOW) or a fifo (O_NONBLOCK keeps the open from waiting for a reader that
+// never comes; the isFile check refuses it) rather than a file.
+function writeOwnedFile(path, content, label) {
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o644);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error(`not a regular file: ${label}`);
+    writeFileSync(fd, content);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 try {
   verifyRunnerIsolation();
   const plan = JSON.parse(readFileSync(0, "utf8"));
@@ -161,7 +164,7 @@ try {
       throw new Error(`illegal file path: ${f.path}`);
     }
     mkdirSync(dirname(dest), { recursive: true });
-    writeFileSync(dest, f.content ?? "");
+    writeOwnedFile(dest, f.content ?? "", f.path);
   }
 
   // When the run carries a host-API grant, preload the brokered host.* client into
@@ -184,7 +187,7 @@ try {
   stepEnv.PLIMSOLL_RUNNER_PID = String(process.pid);
   if (typeof plan.hostSDK === "string" && plan.hostSDK.length > 0) {
     const sdkPath = "/tmp/plimsoll-host.mjs";
-    writeFileSync(sdkPath, plan.hostSDK);
+    writeOwnedFile(sdkPath, plan.hostSDK, sdkPath);
     const preload = "--import=file://" + sdkPath;
     stepEnv.NODE_OPTIONS = stepEnv.NODE_OPTIONS ? stepEnv.NODE_OPTIONS + " " + preload : preload;
   }
@@ -192,10 +195,11 @@ try {
   const steps = [];
   for (const command of plan.steps ?? []) {
     const start = Date.now();
+    // No encoding: output is captured as raw bytes and reported as base64, so a step
+    // that writes bytes that are not UTF-8 is reported with exactly those bytes.
     const r = spawnSync("sh", ["-c", command], {
       cwd: WORK,
       env: stepEnv,
-      encoding: "utf8",
       timeout: plan.stepTimeoutMs || undefined,
       // SIGKILL, not Node's default SIGTERM: a step that ignores SIGTERM would run on
       // past its budget until the outer backstop killed the container and every
@@ -204,23 +208,26 @@ try {
       maxBuffer: MAX_STEP_OUTPUT,
     });
     const timedOut = r.error?.code === "ETIMEDOUT";
-    // Exceeding maxBuffer (ENOBUFS) kills the child and truncates the offending
-    // stream at the cap; flag the stream(s) that plausibly hit it.
+    // Exceeding maxBuffer (ENOBUFS) kills the child, so from that moment neither
+    // stream is complete: both are marked cut. The buffer is shared between them, so
+    // a step that writes 600 KiB to each overflows with neither stream at the cap, and
+    // flagging only a stream that reached the cap would report both as complete
+    // (round-4 review, 2026-10-08).
     const overflowed = r.error?.code === "ENOBUFS";
-    const stdout = r.stdout ?? "";
-    const stderr = r.stderr ?? (r.error ? String(r.error.message) : "");
+    const stdout = r.stdout ?? Buffer.alloc(0);
+    const stderr = r.stderr ?? Buffer.from(r.error ? String(r.error.message) : "", "utf8");
     const step = {
       command: String(command).slice(0, 16 << 10),
-      stdout,
-      stderr,
-      stdoutTruncated: overflowed && Buffer.byteLength(stdout) >= MAX_STEP_OUTPUT,
-      stderrTruncated: overflowed && Buffer.byteLength(stderr) >= MAX_STEP_OUTPUT,
+      stdoutBase64: stdout.toString("base64"),
+      stderrBase64: stderr.toString("base64"),
+      stdoutTruncated: overflowed,
+      stderrTruncated: overflowed,
       exitCode: timedOut ? 124 : (r.status ?? -1),
       timedOut,
       durationMs: Date.now() - start,
     };
     steps.push(step);
-    capEncodedSteps(steps, step);
+    capEncodedSteps(steps, step, stdout, stderr);
     if (timedOut || (r.status ?? 1) !== 0) break; // stop the chain on failure
   }
 

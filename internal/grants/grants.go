@@ -289,6 +289,10 @@ type profileConfig struct {
 	// workload that is a loop by design, such as a controller stepping a plant one
 	// call per tick; the sandbox package caps it at its ceiling (100,000).
 	MaxCalls int `json:"max_calls"`
+	// RouteMaxCalls caps one run's calls to an allow entry, keyed by the entry as
+	// written in allow ("POST /v2/abc123/run": 2): for a route whose call spends. A
+	// call counts against every capped entry it matches, whatever the order of allow.
+	RouteMaxCalls map[string]int `json:"route_max_calls"`
 	// AllowInSessions lets a call inside a session use this profile. Off by default:
 	// in a session, code an earlier call left running can use the grant while a later
 	// call that selected it runs, so an operator turns it on only for a profile whose
@@ -458,6 +462,10 @@ func Load(path string) (*Registry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
 		}
+		routeMax, err := parseRouteMaxCalls(pc.RouteMaxCalls)
+		if err != nil {
+			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
+		}
 		grant := &sandbox.HostAPIGrant{
 			BaseURL:         pc.BaseURL,
 			Allow:           allow,
@@ -467,6 +475,7 @@ func Load(path string) (*Registry, error) {
 			Minter:          minter,
 			HealthCheck:     health,
 			MaxCalls:        pc.MaxCalls,
+			RouteMaxCalls:   routeMax,
 			AllowInSessions: pc.AllowInSessions,
 		}
 		if err := grant.Validate(); err != nil {
@@ -541,6 +550,23 @@ func parseHealthCheck(line string) (*sandbox.HostRoute, error) {
 		return nil, fmt.Errorf("health_check %q: path must be absolute", line)
 	}
 	return &sandbox.HostRoute{Method: method, Path: path}, nil
+}
+
+// parseRouteMaxCalls turns route_max_calls into the grant's RouteMaxCalls; the grant's
+// Validate checks that each key is an allow entry.
+func parseRouteMaxCalls(caps map[string]int) (map[sandbox.HostRoute]int, error) {
+	if len(caps) == 0 {
+		return nil, nil
+	}
+	out := make(map[sandbox.HostRoute]int, len(caps))
+	for line, n := range caps {
+		route, err := parseRoute(line)
+		if err != nil {
+			return nil, fmt.Errorf("route_max_calls entry %w", err)
+		}
+		out[route] = n
+	}
+	return out, nil
 }
 
 // parseAllow turns "METHOD /path" lines into HostRoutes.

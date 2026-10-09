@@ -32,10 +32,10 @@ func TestSpendCapReservesChargesAndRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := settle(30 * time.Second); got != 30 {
+	if got := settle(30*time.Second, time.Time{}); got != 30 {
 		t.Fatalf("charged %v; want 30", got)
 	}
-	settle(time.Hour) // settling twice changes nothing
+	settle(time.Hour, time.Time{}) // settling twice changes nothing
 	if a, total := c.spent("alice"); a != 30 || total != 30 {
 		t.Fatalf("after one run: alice %v, total %v; want 30 and 30", a, total)
 	}
@@ -46,7 +46,7 @@ func TestSpendCapReservesChargesAndRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a reservation that fits exactly: %v", err)
 	}
-	if got := long(10 * time.Hour); got != 270 {
+	if got := long(10*time.Hour, time.Time{}); got != 270 {
 		t.Fatalf("a run longer than its reservation charged %v; want the reservation, 270", got)
 	}
 
@@ -61,7 +61,7 @@ func TestSpendCapReservesChargesAndRefuses(t *testing.T) {
 	}
 
 	now = now.Add(2 * time.Hour) // a new UTC day
-	if got := late(time.Second); got != 1 {
+	if got := late(time.Second, time.Time{}); got != 1 {
 		t.Fatalf("charged %v; want 1", got)
 	}
 	if a, total := c.spent("alice"); a != 0 || total != 0 {
@@ -281,7 +281,7 @@ func TestARunAcrossMidnightCountsInTheNewDay(t *testing.T) {
 	if _, err := c.reserve("bob", 0, 60*time.Second); !refusedCapacity(err) {
 		t.Fatalf("the new day's allowance spent twice over: %v", err)
 	}
-	if got := settle(90 * time.Second); got != 90 {
+	if got := settle(90*time.Second, time.Time{}); got != 90 {
 		t.Fatalf("charged %v; want the 90 s it took", got)
 	}
 	if _, total := c.spent("alice"); total != 30 {
@@ -295,8 +295,156 @@ func TestARunAcrossMidnightCountsInTheNewDay(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(80 * time.Second)
-	settle(90 * time.Second)
+	settle(90*time.Second, time.Time{})
 	if _, total := c.spent("alice"); total != 30 {
 		t.Fatalf("a run settling first after midnight left the new day %v seconds; want the 30 it ran after midnight", total)
+	}
+}
+
+// A session's meter holds one reservation while its sandbox runs: a cover inside what is
+// held changes nothing, one past it charges what ran and holds the new reach from now,
+// and a stop charges what ran and holds nothing, so a suspended session spends nothing.
+func TestSessionMeterChargesOnlyRunningTime(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	c := NewSpendCap(0)
+	c.now = func() time.Time { return now }
+	spent := func() float64 { a, _ := c.spent("alice"); return a }
+	m := c.meter("alice", 1000)
+	if err := m.cover(100 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if got := spent(); got != 100 {
+		t.Fatalf("after the open's cover: %v held, want 100", got)
+	}
+	now = now.Add(10 * time.Second)
+	if err := m.cover(5 * time.Second); err != nil || spent() != 100 {
+		t.Fatalf("a cover inside what is held: err %v, %v held; want nothing changed", err, spent())
+	}
+	now = now.Add(80 * time.Second) // 90 s since the open
+	if err := m.cover(100 * time.Second); err != nil || spent() != 190 {
+		t.Fatalf("a cover past what is held: err %v, %v; want 90 charged and 100 held", err, spent())
+	}
+	now = now.Add(30 * time.Second)
+	if got := m.stop(); got != 120 || spent() != 120 || m.running() {
+		t.Fatalf("stop: charged %v, %v spent, running %v; want 120, 120, false", got, spent(), m.running())
+	}
+	now = now.Add(time.Hour) // suspended: nothing bills
+	if err := m.cover(50 * time.Second); err != nil || spent() != 170 {
+		t.Fatalf("the cover that resumes: err %v, %v; want 50 more held", err, spent())
+	}
+	now = now.Add(5 * time.Second)
+	if got := m.stop(); got != 125 || spent() != 125 {
+		t.Fatalf("after the second span: charged %v, %v spent; want 125", got, spent())
+	}
+}
+
+// A cover the allowance cannot take is refused, not dispatched, reason capacity, in the
+// session's words, and the session stays covered as far as it was.
+func TestSessionMeterRefusalKeepsTheSessionCovered(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	c := NewSpendCap(0)
+	c.now = func() time.Time { return now }
+	spent := func() float64 { a, _ := c.spent("alice"); return a }
+	m := c.meter("alice", 150)
+	if err := m.cover(100 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(40 * time.Second)
+	err := m.cover(120 * time.Second) // 40 charged + 120 held > 150
+	if !refusedCapacity(err) || !strings.Contains(err.Error(), "this session reserves 120") {
+		t.Fatalf("a cover past the allowance: %v; want refused, capacity, naming the session", err)
+	}
+	if got := spent(); got != 100 || !m.running() {
+		t.Fatalf("after the refusal: %v spent, running %v; want the original 100 still covered", got, m.running())
+	}
+	now = now.Add(60 * time.Second)
+	if got := m.stop(); got != 100 || spent() != 100 {
+		t.Fatalf("stop: charged %v, %v spent; want 100", got, spent())
+	}
+}
+
+// A run whose delete gave up is charged its whole reservation, because its microVM
+// bills until the window that reservation covers ends. Settled before midnight with
+// that window reaching past it, the part after midnight is the new day's (round-3
+// review: it left the books at the settle, so the new day's allowance never saw it).
+func TestALeakedRunSettledBeforeMidnightCountsInTheNewDay(t *testing.T) {
+	now := time.Date(2026, 10, 3, 23, 59, 0, 0, time.UTC)
+	c := NewSpendCap(1000)
+	c.now = func() time.Time { return now }
+	settle, err := c.reserve("alice", 0, 100*time.Second) // window ends 00:00:40
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(5 * time.Second)
+	if got := settle(100*time.Second, time.Time{}); got != 100 { // leaked: charged the whole window
+		t.Fatalf("charged %v, want the whole 100", got)
+	}
+	now = time.Date(2026, 10, 4, 0, 0, 1, 0, time.UTC)
+	if caller, total := c.spent("alice"); caller != 40 || total != 40 {
+		t.Fatalf("the new day holds %v (caller) and %v (daemon); want the 40 s the leak bills after midnight", caller, total)
+	}
+	now = time.Date(2026, 10, 5, 0, 0, 1, 0, time.UTC)
+	if caller, _ := c.spent("alice"); caller != 0 {
+		t.Fatalf("the day after holds %v; the window ended the day before", caller)
+	}
+}
+
+// A leaked run owes until the time the provider said its sandbox bills until, when
+// that is past the reservation's window: a slow create starts the provider's clock late,
+// so the sandbox can bill past the window, and the books let it go at the window's end
+// and at the midnight in between (round-7 review, 2026-10-08).
+func TestALeakedRunOwesUntilTheProvidersDeadline(t *testing.T) {
+	now := time.Date(2026, 10, 3, 23, 59, 0, 0, time.UTC)
+	c := NewSpendCap(1000)
+	c.now = func() time.Time { return now }
+	settle, err := c.reserve("alice", 0, 100*time.Second) // window ends 00:00:40
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(5 * time.Second)
+	bills := time.Date(2026, 10, 4, 0, 1, 40, 0, time.UTC) // 60 s past the window
+	if got := settle(100*time.Second, bills); got != 160 {
+		t.Fatalf("charged %v, want the window's 100 and the 60 s past it", got)
+	}
+	if caller, _ := c.spent("alice"); caller != 160 {
+		t.Fatalf("today holds %v; want 160", caller)
+	}
+	now = time.Date(2026, 10, 4, 0, 0, 1, 0, time.UTC)
+	if caller, total := c.spent("alice"); caller != 100 || total != 100 {
+		t.Fatalf("the new day holds %v (caller) and %v (daemon); want the 100 s the leak bills after midnight", caller, total)
+	}
+	// A deadline inside the window changes nothing.
+	now = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	settle, err = c.reserve("bob", 0, 100*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := settle(100*time.Second, now.Add(50*time.Second)); got != 100 {
+		t.Fatalf("charged %v, want the window's 100 only", got)
+	}
+}
+
+// owe charges a sandbox that bills on after its delete gave up from now to the end of
+// the provider's own lifetime for it, never refused, and each midnight before that end
+// counts the rest in the new day.
+func TestOweChargesALeakedSandboxAcrossMidnight(t *testing.T) {
+	now := time.Date(2026, 10, 3, 23, 0, 0, 0, time.UTC)
+	c := NewSpendCap(100)
+	c.now = func() time.Time { return now }
+	if got := c.owe("alice", now.Add(2*time.Hour)); got != 7200 {
+		t.Fatalf("owed %v, want 7200", got)
+	}
+	if caller, total := c.spent("alice"); caller != 7200 || total != 7200 {
+		t.Fatalf("today holds %v and %v; want 7200 each, past the allowance (never refused)", caller, total)
+	}
+	if _, err := c.reserve("bob", 0, time.Second); !refusedCapacity(err) {
+		t.Fatalf("a run was admitted on an allowance the leak spent: %v", err)
+	}
+	now = time.Date(2026, 10, 4, 0, 30, 0, 0, time.UTC)
+	if caller, _ := c.spent("alice"); caller != 3600 {
+		t.Fatalf("the new day holds %v; want the 3600 s the leak bills after midnight", caller)
+	}
+	if got := c.owe("alice", now.Add(-time.Minute)); got != 0 {
+		t.Fatalf("owed %v for an end already past", got)
 	}
 }

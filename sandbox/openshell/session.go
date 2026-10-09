@@ -63,6 +63,7 @@ func (p *Provider) SessionEnvironments() sandbox.Environments { return p.Environ
 // session is one open session.
 type session struct {
 	p      *Provider
+	routes *sandbox.RouteBudget // route caps span the session's granted calls
 	b      box
 	labels map[string]string
 	tier   sandbox.IsolationClass
@@ -106,7 +107,7 @@ func (p *Provider) OpenSession(ctx context.Context, opts sandbox.SessionOptions)
 	if err != nil {
 		return nil, deadlineAware(ctx, err)
 	}
-	s := &session{p: p, b: b, labels: labels, tier: tier}
+	s := &session{p: p, b: b, labels: labels, tier: tier, routes: sandbox.NewRouteBudget()}
 	s.life = sessionkit.NewLife(b.name, s.hooks())
 	if err := s.recordBaseline(ctx); err != nil {
 		s.life.Abandon()
@@ -341,7 +342,7 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 		// A call's grant lives for the call: its relay is one of the call's processes,
 		// and the sweep after the call ends it like any other.
 		var err error
-		if g, err = s.p.startGrant(runCtx, s.b, req.Grant, timeout); err != nil {
+		if g, err = s.p.startGrant(runCtx, s.b, req.Grant, timeout, s.routes); err != nil {
 			return fail, s.grantError(runCtx, err)
 		}
 		defer g.Close()
@@ -416,7 +417,7 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 	defer done()
 	var g *grantRun
 	if req.Grant != nil {
-		if g, err = s.p.startGrant(runCtx, s.b, req.Grant, timeout+runnerGrace); err != nil {
+		if g, err = s.p.startGrant(runCtx, s.b, req.Grant, timeout+runnerGrace, s.routes); err != nil {
 			return fail, s.grantError(runCtx, err)
 		}
 		defer g.Close()

@@ -168,7 +168,7 @@ strong the wall around a run is, and the pages state them this way:
   through a relay inside the sandbox that plimsoll connects to from outside, so the
   sandbox keeps no network rules.
 - <dfn>*Sessions*</dfn>, one sandbox kept for many calls, exist on `docker` with a project
-  image and on `openshell`, nowhere else. A <dfn>*cell*</dfn>, code run in the interpreter a
+  image, on `openshell` and on `e2b`, nowhere else. A <dfn>*cell*</dfn>, code run in the interpreter a
   session keeps alive, carries no grant, and in a docker session the broker serves the grant of the call in
   progress to anything in the container.
 

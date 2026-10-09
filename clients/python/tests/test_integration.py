@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import ssl
 import threading
 import unittest
 import urllib.request
@@ -31,6 +32,7 @@ from plimsoll_client import (
     SessionEndedError,
     SoftwareMismatchError,
     SoftwareRule,
+    TransportError,
     UnsupportedError,
 )
 from plimsoll_client._record import record_digest
@@ -102,6 +104,34 @@ class Wasm(unittest.TestCase):
             return b"".join(r.stdout for r in results)
 
         self.assertEqual(asyncio.run(go()), b"1\n2\n")
+
+
+class TLS(unittest.TestCase):
+    """The wasm daemon over TLS. The transport opens the TLS socket itself (so a cancel
+    can reach it during the handshake); the daemon's certificate and its name are
+    still checked."""
+
+    def test_a_run_over_tls(self) -> None:
+        ctx = ssl.create_default_context(cafile=setting("PLIMSOLL_TLS_CA"))
+        c = Client(setting("PLIMSOLL_TLS_URL"), ssl_context=ctx)
+        self.assertEqual(c.describe().provider, "wasm")
+        r = c.run_javascript("console.log(6*7)", minimum_isolation="process")
+        self.assertEqual((r.stdout, r.isolation), (b"42\n", "process"))
+
+    def test_a_certificate_no_trusted_authority_signed_is_refused(self) -> None:
+        with self.assertRaises(TransportError) as cm:
+            Client(setting("PLIMSOLL_TLS_URL")).describe()
+        self.assertIsInstance(cm.exception.__cause__, ssl.SSLCertVerificationError)
+        self.assertEqual(cm.exception.not_dispatched, "environment")  # the handshake failed before any byte of the request
+
+    def test_a_host_name_the_certificate_does_not_carry_is_refused(self) -> None:
+        # The certificate names 127.0.0.1, ::1 and example.com, not localhost.
+        url = setting("PLIMSOLL_TLS_URL").replace("127.0.0.1", "localhost")
+        ctx = ssl.create_default_context(cafile=setting("PLIMSOLL_TLS_CA"))
+        with self.assertRaises(TransportError) as cm:
+            Client(url, ssl_context=ctx).describe()
+        self.assertIsInstance(cm.exception.__cause__, ssl.SSLCertVerificationError)
+        self.assertIn("localhost", str(cm.exception))
 
 
 class Auth(unittest.TestCase):
@@ -348,6 +378,33 @@ class Sessions(unittest.TestCase):
         self.assertEqual(close.exception.result.calls, 3)
         with self.assertRaises(ChainError):
             s.close()  # the same verdict again, not a quiet summary
+
+    def test_an_owner_at_its_cap_replaces_its_least_recently_used_session(self) -> None:
+        # The session daemon caps each owner at one session, and says so.
+        info = self.c.describe()
+        self.assertEqual((info.max_sessions_per_owner, info.max_sessions_per_caller), (1, 0))
+        first = self.c.open_session(owner="alice@example.com")
+        with self.c.open_session(owner="alice@example.com") as second:
+            with self.assertRaises(SessionEndedError) as cm:
+                first.run_javascript("1")
+            self.assertEqual((cm.exception.reason, cm.exception.not_dispatched), ("replaced", "request"))
+            self.assertEqual(first.close().end, "replaced")
+            with self.c.open_session(owner="bob@example.com"):
+                self.assertEqual(second.run_javascript("2").stdout, b"x")
+        with self.assertRaises(TypeError):
+            self.c.open_session(owner=7)  # type: ignore[arg-type]
+        with self.assertRaises(InvalidRequestError) as cm:
+            self.c.open_session(owner="")
+        self.assertEqual(cm.exception.not_dispatched, "request")
+
+    def test_a_session_the_daemon_forgot_is_ended(self) -> None:
+        # What a restarted daemon finds: no such session. The refusal carries an end.
+        s = self.c.open_session()
+        s._id = "00" * 16
+        with self.assertRaises(SessionEndedError) as cm:
+            s.run_javascript("1")
+        self.assertEqual((cm.exception.reason, cm.exception.not_dispatched), ("not_found", "request"))
+        self.assertEqual(s.ended.reason if s.ended else None, "not_found")
 
     def test_an_ended_session(self) -> None:
         s = self.c.open_session()

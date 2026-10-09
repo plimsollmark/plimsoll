@@ -21,15 +21,15 @@ hands the code another tool's output as a file it reads by path, instead of past
 into the source. The value of the last expression is printed, as in a notebook.
 
 The recipe keeps one sandbox per run. plimsoll does that with a **session**
-([sessions.md](../../docs/sessions.md)), which the `docker` provider (with a project image)
-and the `openshell` provider keep. In a session every call is a **cell**: it runs in a
+([sessions.md](../../docs/sessions.md)), which the `docker` (with a project image),
+`openshell` and `e2b` providers keep. In a session every call is a **cell**: it runs in a
 Python or Node.js interpreter that stays alive between calls, so a table the model loaded
 in one call is still in memory in the next, as it would be in a notebook, and files stay
 in the working directory. The tool's output says so (`stateKept`, `filesPersist`), and says
 when a call starts from nothing (`freshInterpreter`, `freshSandbox`): the recipe disposes
 the sandbox when the chat suspends, so the first call of a resumed turn reports both.
 
-On a provider without sessions (`e2b`, `dockercloud`) the agent still works, and each call
+On a provider without sessions (`dockercloud`, `wasm`) the agent still works, and each call
 starts a fresh sandbox; the tool's `stateKept: false` and `filesPersist: false` tell the
 model nothing carried over. `docker` under gVisor (`SANDBOX_DOCKER_RUNTIME=runsc`) keeps
 sessions at the `kernel` tier.
@@ -57,7 +57,7 @@ the record, but is not a signature or a proof of the guest's computation.
 
    ```sh
    SANDBOX_PROVIDER=docker SANDBOX_DOCKER_RUNTIME=runsc \
-   SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest SANDBOX_MAX_SESSIONS=32 \
+   SANDBOX_DOCKER_PROJECT_IMAGE=plimsoll/sandbox-python:latest SANDBOX_MAX_SESSIONS=4 \
    PLIMSOLL_CLIENTS_FILE=clients.json go run ./cmd/plimsolld
    ```
 
@@ -71,15 +71,24 @@ the record, but is not a signature or a proof of the guest's computation.
 4. `npm run dev`, and connect a frontend with Trigger.dev's chat transport
    ([frontend docs](https://trigger.dev/docs/ai-chat/frontend)).
 
-The `minimumIsolation: "container"` in `chat.ts` makes the daemon refuse, before running
-anything, if its provider reports less (the `wasm` provider is `process`). Raise it to
-`kernel` to require gVisor, which keeps sessions on docker under
-`SANDBOX_DOCKER_RUNTIME=runsc`, or to `vm`, which costs sessions: the providers at that
-tier keep none.
-Use at least the verified `kernel` tier for hostile production code; choose
-`vm` when a VM boundary is required. This example's `container` floor is for
-local development. The [deployable starter](https://github.com/plimsollmark/plimsoll-trigger-starter)
-uses `kernel` by default and includes a task that checks two deployed cells.
+The `minimumIsolation: "container"` in `chat.ts` is for local development only. It makes
+the daemon refuse, before running anything, if its provider reports less (the `wasm`
+provider is `process`), and it lowers the add-on's default, `kernel`, so the example also
+runs on an ordinary docker daemon (runc). Production must delete the line and keep `kernel`
+(gVisor), which keeps sessions on docker under `SANDBOX_DOCKER_RUNTIME=runsc`, or set `vm`:
+`e2b` keeps sessions (a suspend ends the interpreters), `dockercloud` keeps none. The
+[deployable starter](https://github.com/plimsollmark/plimsoll-trigger-starter) uses `kernel`
+by default and includes a task that checks two deployed cells.
+
+To cap each user's sandboxes, pass `codeChatAgent({ owner })`. `owner` gets the turn's
+`runId`, `chatId` and `ctx` (the task run context) and returns the user your server
+authenticated: look the chat's user up in your own database by `chatId`, or read a tag of
+`ctx.run.tags` that your server set itself when it started the session. A tag is only
+yours if the browser cannot set it: `chat.createStartSessionAction`'s helper shallow-merges
+a per-call `triggerConfig` over its default, so call it from your own server action with
+the authenticated user's tag, never with a `triggerConfig` the browser sent. The browser's
+`clientData` is deliberately not passed: a user who could choose the owner could close
+another user's sandboxes.
 
 ## Test
 

@@ -35,15 +35,18 @@ var testRefusals = Refusals{
 
 // fakeSandbox scripts the hooks and records what Life asked of it.
 type fakeSandbox struct {
-	mu       sync.Mutex
-	readBack error
-	sweep    ExecResult
-	sweepErr error
-	unproven *EndedError
-	suspends int
-	resumes  int
-	swept    [][]string
-	torn     chan struct{} // closed when Teardown may return
+	mu         sync.Mutex
+	readBack   error
+	sweep      ExecResult
+	sweepErr   error
+	quiesce    ExecResult
+	quiesceErr error
+	quiesced   [][]string
+	unproven   *EndedError
+	suspends   int
+	resumes    int
+	swept      [][]string
+	torn       chan struct{} // closed when Teardown may return
 }
 
 func (f *fakeSandbox) hooks() Hooks {
@@ -72,6 +75,12 @@ func (f *fakeSandbox) hooks() Hooks {
 			defer f.mu.Unlock()
 			f.swept = append(f.swept, argv)
 			return f.sweep, f.sweepErr
+		},
+		Quiesce: func(_ context.Context, argv []string) (ExecResult, error) {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.quiesced = append(f.quiesced, argv)
+			return f.quiesce, f.quiesceErr
 		},
 		Measure: MeasureWalk,
 		Dirs:    []string{"/tmp"},
@@ -178,6 +187,7 @@ func TestSweepDecidesTheBoundary(t *testing.T) {
 			if !slices.Equal(argv[3:6], []string{"4096", "200000", "walk"}) || !slices.Equal(argv[7:], []string{"1:1:00", "7:2:00"}) {
 				t.Fatalf("sweep argv %q", argv[3:])
 			}
+
 		})
 	}
 }
@@ -381,5 +391,63 @@ func TestACallOnAnAbandonedSessionIsRefused(t *testing.T) {
 		if refusalKind(err) != "ended" || !errors.As(err, &end) {
 			t.Fatalf("call %d on an abandoned session: %v; want refused with the session's end", i, err)
 		}
+	}
+}
+
+// The quiesce before a call decides it: with nothing of the session's alive it is not
+// run at all; a clean one lets the call start and leaves no interpreter behind, since
+// it killed them; one that ran and did not prove the sandbox is clear ends the session,
+// as a sweep that cannot prove the boundary does; one that could not run refuses the
+// call and keeps the session, since nothing of the call has been dispatched.
+func TestQuiesceDecidesTheCall(t *testing.T) {
+	f := &fakeSandbox{}
+	l := openLife(t, f, &Registry{})
+	if err := l.Quiesce(context.Background()); err != nil {
+		t.Fatalf("a session with no interpreter: %v", err)
+	}
+	if n := len(f.quiesced); n != 0 {
+		t.Fatalf("a session with no interpreter ran %d quiesces; want none, since nothing of it survived the sweep", n)
+	}
+	l.Interps.set("python", "42:7:00")
+	f.set(func(f *fakeSandbox) { f.quiesce = ExecResult{Exited: true} })
+	if err := l.Quiesce(context.Background()); err != nil {
+		t.Fatalf("a clean quiesce: %v", err)
+	}
+	if argv := f.quiesced[0]; !slices.Equal(argv[3:], []string{"1:1:00", "7:2:00"}) {
+		t.Fatalf("quiesce argv %q; want only plimsoll's own processes spared", argv[3:])
+	}
+	if guests := l.Interps.Guests(); len(guests) != 0 {
+		t.Fatalf("interpreters after a clean quiesce: %q; want none, they were killed", guests)
+	}
+	f.set(func(f *fakeSandbox) {
+		f.quiesce = ExecResult{ExitCode: 1, Exited: true}
+		f.unproven = &EndedError{Reason: BoundaryFailed, Detail: "stuck"}
+	})
+	l.Interps.set("python", "43:8:00")
+	if err := l.Quiesce(context.Background()); refusalKind(err) != "ended" || SessionEnd(l.Err()) != BoundaryFailed {
+		t.Fatalf("a quiesce that proved nothing: %v (session %v); want the call refused and the session ended", err, l.Err())
+	}
+
+	// A quiesce that could not run at all, on a session of its own.
+	f2 := &fakeSandbox{quiesceErr: errors.New("docker is not answering")}
+	l2 := openLife(t, f2, &Registry{})
+	l2.Interps.set("python", "42:7:00")
+	if err := l2.Quiesce(context.Background()); refusalKind(err) != "unreadable" || l2.Err() != nil {
+		t.Fatalf("a quiesce that could not run: %v (session %v); want the call refused and the session open", err, l2.Err())
+	}
+}
+
+// A quiesce that killed an interpreter the session had given up (the process may still
+// be running, so the empty stop list is not the whole story) still runs.
+func TestQuiesceRunsForAnInterpreterGivenUp(t *testing.T) {
+	f := &fakeSandbox{quiesce: ExecResult{Exited: true}}
+	l := openLife(t, f, &Registry{})
+	l.Interps.set("python", "42:7:00")
+	l.Interps.DropAll()
+	if err := l.Quiesce(context.Background()); err != nil {
+		t.Fatalf("quiesce: %v", err)
+	}
+	if len(f.quiesced) != 1 {
+		t.Fatalf("%d quiesces; want one, since the interpreter plimsoll gave up may still run", len(f.quiesced))
 	}
 }

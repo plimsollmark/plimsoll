@@ -183,17 +183,18 @@ func TestStatedTrainerCountMatchesTheCards(t *testing.T) {
 	}
 }
 
-// The catalog promotes the physics-oracle run report above the lessons: it is
-// evidence from a real run, not a trainer, so it is linked rather than listed as
-// a card. The target is checked on disk, so a moved page fails here.
-func TestCatalogPromotesTheOracleRunReport(t *testing.T) {
+// The catalog links the physics-oracle run report after the lessons, so a reader
+// learns the system first: it is evidence from a real run, not a trainer,
+// so it is linked rather than listed as a card. The target is checked on disk, so a
+// moved page fails here.
+func TestCatalogLinksTheOracleRunReport(t *testing.T) {
 	const href = "../examples/oracle/index.html"
 	catalog := readFile(t, "index.html")
 	if !strings.Contains(catalog, `href="`+href+`"`) {
 		t.Fatalf("catalog does not link the oracle run report at %s", href)
 	}
-	if strings.Index(catalog, href) > strings.Index(catalog, `href="plain-english.html"`) {
-		t.Error("the oracle run report is linked below the first trainer card, not near the top")
+	if strings.Index(catalog, href) < strings.Index(catalog, `href="plain-english.html"`) {
+		t.Error("the oracle run report is linked above the lessons; the lessons come first")
 	}
 	if _, err := os.Stat(href); err != nil {
 		t.Errorf("the linked oracle run report is missing: %v", err)

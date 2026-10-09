@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -64,5 +65,18 @@ func TestUsageNamesEveryVariable(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Fatal("found no environment variable reads to check; the guard is broken")
+	}
+}
+
+// A variable the daemon does not read is named at startup: a misspelled setting, or one
+// a newer plimsolld has, would otherwise be ignored without a word.
+func TestUnknownVariablesAreNamed(t *testing.T) {
+	got := unknownVariables([]string{
+		"SANDBOX_MAX_SESSIONS=4", "SANDBOX_MAX_SESION_PER_OWNER=3", "PLIMSOLL_ADDR=:1",
+		"PLIMSOLL_TOKN=x", "HOME=/root", "SANDBOX_DOCKERCLOUD_API_URLX=y",
+	}, helpText())
+	want := []string{"PLIMSOLL_TOKN", "SANDBOX_DOCKERCLOUD_API_URLX", "SANDBOX_MAX_SESION_PER_OWNER"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("unknown variables: %v; want %v", got, want)
 	}
 }

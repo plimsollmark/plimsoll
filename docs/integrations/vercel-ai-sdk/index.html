@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vercel AI SDK: a calculator with house rules</title><style>
+:root { color-scheme: light; --ink:#1a1a1a; --mut:#5d5d5d; --rule:#dcd7cd;
+        --bg:#fbfaf7; --card:#ffffff; --accent:#0f4a85; --warm:#b4530a; }
+* { box-sizing: border-box; }
+body { margin:0; padding:2.2rem 1.3rem 4rem; background:var(--bg); color:var(--ink);
+       font:15px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+main { max-width: 1010px; margin: 0 auto; }
+h1 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.9rem;
+     line-height:1.2; margin:0 0 .5rem; letter-spacing:-.01em; }
+h2 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.25rem;
+     margin:2.4rem 0 .5rem; }
+p.lede { color:var(--mut); margin:0 0 1.6rem; max-width:68ch; }
+p { max-width:74ch; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(196px,1fr)); gap:.8rem;
+         margin:1.4rem 0 2rem; }
+.tile { background:var(--card); border:1px solid var(--rule); border-radius:9px; padding:.85rem .95rem; }
+.tile .k { font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--mut); }
+.tile .v { font-size:1.5rem; font-variant-numeric:tabular-nums; margin-top:.15rem; }
+.tile .s { font-size:.78rem; color:var(--mut); }
+.tile.good .v { color:var(--accent); }
+.tile.bad  .v { color:var(--warm); }
+figure { background:var(--card); border:1px solid var(--rule); border-radius:9px;
+         margin:0 0 .9rem; padding:.7rem .8rem .3rem; }
+figcaption { font-size:.84rem; color:var(--mut); margin:0 0 .3rem; }
+figcaption b { color:var(--ink); font-weight:600; }
+svg { width:100%; height:auto; display:block; }
+.grid { stroke:#ece8e0; stroke-width:1; }
+.tick { font-size:9.5px; fill:var(--mut); font-variant-numeric:tabular-nums; }
+.axlab { font-size:10px; fill:var(--mut); }
+.truth { fill:none; stroke:var(--ink); stroke-width:.8; }
+.ghost { fill:none; stroke:#cfcabf; stroke-width:.7; }
+.approx { fill:none; stroke:var(--warm); stroke-width:1.5; }
+.band { fill:rgba(15,74,133,.22); stroke:var(--accent); stroke-width:.7; }
+.spine { fill:none; stroke:var(--accent); stroke-width:1; }
+.miss { fill:none; stroke:var(--warm); stroke-width:2; }
+.misslab { font-size:11px; fill:var(--warm); font-weight:600; }
+.legend { display:flex; flex-wrap:wrap; gap:1.1rem; font-size:.8rem; color:var(--mut); margin:.4rem 0 1.8rem; }
+.legend span { display:flex; align-items:center; gap:.4rem; }
+.sw { width:22px; height:3px; border-radius:2px; display:inline-block; }
+table { border-collapse:collapse; width:100%; font-size:.87rem; margin:.6rem 0 1rem; }
+th,td { text-align:right; padding:.42rem .6rem; border-bottom:1px solid var(--rule); }
+th:first-child,td:first-child { text-align:left; }
+th { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:var(--mut);
+     font-weight:600; border-bottom:1.5px solid #c9c3b7; }
+td { font-variant-numeric:tabular-nums; }
+tbody tr:hover { background:#f6f4ef; }
+.mutecol { color:#8a8a8a; }
+.lbl { text-align:left; }
+.same { color:var(--accent); font-weight:600; }
+.diff { color:var(--warm); font-weight:600; }
+.note { background:#fff8f0; border:1px solid #edd9bf; border-left:3px solid var(--warm);
+        border-radius:7px; padding:.85rem 1rem; margin:1.2rem 0; }
+.note b { color:var(--warm); }
+footer { margin-top:2.6rem; padding-top:1rem; border-top:1px solid var(--rule);
+         font-size:.8rem; color:var(--mut); }
+@media (max-width: 760px) {
+  
+  table { display:block; overflow-x:auto; white-space:nowrap; }
+  body { padding:1.5rem .9rem 3rem; }
+  h1 { font-size:1.5rem; }
+}
+code { background:#f0ede6; padding:.1rem .3rem; border-radius:3px;
+       font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace; color:#0f4a85; }
+pre { background:#f5f2ec; border:1px solid var(--rule); border-radius:7px; padding:.7rem .85rem;
+      overflow-x:auto; font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+
+.hero { display:grid; grid-template-columns: 1fr 300px; gap:1.4rem; align-items:start; margin:0 0 1.6rem; }
+@media (max-width: 760px) { .hero { grid-template-columns: 1fr; } }
+.narrator { background:#fffdf6; border:1px solid #e8dfc8; border-radius:12px; padding:.8rem .9rem; font-size:.9rem; position:relative; }
+.narrator .who { font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--mut); margin-bottom:.3rem; }
+.narrator .who small { text-transform:none; letter-spacing:0; }
+.narrator p { margin:0; }
+.face { width:42px; height:42px; float:left; margin:0 .6rem .2rem 0; }
+.scen { display:flex; flex-wrap:wrap; gap:.45rem; margin:.4rem 0 1rem; }
+.scen button, .ctrl button, .ctrl select { font:inherit; font-size:.86rem; border:1px solid var(--rule); background:var(--card);
+  border-radius:999px; padding:.35rem .8rem; cursor:pointer; color:var(--ink); }
+.ctrl select { border-radius:7px; padding:.3rem .5rem; }
+.scen button[aria-pressed="true"] { background:var(--accent); color:#fff; border-color:var(--accent); }
+.scen button:focus-visible, .ctrl button:focus-visible, .ctrl select:focus-visible { outline:2px solid var(--warm); outline-offset:2px; }
+.pipe { width:100%; height:auto; display:block; margin:.2rem 0 .6rem; }
+.pipe .box rect { fill:#fff; stroke:#cfc8ba; stroke-width:1.2; rx:9; transition: fill .25s, stroke .25s; }
+.pipe .box text { font-size:12px; fill:var(--ink); }
+.pipe .box text.sub { font-size:10px; fill:var(--mut); }
+.pipe .box.on rect { fill:#e6eef7; stroke:var(--accent); stroke-width:2; }
+.pipe .box.stop rect { fill:#fbe9e2; stroke:#b4530a; stroke-width:2.2; }
+.pipe .arrow { stroke:#b9b2a4; stroke-width:1.4; fill:none; }
+.pipe.h .arrow { marker-end:url(#tip-h); }
+.pipe.v .arrow { marker-end:url(#tip-v); }
+.pipe .arrow.on { stroke:var(--accent); }
+.pipe .stopsign { fill:#b4530a; font-size:11px; font-weight:700; visibility:hidden; }
+.pipe .box.stop .stopsign { visibility:visible; }
+.pipe .unknownsign { fill:#8a6a00; font-size:11px; font-weight:700; visibility:hidden; }
+.pipe .box.unknown rect { fill:#fff8e1; stroke:#a17c00; stroke-width:2; stroke-dasharray:6 4; }
+.pipe .box.unknown .unknownsign { visibility:visible; }
+.pipe .arrow.unknown { stroke:#a17c00; stroke-dasharray:5 4; }
+.pipe.v { display:none; max-width:340px; }
+@media (max-width: 760px) { .pipe.h { display:none; } .pipe.v { display:block; } .pipe.v .box text { font-size:13px; } .pipe.v .box text.sub { font-size:11px; } }
+.panes { display:grid; grid-template-columns: 1fr 1fr; gap:.8rem; }
+@media (max-width: 760px) { .panes { grid-template-columns: 1fr; } }
+.pane h3 { font-size:.78rem; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); margin:.2rem 0 .3rem; font-weight:600; }
+.pane pre { margin:0; max-height:340px; white-space:pre-wrap; word-break:break-word; }
+.explain { margin:.7rem 0 .2rem; }
+.src { font-size:.78rem; color:var(--mut); }
+.verdict { font-weight:600; padding:.55rem .8rem; border-radius:8px; margin:.6rem 0; }
+.verdict.yes { background:#e8f2ea; color:#24603a; }
+.verdict.no { background:#fbe9e2; color:#9a3f07; }
+.ctrl { display:flex; flex-wrap:wrap; gap:.8rem; align-items:center; margin:.4rem 0; font-size:.9rem; }
+.term { border-bottom:1px dotted var(--accent); cursor:help; }
+.tip { position:absolute; z-index:5; max-width:300px; background:#fff; border:1px solid var(--rule); border-radius:8px;
+  box-shadow:0 4px 14px rgba(0,0,0,.08); padding:.55rem .7rem; font-size:.82rem; color:var(--ink); }
+.gotcha { background:var(--card); border:1px solid var(--rule); border-left:3px solid var(--accent); border-radius:8px; padding:.6rem .8rem; margin:.5rem 0; }
+.gotcha b { display:block; margin-bottom:.15rem; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:.8rem; }
+.cards a.card { display:block; background:var(--card); border:1px solid var(--rule); border-radius:10px; padding:.8rem .9rem; color:var(--ink); text-decoration:none; }
+.cards a.card:hover { border-color:var(--accent); }
+.cards .card .k { font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--mut); }
+.goldfish { display:grid; grid-template-columns: 1fr 1fr; gap:.8rem; }
+@media (max-width: 760px) { .goldfish { grid-template-columns: 1fr; } }
+.bannerwrap { margin:.2rem 0 1.2rem; border-radius:12px; overflow:hidden; border:1px solid var(--rule); }
+.banner { width:100%; height:clamp(110px,18vw,230px); display:block; }
+.realquote { background:#f4f7fb; border:1px solid #cdd9e8; border-left:4px solid var(--accent); border-radius:10px; padding:.7rem .9rem; margin:.7rem 0; font-size:.92rem; }
+.realquote .who { font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--accent); margin-bottom:.25rem; font-weight:600; }
+.realquote p { margin:.15rem 0; }
+.realquote p.after { color:var(--mut); font-style:italic; }
+.realquote p.src { font-size:.76rem; color:var(--mut); margin-top:.4rem; }
+</style></head><body><main>
+<p class="src"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a> · <a href="../index.html">All integrations</a></p>
+<h1>Vercel AI SDK: a calculator with house rules</h1>
+<div class="bannerwrap"><svg class="banner" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 600" role="img" aria-labelledby="bn-vercel-ai-sdk-title">
+<title id="bn-vercel-ai-sdk-title">Three toy robots carrying code from a thought bubble to a fenced wooden sandbox and receiving a report</title>
+<defs><linearGradient id="bn-vercel-ai-sdk-wood" x2="0" y2="1"><stop stop-color="#C69A69"/><stop offset="1" stop-color="#B4530A" stop-opacity=".45"/></linearGradient>
+<linearGradient id="bn-vercel-ai-sdk-sand" x2="0" y2="1"><stop stop-color="#E6CCA0"/><stop offset="1" stop-color="#F7F4EE"/></linearGradient></defs>
+<rect x="0" y="0" width="1800" height="600" rx="0" fill="#F7F4EE" stroke="none" stroke-width="2" opacity="1"/>
+<ellipse cx="1453" cy="469" rx="269" ry="14" fill="#B4530A" opacity=".06"/><path d="M129 229C94 199 120 151 161 149C168 111 219 103 245 129C276 95 330 113 335 151C382 141 408 185 383 215C408 252 377 282 339 275C306 301 264 288 250 274C211 296 172 277 166 258C145 263 126 254 129 229Z" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M141 161C169 169 177 146 182 139" fill="none" stroke="#B4530A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.28"/><path d="M173 172L234 172" fill="none" stroke="#0F4A85" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M249 172L317 172" fill="none" stroke="#B4530A" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M196 198L286 198" fill="none" stroke="#0F4A85" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M198 222L243 222" fill="none" stroke="#B4530A" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M256 222L322 222" fill="none" stroke="#0F4A85" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M175 248L251 248" fill="none" stroke="#0F4A85" stroke-width="5" opacity="0.58" stroke-linecap="round"/><circle cx="361" cy="291" r="12" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><circle cx="394" cy="315" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><g transform="translate(555 338) rotate(0)"><ellipse cx="0" cy="115" rx="53" ry="9" fill="#0F4A85" opacity=".06"/><path d="M-20 56L-19 91L-39 94M20 56L18 96L39 102" fill="none" stroke="#0F4A85" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M-20 56L-19 91M20 56L18 96" fill="none" stroke="#0F4A85" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="-40" y="-9" width="80" height="73" rx="14" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-35" y="-4" width="70" height="62" rx="11" fill="#0F4A85" stroke="none" stroke-width="2" opacity="0.22"/><rect x="-23" y="14" width="46" height="20" rx="5" fill="#F7F4EE" stroke="#0F4A85" stroke-width="1.6" opacity="1"/><circle cx="-12" cy="24" r="3" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M0 24L15 24" fill="none" stroke="#0F4A85" stroke-width="2" opacity="1" stroke-linecap="round"/><path d="M0 -38L0 -69" fill="none" stroke="#0F4A85" stroke-width="3" opacity="1" stroke-linecap="round"/><circle cx="0" cy="-74" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><rect x="-47" y="-61" width="94" height="59" rx="18" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-42" y="-56" width="84" height="48" rx="14" fill="#0F4A85" stroke="none" stroke-width="2" opacity="0.14"/><circle cx="-17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><circle cx="17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M-10 -20Q0 -13 10 -20" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-53" cy="-33" r="6" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><circle cx="53" cy="-33" r="6" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M-40 14L-61 33L-65 55M40 14L61 17L68 35" fill="none" stroke="#0F4A85" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-65" cy="55" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><circle cx="68" cy="35" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/></g><g transform="translate(774 338) rotate(0)"><ellipse cx="0" cy="115" rx="53" ry="9" fill="#0F4A85" opacity=".06"/><path d="M-20 56L-37 91L-57 94M20 56L36 96L57 102" fill="none" stroke="#0F4A85" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M-20 56L-37 91M20 56L36 96" fill="none" stroke="#B4530A" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="-40" y="-9" width="80" height="73" rx="14" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-35" y="-4" width="70" height="62" rx="11" fill="#B4530A" stroke="none" stroke-width="2" opacity="0.22"/><rect x="-23" y="14" width="46" height="20" rx="5" fill="#F7F4EE" stroke="#0F4A85" stroke-width="1.6" opacity="1"/><circle cx="-12" cy="24" r="3" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M0 24L15 24" fill="none" stroke="#0F4A85" stroke-width="2" opacity="1" stroke-linecap="round"/><path d="M0 -38L0 -69" fill="none" stroke="#0F4A85" stroke-width="3" opacity="1" stroke-linecap="round"/><circle cx="0" cy="-74" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-47 -61H47L42 -2H-42Z" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M-42 -56H42L37 -9H-37Z" fill="#B4530A" stroke="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.15"/><circle cx="-17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><circle cx="17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M-10 -20Q0 -13 10 -20" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-53" cy="-33" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><circle cx="53" cy="-33" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-40 13L-65 26L-60 48M40 13L67 28L60 48" fill="none" stroke="#0F4A85" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="-52" y="32" width="104" height="67" rx="6" fill="#E6CCA0" stroke="#B4530A" stroke-width="2.3" opacity="1"/><path d="M-52 32L-37 19H35L52 32Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M0 19L0 32" fill="none" stroke="#B4530A" stroke-width="2" opacity="0.6" stroke-linecap="round"/><g transform="translate(0 66) scale(1.05)"><path d="M-10 -15C-19 -15 -19 -10 -19 -5C-19 0 -24 0 -24 0C-19 0 -19 5 -19 10C-19 15 -13 15 -10 15" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M10 -15C19 -15 19 -10 19 -5C19 0 24 0 24 0C19 0 19 5 19 10C19 15 13 15 10 15" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/></g><circle cx="-55" cy="53" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><circle cx="55" cy="53" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/></g><g transform="translate(988 338) rotate(0)"><ellipse cx="0" cy="115" rx="53" ry="9" fill="#0F4A85" opacity=".06"/><path d="M-20 56L-19 91L-39 94M20 56L18 96L39 102" fill="none" stroke="#0F4A85" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M-20 56L-19 91M20 56L18 96" fill="none" stroke="#C69A69" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="-40" y="-9" width="80" height="73" rx="14" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-35" y="-4" width="70" height="62" rx="11" fill="#C69A69" stroke="none" stroke-width="2" opacity="0.22"/><rect x="-23" y="14" width="46" height="20" rx="5" fill="#F7F4EE" stroke="#0F4A85" stroke-width="1.6" opacity="1"/><circle cx="-12" cy="24" r="3" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M0 24L15 24" fill="none" stroke="#0F4A85" stroke-width="2" opacity="1" stroke-linecap="round"/><path d="M0 -38L0 -69" fill="none" stroke="#0F4A85" stroke-width="3" opacity="1" stroke-linecap="round"/><circle cx="0" cy="-74" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><rect x="-48" y="-62" width="96" height="60" rx="26" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-43" y="-57" width="86" height="49" rx="22" fill="#C69A69" stroke="none" stroke-width="2" opacity="0.25"/><circle cx="-17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><circle cx="17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M-10 -20Q0 -13 10 -20" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-53" cy="-33" r="6" fill="#C69A69" stroke="none" stroke-width="2" opacity="1"/><circle cx="53" cy="-33" r="6" fill="#C69A69" stroke="none" stroke-width="2" opacity="1"/><path d="M-40 14L-61 33L-65 55M40 14L61 17L68 35" fill="none" stroke="#0F4A85" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-65" cy="55" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><circle cx="68" cy="35" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/></g><path d="M1242 362V292L1253 278L1264 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1248 300L1248 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1303 362V292L1314 278L1325 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1309 300L1309 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1364 362V292L1375 278L1386 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1370 300L1370 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1425 362V292L1436 278L1447 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1431 300L1431 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1486 362V292L1497 278L1508 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1492 300L1492 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1547 362V292L1558 278L1569 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1553 300L1553 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1608 362V292L1619 278L1630 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1614 300L1614 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1669 362V292L1680 278L1691 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1675 300L1675 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><rect x="1225" y="318" width="479" height="12" rx="3" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" opacity="1"/><rect x="1225" y="346" width="479" height="12" rx="3" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" opacity="1"/><rect x="1204" y="377" width="508" height="87" rx="19" fill="url(#bn-vercel-ai-sdk-wood)" stroke="#B4530A" stroke-width="2.7" opacity="1"/><rect x="1224" y="389" width="468" height="49" rx="15" fill="url(#bn-vercel-ai-sdk-sand)" stroke="#B4530A" stroke-width="1.8" opacity="1"/><path d="M1231 449L1683 449" fill="none" stroke="#F7F4EE" stroke-width="2" opacity="0.48" stroke-linecap="round"/><rect x="1347" y="349" width="50" height="72" rx="3" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1347" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1366.0" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1385" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><path d="M1356 371L1388 371" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><path d="M1356 387L1388 387" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><rect x="1504" y="349" width="50" height="72" rx="3" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1504" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1523.0" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1542" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><path d="M1513 371L1545 371" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><path d="M1513 387L1545 387" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><rect x="1420" y="315" width="69" height="106" rx="3" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1420" y="301" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1448.5" y="301" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1477" y="301" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><path d="M1429 337L1480 337" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><path d="M1429 353L1480 353" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><rect x="1395" y="378" width="113" height="45" rx="2" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><path d="M1434 423V399Q1454 377 1474 399V423" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><ellipse cx="1305" cy="414" rx="10" ry="3" fill="#B4530A" opacity=".16"/><ellipse cx="1577" cy="416" rx="12" ry="3" fill="#B4530A" opacity=".16"/><ellipse cx="1495" cy="436" rx="8" ry="3" fill="#B4530A" opacity=".16"/><path d="M1198 422V338L1207 328L1216 338V422Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1220 436V352L1229 342L1238 352V436Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1689 440V356L1698 346L1707 356V440Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1701 456V372L1710 362L1719 372V456Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1212 362L1232 375M1212 398L1232 410" fill="none" stroke="#B4530A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1678 389V374Q1690 356 1702 374V389" fill="none" stroke="#0F4A85" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="1672" y="386" width="37" height="38" rx="6" fill="#B88A3F" stroke="#B4530A" stroke-width="2" opacity="1"/><circle cx="1690" cy="401" r="3" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M1690 404L1690 412" fill="none" stroke="#0F4A85" stroke-width="2.5" opacity="1" stroke-linecap="round"/><rect x="1640" y="245" width="9" height="108" rx="2" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" opacity="1"/><circle cx="1645" cy="231" r="35" fill="#F7F4EE" stroke="#B4530A" stroke-width="2.5" opacity="1"/><path d="M1625 224Q1645 204 1665 224M1631 231Q1645 218 1659 231M1638 238Q1645 232 1652 238" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="1645" cy="245" r="2.6" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M1621 206L1669 256" fill="none" stroke="#B4530A" stroke-width="4" opacity="1" stroke-linecap="round"/><path d="M1425 226C1358 152 1230 137 1113 171S1014 216 1073 238" fill="none" stroke="#0F4A85" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="0.45"/><g transform="translate(1162 213) rotate(-16)"><rect x="-41" y="-48" width="82" height="99" rx="5" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><path d="M22 -48V-28H41" fill="#E6CCA0" stroke="#0F4A85" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-24" cy="-22" r="2.7" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-13 -22L29 -22" fill="none" stroke="#0F4A85" stroke-width="2" opacity="0.6" stroke-linecap="round"/><circle cx="-24" cy="-5" r="2.7" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-13 -5L36 -5" fill="none" stroke="#0F4A85" stroke-width="2" opacity="0.6" stroke-linecap="round"/><circle cx="-24" cy="12" r="2.7" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-13 12L22 12" fill="none" stroke="#0F4A85" stroke-width="2" opacity="0.6" stroke-linecap="round"/><circle cx="-24" cy="29" r="2.7" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-13 29L33 29" fill="none" stroke="#0F4A85" stroke-width="2" opacity="0.6" stroke-linecap="round"/></g><path d="M1080 209L1067 222L1086 219M1225 213Q1245 218 1257 232" fill="none" stroke="#B4530A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+</svg>
+</div>
+<div class="hero"><div>
+<p class="lede">Vercel&#x27;s <span class="term" data-term="AI SDK">AI SDK</span> lets a model request tools with typed arguments. <span class="term" data-term="plimsollCodeTools">plimsollCodeTools</span> supplies <span class="term" data-term="executeCode">executeCode</span> through the checked TypeScript client. Keep calls fresh, or bind a <span class="term" data-term="tool">tool</span> to an authenticated user and conversation when the <span class="term" data-term="daemon">daemon</span> supports sessions.</p>
+<p><b>Vercel AI SDK</b>: A TypeScript library for calling models, streaming responses and letting models request tools. This integration does not require Trigger.dev or a Vercel deployment. <a href="https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling">Vercel AI SDK (EXTERNAL · official docs ↗)</a></p>
+</div><div><div class="narrator"><svg class="face" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="20" fill="#f1ece0" stroke="#cdbf9f"/><circle cx="14.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><circle cx="27.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><path d="M19.5 19h3M15 29q6 4 12 0" fill="none" stroke="#5d5d5d" stroke-width="1.6" stroke-linecap="round"/></svg><div class="who">The Professor <small>(a fictional narrator)</small></div><p aria-live="polite">The model gets a calculator; the application keeps the keys. Even a very clever guest should not choose the locks.</p></div><div class="realquote"><div class="who">Real quote</div><p><b>Geoffrey Hinton:</b> “I had a principle when selecting graduate students: &#x27;If they&#x27;re not smarter than me, what&#x27;s the point?&#x27; And I&#x27;ve had quite a number of graduate students who were smarter than me.”</p><p class="src">University of Toronto celebration of his Nobel Prize, reported by U of T News, 17 October 2024. <a href="https://www.utoronto.ca/news/one-great-minds-21st-century-u-t-celebrates-geoffrey-hinton-s-nobel-prize">U of T News (EXTERNAL · article ↗)</a></p></div></div></div>
+
+<h2>Wire it up</h2>
+<pre># Source checkout. The /ai-sdk add-on is not yet released on npm.
+cd clients/typescript
+npm ci --userconfig=/dev/null</pre>
+<pre>import { generateText } from &quot;ai&quot;;
+import { PlimsollClient } from &quot;@plimsollmark/client&quot;;
+import { plimsollCodeTools } from &quot;@plimsollmark/client/ai-sdk&quot;;
+
+// Create the manager once per application process.
+const codeTools = plimsollCodeTools({
+  client: new PlimsollClient({ baseUrl: yourDaemonURL, token: yourDaemonToken }),
+  minimumIsolation: &quot;kernel&quot;,
+});
+
+// IDs come from your authenticated application, never from model arguments.
+const executeCode = codeTools.forConversation({ userId, conversationId });
+const answer = await generateText({
+  model: yourExistingModel, tools: { executeCode }, prompt: yourPrompt,
+});
+// At conversation end: await codeTools.dispose({ userId, conversationId });</pre>
+<p>Options, limits and errors: <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/ai-sdk.md">Vercel AI SDK guide (EXTERNAL · source repo ↗)</a></p>
+
+<h2>Follow one call</h2>
+<p>Replay a recorded scenario. The diagram lights each hop the call passes; a refused call stops where it is refused.
+These buttons send no execution requests. Each answer's source states how it was recorded, including any fixture used.
+Exception panels show what reached the application, rather than an invented code result.</p>
+<div class="scen" id="scenarios" role="group" aria-label="Scenarios"></div>
+<svg class="pipe h" viewBox="0 0 960 100" role="img" aria-label="The path a tool call takes"><defs><marker id="tip-h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#b9b2a4"/></marker></defs><g class="box" data-box="model"><rect x="10.0" y="26" width="128" height="62"/><text x="74.0" y="52" text-anchor="middle">Model</text><text class="sub" x="74.0" y="70" text-anchor="middle">code + language</text><text class="stopsign" x="74.0" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="74.0" y="18" text-anchor="middle">MAY HAVE RUN</text><title>The model requests executeCode with code, language and optional text files. It cannot select credentials, the image, the floor or a conversation identity.</title></g><path data-arrow="sdk" class="arrow" d="M142.0 57.0 H168.4"/><g class="box" data-box="sdk"><rect x="172.4" y="26" width="128" height="62"/><text x="236.4" y="52" text-anchor="middle">AI SDK</text><text class="sub" x="236.4" y="70" text-anchor="middle">typed tool</text><text class="stopsign" x="236.4" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="236.4" y="18" text-anchor="middle">MAY HAVE RUN</text><title>The SDK validates the tool&#x27;s argument schema and invokes its execute function. It passes the call&#x27;s cancellation signal.</title></g><path data-arrow="adapter" class="arrow" d="M304.4 57.0 H330.8"/><g class="box" data-box="adapter"><rect x="334.8" y="26" width="128" height="62"/><text x="398.8" y="52" text-anchor="middle">Tool manager</text><text class="sub" x="398.8" y="70" text-anchor="middle">CodeSandboxes</text><text class="stopsign" x="398.8" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="398.8" y="18" text-anchor="middle">MAY HAVE RUN</text><title>plimsollCodeTools uses CodeSandboxes to select a fresh run or a session bound to the application&#x27;s user and conversation pair. It reserves its runner files; other unsafe paths are refused by the daemon.</title></g><path data-arrow="client" class="arrow" d="M466.8 57.0 H493.2"/><g class="box" data-box="client"><rect x="497.2" y="26" width="128" height="62"/><text x="561.2" y="52" text-anchor="middle">Checked client</text><text class="sub" x="561.2" y="70" text-anchor="middle">floor + run record</text><text class="stopsign" x="561.2" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="561.2" y="18" text-anchor="middle">MAY HAVE RUN</text><title>The client serializes the project request, sends its required floor to the daemon and checks returned isolation and the run record. It does not retry an execution whose outcome is unknown.</title></g><path data-arrow="daemon" class="arrow" d="M629.2 57.0 H655.6"/><g class="box" data-box="daemon"><rect x="659.6" y="26" width="128" height="62"/><text x="723.6" y="52" text-anchor="middle">plimsolld</text><text class="sub" x="723.6" y="70" text-anchor="middle">deadline + image</text><text class="stopsign" x="723.6" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="723.6" y="18" text-anchor="middle">MAY HAVE RUN</text><title>The daemon enforces the configured boundary and deadline, runs in the selected image and owns session lifecycle. Packages are installed in the image before runtime.</title></g><path data-arrow="sandbox" class="arrow" d="M791.6 57.0 H818.0"/><g class="box" data-box="sandbox"><rect x="822.0" y="26" width="128" height="62"/><text x="886.0" y="52" text-anchor="middle">Python or JS</text><text class="sub" x="886.0" y="70" text-anchor="middle">fresh or retained</text><text class="stopsign" x="886.0" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="886.0" y="18" text-anchor="middle">MAY HAVE RUN</text><title>A fresh call runs in a new project. A supported session executes a cell in a retained interpreter. The result states whether the interpreter and files remained available.</title></g></svg><svg class="pipe v" viewBox="0 0 320 428" role="img" aria-label="The path a tool call takes"><defs><marker id="tip-v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#b9b2a4"/></marker></defs><g class="box" data-box="model"><rect x="10.0" y="14" width="230" height="48"/><text x="22" y="34">Model</text><text class="sub" x="22" y="51">code + language</text><text class="stopsign" x="246" y="42.0">STOP</text><text class="unknownsign" x="246" y="42.0">?</text><title>The model requests executeCode with code, language and optional text files. It cannot select credentials, the image, the floor or a conversation identity.</title></g><path data-arrow="sdk" class="arrow" d="M125.0 65.0 V83.0"/><g class="box" data-box="sdk"><rect x="10.0" y="86" width="230" height="48"/><text x="22" y="106">AI SDK</text><text class="sub" x="22" y="123">typed tool</text><text class="stopsign" x="246" y="114.0">STOP</text><text class="unknownsign" x="246" y="114.0">?</text><title>The SDK validates the tool&#x27;s argument schema and invokes its execute function. It passes the call&#x27;s cancellation signal.</title></g><path data-arrow="adapter" class="arrow" d="M125.0 137.0 V155.0"/><g class="box" data-box="adapter"><rect x="10.0" y="158" width="230" height="48"/><text x="22" y="178">Tool manager</text><text class="sub" x="22" y="195">CodeSandboxes</text><text class="stopsign" x="246" y="186.0">STOP</text><text class="unknownsign" x="246" y="186.0">?</text><title>plimsollCodeTools uses CodeSandboxes to select a fresh run or a session bound to the application&#x27;s user and conversation pair. It reserves its runner files; other unsafe paths are refused by the daemon.</title></g><path data-arrow="client" class="arrow" d="M125.0 209.0 V227.0"/><g class="box" data-box="client"><rect x="10.0" y="230" width="230" height="48"/><text x="22" y="250">Checked client</text><text class="sub" x="22" y="267">floor + run record</text><text class="stopsign" x="246" y="258.0">STOP</text><text class="unknownsign" x="246" y="258.0">?</text><title>The client serializes the project request, sends its required floor to the daemon and checks returned isolation and the run record. It does not retry an execution whose outcome is unknown.</title></g><path data-arrow="daemon" class="arrow" d="M125.0 281.0 V299.0"/><g class="box" data-box="daemon"><rect x="10.0" y="302" width="230" height="48"/><text x="22" y="322">plimsolld</text><text class="sub" x="22" y="339">deadline + image</text><text class="stopsign" x="246" y="330.0">STOP</text><text class="unknownsign" x="246" y="330.0">?</text><title>The daemon enforces the configured boundary and deadline, runs in the selected image and owns session lifecycle. Packages are installed in the image before runtime.</title></g><path data-arrow="sandbox" class="arrow" d="M125.0 353.0 V371.0"/><g class="box" data-box="sandbox"><rect x="10.0" y="374" width="230" height="48"/><text x="22" y="394">Python or JS</text><text class="sub" x="22" y="411">fresh or retained</text><text class="stopsign" x="246" y="402.0">STOP</text><text class="unknownsign" x="246" y="402.0">?</text><title>A fresh call runs in a new project. A supported session executes a cell in a retained interpreter. The result states whether the interpreter and files remained available.</title></g></svg>
+<div class="panes">
+<div class="pane"><h3>The model asks for</h3><pre id="call"></pre></div>
+<div class="pane"><h3>Tool result, or exception returned to the application</h3><pre id="answer" aria-live="polite"></pre></div>
+</div>
+<p class="explain" id="explain"></p><p class="src" id="src"></p>
+<div class="narrator"><svg class="face" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="20" fill="#f1ece0" stroke="#cdbf9f"/><circle cx="14.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><circle cx="27.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><path d="M19.5 19h3M15 29q6 4 12 0" fill="none" stroke="#5d5d5d" stroke-width="1.6" stroke-linecap="round"/></svg><div class="who">The Professor <small>(a fictional narrator)</small></div><p id="say" aria-live="polite"></p></div>
+<div class="realquote" id="scenequote" hidden></div>
+
+<h2>Each step of the call</h2>
+<ol><li><b>Model</b>: The model requests <span class="term" data-term="executeCode">executeCode</span> with code, language and optional text files. It cannot select credentials, the image, the <span class="term" data-term="floor">floor</span> or a conversation identity.</li><li><b>AI SDK</b>: The SDK validates the <span class="term" data-term="tool">tool</span>&#x27;s argument schema and invokes its execute function. It passes the call&#x27;s cancellation signal.</li><li><b>Tool manager</b>: <span class="term" data-term="plimsollCodeTools">plimsollCodeTools</span> uses <span class="term" data-term="CodeSandboxes">CodeSandboxes</span> to select a fresh run or a <span class="term" data-term="session">session</span> bound to the application&#x27;s user and conversation pair. It reserves its runner files; other unsafe paths are refused by the <span class="term" data-term="daemon">daemon</span>.</li><li><b>Checked client</b>: The client serializes the project request, sends its required <span class="term" data-term="floor">floor</span> to the <span class="term" data-term="daemon">daemon</span> and checks returned isolation and the <span class="term" data-term="run record">run record</span>. It does not retry an execution whose outcome is unknown.</li><li><b>plimsolld</b>: The <span class="term" data-term="daemon">daemon</span> enforces the configured boundary and deadline, runs in the selected image and owns <span class="term" data-term="session">session</span> lifecycle. Packages are installed in the image before runtime.</li><li><b>Python or JS</b>: A fresh call runs in a new project. A supported <span class="term" data-term="session">session</span> executes a cell in a retained interpreter. The result states whether the interpreter and files remained available.</li></ol>
+
+<h2>How thick should the walls be?</h2>
+<p>The executor carries a <span class="term" data-term="floor">floor</span>; the daemon states its
+<span class="term" data-term="isolation tier">isolation tier</span>. This picker is a teaching simulation:
+change either to see whether the tier meets the floor. It sends no request and does not check other capabilities.</p>
+<div class="ctrl"><label>The daemon runs at <select id="daemon"><option value="process">process</option><option value="container" selected>container</option><option value="kernel">kernel</option><option value="vm">vm</option></select></label>
+<label>The executor's floor is <select id="floor"><option value="process">process</option><option value="container">container</option><option value="kernel" selected>kernel</option><option value="vm">vm</option></select></label></div>
+<div id="tierverdict" class="verdict" aria-live="polite"></div>
+<div class="narrator"><svg class="face" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="20" fill="#f1ece0" stroke="#cdbf9f"/><circle cx="14.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><circle cx="27.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><path d="M19.5 19h3M15 29q6 4 12 0" fill="none" stroke="#5d5d5d" stroke-width="1.6" stroke-linecap="round"/></svg><div class="who">The Professor <small>(a fictional narrator)</small></div><p id="tiersay" aria-live="polite"></p></div>
+<p class="src">The executor&#x27;s <span class="term" data-term="floor">floor</span> defaults to kernel: docker under <span class="term" data-term="runc">runc</span> is the container tier and refuses every call until it runs <span class="term" data-term="gVisor">gVisor</span>, or the executor is built with an explicit container floor, which is for development on your own code only. Use the spelling shown in this page&#x27;s wiring example.</p>
+
+<h2>Surprises and limits</h2>
+<div class="gotcha"><b>Bind identities in your application</b>Create one <span class="term" data-term="tool">tool</span> manager per process. forConversation takes a user and conversation pair from your authenticated application. Those IDs are not model-generated tool arguments. The unscoped <span class="term" data-term="executeCode">executeCode</span> always runs fresh, even when sessions are available.</div><div class="gotcha"><b>A limit for each user&#x27;s retained sandboxes</b><span class="term" data-term="maxSessionsPerOwner">maxSessionsPerOwner</span> defaults to 3, keeping a few conversations warm while bounding one user&#x27;s allocation in this manager. Opening a fourth closes that user&#x27;s least recently used <span class="term" data-term="sandbox">sandbox</span> with no call in progress. If all three are busy, the open is refused with <span class="term" data-term="notDispatched">notDispatched</span>: capacity. The evicted conversation&#x27;s next call starts fresh, reports freshSandbox and loses its earlier variables and files. Set <span class="term" data-term="maxSessions">maxSessions</span> for this process&#x27;s share of the <span class="term" data-term="daemon">daemon</span> pool; its default 0 adds no process-wide cap. Both manager caps count one process only.</div><div class="gotcha"><b>Several workers need the daemon limit</b>For several application workers or serverless functions, set <span class="term" data-term="SANDBOX_MAX_SESSIONS_PER_OWNER">SANDBOX_MAX_SESSIONS_PER_OWNER</span> on the <span class="term" data-term="daemon">daemon</span>; its default 0 leaves this quota off. Workers using the same daemon and application token send the same user&#x27;s <span class="term" data-term="keyed digest">keyed digest</span>, so the daemon counts their sessions together. It replaces that user&#x27;s least recently used idle <span class="term" data-term="session">session</span>, or refuses capacity if all are busy. After a replacement refusal, the manager opens a <span class="term" data-term="fresh sandbox">fresh sandbox</span>. The application must authenticate the user and keep the daemon token on its server: an owner hint is not independent user authentication. This quota counts one daemon; several daemon replicas still need shared application admission if you promise a global limit.</div><div class="gotcha"><b>State follows capability, not the tool&#x27;s name</b>The current Docker, OpenShell and E2B providers support retained interpreters when sessions are enabled; an E2B suspend ends them, so the next call reports freshInterpreter. The current Docker Cloud adapter runs fresh projects. Inspect stateKept, filesPersist, freshInterpreter and freshSandbox instead of assuming the last call&#x27;s state survived. The initial call in a new interpreter reports freshInterpreter even if state is then retained.</div><div class="gotcha"><b>Switch endpoints, then check capabilities</b>The same <span class="term" data-term="tool">tool</span> contract can target your local <span class="term" data-term="daemon">daemon</span> or a remote daemon. Language support, packages, isolation and sessions come from that daemon&#x27;s configured provider and image. Changing endpoints does not migrate a held interpreter or its files. Cloud and local configurations still need the appropriate authentication and connectivity.</div><div class="gotcha"><b>Lifecycle and cancellation</b>dispose closes one conversation&#x27;s <span class="term" data-term="sandbox">sandbox</span> and disposeAll closes every held sandbox. The <span class="term" data-term="AI SDK">AI SDK</span> abort signal reaches the checked client. If a dispatched call loses its transport, its effect may be unknown; without a <span class="term" data-term="notDispatched">notDispatched</span> refusal mark, do not automatically replay it.</div><div class="gotcha"><b>Packages are prepared before the model calls</b>Supply dependencies in the <span class="term" data-term="daemon">daemon</span>&#x27;s image. The <span class="term" data-term="tool">tool</span> does not install npm or pip packages at runtime. The kernel <span class="term" data-term="floor">floor</span> is the default; ordinary Docker with its default <span class="term" data-term="runc">runc</span> runtime is container tier and is refused. These pages do not prove every remote daemon&#x27;s isolation, and checked records are consistency checks rather than independent <span class="term" data-term="attestation">attestation</span>.</div><div class="gotcha"><b>These buttons replay evidence</b>The scenario buttons replay real local <span class="term" data-term="tool">tool</span> calls, not fresh requests to a model or <span class="term" data-term="sandbox">sandbox</span>. The <span class="term" data-term="floor">floor</span> picker is a teaching simulation. A separate smoke example drives the real <span class="term" data-term="AI SDK">AI SDK</span> loop with a scripted model and local <span class="term" data-term="gVisor">gVisor</span>. Scripted answers test integration plumbing, not a model&#x27;s reasoning ability.</div>
+
+<footer><a href="../recordings/vercel-ai-sdk.json">Recorded answers (INTERNAL · raw JSON →)</a>: every call and answer
+this page replays, each with how and when it was recorded.</footer>
+<script type="application/json" id="data">{"path": [{"id": "model", "label": "Model", "sub": "code + language", "detail": "The model requests executeCode with code, language and optional text files. It cannot select credentials, the image, the floor or a conversation identity."}, {"id": "sdk", "label": "AI SDK", "sub": "typed tool", "detail": "The SDK validates the tool's argument schema and invokes its execute function. It passes the call's cancellation signal."}, {"id": "adapter", "label": "Tool manager", "sub": "CodeSandboxes", "detail": "plimsollCodeTools uses CodeSandboxes to select a fresh run or a session bound to the application's user and conversation pair. It reserves its runner files; other unsafe paths are refused by the daemon."}, {"id": "client", "label": "Checked client", "sub": "floor + run record", "detail": "The client serializes the project request, sends its required floor to the daemon and checks returned isolation and the run record. It does not retry an execution whose outcome is unknown."}, {"id": "daemon", "label": "plimsolld", "sub": "deadline + image", "detail": "The daemon enforces the configured boundary and deadline, runs in the selected image and owns session lifecycle. Packages are installed in the image before runtime."}, {"id": "sandbox", "label": "Python or JS", "sub": "fresh or retained", "detail": "A fresh call runs in a new project. A supported session executes a cell in a retained interpreter. The result states whether the interpreter and files remained available."}], "scenarios": [{"id": "works", "name": "Add a CSV", "recording": "works", "stops_at": null, "explain": "The actual executeCode tool received a CSV text file and Python code. The local gVisor run returned 42, exitCode 0, kernel isolation and a checked record digest. A fresh run does not retain variables or files.", "narrator": "Two rows, 42. The assistant has delegated the arithmetic and kept the credit."}, {"id": "javascript", "name": "Switch to JavaScript", "recording": "javascript", "stops_at": null, "explain": "The same tool accepted JavaScript. Its runner printed the last expression, 42. Python also prints its last expression through this tool, unlike the ADK executor's ordinary Python script convention.", "narrator": "Same answer, different language. The calculator did not ask for a second passport."}, {"id": "fresh", "name": "Goldfish memory", "recording": "fresh", "stops_at": null, "explain": "The unscoped manager.executeCode always runs fresh. It defined x in one sandbox, then the next sandbox could not find x. The NameError is a normal failed code result.", "narrator": "We threw away the room, then asked where x had gone. The error message was kinder than the question deserved."}, {"id": "remember", "name": "Remember the conversation", "recording": "remember", "stops_at": null, "explain": "An application-bound user and conversation pair reused one supported Python interpreter. The second call found x and returned 42. These results show stateKept and filesPersist. Availability is still conditional: a deadline, expiry or disposal can end that interpreter.", "narrator": "This time we kept the room. Remembering x is much easier when we haven't evicted it."}, {"id": "other_user", "name": "Another user's turn", "recording": "other_user", "stops_at": null, "explain": "Bob used the same conversation name as Alice but a different application-owned user ID. The manager opened another sandbox. Alice's x was absent, and Bob received NameError. Model arguments never contain either identity.", "narrator": "Alice left x on her desk. Bob does not get a spare key just because he names his desk the same thing."}, {"id": "disposed", "name": "End the conversation", "recording": "disposed", "stops_at": null, "explain": "dispose closed Alice's held sandbox. A later call reopened a fresh one, and x was absent. Call dispose when a conversation ends and disposeAll at application shutdown.", "narrator": "We cleared the desk and then asked it to remember x. Tidying up has consequences."}, {"id": "guest_error", "name": "Confidently wrong", "recording": "guest_error", "stops_at": null, "explain": "Python ran and raised ValueError. The tool returned exitCode 1 and stderr with a checked record. A failing guest is a result, not proof that the transport failed. The adapter does not rerun the call.", "narrator": "The program delivered an objection instead of an answer. At least it left a receipt.", "quote": "confabulate"}, {"id": "floor", "name": "Ask for thicker walls", "recording": "floor", "stops_at": "daemon", "explain": "The recorded call required VM isolation, but the daemon reported kernel isolation. The client sent the required floor and plimsolld refused before dispatch. This panel shows the actual thrown exception in an application-readable projection; it does not invent an executed-code result.", "narrator": "The guest requested thicker walls. Complimenting the thin ones would not help."}, {"id": "bad_file", "name": "Try a sneaky filename", "recording": "bad_file", "stops_at": "daemon", "explain": "The daemon received the project request and rejected ../secret.txt before dispatching code. The thrown exception carries notDispatched: request. Files must stay inside the sandbox work directory. Reserved runner paths are a separate check in the tool manager.", "narrator": "The file asked for a room upstairs. Its booking was for this room only."}], "recordings": {"works": {"call": {"language": "python", "code": "import csv\nsum(int(r['value']) for r in csv.DictReader(open('data.csv')))", "files": [{"path": "data.csv", "content": "value\n20\n22\n"}]}, "answer": {"language": "python", "exitCode": 0, "timedOut": false, "stdout": "42\n", "stderr": "", "truncated": false, "stateKept": false, "filesPersist": false, "isolation": "kernel", "recordSha256": "b6cec6f794646a8bbc62a283fef197942cb4ade36662ae7c32db0418daf8ec0e"}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}, "javascript": {"call": {"language": "javascript", "code": "40 + 2"}, "answer": {"language": "javascript", "exitCode": 0, "timedOut": false, "stdout": "42\n", "stderr": "", "truncated": false, "stateKept": false, "filesPersist": false, "isolation": "kernel", "recordSha256": "483467133aaddf2a21cb82cdde09935ab018bd85faf4a7a8cefa39e9f4f4e25d"}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}, "guest_error": {"call": {"language": "python", "code": "raise ValueError('A confident neuron can still be wrong')"}, "answer": {"language": "python", "exitCode": 1, "timedOut": false, "stdout": "", "stderr": "Traceback (most recent call last):\n  File \"/work/.plimsoll/run.py\", line 12, in <module>\n    settle(eval(compile(tree, 'cell', 'exec', flags=flags), ns))\n           ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"cell\", line 1, in <module>\n    raise ValueError('A confident neuron can still be wrong')\nValueError: A confident neuron can still be wrong\n", "truncated": false, "stateKept": false, "filesPersist": false, "isolation": "kernel", "recordSha256": "271713185d55c3df966a580b965e4aa3bcf1211996a5acce5484e525396c0923"}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}, "fresh": {"source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection.", "steps": [{"call": {"language": "python", "code": "x = 40\nx"}, "answer": {"language": "python", "exitCode": 0, "timedOut": false, "stdout": "40\n", "stderr": "", "truncated": false, "stateKept": false, "filesPersist": false, "isolation": "kernel", "recordSha256": "20f6d693c9e2e8d1d23d9d1df7492bf642e16412822449ca1db5a71e5417caf4"}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}, {"call": {"language": "python", "code": "x + 2"}, "answer": {"language": "python", "exitCode": 1, "timedOut": false, "stdout": "", "stderr": "Traceback (most recent call last):\n  File \"/work/.plimsoll/run.py\", line 14, in <module>\n    value = settle(eval(compile(last, 'cell', 'eval', flags=flags), ns))\n                   ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"cell\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n", "truncated": false, "stateKept": false, "filesPersist": false, "isolation": "kernel", "recordSha256": "24477bf1def474d3fd99b9ba30ac3393111715f47070e5e810999db8a71f6997"}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}]}, "remember": {"source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection.", "steps": [{"call": {"language": "python", "code": "x = 40\nx"}, "answer": {"language": "python", "exitCode": 0, "timedOut": false, "stdout": "40\n", "stderr": "", "truncated": false, "stateKept": true, "freshInterpreter": true, "filesPersist": true, "freshSandbox": true, "isolation": "kernel", "recordSha256": "8ae9137a3ca2c861ec4448913a5aa31b9b14e06227b5ca7e1f3843e4e6841321"}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}, {"call": {"language": "python", "code": "x + 2"}, "answer": {"language": "python", "exitCode": 0, "timedOut": false, "stdout": "42\n", "stderr": "", "truncated": false, "stateKept": true, "filesPersist": true, "isolation": "kernel", "recordSha256": "e24d905066a62254168c340c57b5739b5160ddde5852a498e330a4c1869f850a"}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}]}, "other_user": {"call": {"language": "python", "code": "x + 2"}, "answer": {"language": "python", "exitCode": 1, "timedOut": false, "stdout": "", "stderr": "Traceback (most recent call last):\n  File \"<cell 1>\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n", "truncated": false, "stateKept": true, "freshInterpreter": true, "filesPersist": true, "freshSandbox": true, "isolation": "kernel", "recordSha256": "66e933d9fa68b3fceb17abf0cdd1a69c06be260cfe24740f1d451de195d6ce29"}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}, "disposed": {"call": {"language": "python", "code": "x + 2"}, "answer": {"language": "python", "exitCode": 1, "timedOut": false, "stdout": "", "stderr": "Traceback (most recent call last):\n  File \"<cell 1>\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n", "truncated": false, "stateKept": true, "freshInterpreter": true, "filesPersist": true, "freshSandbox": true, "isolation": "kernel", "recordSha256": "54b75899710fe17326fa724aa73b49dfbc5c7b2f7f8f9456391af694747360c5"}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}, "floor": {"call": {"language": "python", "code": "print('should not run')"}, "answer": {"exception": {"name": "PlimsollError", "code": "failed_precondition", "notDispatched": "isolation", "message": "sandbox isolation requirement not met: provider isolation kernel is below requested minimum vm"}}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}, "bad_file": {"call": {"language": "python", "code": "42", "files": [{"path": "../secret.txt", "content": "nope"}]}, "answer": {"exception": {"name": "PlimsollError", "code": "invalid_argument", "notDispatched": "request", "message": "invalid sandbox request: unsafe file path \"../secret.txt\""}}, "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."}}, "glossary": {"agent": "A program that lets a language model decide what to do next, including which tools to call with which arguments.", "tool": "A function an agent framework offers the model by name and argument schema; the model asks for a call, the framework makes it.", "sandbox": "An execution environment that limits what untrusted code can reach. The strength of those limits depends on its isolation tier.", "plimsolld": "The plimsoll daemon: the service that runs code in sandboxes and states what it ran and behind what.", "daemon": "A background service; here plimsolld, which the tool calls over HTTP.", "isolation tier": "How strong the walls around a run are: process, container, kernel or vm, weakest first. Stated from configuration and startup checks, not cryptographic proof.", "floor": "The weakest isolation tier a call accepts. A daemon below it refuses the call before any code runs.", "CodeExecutor": "The shared helper in plimsoll's Python client that every Python framework tool calls: one fresh sandbox per call.", "run record": "The daemon's statement of a run: fingerprints of its request and result, its execution evidence, and when. SHA-256 is the algorithm that turns bytes into a fixed fingerprint. The client recomputes it to catch changed data, like checking a receipt; this is not independent proof of the host.", "fresh sandbox": "A sandbox that has just been opened: nothing from an earlier call (variables, imports, files) is there. Pages that run every call fresh open one per call; pages that keep a sandbox per conversation open one at the conversation's start and again after it closes.", "runc": "Docker's default way to run a container, on the host's own kernel: plimsoll reports it as the container tier.", "gVisor": "A user-space kernel between the container and host kernel. plimsoll reports kernel isolation after its startup checks verify the runtime.", "JSON": "A plain-text format for structured data; the tool's answer to the model is a JSON object.", "AI SDK": "Vercel's TypeScript library for model calls, streaming and tools. SDK means software development kit.", "plimsollCodeTools": "The standalone AI SDK adapter exported from @plimsollmark/client/ai-sdk.", "executeCode": "The code tool: a schema and execute function accepting code, language and optional text files.", "CodeSandboxes": "The shared TypeScript manager that runs fresh projects or keeps a sandbox and interpreter per application-owned conversation key.", "maxSessionsPerOwner": "The manager option limiting retained sandboxes for one authenticated user in one application process. Default 3; 0 disables it. An idle sandbox can be closed to make room, losing its stored state.", "maxSessions": "The manager's optional process-wide limit across users. Default 0 adds no manager-wide limit; the operator can assign this process a share of the daemon's pool.", "SANDBOX_MAX_SESSIONS_PER_OWNER": "An optional daemon setting limiting one named user of one authenticated caller across application workers using that daemon. Default 0 disables it. The daemon trusts the application to supply authenticated user identities.", "keyed digest": "A fingerprint computed from the user ID and the application token. Workers sharing that token compute the same fingerprint; the daemon receives the fingerprint without the plain user ID.", "session": "One sandbox held for multiple calls. Supported cells can retain variables in a Python or JavaScript interpreter.", "CSV": "Comma-separated values, a text table whose first row usually names its columns.", "stderr": "The program's error-output stream, separate from its normal printed output.", "VM": "Virtual machine, a separate guest operating system isolated using virtualization hardware.", "RPC": "Remote procedure call: the client sends a structured request to the daemon over HTTP.", "attestation": "Evidence signed by a separately trusted verifier. A daemon's internally consistent run record alone is not that proof.", "notDispatched": "A refusal mark proving this request was rejected before code was dispatched. Its absence means execution may have happened."}, "tier_lines": {"yes": "The walls are thick enough. Whatever the code does inside them is now entirely its own problem.", "no": "You asked for thicker walls than this daemon has. Refusing is the right answer, however politely the code asks."}, "quotes": {"confabulate": {"lines": [{"who": "Geoffrey Hinton", "text": "People confabulate all the time. At least I think they do. I just made that up."}], "source": "StarTalk, 28 February 2026, at 1:01:41, on why hallucinations should be called confabulations", "url": "https://www.youtube.com/watch?v=l6ZcFa8pybE&t=3695s", "label": "StarTalk video at 1:01:41 (EXTERNAL \u00b7 video \u2197)"}}}</script>
+<script>// Shared behavior of the integration pages. Reads the page's data from the JSON block
+// build.py embeds, so the same script drives every integration.
+(function () {
+  "use strict";
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const $ = (s, el) => (el || document).querySelector(s);
+  const fmt = (v) => JSON.stringify(v, null, 2);
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Glossary: every .term[data-term] gets its definition on hover, focus and tap.
+  let tip = null;
+  function hideTip() { if (tip) { tip.remove(); tip = null; } }
+  function showTip(el) {
+    hideTip();
+    const def = D.glossary[el.dataset.term];
+    if (!def) return;
+    tip = document.createElement("div");
+    tip.className = "tip";
+    tip.textContent = def;
+    document.body.appendChild(tip);
+    const r = el.getBoundingClientRect();
+    tip.style.left = Math.max(8, Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - 316)) + "px";
+    // Above the term: the pointer hangs down and right from the point it touches, so a
+    // definition just below the term sat under it. Below only when the top of the window
+    // has no room, and then past the pointer's height (about 24 px).
+    const h = tip.offsetHeight;
+    tip.style.top = (r.top - h - 8 >= 0 ? window.scrollY + r.top - h - 8 : window.scrollY + r.bottom + 28) + "px";
+  }
+  // Fills el with text, wrapping the first use of each glossary term in a definition, as
+  // build.py does for the page's own text.
+  const names = Object.keys(D.glossary).sort((a, b) => b.length - a.length);
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp("(?<![\\w-])(" + names.map(esc).join("|") + ")(?![\\w-])", "g");
+  function withTerms(el, text) {
+    el.textContent = "";
+    const used = new Set();
+    let pos = 0;
+    for (const m of text.matchAll(pattern)) {
+      if (used.has(m[1])) continue;
+      used.add(m[1]);
+      el.append(text.slice(pos, m.index));
+      const span = document.createElement("span");
+      span.className = "term";
+      span.dataset.term = m[1];
+      span.textContent = m[1];
+      wire(span);
+      el.append(span);
+      pos = m.index + m[1].length;
+    }
+    el.append(text.slice(pos));
+  }
+  function wire(el) {
+    el.tabIndex = 0;
+    el.addEventListener("mouseenter", () => showTip(el));
+    el.addEventListener("mouseleave", hideTip);
+    el.addEventListener("focus", () => showTip(el));
+    el.addEventListener("blur", hideTip);
+    el.addEventListener("click", (e) => { e.stopPropagation(); showTip(el); });
+  }
+  document.querySelectorAll(".term").forEach(wire);
+  document.addEventListener("click", hideTip);
+  // The index carries only the glossary; the rest is an integration page's.
+  if (!D.path) return;
+
+  // The path a call takes, box by box; a refused call stops at its box. The page draws
+  // the path twice (across for wide screens, down for phones), so each step lights both.
+  const boxes = D.path.map((p) => document.querySelectorAll(`[data-box="${p.id}"]`));
+  const arrows = D.path.slice(1).map((p) => document.querySelectorAll(`[data-arrow="${p.id}"]`));
+  const each = (list, f) => list.forEach((els) => els.forEach(f));
+  let timer = null;
+  function resetPath() {
+    clearTimeout(timer);
+    each(boxes, (b) => b.classList.remove("on", "stop", "unknown"));
+    each(arrows, (a) => a.classList.remove("on", "unknown"));
+  }
+  // Three endings: the call reaches the sandbox (every box lit); it is refused at a box
+  // (stopsAt: that box marked STOPPED HERE, nothing after it); or its answer is lost
+  // after a box (uncertainFrom: the boxes from there on dashed, MAY HAVE RUN), because
+  // nobody can say whether the code ran.
+  function play(stopsAt, uncertainFrom, done) {
+    resetPath();
+    const n = D.path.length;
+    const stop = stopsAt ? D.path.findIndex((p) => p.id === stopsAt) : -1;
+    const unsure = uncertainFrom ? D.path.findIndex((p) => p.id === uncertainFrom) : -1;
+    const last = stop >= 0 ? stop : n - 1;
+    let i = 0;
+    const step = () => {
+      const doubtful = unsure >= 0 && i >= unsure;
+      if (i > 0) arrows[i - 1].forEach((a) => a.classList.add(doubtful ? "unknown" : "on"));
+      boxes[i].forEach((b) => b.classList.add(i === stop ? "stop" : doubtful ? "unknown" : "on"));
+      if (i === last) {
+        done();
+        return;
+      }
+      i++;
+      timer = setTimeout(step, reduce ? 0 : 380);
+    };
+    step();
+  }
+
+  // A recorded step says where it happened when it knows: its own label, or the turn and hook
+  // (Trigger.dev), or the user and thread (Mastra). A one-step scenario needs no label.
+  function stepLabel(x, n) {
+    if (n < 2) return "";
+    const parts = [];
+    if (x.label) parts.push(x.label);
+    if (x.turn != null) parts.push("turn " + x.turn);
+    if (x.hook) parts.push(x.hook);
+    if (x.context && typeof x.context === "object") {
+      const c = x.context;
+      if (c.resourceId || c.threadId) parts.push(`user ${c.resourceId ?? "none"}, thread ${c.threadId ?? "none"}`);
+    }
+    return parts.length ? "// " + parts.join(" · ") + "\n" : "";
+  }
+
+  // Scenarios: the model's call, the path, the tool's recorded answer.
+  const rec = D.recordings;
+  function show(s) {
+    document.querySelectorAll(".scen button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === s.id)));
+    const r = rec[s.recording];
+    const steps = r.steps || [r];
+    $("#call").textContent = steps.map((x) => stepLabel(x, steps.length) + fmt(x.call)).join("\n\n");
+    $("#answer").textContent = "…";
+    $("#explain").textContent = "";
+    $("#say").textContent = "…";
+    showQuote(null);
+    play(s.stops_at, s.uncertain_from, () => {
+      $("#answer").textContent = steps.map((x) => stepLabel(x, steps.length) + (typeof x.answer === "string" ? x.answer : fmt(x.answer))).join("\n\n");
+      $("#explain").textContent = s.explain;
+      $("#src").textContent = "Answer from: " + r.source;
+      withTerms($("#say"), s.narrator);
+      showQuote(s.quote);
+    });
+  }
+  // A scenario's real quote, if it has one, built from text nodes only.
+  function showQuote(key) {
+    const box = $("#scenequote");
+    box.textContent = "";
+    const q = key && D.quotes[key];
+    box.hidden = !q;
+    if (!q) return;
+    const head = document.createElement("div");
+    head.className = "who";
+    head.textContent = "Real quote";
+    box.append(head);
+    for (const l of q.lines) {
+      const p = document.createElement("p");
+      const b = document.createElement("b");
+      b.textContent = l.who + ":";
+      p.append(b, " \u201c" + l.text + "\u201d");
+      box.append(p);
+    }
+    if (q.after) {
+      const p = document.createElement("p");
+      p.className = "after";
+      p.textContent = q.after;
+      box.append(p);
+    }
+    const src = document.createElement("p");
+    src.className = "src";
+    const a = document.createElement("a");
+    a.href = q.url;
+    a.textContent = q.label;
+    src.append(q.source + ". ", a);
+    box.append(src);
+  }
+  const bar = $("#scenarios");
+  D.scenarios.forEach((s) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.id = s.id;
+    b.textContent = s.name;
+    b.addEventListener("click", () => show(s));
+    bar.appendChild(b);
+  });
+  show(D.scenarios[0]);
+
+  // The floor against the daemon's tier: a call runs only where the daemon's tier is at
+  // least the floor the executor demands.
+  const tiers = ["process", "container", "kernel", "vm"];
+  function judge() {
+    const daemon = $("#daemon").value, floor = $("#floor").value;
+    const ok = tiers.indexOf(daemon) >= tiers.indexOf(floor);
+    const v = $("#tierverdict");
+    v.className = "verdict " + (ok ? "yes" : "no");
+    v.textContent = ok
+      ? `The tier meets the floor: ${daemon} is at least ${floor}. Other capability and permission checks must also pass.`
+      : `Refused before anything runs: the daemon is ${daemon} tier, below the ${floor} floor. The adapter reports an isolation refusal.`;
+    withTerms($("#tiersay"), D.tier_lines[ok ? "yes" : "no"]);
+  }
+  $("#daemon").addEventListener("change", judge);
+  $("#floor").addEventListener("change", judge);
+  judge();
+})();
+</script>
+</main></body></html>

@@ -217,7 +217,7 @@ class Transport(unittest.TestCase):
         s.close()
         with self.assertRaises(TransportError) as cm:
             Client(f"http://127.0.0.1:{port}").describe()
-        self.assertIsNone(cm.exception.not_dispatched)
+        self.assertEqual(cm.exception.not_dispatched, "environment")  # refused before any byte of the request left
 
     def test_async_client(self) -> None:
         self.stub.reply = lambda h: send(h, 200, describe_answer())

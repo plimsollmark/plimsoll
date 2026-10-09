@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -81,6 +83,13 @@ type HostAPIGrant struct {
 	// broker, one call per tick), never above MaxHostCallsCeiling, so a run can
 	// still not make an unbounded number of upstream requests.
 	MaxCalls int
+	// RouteMaxCalls caps the calls one run may make to a route of Allow, keyed by the
+	// entry itself, for a route whose call spends (one that starts a paid GPU job, say).
+	// MaxCalls bounds all routes together, so without it a run allowed to poll a job's
+	// status a hundred times could start a hundred jobs. A route it does not name is
+	// bounded by MaxCalls alone. A call counts against every capped entry its path
+	// matches, so overlapping entries and their order cannot route a call around a cap.
+	RouteMaxCalls map[HostRoute]int
 	// AllowInSessions permits the grant on a call inside a session. It is off by
 	// default because a grant is a per-call permission and a session keeps code alive
 	// between calls: while the call runs, anything an earlier call of the session left
@@ -134,6 +143,7 @@ func (g *HostAPIGrant) Clone() *HostAPIGrant {
 		hc := *g.HealthCheck
 		c.HealthCheck = &hc
 	}
+	c.RouteMaxCalls = maps.Clone(g.RouteMaxCalls)
 	return &c
 }
 
@@ -280,6 +290,14 @@ func (g *HostAPIGrant) Validate() error {
 			return fmt.Errorf("host-api grant: duplicate route %s", key)
 		}
 		seenRoutes[key] = struct{}{}
+	}
+	for route, n := range g.RouteMaxCalls {
+		if !slices.Contains(g.Allow, route) {
+			return fmt.Errorf("host-api grant: RouteMaxCalls names %s %q, which is not an entry of Allow", route.Method, route.Path)
+		}
+		if n < 1 || n > MaxHostCallsCeiling {
+			return fmt.Errorf("host-api grant: RouteMaxCalls for %s %q must be between 1 and %d", route.Method, route.Path, MaxHostCallsCeiling)
+		}
 	}
 	if hc := g.HealthCheck; hc != nil {
 		// A broker-operated probe must be a safe, idempotent read the broker can send as
@@ -436,6 +454,26 @@ func (g *HostAPIGrant) matchRoute(method, requestPath string) (HostRoute, bool) 
 		}
 	}
 	return HostRoute{}, false
+}
+
+// cappedRoutesMatching returns every RouteMaxCalls entry that method and requestPath
+// match, in no particular order. requestPath must already have passed matchRoute.
+// Literal segments are compared without regard to case: with an uncapped "/v2/*/run"
+// beside a capped "/v2/ep1/run", "/v2/EP1/run" matches only the wildcard as written,
+// and an upstream that routes without regard to case serves it as ep1. Charging a
+// cap a call may reach is safe; missing it is the bypass.
+func (g *HostAPIGrant) cappedRoutesMatching(method, requestPath string) []HostRoute {
+	if len(g.RouteMaxCalls) == 0 {
+		return nil
+	}
+	segs := strings.Split(strings.ToLower(requestPath), "/")
+	var out []HostRoute
+	for r := range g.RouteMaxCalls {
+		if strings.EqualFold(r.Method, method) && pathMatches(strings.ToLower(r.Path), segs) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // upstreamNeutralSegments reports whether no segment carries syntax an upstream

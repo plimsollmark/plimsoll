@@ -30,27 +30,6 @@
       <p>Twelve compact trainers, each one page, with no build step and no network calls. They cover the walls plimsoll can put around code, called <dfn>isolation tiers</dfn>, and how the daemon proves each one; how to call it from Go, Python, TypeScript or an AI agent; and how sandboxed code can use an API without ever holding its key. That is the job of the <dfn>broker</dfn>, the part of plimsoll that makes API calls for the code, and four trainers go deeper into it: how it connects to each kind of sandbox, a worked example with a private API, the efficiency advisor that reads a run's API calls afterwards, and how it backs off from an overloaded API. Each new word is defined where it first appears and collected in the <a href="glossary.html">glossary (INTERNAL · trainer site →)</a>.</p>
     </header>
 
-    <a class="catalog-live" href="../examples/oracle/index.html">
-      <p class="catalog-eyebrow">see one real run</p>
-      <strong>An AI agent wrote code to balance a pole on a cart. The sandbox ran it against a simulator.</strong>
-      <p>Not a lesson: every number on that page came from one run in a locked-down docker container on 2026-09-18. The agent's <dfn>controller</dfn>, a program that decides every 10 ms of simulated time how to push the cart, was the only file the caller sent. The simulated <dfn>cart-pole</dfn> (a cart on a rail with a pole hinged on top) and a runner program were built into the sandbox image; the runner ran the controller as a separate process and recorded the state every 10 ms. The accepted controller balanced the pole for 20 s and produced the same record, bit for bit, twice. The agent's first draft dropped the pole at 5.96 s. Replay both in the browser.</p>
-      <span class="catalog-cta">Open the run report →</span>
-    </a>
-
-    <a class="catalog-live" href="../examples/providers/index.html">
-      <p class="catalog-eyebrow">see real runs · same run, different sandboxes</p>
-      <strong>The same run on five sandboxes, local and in two clouds: identical results.</strong>
-      <p>Not a lesson: on 2026-09-28 the same accepted controller, runner and simulator ran on five sandboxes from four <dfn>providers</dfn> (the backends that run code), with nothing changed but the provider's settings. A locked-down local container reported the container tier, the same container under <dfn>gVisor</dfn>, a stand-in kernel that runs as an ordinary program, reported kernel, and a sandbox from NVIDIA's <dfn>OpenShell</dfn>, an agent sandbox runtime, reported container. <dfn>E2B</dfn> and <dfn>Docker Cloud Sandboxes</dfn>, two hosted services, each ran it in a <dfn>microVM</dfn>, a small virtual machine created for one run, and reported vm. The Node versions differed, and all five records hashed to the same value the first report published.</p>
-      <span class="catalog-cta">Open the run report →</span>
-    </a>
-
-    <a class="catalog-live" href="../examples/wasm-controller/index.html">
-      <p class="catalog-eyebrow">see real runs · controller in C</p>
-      <strong>The same cart-pole, with a controller written in C and compiled inside the run.</strong>
-      <p>Not a lesson: the run's first step compiled the C to <dfn>WebAssembly</dfn>, a portable bytecode, with no network. A runner built into the image then ran it in four scenarios where it swings the pole up from hanging, and the page compares each record with the same controller in JavaScript, value by value. The records differ where the two languages' <code>cos</code> functions disagree in the last bit; the page shows exactly where, and that the motion itself never differed.</p>
-      <span class="catalog-cta">Open the run report →</span>
-    </a>
-
     <h2 class="catalog-section-title">Learn the system</h2>
     <section class="catalog-grid" aria-label="System trainers">
       <a class="catalog-card" href="plain-english.html" style="--card-accent:#3d8168">
@@ -64,7 +43,7 @@
       <a class="catalog-card" href="concepts.html" style="--card-accent:#177f99">
         <span class="catalog-number">01 / FOUNDATIONS</span>
         <h2>Concepts and providers</h2>
-        <p>Why the project is named after the <dfn>load line</dfn>, the mark on a ship's hull that shows how deep it may sit: pick a provider, set the <dfn>floor</dfn> (the weakest tier a request accepts), and see whether the run goes ahead. Then what each provider proves at startup, what a <dfn>grant</dfn> (one run's permission to call listed API routes) is and is not, the three kinds of answer, how the daemon caps the runs it takes at once, how one sandbox can serve many calls with an interpreter that can keep its state, and a checklist for switching it on.</p>
+        <p>Why the project is named after the <dfn>load line</dfn>, the mark on a ship's hull that shows how deep it may sit: pick a <dfn>provider</dfn> (a backend that runs code), set the <dfn>floor</dfn> (the weakest tier a request accepts), and see whether the run goes ahead. Then what each provider proves at startup, what a <dfn>grant</dfn> (one run's permission to call listed API routes) is and is not, the three kinds of answer, how the daemon caps the runs it takes at once, how one sandbox can serve many calls with an interpreter that can keep its state, and a checklist for switching it on.</p>
         <div class="catalog-topics"><span>load line</span><span>providers</span><span>startup checks</span><span>results</span><span>capacity</span><span>one sandbox, many calls</span></div>
         <span class="catalog-cta">Read the line →</span>
       </a>
@@ -126,7 +105,7 @@
       <a class="catalog-card" href="brokering.html" style="--card-accent:#177f99">
         <span class="catalog-number">08 / HOW THE BROKER CONNECTS</span>
         <h2>The API Broker</h2>
-        <p>How agent code reaches your API without ever holding the key, how Docker, WASM and OpenShell reach the same broker by different routes, why E2B is the hard case, and what a grant means when one sandbox serves many calls.</p>
+        <p>How agent code reaches your API without ever holding the key, how Docker, <dfn>WASM</dfn> (WebAssembly run inside plimsoll itself) and NVIDIA's <dfn>OpenShell</dfn> sandboxes reach the same broker by different routes, why <dfn>E2B</dfn>, a hosted service of small virtual machines, is the hard case, and what a grant means when one sandbox serves many calls.</p>
         <div class="catalog-topics"><span>broker</span><span>network access</span><span>proxies</span><span>E2B</span></div>
         <span class="catalog-cta">Follow a request →</span>
       </a>
@@ -155,6 +134,28 @@
         <span class="catalog-cta">Design the recovery signal →</span>
       </a>
     </section>
+
+    <h2 class="catalog-section-title">See real runs</h2>
+    <a class="catalog-live" href="../examples/oracle/index.html">
+      <p class="catalog-eyebrow">see one real run</p>
+      <strong>An AI agent wrote code to balance a pole on a cart. The sandbox ran it against a simulator.</strong>
+      <p>Not a lesson: every number on that page came from one run in a locked-down docker container on 2026-09-18. The agent's <dfn>controller</dfn>, a program that decides every 10 ms of simulated time how to push the cart, was the only file the caller sent. The simulated <dfn>cart-pole</dfn> (a cart on a rail with a pole hinged on top) and a runner program were built into the sandbox image; the runner ran the controller as a separate process and recorded the state every 10 ms. The accepted controller balanced the pole for 20 s and produced the same record, bit for bit, twice. The agent's first draft dropped the pole at 5.96 s. Replay both in the browser.</p>
+      <span class="catalog-cta">Open the run report →</span>
+    </a>
+
+    <a class="catalog-live" href="../examples/providers/index.html">
+      <p class="catalog-eyebrow">see real runs · same run, different sandboxes</p>
+      <strong>The same run on five sandboxes, local and in two clouds: identical results.</strong>
+      <p>Not a lesson: on 2026-09-28 the same accepted controller, runner and simulator ran on five sandboxes from four providers (the backends that run code), with nothing changed but the provider's settings. A locked-down local container reported the container tier, the same container under <dfn>gVisor</dfn>, a stand-in kernel that runs as an ordinary program, reported kernel, and a sandbox from NVIDIA's OpenShell, an agent sandbox runtime, reported container. E2B and <dfn>Docker Cloud Sandboxes</dfn>, two hosted services, each ran it in a <dfn>microVM</dfn>, a small virtual machine created for one run, and reported vm. The Node versions differed, and all five records hashed to the same value the first report published.</p>
+      <span class="catalog-cta">Open the run report →</span>
+    </a>
+
+    <a class="catalog-live" href="../examples/wasm-controller/index.html">
+      <p class="catalog-eyebrow">see real runs · controller in C</p>
+      <strong>The same cart-pole, with a controller written in C and compiled inside the run.</strong>
+      <p>Not a lesson: the run's first step compiled the C to WebAssembly, a portable bytecode, with no network. A runner built into the image then ran it in four scenarios where it swings the pole up from hanging, and the page compares each record with the same controller in JavaScript, value by value. The records differ where the two languages' <code>cos</code> functions disagree in the last bit; the page shows exactly where, and that the motion itself never differed.</p>
+      <span class="catalog-cta">Open the run report →</span>
+    </a>
 
 
     <p class="catalog-note"><strong>How to use these:</strong> read them here, or serve the repository's <code>docs</code> directory with any static file server (serving only <code>docs/trainers</code> breaks the links up a level, and the architecture map stays blank when a page is opened straight from disk). Nothing you click is saved. The lessons have no build step, analytics, or third-party JavaScript.</p>

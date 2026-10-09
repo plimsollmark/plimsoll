@@ -137,6 +137,8 @@ export type WireDescribeResponse = {
   supportsSessions?: boolean;
   sessionLifetimeMs?: number;
   sessionIdleTimeoutMs?: number;
+  maxSessionsPerCaller?: number;
+  maxSessionsPerOwner?: number;
   sessionEnvironment?: WirePayloadEnvironment;
 };
 

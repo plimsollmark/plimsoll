@@ -8,7 +8,8 @@ uses:
 - An <dfn>*E2B*</dfn> <dfn>*microVM*</dfn> (E2B is a hosted service that runs each
   sandbox in a small virtual machine made for one run) denies <dfn>*egress*</dfn>, any
   connection out of it, except through the <dfn>*guard*</dfn>: the one plimsoll address a
-  run with a <dfn>*grant*</dfn> (permission to call listed routes of one API) may reach.
+  run with a <dfn>*grant*</dfn> (permission to call listed routes of one API) may reach
+  (and port 80 of its host, [limitations.md](limitations.md)).
 
 So `npm install` cannot happen inside a run, from a public registry or a private one,
 and no grant changes that. The <dfn>*broker*</dfn>, the part of plimsoll that makes a

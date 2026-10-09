@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
@@ -114,6 +113,7 @@ var errDraining = fmt.Errorf("%w: the docker provider is shutting down", ErrAtCa
 // dockerSession is one open session.
 type dockerSession struct {
 	d        *DockerSandbox
+	routes   *RouteBudget // route caps span the session's granted calls
 	host     string
 	name     string
 	id       string // the full container ID docker run printed
@@ -235,7 +235,7 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 	s := &dockerSession{
 		d: d, host: state.host, name: "plsm-session-" + randID(),
 		imageID: state.projectImageID, manifest: state.projectManifest, env: state.guestEnv(state.projectImageID), tier: state.isolation,
-		key: dockerPoolKey(state), label: label, broker: broker,
+		key: dockerPoolKey(state), label: label, broker: broker, routes: NewRouteBudget(),
 	}
 	s.life = sessionkit.NewLife(s.name, s.hooks())
 	s.life.Interps.Checker = s.checkFunc
@@ -343,6 +343,18 @@ func (s *dockerSession) hooks() sessionkit.Hooks {
 		// (docker_cli.go), and non-dumpable under the runner guard, so no process of the
 		// session can attach to it.
 		Sweep: func(ctx context.Context, argv []string) (sessionkit.ExecResult, error) {
+			argv, err := sessionkit.ControlArgv(nil, guarded(argv)...)
+			if err != nil {
+				return sessionkit.ExecResult{}, err
+			}
+			out, err := s.exec(ctx, argv, nil, nil, 4096, 4096)
+			return sessionkit.ExecResult{ExitCode: out.exitCode, Exited: out.exited}, err
+		},
+		// The quiesce before a project call: every program of plimsoll's starts in this
+		// container as the uid the session's code runs as, so nothing of the session's
+		// may run while one starts (QuiesceScript). It starts the same way the sweep
+		// does, and its exit status is as trustworthy.
+		Quiesce: func(ctx context.Context, argv []string) (sessionkit.ExecResult, error) {
 			argv, err := sessionkit.ControlArgv(nil, guarded(argv)...)
 			if err != nil {
 				return sessionkit.ExecResult{}, err
@@ -680,7 +692,7 @@ func (s *dockerSession) lend(ctx context.Context, grant *HostAPIGrant, timeout t
 	if grant == nil {
 		return nil, nil, func() {}, nil
 	}
-	core, err := brokerSessionForGrant(ctx, grant, timeout)
+	core, err := brokerSessionForGrant(ctx, grant, timeout, s.routes)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -797,6 +809,16 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 		return fail, err
 	}
 	defer done()
+	// Nothing of the session's runs while the runner starts, so the plan's report key
+	// reaches it alone: until the guard has loaded, a process of the same uid could
+	// read the runner's stdin and memory (QuiesceScript). This kills the interpreters
+	// the session keeps, so a session that mixes cells and project calls loses its cell
+	// state here; the next cell reports a fresh interpreter. It comes before the grant
+	// is lent, so a call the quiesce refuses never had a grant that code of the session
+	// could use (round-7 review, 2026-10-08).
+	if err := s.life.Quiesce(runCtx); err != nil {
+		return fail, err
+	}
 	core, env, unlend, err := s.lend(runCtx, req.Grant, timeout+5*time.Second)
 	if err != nil {
 		return fail, err
@@ -811,7 +833,8 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	}
 	planJSON, err := plan.Encode()
 	if err != nil {
-		return fail, err
+		unlend()
+		return ProjectResult{Sandbox: s.d.Name(), Isolation: s.tier, CallTrace: core.traceSnapshot()}, err
 	}
 	out, err := s.exec(runCtx, runner, nil, planJSON, runnerwire.StdoutCap, s.d.maxOutput()+len(started))
 	ended := deadline.Expired(runCtx) // before the grant is ended, as for a snippet
@@ -1053,9 +1076,7 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 // grant of the call in progress, if any, and answers 503 otherwise.
 type dockerSessionBroker struct {
 	*unixBroker
-
-	mu   sync.Mutex
-	core *brokerSession
+	grantSlot
 }
 
 func startDockerSessionBroker() (*dockerSessionBroker, error) {
@@ -1066,34 +1087,6 @@ func startDockerSessionBroker() (*dockerSessionBroker, error) {
 	}
 	b.unixBroker = u
 	return b, nil
-}
-
-func (b *dockerSessionBroker) current() *brokerSession {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.core
-}
-
-func (b *dockerSessionBroker) set(core *brokerSession) {
-	b.mu.Lock()
-	b.core = core
-	b.mu.Unlock()
-}
-
-// lend serves core's grant until the returned release, which stops serving it and
-// ends it: a request still in flight is cut off upstream, one still arriving is
-// refused, and the release waits for them, so the call's trace is read complete
-// after it. Release is idempotent: a call releases before reading its trace and
-// again, deferred, on its error paths.
-func (b *dockerSessionBroker) lend(core *brokerSession) (release func()) {
-	b.set(core)
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			b.set(nil)
-			core.Close()
-		})
-	}
 }
 
 // Close stops the broker and removes its socket directory.

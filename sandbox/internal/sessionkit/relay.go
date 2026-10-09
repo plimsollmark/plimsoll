@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"sync"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
@@ -314,7 +315,11 @@ func (in *Interpreters) attachRelay(ctx context.Context, attach AttachFunc, lang
 	if reportedCmd(r.id) != argvHex(RelayArgv(lang, work)) {
 		err = fmt.Errorf("%w: the relay reported a process that is not the %s relay", ErrLaunch, lang)
 	} else {
-		err = in.check(ctx, "relay:"+r.id)
+		kind := "relay"
+		if in.RelayParent != 0 {
+			kind = "relay@" + strconv.Itoa(in.RelayParent)
+		}
+		err = in.check(ctx, kind+":"+r.id)
 	}
 	if err != nil {
 		r.close()

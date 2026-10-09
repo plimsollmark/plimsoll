@@ -13,7 +13,7 @@ that say whether anything ran. See README.md beside this package.
 """
 
 from ._record import VERSION as RECORD_VERSION
-from ._transport import MAX_RESPONSE_BYTES
+from ._transport import MAX_RESPONSE_BYTES, CancelHandle
 from ._version import __version__
 from .aio import AsyncClient, AsyncSession
 from .client import PROTOCOL, Client, Session
@@ -34,6 +34,7 @@ from .errors import (
     ProtocolMismatchError,
     RecordMismatchError,
     RecordVersionError,
+    RequestCanceledError,
     RequestTimeoutError,
     ResponseTooLargeError,
     ResultKindMismatchError,
@@ -73,6 +74,7 @@ __all__ = [
     "Session",
     "AsyncClient",
     "AsyncSession",
+    "CancelHandle",
     "SoftwareRule",
     "meets",
     "Info",
@@ -101,6 +103,7 @@ __all__ = [
     "ProtocolMismatchError",
     "AtCapacityError",
     "SessionEndedError",
+    "RequestCanceledError",
     "TransportError",
     "RequestTimeoutError",
     "ResponseTooLargeError",

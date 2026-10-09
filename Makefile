@@ -31,7 +31,7 @@ DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race private-suite lint generate buf vuln docker-images docker-suite clients-suite e2b-suite e2b-guard-live dockercloud-suite openshell-suite modproxy tools tools-check help
+.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
@@ -72,10 +72,6 @@ test:
 ## race: unit tests under the race detector; -short skips every docker test (docker-suite runs them); never sees E2B_API_KEY or DOCKER_SBX_TOKEN
 race:
 	$(NO_PAID_KEYS) go test -race -short ./... -count=1
-
-## private-suite: vet and race-test the private module (private/go.mod), which `audit` no longer reaches; run it when private/ changes
-private-suite:
-	cd private && go vet ./... && $(NO_PAID_KEYS) go test -race -short ./... -count=1
 
 ## lint: golangci-lint (must be on PATH)
 lint:
@@ -155,15 +151,48 @@ docker-suite:
 	   grep -E '^ *--- SKIP' tmp/docker-suite.log >&2; exit 1; fi
 	@exit "$$(cat tmp/docker-suite.status)"
 
-# Install both lockfiles, then require the Python, TypeScript client, add-on and
-# Trigger.dev suites. Keep the go test exit status despite tee, and fail on any
-# Go test skip in case a future test bypasses PLIMSOLL_REQUIRE_CLIENTS.
-## clients-suite: install both npm dependency sets and run the Python, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS
+# One virtual environment per Python framework adapter, installed from its directory's lock:
+# requirements.in names the framework version, requirements.txt is every package it pulls in,
+# pinned with hashes (make py-frameworks-lock writes it), installed with --require-hashes
+# --no-deps so nothing is resolved at install time and local and CI runs test the same set. The
+# locks are compiled for PY_FRAMEWORKS_PYTHON (CI's python3); another version fails here rather
+# than quietly installing a different set. A stamp of the lock decides whether an environment is
+# current; any change rebuilds it from scratch.
+PY_FRAMEWORKS_PYTHON := 3.12
+## py-frameworks: build tmp/py-frameworks/<name> from each clients/python/frameworks/<name>/requirements.txt lock (needs the network the first time)
+py-frameworks:
+	@python3 -c 'import sys; v = "%d.%d" % sys.version_info[:2]; sys.exit(0 if v == "$(PY_FRAMEWORKS_PYTHON)" else "py-frameworks: the locks are for Python $(PY_FRAMEWORKS_PYTHON), python3 is " + v + "; run make py-frameworks-lock under it, or use $(PY_FRAMEWORKS_PYTHON)")'
+	@mkdir -p tmp/py-frameworks
+	@for req in clients/python/frameworks/*/requirements.txt; do \
+	   name=$$(basename $$(dirname $$req)); venv=tmp/py-frameworks/$$name; \
+	   stamp=$$(sha256sum $$req | cut -c1-64); \
+	   if [ "$$(cat $$venv/.requirements 2>/dev/null)" != "$$stamp" ]; then \
+	     echo "py-frameworks: building $$venv"; \
+	     rm -rf $$venv && python3 -m venv $$venv && \
+	     $(NO_PAID_KEYS) $$venv/bin/pip install --quiet --disable-pip-version-check --require-hashes --no-deps -r $$req && \
+	     echo $$stamp > $$venv/.requirements || exit 1; \
+	   fi; \
+	 done
+
+## py-frameworks-lock: recompile each framework's requirements.txt from its requirements.in, every package pinned with hashes (pip-tools in tmp/piptools; needs the network)
+py-frameworks-lock:
+	@[ -x tmp/piptools/bin/pip-compile ] || { python3 -m venv tmp/piptools && tmp/piptools/bin/pip install --quiet --disable-pip-version-check pip-tools; }
+	@for src in clients/python/frameworks/*/requirements.in; do \
+	   dir=$$(dirname $$src); echo "py-frameworks-lock: $$dir"; \
+	   (cd $$dir && ../../../../tmp/piptools/bin/pip-compile -q --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url -o requirements.txt requirements.in) || exit 1; \
+	 done
+
+# Install both lockfiles and the Python framework environments, then require the
+# Python, Python framework adapter, TypeScript client, add-on and Trigger.dev suites.
+# Keep the go test exit status despite tee, and fail on any Go test skip in case a
+# future test bypasses PLIMSOLL_REQUIRE_CLIENTS.
+## clients-suite: install both npm dependency sets and the Python framework environments, then run the Python, framework adapter, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS
 clients-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "clients-suite: tmp/ is not writable" >&2; exit 1; }
 	@{ (cd clients/typescript && $(NO_PAID_KEYS) npm ci --userconfig=/dev/null) && \
 	   (cd examples/trigger-chat && $(NO_PAID_KEYS) npm ci --userconfig=/dev/null) && \
+	   $(MAKE) --no-print-directory py-frameworks && \
 	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) go test ./clients/python/ ./clients/typescript/ -count=1 -v; \
 	   echo $$? > tmp/clients-suite.status; } 2>&1 | tee tmp/clients-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/clients-suite.log; then \
@@ -173,7 +202,7 @@ clients-suite:
 
 ## e2b-suite: the live E2B tests (needs E2B_API_KEY)
 e2b-suite:
-	env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'E2B.*Live' -count=1 -v
+	E2B_LIVE=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'E2B.*Live' -count=1 -v
 
 # The live Docker Cloud Sandboxes suite. DOCKERCLOUD_LIVE_REQUIRED=1 makes missing
 # configuration fail instead of skip, so a green run means the live service was
@@ -227,7 +256,15 @@ openshell-suite:
 #
 ## e2b-guard-live: prove the guarded E2B egress path (FAILS if it is not configured)
 e2b-guard-live:
-	E2B_GUARD_LIVE_REQUIRED=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'TestE2BGuardLive' -count=1 -v
+	E2B_GUARD_LIVE_REQUIRED=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'TestE2BGuardLive|TestE2BSessionGuardLive' -count=1 -v
+
+# The live E2B session suite: the startup and session smoke tests, the session
+# conformance suite and the guest's privileges, against the real service. It spends
+# (a microVM per case, about 2 cents a pass at the template's size), so it runs only
+# here, never in e2b-suite or the gate. E2B_TEMPLATE picks the template (default base).
+## e2b-session-live: prove E2B sessions against the live service (paid; needs E2B_API_KEY)
+e2b-session-live:
+	E2B_SESSION_LIVE=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'TestLiveE2BSessions' -count=1 -v -timeout 40m
 
 # The website targets that used to sit here drove the commercial site's local stack
 # through scripts/ , which is private and does not ship. In a public clone they were

@@ -50,6 +50,7 @@ type dcFake struct {
 	opPending      bool   // CreateSandbox returns a not-done operation
 	waitUnimpl     bool   // WaitOperation answers unimplemented, forcing GetOperation polling
 	opError        bool   // the create operation finishes with an error
+	reportedName   string // non-empty: the create's answer names its sandbox this, not the requested name
 	reportedCPUs   int
 	reportedMemMiB int
 	policyMode     string // default NETWORK_POLICY_MODE_DENY_ALL
@@ -351,6 +352,9 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 		if f.opPending {
 			writeJSON(w, map[string]any{"id": "op-1", "done": false})
 			return
+		}
+		if f.reportedName != "" {
+			name = f.reportedName
 		}
 		writeJSON(w, f.doneOp(name))
 	case dcProcWaitOperation:
@@ -1867,4 +1871,38 @@ func TestDockerCloudChargesACreateWhoseOutcomeIsUnknown(t *testing.T) {
 			})
 		}
 	})
+}
+
+// A create answer that names its sandbox under another name than the one requested is
+// not the create's: its ID is used neither for the run nor for the delete (round-3
+// review: the ID was adopted, then deleted, though it could be another run's sandbox),
+// and since what this create made cannot be accounted for, the run is charged as one
+// whose delete gave up unless the delete by its own name removes it.
+func TestDockerCloudCreateDoesNotAdoptAForeignSandbox(t *testing.T) {
+	f := newDCFake(t)
+	f.reportedName = "plimsoll-someone-else"
+	f.exec = func([]string) (int, string, string) {
+		t.Fatal("code ran in a sandbox named for another create")
+		return 0, "", ""
+	}
+	ctx, gaveUp := WatchTeardown(context.Background())
+	if _, err := f.provider().RunJavaScript(ctx, Request{Code: "1"}); err == nil || !strings.Contains(err.Error(), "reports name") {
+		t.Fatalf("err = %v, want the name mismatch", err)
+	}
+	byName := false
+	for _, d := range f.deletes {
+		ref, _ := d["sandbox"].(map[string]any)
+		if ref["id"] != nil {
+			t.Fatalf("deleted by the foreign sandbox's ID: %v", d)
+		}
+		byName = byName || ref["name"] == f.lastName()
+	}
+	if !byName {
+		t.Fatalf("no delete by this create's own name: %v", f.deletes)
+	}
+	// This stand-in keeps the sandbox under the requested name, so the delete by name
+	// found and removed it: nothing is left billing, and nothing is charged as given up.
+	if gaveUp() {
+		t.Fatal("charged as given up though the delete by name removed the sandbox")
+	}
 }

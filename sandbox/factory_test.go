@@ -94,6 +94,22 @@ func TestProviderEnsureReadySurfacesPreflightFailure(t *testing.T) {
 	}
 }
 
+// plimsolld states sessions for what Build returns and, at shutdown, drains it only
+// if it is a Drainer: an E2B session's delete runs after its close, so an undrained
+// exit leaves its microVM billing.
+func TestBuildE2BKeepsSessionsAndDrains(t *testing.T) {
+	p, err := Build(mapEnv(map[string]string{"SANDBOX_PROVIDER": "e2b", "E2B_API_KEY": "k"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sp, ok := p.Sandbox.(SessionProvider); !ok || !sp.SupportsSessions() {
+		t.Fatal("the e2b provider does not state sessions")
+	}
+	if _, ok := p.Sandbox.(Drainer); !ok {
+		t.Fatal("the e2b provider is not a Drainer, so shutdown would not wait for its session deletes")
+	}
+}
+
 func TestPinnedImageBooleanIsStrict(t *testing.T) {
 	for raw, want := range map[string]bool{"": false, "0": false, "false": false, "1": true, "TRUE": true} {
 		got, err := BoolFromEnv(mapEnv(map[string]string{"PIN": raw}), "PIN")

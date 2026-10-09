@@ -24,12 +24,13 @@ type GrantBroker struct {
 }
 
 // NewGrantBroker mints the run's credential (bounded by timeout) and returns the
-// broker. The caller closes it when the run ends.
-func NewGrantBroker(ctx context.Context, grant *HostAPIGrant, timeout time.Duration) (*GrantBroker, error) {
+// broker. The caller closes it when the run ends. routes is the session's route
+// budget for a call in a session (see RouteBudget), nil for a run.
+func NewGrantBroker(ctx context.Context, grant *HostAPIGrant, timeout time.Duration, routes *RouteBudget) (*GrantBroker, error) {
 	if grant == nil {
 		return nil, errors.New("host api broker: grant is nil")
 	}
-	core, err := brokerSessionForGrant(ctx, grant, timeout)
+	core, err := brokerSessionForGrant(ctx, grant, timeout, routes)
 	if err != nil {
 		return nil, err
 	}

@@ -34,7 +34,7 @@ func sessionServer(t *testing.T) (string, *sandboxtest.Sessions) {
 	t.Helper()
 	p := &sandboxtest.Sessions{}
 	svc := rpc.NewSandboxService(p)
-	svc.Sessions = rpc.SessionConfig{MaxSessions: 4, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	svc.Sessions = rpc.SessionConfig{MaxSessions: 4, MaxPerOwner: 1, Lifetime: time.Minute, IdleTimeout: time.Minute}
 	mux := http.NewServeMux()
 	path, h := plimsollv1connect.NewSandboxServiceHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
@@ -525,5 +525,86 @@ func TestARecorderThatCannotKeepAChainIsRefusedAtOpen(t *testing.T) {
 	}
 	if n := len(p.Opened()); n != 0 {
 		t.Fatalf("%d sessions were opened", n)
+	}
+}
+
+// The owner digest is the same in every official client: this vector is repeated in
+// the Python and TypeScript suites.
+func TestOwnerDigestGoldenVector(t *testing.T) {
+	for _, c := range []struct{ token, want string }{
+		{"golden-token-0123456789abcdefghijklmnop", "a7305a43c4fad079f2784707cb25f3deee16b1c4d7da700ee664f5657084f80b"},
+		{"", "b261355cb5012097b8b4ca487cfe786bf9a7fcbc616c9c2fc38469a1c3e5bc8e"},
+		// Past HMAC's 64-byte block, where a raw key would be replaced by the
+		// token_sha256 the clients file stores.
+		{strings.Repeat("x", 96), "8ba693de695d11b0bc31a1f6d91c883f07cceca84910df18d7fbb918ee799c8f"},
+	} {
+		if got := ownerDigest(c.token, "alice@example.com"); got != c.want {
+			t.Fatalf("ownerDigest(%q): %s; want %s", c.token, got, c.want)
+		}
+	}
+	if ownerDigest("t", "") != "" {
+		t.Fatal("no owner must send none")
+	}
+}
+
+// An owner's second session replaces its first on a daemon capping owners at one,
+// and the first's next call comes back as a typed, not-dispatched replaced end.
+func TestSessionReplacedForItsOwnerCrossesTheWireTyped(t *testing.T) {
+	url, p := sessionServer(t)
+	r := newRemote(t, url)
+	first, err := r.OpenSession(context.Background(), SessionOptions{Owner: "alice@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.OpenSession(context.Background(), SessionOptions{Owner: "alice@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if p.Opened()[0].Err() == nil {
+		t.Fatal("the owner's first session was not replaced")
+	}
+	_, err = first.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+	if r, ok := sandbox.NotDispatchedReason(err); sandbox.SessionEndReason(err) != sandbox.SessionReplaced || !ok || r != sandbox.RefusalRequest {
+		t.Fatalf("a call on the replaced session: %v; want a not-dispatched replaced end", err)
+	}
+	if _, err := r.OpenSession(context.Background(), SessionOptions{Owner: "bob@example.com"}); err != nil || p.Opened()[1].Err() != nil {
+		t.Fatalf("another owner's session: %v", err)
+	}
+}
+
+// Describe states the session caps, so an app relying on the per-owner cap can see
+// whether it is in force.
+func TestDescribeStatesTheSessionCaps(t *testing.T) {
+	url, _ := sessionServer(t)
+	info, err := newRemote(t, url).Describe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.SessionsPerOwner != 1 || info.SessionsPerCaller != 0 {
+		t.Fatalf("per owner %d, per caller %d; want the server's 1 and none", info.SessionsPerOwner, info.SessionsPerCaller)
+	}
+}
+
+// An end a newer daemon has and this client does not is an end, never "open".
+func TestAnUnknownSessionEndIsAnEnd(t *testing.T) {
+	if got := sessionEndFromWire(plimsollv1.SessionEnd(99)); got != sandbox.SessionUnknown {
+		t.Fatalf("end 99: %v; want unknown", got)
+	}
+	if got := sessionEndFromWire(plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED); got != sandbox.SessionOpen {
+		t.Fatalf("no end: %v; want open", got)
+	}
+}
+
+// A session the daemon has forgotten (a restart) comes back as a typed end, so the
+// client stops sending on it.
+func TestAForgottenSessionIsAnEnd(t *testing.T) {
+	url, _ := sessionServer(t)
+	s, err := newRemote(t, url).OpenSession(context.Background(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.id = "00000000000000000000000000000000" // what a restarted daemon finds: no such session
+	_, err = s.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+	if sandbox.SessionEndReason(err) != sandbox.SessionNotFound || sandbox.SessionEndReason(s.Ended()) != sandbox.SessionNotFound {
+		t.Fatalf("a call on a forgotten session: %v (Ended %v); want a not_found end", err, s.Ended())
 	}
 }

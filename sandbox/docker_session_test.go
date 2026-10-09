@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -371,6 +372,40 @@ req.on("error",(e)=>console.log("error",e.code));req.end();`, Timeout: 10 * time
 	}
 }
 
+// A route cap spans the session: each granted call gets a broker of its own, and the
+// cap once started over with each, so a cap of two jobs let three calls start six (the
+// 8 October round-2 review reproduced exactly this on docker).
+func TestDockerSessionRouteCapSpansItsCalls(t *testing.T) {
+	t.Parallel()
+	d := sessionDocker(t)
+	var jobs atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		jobs.Add(1)
+		_, _ = io.WriteString(w, `{"id":1}`)
+	}))
+	defer upstream.Close()
+	submit := sandbox.HostRoute{Method: "POST", Path: "/v2/ep1/run"}
+	grant := &sandbox.HostAPIGrant{
+		BaseURL:         upstream.URL,
+		Allow:           []sandbox.HostRoute{submit},
+		RouteMaxCalls:   map[sandbox.HostRoute]int{submit: 2},
+		Minter:          sandbox.StaticToken("session-grant-token"),
+		AllowInSessions: true,
+	}
+	s := openDockerSession(t, d)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	code := `(async () => { for (let i = 0; i < 3; i++) { await host.post("/v2/ep1/run", {}).then(() => console.log("ok"), (e) => console.log("refused", e.message)); } })()`
+	for i := range 3 {
+		if res, err := s.RunJavaScript(ctx, sandbox.Request{Code: code, Grant: grant, Timeout: 20 * time.Second}); err != nil || res.ExitCode != 0 {
+			t.Fatalf("granted call %d: %+v, %v", i, res, err)
+		}
+	}
+	if n := jobs.Load(); n != 2 {
+		t.Fatalf("three granted calls of one session started %d jobs, want the cap's 2", n)
+	}
+}
+
 // A pause freezes the interpreter with the rest of the container, so a docker
 // session's variables survive an idle suspend (openshell's stop does not keep them;
 // its next cell reports a fresh interpreter).
@@ -393,7 +428,9 @@ func TestDockerSessionPauseKeepsTheInterpreter(t *testing.T) {
 }
 
 // A docker session relays cells through a process it keeps attached beside the
-// interpreter. Code that kills only the relay costs a new relay, not the state.
+// interpreter. Code that kills only the relay costs a new relay, not the state: a
+// cell's answers are not trusted with anything that matters (docs/sessions.md), so a
+// relay starting beside a live interpreter needs no quiesce.
 func TestDockerSessionRelayKilledKeepsTheInterpreter(t *testing.T) {
 	t.Parallel()
 	d := sessionDocker(t)
@@ -415,5 +452,66 @@ console.log(n)`)
 	got, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript, Code: "kept"})
 	if err != nil || got.InterpreterStarted || strings.TrimSpace(got.Stdout) != "7" {
 		t.Fatalf("after the relay was killed: %+v, %v", got, err)
+	}
+}
+
+// An interpreter a session keeps alive is the session's own code and it runs between
+// calls, so it could watch plimsoll start the next project call's process and, until
+// the runner guard has made that process non-dumpable, read its stdin, which carries
+// the plan and the key the runner's report is authenticated with. Nothing of the
+// session's runs across that window: the quiesce before a project call kills every
+// process of the session's, the interpreters included, so a watcher installed in an
+// interpreter never sees the runner, and the next cell gets a fresh interpreter.
+//
+// With the quiesce taken out, this fails on the first thing the watcher does with
+// what it finds: reading the runner's stdin takes the plan out of the pipe, and the
+// call ends with no authenticated runner report (measured 2026-10-08).
+func TestDockerSessionInterpreterCannotWatchACallStart(t *testing.T) {
+	t.Parallel()
+	d := sessionDocker(t)
+	s := openDockerSession(t, d)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	// The watcher lives in the interpreter itself, which the sweep keeps, not in a
+	// child, which it kills. It scans as fast as it can for plimsoll's runner and
+	// tries to read its plan from its stdin.
+	watch := `globalThis.seen = {scans: 0, runners: 0, stolen: ""};
+globalThis.timer = setInterval(() => {
+  const fs = require("fs");
+  seen.scans++;
+  for (const dir of fs.readdirSync("/proc")) {
+    if (!/^[0-9]+$/.test(dir)) continue;
+    let argv = "";
+    try { argv = fs.readFileSync("/proc/" + dir + "/cmdline", "latin1") } catch { continue }
+    if (!argv.includes("/runner.mjs")) continue;
+    seen.runners++;
+    for (const path of ["/proc/" + dir + "/fd/0", "/proc/" + dir + "/mem"]) {
+      try { seen.stolen += fs.readFileSync(path, "latin1").slice(0, 64) } catch {}
+    }
+  }
+}, 0);
+"watching"`
+	if res, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript, Code: watch}); err != nil || res.ExitCode != 0 {
+		t.Fatalf("installing the watcher: %+v, %v", res, err)
+	}
+	project, err := s.RunProject(ctx, sandbox.ProjectRequest{
+		Files:   []sandbox.File{{Path: "main.js", Content: `console.log("ran")`}},
+		Steps:   []string{"node main.js"},
+		Timeout: 60 * time.Second,
+	})
+	if err != nil || project.Outcome != sandbox.ProjectOutcomeCompleted {
+		t.Fatalf("project call: %+v, %v", project, err)
+	}
+	// The watcher is dead with its interpreter, so the next cell is a fresh one and
+	// nothing it collected survives: what it never got is what matters, and the call
+	// above answered with an authenticated report, which a watcher that had read the
+	// runner's stdin would have taken out of the pipe.
+	res, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript,
+		Code: "typeof globalThis.seen"})
+	if err != nil || !res.InterpreterStarted || strings.TrimSpace(res.Stdout) != "'undefined'" {
+		t.Fatalf("after the project call: %+v, %v; want a fresh interpreter with nothing of the watcher left", res, err)
+	}
+	if !strings.Contains(project.Steps[0].Stdout, "ran") {
+		t.Fatalf("the project call reported %q; want the step's own output", project.Steps[0].Stdout)
 	}
 }

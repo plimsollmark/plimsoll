@@ -169,7 +169,7 @@ func (w *WasmSandbox) RunJavaScript(ctx context.Context, req Request) (Result, e
 	}
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	broker, err := brokerSessionForGrant(runCtx, req.Grant, timeout)
+	broker, err := brokerSessionForGrant(runCtx, req.Grant, timeout, nil)
 	if err != nil {
 		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass()}, fmt.Errorf("start host api broker: %w", err)
 	}

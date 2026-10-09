@@ -19,5 +19,9 @@
     "@types/node": "^22.20.4",
     "trigger.dev": "^4.7.0",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "engine.io-client": "^6.6.7",
+    "giget": "^2.0.0"
   }
 }

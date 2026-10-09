@@ -4,6 +4,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -153,5 +156,35 @@ func TestDecodeModuleResults(t *testing.T) {
 	}
 	if _, _, err := DecodeModuleResults(rec, 4, 2); err == nil || !strings.Contains(err.Error(), "of 3 params, the request had 4 rows of 2") {
 		t.Fatalf("params mismatch not refused: %v", err)
+	}
+}
+
+// The decoder accepts every width the worker accepts: a row of 65,537 outputs, past the
+// decoder's old bound and within the worker's, decodes.
+func TestDecodeModuleResultsAcceptsTheWorkersWidths(t *testing.T) {
+	out := make([]float64, 65537)
+	out[65536] = 7
+	runs, width, err := DecodeModuleResults(encodeModuleResults([]ModuleRun{{Status: 1, Outputs: out}}, len(out), 1), 1, 1)
+	if err != nil || width != 65537 || len(runs) != 1 || runs[0].Outputs[65536] != 7 {
+		t.Fatalf("a row the worker accepts: width %d, err %v", width, err)
+	}
+	if _, _, err := DecodeModuleResults(encodeModuleResults(nil, maxModuleOutputWidth+1, 1), 0, 1); err == nil {
+		t.Fatal("a width past the worker's bound decoded")
+	}
+}
+
+// The worker and the decoder share one width contract; this reads the worker's bound
+// from its source, so changing one side alone fails here.
+func TestModuleWidthBoundMatchesTheWorker(t *testing.T) {
+	src, err := os.ReadFile("../docker/sim/worker.c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`#define MAX_WIDTH \(1 << (\d+)\)`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("worker.c no longer defines MAX_WIDTH as (1 << n)")
+	}
+	if shift, _ := strconv.Atoi(string(m[1])); 1<<shift != maxModuleOutputWidth {
+		t.Fatalf("worker MAX_WIDTH is 1 << %d, decoder maxModuleOutputWidth is %d", shift, maxModuleOutputWidth)
 	}
 }

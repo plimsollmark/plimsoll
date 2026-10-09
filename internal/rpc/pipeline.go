@@ -103,7 +103,7 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 	// A request the provider cannot run reserves nothing: it is refused as what it is
 	// (unsupported), never as a spent allowance. A panic under the run charges the time
 	// since the reservation; a normal end settles first, which makes this a no-op.
-	settle := func(time.Duration) float64 { return 0 }
+	settle := func(time.Duration, time.Time) float64 { return 0 }
 	var whole time.Duration // the reservation; 0 when nothing was reserved
 	if t.teardown > 0 && s.Spend != nil && s.supports(k) {
 		p, _ := PrincipalFrom(ctx)
@@ -113,11 +113,11 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 		if settle, err = s.Spend.reserve(auditCaller(ctx), p.PaidSecondsPerDay, whole); err != nil {
 			return nil, err
 		}
-		defer func() { settle(time.Since(reserved)) }()
+		defer func() { settle(time.Since(reserved), time.Time{}) }()
 	}
 	release, err := t.admit(ctx)
 	if err != nil {
-		settle(0)
+		settle(0, time.Time{})
 		return nil, err
 	}
 	// The slot comes back once the call has returned and its sandbox is gone, which
@@ -129,17 +129,21 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 	runCtx, cancel := runContext(ctx)
 	defer cancel()
 	// A microVM the provider could not delete bills on until the provider's own
-	// lifetime for it ends, which the reservation covers: the run is charged all of it
-	// (sandbox.WatchTeardown).
-	runCtx, teardownGaveUp := sandbox.WatchTeardown(runCtx)
+	// lifetime for it ends: the run is charged its whole reservation, and owes until
+	// the time the provider said, when that is later than the reservation's window
+	// (sandbox.WatchTeardownUntil, SpendCap.leak).
+	runCtx, teardownGaveUp := sandbox.WatchTeardownUntil(runCtx)
 	started := time.Now()
 	err = k.dispatch(runCtx, t)
 	billed := time.Since(started)
-	leaked := whole > 0 && teardownGaveUp()
+	gaveUp, billsUntil := teardownGaveUp()
+	leaked := whole > 0 && gaveUp
 	if leaked {
 		billed = whole
+	} else {
+		billsUntil = time.Time{}
 	}
-	charged := settle(billed)
+	charged := settle(billed, billsUntil)
 	attrs := append([]slog.Attr{slog.String("op", k.op()), slog.String("caller", auditCaller(ctx))}, k.requestAttrs()...)
 	if t.teardown > 0 && s.Spend != nil {
 		attrs = append(attrs, slog.Float64("paid_seconds", charged))

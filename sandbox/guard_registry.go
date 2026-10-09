@@ -69,60 +69,112 @@ func newGuardToken() (string, error) {
 	return "crg_" + fmt.Sprintf("%x", raw[:]), nil
 }
 
-// guardRegistry maps live per-run guard credentials (by SHA-256, so the map never
-// holds a token) to the run's frozen broker session. It is process-local: a guard
-// credential only exists in the process that opened the run, which is why the public
+// grantSlot serves the grant of the call in progress, or none: a run's slot holds its
+// grant for the run, a session's is lent one call's grant at a time.
+type grantSlot struct {
+	mu   sync.Mutex
+	core *brokerSession
+}
+
+func (s *grantSlot) current() *brokerSession {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.core
+}
+
+func (s *grantSlot) set(core *brokerSession) {
+	s.mu.Lock()
+	s.core = core
+	s.mu.Unlock()
+}
+
+// lend serves core's grant until the returned release, which stops serving it and
+// ends it: a request still in flight is cut off upstream, one still arriving is
+// refused, and the release waits for them, so the call's trace is read complete
+// after it. Release is idempotent: a call releases before reading its trace and
+// again, deferred, on its error paths.
+func (s *grantSlot) lend(core *brokerSession) (release func()) {
+	s.set(core)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.set(nil)
+			core.Close()
+		})
+	}
+}
+
+// guardRegistry maps live guard credentials (by SHA-256, so the map never holds a
+// token) to the slot whose grant they reach. It is process-local: a guard credential
+// only exists in the process that opened the run or session, which is why the public
 // guard URL must reach that same process. Both VM providers use it; they differ only
 // in how the credential reaches the guard (E2B injects it outside the guest,
 // dockercloud's guest sends it).
 type guardRegistry struct {
-	mu       sync.Mutex
-	sessions map[[32]byte]*brokerSession
+	mu    sync.Mutex
+	slots map[[32]byte]*grantSlot
 }
 
 // open freezes the grant into a broker session and registers a fresh credential for
 // it. cleanup unregisters and closes the session exactly once; call it when the run
 // ends on every path.
-func (g *guardRegistry) open(ctx context.Context, grant *HostAPIGrant, timeout time.Duration) (token string, core *brokerSession, cleanup func(), err error) {
+func (g *guardRegistry) open(ctx context.Context, grant *HostAPIGrant, timeout time.Duration, routes *RouteBudget) (token string, core *brokerSession, cleanup func(), err error) {
 	if grant == nil {
 		return "", nil, func() {}, errors.New("open guard: nil grant")
 	}
-	core, err = brokerSessionForGrant(ctx, grant, timeout)
+	core, err = brokerSessionForGrant(ctx, grant, timeout, routes)
 	if err != nil {
 		return "", nil, func() {}, err
 	}
-	token, err = newGuardToken()
+	token, slot, unregister, err := g.register()
 	if err != nil {
 		core.Close()
 		return "", nil, func() {}, err
 	}
-	digest := sha256.Sum256([]byte(token))
-	g.mu.Lock()
-	if g.sessions == nil {
-		g.sessions = make(map[[32]byte]*brokerSession)
-	}
-	g.sessions[digest] = core
-	g.mu.Unlock()
-	var once sync.Once
-	cleanup = func() {
-		once.Do(func() {
-			g.mu.Lock()
-			delete(g.sessions, digest)
-			g.mu.Unlock()
-			core.Close()
-		})
-	}
-	return token, core, cleanup, nil
+	release := slot.lend(core)
+	return token, core, func() { unregister(); release() }, nil
 }
 
+// register adds a fresh credential with an empty slot, for a session to lend one
+// call's grant at a time. unregister removes it and is idempotent; ending a lent
+// grant is the lender's release.
+func (g *guardRegistry) register() (token string, slot *grantSlot, unregister func(), err error) {
+	token, err = newGuardToken()
+	if err != nil {
+		return "", nil, func() {}, err
+	}
+	digest := sha256.Sum256([]byte(token))
+	slot = &grantSlot{}
+	g.mu.Lock()
+	if g.slots == nil {
+		g.slots = make(map[[32]byte]*grantSlot)
+	}
+	g.slots[digest] = slot
+	g.mu.Unlock()
+	var once sync.Once
+	return token, slot, func() {
+		once.Do(func() {
+			g.mu.Lock()
+			delete(g.slots, digest)
+			g.mu.Unlock()
+		})
+	}, nil
+}
+
+// lookup is the grant a credential reaches now: nil for an unknown credential, and
+// for a session's between its calls.
 func (g *guardRegistry) lookup(token string) *brokerSession {
 	if strings.TrimSpace(token) == "" {
 		return nil
 	}
 	digest := sha256.Sum256([]byte(token))
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.sessions[digest]
+	slot := g.slots[digest]
+	g.mu.Unlock()
+	if slot == nil {
+		return nil
+	}
+	return slot.current()
 }
 
 // call is EgressGuardCall for any provider that uses the registry.

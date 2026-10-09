@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>plimsoll in Agno</title><style>
+:root { color-scheme: light; --ink:#1a1a1a; --mut:#5d5d5d; --rule:#dcd7cd;
+        --bg:#fbfaf7; --card:#ffffff; --accent:#0f4a85; --warm:#b4530a; }
+* { box-sizing: border-box; }
+body { margin:0; padding:2.2rem 1.3rem 4rem; background:var(--bg); color:var(--ink);
+       font:15px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+main { max-width: 1010px; margin: 0 auto; }
+h1 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.9rem;
+     line-height:1.2; margin:0 0 .5rem; letter-spacing:-.01em; }
+h2 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.25rem;
+     margin:2.4rem 0 .5rem; }
+p.lede { color:var(--mut); margin:0 0 1.6rem; max-width:68ch; }
+p { max-width:74ch; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(196px,1fr)); gap:.8rem;
+         margin:1.4rem 0 2rem; }
+.tile { background:var(--card); border:1px solid var(--rule); border-radius:9px; padding:.85rem .95rem; }
+.tile .k { font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--mut); }
+.tile .v { font-size:1.5rem; font-variant-numeric:tabular-nums; margin-top:.15rem; }
+.tile .s { font-size:.78rem; color:var(--mut); }
+.tile.good .v { color:var(--accent); }
+.tile.bad  .v { color:var(--warm); }
+figure { background:var(--card); border:1px solid var(--rule); border-radius:9px;
+         margin:0 0 .9rem; padding:.7rem .8rem .3rem; }
+figcaption { font-size:.84rem; color:var(--mut); margin:0 0 .3rem; }
+figcaption b { color:var(--ink); font-weight:600; }
+svg { width:100%; height:auto; display:block; }
+.grid { stroke:#ece8e0; stroke-width:1; }
+.tick { font-size:9.5px; fill:var(--mut); font-variant-numeric:tabular-nums; }
+.axlab { font-size:10px; fill:var(--mut); }
+.truth { fill:none; stroke:var(--ink); stroke-width:.8; }
+.ghost { fill:none; stroke:#cfcabf; stroke-width:.7; }
+.approx { fill:none; stroke:var(--warm); stroke-width:1.5; }
+.band { fill:rgba(15,74,133,.22); stroke:var(--accent); stroke-width:.7; }
+.spine { fill:none; stroke:var(--accent); stroke-width:1; }
+.miss { fill:none; stroke:var(--warm); stroke-width:2; }
+.misslab { font-size:11px; fill:var(--warm); font-weight:600; }
+.legend { display:flex; flex-wrap:wrap; gap:1.1rem; font-size:.8rem; color:var(--mut); margin:.4rem 0 1.8rem; }
+.legend span { display:flex; align-items:center; gap:.4rem; }
+.sw { width:22px; height:3px; border-radius:2px; display:inline-block; }
+table { border-collapse:collapse; width:100%; font-size:.87rem; margin:.6rem 0 1rem; }
+th,td { text-align:right; padding:.42rem .6rem; border-bottom:1px solid var(--rule); }
+th:first-child,td:first-child { text-align:left; }
+th { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:var(--mut);
+     font-weight:600; border-bottom:1.5px solid #c9c3b7; }
+td { font-variant-numeric:tabular-nums; }
+tbody tr:hover { background:#f6f4ef; }
+.mutecol { color:#8a8a8a; }
+.lbl { text-align:left; }
+.same { color:var(--accent); font-weight:600; }
+.diff { color:var(--warm); font-weight:600; }
+.note { background:#fff8f0; border:1px solid #edd9bf; border-left:3px solid var(--warm);
+        border-radius:7px; padding:.85rem 1rem; margin:1.2rem 0; }
+.note b { color:var(--warm); }
+footer { margin-top:2.6rem; padding-top:1rem; border-top:1px solid var(--rule);
+         font-size:.8rem; color:var(--mut); }
+@media (max-width: 760px) {
+  
+  table { display:block; overflow-x:auto; white-space:nowrap; }
+  body { padding:1.5rem .9rem 3rem; }
+  h1 { font-size:1.5rem; }
+}
+code { background:#f0ede6; padding:.1rem .3rem; border-radius:3px;
+       font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace; color:#0f4a85; }
+pre { background:#f5f2ec; border:1px solid var(--rule); border-radius:7px; padding:.7rem .85rem;
+      overflow-x:auto; font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+
+.hero { display:grid; grid-template-columns: 1fr 300px; gap:1.4rem; align-items:start; margin:0 0 1.6rem; }
+@media (max-width: 760px) { .hero { grid-template-columns: 1fr; } }
+.narrator { background:#fffdf6; border:1px solid #e8dfc8; border-radius:12px; padding:.8rem .9rem; font-size:.9rem; position:relative; }
+.narrator .who { font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--mut); margin-bottom:.3rem; }
+.narrator .who small { text-transform:none; letter-spacing:0; }
+.narrator p { margin:0; }
+.face { width:42px; height:42px; float:left; margin:0 .6rem .2rem 0; }
+.scen { display:flex; flex-wrap:wrap; gap:.45rem; margin:.4rem 0 1rem; }
+.scen button, .ctrl button, .ctrl select { font:inherit; font-size:.86rem; border:1px solid var(--rule); background:var(--card);
+  border-radius:999px; padding:.35rem .8rem; cursor:pointer; color:var(--ink); }
+.ctrl select { border-radius:7px; padding:.3rem .5rem; }
+.scen button[aria-pressed="true"] { background:var(--accent); color:#fff; border-color:var(--accent); }
+.scen button:focus-visible, .ctrl button:focus-visible, .ctrl select:focus-visible { outline:2px solid var(--warm); outline-offset:2px; }
+.pipe { width:100%; height:auto; display:block; margin:.2rem 0 .6rem; }
+.pipe .box rect { fill:#fff; stroke:#cfc8ba; stroke-width:1.2; rx:9; transition: fill .25s, stroke .25s; }
+.pipe .box text { font-size:12px; fill:var(--ink); }
+.pipe .box text.sub { font-size:10px; fill:var(--mut); }
+.pipe .box.on rect { fill:#e6eef7; stroke:var(--accent); stroke-width:2; }
+.pipe .box.stop rect { fill:#fbe9e2; stroke:#b4530a; stroke-width:2.2; }
+.pipe .arrow { stroke:#b9b2a4; stroke-width:1.4; fill:none; }
+.pipe.h .arrow { marker-end:url(#tip-h); }
+.pipe.v .arrow { marker-end:url(#tip-v); }
+.pipe .arrow.on { stroke:var(--accent); }
+.pipe .stopsign { fill:#b4530a; font-size:11px; font-weight:700; visibility:hidden; }
+.pipe .box.stop .stopsign { visibility:visible; }
+.pipe .unknownsign { fill:#8a6a00; font-size:11px; font-weight:700; visibility:hidden; }
+.pipe .box.unknown rect { fill:#fff8e1; stroke:#a17c00; stroke-width:2; stroke-dasharray:6 4; }
+.pipe .box.unknown .unknownsign { visibility:visible; }
+.pipe .arrow.unknown { stroke:#a17c00; stroke-dasharray:5 4; }
+.pipe.v { display:none; max-width:340px; }
+@media (max-width: 760px) { .pipe.h { display:none; } .pipe.v { display:block; } .pipe.v .box text { font-size:13px; } .pipe.v .box text.sub { font-size:11px; } }
+.panes { display:grid; grid-template-columns: 1fr 1fr; gap:.8rem; }
+@media (max-width: 760px) { .panes { grid-template-columns: 1fr; } }
+.pane h3 { font-size:.78rem; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); margin:.2rem 0 .3rem; font-weight:600; }
+.pane pre { margin:0; max-height:340px; white-space:pre-wrap; word-break:break-word; }
+.explain { margin:.7rem 0 .2rem; }
+.src { font-size:.78rem; color:var(--mut); }
+.verdict { font-weight:600; padding:.55rem .8rem; border-radius:8px; margin:.6rem 0; }
+.verdict.yes { background:#e8f2ea; color:#24603a; }
+.verdict.no { background:#fbe9e2; color:#9a3f07; }
+.ctrl { display:flex; flex-wrap:wrap; gap:.8rem; align-items:center; margin:.4rem 0; font-size:.9rem; }
+.term { border-bottom:1px dotted var(--accent); cursor:help; }
+.tip { position:absolute; z-index:5; max-width:300px; background:#fff; border:1px solid var(--rule); border-radius:8px;
+  box-shadow:0 4px 14px rgba(0,0,0,.08); padding:.55rem .7rem; font-size:.82rem; color:var(--ink); }
+.gotcha { background:var(--card); border:1px solid var(--rule); border-left:3px solid var(--accent); border-radius:8px; padding:.6rem .8rem; margin:.5rem 0; }
+.gotcha b { display:block; margin-bottom:.15rem; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:.8rem; }
+.cards a.card { display:block; background:var(--card); border:1px solid var(--rule); border-radius:10px; padding:.8rem .9rem; color:var(--ink); text-decoration:none; }
+.cards a.card:hover { border-color:var(--accent); }
+.cards .card .k { font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--mut); }
+.goldfish { display:grid; grid-template-columns: 1fr 1fr; gap:.8rem; }
+@media (max-width: 760px) { .goldfish { grid-template-columns: 1fr; } }
+.bannerwrap { margin:.2rem 0 1.2rem; border-radius:12px; overflow:hidden; border:1px solid var(--rule); }
+.banner { width:100%; height:clamp(110px,18vw,230px); display:block; }
+.realquote { background:#f4f7fb; border:1px solid #cdd9e8; border-left:4px solid var(--accent); border-radius:10px; padding:.7rem .9rem; margin:.7rem 0; font-size:.92rem; }
+.realquote .who { font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:var(--accent); margin-bottom:.25rem; font-weight:600; }
+.realquote p { margin:.15rem 0; }
+.realquote p.after { color:var(--mut); font-style:italic; }
+.realquote p.src { font-size:.76rem; color:var(--mut); margin-top:.4rem; }
+</style></head><body><main>
+<p class="src"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a> · <a href="../index.html">All integrations</a></p>
+<h1>plimsoll in Agno</h1>
+<div class="bannerwrap"><svg class="banner" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 600" role="img" aria-labelledby="bn-agno-title">
+<title id="bn-agno-title">Three toy robots carrying code from a thought bubble to a fenced wooden sandbox and receiving a report</title>
+<defs><linearGradient id="bn-agno-wood" x2="0" y2="1"><stop stop-color="#C69A69"/><stop offset="1" stop-color="#B4530A" stop-opacity=".45"/></linearGradient>
+<linearGradient id="bn-agno-sand" x2="0" y2="1"><stop stop-color="#E6CCA0"/><stop offset="1" stop-color="#F7F4EE"/></linearGradient></defs>
+<rect x="0" y="0" width="1800" height="600" rx="0" fill="#F7F4EE" stroke="none" stroke-width="2" opacity="1"/>
+<ellipse cx="1453" cy="469" rx="269" ry="14" fill="#B4530A" opacity=".06"/><path d="M129 229C94 199 120 151 161 149C168 111 219 103 245 129C276 95 330 113 335 151C382 141 408 185 383 215C408 252 377 282 339 275C306 301 264 288 250 274C211 296 172 277 166 258C145 263 126 254 129 229Z" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M141 161C169 169 177 146 182 139" fill="none" stroke="#B4530A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.28"/><path d="M173 172L234 172" fill="none" stroke="#0F4A85" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M249 172L317 172" fill="none" stroke="#B4530A" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M196 198L286 198" fill="none" stroke="#0F4A85" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M198 222L243 222" fill="none" stroke="#B4530A" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M256 222L322 222" fill="none" stroke="#0F4A85" stroke-width="5" opacity="0.58" stroke-linecap="round"/><path d="M175 248L251 248" fill="none" stroke="#0F4A85" stroke-width="5" opacity="0.58" stroke-linecap="round"/><circle cx="361" cy="291" r="12" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><circle cx="394" cy="315" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><g transform="translate(555 338) rotate(0)"><ellipse cx="0" cy="115" rx="53" ry="9" fill="#0F4A85" opacity=".06"/><path d="M-20 56L-19 91L-39 94M20 56L18 96L39 102" fill="none" stroke="#0F4A85" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M-20 56L-19 91M20 56L18 96" fill="none" stroke="#0F4A85" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="-40" y="-9" width="80" height="73" rx="14" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-35" y="-4" width="70" height="62" rx="11" fill="#0F4A85" stroke="none" stroke-width="2" opacity="0.22"/><rect x="-23" y="14" width="46" height="20" rx="5" fill="#F7F4EE" stroke="#0F4A85" stroke-width="1.6" opacity="1"/><circle cx="-12" cy="24" r="3" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M0 24L15 24" fill="none" stroke="#0F4A85" stroke-width="2" opacity="1" stroke-linecap="round"/><path d="M0 -38L0 -69" fill="none" stroke="#0F4A85" stroke-width="3" opacity="1" stroke-linecap="round"/><circle cx="0" cy="-74" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><rect x="-47" y="-61" width="94" height="59" rx="18" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-42" y="-56" width="84" height="48" rx="14" fill="#0F4A85" stroke="none" stroke-width="2" opacity="0.14"/><circle cx="-17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><circle cx="17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M-10 -20Q0 -13 10 -20" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-53" cy="-33" r="6" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><circle cx="53" cy="-33" r="6" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M-40 14L-61 33L-65 55M40 14L61 17L68 35" fill="none" stroke="#0F4A85" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-65" cy="55" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><circle cx="68" cy="35" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/></g><g transform="translate(774 338) rotate(0)"><ellipse cx="0" cy="115" rx="53" ry="9" fill="#0F4A85" opacity=".06"/><path d="M-20 56L-37 91L-57 94M20 56L36 96L57 102" fill="none" stroke="#0F4A85" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M-20 56L-37 91M20 56L36 96" fill="none" stroke="#B4530A" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="-40" y="-9" width="80" height="73" rx="14" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-35" y="-4" width="70" height="62" rx="11" fill="#B4530A" stroke="none" stroke-width="2" opacity="0.22"/><rect x="-23" y="14" width="46" height="20" rx="5" fill="#F7F4EE" stroke="#0F4A85" stroke-width="1.6" opacity="1"/><circle cx="-12" cy="24" r="3" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M0 24L15 24" fill="none" stroke="#0F4A85" stroke-width="2" opacity="1" stroke-linecap="round"/><path d="M0 -38L0 -69" fill="none" stroke="#0F4A85" stroke-width="3" opacity="1" stroke-linecap="round"/><circle cx="0" cy="-74" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-47 -61H47L42 -2H-42Z" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M-42 -56H42L37 -9H-37Z" fill="#B4530A" stroke="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.15"/><circle cx="-17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><circle cx="17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M-10 -20Q0 -13 10 -20" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-53" cy="-33" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><circle cx="53" cy="-33" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-40 13L-65 26L-60 48M40 13L67 28L60 48" fill="none" stroke="#0F4A85" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="-52" y="32" width="104" height="67" rx="6" fill="#E6CCA0" stroke="#B4530A" stroke-width="2.3" opacity="1"/><path d="M-52 32L-37 19H35L52 32Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M0 19L0 32" fill="none" stroke="#B4530A" stroke-width="2" opacity="0.6" stroke-linecap="round"/><g transform="translate(0 66) scale(1.05)"><path d="M-10 -15C-19 -15 -19 -10 -19 -5C-19 0 -24 0 -24 0C-19 0 -19 5 -19 10C-19 15 -13 15 -10 15" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M10 -15C19 -15 19 -10 19 -5C19 0 24 0 24 0C19 0 19 5 19 10C19 15 13 15 10 15" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/></g><circle cx="-55" cy="53" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><circle cx="55" cy="53" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/></g><g transform="translate(988 338) rotate(0)"><ellipse cx="0" cy="115" rx="53" ry="9" fill="#0F4A85" opacity=".06"/><path d="M-20 56L-19 91L-39 94M20 56L18 96L39 102" fill="none" stroke="#0F4A85" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M-20 56L-19 91M20 56L18 96" fill="none" stroke="#C69A69" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="-40" y="-9" width="80" height="73" rx="14" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-35" y="-4" width="70" height="62" rx="11" fill="#C69A69" stroke="none" stroke-width="2" opacity="0.22"/><rect x="-23" y="14" width="46" height="20" rx="5" fill="#F7F4EE" stroke="#0F4A85" stroke-width="1.6" opacity="1"/><circle cx="-12" cy="24" r="3" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M0 24L15 24" fill="none" stroke="#0F4A85" stroke-width="2" opacity="1" stroke-linecap="round"/><path d="M0 -38L0 -69" fill="none" stroke="#0F4A85" stroke-width="3" opacity="1" stroke-linecap="round"/><circle cx="0" cy="-74" r="6" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><rect x="-48" y="-62" width="96" height="60" rx="26" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2.8" opacity="1"/><rect x="-43" y="-57" width="86" height="49" rx="22" fill="#C69A69" stroke="none" stroke-width="2" opacity="0.25"/><circle cx="-17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><circle cx="17" cy="-35" r="5" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M-10 -20Q0 -13 10 -20" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-53" cy="-33" r="6" fill="#C69A69" stroke="none" stroke-width="2" opacity="1"/><circle cx="53" cy="-33" r="6" fill="#C69A69" stroke="none" stroke-width="2" opacity="1"/><path d="M-40 14L-61 33L-65 55M40 14L61 17L68 35" fill="none" stroke="#0F4A85" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-65" cy="55" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><circle cx="68" cy="35" r="7" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/></g><path d="M1242 362V292L1253 278L1264 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1248 300L1248 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1303 362V292L1314 278L1325 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1309 300L1309 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1364 362V292L1375 278L1386 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1370 300L1370 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1425 362V292L1436 278L1447 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1431 300L1431 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1486 362V292L1497 278L1508 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1492 300L1492 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1547 362V292L1558 278L1569 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1553 300L1553 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1608 362V292L1619 278L1630 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1614 300L1614 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><path d="M1669 362V292L1680 278L1691 292V362Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1675 300L1675 352" fill="none" stroke="#F7F4EE" stroke-width="1.3" opacity="0.6" stroke-linecap="round"/><rect x="1225" y="318" width="479" height="12" rx="3" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" opacity="1"/><rect x="1225" y="346" width="479" height="12" rx="3" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" opacity="1"/><rect x="1204" y="377" width="508" height="87" rx="19" fill="url(#bn-agno-wood)" stroke="#B4530A" stroke-width="2.7" opacity="1"/><rect x="1224" y="389" width="468" height="49" rx="15" fill="url(#bn-agno-sand)" stroke="#B4530A" stroke-width="1.8" opacity="1"/><path d="M1231 449L1683 449" fill="none" stroke="#F7F4EE" stroke-width="2" opacity="0.48" stroke-linecap="round"/><rect x="1347" y="349" width="50" height="72" rx="3" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1347" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1366.0" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1385" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><path d="M1356 371L1388 371" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><path d="M1356 387L1388 387" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><rect x="1504" y="349" width="50" height="72" rx="3" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1504" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1523.0" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1542" y="335" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><path d="M1513 371L1545 371" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><path d="M1513 387L1545 387" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><rect x="1420" y="315" width="69" height="106" rx="3" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1420" y="301" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1448.5" y="301" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><rect x="1477" y="301" width="12" height="19" rx="1" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><path d="M1429 337L1480 337" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><path d="M1429 353L1480 353" fill="none" stroke="#B4530A" stroke-width="1" opacity="0.3" stroke-linecap="round"/><rect x="1395" y="378" width="113" height="45" rx="2" fill="#E6CCA0" stroke="#B4530A" stroke-width="1.6" opacity="1"/><path d="M1434 423V399Q1454 377 1474 399V423" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><ellipse cx="1305" cy="414" rx="10" ry="3" fill="#B4530A" opacity=".16"/><ellipse cx="1577" cy="416" rx="12" ry="3" fill="#B4530A" opacity=".16"/><ellipse cx="1495" cy="436" rx="8" ry="3" fill="#B4530A" opacity=".16"/><path d="M1198 422V338L1207 328L1216 338V422Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1220 436V352L1229 342L1238 352V436Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1689 440V356L1698 346L1707 356V440Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1701 456V372L1710 362L1719 372V456Z" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1212 362L1232 375M1212 398L1232 410" fill="none" stroke="#B4530A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><path d="M1678 389V374Q1690 356 1702 374V389" fill="none" stroke="#0F4A85" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><rect x="1672" y="386" width="37" height="38" rx="6" fill="#B88A3F" stroke="#B4530A" stroke-width="2" opacity="1"/><circle cx="1690" cy="401" r="3" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M1690 404L1690 412" fill="none" stroke="#0F4A85" stroke-width="2.5" opacity="1" stroke-linecap="round"/><rect x="1640" y="245" width="9" height="108" rx="2" fill="#C69A69" stroke="#B4530A" stroke-width="1.5" opacity="1"/><circle cx="1645" cy="231" r="35" fill="#F7F4EE" stroke="#B4530A" stroke-width="2.5" opacity="1"/><path d="M1625 224Q1645 204 1665 224M1631 231Q1645 218 1659 231M1638 238Q1645 232 1652 238" fill="none" stroke="#0F4A85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="1645" cy="245" r="2.6" fill="#0F4A85" stroke="none" stroke-width="2" opacity="1"/><path d="M1621 206L1669 256" fill="none" stroke="#B4530A" stroke-width="4" opacity="1" stroke-linecap="round"/><path d="M1425 226C1358 152 1230 137 1113 171S1014 216 1073 238" fill="none" stroke="#0F4A85" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="0.45"/><g transform="translate(1162 213) rotate(-16)"><rect x="-41" y="-48" width="82" height="99" rx="5" fill="#F7F4EE" stroke="#0F4A85" stroke-width="2" opacity="1"/><path d="M22 -48V-28H41" fill="#E6CCA0" stroke="#0F4A85" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="1"/><circle cx="-24" cy="-22" r="2.7" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-13 -22L29 -22" fill="none" stroke="#0F4A85" stroke-width="2" opacity="0.6" stroke-linecap="round"/><circle cx="-24" cy="-5" r="2.7" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-13 -5L36 -5" fill="none" stroke="#0F4A85" stroke-width="2" opacity="0.6" stroke-linecap="round"/><circle cx="-24" cy="12" r="2.7" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-13 12L22 12" fill="none" stroke="#0F4A85" stroke-width="2" opacity="0.6" stroke-linecap="round"/><circle cx="-24" cy="29" r="2.7" fill="#B4530A" stroke="none" stroke-width="2" opacity="1"/><path d="M-13 29L33 29" fill="none" stroke="#0F4A85" stroke-width="2" opacity="0.6" stroke-linecap="round"/></g><path d="M1080 209L1067 222L1086 219M1225 213Q1245 218 1257 232" fill="none" stroke="#B4530A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+</svg>
+</div>
+<div class="hero"><div>
+<p class="lede">PlimsollTools gives an <span class="term" data-term="Agno">Agno</span> <span class="term" data-term="agent">agent</span> one <span class="term" data-term="tool">tool</span>, plimsoll_run_code, that runs the model&#x27;s Python or JavaScript in a fresh plimsoll <span class="term" data-term="sandbox">sandbox</span> and tells the model whether the code ran, failed, or was refused before it could run.</p>
+<p><b>Agno</b>: an open-source Python framework for building agents, in which a <span class="term" data-term="toolkit">toolkit</span> groups the tools an <span class="term" data-term="agent">agent</span> may call. <a href="https://docs.agno.com/tools/creating-tools/toolkits">Agno (EXTERNAL · official docs ↗)</a></p>
+</div><div><div class="narrator"><svg class="face" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="20" fill="#f1ece0" stroke="#cdbf9f"/><circle cx="14.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><circle cx="27.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><path d="M19.5 19h3M15 29q6 4 12 0" fill="none" stroke="#5d5d5d" stroke-width="1.6" stroke-linecap="round"/></svg><div class="who">The Professor <small>(a fictional narrator)</small></div><p aria-live="polite">The model writes the program, <span class="term" data-term="Agno">Agno</span> makes the call, and plimsoll supplies the room with no windows and no internet. Everyone gets the job they are suited for.</p></div><div class="realquote"><div class="who">Real quote</div><p><b>Geoffrey Hinton:</b> “It&#x27;s a trillion real numbers and nobody quite knows how they work.”</p><p class="src">StarTalk, 28 February 2026, at 52:01, on what a large language model is. <a href="https://www.youtube.com/watch?v=l6ZcFa8pybE&amp;t=3118s">StarTalk video at 52:01 (EXTERNAL · video ↗)</a></p></div></div></div>
+
+<h2>Wire it up</h2>
+<pre>pip install &#x27;plimsoll-client[agno]&#x27;</pre>
+<pre>from agno.agent import Agent
+from plimsoll_client import Client
+from plimsoll_client.agno import PlimsollTools
+from plimsoll_client.execution import CodeExecutor
+
+executor = CodeExecutor(Client(&quot;https://plimsoll.internal:8746&quot;, token=TOKEN))
+agent = Agent(model=..., tools=[PlimsollTools(executor)])</pre>
+<p>Options, limits and errors: <a href="https://github.com/plimsollmark/plimsoll/blob/main/clients/python/README.md#agno-and-crewai-tools">Python client guide, Agno and CrewAI tools (EXTERNAL · source repo ↗)</a></p>
+
+<h2>Follow one call</h2>
+<p>Replay a recorded scenario. The diagram lights each hop the call passes; a refused call stops where it is refused.
+These buttons send no execution requests. Each answer's source states how it was recorded, including any fixture used.
+Exception panels show what reached the application, rather than an invented code result.</p>
+<div class="scen" id="scenarios" role="group" aria-label="Scenarios"></div>
+<svg class="pipe h" viewBox="0 0 960 100" role="img" aria-label="The path a tool call takes"><defs><marker id="tip-h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#b9b2a4"/></marker></defs><g class="box" data-box="model"><rect x="10.0" y="26" width="128" height="62"/><text x="74.0" y="52" text-anchor="middle">The model</text><text class="sub" x="74.0" y="70" text-anchor="middle">asks for plimsoll_run_code</text><text class="stopsign" x="74.0" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="74.0" y="18" text-anchor="middle">MAY HAVE RUN</text><title>The language model decides to run code and writes the arguments: the code, its language and any input files.</title></g><path data-arrow="framework" class="arrow" d="M142.0 57.0 H168.4"/><g class="box" data-box="framework"><rect x="172.4" y="26" width="128" height="62"/><text x="236.4" y="52" text-anchor="middle">Agno</text><text class="sub" x="236.4" y="70" text-anchor="middle">FunctionCall</text><text class="stopsign" x="236.4" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="236.4" y="18" text-anchor="middle">MAY HAVE RUN</text><title>Agno checks the model&#x27;s arguments against the tool&#x27;s schema (the language list included) and calls the tool; a call that does not fit the schema stops here.</title></g><path data-arrow="tool" class="arrow" d="M304.4 57.0 H330.8"/><g class="box" data-box="tool"><rect x="334.8" y="26" width="128" height="62"/><text x="398.8" y="52" text-anchor="middle">PlimsollTools</text><text class="sub" x="398.8" y="70" text-anchor="middle">plimsoll_run_code</text><text class="stopsign" x="398.8" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="398.8" y="18" text-anchor="middle">MAY HAVE RUN</text><title>Checks the arguments, hands them to the executor, and turns whatever comes back into the JSON the model reads: ran true, false or &quot;unknown&quot;.</title></g><path data-arrow="executor" class="arrow" d="M466.8 57.0 H493.2"/><g class="box" data-box="executor"><rect x="497.2" y="26" width="128" height="62"/><text x="561.2" y="52" text-anchor="middle">CodeExecutor</text><text class="sub" x="561.2" y="70" text-anchor="middle">checks, then sends</text><text class="stopsign" x="561.2" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="561.2" y="18" text-anchor="middle">MAY HAVE RUN</text><title>Asks the daemon what it is, refuses if its isolation tier is below the floor or it lacks the language, then sends the code and files as one fresh project with a fixed command.</title></g><path data-arrow="daemon" class="arrow" d="M629.2 57.0 H655.6"/><g class="box" data-box="daemon"><rect x="659.6" y="26" width="128" height="62"/><text x="723.6" y="52" text-anchor="middle">plimsolld</text><text class="sub" x="723.6" y="70" text-anchor="middle">admits or refuses</text><text class="stopsign" x="723.6" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="723.6" y="18" text-anchor="middle">MAY HAVE RUN</text><title>Checks the floor again against its current evidence, admits the run if it has capacity, and states a run record of exactly what it ran and answered.</title></g><path data-arrow="sandbox" class="arrow" d="M791.6 57.0 H818.0"/><g class="box" data-box="sandbox"><rect x="822.0" y="26" width="128" height="62"/><text x="886.0" y="52" text-anchor="middle">Fresh sandbox</text><text class="sub" x="886.0" y="70" text-anchor="middle">runs, then is deleted</text><text class="stopsign" x="886.0" y="18" text-anchor="middle">STOPPED HERE</text><text class="unknownsign" x="886.0" y="18" text-anchor="middle">MAY HAVE RUN</text><title>A new locked-down container with no network: the files are written, the code runs once, and the container is removed.</title></g></svg><svg class="pipe v" viewBox="0 0 320 428" role="img" aria-label="The path a tool call takes"><defs><marker id="tip-v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#b9b2a4"/></marker></defs><g class="box" data-box="model"><rect x="10.0" y="14" width="230" height="48"/><text x="22" y="34">The model</text><text class="sub" x="22" y="51">asks for plimsoll_run_code</text><text class="stopsign" x="246" y="42.0">STOP</text><text class="unknownsign" x="246" y="42.0">?</text><title>The language model decides to run code and writes the arguments: the code, its language and any input files.</title></g><path data-arrow="framework" class="arrow" d="M125.0 65.0 V83.0"/><g class="box" data-box="framework"><rect x="10.0" y="86" width="230" height="48"/><text x="22" y="106">Agno</text><text class="sub" x="22" y="123">FunctionCall</text><text class="stopsign" x="246" y="114.0">STOP</text><text class="unknownsign" x="246" y="114.0">?</text><title>Agno checks the model&#x27;s arguments against the tool&#x27;s schema (the language list included) and calls the tool; a call that does not fit the schema stops here.</title></g><path data-arrow="tool" class="arrow" d="M125.0 137.0 V155.0"/><g class="box" data-box="tool"><rect x="10.0" y="158" width="230" height="48"/><text x="22" y="178">PlimsollTools</text><text class="sub" x="22" y="195">plimsoll_run_code</text><text class="stopsign" x="246" y="186.0">STOP</text><text class="unknownsign" x="246" y="186.0">?</text><title>Checks the arguments, hands them to the executor, and turns whatever comes back into the JSON the model reads: ran true, false or &quot;unknown&quot;.</title></g><path data-arrow="executor" class="arrow" d="M125.0 209.0 V227.0"/><g class="box" data-box="executor"><rect x="10.0" y="230" width="230" height="48"/><text x="22" y="250">CodeExecutor</text><text class="sub" x="22" y="267">checks, then sends</text><text class="stopsign" x="246" y="258.0">STOP</text><text class="unknownsign" x="246" y="258.0">?</text><title>Asks the daemon what it is, refuses if its isolation tier is below the floor or it lacks the language, then sends the code and files as one fresh project with a fixed command.</title></g><path data-arrow="daemon" class="arrow" d="M125.0 281.0 V299.0"/><g class="box" data-box="daemon"><rect x="10.0" y="302" width="230" height="48"/><text x="22" y="322">plimsolld</text><text class="sub" x="22" y="339">admits or refuses</text><text class="stopsign" x="246" y="330.0">STOP</text><text class="unknownsign" x="246" y="330.0">?</text><title>Checks the floor again against its current evidence, admits the run if it has capacity, and states a run record of exactly what it ran and answered.</title></g><path data-arrow="sandbox" class="arrow" d="M125.0 353.0 V371.0"/><g class="box" data-box="sandbox"><rect x="10.0" y="374" width="230" height="48"/><text x="22" y="394">Fresh sandbox</text><text class="sub" x="22" y="411">runs, then is deleted</text><text class="stopsign" x="246" y="402.0">STOP</text><text class="unknownsign" x="246" y="402.0">?</text><title>A new locked-down container with no network: the files are written, the code runs once, and the container is removed.</title></g></svg>
+<div class="panes">
+<div class="pane"><h3>The model asks for</h3><pre id="call"></pre></div>
+<div class="pane"><h3>The tool answers the model</h3><pre id="answer" aria-live="polite"></pre></div>
+</div>
+<p class="explain" id="explain"></p><p class="src" id="src"></p>
+<div class="narrator"><svg class="face" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="20" fill="#f1ece0" stroke="#cdbf9f"/><circle cx="14.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><circle cx="27.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><path d="M19.5 19h3M15 29q6 4 12 0" fill="none" stroke="#5d5d5d" stroke-width="1.6" stroke-linecap="round"/></svg><div class="who">The Professor <small>(a fictional narrator)</small></div><p id="say" aria-live="polite"></p></div>
+<div class="realquote" id="scenequote" hidden></div>
+
+<h2>Each step of the call</h2>
+<ol><li><b>The model</b>: The language model decides to run code and writes the arguments: the code, its language and any input files.</li><li><b>Agno</b>: <span class="term" data-term="Agno">Agno</span> checks the model&#x27;s arguments against the <span class="term" data-term="tool">tool</span>&#x27;s schema (the language list included) and calls the tool; a call that does not fit the schema stops here.</li><li><b>PlimsollTools</b>: Checks the arguments, hands them to the executor, and turns whatever comes back into the <span class="term" data-term="JSON">JSON</span> the model reads: ran true, false or &quot;unknown&quot;.</li><li><b>CodeExecutor</b>: Asks the <span class="term" data-term="daemon">daemon</span> what it is, refuses if its <span class="term" data-term="isolation tier">isolation tier</span> is below the <span class="term" data-term="floor">floor</span> or it lacks the language, then sends the code and files as one fresh project with a fixed command.</li><li><b>plimsolld</b>: Checks the <span class="term" data-term="floor">floor</span> again against its current evidence, admits the run if it has capacity, and states a <span class="term" data-term="run record">run record</span> of exactly what it ran and answered.</li><li><b>Fresh sandbox</b>: A new locked-down container with no network: the files are written, the code runs once, and the container is removed.</li></ol>
+
+<h2>How thick should the walls be?</h2>
+<p>The executor carries a <span class="term" data-term="floor">floor</span>; the daemon states its
+<span class="term" data-term="isolation tier">isolation tier</span>. This picker is a teaching simulation:
+change either to see whether the tier meets the floor. It sends no request and does not check other capabilities.</p>
+<div class="ctrl"><label>The daemon runs at <select id="daemon"><option value="process">process</option><option value="container" selected>container</option><option value="kernel">kernel</option><option value="vm">vm</option></select></label>
+<label>The executor's floor is <select id="floor"><option value="process">process</option><option value="container">container</option><option value="kernel" selected>kernel</option><option value="vm">vm</option></select></label></div>
+<div id="tierverdict" class="verdict" aria-live="polite"></div>
+<div class="narrator"><svg class="face" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="20" fill="#f1ece0" stroke="#cdbf9f"/><circle cx="14.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><circle cx="27.5" cy="19" r="5" fill="none" stroke="#5d5d5d" stroke-width="1.6"/><path d="M19.5 19h3M15 29q6 4 12 0" fill="none" stroke="#5d5d5d" stroke-width="1.6" stroke-linecap="round"/></svg><div class="who">The Professor <small>(a fictional narrator)</small></div><p id="tiersay" aria-live="polite"></p></div>
+<p class="src">The executor&#x27;s <span class="term" data-term="floor">floor</span> defaults to kernel: docker under <span class="term" data-term="runc">runc</span> is the container tier and refuses every call until it runs <span class="term" data-term="gVisor">gVisor</span>, or the executor is built with an explicit container floor, which is for development on your own code only. Use the spelling shown in this page&#x27;s wiring example.</p>
+
+<h2>Surprises and limits</h2>
+<div class="gotcha"><b>Agno takes the name files</b><span class="term" data-term="Agno">Agno</span> passes media to tools through a parameter called files, and drops any <span class="term" data-term="tool">tool</span> parameter of that name from the schema without a warning. The model would never see it. The tool&#x27;s parameter is input_files.</div><div class="gotcha"><b>The default floor refuses plain Docker</b><span class="term" data-term="CodeExecutor">CodeExecutor</span>&#x27;s <span class="term" data-term="floor">floor</span> is kernel. A <span class="term" data-term="daemon">daemon</span> on docker under <span class="term" data-term="runc">runc</span> is the container tier and refuses every call until it runs <span class="term" data-term="gVisor">gVisor</span>, or until the executor is built with minimum_isolation=&quot;container&quot;, which is for development on your own code only.</div><div class="gotcha"><b>Nothing persists between calls</b>Every call is a <span class="term" data-term="fresh sandbox">fresh sandbox</span>: no variable, import or file from an earlier call is there. The <span class="term" data-term="tool">tool</span>&#x27;s description says so, so the model writes each call complete.</div><div class="gotcha"><b>Only the libraries built into the image</b>The <span class="term" data-term="sandbox">sandbox</span> has no network and installs nothing. Bake what models may import into the <span class="term" data-term="daemon">daemon</span>&#x27;s project image (plimsoll/sandbox-python carries NumPy and SciPy).</div><div class="gotcha"><b>Cancelling an async run cancels the call</b><span class="term" data-term="agent">agent</span>.arun runs the <span class="term" data-term="tool">tool</span> in a <span class="term" data-term="worker thread">worker thread</span> with a <span class="term" data-term="cancel handle">cancel handle</span>, which cancelling the await cancels too. Cancelled before the run request is sent (while the <span class="term" data-term="daemon">daemon</span> is still answering <span class="term" data-term="Describe">Describe</span>, say), the call never sends it. Cancelled while the run is in flight, its connection is cut and the thread ends at once rather than at the executor&#x27;s timeout. The code may have run by then; the daemon stops it only if its provider honors the closed connection.</div>
+
+<footer><a href="../recordings/agno.json">Recorded answers (INTERNAL · raw JSON →)</a>: every call and answer
+this page replays, each with how and when it was recorded.</footer>
+<script type="application/json" id="data">{"path": [{"id": "model", "label": "The model", "sub": "asks for plimsoll_run_code", "detail": "The language model decides to run code and writes the arguments: the code, its language and any input files."}, {"id": "framework", "label": "Agno", "sub": "FunctionCall", "detail": "Agno checks the model's arguments against the tool's schema (the language list included) and calls the tool; a call that does not fit the schema stops here."}, {"id": "tool", "label": "PlimsollTools", "sub": "plimsoll_run_code", "detail": "Checks the arguments, hands them to the executor, and turns whatever comes back into the JSON the model reads: ran true, false or \"unknown\"."}, {"id": "executor", "label": "CodeExecutor", "sub": "checks, then sends", "detail": "Asks the daemon what it is, refuses if its isolation tier is below the floor or it lacks the language, then sends the code and files as one fresh project with a fixed command."}, {"id": "daemon", "label": "plimsolld", "sub": "admits or refuses", "detail": "Checks the floor again against its current evidence, admits the run if it has capacity, and states a run record of exactly what it ran and answered."}, {"id": "sandbox", "label": "Fresh sandbox", "sub": "runs, then is deleted", "detail": "A new locked-down container with no network: the files are written, the code runs once, and the container is removed."}], "scenarios": [{"id": "works", "name": "Read a file and add it up", "recording": "works", "stops_at": null, "explain": "The CSV arrived as a file in the sandbox's working directory, the code read it, and the answer came back with the isolation tier it ran behind and the digest of the run record the client checked.", "narrator": "Hand the model its data as a file. It can read a CSV; it should not have to retype one."}, {"id": "javascript", "name": "Same tool, JavaScript", "recording": "javascript", "stops_at": null, "explain": "The same tool runs JavaScript under Node.js when the model asks for it and the image has node. The executor picks a fixed command per language; nothing the model writes becomes part of the command.", "narrator": "Two languages, one tool. Rather like a bilingual child: the same brain, different syntax errors."}, {"id": "fails", "name": "The code divides by zero", "recording": "fails", "stops_at": null, "explain": "The model's own bug. That is a result, not a failure of the tool: ran is true, exit_code is 1 and the traceback is in stderr, so the model can read it and fix its code.", "narrator": "It explained infinity beautifully. Python was less impressed."}, {"id": "goldfish", "name": "Define x, then use it", "recording": "goldfish", "stops_at": null, "explain": "Two calls. The first set x; the second ran in a new sandbox where x was never defined, so Python raised NameError. Every call starts from nothing, and the tool's description tells the model so.", "narrator": "The model remembers the conversation. The sandbox has never met it.", "quote": "resurrection"}, {"id": "no_install", "name": "Import a library the image lacks", "recording": "no_install", "stops_at": null, "explain": "pandas is not in this sandbox image, and the sandbox has no network to fetch it. What the model can import is decided when the operator builds the image, not at run time.", "narrator": "Nothing gets installed by hand at run time here: not by the model, and not by an obliging intern.", "quote": "by_hand"}, {"id": "floor", "name": "The daemon is below the floor", "recording": "floor", "stops_at": "executor", "explain": "The executor's floor defaults to kernel; this daemon runs docker under runc, the container tier. The executor asked the daemon what it is, saw it was below the floor and sent no code. ran is false and refused names the reason.", "narrator": "The model promised to behave. We checked the walls anyway.", "quote": "volkswagen"}, {"id": "wrong_language", "name": "Ask for a language it doesn't offer", "recording": "wrong_language", "stops_at": "framework", "explain": "This tool was built to offer Python only, so its schema lists one language. Agno checked the model's arguments against the schema and refused before the tool ran.", "narrator": "The schema said Python. The model answered in JavaScript. Some students read the question; others answer the one they revised for."}, {"id": "lost", "name": "The answer is lost", "recording": "lost", "stops_at": null, "explain": "The request left and no answer the client could check came back, so the code may have run. The tool says ran: \"unknown\" and does not retry: running a payment twice is worse than asking first.", "narrator": "We don't know whether it ran. This is where a less careful system would add \"definitely\".", "uncertain_from": "sandbox", "quote": "confabulate"}], "recordings": {"works": {"call": {"code": "import csv\nrows = list(csv.DictReader(open('sales.csv')))\nprint(sum(int(r['units']) for r in rows), 'units across', len(rows), 'regions')", "input_files": [{"path": "sales.csv", "content": "region,units\nnorth,120\nsouth,95\neast,143\nwest,88\n"}]}, "answer": {"ran": true, "outcome": "completed", "language": "python", "exit_code": 0, "timed_out": false, "stdout": "446 units across 4 regions\n", "stderr": "", "truncated": false, "isolation": "container", "record_sha256": "8a5f6e2c8cd07351569ff4ee58189ac90deeb6626f475fd3e967f354f8ce34da"}, "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"}, "javascript": {"call": {"code": "const xs = [3, 1, 4, 1, 5, 9, 2, 6];\nconsole.log(xs.sort((a, b) => a - b).join(' '));", "language": "javascript"}, "answer": {"ran": true, "outcome": "completed", "language": "javascript", "exit_code": 0, "timed_out": false, "stdout": "1 1 2 3 4 5 6 9\n", "stderr": "", "truncated": false, "isolation": "container", "record_sha256": "0a1e6134ac93fd48ca236a6d95ae31310ddb20dbdcfcb2dc8549fb855ee0e889"}, "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"}, "fails": {"call": {"code": "units = [120, 95, 143, 88]\nprint(sum(units) / (len(units) - 4))"}, "answer": {"ran": true, "outcome": "completed", "language": "python", "exit_code": 1, "timed_out": false, "stdout": "", "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import runpy; runpy.run_path(\".plimsoll/code.py\", run_name=\"__main__\")\n                  ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \".plimsoll/code.py\", line 2, in <module>\n    print(sum(units) / (len(units) - 4))\n          ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~\nZeroDivisionError: division by zero\n", "truncated": false, "isolation": "container", "record_sha256": "6193b4ab0fe391451bb99d8f3fa25f8237801ec33a1260fe1bdf1af64af0e236"}, "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"}, "no_install": {"call": {"code": "import pandas as pd\nprint(pd.__version__)"}, "answer": {"ran": true, "outcome": "completed", "language": "python", "exit_code": 1, "timed_out": false, "stdout": "", "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import runpy; runpy.run_path(\".plimsoll/code.py\", run_name=\"__main__\")\n                  ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \".plimsoll/code.py\", line 1, in <module>\n    import pandas as pd\nModuleNotFoundError: No module named 'pandas'\n", "truncated": false, "isolation": "container", "record_sha256": "de2245d320c87f44b4000cf340ba1bb02abd3d0429e4577778d9f81b901930d5"}, "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"}, "floor": {"call": {"code": "print('hello')"}, "answer": {"ran": false, "refused": "isolation", "error": "the daemon is below CodeExecutor's isolation floor"}, "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"}, "wrong_language": {"call": {"code": "console.log(1)", "language": "javascript"}, "answer": "Agno refused the call before the tool ran: 1 validation error for plimsoll_run_code", "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"}, "lost": {"call": {"code": "print('charge the card')"}, "answer": {"ran": "unknown", "error": "plimsoll: internal: internal error 5d1c0e9a2b7f4c31; the daemon's log holds its detail", "note": "The code may have run. It was not retried; running it again could repeat what it did."}, "source": "the real tool and framework, with the executor replaced by one that raises the error a lost answer produces"}, "goldfish": {"steps": [{"call": {"code": "x = 42\nprint('x is', x)"}, "answer": {"ran": true, "outcome": "completed", "language": "python", "exit_code": 0, "timed_out": false, "stdout": "x is 42\n", "stderr": "", "truncated": false, "isolation": "container", "record_sha256": "6cc0f03870faff072ced32c2965891ed3d1dc1c3b5fc8e734d481bfcec870527"}, "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"}, {"call": {"code": "print(x + 1)"}, "answer": {"ran": true, "outcome": "completed", "language": "python", "exit_code": 1, "timed_out": false, "stdout": "", "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import runpy; runpy.run_path(\".plimsoll/code.py\", run_name=\"__main__\")\n                  ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \".plimsoll/code.py\", line 1, in <module>\n    print(x + 1)\n          ^\nNameError: name 'x' is not defined\n", "truncated": false, "isolation": "container", "record_sha256": "40e3809ce0217c952870e350f6c5b3560538107fcf74194738fd9222a744525d"}, "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"}], "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"}}, "glossary": {"agent": "A program that lets a language model decide what to do next, including which tools to call with which arguments.", "tool": "A function an agent framework offers the model by name and argument schema; the model asks for a call, the framework makes it.", "sandbox": "An execution environment that limits what untrusted code can reach. The strength of those limits depends on its isolation tier.", "plimsolld": "The plimsoll daemon: the service that runs code in sandboxes and states what it ran and behind what.", "daemon": "A background service; here plimsolld, which the tool calls over HTTP.", "isolation tier": "How strong the walls around a run are: process, container, kernel or vm, weakest first. Stated from configuration and startup checks, not cryptographic proof.", "floor": "The weakest isolation tier a call accepts. A daemon below it refuses the call before any code runs.", "CodeExecutor": "The shared helper in plimsoll's Python client that every Python framework tool calls: one fresh sandbox per call.", "run record": "The daemon's statement of a run: fingerprints of its request and result, its execution evidence, and when. SHA-256 is the algorithm that turns bytes into a fixed fingerprint. The client recomputes it to catch changed data, like checking a receipt; this is not independent proof of the host.", "fresh sandbox": "A sandbox that has just been opened: nothing from an earlier call (variables, imports, files) is there. Pages that run every call fresh open one per call; pages that keep a sandbox per conversation open one at the conversation's start and again after it closes.", "runc": "Docker's default way to run a container, on the host's own kernel: plimsoll reports it as the container tier.", "gVisor": "A user-space kernel that sits between a container and the host's kernel: plimsoll reports it as the kernel tier.", "JSON": "A plain-text format for structured data; the tool's answer to the model is a JSON object.", "Agno": "An open-source Python framework for building agents (agno on PyPI).", "FunctionCall": "Agno's object for one tool call: it validates the model's arguments against the tool's schema, then calls the tool.", "toolkit": "In Agno, a class that groups tools; an agent takes a list of toolkits.", "worker thread": "A second line of execution in the same program, which an async framework uses to make a blocking call without stalling everything else.", "cancel handle": "The plimsoll client's CancelHandle: an object a call carries so another thread can stop it. A request not yet sent is never sent; one in flight has its connection shut down.", "Describe": "The daemon's call that states its provider, isolation tier and what it supports. The tool asks it before each run; it runs no code."}, "tier_lines": {"yes": "The walls are thick enough. Whatever the code does inside them is now entirely its own problem.", "no": "You asked for thicker walls than this daemon has. Refusing is the right answer, however politely the code asks."}, "quotes": {"by_hand": {"lines": [{"who": "Geoffrey Hinton", "text": "I sure as hell don't want to put them in by hand. I don't even want to tell my graduate students to put them in."}, {"who": "Chuck Nice", "text": "Yeah, that's what they're there for, professor."}], "after": "[laughter]", "source": "StarTalk, 28 February 2026, at 24:45, on setting a billion connection strengths", "url": "https://www.youtube.com/watch?v=l6ZcFa8pybE&t=1475s", "label": "StarTalk video at 24:45 (EXTERNAL \u00b7 video \u2197)"}, "confabulate": {"lines": [{"who": "Geoffrey Hinton", "text": "People confabulate all the time. At least I think they do. I just made that up."}], "source": "StarTalk, 28 February 2026, at 1:01:41, on why hallucinations should be called confabulations", "url": "https://www.youtube.com/watch?v=l6ZcFa8pybE&t=3695s", "label": "StarTalk video at 1:01:41 (EXTERNAL \u00b7 video \u2197)"}, "resurrection": {"lines": [{"who": "Geoffrey Hinton", "text": "So for digital intelligence, we solved the problem of resurrection. ... We can actually do it, but we can only do it for digital intelligences."}], "source": "StarTalk, 28 February 2026, at 47:21, on saving a model's weights and loading them again", "url": "https://www.youtube.com/watch?v=l6ZcFa8pybE&t=2830s", "label": "StarTalk video at 47:21 (EXTERNAL \u00b7 video \u2197)"}, "volkswagen": {"lines": [{"who": "Geoffrey Hinton", "text": "It's what I call the Volkswagen effect. If it senses that it's being tested, it can act dumb."}], "source": "StarTalk, 28 February 2026, at 54:37, on whether AI will play down how smart it is", "url": "https://www.youtube.com/watch?v=l6ZcFa8pybE&t=3270s", "label": "StarTalk video at 54:37 (EXTERNAL \u00b7 video \u2197)"}}}</script>
+<script>// Shared behavior of the integration pages. Reads the page's data from the JSON block
+// build.py embeds, so the same script drives every integration.
+(function () {
+  "use strict";
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const $ = (s, el) => (el || document).querySelector(s);
+  const fmt = (v) => JSON.stringify(v, null, 2);
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Glossary: every .term[data-term] gets its definition on hover, focus and tap.
+  let tip = null;
+  function hideTip() { if (tip) { tip.remove(); tip = null; } }
+  function showTip(el) {
+    hideTip();
+    const def = D.glossary[el.dataset.term];
+    if (!def) return;
+    tip = document.createElement("div");
+    tip.className = "tip";
+    tip.textContent = def;
+    document.body.appendChild(tip);
+    const r = el.getBoundingClientRect();
+    tip.style.left = Math.max(8, Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - 316)) + "px";
+    // Above the term: the pointer hangs down and right from the point it touches, so a
+    // definition just below the term sat under it. Below only when the top of the window
+    // has no room, and then past the pointer's height (about 24 px).
+    const h = tip.offsetHeight;
+    tip.style.top = (r.top - h - 8 >= 0 ? window.scrollY + r.top - h - 8 : window.scrollY + r.bottom + 28) + "px";
+  }
+  // Fills el with text, wrapping the first use of each glossary term in a definition, as
+  // build.py does for the page's own text.
+  const names = Object.keys(D.glossary).sort((a, b) => b.length - a.length);
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp("(?<![\\w-])(" + names.map(esc).join("|") + ")(?![\\w-])", "g");
+  function withTerms(el, text) {
+    el.textContent = "";
+    const used = new Set();
+    let pos = 0;
+    for (const m of text.matchAll(pattern)) {
+      if (used.has(m[1])) continue;
+      used.add(m[1]);
+      el.append(text.slice(pos, m.index));
+      const span = document.createElement("span");
+      span.className = "term";
+      span.dataset.term = m[1];
+      span.textContent = m[1];
+      wire(span);
+      el.append(span);
+      pos = m.index + m[1].length;
+    }
+    el.append(text.slice(pos));
+  }
+  function wire(el) {
+    el.tabIndex = 0;
+    el.addEventListener("mouseenter", () => showTip(el));
+    el.addEventListener("mouseleave", hideTip);
+    el.addEventListener("focus", () => showTip(el));
+    el.addEventListener("blur", hideTip);
+    el.addEventListener("click", (e) => { e.stopPropagation(); showTip(el); });
+  }
+  document.querySelectorAll(".term").forEach(wire);
+  document.addEventListener("click", hideTip);
+  // The index carries only the glossary; the rest is an integration page's.
+  if (!D.path) return;
+
+  // The path a call takes, box by box; a refused call stops at its box. The page draws
+  // the path twice (across for wide screens, down for phones), so each step lights both.
+  const boxes = D.path.map((p) => document.querySelectorAll(`[data-box="${p.id}"]`));
+  const arrows = D.path.slice(1).map((p) => document.querySelectorAll(`[data-arrow="${p.id}"]`));
+  const each = (list, f) => list.forEach((els) => els.forEach(f));
+  let timer = null;
+  function resetPath() {
+    clearTimeout(timer);
+    each(boxes, (b) => b.classList.remove("on", "stop", "unknown"));
+    each(arrows, (a) => a.classList.remove("on", "unknown"));
+  }
+  // Three endings: the call reaches the sandbox (every box lit); it is refused at a box
+  // (stopsAt: that box marked STOPPED HERE, nothing after it); or its answer is lost
+  // after a box (uncertainFrom: the boxes from there on dashed, MAY HAVE RUN), because
+  // nobody can say whether the code ran.
+  function play(stopsAt, uncertainFrom, done) {
+    resetPath();
+    const n = D.path.length;
+    const stop = stopsAt ? D.path.findIndex((p) => p.id === stopsAt) : -1;
+    const unsure = uncertainFrom ? D.path.findIndex((p) => p.id === uncertainFrom) : -1;
+    const last = stop >= 0 ? stop : n - 1;
+    let i = 0;
+    const step = () => {
+      const doubtful = unsure >= 0 && i >= unsure;
+      if (i > 0) arrows[i - 1].forEach((a) => a.classList.add(doubtful ? "unknown" : "on"));
+      boxes[i].forEach((b) => b.classList.add(i === stop ? "stop" : doubtful ? "unknown" : "on"));
+      if (i === last) {
+        done();
+        return;
+      }
+      i++;
+      timer = setTimeout(step, reduce ? 0 : 380);
+    };
+    step();
+  }
+
+  // A recorded step says where it happened when it knows: its own label, or the turn and hook
+  // (Trigger.dev), or the user and thread (Mastra). A one-step scenario needs no label.
+  function stepLabel(x, n) {
+    if (n < 2) return "";
+    const parts = [];
+    if (x.label) parts.push(x.label);
+    if (x.turn != null) parts.push("turn " + x.turn);
+    if (x.hook) parts.push(x.hook);
+    if (x.context && typeof x.context === "object") {
+      const c = x.context;
+      if (c.resourceId || c.threadId) parts.push(`user ${c.resourceId ?? "none"}, thread ${c.threadId ?? "none"}`);
+    }
+    return parts.length ? "// " + parts.join(" · ") + "\n" : "";
+  }
+
+  // Scenarios: the model's call, the path, the tool's recorded answer.
+  const rec = D.recordings;
+  function show(s) {
+    document.querySelectorAll(".scen button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === s.id)));
+    const r = rec[s.recording];
+    const steps = r.steps || [r];
+    $("#call").textContent = steps.map((x) => stepLabel(x, steps.length) + fmt(x.call)).join("\n\n");
+    $("#answer").textContent = "…";
+    $("#explain").textContent = "";
+    $("#say").textContent = "…";
+    showQuote(null);
+    play(s.stops_at, s.uncertain_from, () => {
+      $("#answer").textContent = steps.map((x) => stepLabel(x, steps.length) + (typeof x.answer === "string" ? x.answer : fmt(x.answer))).join("\n\n");
+      $("#explain").textContent = s.explain;
+      $("#src").textContent = "Answer from: " + r.source;
+      withTerms($("#say"), s.narrator);
+      showQuote(s.quote);
+    });
+  }
+  // A scenario's real quote, if it has one, built from text nodes only.
+  function showQuote(key) {
+    const box = $("#scenequote");
+    box.textContent = "";
+    const q = key && D.quotes[key];
+    box.hidden = !q;
+    if (!q) return;
+    const head = document.createElement("div");
+    head.className = "who";
+    head.textContent = "Real quote";
+    box.append(head);
+    for (const l of q.lines) {
+      const p = document.createElement("p");
+      const b = document.createElement("b");
+      b.textContent = l.who + ":";
+      p.append(b, " \u201c" + l.text + "\u201d");
+      box.append(p);
+    }
+    if (q.after) {
+      const p = document.createElement("p");
+      p.className = "after";
+      p.textContent = q.after;
+      box.append(p);
+    }
+    const src = document.createElement("p");
+    src.className = "src";
+    const a = document.createElement("a");
+    a.href = q.url;
+    a.textContent = q.label;
+    src.append(q.source + ". ", a);
+    box.append(src);
+  }
+  const bar = $("#scenarios");
+  D.scenarios.forEach((s) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.id = s.id;
+    b.textContent = s.name;
+    b.addEventListener("click", () => show(s));
+    bar.appendChild(b);
+  });
+  show(D.scenarios[0]);
+
+  // The floor against the daemon's tier: a call runs only where the daemon's tier is at
+  // least the floor the executor demands.
+  const tiers = ["process", "container", "kernel", "vm"];
+  function judge() {
+    const daemon = $("#daemon").value, floor = $("#floor").value;
+    const ok = tiers.indexOf(daemon) >= tiers.indexOf(floor);
+    const v = $("#tierverdict");
+    v.className = "verdict " + (ok ? "yes" : "no");
+    v.textContent = ok
+      ? `The tier meets the floor: ${daemon} is at least ${floor}. Other capability and permission checks must also pass.`
+      : `Refused before anything runs: the daemon is ${daemon} tier, below the ${floor} floor. The adapter reports an isolation refusal.`;
+    withTerms($("#tiersay"), D.tier_lines[ok ? "yes" : "no"]);
+  }
+  $("#daemon").addEventListener("change", judge);
+  $("#floor").addEventListener("change", judge);
+  judge();
+})();
+</script>
+</main></body></html>

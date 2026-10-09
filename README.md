@@ -93,11 +93,28 @@ be a fresh short-lived token, and it never enters the sandbox. Code that skips t
 and calls out by hand gets no further, because the broker, not the client, enforces the
 rules. See [docs/capability-grants.md](docs/capability-grants.md).
 
+## Use it from an agent framework
+
+These agent frameworks can hand their model's code to plimsoll through a tool or code
+executor of their own (<dfn>*Trigger.dev*</dfn>, one of them, is a hosted TypeScript job
+runner). Each row names what to install, the guide, and a page that replays recorded calls
+from that framework's tool to a sandbox and back, refusals included.
+
+<!-- integrations table: generated from the integration pages' data; edit that, not these rows -->
+| Framework | Package or extra | Guide | See a run |
+|---|---|---|---|
+| Vercel AI SDK | `@plimsollmark/client/ai-sdk` | [Vercel AI SDK guide (INTERNAL · documentation →)](docs/ai-sdk.md) | [Vercel AI SDK page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/vercel-ai-sdk/index.html) |
+| Google ADK | `plimsoll-client[adk]` | [Google ADK guide (INTERNAL · documentation →)](docs/google-adk.md) | [Google ADK page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/google-adk/index.html) |
+| Agno | `plimsoll-client[agno]` | [Python client guide, Agno and CrewAI tools (INTERNAL · documentation →)](clients/python/README.md#agno-and-crewai-tools) | [Agno page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/agno/index.html) |
+| CrewAI | `plimsoll-client[crewai]` | [Python client guide, Agno and CrewAI tools (INTERNAL · documentation →)](clients/python/README.md#agno-and-crewai-tools) | [CrewAI page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/crewai/index.html) |
+| [Trigger.dev](docs/trainers/glossary.html#trigger-dev) | `@plimsollmark/client/trigger` | [Trigger.dev guide (INTERNAL · documentation →)](docs/trigger-dev.md) | [Trigger.dev page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/trigger-dev/index.html) |
+| Mastra | `@plimsollmark/client/mastra` | [TypeScript client guide, Mastra (INTERNAL · documentation →)](clients/typescript/README.md#mastra) | [Mastra page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/mastra/index.html) |
+<!-- end of the integrations table -->
+
 ## Give a Trigger.dev agent a code tool
 
 The [TypeScript add-on](clients/typescript/README.md#triggerdev) gives an
-`executeCode` tool to a chat agent on <dfn>*Trigger.dev*</dfn>, a hosted
-TypeScript job runner. On a daemon with a <dfn>*session*</dfn>, one sandbox kept
+`executeCode` tool to a chat agent on Trigger.dev. On a daemon with a <dfn>*session*</dfn>, one sandbox kept
 for several calls, each call is a <dfn>*cell*</dfn>, code run inside the
 interpreter kept for that conversation:
 variables and files can survive the next call. Each tool result says whether
@@ -144,6 +161,7 @@ release (one exact version, changed only by editing this repository) and registe
 runtime, <dfn>*runsc*</dfn>, with docker. Nothing else about the program changes:
 
 ```sh
+make docker-images   # builds the project image (plimsoll/sandbox) the docker provider checks for
 SANDBOX_PROVIDER=docker SANDBOX_DOCKER_RUNTIME=runsc go run ./examples/minimal
 ```
 
@@ -159,7 +177,7 @@ client. It also covers embedding the Go package instead of running the daemon.
 
 ```mermaid
 flowchart LR
-  A["Agent or MCP gateway"] -->|"Run: one payload, a protocol number, minimum_isolation"| AU
+  A["Agent or MCP gateway (MCP: how an AI app offers tools to a model)"] -->|"Run: one payload, a protocol number, minimum_isolation"| AU
 
   subgraph D["plimsolld"]
     AU["authenticate the caller"] --> FL["compare the floor with current provider evidence"]
@@ -188,9 +206,9 @@ reaches the network directly. A run with no grant has no network at all.
 | Provider | Boundary | Tier reported | Use |
 |---|---|---|---|
 | `wasm` | QuickJS on <dfn>*wazero*</dfn> (a WebAssembly runtime written in Go), inside `plimsolld` itself | `process` | Fast local development. An <dfn>*escape*</dfn> (a bug that lets code out of its sandbox) in the engine lands inside your daemon. |
-| `docker` with <dfn>*runc*</dfn>, docker's default runtime | a container sharing your machine's kernel | `container` | Self-hosting when a kernel bug is not one of the attacks you plan for. With a project image it keeps a session: one container for many calls, with Python and JavaScript interpreters whose variables survive between calls. |
+| `docker` with <dfn>*runc*</dfn>, docker's default runtime | a container sharing your machine's kernel | `container` | Self-hosting when a kernel bug is not one of the attacks you plan for. With a project image it keeps a session: one container for many calls, with a JavaScript interpreter (and a Python one with `plimsoll/sandbox-python` as the project image) whose variables survive between calls. |
 | `docker` with `runsc` | gVisor, once the startup checks confirm docker has `runsc` registered | `kernel` | Hostile code on your own machines. Keeps sessions too. |
-| `e2b` | a <dfn>*microVM*</dfn> (a small virtual machine made for one run, then destroyed) from <dfn>*E2B*</dfn>, a hosted service that runs them on <dfn>*Firecracker*</dfn>, AWS's open-source VM monitor | `vm` | Hostile code, on E2B's machines rather than yours; billed per run. |
+| `e2b` | a <dfn>*microVM*</dfn> (a small virtual machine made for one run, then destroyed) from <dfn>*E2B*</dfn>, a hosted service that runs them on <dfn>*Firecracker*</dfn>, AWS's open-source VM monitor | `vm` | Hostile code, on E2B's machines rather than yours; billed per run. Keeps sessions too, billed while the microVM runs; a suspend pauses it, which keeps the files but not an interpreter's variables. |
 | `dockercloud` | a microVM from <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted sandbox service | `vm` | Hostile code, on Docker's machines; billed per run. It speaks two APIs, chosen by `SANDBOX_DOCKERCLOUD_API`, and both passed the live suite on 2026-10-04: the one Docker released before launch, no longer documented, which is the default because only it has grants and image evidence, and the REST API Docker documents, kept as a backup until it covers those (no grants, refused under `PLIMSOLL_HARDENED=1`, runs of at most 270 s). The account's network policy must be <dfn>*deny-all*</dfn> (no connection unless a rule allows it), and every run checks that. Grants work through the same <dfn>*guard*</dfn> as E2B (an address on the plimsoll server, the only place the microVM may connect to) when `SANDBOX_DOCKERCLOUD_GUARD_URL` is set. Unlike E2B, the guest holds its own run's short-lived credential for the guard, and the one network rule is set through a Docker call outside its published API. |
 | `openshell` | a sandbox from <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, created by its gateway server on docker | `container` | Agent platforms that already run an OpenShell gateway. Each run gets its own sandbox with no network; plimsoll reads its settings back, refuses to run on any difference, and deletes it afterwards. Tested against a v0.1.2 gateway on 2026-09-28. Grants reach the broker through a relay inside the sandbox that plimsoll connects to from outside, so the sandbox needs no network rules. Keeps sessions too. |
 | unset | nothing runs | n/a | The default. |
@@ -275,6 +293,8 @@ Each of these answers one question, end to end.
 | [clients/python](clients/python/README.md) | How do I call plimsolld from Python? |
 | [clients/typescript](clients/typescript/README.md) | How do I call it from TypeScript, and give a Trigger.dev or Mastra agent a code tool that keeps its state? |
 | [docs/trigger-dev.md](docs/trigger-dev.md) | How do calls that reuse one interpreter, an isolation floor and checked run records appear together in a Trigger.dev tool, and how do I deploy a task? |
+| [docs/ai-sdk.md](docs/ai-sdk.md) | How do I give a Vercel AI SDK agent an `executeCode` tool, fresh per call or kept for one user's conversation? |
+| [docs/google-adk.md](docs/google-adk.md) | How do I make plimsoll the code executor of a Google ADK agent, with input files, output artifacts and a refusal below the floor? |
 | [docs/placement.md](docs/placement.md) | I run several daemons: how do I pick one per request, and when is a refusal safe to retry elsewhere? |
 | [docs/inner-loop-workflow.md](docs/inner-loop-workflow.md) | How do I iterate fast locally without shipping a weak sandbox to production? |
 | [docs/efficiency-advisor.md](docs/efficiency-advisor.md) | What does the advisor see, why can what it records never include the data the code sent or received, and how do I choose what it emits? |

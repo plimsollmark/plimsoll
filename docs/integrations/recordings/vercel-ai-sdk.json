@@ -1,0 +1,231 @@
+{
+  "works": {
+    "call": {
+      "language": "python",
+      "code": "import csv\nsum(int(r['value']) for r in csv.DictReader(open('data.csv')))",
+      "files": [
+        {
+          "path": "data.csv",
+          "content": "value\n20\n22\n"
+        }
+      ]
+    },
+    "answer": {
+      "language": "python",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "42\n",
+      "stderr": "",
+      "truncated": false,
+      "stateKept": false,
+      "filesPersist": false,
+      "isolation": "kernel",
+      "recordSha256": "b6cec6f794646a8bbc62a283fef197942cb4ade36662ae7c32db0418daf8ec0e"
+    },
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+  },
+  "javascript": {
+    "call": {
+      "language": "javascript",
+      "code": "40 + 2"
+    },
+    "answer": {
+      "language": "javascript",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "42\n",
+      "stderr": "",
+      "truncated": false,
+      "stateKept": false,
+      "filesPersist": false,
+      "isolation": "kernel",
+      "recordSha256": "483467133aaddf2a21cb82cdde09935ab018bd85faf4a7a8cefa39e9f4f4e25d"
+    },
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+  },
+  "guest_error": {
+    "call": {
+      "language": "python",
+      "code": "raise ValueError('A confident neuron can still be wrong')"
+    },
+    "answer": {
+      "language": "python",
+      "exitCode": 1,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/work/.plimsoll/run.py\", line 12, in <module>\n    settle(eval(compile(tree, 'cell', 'exec', flags=flags), ns))\n           ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"cell\", line 1, in <module>\n    raise ValueError('A confident neuron can still be wrong')\nValueError: A confident neuron can still be wrong\n",
+      "truncated": false,
+      "stateKept": false,
+      "filesPersist": false,
+      "isolation": "kernel",
+      "recordSha256": "271713185d55c3df966a580b965e4aa3bcf1211996a5acce5484e525396c0923"
+    },
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+  },
+  "fresh": {
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection.",
+    "steps": [
+      {
+        "call": {
+          "language": "python",
+          "code": "x = 40\nx"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "40\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": false,
+          "filesPersist": false,
+          "isolation": "kernel",
+          "recordSha256": "20f6d693c9e2e8d1d23d9d1df7492bf642e16412822449ca1db5a71e5417caf4"
+        },
+        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+      },
+      {
+        "call": {
+          "language": "python",
+          "code": "x + 2"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 1,
+          "timedOut": false,
+          "stdout": "",
+          "stderr": "Traceback (most recent call last):\n  File \"/work/.plimsoll/run.py\", line 14, in <module>\n    value = settle(eval(compile(last, 'cell', 'eval', flags=flags), ns))\n                   ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"cell\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n",
+          "truncated": false,
+          "stateKept": false,
+          "filesPersist": false,
+          "isolation": "kernel",
+          "recordSha256": "24477bf1def474d3fd99b9ba30ac3393111715f47070e5e810999db8a71f6997"
+        },
+        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+      }
+    ]
+  },
+  "remember": {
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection.",
+    "steps": [
+      {
+        "call": {
+          "language": "python",
+          "code": "x = 40\nx"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "40\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "freshInterpreter": true,
+          "filesPersist": true,
+          "freshSandbox": true,
+          "isolation": "kernel",
+          "recordSha256": "8ae9137a3ca2c861ec4448913a5aa31b9b14e06227b5ca7e1f3843e4e6841321"
+        },
+        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+      },
+      {
+        "call": {
+          "language": "python",
+          "code": "x + 2"
+        },
+        "answer": {
+          "language": "python",
+          "exitCode": 0,
+          "timedOut": false,
+          "stdout": "42\n",
+          "stderr": "",
+          "truncated": false,
+          "stateKept": true,
+          "filesPersist": true,
+          "isolation": "kernel",
+          "recordSha256": "e24d905066a62254168c340c57b5739b5160ddde5852a498e330a4c1869f850a"
+        },
+        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+      }
+    ]
+  },
+  "other_user": {
+    "call": {
+      "language": "python",
+      "code": "x + 2"
+    },
+    "answer": {
+      "language": "python",
+      "exitCode": 1,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"<cell 1>\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n",
+      "truncated": false,
+      "stateKept": true,
+      "freshInterpreter": true,
+      "filesPersist": true,
+      "freshSandbox": true,
+      "isolation": "kernel",
+      "recordSha256": "66e933d9fa68b3fceb17abf0cdd1a69c06be260cfe24740f1d451de195d6ce29"
+    },
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+  },
+  "disposed": {
+    "call": {
+      "language": "python",
+      "code": "x + 2"
+    },
+    "answer": {
+      "language": "python",
+      "exitCode": 1,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"<cell 1>\", line 1, in <module>\n    x + 2\n    ^\nNameError: name 'x' is not defined\n",
+      "truncated": false,
+      "stateKept": true,
+      "freshInterpreter": true,
+      "filesPersist": true,
+      "freshSandbox": true,
+      "isolation": "kernel",
+      "recordSha256": "54b75899710fe17326fa724aa73b49dfbc5c7b2f7f8f9456391af694747360c5"
+    },
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+  },
+  "floor": {
+    "call": {
+      "language": "python",
+      "code": "print('should not run')"
+    },
+    "answer": {
+      "exception": {
+        "name": "PlimsollError",
+        "code": "failed_precondition",
+        "notDispatched": "isolation",
+        "message": "sandbox isolation requirement not met: provider isolation kernel is below requested minimum vm"
+      }
+    },
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+  },
+  "bad_file": {
+    "call": {
+      "language": "python",
+      "code": "42",
+      "files": [
+        {
+          "path": "../secret.txt",
+          "content": "nope"
+        }
+      ]
+    },
+    "answer": {
+      "exception": {
+        "name": "PlimsollError",
+        "code": "invalid_argument",
+        "notDispatched": "request",
+        "message": "invalid sandbox request: unsafe file path \"../secret.txt\""
+      }
+    },
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+  }
+}

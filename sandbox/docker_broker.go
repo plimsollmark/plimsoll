@@ -130,7 +130,7 @@ func (d *DockerSandbox) brokerForRun(ctx context.Context, grant *HostAPIGrant, t
 	if grant == nil {
 		return nil, nil, nil, nil
 	}
-	core, err := brokerSessionForGrant(ctx, grant, timeout)
+	core, err := brokerSessionForGrant(ctx, grant, timeout, nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}

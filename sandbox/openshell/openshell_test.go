@@ -442,8 +442,8 @@ func TestRunProject(t *testing.T) {
 	var seen wirePlan
 	f.run = fakeRunner(t, func(plan wirePlan) (string, string, int32) {
 		seen = plan
-		return "incidental\n" + signed(t, plan, `{"steps":[{"command":"node main.js","stdout":"hi\n","exitCode":0,"durationMs":12},`+
-			`{"command":"exit 2","stderr":"boom","stderrTruncated":true,"exitCode":2,"durationMs":1}],`+
+		return "incidental\n" + signed(t, plan, `{"steps":[{"command":"node main.js","stdoutBase64":"aGkK","exitCode":0,"durationMs":12},`+
+			`{"command":"exit 2","stderrBase64":"Ym9vbQ==","stderrTruncated":true,"exitCode":2,"durationMs":1}],`+
 			`"artifacts":[{"path":"out.txt","content":"aGk="}],"artifactsTruncated":true}`), "", 0
 	})
 	req := sandbox.ProjectRequest{

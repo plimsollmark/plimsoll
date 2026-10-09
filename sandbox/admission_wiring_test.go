@@ -73,8 +73,9 @@ func (s *endingSession) Err() error                  { return nil }
 // review of v0.10.0, finding 2, 2026-09-28). The interface list is read from this
 // package's source, so a new optional interface fails here until it is classified.
 func TestAdmissionForwardsEveryOptionalInterface(t *testing.T) {
-	// Interfaces of the package that are not optional provider capabilities.
-	notOptional := map[string]bool{"Sandbox": true, "Session": true, "CellRunner": true, "TokenMinter": true, "SubjectBoundMinter": true}
+	// Interfaces of the package that are not optional provider capabilities. A
+	// BillsUntiler is a session's, not a provider's, and admission does not wrap sessions.
+	notOptional := map[string]bool{"Sandbox": true, "Session": true, "CellRunner": true, "TokenMinter": true, "SubjectBoundMinter": true, "BillsUntiler": true}
 	ctx := context.Background()
 	calls := map[string]func(Sandbox) bool{
 		"ProjectCapable": func(s Sandbox) bool { c, ok := s.(ProjectCapable); return ok && c.SupportsProjects() },

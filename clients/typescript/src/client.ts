@@ -5,6 +5,7 @@
 // isolation evidence against the caller's floor, and tracks a session's chain of
 // records so a call it did not make is caught.
 
+import { createHash, createHmac } from "node:crypto";
 import { isIP } from "node:net";
 
 import {
@@ -200,6 +201,13 @@ export type Info = {
   sessionIdleTimeoutMs: number;
   /** Where a session's calls run (on docker the project image), stated with supportsSessions. */
   sessionEnvironment: PayloadEnvironment;
+  /**
+   * The daemon's caps on this caller's sessions and on one owner's of them
+   * (openSession's owner), 0 when there is none. An app that relies on the per-owner
+   * cap across its processes checks maxSessionsPerOwner.
+   */
+  maxSessionsPerCaller: number;
+  maxSessionsPerOwner: number;
   environments: { javascript: PayloadEnvironment; project: PayloadEnvironment; module: PayloadEnvironment; policy: string };
   resources: { memoryMb: number; cpus: number; pids: number; diskMb: number };
 };
@@ -217,8 +225,32 @@ export type SessionOptions = {
    * language the daemon states still runs.
    */
   languages?: Language[];
+  /**
+   * The end user the session is for (an account ID, an email), so a daemon with a
+   * per-owner cap (SANDBOX_MAX_SESSIONS_PER_OWNER) keeps each user to it across every
+   * process of the app: at the cap it closes that user's least recently used session
+   * with no call in progress. It never leaves this process: the daemon gets a digest
+   * keyed by this client's token (ownerDigest). Omit it for none; an empty string is
+   * refused before anything is sent.
+   */
+  owner?: string;
   signal?: AbortSignal;
 };
+
+/**
+ * What an owner is sent as: hex(HMAC-SHA256(key = SHA-256("plimsoll session owner key
+ * v2\n" + the client's token), message = "plimsoll session owner v2\n" + owner)), the
+ * same in every official client, so the processes of one app agree on a user. The
+ * daemon stores only a token's SHA-256, so it cannot test a guessed name against a
+ * digest; without a token anyone can. The key is derived, not the token itself: HMAC
+ * replaces a key longer than 64 bytes with its SHA-256, which for a long imported
+ * token is exactly the token_sha256 the clients file holds.
+ * @internal
+ */
+export function ownerDigest(token: string | undefined, owner: string): string {
+  const key = createHash("sha256").update("plimsoll session owner key v2\n" + (token ?? ""), "utf8").digest();
+  return createHmac("sha256", key).update("plimsoll session owner v2\n" + owner, "utf8").digest("hex");
+}
 
 export type SessionSummary = { session: string; calls: bigint; lastRecordSha256: string; end: SessionEnd };
 
@@ -508,6 +540,8 @@ export class PlimsollClient {
       sessionLifetimeMs: m.sessionLifetimeMs ?? 0,
       sessionIdleTimeoutMs: m.sessionIdleTimeoutMs ?? 0,
       sessionEnvironment: env(m.sessionEnvironment),
+      maxSessionsPerCaller: m.maxSessionsPerCaller ?? 0,
+      maxSessionsPerOwner: m.maxSessionsPerOwner ?? 0,
       environments: {
         javascript: env(m.javascriptEnvironment),
         project: env(m.projectEnvironment),
@@ -547,6 +581,11 @@ export class PlimsollClient {
         throw new PlimsollError("invalid_argument", `plimsoll: unknown language ${JSON.stringify(l)} in the hint`, { notDispatched: "request" });
       }
     }
+    // Undefined is no owner; anything else names one. An empty owner sent as none would
+    // escape the daemon's per-owner cap without a word.
+    if (opts.owner !== undefined && (typeof opts.owner !== "string" || opts.owner === "")) {
+      throw new PlimsollError("invalid_argument", "plimsoll: owner must be a nonempty string, or omitted for none", { notDispatched: "request" });
+    }
     const m = await this.call<WireOpenSessionResponse>(
       "OpenSession",
       {
@@ -557,6 +596,7 @@ export class PlimsollClient {
         idleTimeoutMs: durationMs(opts.idleTimeoutMs) || undefined,
         softwareRule: rule,
         languages: opts.languages?.length ? [...new Set(opts.languages)] : undefined,
+        owner: opts.owner === undefined ? undefined : ownerDigest(this.token, opts.owner),
       },
       opts.signal,
     );
@@ -672,6 +712,7 @@ export class Session {
   // the chain check. They are refused here instead, before anything is sent.
   #unknown: string | undefined;
   #queue: Promise<unknown> = Promise.resolve();
+  #closing: Promise<SessionSummary> | undefined;
 
   /** @internal */
   constructor(client: PlimsollClient, m: WireOpenSessionResponse, rule: WireSoftwareRule | undefined, floor?: Exclude<Isolation, "none">) {
@@ -834,11 +875,27 @@ export class Session {
 
   /**
    * Ends the session (or collects one that ended by itself) and checks the
-   * daemon's count of executed calls against the chain this client saw.
+   * daemon's count of executed calls against the chain this client saw. Every
+   * later call returns the first one's promise, so its summary or its error, without
+   * another request: the daemon forgets a session at its first close, and a second
+   * CloseSession would be answered NotFound. The one exception is a close refused
+   * not dispatched (its signal aborted before it was sent, say): it closed nothing,
+   * so the next call tries again. The first call's signal is the one that applies.
    */
   close(signal?: AbortSignal): Promise<SessionSummary> {
+    return (this.#closing ??= this.#closeOnce(signal));
+  }
+
+  #closeOnce(signal: AbortSignal | undefined): Promise<SessionSummary> {
     return this.#serial(async () => {
-      const m = await this.#client.call<WireCloseSessionResponse>("CloseSession", { protocol: PROTOCOL, sessionId: this.#id }, signal);
+      let m: WireCloseSessionResponse;
+      try {
+        m = await this.#client.call<WireCloseSessionResponse>("CloseSession", { protocol: PROTOCOL, sessionId: this.#id }, signal);
+      } catch (e) {
+        // Refused not dispatched: the session is still open on the daemon.
+        if (e instanceof PlimsollError && e.notDispatched) this.#closing = undefined;
+        throw e;
+      }
       const sum: SessionSummary = decoded(() => ({
         session: m.session ?? "",
         calls: BigInt(m.calls ?? 0),

@@ -11,10 +11,11 @@ agent-authored code with an explicitly reported isolation tier, callable over RP
 Hostile production deployments require the verified kernel or VM tiers; the WASM
 option is intentionally only process-tier.
 
-- Go module `github.com/plimsollmark/plimsoll`. The **canonical build pins the 1.26.6
-  toolchain** (`toolchain go1.26.6`): `govulncheck ./...` is clean there, while earlier
-  1.26.x had stdlib advisories in the reverse-proxy and HTTP/2 paths this TCB actually
-  calls. Build plimsolld with >= 1.26.6.
+- Go module `github.com/plimsollmark/plimsoll`. The **canonical build pins the 1.26.9
+  toolchain** (`toolchain go1.26.9`) and `golang.org/x/net` v0.60.0: `govulncheck ./...` is
+  clean there, while 1.26.6 had eleven stdlib advisories published on 2026-10-08, among
+  them an HTTP/2 server crash and HTTP/2 memory exhaustion in paths this TCB calls (earlier
+  1.26.x had more in the reverse proxy and HTTP/2). Build plimsolld with >= 1.26.9.
 - Direct dependencies are Connect, protobuf, wazero, and `golang.org/x/net`;
   `x/sys` and `x/text` are indirect. Do not add dependencies casually: this is a
   hostile-code TCB.
@@ -214,7 +215,23 @@ interpreters, their launcher and the relay each provider keeps attached beside e
 interpreter (one `docker exec` or one OpenShell exec stream held open, so a warm cell's code
 reaches its interpreter without a new process) live in [sandbox/internal/sessionkit](sandbox/internal/sessionkit/) and travel in argv, so an image
 needs only `node` (and `python3` for Python); the sweep keeps each live interpreter by PID,
-start time and command line and kills its children; a deadline kills it. Code of a session can
+start time and command line and kills its children; a deadline kills it. On docker, where every
+program of plimsoll's starts in the container as the uid the session's code runs as, a **project
+call** starts with nothing of the session's running: a quiesce before it kills every process of
+the session's, the interpreters it keeps included (`sessionkit.QuiesceScript`, the
+`Hooks.Quiesce` a provider sets when its own processes are reachable that way; openshell leaves
+it nil, since its gateway walls each exec's processes off from the others', and e2b runs the
+session's code as a uid of its own). Until a program of plimsoll's has loaded the runner guard,
+a process of the same uid could open its stdin, stdout and memory, and a descriptor opened
+before `PR_SET_DUMPABLE=0` keeps working, memory included: a project call's stdin carries the
+plan, with the key its report is authenticated with. Killing, not stopping: a stopped process
+can arrange its own `SIGCONT` before it is stopped (an asynchronous descriptor notification, a
+POSIX timer, a message queue), and seccomp cannot filter a signal that travels in a structure.
+So a session that runs cells loses their interpreter state at its next project call, and the
+next cell reports a fresh interpreter; a session that runs only project calls keeps no process
+of its own, so it runs no quiesce at all. A quiesce that cannot clear the sandbox refuses the
+call, nothing dispatched, and ends the session, as a sweep that cannot prove the boundary does.
+A snippet and a cell carry no key and are not protected that way. Code of a session can still
 write into a docker relay's or launcher's output while it starts, so nothing they print decides
 a not-dispatched mark, a second send or what the sweep keeps: a cell is two steps (files and
 the interpreter's connection, then the code), only the first can refuse it, every relay line
@@ -224,11 +241,29 @@ process with the interpreter's command line). Which languages an
 image runs is found by each provider's smoke test (the interpreter starts and prints) and stated
 on `PayloadEnvironment.languages`; with sessions on, the session smoke test then runs a cell that
 keeps state in each, and refuses a stated language it has no check for. Every call of a session runs in one work directory
-(docker `/work`, openshell `/tmp/work`), so a snippet finds what a project wrote. Every
+(docker `/work`, openshell `/tmp/work`, e2b `/work`), so a snippet finds what a project wrote. Every
 implementation runs the conformance suite in [sandbox/sessiontest](sandbox/sessiontest/) and
-states sessions only once it passes; openshell and docker do (their call boundaries:
-[docs/openshell.md](docs/openshell.md#sessions), [docs/sessions.md](docs/sessions.md#docker)).
-Both run the same in-sandbox programs between calls, the process lister and the sweep, from
+states sessions only once it passes; openshell, docker and e2b do (their call boundaries:
+[docs/openshell.md](docs/openshell.md#sessions), [docs/sessions.md](docs/sessions.md#docker),
+[docs/sessions.md](docs/sessions.md#e2b)). E2B's ([sandbox/e2b_session.go](sandbox/e2b_session.go))
+passes it against the live service (`make e2b-session-live`, paid, outside every gate; it also
+fails if a sandbox it made is still listed after a drain) and, in the docker suite, against a
+stand-in for envd that really runs processes in a local container
+([sandbox/internal/e2bfake](sandbox/internal/e2bfake/envd/main.go)). Its guest runs as a uid no
+account has, through setpriv with no-new-privs, after the open locks the template's empty
+passwords and stops its sshd; the lister, sweep and identity check run as root. Its suspend is
+E2B's pause, which cuts the relays' streams, so the interpreters are forgotten and swept at the
+resume: files survive a suspend, cell state does not. A granted call in an E2B session reaches its
+grant only with `E2B_SESSION_GRANTS` (and `E2B_GUARD_URL`) set, one of two ways behind one interface
+([sandbox/e2b_session_grant.go](sandbox/e2b_session_grant.go)): `session` creates the sandbox with the
+guard's rule and one credential whose slot serves only the grant of the call in progress, as docker's
+broker socket does; `call` puts the rule on with a fresh credential through E2B's network update for
+each granted call and takes it off after. Both pass against the live service (`make e2b-guard-live`: a
+granted call before and after a suspend); unset, the
+call is refused, not dispatched, reason `unsupported`. A sandbox paused once and resumed goes back to its paused
+snapshot at E2B's timeout rather than away, so `ReconcileOrphans` deletes any instance's session
+sandbox more than 5 minutes past its declared expiry. All three run the same in-sandbox programs
+between calls, the process lister and the sweep, from
 [sandbox/internal/sessionkit](sandbox/internal/sessionkit/). A docker session is a run's
 locked-down container from the project image kept alive under docker's init, every call a
 `docker exec` into it; its idle suspend is `docker pause`, so `Suspend` reports the memory
@@ -238,8 +273,9 @@ mounted at open and serves only the grant of the call in progress, to anything i
 container, code an earlier call left running included; an OpenShell session's granted call
 starts its relay in the sandbox, reachable the same way. So a granted session call needs a
 grant that allows sessions (`HostAPIGrant.AllowInSessions`, a profile's
-`allow_in_sessions`), or both providers refuse it before dispatch
-(`ErrGrantNotForSessions`, reason `permission`, `PermissionDenied` over RPC).
+`allow_in_sessions`), or every provider refuses it before dispatch
+(`ErrGrantNotForSessions`, reason `permission`, `PermissionDenied` over RPC); an E2B session
+without `E2B_SESSION_GRANTS` refuses one that does allow sessions too, reason `unsupported`.
 [docs/sessions.md](docs/sessions.md#what-a-session-gives-up) says what a session gives up.
 Over RPC the procedures are `OpenSession`, `SessionRun` (its own request message, so a
 daemon that predates sessions refuses it instead of dropping the ID) and `CloseSession`;
@@ -346,8 +382,10 @@ uid is the host's, so an escape lands as no account),
 `@sha256:`-pinned),
 `E2B_API_KEY`, `E2B_TEMPLATE`, `E2B_GUARD_URL` (the guard is **process-local**: a run's
 guard credential lives only in the memory of the process that opened that run, so the
-public guard URL must resolve to that same process — an ordinary load balancer across
-replicas rejects valid guard calls as unknown credentials), `DOCKER_SBX_TOKEN` (a Docker
+public guard URL must resolve to that same process's `PLIMSOLL_GUARD_ADDR` — an ordinary load balancer across
+replicas rejects valid guard calls as unknown credentials), `E2B_SESSION_GRANTS` (`session` or
+`call`: how a granted E2B session call reaches the guard, see Sessions; unset refuses one; needs
+`E2B_GUARD_URL`), `DOCKER_SBX_TOKEN` (a Docker
 personal access token with the Cloud Sandboxes scope, read from the environment only),
 `DOCKER_SBX_USERNAME` (the account it belongs to), `SANDBOX_DOCKERCLOUD_AUTH_URL`
 (the token exchange; default Docker Hub's), `SANDBOX_DOCKERCLOUD_API` (`connect`, the default, or `rest`),
@@ -374,13 +412,24 @@ which needs the gateway's `allow_driver_config = true`; never a session's),
 set for a provider without sessions), `SANDBOX_MAX_SESSIONS_PER_CALLER` (open sessions one
 principal may hold, suspended ones included; default 0, no cap beyond the daemon's; a
 suspended session holds no concurrency slot, so the per-caller concurrency cap does not bound
-them), `SANDBOX_SESSION_POOL` (docker only: never-used session containers kept ready,
+them), `SANDBOX_MAX_SESSIONS_PER_OWNER` (open sessions one owner of one principal may hold:
+the end user an open names in `OpenSessionRequest.owner`, which the official clients send as
+hex(HMAC-SHA256(key = SHA-256("plimsoll session owner key v2\n" + the caller's token), message = "plimsoll session owner v2\n" + owner);
+a derived key, since HMAC replaces a key over 64 bytes with its SHA-256, which is the clients file's `token_sha256`)
+and the daemon never logs; default 0, no per-owner cap; at the cap the open closes that
+owner's least recently used session with no call in progress and takes its place, the closed
+one's calls refused not dispatched with session end `replaced`, and refuses the open, reason
+`capacity`, when none can be closed; an open the daemon refuses closes nothing, and a victim
+whose close fails stays open; `Describe` states it, with the per-caller cap, as
+`max_sessions_per_owner` and `max_sessions_per_caller`; so an app running as many processes keeps each
+user to a cap that the TypeScript `CodeSandboxes` cap, which counts one process, cannot),
+`SANDBOX_SESSION_POOL` (docker only: never-used session containers kept ready,
 each with an interpreter and relay already attached for every language the image runs;
 default 0, at most `SANDBOX_MAX_SESSIONS`; one goes to one session and is removed at its
 close, never reused; each is charged one run's memory against `SANDBOX_TOTAL_MEMORY_MB`, in
 plimsolld's clamp and in `WithAdmission`; [docs/sessions.md](docs/sessions.md#docker)), `SANDBOX_SESSION_LIFETIME` (default 30m, at most
-12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends; otherwise 1s to 12h, and a
-request may ask for less but not under 1s), `SANDBOX_SESSION_DISK_MB`
+12h), `SANDBOX_SESSION_IDLE` (default 5m; 0 never suspends, which startup refuses with a provider
+billed by the second; otherwise 1s to 12h, and a request may ask for less but not under 1s), `SANDBOX_SESSION_DISK_MB`
 (default 1024; 0 disables the check and measures nothing; disk use is measured after each call,
 on docker as the used space of the session's tmpfs mounts (`statfs`), on openshell by a walk
 the session's code can hide files from;
@@ -420,7 +469,11 @@ the provider's own lifetime for it ends; UTC days, a run crossing midnight count
 day for the part after it; per daemon, so placement's retry on
 a capacity refusal lets a caller spend its allowance once per daemon; the counters live
 in memory, so a restart forgets the day's spend; refusals are counted in
-`plimsoll_shed_total`). Each provider reports its boundary via
+`plimsoll_shed_total`; a session on such a provider draws on the same allowances for the time its
+sandbox runs, from its open, or the call that resumes it, to its next suspend or its end: it holds
+a reservation reaching its call's timeout, its idle timeout and the teardown past every call, a
+call the allowance cannot cover is refused, not dispatched, and a session that can neither
+suspend nor pay for another idle period is closed). Each provider reports its boundary via
 `IsolationClass()` and in the RPC response `isolation` field, and the **`Describe`
 RPC** reports the active provider, tier, project and module support, and
 operation-specific grant support (via `ProjectCapable` / `ModuleCapable` /
@@ -470,7 +523,12 @@ keep it, and the session goes on. Encoding and field list: [docs/run-records.md]
 `/readyz` outside auth on its RPC listener. `GET /metrics`, also outside auth, has a listener of its own,
 `PLIMSOLL_METRICS_ADDR` (default `127.0.0.1:9464`: loopback and port 9464 are OpenTelemetry's Prometheus exporter
 defaults; `off` disables it), because its labels name grant profiles and route templates, which a caller who can reach the RPC
-port has no business reading. `/readyz` re-runs the provider's bounded `Preflight`: for docker
+port has no business reading. The egress guard (E2B and Docker Cloud grants) has a listener of its own too,
+`PLIMSOLL_GUARD_ADDR`, required when a guard URL is set and refused otherwise, serving the guard path and
+nothing else ([cmd/plimsolld/main.go](cmd/plimsolld/main.go) `guardHandler`): a granted guest's one permitted
+destination is the guard, so on the RPC listener it would also reach the RPC procedures, `/healthz` and
+`/readyz`. The RPC listener does not serve the guard path; the guard listener stays up through the shutdown
+drain, since runs still in flight call through it. `/readyz` re-runs the provider's bounded `Preflight`: for docker
 that probes the pinned daemon and runtime, but for e2b and dockercloud it validates **configuration only**
 and proves nothing about API reachability, token or key validity, or guard routability — the
 behavioral proof is the one-shot startup `SmokeTest`, which creates a real billable
@@ -481,7 +539,10 @@ re-runs `Preflight` every minute while the tier is below what startup proved. `D
 structural/static operation support. Every provider whose boundary depends on the
 host or a remote service (docker, e2b, dockercloud, openshell) runs a startup
 **`SmokeTest`** (behavior, not just configuration) via `EnsureReady`, and none
-serves if it fails. With sessions enabled, plimsolld then runs `sandbox.SessionSmokeTest`
+serves if it fails. plimsolld settles every local setting (limits, sessions, grants, the
+caller registry, TLS, every rule of hardened mode but isolation) and binds every listener
+before it, since on e2b and dockercloud the smoke test is a billed microVM and a daemon
+restarting over a bad setting would otherwise pay for one each time. With sessions enabled, plimsolld then runs `sandbox.SessionSmokeTest`
 on one real session (the sweep kills a process a call left, files survive calls and a
 suspend, a cell's interpreter keeps state in every stated language and after a suspend keeps
 it or says it is fresh, a call cannot open a running relay's pipes, a failing call is a
@@ -538,9 +599,10 @@ an enforced startup policy: a warning is not a policy. It refuses to serve unles
 every advertised production property is verifiably in force — `vm` or verified
 `kernel` isolation (post-`EnsureReady` evidence, so docker means proven runsc),
 multi-client auth (`PLIMSOLL_CLIENTS_FILE`; a shared token or open dev mode is
-rejected), TLS on any non-loopback listener (the metrics listener included), an immutable execution surface
+rejected), TLS on any non-loopback listener (the metrics and guard listeners included), an immutable execution surface
 (docker: `SANDBOX_REQUIRE_PINNED_IMAGES=1`, no `unconfined` seccomp; e2b: an
-explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1` or a store image, which always carries its digest), an explicit
+explicit `E2B_TEMPLATE`; dockercloud: `SANDBOX_REQUIRE_PINNED_IMAGES=1` or a store image, which always carries its digest, and
+`SANDBOX_DOCKERCLOUD_API=connect` named explicitly), an explicit
 per-run resource envelope (memory and CPU only for dockercloud, which has no disk
 control) plus, for docker, whose runners share the daemon's host, the aggregate memory budget, per-caller rate limiting with a burst no larger than a minute's rate, and a per-caller concurrency cap (`SANDBOX_PER_KEY_CONCURRENT` positive and below `SANDBOX_MAX_CONCURRENT`: a rate limit bounds what a caller starts, not the slots its long runs or running sessions hold), and with sessions on a per-caller session cap (`SANDBOX_MAX_SESSIONS_PER_CALLER` positive), and with a provider billed by the second a daily allowance on every caller (`paid_seconds_per_day`). Every violation is reported at once
 (one fix pass, not a startup loop). TLS itself is configured with
@@ -690,7 +752,13 @@ include `code:run` or `*`.
 per-run grant, minted token, exact approve==wire check, proxy-free/no-redirect
 upstream request, traffic budgets (256 calls by default, 1 MiB request, 4 MiB
 response; a profile's `max_calls` raises the call budget for a workload that is a
-loop by design, never past `MaxHostCallsCeiling` of 100,000, and the metadata trace
+loop by design, never past `MaxHostCallsCeiling` of 100,000, and its `route_max_calls`
+caps one allowed route within it, for a route whose call spends (a GPU job's submit),
+answered 429 past the cap (a call counts against every capped entry it matches, compared
+without regard to case, all or nothing, so neither an overlapping wildcard, a case variant
+nor the order of `allow` routes around one; in a session the count is the session's, a
+`sandbox.RouteBudget` every granted call's broker charges, since code a session keeps can
+use each call's grant), and the metadata trace
 stays capped at the default 256 rows either way, counting the rest as `Dropped`;
 16 calls in flight; 60 s per upstream call, headers and body),
 and metadata-only trace. Docker JavaScript keeps `--network none` and frames calls
@@ -762,10 +830,16 @@ Every run is **audit-logged** (`slog`): one structured line per RunJavaScript/
 RunProject with the caller (principal UserID, never the token), code/file sizes,
 `grant_profile`, provider, exit code, timed-out, and duration — never the code
 contents. Raw HTTP bodies and decompressed Connect messages are independently
-capped. HTTP middleware authenticates before Connect reads the body, bounds
-concurrent decode work (a slot covers the body only, given back once it has been read,
-and one caller holds at most half the slots), and the server applies a whole-body read
-deadline. A session holds one call waiting for its turn; a further one is refused, not
+capped. HTTP middleware authenticates before Connect reads the body, refuses a declared
+length over the cap from the header alone, bounds
+concurrent decode work (a slot covers reading, decompressing and decoding the body,
+given back by the first interceptor once Connect has decoded the request, and one caller
+holds at most half the slots), and the server applies a whole-body read
+deadline. An HTTP/1.x answer given before its request body was read closes the
+connection instead of waiting for that body ([internal/unreadbody](internal/unreadbody/),
+on every handler plimsolld serves and in the guard handler itself), and the RPC listener
+(with the guard's, when there is one) holds at most half the process's descriptor limit in
+open connections. A session holds one call waiting for its turn; a further one is refused, not
 dispatched, reason `capacity`. An internal fault reaches the caller as `internal error
 <id>` only; its text (which can carry a vendor's response body or docker's stderr) goes
 to the log under that ID, cut to 4 KiB. Refused credentials are counted and logged at
@@ -852,7 +926,7 @@ path into guest content. The pipeline:
 ```sh
 go build ./...
 go vet ./...
-go test ./...     # the e2b and dockercloud *live* tests skip without their credentials
+go test ./...     # paid live tests skip unless their make target's flag is 1; a key alone runs nothing paid
 ```
 Some tests need a local docker daemon and the five images `make docker-images`
 provides: `node:22-alpine` for snippets (pulled), and `plimsoll/sandbox:latest` for
@@ -876,25 +950,29 @@ of its own through an optional, unpublished `local.mk` (`EXTRA_AUDIT`). The real
 infrastructure suites are opt-in: `make audit DOCKER=1` adds the
 docker/seccomp/broker/smoke tests, `make audit E2B=1` (with `E2B_API_KEY`) adds
 the live E2B suite, and `make audit DOCKERCLOUD=1` (with `DOCKER_SBX_TOKEN`,
-`SANDBOX_DOCKERCLOUD_API_URL` and `SANDBOX_DOCKERCLOUD_IMAGE`) adds the live Docker
+`DOCKER_SBX_USERNAME`, `SANDBOX_DOCKERCLOUD_IMAGE` or `_STORE_IMAGE`, and
+`SANDBOX_DOCKERCLOUD_API_URL` unless the API is rest) adds the live Docker
 Cloud Sandboxes suite, which fails rather than skips when that configuration is
 absent. `make audit OPENSHELL=1` (with a gateway and the `SANDBOX_OPENSHELL_*`
 settings) adds the live OpenShell suite, the provider's tests plus a daemon test
 against the gateway; it is free but needs a gateway, and it too fails rather than
 skips. `make help` lists individual targets.
 
-**The ordinary gate cannot spend.** A bare `go test ./...` with `E2B_API_KEY` or
-`DOCKER_SBX_TOKEN` (plus its API URL) in the environment runs a live suite, which
-creates billable microVMs. So the `test`, `race` and `docker-suite` targets run
-under `env -u E2B_API_KEY -u DOCKER_SBX_TOKEN`; only `e2b-suite` and
-`e2b-guard-live` see the E2B key, only `dockercloud-suite` sees the Docker token,
-and each paid suite strips the other's credential. Prefer the make targets to a bare `go test ./...`
-in any shell that may hold a key. Docker is deliberately *not* hidden from the
+**The ordinary gate cannot spend.** A credential in the environment is not consent to
+spend: every test that creates a billable microVM skips unless the flag only its make
+target sets is `1` (`E2B_LIVE` for `e2b-suite`, `E2B_GUARD_LIVE_REQUIRED` for
+`e2b-guard-live`, `E2B_SESSION_LIVE` for `e2b-session-live`, `DOCKERCLOUD_LIVE_REQUIRED`
+for `dockercloud-suite`), so a bare `go test ./...` in a shell holding `E2B_API_KEY` or
+`DOCKER_SBX_TOKEN` runs nothing paid. As a second layer the `test`, `race` and
+`docker-suite` targets, and the export's test step, run under `env -u E2B_API_KEY -u
+DOCKER_SBX_TOKEN`; only the E2B targets see the E2B key, only `dockercloud-suite` sees the
+Docker token, and each paid suite strips the other's credential. Docker is deliberately *not* hidden from the
 ordinary gate: those tests are free and local, and they are the isolation proof.
 
-One claim the gate does **not** make: `make audit E2B=1` runs `-run 'E2B.*Live'`, and
-`TestE2BGuardLive` skips unless `E2B_GUARD_URL` and `E2B_LIVE_GRANT_BASE_URL` are
-also set, so a green E2B suite does not mean the guarded-egress path was exercised.
+One claim the gate does **not** make: `make audit E2B=1` runs `e2b-suite` (`-run 'E2B.*Live'`
+with `E2B_LIVE=1`), in which `TestE2BGuardLive` and `TestE2BSessionGuardLive` always skip,
+since only `make e2b-guard-live` sets `E2B_GUARD_LIVE_REQUIRED`; so a green E2B suite never
+means the guarded-egress path was exercised.
 `make e2b-guard-live` is that run, and it fails rather than skips when its
 configuration is absent, so a pass can only come from actually proving the path.
 Startup `SmokeTest` proves deny-all egress on a no-grant microVM; it does not create

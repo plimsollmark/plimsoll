@@ -37,7 +37,7 @@ class _RaisingTransport:
         self.fail = fail
         self.calls = 0
 
-    def call(self, method: str, body: Dict[str, Any], path: str) -> Msg:
+    def call(self, method: str, body: Dict[str, Any], path: str, cancel: Any = None) -> Msg:
         self.calls += 1
         if isinstance(self.fail, BaseException):
             raise self.fail

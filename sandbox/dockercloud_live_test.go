@@ -10,18 +10,18 @@ import (
 
 // These tests create real, billable Docker Cloud sandboxes, through the API
 // SANDBOX_DOCKERCLOUD_API selects (Connect unless it says rest), as plimsolld would:
-// run the suite once per API. They run only when DOCKER_SBX_TOKEN,
-// DOCKER_SBX_USERNAME and, for Connect, SANDBOX_DOCKERCLOUD_API_URL are set (REST
-// defaults to its documented URL), and skip
-// otherwise; the ordinary gate strips the token (Makefile NO_PAID_KEYS) so they
-// cannot run by accident. `make dockercloud-suite` sets DOCKERCLOUD_LIVE_REQUIRED=1,
-// under which missing configuration fails instead of skipping, so a green
-// deliberate run means the live service was actually exercised.
+// run the suite once per API. They skip unless DOCKERCLOUD_LIVE_REQUIRED=1, which only
+// `make dockercloud-suite` sets, so a token in the environment alone runs nothing
+// paid (the ordinary gate also strips it, Makefile NO_PAID_KEYS). Under it they need
+// DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME and, for Connect, SANDBOX_DOCKERCLOUD_API_URL
+// (REST defaults to its documented URL), and missing configuration fails instead of
+// skipping, so a green deliberate run means the live service was actually exercised.
 //
 // Each test creates one or two sandboxes for a few seconds; at the published
 // rate (from $0.07 an hour) the whole suite costs well under one cent.
 func dockerCloudLive(t *testing.T) *DockerCloud {
 	t.Helper()
+	paidOptIn(t, "DOCKERCLOUD_LIVE_REQUIRED")
 	token := os.Getenv("DOCKER_SBX_TOKEN")
 	user := os.Getenv("DOCKER_SBX_USERNAME")
 	api := os.Getenv("SANDBOX_DOCKERCLOUD_API")

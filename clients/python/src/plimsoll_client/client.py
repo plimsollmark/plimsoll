@@ -9,6 +9,8 @@ chain of records so a call it did not make is caught.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import math
 import ssl
 import threading
@@ -17,7 +19,7 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from . import _validate as v
 from ._record import check, check_single, check_unanswered, request_digest, session_fingerprint
-from ._transport import Transport
+from ._transport import CancelHandle, Transport
 from ._wire import (
     INT32,
     INT64,
@@ -281,6 +283,19 @@ def _project_payload(files: v.FilesArg, steps: Sequence[str], artifacts: Sequenc
 # --- the client -------------------------------------------------------------------
 
 
+def _owner_digest(token: Optional[str], owner: str) -> str:
+    """What an owner is sent as: hex(HMAC-SHA256(key = SHA-256("plimsoll session
+    owner key v2\\n" + the client's token), message = "plimsoll session owner v2\\n"
+    + owner)), the same in every official client, so the processes of one app agree
+    on a user. The daemon stores only a token's SHA-256, so it cannot test a guessed
+    name against a digest; without a token anyone can. The key is derived, not the
+    token itself: HMAC replaces a key longer than 64 bytes with its SHA-256, which for
+    a long imported token is exactly the token_sha256 the clients file holds."""
+    key = hashlib.sha256(("plimsoll session owner key v2\n" + (token or "")).encode("utf-8")).digest()
+    msg = ("plimsoll session owner v2\n" + owner).encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
 class Client:
     """A client for one plimsolld.
 
@@ -319,11 +334,12 @@ class Client:
     def __repr__(self) -> str:
         return f"Client({self.base_url!r})"
 
-    def describe(self) -> Info:
+    def describe(self, *, cancel: Optional[CancelHandle] = None) -> Info:
         """What the daemon states about itself. Raises ProtocolMismatchError,
         with the description attached as ``info``, when the daemon serves another
-        protocol number than this client speaks: every request would be refused."""
-        m = self._transport.call("Describe", {}, "DescribeResponse")
+        protocol number than this client speaks: every request would be refused.
+        ``cancel`` stops the request from another thread (:class:`CancelHandle`)."""
+        m = self._transport.call("Describe", {}, "DescribeResponse", cancel)
         res = m.get_msg("resources")
         info = Info(
             provider=m.get_str("sandbox"),
@@ -337,6 +353,8 @@ class Client:
             session_lifetime_ms=m.get_int("sessionLifetimeMs", UINT32),
             session_idle_timeout_ms=m.get_int("sessionIdleTimeoutMs", UINT32),
             session_environment=_payload_environment(m.get_msg("sessionEnvironment")),
+            max_sessions_per_caller=m.get_int("maxSessionsPerCaller", UINT32),
+            max_sessions_per_owner=m.get_int("maxSessionsPerOwner", UINT32),
             javascript_environment=_payload_environment(m.get_msg("javascriptEnvironment")),
             project_environment=_payload_environment(m.get_msg("projectEnvironment")),
             module_environment=_payload_environment(m.get_msg("moduleEnvironment")),
@@ -365,6 +383,7 @@ class Client:
         software: Optional[SoftwareRule] = None,
         grant_profile: Optional[str] = None,
         trace_id: Optional[str] = None,
+        cancel: Optional[CancelHandle] = None,
     ) -> JavaScriptResult:
         """Runs a JavaScript snippet in a fresh sandbox.
 
@@ -375,11 +394,14 @@ class Client:
         ``grant_profile`` names a host-API capability configured on the daemon;
         without one the run has no network. ``trace_id`` is an opaque correlation
         ID for the daemon's audit line, 1 to 64 characters of ``[A-Za-z0-9._:-]``.
+        ``cancel`` stops the request from another thread (:class:`CancelHandle`):
+        before it is sent, nothing runs and the error says so; once it may have
+        been sent, the connection is cut and the error is unmarked.
         """
         rule = v.software_rule(software)
         req = _envelope(timeout, minimum_isolation, rule, trace_id)
         req["javascript"] = _javascript_payload(code, grant_profile)
-        return self._run("javascript", req, rule)
+        return self._run("javascript", req, rule, cancel)
 
     def run_project(
         self,
@@ -392,6 +414,7 @@ class Client:
         software: Optional[SoftwareRule] = None,
         grant_profile: Optional[str] = None,
         trace_id: Optional[str] = None,
+        cancel: Optional[CancelHandle] = None,
     ) -> ProjectResult:
         """Writes ``files`` (a mapping of relative path to text, or a list of
         ``(path, text)`` pairs, sent in that order) into a fresh sandbox and runs
@@ -401,7 +424,7 @@ class Client:
         rule = v.software_rule(software)
         req = _envelope(timeout, minimum_isolation, rule, trace_id)
         req["project"] = _project_payload(files, steps, artifacts, grant_profile)
-        return self._run("project", req, rule)
+        return self._run("project", req, rule, cancel)
 
     def run_module(
         self,
@@ -414,6 +437,7 @@ class Client:
         minimum_isolation: Optional[str] = None,
         software: Optional[SoftwareRule] = None,
         trace_id: Optional[str] = None,
+        cancel: Optional[CancelHandle] = None,
     ) -> ModuleResult:
         """Runs a compiled simulator built into the daemon's module image once per
         parameter row, each instance stepping from 0 to ``end_time`` with
@@ -422,11 +446,11 @@ class Client:
         rule = v.software_rule(software)
         req = _envelope(timeout, minimum_isolation, rule, trace_id)
         req["module"] = v.module(model, rows, end_time, step)
-        return self._run("module", req, rule)
+        return self._run("module", req, rule, cancel)
 
-    def _run(self, kind: str, req: Dict[str, Any], rule: Optional[SoftwareRule]) -> Any:
+    def _run(self, kind: str, req: Dict[str, Any], rule: Optional[SoftwareRule], cancel: Optional[CancelHandle]) -> Any:
         digest = request_digest(req)
-        resp = self._transport.call("Run", req, "RunResponse")
+        resp = self._transport.call("Run", req, "RunResponse", cancel)
         floor = req.get("minimumIsolation", "")
         return _finish(kind, resp, lambda: check_single(digest, PROTOCOL, rule, resp), floor)
 
@@ -439,6 +463,7 @@ class Client:
         idle_timeout: Optional[float] = None,
         trace_id: Optional[str] = None,
         languages: Optional[Sequence[str]] = None,
+        owner: Optional[str] = None,
     ) -> "Session":
         """Opens a session: one sandbox kept for many calls, in which the files a
         call writes persist for later calls and no process a call starts outlives
@@ -449,13 +474,27 @@ class Client:
         ``idle_timeout`` (seconds) may only shorten the daemon's own.
         ``languages`` names the languages the session's cells will use: a hint, so
         a daemon with a warm pool hands over a sandbox with those interpreters
-        already running; a cell in any language the daemon states still runs. Use
-        it as a context manager, or call :meth:`Session.close`."""
+        already running; a cell in any language the daemon states still runs.
+        ``owner`` names the end user the session is for (an account ID, an
+        email), so a daemon with a per-owner cap (``SANDBOX_MAX_SESSIONS_PER_OWNER``)
+        keeps each user to it across every process of the app: at the cap it
+        closes that user's least recently used session with no call in progress.
+        It never leaves this process: the daemon gets a digest keyed by this
+        client's token (:func:`_owner_digest`). Use it as a context manager, or
+        call :meth:`Session.close`."""
         rule = v.software_rule(software)
         hint = v.languages(languages)
         req: Dict[str, Any] = {"protocol": PROTOCOL}
         if hint:
             req["languages"] = hint
+        if owner is not None:
+            if not isinstance(owner, str):
+                raise TypeError("owner must be a string")
+            if not owner:
+                # An empty owner would send none, and the per-owner cap would silently
+                # not apply; the TypeScript client refuses it the same way.
+                raise v.invalid("owner must not be empty; omit it for a session with no owner")
+            req["owner"] = _owner_digest(self._transport.token, owner)
         floor = v.floor(minimum_isolation)
         if floor:
             req["minimumIsolation"] = floor
@@ -495,7 +534,14 @@ class Session:
     daemon, so the chain this client tracks follows the daemon's: a record that
     does not continue it means someone else holding the session ID made a call
     (ChainError). The session ID is a capability: it is sent to the daemon and
-    appears nowhere else, not in ``repr`` and not in errors."""
+    appears nowhere else, not in ``repr`` and not in errors.
+
+    A call's ``cancel`` handle, cancelled before the call is sent (while it waits
+    for an earlier call to finish, say), refuses it with nothing sent and the
+    session unchanged. Cancelled once the call may have been sent, it cuts the
+    connection: the call may have run, so, as after any call left without an
+    answer, the session sends nothing more (open a new one; closing this one
+    reports the daemon's count)."""
 
     def __init__(self, transport: Transport, session_id: str, m: Msg, rule: Optional[SoftwareRule], floor: str = "") -> None:
         self._transport = transport
@@ -564,13 +610,14 @@ class Session:
         software: Optional[SoftwareRule] = None,
         grant_profile: Optional[str] = None,
         trace_id: Optional[str] = None,
+        cancel: Optional[CancelHandle] = None,
     ) -> JavaScriptResult:
         """Runs a snippet in the session. Arguments as for :meth:`Client.run_javascript`;
         ``software`` narrows the session's rule."""
         rule = v.merge_rules(self._rule, v.software_rule(software))
         req = _envelope(timeout, _stronger(self._floor, v.floor(minimum_isolation)), rule, trace_id)
         req["javascript"] = _javascript_payload(code, grant_profile)
-        return self._call("javascript", req, rule)
+        return self._call("javascript", req, rule, cancel)
 
     def run_project(
         self,
@@ -583,12 +630,13 @@ class Session:
         software: Optional[SoftwareRule] = None,
         grant_profile: Optional[str] = None,
         trace_id: Optional[str] = None,
+        cancel: Optional[CancelHandle] = None,
     ) -> ProjectResult:
         """Runs a project in the session; its files persist for later calls."""
         rule = v.merge_rules(self._rule, v.software_rule(software))
         req = _envelope(timeout, _stronger(self._floor, v.floor(minimum_isolation)), rule, trace_id)
         req["project"] = _project_payload(files, steps, artifacts, grant_profile)
-        return self._call("project", req, rule)
+        return self._call("project", req, rule, cancel)
 
     def run_cell(
         self,
@@ -600,6 +648,7 @@ class Session:
         minimum_isolation: Optional[str] = None,
         software: Optional[SoftwareRule] = None,
         trace_id: Optional[str] = None,
+        cancel: Optional[CancelHandle] = None,
     ) -> CellResult:
         """Runs ``code`` in the session's interpreter for ``language``
         (``"python"`` or ``"javascript"``), which keeps what earlier cells defined,
@@ -610,9 +659,9 @@ class Session:
         rule = v.merge_rules(self._rule, v.software_rule(software))
         req = _envelope(timeout, _stronger(self._floor, v.floor(minimum_isolation)), rule, trace_id)
         req["cell"] = v.cell(language, code, files)
-        return self._call("cell", req, rule)
+        return self._call("cell", req, rule, cancel)
 
-    def _call(self, kind: str, req: Dict[str, Any], rule: Optional[SoftwareRule]) -> Any:
+    def _call(self, kind: str, req: Dict[str, Any], rule: Optional[SoftwareRule], cancel: Optional[CancelHandle]) -> Any:
         req["sessionId"] = self._id
         digest = request_digest(req)  # the session ID is not part of it
         floor = req.get("minimumIsolation", "")
@@ -632,7 +681,7 @@ class Session:
                 )
             calls_before = self._calls
             try:
-                return self._exchange(kind, req, rule, digest, floor)
+                return self._exchange(kind, req, rule, digest, floor, cancel)
             except BaseException as e:
                 # Whatever ended the exchange (an error of the daemon's or the
                 # transport's, an answer this client could not read, a
@@ -644,9 +693,11 @@ class Session:
                     self._unanswered = e.message if isinstance(e, PlimsollError) else type(e).__name__
                 raise
 
-    def _exchange(self, kind: str, req: Dict[str, Any], rule: Optional[SoftwareRule], digest: str, floor: str) -> Any:
+    def _exchange(
+        self, kind: str, req: Dict[str, Any], rule: Optional[SoftwareRule], digest: str, floor: str, cancel: Optional[CancelHandle]
+    ) -> Any:
         try:
-            m = self._transport.call("SessionRun", req, "SessionRunResponse")
+            m = self._transport.call("SessionRun", req, "SessionRunResponse", cancel)
         except PlimsollError as e:
             if isinstance(e, SessionEndedError):
                 self._ended = SessionEnded(reason=e.reason, detail=e.detail)
@@ -676,9 +727,10 @@ class Session:
         run = m.get_msg("run")
         if run is None:
             raise ResultKindMismatchError("plimsoll: the session call's answer carries no run")
-        end = m.get_enum("ended", SESSION_ENDS)
+        end = m.get_enum("ended", SESSION_ENDS, unknown=-1)
         if end != 0:
-            name = SESSION_END_NAMES[end] if 0 < end < len(SESSION_END_NAMES) else "open"
+            # A number this client has no name for is an end all the same: "unknown".
+            name = SESSION_END_NAMES[end] if 0 < end < len(SESSION_END_NAMES) else "unknown"
             self._ended = SessionEnded(reason=name, detail=m.get_str("endDetail"))
         return _finish(kind, run, lambda: self._checked_chain(digest, rule, run, floor), floor)
 
@@ -720,12 +772,12 @@ class Session:
             if self._closed is not None:
                 return self._closed
             m = self._transport.call("CloseSession", {"protocol": PROTOCOL, "sessionId": self._id}, "CloseSessionResponse")
-            end = m.get_enum("ended", SESSION_ENDS)
+            end = m.get_enum("ended", SESSION_ENDS, unknown=-1)
             summary = SessionSummary(
                 session=m.get_str("session"),
                 calls=m.get_int("calls", UINT64),
                 last_record_sha256=m.get_str("lastRecordSha256"),
-                end=SESSION_END_NAMES[end] if 0 <= end < len(SESSION_END_NAMES) else "open",
+                end=SESSION_END_NAMES[end] if 0 <= end < len(SESSION_END_NAMES) else "unknown",
             )
             if self._ended is None and summary.end != "open":
                 self._ended = SessionEnded(reason=summary.end, detail="")

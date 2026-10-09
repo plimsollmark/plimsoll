@@ -66,6 +66,7 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		{"CellFilesLandInTheWorkDirectory", cellFiles},
 		{"CellFilesThatCannotBeWrittenAreRefused", cellFilesRefused},
 		{"CellFilesDoNotFollowLinksOutOfTheWorkDirectory", cellFilesStayInWork},
+		{"FifoLeftInTheWorkDirectoryDoesNotHoldACall", fifoDoesNotHold},
 		{"KilledInterpreterIsStartedAgain", cellInterpreterKilled},
 		{"GrantedCallNeedsAGrantThatAllowsSessions", grantNeedsSessionOptIn},
 		{"ForgedRelayFramesNeitherMarkNorRepeatACell", forgedRelayFrames},
@@ -395,6 +396,53 @@ func cellFilesRefused(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	}
 }
 
+// A fifo an earlier call left in the work directory, where a later call writes a file
+// or reads an artifact, does not hold that call until its deadline: opening a fifo
+// waits for the other end, and nothing in the session is at the other end. The cell
+// is refused before its code is sent, the project fails without timing out, and the
+// artifact is left out of a completed run (security review, 2026-10-08).
+func fifoDoesNotHold(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	if res := js(t, s, `require("child_process").execFileSync("mkfifo", ["fifo.txt"])`, 10*time.Second); res.ExitCode != 0 {
+		t.Fatalf("mkfifo: exit %d, stderr %q", res.ExitCode, res.Stderr)
+	}
+	quick := 20 * time.Second // each call below has a 30 s budget; holding means reaching it
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript, Code: "globalThis.ran = 1", Timeout: 30 * time.Second,
+		Files: []sandbox.File{{Path: "fifo.txt", Content: "x"}}})
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalRequest || time.Since(start) > quick {
+		t.Fatalf("a cell file at a fifo: %v after %v; want refused at once, reason request", err, time.Since(start))
+	}
+
+	start = time.Now()
+	pr, err := s.RunProject(ctx, sandbox.ProjectRequest{Files: []sandbox.File{{Path: "fifo.txt", Content: "x"}}, Steps: []string{"true"}, Timeout: 30 * time.Second})
+	if err == nil && (pr.Outcome == sandbox.ProjectOutcomeCompleted || pr.Outcome == sandbox.ProjectOutcomeTimedOut) || time.Since(start) > quick {
+		t.Fatalf("a project file at a fifo: %+v, %v after %v; want a failure at once, not a completed or timed-out run", pr, err, time.Since(start))
+	}
+
+	start = time.Now()
+	pr, err = s.RunProject(ctx, sandbox.ProjectRequest{Steps: []string{"true"}, Artifacts: []string{"fifo.txt"}, Timeout: 30 * time.Second})
+	if err != nil || pr.Outcome != sandbox.ProjectOutcomeCompleted || len(pr.Artifacts) != 0 || time.Since(start) > quick {
+		t.Fatalf("an artifact at a fifo: %+v, %v after %v; want a completed run without it, at once", pr, err, time.Since(start))
+	}
+
+	// The file the runner writes for a granted project (the host client its steps
+	// preload) is written the same way as the project's own files (round-3 review).
+	if res := js(t, s, `require("child_process").execFileSync("mkfifo", ["/tmp/plimsoll-host.mjs"])`, 10*time.Second); res.ExitCode != 0 {
+		t.Fatalf("mkfifo at the host client's path: exit %d, stderr %q", res.ExitCode, res.Stderr)
+	}
+	grant := &sandbox.HostAPIGrant{BaseURL: "https://api.example.com", Allow: []sandbox.HostRoute{{Method: "GET", Path: "/v1/items"}},
+		Minter: sandbox.StaticToken("plimsoll-conformance"), AllowInSessions: true}
+	start = time.Now()
+	pr, err = s.RunProject(ctx, sandbox.ProjectRequest{Steps: []string{"true"}, Timeout: 30 * time.Second, Grant: grant})
+	if err == nil && (pr.Outcome == sandbox.ProjectOutcomeCompleted || pr.Outcome == sandbox.ProjectOutcomeTimedOut) || time.Since(start) > quick {
+		t.Fatalf("a granted project with a fifo at the host client's path: %+v, %v after %v; want a failure (or a refusal) at once", pr, err, time.Since(start))
+	}
+}
+
 // A link an earlier call left in the work directory, to a directory or a file outside
 // it, is not followed when a cell's files are written: the cell is refused before its
 // code is sent, and nothing is written outside (v0.15.0 review, L4).
@@ -466,6 +514,18 @@ func open(t *testing.T, p sandbox.SessionProvider, lifetime time.Duration) sandb
 	}
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
 	return s
+}
+
+// jsAtFloor runs code with a floor, failing the test on any error.
+func jsAtFloor(t *testing.T, s sandbox.Session, code string, floor sandbox.IsolationClass) sandbox.Result {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := s.RunJavaScript(ctx, sandbox.Request{Code: code, Timeout: 10 * time.Second, MinimumIsolation: floor})
+	if err != nil {
+		t.Fatalf("RunJavaScript with floor %v: %v", floor, err)
+	}
+	return res
 }
 
 func js(t *testing.T, s sandbox.Session, code string, timeout time.Duration) sandbox.Result {
@@ -600,7 +660,11 @@ func suspendKeepsFiles(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 func floorRefused(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	s := open(t, p, cfg.Lifetime)
 	if s.Isolation() >= sandbox.IsolationVM {
-		t.Skip("the session is already at the highest tier")
+		// No tier is above the session's, so a floor at its own tier must run instead.
+		if got := jsAtFloor(t, s, `console.log("at the floor")`, s.Isolation()); strings.TrimSpace(got.Stdout) != "at the floor" {
+			t.Fatalf("a floor at the session's own tier: %+v", got)
+		}
+		return
 	}
 	_, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: `console.log(1)`, MinimumIsolation: s.Isolation() + 1})
 	if !errors.Is(err, sandbox.ErrInsufficientIsolation) {

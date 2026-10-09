@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
@@ -50,7 +51,9 @@ import (
 //     their records;
 //   - liar: a handler that breaks the protocol in the ways the client must catch;
 //   - sessions: the in-memory session provider, with POST /test/end-last ending the
-//     most recently opened session as a lifetime or a disk budget would.
+//     most recently opened session as a lifetime or a disk budget would;
+//   - tls: the real wasm provider over TLS, its certificate (for 127.0.0.1, ::1 and
+//     example.com) handed to the suite as the only trusted authority.
 //
 // The suite fails rather than skips when it is run here, so a green test means
 // every case ran. It needs python3 >= 3.10 and nothing else.
@@ -65,11 +68,12 @@ func TestPython(t *testing.T) {
 
 	sessions := &sandboxtest.Sessions{}
 	sessionSvc := quiet(rpc.NewSandboxService(sessions))
-	sessionSvc.Sessions = rpc.SessionConfig{MaxSessions: 16, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	sessionSvc.Sessions = rpc.SessionConfig{MaxSessions: 16, MaxPerOwner: 1, Lifetime: time.Minute, IdleTimeout: time.Minute}
 	ends := map[string]sandbox.SessionEnd{"expired": sandbox.SessionExpired, "disk_exceeded": sandbox.SessionDiskExceeded}
 
 	fixture := filepath.Join(t.TempDir(), "digests.json")
 	writeFixture(t, fixture)
+	tlsURL, tlsCA := serveTLS(t, quiet(rpc.NewSandboxService(sandboxtest.Wasm())))
 
 	env := append(os.Environ(),
 		"PLIMSOLL_WASM_URL="+serve(t, quiet(rpc.NewSandboxService(sandboxtest.Wasm())), nil, nil),
@@ -90,6 +94,8 @@ func TestPython(t *testing.T) {
 		}),
 		"PLIMSOLL_BREAKING_URL="+serve(t, breakingSvc(), nil, nil),
 		"PLIMSOLL_LOSSY_URL="+lossyProxy(t, serve(t, plainSessionSvc(), nil, nil)),
+		"PLIMSOLL_TLS_URL="+tlsURL,
+		"PLIMSOLL_TLS_CA="+tlsCA,
 		"PLIMSOLL_SCRIPTED_SOFTWARE="+scriptedSoftware,
 		"PLIMSOLL_GO_PROTOCOL="+strconv.FormatUint(uint64(protocol.Number), 10),
 		"PLIMSOLL_GO_RECORD_VERSION="+strconv.Itoa(record.Version),
@@ -139,6 +145,22 @@ func serve(t *testing.T, h plimsollv1connect.SandboxServiceHandler, v rpc.TokenV
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+// serveTLS serves h over TLS and returns its URL and a PEM file of its certificate,
+// which is self-signed and so the authority a client must trust to reach it.
+func serveTLS(t *testing.T, h plimsollv1connect.SandboxServiceHandler) (url, caFile string) {
+	t.Helper()
+	mux := http.NewServeMux()
+	path, handler := plimsollv1connect.NewSandboxServiceHandler(h, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	mux.Handle(path, handler)
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	caFile = filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return srv.URL, caFile
 }
 
 // verifier accepts exactly one token, with the code:run scope.

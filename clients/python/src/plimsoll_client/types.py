@@ -327,13 +327,18 @@ class Info:
     module_environment: PayloadEnvironment
     policy: str
     resources: Resources
+    max_sessions_per_caller: int = 0
+    max_sessions_per_owner: int = 0
+    """The daemon's caps on this caller's sessions and on one owner's of them
+    (``open_session(owner=...)``), 0 when there is none."""
 
 
 @dataclass(frozen=True)
 class SessionEnded:
     """Why a session ended: ``closed``, ``expired``, ``disk_exceeded``,
-    ``main_process_ended``, ``boundary_failed``, ``sandbox_changed`` or
-    ``shutdown``, with the daemon's detail."""
+    ``main_process_ended``, ``boundary_failed``, ``sandbox_changed``,
+    ``shutdown`` or ``replaced`` (the daemon closed it for a newer session of the same
+    owner), with the daemon's detail."""
 
     reason: str
     detail: str

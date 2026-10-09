@@ -287,6 +287,10 @@ type Info struct {
 	SupportsSessions   bool
 	SessionLifetime    time.Duration
 	SessionIdleTimeout time.Duration
+	// SessionsPerCaller and SessionsPerOwner are the daemon's caps on one caller's
+	// sessions and on one owner's of them (SessionOptions.Owner), 0 when there is none.
+	SessionsPerCaller int
+	SessionsPerOwner  int
 	// SessionEnvironment is where a session's calls run (every kind in one sandbox;
 	// on docker the project image), stated with SupportsSessions. Informational, like
 	// Environments.
@@ -324,6 +328,8 @@ func (r *Remote) Describe(ctx context.Context) (Info, error) {
 		SessionLifetime:          time.Duration(resp.Msg.GetSessionLifetimeMs()) * time.Millisecond,
 		SessionIdleTimeout:       time.Duration(resp.Msg.GetSessionIdleTimeoutMs()) * time.Millisecond,
 		SessionEnvironment:       payloadEnvironment(resp.Msg.GetSessionEnvironment()),
+		SessionsPerCaller:        int(resp.Msg.GetMaxSessionsPerCaller()),
+		SessionsPerOwner:         int(resp.Msg.GetMaxSessionsPerOwner()),
 		Environments: sandbox.Environments{
 			JavaScript: payloadEnvironment(resp.Msg.GetJavascriptEnvironment()),
 			Project:    payloadEnvironment(resp.Msg.GetProjectEnvironment()),
@@ -725,8 +731,15 @@ func sessionEndFromWire(e plimsollv1.SessionEnd) sandbox.SessionEnd {
 		return sandbox.SessionSandboxChanged
 	case plimsollv1.SessionEnd_SESSION_END_SHUTDOWN:
 		return sandbox.SessionShutdown
-	default:
+	case plimsollv1.SessionEnd_SESSION_END_REPLACED:
+		return sandbox.SessionReplaced
+	case plimsollv1.SessionEnd_SESSION_END_NOT_FOUND:
+		return sandbox.SessionNotFound
+	case plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED:
 		return sandbox.SessionOpen
+	default:
+		// A newer daemon's end: ended all the same, never read as still open.
+		return sandbox.SessionUnknown
 	}
 }
 

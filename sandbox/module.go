@@ -143,6 +143,12 @@ func validateModuleRequest(req ModuleRequest) error {
 	return nil
 }
 
+// maxModuleOutputWidth is the widest output row the decoder accepts: the worker's own
+// bound (MAX_WIDTH in docker/sim/worker.c), the most doubles one row can hold within
+// the 8 MiB result budget. A tighter bound here once turned a row the worker had
+// accepted and run into a protocol error (round-3 review).
+const maxModuleOutputWidth = 1 << 20
+
 // DecodeModuleResults parses the worker's versioned result record: a 20-byte
 // header ("PLSM", uint32 version 1, uint32 rows, uint32 width, uint32 params),
 // then per row an int32 status followed by status*width little-endian float64
@@ -167,7 +173,7 @@ func DecodeModuleResults(b []byte, rows, params int) ([]ModuleRun, int, error) {
 	if int64(gotRows) != int64(rows) || int64(gotParams) != int64(params) {
 		return nil, 0, fmt.Errorf("result record describes %d rows of %d params, the request had %d rows of %d", gotRows, gotParams, rows, params)
 	}
-	if width == 0 || width > 1<<16 {
+	if width == 0 || width > maxModuleOutputWidth {
 		return nil, 0, fmt.Errorf("result record width %d is out of range", width)
 	}
 	runs := make([]ModuleRun, 0, rows)

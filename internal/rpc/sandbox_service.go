@@ -254,6 +254,8 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 		SessionLifetimeMs:    sessionLifetime,
 		SessionIdleTimeoutMs: sessionIdle,
 		SessionEnvironment:   sessionEnv,
+		MaxSessionsPerCaller: sessionCap(supportsSessions, s.Sessions.MaxPerCaller),
+		MaxSessionsPerOwner:  sessionCap(supportsSessions, s.Sessions.MaxPerOwner),
 	}), nil
 }
 
@@ -299,7 +301,8 @@ type target struct {
 	module   func(context.Context, sandbox.ModuleRequest) (sandbox.ModuleResult, error) // runs only
 	// teardown is the provider's BillingTeardown: positive when it bills by the second
 	// (sandbox.Metered), so a run draws on the daily allowances (SpendCap). Runs only:
-	// plimsolld refuses sessions on a provider that bills by the second.
+	// a session's paid time is charged by its sessionMeter, from its open to its
+	// suspend and from a resume to the next.
 	teardown time.Duration
 	software sandbox.Environments
 	// session is set for a session call: software then holds the identities its
@@ -611,4 +614,12 @@ func canonicalNaNs(outputs []float64) []float64 {
 		return outputs
 	}
 	return out
+}
+
+// sessionCap is a session cap as Describe states it: only where sessions work.
+func sessionCap(supportsSessions bool, n int) uint32 {
+	if !supportsSessions || n <= 0 {
+		return 0
+	}
+	return uint32(n)
 }

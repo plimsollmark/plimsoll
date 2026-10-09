@@ -55,6 +55,8 @@ SESSION_ENDS: Dict[str, int] = {
     "SESSION_END_BOUNDARY_FAILED": 5,
     "SESSION_END_SANDBOX_CHANGED": 6,
     "SESSION_END_SHUTDOWN": 7,
+    "SESSION_END_REPLACED": 8,
+    "SESSION_END_NOT_FOUND": 9,
 }
 SESSION_END_NAMES = (
     "open",
@@ -65,6 +67,8 @@ SESSION_END_NAMES = (
     "boundary_failed",
     "sandbox_changed",
     "shutdown",
+    "replaced",
+    "not_found",
 )
 
 # plimsoll.v1.NotDispatchedReason, by number.
@@ -239,14 +243,18 @@ class Msg:
         except ValueError:
             raise self._bad(name, "base64") from None
 
-    def get_enum(self, name: str, values: Dict[str, int]) -> int:
+    def get_enum(self, name: str, values: Dict[str, int], unknown: Optional[int] = None) -> int:
         """The enum's number. A name this client does not know cannot be turned
-        into the number a digest covers, so it is malformed; a number is kept."""
+        into the number a digest covers, so it is malformed; a number is kept. For a
+        field no digest covers (a session's end), ``unknown`` is returned for such a
+        name instead: a newer daemon's value is then read as unknown, not refused."""
         v = self._get(name)
         if v is None:
             return 0
         if isinstance(v, str):
             if v not in values:
+                if unknown is not None:
+                    return unknown
                 raise self._bad(name, "a known enum value")
             return values[v]
         return _as_int(v, INT32, lambda: self._bad(name, "an enum value"))
@@ -544,7 +552,8 @@ def error_from_wire(status: int, body: bytes) -> PlimsollError:
                 refusal = REFUSAL_NAMES[n] if 0 <= n < len(REFUSAL_NAMES) else "unknown"
             elif type_name == "plimsoll.v1.SessionEnded" and end is None:
                 n, text = decode_enum_and_string(raw)
-                end = (SESSION_END_NAMES[n] if 0 <= n < len(SESSION_END_NAMES) else "open", text)
+                # A number this client has no name for is an end all the same.
+                end = (SESSION_END_NAMES[n] if 0 < n < len(SESSION_END_NAMES) else ("open" if n == 0 else "unknown"), text)
             elif type_name == "plimsoll.v1.UnansweredCall" and unanswered is None:
                 unanswered = decode_unanswered(raw)
         except (ValueError, UnicodeDecodeError):

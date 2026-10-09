@@ -104,7 +104,11 @@ func Build(getenv func(string) string) (Provider, error) {
 		res.applyDocker(d)
 		return Provider{Sandbox: d, Resources: res}, nil
 	case "e2b":
-		e := &E2B{APIKey: getenv("E2B_API_KEY"), Template: getenv("E2B_TEMPLATE"), GuardURL: getenv("E2B_GUARD_URL")}
+		e := &E2B{APIKey: getenv("E2B_API_KEY"), Template: getenv("E2B_TEMPLATE"), GuardURL: getenv("E2B_GUARD_URL"),
+			SessionGrants: getenv("E2B_SESSION_GRANTS")}
+		if err := validateE2BSessionGrants(e.SessionGrants, e.GuardURL); err != nil {
+			return Provider{}, err
+		}
 		// E2B sizes resources at template level. Verify the live allocation from the
 		// control plane and reject templates that exceed the requested cap; dimensions
 		// E2B cannot enforce fail configuration here rather than at first run.

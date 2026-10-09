@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/internal/unreadbody"
 )
 
 // The guard envelope contains one broker request. The broker applies its own
@@ -69,7 +71,11 @@ func EgressGuardHTTPHandler(guard EgressGuardCapable, guardPath string, maxInFli
 	}
 	slots := make(chan struct{}, maxInFlight)
 	runs := &guardRuns{perRun: perRun, byToken: map[string]*guardRun{}}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Every refusal below answers without reading the body. On HTTP/1.x Go's server
+	// would read a small unread body before writing that answer, so a caller with no
+	// credential could hold each refusal until the read timeout by sending its body
+	// slowly; unreadbody closes the connection instead.
+	return unreadbody.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != guardPath || r.URL.RawQuery != "" {
 			http.NotFound(w, r)
 			return
@@ -81,6 +87,13 @@ func EgressGuardHTTPHandler(guard EgressGuardCapable, guardPath string, maxInFli
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"unknown or expired egress guard credential"}` + "\n"))
+			return
+		}
+		if r.ContentLength > maxEgressGuardEnvelopeBytes {
+			// Refused at constant cost, like the credential: the MaxBytesReader below
+			// trips only once the bytes arrive, so a declared 100 MB held a slot until
+			// the body deadline.
+			http.Error(w, "egress guard request too large", http.StatusRequestEntityTooLarge)
 			return
 		}
 		run, ok := runs.admit(token)
@@ -135,7 +148,7 @@ func EgressGuardHTTPHandler(guard EgressGuardCapable, guardPath string, maxInFli
 		}
 		w.WriteHeader(status)
 		_, _ = w.Write(resp.Body)
-	})
+	}))
 }
 
 // guardRuns tracks each live credential's requests in the handler: how many there

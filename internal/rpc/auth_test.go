@@ -45,8 +45,11 @@ func TestAuthenticateHTTPRejectsBeforeReadingBody(t *testing.T) {
 	if called {
 		t.Fatal("unauthenticated request reached Connect handler")
 	}
-	if !body.closed.Load() {
-		t.Fatal("rejected request body was not closed")
+	// Closing is reading here: Go's HTTP/1.x server drains a small unread body on
+	// Close, so a refusal leaves the body alone and the server's unreadbody wrapper
+	// closes the connection instead.
+	if body.closed.Load() {
+		t.Fatal("refusal closed the request body, which drains it")
 	}
 }
 
@@ -245,4 +248,53 @@ func TestLimitHTTPConcurrencyLeavesRoomForOtherCallers(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("another caller: status %d (%s); want 200", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
+}
+
+// A decode slot covers decoding, not only the body's bytes: Connect reads the whole
+// body before it decompresses and unmarshals it, so a slot given back at the body's
+// end let more decoding run at once than the slots allow (round-7 review, 2026-10-08).
+// It is given back by ReleaseDecodeSlot, which Connect runs on a decoded request, or
+// when the handler returns.
+func TestDecodeSlotIsHeldUntilTheRequestIsDecoded(t *testing.T) {
+	read, decoded, finish := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	given := make(chan struct{}, 2)
+	release := ReleaseDecodeSlot()(func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) { return nil, nil })
+	h := LimitHTTPConcurrency(2, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body) // the body is read to its end: decoding comes next
+		read <- struct{}{}
+		<-decoded
+		_, _ = release(r.Context(), nil) // what the first interceptor does
+		given <- struct{}{}
+		<-finish
+		w.WriteHeader(http.StatusOK)
+	}))
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(httptest.NewRecorder(), withPrincipal(httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("{}")), "alice"))
+		close(done)
+	}()
+	<-read
+	// One slot per caller of two: while the first request decodes, a second of the same
+	// caller is refused, though its first's body has been read to the end.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("{}")), "alice"))
+	if rec.Code == http.StatusOK {
+		t.Fatal("a second request was admitted while the first still decoded; want the slot held until the request is decoded")
+	}
+	close(decoded)
+	<-given
+	// Decoded and given back: the caller's next request is admitted while the first
+	// still runs.
+	admitted := make(chan int, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, withPrincipal(httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("{}")), "alice"))
+		admitted <- rec.Code
+	}()
+	<-read
+	close(finish)
+	if code := <-admitted; code != http.StatusOK {
+		t.Fatalf("after the first was decoded: status %d; want the next admitted", code)
+	}
+	<-done
 }

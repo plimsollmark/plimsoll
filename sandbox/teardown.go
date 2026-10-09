@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync/atomic"
+	"time"
 )
 
 // A provider billed by the second deletes each run's microVM before it returns,
@@ -19,20 +20,65 @@ import (
 
 type teardownKey struct{}
 
+// teardownWatch is what a watched context carries: whether a delete gave up, and the
+// latest time a provider said what it could not delete may bill until (Unix nanoseconds,
+// 0 when none said).
+type teardownWatch struct {
+	failed atomic.Bool
+	until  atomic.Int64
+}
+
 // WatchTeardown returns ctx carrying a watch, and gaveUp, which reports whether a
 // provider said a delete under ctx gave up.
 func WatchTeardown(ctx context.Context) (watched context.Context, gaveUp func() bool) {
-	var failed atomic.Bool
-	return context.WithValue(ctx, teardownKey{}, &failed), failed.Load
+	w := &teardownWatch{}
+	return context.WithValue(ctx, teardownKey{}, w), w.failed.Load
+}
+
+// WatchTeardownUntil is WatchTeardown for a caller that needs, beside whether a delete
+// gave up, until when what was not deleted may bill (zero when the provider did not
+// say): a failed session open, whose sandbox has no run's reservation to cover it.
+func WatchTeardownUntil(ctx context.Context) (watched context.Context, gaveUp func() (bool, time.Time)) {
+	w := &teardownWatch{}
+	return context.WithValue(ctx, teardownKey{}, w), func() (bool, time.Time) {
+		if n := w.until.Load(); n != 0 {
+			return w.failed.Load(), time.Unix(0, n)
+		}
+		return w.failed.Load(), time.Time{}
+	}
 }
 
 // TeardownGaveUp is what a provider billed by the second calls, with the run's
 // context, when it could not delete the run's microVM. Without a watch it does
 // nothing.
 func TeardownGaveUp(ctx context.Context) {
-	if f, ok := ctx.Value(teardownKey{}).(*atomic.Bool); ok {
-		f.Store(true)
+	if w, ok := ctx.Value(teardownKey{}).(*teardownWatch); ok {
+		w.failed.Store(true)
 	}
+}
+
+// TeardownGaveUpUntil is TeardownGaveUp with the time the microVM may bill until: the
+// end of the provider's own lifetime for it. The latest one said is kept.
+func TeardownGaveUpUntil(ctx context.Context, until time.Time) {
+	w, ok := ctx.Value(teardownKey{}).(*teardownWatch)
+	if !ok {
+		return
+	}
+	w.failed.Store(true)
+	for n := until.UnixNano(); ; {
+		old := w.until.Load()
+		if n <= old || w.until.CompareAndSwap(old, n) {
+			return
+		}
+	}
+}
+
+// BillsUntiler is a Session on a provider billed by the second whose sandbox can
+// outlive its end: after Done, BillsUntil is when the provider's own lifetime for the
+// sandbox ends if its delete gave up, and zero when it was deleted. A caller that
+// charges sessions for their time charges until then.
+type BillsUntiler interface {
+	BillsUntil() time.Time
 }
 
 // requestNeverLeft reports whether err, from sending a create request, proves the

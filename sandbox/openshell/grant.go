@@ -98,8 +98,8 @@ type grantRun struct {
 // startGrant mints the run's credential, starts the relay in the sandbox, and serves
 // the broker on the connections the relay asks for. ctx bounds the start; the relay
 // and the connections live until Close.
-func (p *Provider) startGrant(ctx context.Context, b box, grant *sandbox.HostAPIGrant, budget time.Duration) (*grantRun, error) {
-	broker, err := sandbox.NewGrantBroker(ctx, grant, budget)
+func (p *Provider) startGrant(ctx context.Context, b box, grant *sandbox.HostAPIGrant, budget time.Duration, routes *sandbox.RouteBudget) (*grantRun, error) {
+	broker, err := sandbox.NewGrantBroker(ctx, grant, budget, routes)
 	if err != nil {
 		return nil, err
 	}

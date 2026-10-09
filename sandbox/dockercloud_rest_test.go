@@ -736,8 +736,18 @@ func TestDockerCloudRESTRefusesAnUnusableEndpoint(t *testing.T) {
 			tweak(f.restState())
 			ran := false
 			f.exec = func([]string) (int, string, string) { ran = true; return 0, "", "" }
-			if _, err := f.provider().RunJavaScript(context.Background(), Request{Code: "1"}); err == nil || ran {
+			ctx, gaveUp := WatchTeardown(context.Background())
+			if _, err := f.provider().RunJavaScript(ctx, Request{Code: "1"}); err == nil || ran {
 				t.Fatalf("err = %v, ran = %v; want a refusal before any code", err, ran)
+			}
+			if name == "name not kept" {
+				// The service shows the sandbox under another name, so its ID is not this
+				// create's to delete (round-3 review): nothing is deleted by it, and the run
+				// is charged as one whose delete gave up.
+				if len(f.deletedRefs()) != 0 || !gaveUp() {
+					t.Fatalf("deletes %v, charged as given up %v; want no delete and the charge", f.deletedRefs(), gaveUp())
+				}
+				return
 			}
 			if len(f.deletedRefs()) != 1 {
 				t.Fatal("refused sandbox not deleted")

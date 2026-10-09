@@ -18,7 +18,7 @@ daemon loads.
 
 ## Create the first caller
 
-From a clone, with Go 1.26.6 or newer:
+From a clone, with Go 1.26.9 or newer:
 
 ```sh
 TOKEN="$(go run ./cmd/plimsoll-clients create \
@@ -63,6 +63,7 @@ scope.
 SANDBOX_PROVIDER=wasm \
 PLIMSOLL_ADDR=127.0.0.1:8746 \
 PLIMSOLL_CLIENTS_FILE=clients.json \
+PLIMSOLL_LOG_FORMAT=text \
 go run ./cmd/plimsolld
 ```
 
@@ -112,7 +113,8 @@ evidence from configuration and from the provider, not <dfn>*attestation*</dfn>
 (cryptographic proof, usually rooted in the hardware, of what software is running).
 
 A wrong token and a missing token are both refused before the body is decoded, with
-HTTP 401 and a Connect error body:
+HTTP 401 and a Connect error body (shown without its `details` array, which carries the
+`plimsoll.v1.NotDispatched` mark: nothing ran):
 
 ```
 {"code":"unauthenticated","message":"invalid or expired token"}
@@ -161,7 +163,9 @@ delete gave up, or the create may have made one with nothing to delete it by: a 
 whose answer never came back or was neither a success nor a refusal, or on Docker Cloud
 one still running when the run gave up and not found by the cleanup delete; it then
 bills until the provider's own lifetime for it ends: the run's deadline plus 10 seconds on
-E2B, 30 on Docker Cloud, which the reservation covers).
+E2B, 30 on Docker Cloud). When the provider says that lifetime ends after the window the
+reservation covered, as it can when a create was slow, the run is charged the seconds
+past the window too, and owes them until that time, across a midnight if there is one.
 `0` removes the allowance; `create` and `import` take the same `-paid-seconds-per-day`.
 `SANDBOX_PAID_SECONDS_PER_DAY` is one allowance for the whole daemon on top. The counts
 live in the daemon's memory, so a restart forgets the day's spend, every caller's and the

@@ -2,11 +2,18 @@
 
 Each call runs the blocking client in a worker thread (``asyncio.to_thread``), so
 the checks, the errors and the results are exactly the synchronous client's.
-Cancelling an awaiting task stops the wait, not the request: the HTTP exchange
-runs on in its thread until it finishes or reaches the client's
-``request_timeout``, and a run it carried may execute. A session that
-``open_session`` opens after its await was cancelled is closed, not left
-holding a slot on the daemon until it expires.
+
+Cancelling an awaiting task cancels its request too, through a
+:class:`~plimsoll_client.CancelHandle`: a request not yet sent (a session call
+waiting for the one before it, say) is never sent, and a request in flight has its
+connection cut, so its thread returns at once. A cut request may still have run
+on the daemon; a session whose call was cut sends nothing more (see
+:class:`~plimsoll_client.Session`).
+
+Two calls are left to finish instead. ``open_session``: cutting it once the daemon
+had answered would leave a session nobody holds the ID of until it expired, so the
+open runs to its answer in its thread and a session it opens after the cancel is
+closed. And ``AsyncSession.close``, which is the release of the session.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ import threading
 from typing import Any, List, Optional, Sequence
 
 from . import _validate as v
+from ._transport import in_thread
 from .client import DEFAULT_REQUEST_TIMEOUT, Client, Session
 from .types import (
     CellResult,
@@ -53,7 +61,7 @@ class AsyncClient:
         return f"AsyncClient({self.sync.base_url!r})"
 
     async def describe(self) -> Info:
-        return await asyncio.to_thread(self.sync.describe)
+        return await in_thread(self.sync.describe)
 
     async def run_javascript(
         self,
@@ -65,7 +73,7 @@ class AsyncClient:
         grant_profile: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> JavaScriptResult:
-        return await asyncio.to_thread(
+        return await in_thread(
             self.sync.run_javascript,
             code,
             timeout=timeout,
@@ -87,7 +95,7 @@ class AsyncClient:
         grant_profile: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> ProjectResult:
-        return await asyncio.to_thread(
+        return await in_thread(
             self.sync.run_project,
             files,
             steps,
@@ -111,7 +119,7 @@ class AsyncClient:
         software: Optional[SoftwareRule] = None,
         trace_id: Optional[str] = None,
     ) -> ModuleResult:
-        return await asyncio.to_thread(
+        return await in_thread(
             self.sync.run_module,
             model,
             rows,
@@ -132,6 +140,7 @@ class AsyncClient:
         idle_timeout: Optional[float] = None,
         trace_id: Optional[str] = None,
         languages: Optional[Sequence[str]] = None,
+        owner: Optional[str] = None,
     ) -> "AsyncSession":
         # Cancelling the await does not stop the open in its thread, and a session
         # the daemon opens after the cancel would reach nobody and hold its slot
@@ -149,6 +158,7 @@ class AsyncClient:
                 idle_timeout=idle_timeout,
                 trace_id=trace_id,
                 languages=languages,
+                owner=owner,
             )
             with lock:
                 if not abandoned:
@@ -213,7 +223,7 @@ class AsyncSession:
         grant_profile: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> JavaScriptResult:
-        return await asyncio.to_thread(
+        return await in_thread(
             self.sync.run_javascript,
             code,
             timeout=timeout,
@@ -235,7 +245,7 @@ class AsyncSession:
         grant_profile: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> ProjectResult:
-        return await asyncio.to_thread(
+        return await in_thread(
             self.sync.run_project,
             files,
             steps,
@@ -258,7 +268,7 @@ class AsyncSession:
         software: Optional[SoftwareRule] = None,
         trace_id: Optional[str] = None,
     ) -> CellResult:
-        return await asyncio.to_thread(
+        return await in_thread(
             self.sync.run_cell,
             code,
             language,

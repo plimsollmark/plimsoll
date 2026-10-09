@@ -92,7 +92,7 @@ func (d *DockerCloud) openGuard(ctx context.Context, grant *HostAPIGrant, timeou
 	if endpoint == nil {
 		return nil, func() {}, refused(fmt.Errorf("%w: dockercloud host-API grants require SANDBOX_DOCKERCLOUD_GUARD_URL", ErrUnsupported))
 	}
-	token, core, cleanup, err := d.guards.open(ctx, grant, timeout)
+	token, core, cleanup, err := d.guards.open(ctx, grant, timeout, nil)
 	if err != nil {
 		return nil, func() {}, err
 	}

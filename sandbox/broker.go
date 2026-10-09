@@ -75,9 +75,12 @@ type brokerSession struct {
 	transport http.RoundTripper
 	requests  chan struct{}
 	callsMade atomic.Int64
-	trace     *callTrace
-	health    *HostRoute // optional concrete GET route the breaker probes for recovery
-	breaker   breaker
+	// routes counts the calls charged to each route the grant's RouteMaxCalls caps:
+	// the run's own, or the session's, shared by all its granted calls.
+	routes  *RouteBudget
+	trace   *callTrace
+	health  *HostRoute // optional concrete GET route the breaker probes for recovery
+	breaker breaker
 
 	// life ends with the run, or with a session's call: End cancels it, which cuts off
 	// an upstream request in flight and refuses a call that arrives later. A session's
@@ -230,6 +233,7 @@ func newBrokerSession(grant *HostAPIGrant, token string, transport http.RoundTri
 		origin:    origin,
 		transport: transport,
 		requests:  make(chan struct{}, maxHostConcurrent),
+		routes:    NewRouteBudget(),
 		trace:     newCallTrace(),
 		health:    grant.HealthCheck, // frozen concrete GET route, or nil
 		life:      life,
@@ -244,7 +248,9 @@ func newBrokerSession(grant *HostAPIGrant, token string, transport http.RoundTri
 // Every provider calls it before any of the run's code is dispatched, so its errors
 // are marked not dispatched here, at the source: reason permission (the run's
 // authority could not be issued), or capacity when the run's context ended first.
-func brokerSessionForGrant(ctx context.Context, grant *HostAPIGrant, timeout time.Duration) (*brokerSession, error) {
+// routes is the session's route budget for a call in a session, nil for a run, which
+// gets a fresh one.
+func brokerSessionForGrant(ctx context.Context, grant *HostAPIGrant, timeout time.Duration, routes *RouteBudget) (*brokerSession, error) {
 	if grant == nil {
 		return nil, nil
 	}
@@ -265,6 +271,9 @@ func brokerSessionForGrant(ctx context.Context, grant *HostAPIGrant, timeout tim
 	core, err := newBrokerSession(grant, token, nil)
 	if err != nil {
 		return nil, refuse(err)
+	}
+	if routes != nil {
+		core.routes = routes
 	}
 	return core, nil
 }
@@ -370,6 +379,10 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	if !ok {
 		b.trace.recordDenied()
 		return brokerError(http.StatusForbidden, "forbidden by sandbox capability allowlist")
+	}
+	if !b.chargeRouteCaps(method, call.RawTarget) {
+		b.trace.recordDenied()
+		return brokerError(http.StatusTooManyRequests, "host api call budget for this route is exhausted")
 	}
 
 	// Backpressure gate. An upstream 429/503 opens the per-run breaker; while open the
@@ -512,6 +525,15 @@ func (b *brokerSession) matchRawTarget(method, rawTarget string) (HostRoute, boo
 		return HostRoute{}, false
 	}
 	return b.grant.matchRoute(method, rawTarget)
+}
+
+// chargeRouteCaps admits a call against every capped allow entry its path matches,
+// not only the entry that matched it first. A cap on "POST /v2/ep1/run" would
+// otherwise hold or not depending on whether "POST /v2/*/run" is written before it.
+// The count is the run's, or for a call in a session the session's (RouteBudget).
+// target has already passed matchRawTarget.
+func (b *brokerSession) chargeRouteCaps(method, target string) bool {
+	return b.routes.charge(b.origin.Scheme+"://"+b.origin.Host, b.grant.cappedRoutesMatching(method, target), b.grant.RouteMaxCalls)
 }
 
 // probeHealth sends the grant's declared health_check route host-side (with the run's
