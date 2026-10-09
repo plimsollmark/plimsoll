@@ -93,28 +93,18 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Docker Hub allows 100 anonymous pulls per 6 hours per address, and hosted
-      # runners share addresses, so a run can be refused before any test runs (every
-      # docker job on 2026-10-09). Google's mirror.gcr.io serves Docker Hub's official
-      # images with no anonymous limit. The daemon, and the builder inside it, try the
-      # mirror first for Docker Hub names, so node:22-alpine keeps its name and digest;
-      # ghcr.io images are fetched as before. The same step is in gvisor.yml.
-      - name: Pull Docker Hub images through mirror.gcr.io
-        run: |
-          f=/etc/docker/daemon.json
-          sudo test -s "$f" || echo '{}' | sudo tee "$f" >/dev/null
-          sudo jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' "$f" > "$RUNNER_TEMP/daemon.json"
-          sudo install -m 0644 "$RUNNER_TEMP/daemon.json" "$f"
-          sudo systemctl restart docker
-          docker info --format '{{json .RegistryConfig.Mirrors}}' | grep -F mirror.gcr.io
-
       - name: Report the daemon and its runtimes
         run: docker info --format 'server {{.ServerVersion}} runtimes {{range $k, $v := .Runtimes}}{{$k}} {{end}}'
 
       # The suite launches the images by Preflight-verified content ID, so they must
       # exist on the daemon before the tests run; the test helpers fail (not skip)
       # when they do not, because DOCKER=1 is a request for proof.
+      # DOCKER_HUB_MIRROR: Docker Hub refuses anonymous pulls past 100 per 6 hours per
+      # address, and hosted runners share addresses; the Makefile says how the mirror
+      # is used. The same setting is in gvisor.yml.
       - name: Pull the snippet image and build the project image
+        env:
+          DOCKER_HUB_MIRROR: mirror.gcr.io
         run: make docker-images
 
       - name: make docker-suite

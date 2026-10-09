@@ -48,24 +48,15 @@ jobs:
       - name: Install the pinned gVisor release
         run: sudo ./docker/install-gvisor.sh
 
-      # After the installer, which merges runsc into the same daemon.json and restarts
-      # the daemon: Docker Hub's anonymous pull limit, and why mirror.gcr.io, are
-      # explained beside the same step in audit.yml.
-      - name: Pull Docker Hub images through mirror.gcr.io
-        run: |
-          f=/etc/docker/daemon.json
-          sudo test -s "$f" || echo '{}' | sudo tee "$f" >/dev/null
-          sudo jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' "$f" > "$RUNNER_TEMP/daemon.json"
-          sudo install -m 0644 "$RUNNER_TEMP/daemon.json" "$f"
-          sudo systemctl restart docker
-          docker info --format '{{json .RegistryConfig.Mirrors}}' | grep -F mirror.gcr.io
-
       - name: Report the daemon and its runtimes
         run: |
           docker info --format 'server {{.ServerVersion}} runtimes {{range $k, $v := .Runtimes}}{{$k}} {{end}}'
           runsc --version
 
+      # DOCKER_HUB_MIRROR: see the same step in audit.yml.
       - name: Pull the snippet image and build the project image
+        env:
+          DOCKER_HUB_MIRROR: mirror.gcr.io
         run: make docker-images
 
       # The suite reads SANDBOX_DOCKER_RUNTIME, so every docker test, the startup

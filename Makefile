@@ -100,12 +100,30 @@ vuln:
 
 ## docker-images: pull the snippet image and build the project images the docker suite runs against
 docker-images:
-	docker pull node:22-alpine
+	@set -e; for img in $(if $(DOCKER_HUB_MIRROR),$(DOCKER_HUB_IMAGES),node:22-alpine); do \
+	  if [ -n "$(DOCKER_HUB_MIRROR)" ] && docker pull "$(DOCKER_HUB_MIRROR)/library/$$img"; then \
+	    docker tag "$(DOCKER_HUB_MIRROR)/library/$$img" "$$img"; \
+	  else \
+	    docker pull "$$img"; \
+	  fi; \
+	done
 	@h="$$($(DOCKER_INPUTS_HASH))"; set -ex; \
 	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox:latest docker/; \
 	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-python:latest -f docker/python.Dockerfile docker/; \
 	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-sim:latest -f docker/sim.Dockerfile docker/; \
 	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-wasm-cc:latest -f docker/wasm-cc.Dockerfile docker/
+
+# The Docker Hub images docker-images needs: the Dockerfiles' FROM images named with no
+# registry, no namespace and no digest (Docker Hub's official images, the snippet
+# image node:22-alpine among them), read from the Dockerfiles so a changed base cannot
+# be left out. DOCKER_HUB_MIRROR, unset by default, names a registry serving Docker
+# Hub's official images under library/ (CI sets mirror.gcr.io): each image is pulled from
+# it and tagged with its Docker Hub name, so the builds find it locally, and only an
+# image the mirror lacks is pulled from Docker Hub. Hosted runners share Docker Hub's
+# anonymous limit of 100 pulls per 6 hours per address, and a mirror set in the runner's
+# daemon.json does not help: the daemon sends the runner's Docker Hub login to the
+# mirror, which refuses any credentials, and falls back to Docker Hub.
+DOCKER_HUB_IMAGES = $(shell sed -n 's/^FROM \([^ ]*\).*/\1/p' docker/Dockerfile docker/*.Dockerfile | grep -v -e / -e @ | LC_ALL=C sort -u)
 
 # The images the suite builds from docker/, and the label each carries: a hash of the
 # build context (every file under docker/ by path and content, minus the literal paths
