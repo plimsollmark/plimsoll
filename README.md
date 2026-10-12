@@ -229,6 +229,11 @@ provider can also apply the shipped <dfn>*seccomp*</dfn> profile, a list of the 
 <dfn>*system calls*</dfn> (requests to the kernel, such as opening a file) its containers
 may make ([docs/seccomp.md](docs/seccomp.md)).
 
+How this compares with the other self-hosted sandboxes for agent code (E2B's self-hosted
+version, microsandbox, NVIDIA OpenShell, Kubernetes agent-sandbox and eight more), each
+described from its own documentation, with plimsoll's weak points beside them:
+[the comparison (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/compare/index.html).
+
 ## More real runs
 
 | Page | What it shows |
