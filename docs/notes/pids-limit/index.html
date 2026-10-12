@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Docker accepts --pids-limit under every runtime. Not every runtime enforces it.</title>
+<meta name="description" content="The same --pids-limit 64 test under runc, gVisor and Kata Containers: runc enforced the 64, gVisor&#x27;s container died after 14 processes, Kata started all 200. How to prove a process limit where it is enforced.">
+<meta name="author" content="Carroll Guertin">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Docker accepts --pids-limit under every runtime. Not every runtime enforces it.">
+<meta property="og:description" content="The same --pids-limit 64 test under runc, gVisor and Kata Containers: runc enforced the 64, gVisor&#x27;s container died after 14 processes, Kata started all 200. How to prove a process limit where it is enforced.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/notes/pids-limit/index.html">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/notes/pids-limit/index.html">
+<style>
+:root { color-scheme: light; --ink:#1a1a1a; --mut:#5d5d5d; --rule:#dcd7cd;
+        --bg:#fbfaf7; --card:#ffffff; --accent:#0f4a85; }
+* { box-sizing: border-box; }
+body { margin:0; padding:2.2rem 1.3rem 4rem; background:var(--bg); color:var(--ink);
+       font:16px/1.65 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+main { max-width: 46rem; margin: 0 auto; }
+nav { font-size:.85rem; color:var(--mut); margin-bottom:1.6rem; }
+nav a { color:var(--mut); }
+h1 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.85rem;
+     line-height:1.25; margin:0 0 .4rem; letter-spacing:-.01em; }
+h2 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.3rem;
+     margin:2.2rem 0 .5rem; }
+.byline { color:var(--mut); font-size:.9rem; margin:0 0 1.8rem; }
+a { color:var(--accent); }
+code { background:#f0ede6; padding:.1rem .3rem; border-radius:3px;
+       font:.86em ui-monospace,SFMono-Regular,Menlo,monospace; }
+pre { background:#f5f2ec; border:1px solid var(--rule); border-radius:7px; padding:.75rem .9rem;
+      overflow-x:auto; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+pre code { background:none; padding:0; font:inherit; }
+.wrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; width:100%; font-size:.92rem; background:var(--card); }
+th, td { text-align:left; vertical-align:top; padding:.45rem .6rem; border-bottom:1px solid var(--rule); }
+th { font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--mut);
+     border-bottom:1.5px solid #c9c3b7; }
+th code { text-transform:none; letter-spacing:0; }
+ul.notes { padding-left:1.1rem; }
+ul.notes li { margin:.6rem 0; }
+ul.notes .d { color:var(--mut); font-size:.85rem; }
+footer { margin-top:2.6rem; padding-top:1rem; border-top:1px solid var(--rule);
+         font-size:.82rem; color:var(--mut); }
+@media (max-width: 760px) { body { padding:1.4rem .9rem 3rem; } h1 { font-size:1.5rem; } }
+</style></head>
+<body><main>
+<nav><a href="../../index.html">plimsoll</a> / <a href="../index.html">notes</a></nav>
+<article>
+<h1>Docker accepts --pids-limit under every runtime. Not every runtime enforces it.</h1>
+<p class="byline">Carroll Guertin, 2026-10-11</p>
+<p>I run code that AI agents write inside sandboxes, through a small service I built called plimsoll. One limit it puts on every sandbox is the number of processes, so a fork bomb in agent code stays a problem for that one sandbox. In Docker that is one flag: <code>--pids-limit</code>.</p>
+<p>Docker accepts the flag whichever runtime runs the container. What the runtime does with it is a separate question, and I hadn't asked it until I tried Kata as a runtime. So I ran the same test under the three runtimes on my machine: runc (Docker's default), gVisor and Kata Containers. Start a container with <code>--pids-limit 64</code>, read the limit from inside, then try to start 200 <code>sleep</code> processes.</p>
+<pre><code>RUNTIME=runc   # or runsc (gVisor), or kata
+docker run --rm --runtime=$RUNTIME --pids-limit 64 node:22-alpine node -e &#x27;
+const fs = require(&quot;fs&quot;), { spawn } = require(&quot;child_process&quot;);
+for (const f of [&quot;/sys/fs/cgroup/pids.max&quot;, &quot;/sys/fs/cgroup/pids/pids.max&quot;])
+  if (fs.existsSync(f)) console.log(f, &quot;=&quot;, fs.readFileSync(f, &quot;utf8&quot;).trim());
+let ok = 0, failed = 0, why = &quot;&quot;;
+for (let i = 0; i &lt; 200; i++) {
+  let c; try { c = spawn(&quot;sleep&quot;, [&quot;60&quot;]); } catch (e) { failed++; why = why || e.code; continue; }
+  c.on(&quot;spawn&quot;, () =&gt; ok++);
+  c.on(&quot;error&quot;, e =&gt; { failed++; why = why || e.code; });
+}
+setTimeout(() =&gt; { console.log(`started ${ok} of 200, failed ${failed} ${why}`); process.exit(0); }, 3000);&#x27;</code></pre>
+<p>(I first wrote this in plain <code>sh</code>. Under runc the shell died at the limit, because a failed fork is fatal to it, so it never printed a count. Use something that survives the failure.)</p>
+<p>Docker 29.1.3, gVisor release-20260907.0, Kata 4.2.0, one laptop:</p>
+<div class="wrap"><table><thead><tr><th>Runtime</th><th><code>pids.max</code> inside</th><th>Started</th><th>At the limit</th></tr></thead><tbody><tr><td>runc</td><td>64</td><td>57 of 200</td><td><code>EAGAIN</code>, and the program carries on</td></tr><tr><td>gVisor</td><td><code>max</code></td><td>14</td><td><code>ENOMEM</code>, then the whole container exits with status 2 and prints nothing</td></tr><tr><td>Kata</td><td><code>max</code></td><td>200 of 200</td><td>no limit at all</td></tr></tbody></table></div>
+<p>runc does what you'd expect. The count is under 64 because node's own threads are counted against the same limit. Under gVisor the probe prints nothing past the first line; the 14 comes from a version that logs each spawn as it happens.</p>
+<p><strong>Kata doesn't apply it.</strong> The limit never reaches the VM, so inside it there is none. This is known upstream: <a href="https://github.com/kata-containers/kata-containers/issues/4887" rel="noopener">kata-containers#4887 &#8599;</a> was closed as not planned ("there is no way to provide this value to the agent"), and <a href="https://github.com/kata-containers/kata-containers/issues/13824" rel="noopener">#13824 &#8599;</a>, open since September, reports the same on 4.1.0 with Cloud Hypervisor. To be fair to Kata, the code is inside a VM, so a fork bomb eats that VM's memory and CPUs, not the host's. But if your sandbox promises its users 64 processes, the promise is false. My Kata setup is the one Kata documents for Docker (its deprecated Go shim, "tested only with QEMU"), and I saw the same under Cloud Hypervisor.</p>
+<p><strong>gVisor does apply it, but not where you can see it, and not with the budget you think.</strong> From inside, gVisor shows its own emulated cgroup files in the old v1 layout, and <code>/sys/fs/cgroup/pids/pids.max</code> says <code>max</code>. <code>/proc/self/cgroup</code> names a cgroup for the container that doesn't exist in that tree. The real limit is on the host, on the cgroup of the whole sandbox, and that cgroup also holds gVisor's own tasks: about 30 when idle, plus about two host tasks for every process the guest starts. At a limit of 64 the guest got 14 processes. At 256 it got 112, where runc gives 192 or more.</p>
+<p>The failure isn't clean either. The spawn that crosses the line fails with <code>ENOMEM</code>, not <code>EAGAIN</code>, and a few spawns later the whole container exits with status 2 and no output: the program above never prints its last line. At 64 that happened in 6 runs out of 6. At 256, in an earlier measurement, it happened in 2 of 4.</p>
+<p>You may read that under gVisor the host cgroup doesn't bound guest processes at all, since they are tasks inside gVisor's kernel. On gVisor's default platform, systrap, that isn't what I measured: the host limit is what stopped the guest. I haven't tried the KVM platform.</p>
+<h2 id="what-i-do-about-it">What I do about it</h2>
+<p>Prove the limit where it is enforced, and refuse to run if you can't.</p>
+<p>plimsoll now does that at startup. Under runc it starts a throwaway container and requires <code>pids.max</code> inside to equal the configured limit. Under gVisor the inside is useless, so it starts one more container, takes the PID Docker reports for it, finds that process's cgroup on the host (refusing unless the cgroup path names that container) and reads <code>pids.max</code> there. If the number isn't the configured one, or can't be read, the daemon doesn't start. Kata fails this check, which was one of the reasons I didn't add it as a runtime.</p>
+<p>A test also holds each runtime to a minimum number of processes at the default limit, so if a gVisor release makes each process cost more host tasks, the build fails instead of users finding out.</p>
+<p>The embarrassing part: my first version of the check read <code>pids.max</code> inside the container under every runtime. Every gVisor daemon then refused to start, because gVisor's file says <code>max</code>. That's how I learned where gVisor actually keeps the limit.</p>
+<p>If you size a process limit for gVisor, leave room for gVisor: at 256, a guest gets well under half.</p>
+<p>The check is <code>checkPidsLimit</code> and <code>hostPidsMaxPath</code> in <a href="https://github.com/plimsollmark/plimsoll/blob/main/sandbox/docker_smoke.go" rel="noopener">sandbox/docker_smoke.go &#8599;</a>. plimsoll is Apache-2.0: <a href="https://github.com/plimsollmark/plimsoll" rel="noopener">https://github.com/plimsollmark/plimsoll &#8599;</a></p>
+</article>
+<footer><a href="../index.html">More notes</a> · <a href="../../index.html">plimsoll documentation</a></footer>
+</main></body></html>
