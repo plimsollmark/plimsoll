@@ -134,8 +134,10 @@ jobs:
   # The capsule example is its own Go module, outside the root build, so `audit`
   # never compiles it. This job does, with the capsule project's Python reference
   # verifier installed from the example's hash-pinned lockfile, so the public
-  # capsule page's checks run on every push. Its go.mod selects Go 1.27.2; setup-go
-  # lands the root's toolchain and GOTOOLCHAIN=auto fetches that one for the module.
+  # capsule page's checks run on every push. Its go.mod selects Go 1.27.2 with a
+  # `toolchain` line, and setup-go installs that version when pointed at that go.mod;
+  # setup-go also runs with GOTOOLCHAIN=local, so nothing downloads another toolchain
+  # mid-job (the first run, on the root go.mod, failed with go 1.26.9 for that reason).
   capsule:
     needs: audit
     runs-on: ubuntu-latest
@@ -147,7 +149,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: examples/capsule/go.mod
 
       - name: make capsule-suite
         run: make capsule-suite

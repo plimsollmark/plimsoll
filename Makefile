@@ -223,7 +223,9 @@ clients-suite:
 # builds or tests it. Its tests need the capsule project's Python reference
 # verifier, pinned by hash in examples/capsule/requirements.txt as the framework
 # environments are, installed into tmp/capsule-verifier and rebuilt when the
-# lockfile changes. GOTOOLCHAIN=auto fetches the module's own toolchain.
+# lockfile changes. The module needs Go 1.27: with Go's default GOTOOLCHAIN=auto the
+# go command fetches the module's own toolchain line (1.27.2); under
+# GOTOOLCHAIN=local, as in CI, the go on PATH must already be 1.27 or later.
 ## capsule-suite: vet and race-test examples/capsule (its own Go module) with the Python reference verifier installed from its hash-pinned lockfile; a missing verifier or a skipped test FAILS
 capsule-suite:
 	@mkdir -p tmp
