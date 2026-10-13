@@ -45,6 +45,7 @@ import (
 	"github.com/plimsollmark/plimsoll/attest"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/record"
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 //go:embed page.html
@@ -92,16 +93,17 @@ func run() error {
 	bundlePath := flag.String("bundle", filepath.Join("..", "..", "docs", "examples", "sessions", "bundle.jsonl"), "the signed session bundle to state as capsules")
 	pubPath := flag.String("pub", filepath.Join("..", "..", "docs", "examples", "sessions", "harness.pub"), "the harness public key that signed the bundle")
 	outDir := flag.String("out", filepath.Join("..", "..", "docs", "examples", "capsule"), "where the page, capsules and producer key go")
-	importedAt := flag.String("imported-at", publishedImportedAt, "the import time every capsule states (RFC 3339); the default is the published import's, which reproduces every published capsule ID")
+	importedAt := flag.String("imported-at", "", "the import time every capsule states (RFC 3339); on the published bundle it defaults to the published import's, which reproduces every published capsule ID, and any other bundle must give it")
+	operator := flag.String("operator", "", "the accountable operator every capsule names; defaults to the published one on the published bundle, required on any other")
+	developer := flag.String("developer", "", "the developer every capsule names; defaults to the published one on the published bundle, required on any other")
 	aac := flag.String("aac", "", "path to the capsule project's Python reference verifier, agent-action-capsule")
 	flag.Parse()
 
-	at, err := time.Parse(time.RFC3339, *importedAt)
-	if err != nil {
-		return fmt.Errorf("-imported-at: %w", err)
-	}
-
 	bundleBytes, err := os.ReadFile(*bundlePath)
+	if err != nil {
+		return err
+	}
+	src, err := sourceFor(bundleBytes, *operator, *developer, *importedAt)
 	if err != nil {
 		return err
 	}
@@ -120,7 +122,8 @@ func run() error {
 	var checks []check
 
 	// plimsoll's verifier first: nothing becomes a capsule that it did not accept.
-	rep, err := attest.VerifyBundle(entries, attest.NewVerifier(pub))
+	verifier := attest.NewVerifier(pub)
+	rep, err := attest.VerifyBundle(entries, verifier)
 	if err != nil {
 		return fmt.Errorf("plimsoll's verifier refused the bundle, so nothing was stated: %w", err)
 	}
@@ -130,11 +133,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	_, terr := attest.VerifyBundle(tail, attest.NewVerifier(pub))
+	_, terr := attest.VerifyBundle(tail, verifier)
 	checks = append(checks, ran("plimsoll attest (Go)", "the bundle with its last call removed (the next line's link names the removed line, and the close statement still counts the call)",
-		"refused", verdictText(terr == nil, errText(terr)), terr != nil))
-
-	src := publishedSource(bundleBytes, at.UTC())
+		"refused", verdictText(okText(terr == nil), errText(terr)), terr != nil))
 
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -146,7 +147,7 @@ func run() error {
 	}
 	producerPub := priv.Public().(ed25519.PublicKey)
 
-	caps, err := state(entries, src)
+	caps, err := state(entries, src, verifier)
 	if err != nil {
 		return err
 	}
@@ -194,30 +195,57 @@ func run() error {
 	for _, c := range checks {
 		fmt.Printf("check    | %-30s | %s -> %s\n", c.Verifier, c.What, c.Got)
 	}
-	fmt.Printf("page     | wrote %s with %d capsules; imported-at %s\n", filepath.Join(*outDir, "index.html"), len(caps), at.Format(time.RFC3339))
+	fmt.Printf("page     | wrote %s with %d capsules; imported-at %s\n", filepath.Join(*outDir, "index.html"), len(caps), src.importedAt.Format(time.RFC3339))
 	return nil
 }
 
 // state builds one unsigned capsule per call in a bundle plimsoll's verifier has
-// already accepted, chaining each session's calls in order. Nothing here uses a
-// key, so the capsule IDs are a function of the bundle and src alone.
-func state(entries []attest.Entry, src source) ([]capsule, error) {
+// already accepted, chaining each session's calls in order. v is that verifier:
+// each entry's signed record is read from its envelope, so a call that got no
+// answer, whose entry stores no response, is stated from what was signed, and an
+// answered call's stored exchange must be the one its signed record names.
+// Nothing here uses a key, so the capsule IDs are a function of the bundle and
+// src alone.
+func state(entries []attest.Entry, src source, v *attest.Verifier) ([]capsule, error) {
 	var caps []capsule
 	last := map[string]string{} // session fingerprint -> the previous call's capsule ID
 	for i, e := range entries {
 		if len(e.Request) == 0 {
 			continue // a session's close statement: it states a count, not a run
 		}
-		req, resp := &plimsollv1.RunRequest{}, &plimsollv1.RunResponse{}
+		req := &plimsollv1.RunRequest{}
 		if err := proto.Unmarshal(e.Request, req); err != nil {
 			return nil, fmt.Errorf("entry %d request: %w", i, err)
 		}
-		if err := proto.Unmarshal(e.Response, resp); err != nil {
-			return nil, fmt.Errorf("entry %d response: %w", i, err)
-		}
-		rec, err := record.CheckExchange(req, resp)
+		signed, err := v.Verify(e.Envelope)
 		if err != nil {
 			return nil, fmt.Errorf("entry %d: %w", i, err)
+		}
+		var rec *sandbox.RunRecord
+		var resp *plimsollv1.RunResponse
+		var result string
+		if signed.Unanswered != "" {
+			// The call may have run and got no answer: the stored request must be
+			// the one the signed record names, and there is no response to read.
+			if len(e.Response) != 0 {
+				return nil, fmt.Errorf("entry %d: an unanswered call's entry stores a response", i)
+			}
+			if err := record.CheckUnansweredExchange(req, signed); err != nil {
+				return nil, fmt.Errorf("entry %d: %w", i, err)
+			}
+			rec, result = &signed, "unanswered: "+signed.Unanswered
+		} else {
+			resp = &plimsollv1.RunResponse{}
+			if err := proto.Unmarshal(e.Response, resp); err != nil {
+				return nil, fmt.Errorf("entry %d response: %w", i, err)
+			}
+			if rec, err = record.CheckExchange(req, resp); err != nil {
+				return nil, fmt.Errorf("entry %d: %w", i, err)
+			}
+			if rec.SHA256 != signed.SHA256 {
+				return nil, fmt.Errorf("entry %d: the stored exchange's record %s is not the signed record %s", i, rec.SHA256, signed.SHA256)
+			}
+			result = summary(resp)
 		}
 		parent := ""
 		if rec.Session != "" {
@@ -236,7 +264,7 @@ func state(entries []attest.Entry, src source) ([]capsule, error) {
 		}
 		caps = append(caps, capsule{
 			Sequence: rec.Sequence, Session: rec.Session, ID: built.CapsuleID, Parent: parent, Record: rec.SHA256,
-			Verdict: string(in.Disposition.VerdictClass), Status: string(in.Effect.Status), Result: summary(resp),
+			Verdict: string(in.Disposition.VerdictClass), Status: string(in.Effect.Status), Result: result,
 			Payload: built.JSON,
 		})
 	}
@@ -330,16 +358,15 @@ func pyVerify(bin, dir string, caps []capsule) ([]check, error) {
 	var out []check
 	accepted := 0
 	for _, c := range caps {
-		if ok, _ := pyRun(bin, filepath.Join(store, c.ID+".json")); ok {
+		if v, _ := pyRun(bin, filepath.Join(store, c.ID+".json")); v == pyAccepted {
 			accepted++
 		}
 	}
-	out = append(out, ran("agent-action-capsule (Python)", fmt.Sprintf("each of the %d capsules on its own", len(caps)),
+	out = append(out, ran(pyWho, fmt.Sprintf("each of the %d capsules on its own", len(caps)),
 		fmt.Sprintf("%d accepted", len(caps)), fmt.Sprintf("%d accepted", accepted), accepted == len(caps)))
 
-	ok, detail := pyRun(bin, "--store", store)
-	out = append(out, ran("agent-action-capsule (Python)", "the capsules directory as one store (chain checks across capsules)",
-		"accepted", verdictText(ok, detail), ok))
+	v, detail := pyRun(bin, "--store", store)
+	out = append(out, pyPositive("the capsules directory as one store (chain checks across capsules)", "accepted", v, detail))
 
 	tmp, err := os.MkdirTemp("", "capsule-tamper-")
 	if err != nil {
@@ -352,9 +379,8 @@ func pyVerify(bin, dir string, caps []capsule) ([]check, error) {
 	if err := os.WriteFile(path, edited, 0o644); err != nil {
 		return nil, err
 	}
-	ok, detail = pyRun(bin, path)
-	out = append(out, ran("agent-action-capsule (Python)", fmt.Sprintf("call %d's capsule with its verdict changed from %s to denied", mid.Sequence, mid.Verdict),
-		"refused", verdictText(ok, detail), !ok))
+	v, detail = pyRun(bin, path)
+	out = append(out, pyNegative(fmt.Sprintf("call %d's capsule with its verdict changed from %s to denied", mid.Sequence, mid.Verdict), v, detail))
 
 	dropped := filepath.Join(tmp, "dropped")
 	if err := os.MkdirAll(dropped, 0o755); err != nil {
@@ -368,9 +394,8 @@ func pyVerify(bin, dir string, caps []capsule) ([]check, error) {
 			return nil, err
 		}
 	}
-	ok, detail = pyRun(bin, "--store", dropped)
-	out = append(out, ran("agent-action-capsule (Python)", fmt.Sprintf("the store with call %d's capsule removed", mid.Sequence),
-		"refused", verdictText(ok, detail), !ok))
+	v, detail = pyRun(bin, "--store", dropped)
+	out = append(out, pyNegative(fmt.Sprintf("the store with call %d's capsule removed", mid.Sequence), v, detail))
 
 	// The tail: no capsule names the last one as its parent, so a store check
 	// cannot see it go. Catching that is the witnessed log's job, not this
@@ -388,9 +413,9 @@ func pyVerify(bin, dir string, caps []capsule) ([]check, error) {
 			return nil, err
 		}
 	}
-	ok, detail = pyRun(bin, "--store", short)
-	out = append(out, ran("agent-action-capsule (Python)", fmt.Sprintf("the store with the last call's capsule (call %d) removed, and no witnessed log", lastCap.Sequence),
-		"accepted: a store check cannot see a missing tail; a witnessed log checkpoint is what catches it", verdictText(ok, detail), ok))
+	v, detail = pyRun(bin, "--store", short)
+	out = append(out, pyPositive(fmt.Sprintf("the store with the last call's capsule (call %d) removed, and no witnessed log", lastCap.Sequence),
+		"accepted: a store check cannot see a missing tail; a witnessed log checkpoint is what catches it", v, detail))
 
 	env, err := pyEnvelopes(filepath.Join(filepath.Dir(bin), "python"), dir, caps)
 	if err != nil {
@@ -403,9 +428,12 @@ func pyVerify(bin, dir string, caps []capsule) ([]check, error) {
 // verifier (verify_envelopes.py), which reaches COSE_Sign1 through scitt-cose's
 // from-scratch implementation: no COSE code is shared with the Go signer.
 func pyEnvelopes(python, dir string, caps []capsule) ([]check, error) {
-	b, err := exec.Command(python, "verify_envelopes.py", dir).Output()
+	cmd := exec.Command(python, "verify_envelopes.py", dir)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	b, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("verify_envelopes.py: %w (install agent-action-capsule[envelope])", err)
+		return nil, fmt.Errorf("verify_envelopes.py: %w (install agent-action-capsule[envelope], as requirements.txt pins it): %s", err, strings.TrimSpace(stderr.String()))
 	}
 	var r struct {
 		Envelopes int `json:"envelopes"`
@@ -429,9 +457,9 @@ func pyEnvelopes(python, dir string, caps []capsule) ([]check, error) {
 		ran(who, fmt.Sprintf("each of the %d signatures (COSE_Sign1 over the capsule ID), authenticated to the key in producer.pub", r.Envelopes),
 			fmt.Sprintf("%d accepted", len(caps)), fmt.Sprintf("%d accepted", r.Accepted), r.Envelopes == len(caps) && r.Accepted == len(caps)),
 		ran(who, fmt.Sprintf("call %d's signature with one bit flipped", mid.Sequence),
-			"refused", verdictText(r.Flipped.OK, strings.Join(r.Flipped.Codes, "; ")), !r.Flipped.OK),
+			"refused", verdictText(okText(r.Flipped.OK), strings.Join(r.Flipped.Codes, "; ")), !r.Flipped.OK),
 		ran(who, fmt.Sprintf("call %d's signature presented for call %d's capsule", mid.Sequence, next.Sequence),
-			"refused", verdictText(r.Moved.OK, strings.Join(r.Moved.Codes, "; ")), !r.Moved.OK),
+			"refused", verdictText(okText(r.Moved.OK), strings.Join(r.Moved.Codes, "; ")), !r.Moved.OK),
 	}, nil
 }
 
@@ -461,6 +489,12 @@ func summary(resp *plimsollv1.RunResponse) string {
 			s += ", timed out"
 		}
 		return s
+	case *plimsollv1.RunResponse_Cell:
+		s := fmt.Sprintf("cell, exit %d", r.Cell.GetExitCode())
+		if r.Cell.GetTimedOut() {
+			s += ", timed out"
+		}
+		return s
 	case *plimsollv1.RunResponse_Project:
 		var codes []string
 		for _, st := range r.Project.GetSteps() {
@@ -477,11 +511,67 @@ func outcomeWord(o plimsollv1.ProjectOutcome) string {
 	return strings.ToLower(strings.TrimPrefix(o.String(), "PROJECT_OUTCOME_"))
 }
 
-// pyRun runs the Python verifier and returns whether it accepted, with its
-// error findings (the "[error]" lines) as the reason, or "no errors".
-func pyRun(bin string, args ...string) (bool, string) {
+// pyWho names the Python verifier on the page.
+const pyWho = "agent-action-capsule (Python)"
+
+// pyVerdict is what one run of the Python verifier came to. The verifier exits 0
+// when it accepted, 1 when it refused, and 2 when it could not run (cli.py in
+// agent-action-capsule 0.6.0); a binary that does not start, or dies on a signal,
+// has no exit code and could not run either.
+type pyVerdict int
+
+const (
+	pyAccepted pyVerdict = iota
+	pyRefused
+	pyCannotRun
+)
+
+func (v pyVerdict) String() string {
+	switch v {
+	case pyAccepted:
+		return "accepted"
+	case pyRefused:
+		return "refused"
+	}
+	return "could not run"
+}
+
+// text is the verdict with its reasons, as the page shows them.
+func (v pyVerdict) text(detail string) string { return verdictText(v.String(), detail) }
+
+// pyPositive is a check the Python verifier must accept, and pyNegative one it
+// must refuse. Only pyRefused is a refusal: a verifier that could not run, or
+// died on the input, judged nothing, and counting that as a pass would let a
+// crash grade a tamper check.
+func pyPositive(what, want string, v pyVerdict, detail string) check {
+	return ran(pyWho, what, want, v.text(detail), v == pyAccepted)
+}
+
+func pyNegative(what string, v pyVerdict, detail string) check {
+	return ran(pyWho, what, "refused", v.text(detail), v == pyRefused)
+}
+
+// pyRun runs the Python verifier and returns its verdict, with its error findings
+// (the "[error]" lines) as the reason, "no errors" when it printed none, or what
+// it printed when it could not run.
+func pyRun(bin string, args ...string) (pyVerdict, string) {
 	cmd := exec.Command(bin, append([]string{"verify"}, args...)...)
 	b, err := cmd.CombinedOutput()
+	v := pyCannotRun
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		v = pyAccepted
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		v = pyRefused
+	}
+	if v == pyCannotRun {
+		tail := strings.TrimSpace(string(b))
+		if len(tail) > 200 {
+			tail = tail[len(tail)-200:]
+		}
+		return v, strings.TrimSpace(err.Error() + " " + tail)
+	}
 	var errs []string
 	for _, line := range strings.Split(string(b), "\n") {
 		if _, after, ok := strings.Cut(line, "[error] "); ok {
@@ -489,9 +579,9 @@ func pyRun(bin string, args ...string) (bool, string) {
 		}
 	}
 	if len(errs) == 0 {
-		return err == nil, "no errors"
+		return v, "no errors"
 	}
-	return err == nil, strings.Join(errs, "; ")
+	return v, strings.Join(errs, "; ")
 }
 
 // hexDigest is a SHA-256 in hex, as the verifiers print them.
@@ -499,15 +589,19 @@ var hexDigest = regexp.MustCompile(`[0-9a-f]{64}`)
 
 // verdictText is a verifier's answer and its reasons, whole: each 64-digit
 // digest is shortened to its first 16 digits so the reasons stay readable.
-func verdictText(ok bool, detail string) string {
-	v := "refused"
-	if ok {
-		v = "accepted"
-	}
+func verdictText(verdict, detail string) string {
 	if detail == "" {
-		return v
+		return verdict
 	}
-	return v + ": " + hexDigest.ReplaceAllStringFunc(detail, func(h string) string { return h[:16] + "..." })
+	return verdict + ": " + hexDigest.ReplaceAllStringFunc(detail, func(h string) string { return h[:16] + "..." })
+}
+
+// okText is a Go verifier's answer as a word.
+func okText(ok bool) string {
+	if ok {
+		return "accepted"
+	}
+	return "refused"
 }
 
 func plural(n int, noun string) string {

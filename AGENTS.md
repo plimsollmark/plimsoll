@@ -1012,7 +1012,10 @@ pinned separately by go.mod `tool` directives.
 
 **CI** ([.github/workflows/](.github/workflows/)) runs plain `make audit`, then
 `make clients-suite` (both `npm ci` installs and the Python, TypeScript client,
-add-on and Trigger.dev tests in required mode) and `make docker-suite` under runc.
+add-on and Trigger.dev tests in required mode), `make capsule-suite` (the capsule
+example's own Go module, vetted and race-tested with the capsule project's Python
+reference verifier installed from `examples/capsule/requirements.txt`, which names each
+package's exact version and content hash) and `make docker-suite` under runc.
 The docker suite also runs under runsc in a separate workflow, so a runsc failure
 cannot mask the runc result; what each green check proves is in
 [CONTRIBUTING.md](CONTRIBUTING.md). The client and provider jobs run their required

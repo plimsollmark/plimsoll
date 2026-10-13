@@ -58,7 +58,7 @@ field changes what a daemon may execute.
 
 | Field | Meaning |
 |---|---|
-| `version` | The encoding version: `2` for an answered call, `3` for a call that may have run but ended in an error (below). New signers sign versions `2` and `3`; verifiers still accept existing version `1` signed records. A verifier refuses an unknown version. |
+| `version` | The encoding version: `2` for an answered call, `3` for a call that may have run but ended in an error (below). Signers sign, and verifiers accept, versions `2` and `3` only: a version `1` record, which states no software identity, is refused like an unknown version (`attest.ErrStatement`). A version `1` signature still verifies as raw Ed25519 over its bytes, but no current verifier accepts the record, and no version `1` bundle is published any more. |
 | `request_sha256` | Digest of what the caller sent: protocol number, isolation <dfn>*floor*</dfn> (the weakest tier the caller accepts), timeout, software rule and payload. Version 1 omits the software rule. |
 | `result_sha256` | Digest of the result as sent: exit codes or outcome, output, truncation flags, steps, artifacts, module rows. |
 | `provider` | The provider that ran it (the response's `sandbox`). |
@@ -97,6 +97,15 @@ alone.
   contents are their raw bytes.
 - A repeated group is preceded by its count, so moving a boundary (a byte from one
   file's path into its content, two steps joined into one) always changes the digest.
+
+A domain string names one encoding for good. Any change to what it covers, a new payload
+kind included, takes a new domain string, so a digest under a given domain string always
+means one byte layout. Nothing in a result says which result domain hashed it: the
+record's version fixes that (every version so far uses `plimsoll.run-result.v1`), so a new
+result domain comes with a new record version. `plimsoll.run-result.v1` covers the four
+kinds listed under it and no other; the `cell` kind joined it on 2026-10-01, before this
+rule was written down. `TestResultDomainCoversItsKinds` in `record/` fails if a fifth kind
+appears beside them.
 
 ### Request: domains `plimsoll.run-request.v1` and `.v2`
 
@@ -183,6 +192,17 @@ print(digest("plimsoll.run-request.v1", [
 (`str()` suits integers and strings here; booleans must be written `true` or
 `false`, and floats packed with `struct.pack(">d", v)`.)
 
+Floats have vectors of their own in `record/testdata/float-bits.json`, written by
+`record/testdata/float_bits.py` from this page alone and checked against the Go
+implementation: a module result whose one output is +0, -0, 0.1, the NaN the daemon sends
+or a NaN with a payload, each with its digest, and three wrong computations a conforming
+implementation must not reproduce (the sign of -0 dropped, the payload of a NaN dropped, a
+float written as decimal text). The +0 and -0 pair is the one a JSON digest cannot tell
+apart: RFC 8785, the JSON canonicalization scheme, writes both as `0`. The daemon sends
+every NaN as `7ff8000000000000`, so the payload pair tests the encoding, not a result
+plimsoll returns. A JavaScript number need not keep a NaN's payload, so an implementation in
+JavaScript passes that vector only by taking each float as its 64-bit pattern.
+
 ## A session call that may have run but got no result
 
 A session call can end in an error that does not say nothing ran: an exec stream that
@@ -219,7 +239,7 @@ uses the standard library only (Ed25519, SHA-256, JSON).
 - **Sign.** The harness checks the record against its own copy of the request and the
   response (`record.Check`), then signs it. A record whose digest does not match its
   fields is never signed, and neither is one whose isolation is below the request's
-  `minimum_isolation`, or an answered call's record (version 1 or 2) that names an
+  `minimum_isolation`, or an answered call's record (version 2) that names an
   unanswered code, a field its version's digest does not cover. The signed form is a <dfn>*DSSE*</dfn> envelope (Dead Simple
   Signing Envelope, a small standard format that wraps a payload together with its
   signatures:

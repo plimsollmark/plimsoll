@@ -1,0 +1,4 @@
+# The capsule project's Python reference verifier, the version the published page was
+# checked with; the envelope extra brings scitt-cose for verify_envelopes.py.
+# Regenerate requirements.txt with: make capsule-lock
+agent-action-capsule[envelope]==0.6.0

@@ -130,3 +130,24 @@ jobs:
 
       - name: make clients-suite
         run: make clients-suite
+
+  # The capsule example is its own Go module, outside the root build, so `audit`
+  # never compiles it. This job does, with the capsule project's Python reference
+  # verifier installed from the example's hash-pinned lockfile, so the public
+  # capsule page's checks run on every push. Its go.mod selects Go 1.27.2; setup-go
+  # lands the root's toolchain and GOTOOLCHAIN=auto fetches that one for the module.
+  capsule:
+    needs: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: make capsule-suite
+        run: make capsule-suite

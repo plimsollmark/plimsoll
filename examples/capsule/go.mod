@@ -2,6 +2,9 @@ module github.com/plimsollmark/plimsoll/examples/capsule
 
 go 1.27.0
 
+// This module is outside the root module's patched compiler selection.
+toolchain go1.27.2
+
 replace github.com/plimsollmark/plimsoll => ../..
 
 require (
@@ -16,6 +19,6 @@ require (
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/veraison/go-cose v1.3.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 )

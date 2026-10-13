@@ -1,0 +1,217 @@
+{
+  "about": [
+    "Float-bit vectors for the result digest (docs/run-records.md). Each input is a completed",
+    "module result with one row holding one output, given as its 64-bit pattern in hex. A",
+    "PASS vector's digest is what a conforming implementation produces from its input. A",
+    "MUST-FAIL vector's pre-image and digest are a wrong computation from its input, which a",
+    "conforming implementation must not reproduce. Written by float_bits.py from the",
+    "specification alone; record/float_bits_test.go checks every vector against the Go",
+    "implementation. Changing a digest here changes the encoding: change docs/run-records.md",
+    "first."
+  ],
+  "vectors": [
+    {
+      "id": "plimsoll-float-pass-01",
+      "description": "PASS: one output of +0.",
+      "domain": "plimsoll.run-result.v1",
+      "spec_ref": "docs/run-records.md: The encoding; Result: domain plimsoll.run-result.v1, module",
+      "must_fail": false,
+      "input": {
+        "kind": "module",
+        "outcome": 1,
+        "outcome_detail": "",
+        "width": 1,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "runs": [
+          {
+            "status": 1,
+            "outputs_bits_hex": [
+              "0000000000000000"
+            ]
+          }
+        ]
+      },
+      "pre_image_bytes_hex": "0000000000000016706c696d736f6c6c2e72756e2d726573756c742e763100000000000000046b696e6400000000000000066d6f64756c6500000000000000076f7574636f6d65000000000000000131000000000000000e6f7574636f6d655f64657461696c00000000000000000000000000000005776964746800000000000000013100000000000000067374646f7574000000000000000000000000000000067374646572720000000000000000000000000000000472756e73000000000000000131000000000000000a72756e5f737461747573000000000000000131000000000000000b72756e5f6f75747075747300000000000000080000000000000000",
+      "digest": "a3d41d3613a22fab2f8ee9a787159fb26baaf1fc7b65bc8eeb4b11b58d0019c9"
+    },
+    {
+      "id": "plimsoll-float-pass-02",
+      "description": "PASS: one output of -0. Differs from pass-01 in the sign bit alone, and so does its digest; RFC 8785 serializes both zeros as 0, so a jcs digest cannot tell them apart.",
+      "domain": "plimsoll.run-result.v1",
+      "spec_ref": "docs/run-records.md: The encoding; Result: domain plimsoll.run-result.v1, module",
+      "must_fail": false,
+      "input": {
+        "kind": "module",
+        "outcome": 1,
+        "outcome_detail": "",
+        "width": 1,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "runs": [
+          {
+            "status": 1,
+            "outputs_bits_hex": [
+              "8000000000000000"
+            ]
+          }
+        ]
+      },
+      "pre_image_bytes_hex": "0000000000000016706c696d736f6c6c2e72756e2d726573756c742e763100000000000000046b696e6400000000000000066d6f64756c6500000000000000076f7574636f6d65000000000000000131000000000000000e6f7574636f6d655f64657461696c00000000000000000000000000000005776964746800000000000000013100000000000000067374646f7574000000000000000000000000000000067374646572720000000000000000000000000000000472756e73000000000000000131000000000000000a72756e5f737461747573000000000000000131000000000000000b72756e5f6f75747075747300000000000000088000000000000000",
+      "digest": "ffc0335373efede07fa8b8d3e3e002576b4505d95ed43f3b5b86e260815de585"
+    },
+    {
+      "id": "plimsoll-float-pass-03",
+      "description": "PASS: one output of 0.1, the double nearest it, as its eight octets.",
+      "domain": "plimsoll.run-result.v1",
+      "spec_ref": "docs/run-records.md: The encoding; Result: domain plimsoll.run-result.v1, module",
+      "must_fail": false,
+      "input": {
+        "kind": "module",
+        "outcome": 1,
+        "outcome_detail": "",
+        "width": 1,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "runs": [
+          {
+            "status": 1,
+            "outputs_bits_hex": [
+              "3fb999999999999a"
+            ]
+          }
+        ]
+      },
+      "pre_image_bytes_hex": "0000000000000016706c696d736f6c6c2e72756e2d726573756c742e763100000000000000046b696e6400000000000000066d6f64756c6500000000000000076f7574636f6d65000000000000000131000000000000000e6f7574636f6d655f64657461696c00000000000000000000000000000005776964746800000000000000013100000000000000067374646f7574000000000000000000000000000000067374646572720000000000000000000000000000000472756e73000000000000000131000000000000000a72756e5f737461747573000000000000000131000000000000000b72756e5f6f75747075747300000000000000083fb999999999999a",
+      "digest": "3c739ccea758f588d8ae911d3cd68875f0bd07f743ea98bcef79e0878b036655"
+    },
+    {
+      "id": "plimsoll-float-pass-04",
+      "description": "PASS: one output of the quiet NaN with no sign or payload, the one NaN the daemon sends.",
+      "domain": "plimsoll.run-result.v1",
+      "spec_ref": "docs/run-records.md: The encoding; Result: domain plimsoll.run-result.v1, module",
+      "must_fail": false,
+      "input": {
+        "kind": "module",
+        "outcome": 1,
+        "outcome_detail": "",
+        "width": 1,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "runs": [
+          {
+            "status": 1,
+            "outputs_bits_hex": [
+              "7ff8000000000000"
+            ]
+          }
+        ]
+      },
+      "pre_image_bytes_hex": "0000000000000016706c696d736f6c6c2e72756e2d726573756c742e763100000000000000046b696e6400000000000000066d6f64756c6500000000000000076f7574636f6d65000000000000000131000000000000000e6f7574636f6d655f64657461696c00000000000000000000000000000005776964746800000000000000013100000000000000067374646f7574000000000000000000000000000000067374646572720000000000000000000000000000000472756e73000000000000000131000000000000000a72756e5f737461747573000000000000000131000000000000000b72756e5f6f75747075747300000000000000087ff8000000000000",
+      "digest": "ec543ab6551842a9df50b3f3e41815275b4f4d23ccfab7555d93fa0def68fc04"
+    },
+    {
+      "id": "plimsoll-float-pass-05",
+      "description": "PASS: one output of a NaN with payload 1. Differs from pass-04 in its last bit alone, and so does its digest. The daemon never sends this NaN; the vector tests the encoding.",
+      "domain": "plimsoll.run-result.v1",
+      "spec_ref": "docs/run-records.md: The encoding; Result: domain plimsoll.run-result.v1, module",
+      "must_fail": false,
+      "input": {
+        "kind": "module",
+        "outcome": 1,
+        "outcome_detail": "",
+        "width": 1,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "runs": [
+          {
+            "status": 1,
+            "outputs_bits_hex": [
+              "7ff8000000000001"
+            ]
+          }
+        ]
+      },
+      "pre_image_bytes_hex": "0000000000000016706c696d736f6c6c2e72756e2d726573756c742e763100000000000000046b696e6400000000000000066d6f64756c6500000000000000076f7574636f6d65000000000000000131000000000000000e6f7574636f6d655f64657461696c00000000000000000000000000000005776964746800000000000000013100000000000000067374646f7574000000000000000000000000000000067374646572720000000000000000000000000000000472756e73000000000000000131000000000000000a72756e5f737461747573000000000000000131000000000000000b72756e5f6f75747075747300000000000000087ff8000000000001",
+      "digest": "93583d0fb05471ab8008c3b14a8a27c65f418bcd48d1c03cfe59ecb0d16a9655"
+    },
+    {
+      "id": "plimsoll-float-fail-01",
+      "description": "MUST-FAIL: the -0 output of pass-02 hashed with its sign dropped, as a JSON mapping followed by RFC 8785 would.",
+      "domain": "plimsoll.run-result.v1",
+      "spec_ref": "docs/run-records.md: The encoding; Result: domain plimsoll.run-result.v1, module",
+      "must_fail": true,
+      "failure_reason": "float_sign_dropped",
+      "input": {
+        "kind": "module",
+        "outcome": 1,
+        "outcome_detail": "",
+        "width": 1,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "runs": [
+          {
+            "status": 1,
+            "outputs_bits_hex": [
+              "8000000000000000"
+            ]
+          }
+        ]
+      },
+      "pre_image_bytes_hex": "0000000000000016706c696d736f6c6c2e72756e2d726573756c742e763100000000000000046b696e6400000000000000066d6f64756c6500000000000000076f7574636f6d65000000000000000131000000000000000e6f7574636f6d655f64657461696c00000000000000000000000000000005776964746800000000000000013100000000000000067374646f7574000000000000000000000000000000067374646572720000000000000000000000000000000472756e73000000000000000131000000000000000a72756e5f737461747573000000000000000131000000000000000b72756e5f6f75747075747300000000000000080000000000000000",
+      "digest": "a3d41d3613a22fab2f8ee9a787159fb26baaf1fc7b65bc8eeb4b11b58d0019c9"
+    },
+    {
+      "id": "plimsoll-float-fail-02",
+      "description": "MUST-FAIL: the payload NaN of pass-05 hashed as the NaN without a payload, as a JSON mapping that writes every NaN as \"NaN\" would.",
+      "domain": "plimsoll.run-result.v1",
+      "spec_ref": "docs/run-records.md: The encoding; Result: domain plimsoll.run-result.v1, module",
+      "must_fail": true,
+      "failure_reason": "nan_payload_collapsed",
+      "input": {
+        "kind": "module",
+        "outcome": 1,
+        "outcome_detail": "",
+        "width": 1,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "runs": [
+          {
+            "status": 1,
+            "outputs_bits_hex": [
+              "7ff8000000000001"
+            ]
+          }
+        ]
+      },
+      "pre_image_bytes_hex": "0000000000000016706c696d736f6c6c2e72756e2d726573756c742e763100000000000000046b696e6400000000000000066d6f64756c6500000000000000076f7574636f6d65000000000000000131000000000000000e6f7574636f6d655f64657461696c00000000000000000000000000000005776964746800000000000000013100000000000000067374646f7574000000000000000000000000000000067374646572720000000000000000000000000000000472756e73000000000000000131000000000000000a72756e5f737461747573000000000000000131000000000000000b72756e5f6f75747075747300000000000000087ff8000000000000",
+      "digest": "ec543ab6551842a9df50b3f3e41815275b4f4d23ccfab7555d93fa0def68fc04"
+    },
+    {
+      "id": "plimsoll-float-fail-03",
+      "description": "MUST-FAIL: the 0.1 output of pass-03 hashed as the decimal text 0.1 instead of its eight octets.",
+      "domain": "plimsoll.run-result.v1",
+      "spec_ref": "docs/run-records.md: The encoding; Result: domain plimsoll.run-result.v1, module",
+      "must_fail": true,
+      "failure_reason": "float_as_decimal_text",
+      "input": {
+        "kind": "module",
+        "outcome": 1,
+        "outcome_detail": "",
+        "width": 1,
+        "stdout_hex": "",
+        "stderr_hex": "",
+        "runs": [
+          {
+            "status": 1,
+            "outputs_bits_hex": [
+              "3fb999999999999a"
+            ]
+          }
+        ]
+      },
+      "pre_image_bytes_hex": "0000000000000016706c696d736f6c6c2e72756e2d726573756c742e763100000000000000046b696e6400000000000000066d6f64756c6500000000000000076f7574636f6d65000000000000000131000000000000000e6f7574636f6d655f64657461696c00000000000000000000000000000005776964746800000000000000013100000000000000067374646f7574000000000000000000000000000000067374646572720000000000000000000000000000000472756e73000000000000000131000000000000000a72756e5f737461747573000000000000000131000000000000000b72756e5f6f7574707574730000000000000003302e31",
+      "digest": "7e89865967b62f0896ec38ff96d857f2263328b9212310174fad52287b18435b"
+    }
+  ]
+}

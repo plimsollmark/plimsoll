@@ -218,6 +218,36 @@ clients-suite:
 	   grep -E '^ *--- SKIP' tmp/clients-suite.log >&2; exit 1; fi
 	@exit "$$(cat tmp/clients-suite.status)"
 
+# The capsule example is its own Go module (Go 1.27 and the capsule emitter's COSE
+# and CBOR dependencies), outside `go build ./...` at the root, so nothing else
+# builds or tests it. Its tests need the capsule project's Python reference
+# verifier, pinned by hash in examples/capsule/requirements.txt as the framework
+# environments are, installed into tmp/capsule-verifier and rebuilt when the
+# lockfile changes. GOTOOLCHAIN=auto fetches the module's own toolchain.
+## capsule-suite: vet and race-test examples/capsule (its own Go module) with the Python reference verifier installed from its hash-pinned lockfile; a missing verifier or a skipped test FAILS
+capsule-suite:
+	@mkdir -p tmp
+	@[ -w tmp ] || { echo "capsule-suite: tmp/ is not writable" >&2; exit 1; }
+	@req=examples/capsule/requirements.txt; venv=tmp/capsule-verifier; stamp=$$(sha256sum $$req | cut -d' ' -f1); \
+	 if [ "$$(cat $$venv/.requirements 2>/dev/null)" != "$$stamp" ]; then \
+	   echo "capsule-suite: building $$venv"; \
+	   rm -rf $$venv && python3 -m venv $$venv && \
+	   $(NO_PAID_KEYS) $$venv/bin/pip install --quiet --disable-pip-version-check --require-hashes --no-deps -r $$req && \
+	   echo $$stamp > $$venv/.requirements || exit 1; \
+	 fi
+	@{ (cd examples/capsule && $(NO_PAID_KEYS) go vet ./... && \
+	   AAC_VERIFIER="$(CURDIR)/tmp/capsule-verifier/bin/agent-action-capsule" $(NO_PAID_KEYS) go test -race -count=1 -v ./...); \
+	   echo $$? > tmp/capsule-suite.status; } 2>&1 | tee tmp/capsule-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/capsule-suite.log; then \
+	   echo "capsule-suite: required coverage was skipped:" >&2; \
+	   grep -E '^ *--- SKIP' tmp/capsule-suite.log >&2; exit 1; fi
+	@exit "$$(cat tmp/capsule-suite.status)"
+
+## capsule-lock: recompile examples/capsule/requirements.txt from its requirements.in, every package pinned with hashes (pip-tools in tmp/piptools; needs the network)
+capsule-lock:
+	@[ -x tmp/piptools/bin/pip-compile ] || { python3 -m venv tmp/piptools && tmp/piptools/bin/pip install --quiet --disable-pip-version-check pip-tools; }
+	tmp/piptools/bin/pip-compile -q --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url -o examples/capsule/requirements.txt examples/capsule/requirements.in
+
 ## e2b-suite: the live E2B tests (needs E2B_API_KEY)
 e2b-suite:
 	E2B_LIVE=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'E2B.*Live' -count=1 -v

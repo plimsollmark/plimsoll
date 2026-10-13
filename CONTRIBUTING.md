@@ -17,6 +17,12 @@ gate is the project's full check, `make audit`. In CI:
   TypeScript client, its add-ons and the <dfn>*Trigger.dev*</dfn> example (a chat
   agent on a hosted TypeScript job runner) ran, and none of the selected Go
   tests skipped; a missing runtime or dependency fails the job.
+- Its `capsule` job runs `make capsule-suite` after `audit`: the capsule example
+  (`examples/capsule`, its own Go module, outside the root build) is vetted and
+  race-tested with the capsule project's Python reference verifier installed from the
+  example's lockfile, which names each package's exact version and content hash, so
+  the public capsule page's checks run on every push. A missing verifier or a skipped
+  test fails the job.
 - It then runs `make docker-suite` with the images prepared, so the docker,
   <dfn>*seccomp*</dfn>, <dfn>*broker*</dfn> and smoke tests, which need a real docker
   daemon, run on every push to `main` and every pull request under

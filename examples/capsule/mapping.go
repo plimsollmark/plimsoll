@@ -26,9 +26,9 @@ type verdict struct {
 	reason bool
 }
 
-// verdicts is the whole mapping, as data. Every run plimsoll answered was
-// dispatched, so no row derives effect_mode not_applicable: blocked and denied
-// belong to refusals, and a refusal carries no run record today.
+// verdicts is the mapping of an answered call, as data. Every run plimsoll
+// answered was dispatched, so no row derives effect_mode not_applicable: blocked
+// and denied belong to refusals, and a refusal carries no run record today.
 //
 // A completed run is confirmed whatever its exit code. The daemon observed the
 // result and the response digest binds it, exit code included; the capsule
@@ -41,8 +41,20 @@ var verdicts = map[plimsollv1.ProjectOutcome]verdict{
 	plimsollv1.ProjectOutcome_PROJECT_OUTCOME_PROTOCOL_ERROR: {emit.VerdictErrored, emit.EffectDispatched, true},
 }
 
-// outcome reads one outcome from any payload kind. A snippet has no outcome
-// field: it timed out or it completed, and its exit code is part of its result.
+// unanswered is the verdict of a session call that may have run but got no
+// answer (a version 3 record): the daemon dispatched it and reports no result,
+// which is the capsule's errored class (ran and threw, state unknown) with a
+// dispatched effect. The reason object carries the error's status code.
+var unanswered = verdict{emit.VerdictErrored, emit.EffectDispatched, true}
+
+// outcome reads one outcome from a snippet, a cell or a project run. A snippet
+// and a cell have no outcome field: each timed out or completed, and its exit
+// code is part of its result. A module run is refused: its request (end_time,
+// step) and its outputs are doubles, and draft -05 forbids JSON floating-point
+// values in digest-bearing material (Section 2). The emitter refuses most of
+// them, but it reads a double written as an integer as an integer and digests
+// -0 as 0 (RFC 8785, Appendix B), so a capsule could still be made for some
+// module runs, against the rule and without binding the sign of a zero output.
 func outcome(resp *plimsollv1.RunResponse) (plimsollv1.ProjectOutcome, error) {
 	switch r := resp.GetResult().(type) {
 	case *plimsollv1.RunResponse_Javascript:
@@ -50,12 +62,26 @@ func outcome(resp *plimsollv1.RunResponse) (plimsollv1.ProjectOutcome, error) {
 			return plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT, nil
 		}
 		return plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED, nil
+	case *plimsollv1.RunResponse_Cell:
+		if r.Cell.GetTimedOut() {
+			return plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT, nil
+		}
+		return plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED, nil
 	case *plimsollv1.RunResponse_Project:
 		return r.Project.GetOutcome(), nil
 	case *plimsollv1.RunResponse_Module:
-		return r.Module.GetOutcome(), nil
+		return 0, fmt.Errorf("a module run cannot be stated under draft -05: its request and result carry floating-point values, which the spec forbids in digest-bearing material")
 	}
 	return 0, fmt.Errorf("response carries no result")
+}
+
+// grantProfile is the host-API grant a request names, or "" for an isolated run.
+// A cell carries no grant.
+func grantProfile(req *plimsollv1.RunRequest) string {
+	if p := req.GetJavascript().GetGrantProfile(); p != "" {
+		return p
+	}
+	return req.GetProject().GetGrantProfile()
 }
 
 // source names what one import read, so every capsule it makes can say where
@@ -76,8 +102,9 @@ const recordRefType = "plimsoll-run-record"
 const effectType = "code_execution"
 
 // capsuleInput states one verified run record as a capsule. rec must be the
-// record plimsoll's verifier accepted for req and resp; parent is the previous
-// call's capsule ID, or "" for a single run or a session's first call.
+// record plimsoll's verifier accepted for req and resp; for an unanswered call
+// (rec.Unanswered set) there is no response and resp is nil. parent is the
+// previous call's capsule ID, or "" for a single run or a session's first call.
 func capsuleInput(rec sandbox.RunRecord, req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse, parent string, src source) (emit.Input, error) {
 	// An import cannot precede what it imports, and one stamped at the same instant
 	// is the shape the spec's verifier refuses as laundering an import into a
@@ -85,24 +112,49 @@ func capsuleInput(rec sandbox.RunRecord, req *plimsollv1.RunRequest, resp *plims
 	if !src.importedAt.After(rec.Ended) {
 		return emit.Input{}, fmt.Errorf("import time %s does not follow the record's time %s", wireTime(src.importedAt), wireTime(rec.Ended))
 	}
-	o, err := outcome(resp)
-	if err != nil {
-		return emit.Input{}, err
+	// A granted call's code can reach a host API with PUT, POST or DELETE, and the
+	// response carries no call trace (it stays in the daemon), so nothing here can
+	// tell what the call did outside the sandbox. The irreversibility class is an
+	// ordered enumeration with no "unknown" value, so a granted call is refused
+	// rather than given a class by guesswork.
+	if p := grantProfile(req); p != "" {
+		return emit.Input{}, fmt.Errorf("a call granted %q cannot be stated: its code could reach a host API with PUT, POST or DELETE, and the response carries no call trace, so its irreversibility class is unknown", p)
 	}
-	v, ok := verdicts[o]
-	if !ok {
-		return emit.Input{}, fmt.Errorf("outcome %v has no capsule verdict", o)
+	v := unanswered
+	reason := map[string]any{"plimsoll_unanswered": rec.Unanswered}
+	if rec.Unanswered == "" {
+		o, err := outcome(resp)
+		if err != nil {
+			return emit.Input{}, err
+		}
+		var ok bool
+		if v, ok = verdicts[o]; !ok {
+			return emit.Input{}, fmt.Errorf("outcome %v has no capsule verdict", o)
+		}
+		reason = map[string]any{"plimsoll_outcome": outcomeWord(o)}
+	} else if resp != nil {
+		return emit.Input{}, fmt.Errorf("an unanswered call has no response to state")
 	}
 	reqDigest, err := jsonDigest(req)
 	if err != nil {
 		return emit.Input{}, fmt.Errorf("request digest: %w", err)
 	}
 	effect := &emit.Effect{
-		Type:                 effectType,
-		Status:               v.status,
+		Type:   effectType,
+		Status: v.status,
+		// Every call stated here ran with no grant (refused above), so whatever it
+		// did stayed inside the sandbox, where the next call can overwrite it: the
+		// lowest of the draft's four classes.
 		IrreversibilityClass: emit.IrreversibilityTwoWay,
-		EffectAttestation:    emit.AttestationGateExecuted,
-		RequestDigest:        reqDigest,
+		// This program read a signed record afterwards and observed nothing itself.
+		// The record is the daemon's statement, checked against the bytes by the
+		// harness, which is the draft's "the executing runtime asserted completion;
+		// the capsule records that claim, not an observation". Whether a collector
+		// restating a gate's signed record may carry gate_executed instead is Q1 to
+		// the draft's author, unanswered; the lower grade is what this program can
+		// vouch for, and the draft reads an unrecognized grade as no stronger.
+		EffectAttestation: emit.AttestationRuntimeClaimed,
+		RequestDigest:     reqDigest,
 	}
 	// confirmed requires a digest of the response actually observed; dispatched
 	// forbids one.
@@ -139,7 +191,7 @@ func capsuleInput(rec sandbox.RunRecord, req *plimsollv1.RunRequest, resp *plims
 		// The spec's reason object: machine-readable members only, never the
 		// outcome's human detail, so two producers stating the same outcome
 		// commit the same digest.
-		if in.Disposition.ReasonDigest, err = emit.DigestJSON(map[string]any{"plimsoll_outcome": outcomeWord(o)}); err != nil {
+		if in.Disposition.ReasonDigest, err = emit.DigestJSON(reason); err != nil {
 			return emit.Input{}, fmt.Errorf("reason digest: %w", err)
 		}
 	}
@@ -175,9 +227,12 @@ func runtime(rec sandbox.RunRecord) string {
 
 // jsonDigest is the capsule's JSON digest of a protobuf message: its protobuf
 // JSON mapping, canonicalized by the emitter. Bytes fields are base64 in that
-// mapping. A double that is NaN becomes the string "NaN", so two NaNs with
-// different payloads share a digest here; plimsoll's own record digest does not
-// have that loss (see README).
+// mapping, and 64-bit integers decimal strings. No double reaches it: only a
+// module run carries one, and outcome refuses a module run before this is called.
+// The mapping is the one the protobuf library produces for the schema this
+// program was compiled with (a field that schema does not know is dropped), so
+// these digests are reproducible with this program and its schema, not from a
+// specification; plimsoll's own record digests are the specified ones.
 func jsonDigest(m proto.Message) (string, error) {
 	b, err := protojson.Marshal(m)
 	if err != nil {
