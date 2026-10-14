@@ -1,0 +1,5 @@
+- **One order per command:** every create sends the same `command_id`, so a retry after a 5xx, 502 or timeout gets back the original mission instead of placing a second order. Command ids the vendor would reject (outside 8–64 `[A-Za-z0-9_-]`) are mapped to a stable hashed id.
+- **Refused vs. unresolved:** "refused" only when nothing could have reached the vendor (4xx, sandbox denial, or only 429s). After any ambiguous attempt, a later 4xx gives "unresolved", after a read-only check for the robot's running mission that carries this `command_id`.
+- **Timeouts:** every call has a timeout so a vendor that never answers can't hang the adapter. Abandoned calls are swallowed, and retries of them are safe because creates are deduplicated and reads and cancels are idempotent.
+- **`wait`:** counts every status read, including failed ones, and never makes more than `maxPolls`. It retries 5xx/429, and a brief 404 for a just-created mission. It reports `failed` as is and never cancels or re-dispatches on timeout.
+- **`cancel`:** calls `cancelMission` again (it's idempotent) until the vendor shows a finished state. Nothing ever calls `decommissionRobot` or `updateFirmware`.

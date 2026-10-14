@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,9 +14,13 @@ func outcomeText(s source) string {
 }
 
 // Exercise independent altered copies. Never write or alter the source evidence.
-func tamperChecks(raw, pem []byte, image *imageBOM) ([]string, error) {
+func tamperChecks(raw, pem []byte, image *imageBOM, have sharedFiles) ([]string, error) {
 	var lines []string
-	for _, kind := range []string{"envelope", "file hash", "claim digest"} {
+	kinds := []string{"envelope", "file hash", "claim digest"}
+	if bytes.Contains(raw, []byte(`"claim-verdict"`)) {
+		kinds = append(kinds, "verdict")
+	}
+	for _, kind := range kinds {
 		var doc object
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			return nil, err
@@ -57,12 +62,22 @@ func tamperChecks(raw, pem []byte, image *imageBOM) ([]string, error) {
 			prefix := "file-set digest "
 			at := strings.Index(p, prefix) + len(prefix)
 			c["predicate"] = p[:at] + changeHex(p[at:at+64]) + p[at+64:]
+		case "verdict":
+			// The one word a reader acts on, flipped in the claim; the signed statement
+			// behind it still says what it said.
+			c := doc["declarations"].(map[string]any)["claims"].([]any)[3].(map[string]any)
+			p := c["predicate"].(string)
+			flipped := strings.Replace(p, "Verdict: pass.", "Verdict: fail.", 1)
+			if flipped == p {
+				flipped = strings.Replace(p, "Verdict: fail.", "Verdict: pass.", 1)
+			}
+			c["predicate"] = flipped
 		}
 		changed, err := json.Marshal(doc)
 		if err != nil {
 			return nil, err
 		}
-		_, err = checkBOM(changed, pem, image)
+		_, err = checkBOM(changed, pem, image, have)
 		if err == nil {
 			return nil, fmt.Errorf("altered %s was accepted", kind)
 		}
@@ -126,13 +141,17 @@ func propertySource(name string) string {
 	case "minimum_isolation", "timeout_ms", "trace_id":
 		return "Stored request: " + key + "; the bundle link signs the exact stored bytes."
 	case "grant":
-		return "Stored request.project.grant_profile is empty; granted runs are refused."
+		return "Stored request.project.grant_profile, or none when it is empty."
+	case "bundle_line":
+		return "Index the harness's signed link gives the attached bundle line."
+	case "qualification_sha256":
+		return "SHA-256 of the complete qualification file the attached statement belongs to."
 	case "outcome":
 		return "Stored response.project.outcome."
 	case "exit_code", "duration_ms", "timed_out", "stdout_truncated", "stderr_truncated":
 		return "Stored response.project.steps[]." + key + "; the bundle link signs the stored bytes."
 	case "bundle_sha256":
-		return "SHA-256 of the original complete bundle file bytes."
+		return "SHA-256 of the complete bundle file the attached line belongs to."
 	case "author_kind", "author_kind_basis":
 		return "Unsigned supplied example context; the run record does not establish authorship."
 	default:
@@ -149,7 +168,7 @@ func fieldSource(p string) string {
 	case strings.HasSuffix(p, ".timeStart"):
 		return "Signed record.started_unix_ms, formatted in UTC with milliseconds."
 	case p == "metadata.component.name":
-		return "Unsigned -name display label."
+		return "Unsigned display label: -name, or the judged file's name for a run with a verdict."
 	case p == "components[0].name":
 		return "Unsigned -image-name display label."
 	case strings.HasPrefix(p, "declarations.assessors") && strings.HasSuffix(p, ".name"):
@@ -173,17 +192,21 @@ func fieldSource(p string) string {
 	case strings.HasPrefix(p, "metadata.component.externalReferences") && strings.HasSuffix(p, ".url"):
 		return "Unsigned -pages base URL for evidence/documentation, or fixed repository URL."
 	case strings.HasPrefix(p, "metadata.component.externalReferences") && strings.HasSuffix(p, ".content"):
-		return "SHA-256 of the complete original bundle file bytes."
+		return "SHA-256 of the referenced complete bundle, or qualification file, bytes."
 	case strings.HasPrefix(p, "formulation") && strings.HasSuffix(p, ".uid"):
 		return "Signed record.record_sha256 for the workflow; one-based result-step index for a task."
 	case strings.HasPrefix(p, "formulation") && (strings.HasSuffix(p, ".executed") || (strings.Contains(p, ".tasks[") && strings.HasSuffix(p, ".name"))):
 		return "Stored request.project.steps[] equals stored response.project.steps[].command."
 	case strings.Contains(p, ".taskTypes["):
 		return "Constant other: no task type was declared; the command supplies the name."
+	case p == "declarations.claims[3].predicate":
+		return "The verified qualification statement: its judged file, scenario, every rule's outcome and the verdict."
 	case strings.HasPrefix(p, "declarations.claims") && strings.HasSuffix(p, ".predicate"):
 		return "Verified signed record and its stored request; code claim also uses the file-set digest."
+	case p == "declarations.attestations[0].map[3].conformance.score" || p == "declarations.attestations[0].map[3].conformance.rationale":
+		return "From the verified qualification statement: 1 when every rule held, else 0 with the rules that broke."
 	case strings.HasPrefix(p, "declarations.evidence") && strings.HasSuffix(p, ".attachment.content"):
-		return "Base64 of the selected DSSE envelope, public PEM key, complete bundle or checked JSON exchange copy (attachment name identifies which)."
+		return "Base64 of the selected DSSE envelope, public PEM key, the run's bundle line, the checked JSON exchange copy, or the qualification statement (attachment name identifies which)."
 	case strings.HasPrefix(p, "declarations.evidence") && (strings.HasSuffix(p, ".description") || strings.HasSuffix(p, ".author.name")):
 		return "Fixed envelope/statement/predicate type names plus key id = SHA-256 of the public key bytes."
 	default:

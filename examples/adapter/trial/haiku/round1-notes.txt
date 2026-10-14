@@ -1,0 +1,5 @@
+- `dispatch` resends the same `command_id` on no-answer and 5xx, so the vendor returns the original mission. A 4xx or sandbox denial is "refused"; exhausted retries or a mismatched answer is "unresolved".
+- `wait` counts every status read, including retried 502/503 reads, toward `maxPolls`.
+- `cancel` retries 502/503 because cancelling a finished mission is a no-op on the vendor.
+- `fleet` is used as a free variable supplied by the sandbox, since the contract doesn't say how it is injected.
+- `commandId` format is not validated here; a malformed one gets a 400 from the vendor and is reported as "refused".

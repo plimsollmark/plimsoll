@@ -1,0 +1,4 @@
+- Same design as before, so the passing path is unchanged. Cancel is safe to repeat, and so is a create with the same `command_id`.
+- I added a per-call timeout to every vendor call, so a call with no answer is treated like a 502 instead of hanging.
+- I replaced the tangled error check in `dispatch` with `isTransient`. 5xx, timeouts and 502 are retried and end in `unresolved`; any other rejection, including a 409 conflict or a permission denial, throws `refused`.
+- `wait` still counts only successful reads, retries transient errors with a pause, and reports a failed mission without retrying.

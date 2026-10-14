@@ -330,6 +330,39 @@ func VerifyBundle(entries []Entry, v *Verifier) (Report, error) {
 	return rep, err
 }
 
+// VerifyEntry checks one call line of a bundle on its own, for a holder of the line
+// without the bundle around it: the record's signature; the stored request and
+// response against the signed record, as VerifyBundle checks every line; and the
+// line's link, which must be the harness's signature over this line's content at the
+// place its Index states. It returns the record and that link. What it cannot check is
+// the bundle itself: that the line is in the bundle its holder names, that the chain
+// around it is whole, and (for a session's call) where it stands in its session's
+// chain, are VerifyBundle's.
+func VerifyEntry(v *Verifier, e Entry) (sandbox.RunRecord, Link, error) {
+	if e.Link == nil {
+		return sandbox.RunRecord{}, Link{}, fmt.Errorf("%w: the line has no link", ErrLink)
+	}
+	l, err := v.VerifyLink(*e.Link)
+	if err != nil {
+		return sandbox.RunRecord{}, Link{}, err
+	}
+	if l.Checkpoint || l.Lines != 0 || l.Index == 0 || l.Entry != ContentDigest(e) {
+		return sandbox.RunRecord{}, Link{}, fmt.Errorf("%w: the line's link signs other content", ErrLink)
+	}
+	rec, err := v.Verify(e.Envelope)
+	if err != nil {
+		return sandbox.RunRecord{}, Link{}, err
+	}
+	if err := matchStored(e, rec); err != nil {
+		return sandbox.RunRecord{}, Link{}, err
+	}
+	// What one line shows of the chain rules, it is held to, as VerifyBundle holds it.
+	if rec.Session == "" && (rec.Version == record.UnansweredVersion || rec.Sequence != 0 || rec.PreviousSHA256 != "") {
+		return sandbox.RunRecord{}, Link{}, fmt.Errorf("%w: a single run's record that is unanswered or carries chain fields", ErrChain)
+	}
+	return rec, l, nil
+}
+
 // verifyEntries is VerifyBundle, also returning each call entry's signed record by
 // index (the zero record for a close statement), so a replay reads its baseline from
 // what was signed rather than from the stored response.

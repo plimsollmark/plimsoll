@@ -1,0 +1,90 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Fleet Vendor API",
+    "version": "2.4.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Report whether the fleet service is accepting requests: {ok, robots}.",
+        "x-plimsoll-health-check": true
+      }
+    },
+    "/robots": {
+      "get": {
+        "operationId": "listRobots",
+        "summary": "List the fleet's robots: {robots: [{id, status, battery, pose, mission}]}, status one of idle, moving or fault.",
+        "x-plimsoll-batch-of": ["getRobot"]
+      }
+    },
+    "/robots/{id}": {
+      "get": {
+        "operationId": "getRobot",
+        "summary": "Get one robot: {id, status (idle, moving or fault), battery, pose: {x, y}, mission (its running mission's id, if any)}.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ]
+      },
+      "delete": {
+        "operationId": "decommissionRobot",
+        "summary": "Remove a robot from the fleet permanently.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ]
+      }
+    },
+    "/robots/{id}/missions": {
+      "post": {
+        "operationId": "createMission",
+        "summary": "Send a robot to a target position: body {target: {x, y}, command_id}; answers {mission_id, robot, status, command_id}, 201 for a new mission. A robot runs one mission at a time and queues the rest. command_id (optional, 8 to 64 letters, digits, - or _) is the caller's name for the order: a create repeated with a command_id already accepted answers with that original mission instead of a new one, or 409 if the robot or target differ.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "required": ["target"],
+            "properties": {
+              "target": { "type": "object", "required": ["x", "y"], "properties": { "x": { "type": "number" }, "y": { "type": "number" } } },
+              "command_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,64}$" }
+            }
+          } } }
+        }
+      }
+    },
+    "/robots/{id}/firmware": {
+      "post": {
+        "operationId": "updateFirmware",
+        "summary": "Install a firmware image on a robot.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object" } } }
+        }
+      }
+    },
+    "/missions/{id}": {
+      "get": {
+        "operationId": "getMission",
+        "summary": "Get a mission: {id, robot, command_id, status (queued, running, done, failed or cancelled), target, progress, error}.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ]
+      }
+    },
+    "/missions/{id}/cancel": {
+      "post": {
+        "operationId": "cancelMission",
+        "summary": "Cancel a mission: a running one stops its robot where it is and the robot starts its next queued mission; a queued one never runs; a finished one is unchanged. Answers the mission, as getMission does.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ]
+      }
+    }
+  }
+}

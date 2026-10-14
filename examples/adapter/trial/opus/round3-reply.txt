@@ -1,0 +1,8 @@
+KEEP
+
+The undisclosed failure modes I can anticipate are already covered, and further changes would be guesses I can't test:
+
+- **Lost, failed or missing answers:** every create carries the same `command_id`, so retries return the original mission instead of placing a second order.
+- **No definite answer:** `dispatch` throws `unresolved` rather than claiming `refused` when an order might exist.
+- **Faults:** failed missions are reported as is and never retried.
+- **Vendor errors on reads and cancels:** 503s, 502s and timeouts are retried within limits.

@@ -43,9 +43,9 @@ func TestImageEvidenceIdentityAndReferences(t *testing.T) {
 	if image.SHA256 != "67f4c52093e4e364b86fb1d7db9cbda8572d25afc906e4cac6ec738a57dd0292" || image.Count != 694 || image.Generator != "syft" || image.GeneratorVersion != "1.54.1" {
 		t.Fatalf("pinned image evidence changed: %+v", image)
 	}
-	s, b, p := fixtures(t)
-	raw := emitted(t, s[0], b, p)
-	if _, err := checkBOM(raw, p, nil); err == nil || !strings.Contains(err.Error(), "missing") {
+	s, _, p := fixtures(t)
+	raw := emitted(t, s[0])
+	if _, err := checkBOM(raw, p, nil, have(s[0])); err == nil || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("missing image accepted: %v", err)
 	}
 	for _, field := range []string{"url", "hash", "link"} {
@@ -60,7 +60,7 @@ func TestImageEvidenceIdentityAndReferences(t *testing.T) {
 				refs[1].(object)["url"] = "urn:cdx:39c24821-518f-475e-b688-3e366a2310be/2#wrong"
 			}
 		})
-		if _, err := checkBOM(changed, p, image); err == nil {
+		if _, err := checkBOM(changed, p, image, have(s[0])); err == nil {
 			t.Fatalf("changed image %s accepted", field)
 		}
 	}
@@ -84,9 +84,9 @@ func TestImageEvidenceIdentityAndReferences(t *testing.T) {
 }
 
 func TestExchangeJSONMustEqualSignedProtobuf(t *testing.T) {
-	s, b, p := fixtures(t)
+	s, _, p := fixtures(t)
 	for _, field := range []string{"content", "duration_ms", "trace_id"} {
-		changed := mutate(t, emitted(t, s[0], b, p), func(d object) {
+		changed := mutate(t, emitted(t, s[0]), func(d object) {
 			data := d["declarations"].(object)["evidence"].([]any)[0].(object)["data"].([]any)
 			for _, item := range data {
 				if item.(object)["name"] != "exchange.json" {
@@ -105,7 +105,7 @@ func TestExchangeJSONMustEqualSignedProtobuf(t *testing.T) {
 				encodeAttachmentObject(t, a, x)
 			}
 		})
-		if _, err := checkBOM(changed, p, fixtureImage(t)); err == nil {
+		if _, err := checkBOM(changed, p, fixtureImage(t), have(s[0])); err == nil {
 			t.Fatalf("changed exchange %s accepted", field)
 		}
 	}

@@ -1,0 +1,1269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>An AI-written vendor adapter, judged by the vendor's ledger: two orders for one command caught, the rewrite passes, every verdict signed</title>
+<meta name="description" content="One OpenAPI document becomes the grant, the client and the description; an AI-written vendor adapter runs inside plimsoll's sandbox against a simulated fleet API over five scenarios, under a credential minted per run; the verdict is made from the vendor's own ledger, not the adapter's report; a lost answer makes the first adapter place two orders for one command; the rewrite passes; four adapters broken on purpose are each caught; every record and every verdict is signed and verified.">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="An AI-written vendor adapter, judged by the vendor's ledger, caught placing two orders for one command">
+<meta property="og:description" content="One OpenAPI document becomes the grant, the client and the description; an AI-written vendor adapter runs in the sandbox against a simulated fleet API; a lost answer makes it place two orders for one command; the vendor's ledger catches it; the rewrite passes; every record and verdict is signed.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html">
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --mut: #6b6b66; --blue: #2a78d6; --green: #1e6b2f; --red: #8a1c1c; --amber: #8a5a00; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; --r1: #2a78d6; --r2: #c2410c; --r3: #0f766e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
+  h1 { font-size: 27px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 34px 0 8px; }
+  h3 { font-size: 15px; margin: 18px 0 6px; }
+  p { margin: 6px 0; }
+  a { color: var(--blue); }
+  p, td, li, .panel, .card { overflow-wrap: anywhere; }
+  .sub { color: var(--ink2); margin-bottom: 18px; }
+  .kicker { color: var(--mut); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin: 30px 0 -4px; }
+  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 14px 0 6px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .k { color: var(--ink2); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  .tile .v { font-size: 22px; font-weight: 650; margin-top: 2px; }
+  .tile .n { color: var(--ink2); font-size: 12.5px; margin-top: 2px; }
+  pre { margin: 0; padding: 10px 12px; background: #fff; border: 1px solid var(--line); border-radius: 8px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
+  code, .mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .mono { word-break: break-all; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink2); font-weight: 600; font-size: 13px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-weight: 650; font-size: 13px; white-space: nowrap; }
+  .badge.ok { background: #e6f4ea; color: var(--green); }
+  .badge.no { background: #fdecea; color: var(--red); }
+  .badge.off { background: #f1f1ee; color: var(--ink2); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 10px; }
+  .note { color: var(--ink2); font-size: 13px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .wide { overflow-x: auto; }
+  ol.loop li { margin: 6px 0; }
+  .small { font-size: 13px; }
+  .diagram { width: 100%; height: auto; display: block; background: #f7fafc; border-radius: 12px; margin: 10px 0; }
+  .diagram text { font-family: system-ui, sans-serif; font-size: 13px; fill: var(--ink); }
+  .diagram text.sub { font-size: 11.5px; fill: var(--ink2); }
+  .diagram text.tag { font-size: 11px; font-weight: 650; }
+  .art { width: 100%; height: auto; display: block; margin: 10px auto; max-width: 1040px; }
+  .narrator { background: #fffdf6; border: 1px solid #e8dfc8; border-radius: 12px; padding: .8rem .9rem; font-size: .92rem; }
+  .narrator .who { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: var(--mut); margin-bottom: .3rem; }
+  .narrator .who small { text-transform: none; letter-spacing: 0; }
+  .narrator p { margin: 0; }
+  .realquote { background: #f6f9fc; border: 1px solid #d9e4ee; border-radius: 12px; padding: .8rem .9rem; font-size: .92rem; }
+  .realquote .who { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: var(--mut); margin-bottom: .3rem; }
+  .realquote p { margin: 0 0 .25rem; }
+  .realquote .src { color: var(--ink2); font-size: .8rem; }
+  .asides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .card.no-card { border-color: #e7b3b3; background: #fffafa; }
+  .card .head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .card .head b { font-size: 15.5px; }
+  .card .step { color: var(--mut); font-size: 12px; margin: 2px 0 8px; }
+  .card dl { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; margin: 8px 0 0; font-size: 13.5px; }
+  .card dt { color: var(--ink2); }
+  .card dd { margin: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-block; background: #eef2f6; border: 1px solid #d9e1ea; border-radius: 999px; padding: 2px 9px; font-size: 12.5px; font-weight: 600; }
+  .chip.bad, .chip.no { background: #fdecea; border-color: #f1bdbd; color: var(--red); }
+  .chip.ok { background: #e6f4ea; border-color: #b9dcc3; color: var(--green); }
+  .chip.warn { background: #fff4df; border-color: #ecd49a; color: var(--amber); }
+  .matrix td, .matrix th { text-align: center; padding: 6px 8px; }
+  .matrix td:first-child, .matrix th:first-child { text-align: left; min-width: 250px; }
+  .matrix th { font-size: 12px; }
+  .matrix td.held { color: var(--green); font-weight: 700; }
+  .matrix td.broke { color: var(--red); background: #fdecea; font-weight: 700; cursor: help; }
+  .matrix tr.group td { background: #f4f6f8; color: var(--ink2); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; text-align: left; }
+  dl.rules { display: grid; grid-template-columns: 200px 1fr; gap: 4px 12px; font-size: 13.5px; margin: 10px 0; }
+  dl.rules dt { font-weight: 650; }
+  dl.rules dd { margin: 0; color: var(--ink2); }
+  .counts { columns: 2; column-gap: 14px; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 0; padding: 0; list-style: none; }
+  .floor { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; align-items: start; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
+  .btn { font: inherit; font-size: 13.5px; padding: 6px 12px; border-radius: 999px; border: 1px solid #cdd6e0; background: #fff; color: var(--ink); cursor: pointer; }
+  .btn[aria-pressed="true"] { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .btn.play { background: #1e6b2f; color: #fff; border-color: #1e6b2f; }
+  .status { min-height: 3.2em; font-size: 14px; }
+  .robot { transition: transform .38s ease; }
+  .fade { animation: pop .5s ease; }
+  @keyframes pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) { .robot { transition: none; } .fade { animation: none; } }
+  @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, 1fr); } .two, .three, .asides, .cards, .floor { grid-template-columns: 1fr; } .card dl, dl.rules { grid-template-columns: 1fr; } .counts { columns: 1; } }
+</style>
+</head>
+<body>
+<main>
+<h1>An AI-written vendor adapter, judged by the vendor's own ledger: two orders for one command caught, the rewrite passes, every verdict signed</h1>
+<p class="sub">Run on 2026-10-14 through plimsolld on the <b>docker</b> provider at the <b>container</b> tier (runc); project image docker-image:sha256:92c07f345ffdb80b7c91008ebeda9f2ff394e7b89d9d0ffb8a896cfe946fb127; software identity oci-manifest:linux/amd64@sha256:1c6cbab4a47d34da471ab4ab970709cbba18e2a3445fde884b5d90ec2c4c5b25; policy none. <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/adapter">Source</a> · <a href="https://plimsollmark.github.io/plimsoll/">plimsoll</a></p>
+
+<div class="tiles">
+  <div class="tile"><div class="k">Runs</div><div class="v">26 of 38</div><div class="n">passed; the first adapter failed 3 scenarios, the independent agents' adapters passed 16 of 18, and all 7 adapters broken on purpose were caught</div></div>
+  <div class="tile"><div class="k">Calls, nominal</div><div class="v">26 → 20</div><div class="n">brokered calls, first adapter, then second after the finding</div></div>
+  <div class="tile"><div class="k">Boundary</div><div class="v">3 refusals</div><div class="n">client, broker, no network; no credential found</div></div>
+  <div class="tile"><div class="k">Credentials</div><div class="v">37 for 38 runs</div><div class="n">a JWT minted per run, living 95 s; the probe's never reached the vendor</div></div>
+  <div class="tile"><div class="k">Signed</div><div class="v">38 + 38</div><div class="n">run records and verdicts; each verdict rebuilt from its evidence</div></div>
+</div>
+
+<p class="kicker">In plain words</p>
+<h2>What's an adapter, and why bother checking one?</h2>
+<p>Every robot vendor speaks its own API: its own routes, its own JSON, its own way of saying "busy, try later". A platform that runs robots from many vendors doesn't want to learn every dialect, so it writes down one small contract of four functions: list the robots, send one somewhere, wait until it gets there, cancel. An <b>adapter</b> is the few dozen lines that translate those four functions into one vendor's API. Think of a travel plug adapter: the platform is the plug, the vendor is the wall socket, and the adapter had better not swap live and neutral.</p>
+<p>These days an AI writes the adapter, and it usually works on the first try. The question is what it does on a bad day: the vendor takes the order and loses the answer, the connection drops, the server says 500 after the order already went through. Get that wrong and a robot gets the same job twice, or the platform is told a job failed while the robot is halfway there. This page puts adapters through exactly those moments, inside plimsoll's sandbox, and judges them by what the vendor's own books say happened, not by what the adapter says about itself.</p>
+<svg class="art" viewBox="0 0 1100 260" role="img" aria-labelledby="ad-t ad-d">
+<title id="ad-t">Where an adapter sits</title>
+<desc id="ad-d">The platform's four functions on the left call the adapter, which sits inside plimsoll's sandbox and reaches the vendor's API only through the broker. The vendor drives three robots and keeps a ledger of what it actually did; the grader reads that ledger to reach the verdict.</desc>
+<defs><marker id="ar3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker></defs>
+<rect x="20" y="40" width="220" height="150" rx="12" fill="#eaf3fb" stroke="#bed4e5"/>
+<text x="36" y="66" font-size="14" font-weight="650" font-family="system-ui">The platform</text>
+<text x="36" y="94" font-size="12" font-family="ui-monospace, monospace">inventory()</text>
+<text x="36" y="118" font-size="12" font-family="ui-monospace, monospace">dispatch(robot, target, id)</text>
+<text x="36" y="142" font-size="12" font-family="ui-monospace, monospace">wait(mission)</text>
+<text x="36" y="166" font-size="12" font-family="ui-monospace, monospace">cancel(mission)</text>
+<path d="M240 115H318" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="296" y="26" width="270" height="174" rx="14" fill="none" stroke="#b9c3cf" stroke-width="2" stroke-dasharray="6 5"/>
+<text x="310" y="46" font-size="11.5" fill="#5a5a5a" font-family="system-ui">plimsoll's sandbox: no network, no credential</text>
+<rect x="326" y="70" width="200" height="92" rx="10" fill="#fff5df" stroke="#dfc790"/>
+<text x="342" y="98" font-size="14" font-weight="650" font-family="system-ui">The adapter</text>
+<text x="342" y="120" font-size="12" fill="#5a5a5a" font-family="system-ui">written by an AI</text>
+<text x="342" y="140" font-size="12" fill="#8a5a00" font-weight="650" font-family="system-ui">the thing under test</text>
+<rect x="556" y="100" width="20" height="30" rx="4" fill="#fff" stroke="#5687a7" stroke-width="2"/>
+<text x="540" y="148" font-size="10.5" font-weight="650" font-family="system-ui">broker</text>
+<path d="M526 115H552M576 115H598" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="604" y="40" width="252" height="150" rx="12" fill="#eaf3fb" stroke="#bed4e5"/>
+<text x="620" y="66" font-size="14" font-weight="650" font-family="system-ui">The vendor's API</text>
+<text x="620" y="94" font-size="11.5" font-family="ui-monospace, monospace">GET /robots</text>
+<text x="620" y="118" font-size="11.5" font-family="ui-monospace, monospace">POST /robots/{id}/missions</text>
+<text x="620" y="142" font-size="11.5" font-family="ui-monospace, monospace">GET /missions/{id}</text>
+<text x="620" y="166" font-size="11.5" font-family="ui-monospace, monospace">POST /missions/{id}/cancel</text>
+<path d="M856 115H902" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<g transform="translate(934 112)"><rect x="-14" y="-11" width="28" height="22" rx="6" fill="#fff" stroke="#2a78d6" stroke-width="2.5"/><circle cx="-5" cy="-2" r="2.6" fill="#2a78d6"/><circle cx="5" cy="-2" r="2.6" fill="#2a78d6"/><path d="M-5 5 Q0 9 5 5" fill="none" stroke="#2a78d6" stroke-width="1.8"/></g>
+<g transform="translate(990 112)"><rect x="-14" y="-11" width="28" height="22" rx="6" fill="#fff" stroke="#c2410c" stroke-width="2.5"/><circle cx="-5" cy="-2" r="2.6" fill="#c2410c"/><circle cx="5" cy="-2" r="2.6" fill="#c2410c"/><path d="M-5 5 Q0 9 5 5" fill="none" stroke="#c2410c" stroke-width="1.8"/></g>
+<g transform="translate(1046 112)"><rect x="-14" y="-11" width="28" height="22" rx="6" fill="#fff" stroke="#0f766e" stroke-width="2.5"/><circle cx="-5" cy="-2" r="2.6" fill="#0f766e"/><circle cx="5" cy="-2" r="2.6" fill="#0f766e"/><path d="M-5 5 Q0 9 5 5" fill="none" stroke="#0f766e" stroke-width="1.8"/></g>
+<text x="940" y="152" font-size="11.5" fill="#5a5a5a" font-family="system-ui">three robots, simulated</text>
+<path d="M730 190V206" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="640" y="212" width="180" height="34" rx="8" fill="#fff" stroke="#bed4e5"/>
+<text x="654" y="234" font-size="12" font-family="system-ui">the vendor's ledger</text>
+<path d="M640 229H558" stroke="#1e6b2f" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="296" y="212" width="258" height="34" rx="8" fill="#e9f5ed" stroke="#a9ccb6"/>
+<text x="310" y="234" font-size="12" font-family="system-ui">the grader: the verdict comes from here</text>
+</svg>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>Nobody gets paged about the happy path. You get paged about the vendor that took the order, then forgot to mention it. An adapter is mostly a polite letter to a server you have never met, and Lamport described what can go wrong with that in one sentence in 1987. It still reads like an incident report.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Leslie Lamport:</b> “A distributed system is one in which the failure of a computer you didn't even know existed can render your own computer unusable.”</p><p class="src">Email to the SRC src-t list, 28 May 1987, published on Lamport's site. <a href="https://lamport.azurewebsites.net/pubs/distributed-system.txt">the 1987 email (EXTERNAL · author's page ↗)</a></p></div>
+</div>
+
+<p class="kicker">The whole loop on one picture</p>
+<h2>One document in, one signed verdict out</h2>
+<p>A platform that lets an AI write the code which integrates a vendor's device has to answer five questions before that code touches anything real: what may it call, with whose credential, did it do the job, what did it cost the vendor, and what is the evidence. This page is one pass through that loop with plimsoll, using a fictional fleet vendor and a simulated instance of its API. Nothing here is a robot; everything here is the code path a robot platform would use.</p>
+<svg class="diagram" viewBox="0 0 1100 300" role="img" aria-labelledby="loop-t loop-d">
+<title id="loop-t">The loop: an OpenAPI document becomes a grant, a client and a description; an agent writes the adapter; the sandbox runs it through the broker against the simulated vendor; every run's record and verdict is signed</title>
+<desc id="loop-d">Boxes left to right: the vendor's OpenAPI document; specgen producing the allow list, the client and the description; the agent writing adapter.js; the sandbox running the harness and the adapter, with the broker as its only door; the simulated vendor with its ledger. Below: the run record and the vendor's ledger both go to the signer, which signs the record and the verdict made from the ledger.</desc>
+<defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker></defs>
+<rect x="18" y="52" width="190" height="86" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="34" y="80">The vendor's document</text><text class="sub" x="34" y="100">OpenAPI, 8 operations</text><text class="sub" x="34" y="120">the one source</text>
+<path d="M208 95H240" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<circle cx="262" cy="95" r="16" fill="#fff5df" stroke="#dfc790"/><path d="M255 95h14M262 88v14" stroke="#b08a2e" stroke-width="2"/><text class="tag" x="240" y="128">specgen</text>
+<path d="M280 95H306" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="312" y="40" width="200" height="30" rx="8" fill="#e9f5ed" stroke="#a9ccb6"/><text x="324" y="60">allow: 6 routes of 8</text>
+<rect x="312" y="80" width="200" height="30" rx="8" fill="#e9f5ed" stroke="#a9ccb6"/><text x="324" y="100">client: fleet.* methods</text>
+<rect x="312" y="120" width="200" height="30" rx="8" fill="#e9f5ed" stroke="#a9ccb6"/><text x="324" y="140">description for the agent</text>
+<path d="M512 135H546" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="552" y="52" width="150" height="86" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="568" y="80">The agent</text><text class="sub" x="568" y="100">reads the contract</text><text class="sub" x="568" y="120">writes adapter.js</text>
+<path d="M702 95H736" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="742" y="30" width="190" height="130" rx="12" fill="#eef1f5" stroke="#b9c3cf" stroke-width="2"/><text x="758" y="56">The sandbox</text><text class="sub" x="758" y="76">harness + adapter</text><text class="sub" x="758" y="94">no network interface</text><text class="sub" x="758" y="112">no credential inside</text>
+<rect x="918" y="78" width="28" height="36" rx="4" fill="#fff" stroke="#5687a7" stroke-width="2"/><text class="tag" x="912" y="130">broker</text><text class="sub" x="900" y="146">the one door</text>
+<path d="M946 95H978" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="984" y="52" width="104" height="86" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="998" y="80">Vendor</text><text class="sub" x="998" y="100">simulated</text><text class="sub" x="998" y="120">keeps a ledger</text>
+<path d="M512 55 L742 44" stroke="#a9ccb6" stroke-width="1.5" stroke-dasharray="4 4"/>
+<text class="sub" x="530" y="24">the allow list is what the broker enforces</text>
+<path d="M836 160V196" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="742" y="204" width="190" height="66" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="758" y="230">Run record</text><text class="sub" x="758" y="250">digests, tier, image, times</text>
+<path d="M932 237H978" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<path d="M1036 138V196" stroke="#5687a7" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar)"/><text class="sub" x="1042" y="174">ledger</text>
+<rect x="984" y="204" width="104" height="66" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="998" y="228">Signed</text><text class="sub" x="998" y="246">record and</text><text class="sub" x="998" y="262">verdict</text>
+<text class="sub" x="20" y="286">Nothing in the sandbox is trusted, the platform's harness included: it runs beside the adapter, so its report is a claim. The document, the grant, the vendor's ledger, the grader and the signer are outside it.</text>
+</svg>
+<ol class="loop">
+  <li><b>One document.</b> The vendor's OpenAPI document describes 8 operations. <code>plimsoll-specgen</code> derives three artifacts from it: the route list a grant allows, the typed client the sandbox injects, and the description an agent reads. The three cannot drift, because none of them is written by hand.</li>
+  <li><b>One contract, eight rules.</b> The platform states four functions every vendor adapter must export, and the eight rules it judges every adapter by. The harness runs the platform's commands through an adapter and reports what the adapter said. That report is a claim: the verdict is made on the host, after the run, from the plan and the vendor's own ledger, which the adapter cannot write.</li>
+  <li><b>One agent, said plainly.</b> The first adapter, <code>adapter-v1.js</code>, was written from the prompt beside it by the AI that built this example, in the same session, before the scenario that caught it existed. It is not an independent agent's answer: its author also wrote the harness.</li>
+  <li><b>Runs under a grant.</b> plimsolld runs the harness and the adapter in a locked-down container. The only way out is the brokered client: six routes of the vendor's eight, a credential the daemon mints for each run (a JWT the vendor verifies) that never enters the container, and a metadata-only trace of what was called. A probe shows the other two routes, a direct request and a hunt for the credential all failing.</li>
+  <li><b>Defects, a finding, a rewrite, two signatures.</b> When the vendor accepts an order and loses only the answer, the first adapter sends it again and the ledger shows two orders for one command while the adapter's report is clean; when the connection drops, it reports a failure for an order the robot is already running. The efficiency advisor also names the batch route the operator declared. The rewrite names every order with the platform's command ID, which the vendor uses to answer a repeat with the original order, and passes all five scenarios. Four adapters broken on purpose show each rule catching what it is for. Every run's record is signed, and so is every verdict, bound to its record; the verifier rebuilds each verdict from its evidence.</li>
+</ol>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>Nobody wants to write the fortieth vendor adapter by hand, so an agent writes it. Everyone else here keeps exactly one job: the document says what exists, the grant says what is allowed, the vendor keeps the books, a grader outside the building reads them, and a signer outside it signs for the lot. Nobody gets two of those jobs, least of all the one who wrote the code.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Geoffrey Hinton:</b> “I sure as hell don't want to put them in by hand. I don't even want to tell my graduate students to put them in.”</p><p><b>Chuck Nice:</b> “Yeah, that's what they're there for, professor.” [laughter]</p><p class="src">StarTalk, 28 February 2026, at 24:45, on setting a billion connection strengths. <a href="https://www.youtube.com/watch?v=l6ZcFa8pybE&amp;t=1475s">StarTalk video at 24:45 (EXTERNAL · video ↗)</a></p></div>
+</div>
+
+<p class="kicker">Step 1</p>
+<h2>The vendor's document, and what was generated from it</h2>
+<p>Fleet Vendor API, version 2.4.0. The operator grants the six operations the contract needs and leaves two in the catalog: a decommission and a firmware install are not something an untested adapter gets to do.</p>
+<div class="wide"><table>
+<tr><th>Operation</th><th>Route</th><th>Summary</th><th>In the grant</th></tr>
+<tr><td class="mono">health</td><td class="mono">GET /health</td><td>Report whether the fleet service is accepting requests: {ok, robots}.</td><td><span class="badge ok">granted</span></td></tr>
+<tr><td class="mono">getMission</td><td class="mono">GET /missions/{id}</td><td>Get a mission: {id, robot, command_id, status (queued, running, done, failed or cancelled), target, progress, error}.</td><td><span class="badge ok">granted</span></td></tr>
+<tr><td class="mono">cancelMission</td><td class="mono">POST /missions/{id}/cancel</td><td>Cancel a mission: a running one stops its robot where it is and the robot starts its next queued mission; a queued one never runs; a finished one is unchanged. Answers the mission, as getMission does.</td><td><span class="badge ok">granted</span></td></tr>
+<tr><td class="mono">listRobots</td><td class="mono">GET /robots</td><td>List the fleet&#39;s robots: {robots: [{id, status, battery, pose, mission}]}, status one of idle, moving or fault.</td><td><span class="badge ok">granted</span></td></tr>
+<tr><td class="mono">decommissionRobot</td><td class="mono">DELETE /robots/{id}</td><td>Remove a robot from the fleet permanently.</td><td><span class="badge off">catalog only</span></td></tr>
+<tr><td class="mono">getRobot</td><td class="mono">GET /robots/{id}</td><td>Get one robot: {id, status (idle, moving or fault), battery, pose: {x, y}, mission (its running mission&#39;s id, if any)}.</td><td><span class="badge ok">granted</span></td></tr>
+<tr><td class="mono">updateFirmware</td><td class="mono">POST /robots/{id}/firmware</td><td>Install a firmware image on a robot.</td><td><span class="badge off">catalog only</span></td></tr>
+<tr><td class="mono">createMission</td><td class="mono">POST /robots/{id}/missions</td><td>Send a robot to a target position: body {target: {x, y}, command_id}; answers {mission_id, robot, status, command_id}, 201 for a new mission. A robot runs one mission at a time and queues the rest. command_id (optional, 8 to 64 letters, digits, - or _) is the caller&#39;s name for the order: a create repeated with a command_id already accepted answers with that original mission instead of a new one, or 409 if the robot or target differ.</td><td><span class="badge ok">granted</span></td></tr>
+</table></div>
+<div class="two" style="margin-top:14px">
+  <div><h3>The profile's <code>allow</code> (6 routes)</h3><pre>GET /health
+GET /missions/*
+POST /missions/*/cancel
+GET /robots
+GET /robots/*
+POST /robots/*/missions
+</pre><p class="note">Also declared: <code>batch_of</code> GET /robots = GET /robots/*, the operator's statement that one request to the collection returns what the per-item calls did; and <code>health_check</code> GET /health, the route the broker probes while shedding.</p></div>
+  <div><h3>The client the sandbox injects (<code>preamble.js</code>)</h3><pre>// Generated by plimsoll-specgen from &#34;Fleet Vendor API&#34;, version &#34;2.4.0&#34;. Do not edit by hand.
+;(function () {
+  const h = globalThis[&#34;fleet&#34;];
+  if (!h) return;
+  h[&#34;health&#34;] = () =&gt; h.get(&#34;/health&#34;);
+  h[&#34;getMission&#34;] = (id) =&gt; h.get(&#34;/missions/&#34; &#43; id);
+  h[&#34;cancelMission&#34;] = (id) =&gt; h.post(&#34;/missions/&#34; &#43; id &#43; &#34;/cancel&#34;);
+  h[&#34;listRobots&#34;] = () =&gt; h.get(&#34;/robots&#34;);
+  h[&#34;getRobot&#34;] = (id) =&gt; h.get(&#34;/robots/&#34; &#43; id);
+  h[&#34;decommissionRobot&#34;] = (id) =&gt; h.del(&#34;/robots/&#34; &#43; id);
+  h[&#34;updateFirmware&#34;] = (id, body) =&gt; h.post(&#34;/robots/&#34; &#43; id &#43; &#34;/firmware&#34;, body);
+  h[&#34;createMission&#34;] = (id, body) =&gt; h.post(&#34;/robots/&#34; &#43; id &#43; &#34;/missions&#34;, body);
+})();
+</pre></div>
+</div>
+<h3>The description the agent was shown</h3>
+<pre>Fleet Vendor API (v2.4.0).
+Agent code reaches it through the brokered `fleet.*` client; only the operations
+below are permitted. Every call is allow-listed and gets a per-run token injected
+host-side, so the code never handles a credential.
+
+  fleet.health()  -&gt;  GET /health
+      Report whether the fleet service is accepting requests: {ok, robots}.
+  fleet.getMission(id)  -&gt;  GET /missions/{id}
+      Get a mission: {id, robot, command_id, status (queued, running, done, failed or cancelled), target, progress, error}.
+  fleet.cancelMission(id)  -&gt;  POST /missions/{id}/cancel
+      Cancel a mission: a running one stops its robot where it is and the robot starts its next queued mission; a queued one never runs; a finished one is unchanged. Answers the mission, as getMission does.
+  fleet.listRobots()  -&gt;  GET /robots
+      List the fleet&#39;s robots: {robots: [{id, status, battery, pose, mission}]}, status one of idle, moving or fault.
+  fleet.getRobot(id)  -&gt;  GET /robots/{id}
+      Get one robot: {id, status (idle, moving or fault), battery, pose: {x, y}, mission (its running mission&#39;s id, if any)}.
+  fleet.decommissionRobot(id)  -&gt;  DELETE /robots/{id}
+      Remove a robot from the fleet permanently.
+  fleet.updateFirmware(id, body)  -&gt;  POST /robots/{id}/firmware
+      Install a firmware image on a robot.
+  fleet.createMission(id, body)  -&gt;  POST /robots/{id}/missions
+      Send a robot to a target position: body {target: {x, y}, command_id}; answers {mission_id, robot, status, command_id}, 201 for a new mission. A robot runs one mission at a time and queues the rest. command_id (optional, 8 to 64 letters, digits, - or _) is the caller&#39;s name for the order: a create repeated with a command_id already accepted answers with that original mission instead of a new one, or 409 if the robot or target differ.
+</pre>
+<p class="note">The description lists the vendor's whole surface, eight operations; the grant allows six. The broker holds the grant's line whatever the code was told, which the probe below demonstrates.</p>
+
+<p class="kicker">Step 2</p>
+<h2>The contract</h2>
+<pre>module.exports = {
+  // Every robot the vendor knows, as [{ id, status, battery }].
+  // status is one of &#34;idle&#34;, &#34;moving&#34;, &#34;fault&#34;.
+  async inventory() {},
+
+  // Send robot `robotId` to target `{ x, y }` as the platform&#39;s command `commandId`,
+  // and return the vendor&#39;s mission id for that command. One command is at most one
+  // order: whatever the vendor answers (an error, a lost answer, no answer at all), the
+  // adapter must never put a second order on the vendor for it, and the mission it
+  // returns must be the one this command created. When it cannot tell whether the
+  // vendor took the order, it throws an Error whose code is &#34;unresolved&#34;; when the
+  // vendor refused it, one whose code is &#34;refused&#34;.
+  async dispatch(robotId, target, commandId) {},
+
+  // Poll the mission until it ends. Returns { state, polls } with state one of
+  // &#34;done&#34;, &#34;failed&#34;, &#34;cancelled&#34; or &#34;timeout&#34;, and polls the number of status reads.
+  // opts.maxPolls bounds the reads (default 50), failed reads included. A failed mission
+  // is reported, never retried; a transient vendor error (a 503) is retried with a short
+  // pause, within the same bound.
+  async wait(missionId, opts) {},
+
+  // Cancel the mission; the robot stops where it is.
+  async cancel(missionId) {},
+};
+</pre>
+<p>The harness runs the commands of <code>plan.json</code>, which the platform writes for each run (four commands, each with its own ID; the fourth is cancelled as soon as it is placed), and prints one <code>ADAPTER-REPORT</code> line: the mission and state the adapter reported for each command. It shares a process with the adapter, so nothing it prints is evidence; it records every value the adapter returned, as returned, so the host can check each one. The verdict comes from eight rules, the same in every scenario, applied on the host to those values, the plan, the vendor's ledger and the vendor's own record of its robots:</p>
+<dl class="rules">
+<dt>ran to the end</dt><dd>the harness ran every step: the adapter loaded, exported the contract&#39;s four functions, and no call hung</dd>
+<dt>kept the contract&#39;s shapes</dt><dd>every value the adapter returned has the contract&#39;s shape: inventory entries with an id, a status of idle, moving or fault and a numeric battery; a mission id or an error coded refused or unresolved; a final state of done, failed, cancelled or timeout, with a read count within the budget</dd>
+<dt>the inventory is the vendor&#39;s</dt><dd>each inventory lists exactly the vendor&#39;s robots, and the last, taken as the run&#39;s final call, matches the vendor&#39;s own record of each robot&#39;s status and battery</dd>
+<dt>one order per command</dt><dd>each command became exactly one order on the vendor&#39;s ledger</dd>
+<dt>the right robot and target</dt><dd>every order on the ledger carries its command&#39;s robot and target</dd>
+<dt>ended as it should</dt><dd>each order ended done, or failed where the scenario faults its robot, or cancelled where the platform cancelled it</dd>
+<dt>robot at the target</dt><dd>every order the vendor marks done left its robot at the command&#39;s target</dd>
+<dt>the report is true</dt><dd>the mission and state the adapter reported for each command are the vendor&#39;s</dd>
+</dl>
+<p class="note">A scenario changes what the vendor does, and through its data (which robot faults) what each order should end as; it never adds a rule. Full text: <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/adapter/contract/CONTRACT.md">CONTRACT.md</a>; the rules: <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/adapter/qualify/qualify.go">qualify.go</a>.</p>
+
+<p class="kicker">Step 3</p>
+<h2>The first adapter, and the rewrite</h2>
+<p>The instruction the first adapter was written from, in <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/adapter/adapter/PROMPT.md">PROMPT.md</a>, with the contract and the vendor document as they stood then (no command ID). Its author was the AI that built this example, in the same session, so this is a worked example, not an independent trial of an agent:</p>
+<pre>Write `adapter.js`, a CommonJS module for Node 22, implementing the contract below
+against the vendor API described after it. Use only the injected `fleet` client; do not
+import anything else. Report a failed mission as `failed`; retry a transient vendor
+error (a 503) with a short pause, a bounded number of times.</pre>
+<div class="two" style="margin-top:14px">
+  <div><h3>adapter-v1.js, inventory()</h3><pre>  async inventory() {
+    const list = await withRetry(() =&gt; fleet.listRobots());
+    const out = [];
+    for (const summary of list.robots) {
+      const robot = await withRetry(() =&gt; fleet.getRobot(summary.id));
+      out.push({ id: robot.id, status: robot.status, battery: robot.battery });
+    }
+    return out;
+  },</pre><p class="note">The list, then one read per robot: the agent was not told whether the list carries state, so it fetched each robot to be sure. Correct, and one request per robot.</p></div>
+  <div><h3>adapter-v2.js, inventory()</h3><pre>  async inventory() {
+    const list = await withRetry(() =&gt; fleet.listRobots());
+    return list.robots.map((robot) =&gt; ({ id: robot.id, status: robot.status, battery: robot.battery }));
+  },</pre><p class="note">After the finding: the declared batch route alone. Both files: <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/adapter/adapter">examples/adapter/adapter</a>.</p></div>
+</div>
+<h3>adapter-v2.js, dispatch()</h3>
+<pre>  async dispatch(robotId, target, commandId) {
+    for (let attempt = 1; ; attempt&#43;&#43;) {
+      try {
+        const mission = await fleet.createMission(robotId, { target, command_id: commandId });
+        return mission.mission_id;
+      } catch (e) {
+        if (refused(e)) throw failure(&#34;refused&#34;, &#34;command &#34; &#43; commandId &#43; &#34; was not placed: &#34; &#43; e.message);
+        if (attempt &gt;= ATTEMPTS) throw failure(&#34;unresolved&#34;, &#34;command &#34; &#43; commandId &#43; &#34;: no answer after &#34; &#43; attempt &#43; &#34; attempts; the vendor may or may not hold the order&#34;);
+        retries&#43;&#43;;
+        await sleep(250);
+      }
+    }
+  },</pre>
+<p class="note">The other change. Every create carries the platform's command ID; when the answer is an error or never arrives, the same create goes again, and the vendor answers a command ID it has already accepted with that original order. A refusal comes back as code <code>refused</code>, and an answer it never gets after the retries as <code>unresolved</code>, never as a guess. An earlier rewrite read the robot back after an error and adopted whatever mission it found. A review showed that still placed a second order when the first had already finished, and could report another command's order as its own; this one does neither, and a docker test places a stranger's order on the robot first to show it. Three later repairs came from further review and testing: a 500 is no longer taken as a refusal (the scenario "a server error after accepting" holds it to that), <code>wait</code>'s <code>maxPolls</code> now counts failed reads too (a docker test makes it keep a budget of one), and a status answer naming another mission counts as a failed read, never as this mission's state.</p>
+
+<div class="panel">
+<p><b>The finding, on the first adapter's nominal run</b> (pattern <code>fan_out</code>, severity low, remedy batch): This run made 6 successful GET /robots/* calls to one per-item route (the trace holds the template, not the item); a collection or batch read would cover them in one request if it returns the same items. The profile declares GET /robots as this route&#39;s batch form and grants it; the declaration is the operator&#39;s, and plimsoll has not checked that it returns the same items.</p>
+<p>Suggested route: <code>GET /robots</code>, which the profile declares as the batch form of <code>GET /robots/*</code> and grants, so the finding came back to the caller on the run result. Measured: 5 calls beyond one, 376 bytes moved across the flagged calls; the added latency is a model (summed round trips beyond one call), not wall time lost.</p>
+<p class="note">The advisor is computed after the run over the broker's metadata-only trace: route templates, counts, sizes and timings, never a path, a body or a credential. It never calls a model, and it changes nothing about execution: a run with advice is byte-identical to one without. In the nominal scenario the first adapter made 26 brokered calls and the second 20; the vendor's own counts, by route, are on each run's card below.</p>
+</div>
+
+
+<p class="kicker">Step 4</p>
+<h2>The floor: replay the six scenarios</h2>
+<p>The floor replays the vendor's own record of this page's runs: every order, start, status read, fault, refusal and cancel, in the order it happened (a mission moves its robot one unit toward the target on every read of that robot's state). Pick a scenario and an adapter and press play. At the end it checks where it drew each robot against where the signed ledger says each order stopped. The panel beside the floor shows that run's verdict.</p>
+<div class="floor">
+  <div>
+    <div class="controls" id="scenarios" role="group" aria-label="scenario">
+      <button class="btn" type="button" data-scenario="nominal" aria-pressed="true">nominal</button>
+      <button class="btn" type="button" data-scenario="fault" aria-pressed="false">a fault</button>
+      <button class="btn" type="button" data-scenario="overload" aria-pressed="false">an overloaded vendor</button>
+      <button class="btn" type="button" data-scenario="lost_ack" aria-pressed="false">a lost answer</button>
+      <button class="btn" type="button" data-scenario="dropped" aria-pressed="false">a dropped connection</button>
+      <button class="btn" type="button" data-scenario="server_error" aria-pressed="false">a server error</button>
+    </div>
+    <div class="controls" id="adapters" role="group" aria-label="adapter">
+      <button class="btn" type="button" data-adapter="adapter-v1.js" aria-pressed="true">the first adapter</button>
+      <button class="btn" type="button" data-adapter="adapter-v2.js" aria-pressed="false">the second adapter</button>
+      <button class="btn" type="button" data-adapter="trial/haiku.js" aria-pressed="false">Haiku's</button>
+      <button class="btn" type="button" data-adapter="trial/sonnet.js" aria-pressed="false">Sonnet's</button>
+      <button class="btn" type="button" data-adapter="trial/opus.js" aria-pressed="false">Opus's</button>
+      <button class="btn play" type="button" id="play">Play</button>
+      <button class="btn" type="button" id="reset">Reset</button>
+    </div>
+    <svg id="floorsvg" class="art" viewBox="0 0 560 390" role="img" aria-label="The floor: three robots, their targets, and what each scenario does to them">
+      <rect x="0" y="0" width="560" height="390" rx="12" fill="#f7fafc"/>
+      <g id="grid" stroke="#e3e9f0" stroke-width="1"></g>
+      <g id="targets"></g>
+      <g id="trails" fill="none" stroke-width="2" stroke-dasharray="3 4"></g>
+      <g id="robots"></g>
+      <g id="vendorbox"><rect x="400" y="14" width="146" height="54" rx="10" fill="#fff" stroke="#bed4e5"/><text x="416" y="36" font-size="13" fill="#1a1a1a" font-family="system-ui">Vendor</text><text id="vendorstate" x="416" y="56" font-size="12" fill="#5a5a5a" font-family="system-ui">accepting requests</text></g>
+      <g id="effects"></g>
+    </svg>
+    <div class="status" id="status" aria-live="polite">Press play.</div>
+  </div>
+  <div class="card" id="outcome">
+    <div class="head"><b id="o-title">The first adapter, nominal</b><span class="badge ok" id="o-badge">passed</span></div>
+    <div class="step" id="o-step">measured on this page's run</div>
+    <dl>
+      <dt>Rules</dt><dd id="o-verdict"></dd>
+      <dt>Brokered calls</dt><dd id="o-calls"></dd>
+      <dt>Status reads</dt><dd id="o-polls"></dd>
+      <dt>Retries</dt><dd id="o-retries"></dd>
+      <dt>Orders on the ledger</dt><dd class="chips" id="o-orders"></dd>
+    </dl>
+    <p class="note" id="o-note"></p>
+  </div>
+</div>
+
+<h2>The verdicts: 38 runs, judged by the same eight rules</h2>
+<p>Each row is one run; each column a rule. A cross marks a rule the vendor's ledger shows broken; hover or tap it for the ledger's own words. The probe, which is not an adapter, has rules of its own (step 5).</p>
+<div class="wide"><table class="matrix">
+<tr><th>Run</th><th title="the harness ran every step: the adapter loaded, exported the contract&#39;s four functions, and no call hung">ran to the end</th><th title="every value the adapter returned has the contract&#39;s shape: inventory entries with an id, a status of idle, moving or fault and a numeric battery; a mission id or an error coded refused or unresolved; a final state of done, failed, cancelled or timeout, with a read count within the budget">kept the contract&#39;s shapes</th><th title="each inventory lists exactly the vendor&#39;s robots, and the last, taken as the run&#39;s final call, matches the vendor&#39;s own record of each robot&#39;s status and battery">the inventory is the vendor&#39;s</th><th title="each command became exactly one order on the vendor&#39;s ledger">one order per command</th><th title="every order on the ledger carries its command&#39;s robot and target">the right robot and target</th><th title="each order ended done, or failed where the scenario faults its robot, or cancelled where the platform cancelled it">ended as it should</th><th title="every order the vendor marks done left its robot at the command&#39;s target">robot at the target</th><th title="the mission and state the adapter reported for each command are the vendor&#39;s">the report is true</th><th>Verdict</th></tr>
+<tr><td><b>1</b> The first adapter, nominal</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>2</b> The first adapter, a fault</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>3</b> The first adapter, an overloaded vendor</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>4</b> The first adapter, a lost answer</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="run04-c2 became 2 orders (m2, m3)">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge no">failed</span></td></tr>
+<tr><td><b>5</b> The first adapter, a dropped connection</td><td class="held" title="">✓</td><td class="broke" title="run05-c2: dispatch threw an error coded &#34;&#34;, not refused or unresolved">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="m2 (run05-c2) is running, want done">✗</td><td class="held" title="">✓</td><td class="broke" title="run05-c2: the adapter reported an error (host api 502: host api unavailable) and the vendor holds the order as m2">✗</td><td><span class="badge no">failed</span></td></tr>
+<tr><td><b>6</b> The first adapter, a server error after accepting</td><td class="held" title="">✓</td><td class="broke" title="run06-c2: dispatch threw an error coded &#34;&#34;, not refused or unresolved">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="m2 (run06-c2) is running, want done">✗</td><td class="held" title="">✓</td><td class="broke" title="run06-c2: the adapter reported an error (host api 500: {&#34;error&#34;:&#34;acknowledgement lost&#34;}) and the vendor holds the order as m2">✗</td><td><span class="badge no">failed</span></td></tr>
+<tr><td><b>8</b> The second adapter, nominal</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>9</b> The second adapter, a fault</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>10</b> The second adapter, an overloaded vendor</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>11</b> The second adapter, a lost answer</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>12</b> The second adapter, a dropped connection</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>13</b> The second adapter, a server error after accepting</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>14</b> Claude Haiku&#39;s adapter, nominal</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>15</b> Claude Haiku&#39;s adapter, a fault</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>16</b> Claude Haiku&#39;s adapter, an overloaded vendor</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="run16-c2 became no order">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge no">failed</span></td></tr>
+<tr><td><b>17</b> Claude Haiku&#39;s adapter, a lost answer</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>18</b> Claude Haiku&#39;s adapter, a dropped connection</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>19</b> Claude Haiku&#39;s adapter, a server error after accepting</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>20</b> Claude Sonnet&#39;s adapter, nominal</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>21</b> Claude Sonnet&#39;s adapter, a fault</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>22</b> Claude Sonnet&#39;s adapter, an overloaded vendor</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="run22-c2 became no order; run22-c3 became no order">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge no">failed</span></td></tr>
+<tr><td><b>23</b> Claude Sonnet&#39;s adapter, a lost answer</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>24</b> Claude Sonnet&#39;s adapter, a dropped connection</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>25</b> Claude Sonnet&#39;s adapter, a server error after accepting</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>26</b> Claude Opus&#39;s adapter, nominal</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>27</b> Claude Opus&#39;s adapter, a fault</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>28</b> Claude Opus&#39;s adapter, an overloaded vendor</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>29</b> Claude Opus&#39;s adapter, a lost answer</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>30</b> Claude Opus&#39;s adapter, a dropped connection</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>31</b> Claude Opus&#39;s adapter, a server error after accepting</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge ok">passed</span></td></tr>
+<tr><td><b>32</b> Broken on purpose: every order sent to (0, 0)</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="m1 (run32-c1) went to (0, 0), not (3, 0); m2 (run32-c2) went to (0, 0), not (10, 4); m3 (run32-c3) went to (0, 0), not (0, 15); m4 (run32-c4) went to (0, 0), not (50, 50)">✗</td><td class="held" title="">✓</td><td class="broke" title="m1 (run32-c1) ended done with r1 at (0, 0); the target is (3, 0); m2 (run32-c2) ended done with r2 at (0, 0); the target is (10, 4); m3 (run32-c3) ended done with r3 at (0, 0); the target is (0, 15)">✗</td><td class="held" title="">✓</td><td><span class="badge no">caught</span></td></tr>
+<tr><td><b>33</b> Broken on purpose: r1&#39;s orders sent to r3</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="m1 (run33-c1) went to r3, not r1; m4 (run33-c4) went to r3, not r1">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge no">caught</span></td></tr>
+<tr><td><b>34</b> Broken on purpose: a failure reported as done</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="run34-c2: the adapter reported m2 done, the vendor says failed">✗</td><td><span class="badge no">caught</span></td></tr>
+<tr><td><b>35</b> Broken on purpose: a cancel that sends nothing</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="m4 (run35-c4) is running, want cancelled">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge no">caught</span></td></tr>
+<tr><td><b>36</b> Broken on purpose: a wait that reports no state</td><td class="held" title="">✓</td><td class="broke" title="run36-c1: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:3}; run36-c2: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:4}; run36-c3: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:5}; run36-c4: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:1}">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge no">caught</span></td></tr>
+<tr><td><b>37</b> Broken on purpose: an empty inventory</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge no">caught</span></td></tr>
+<tr><td><b>38</b> Broken on purpose: an invented robot</td><td class="held" title="">✓</td><td class="broke" title="inventory 1: robot imaginary has status &#34;banana&#34;, not idle, moving or fault; inventory 2: robot imaginary has status &#34;banana&#34;, not idle, moving or fault">✗</td><td class="broke" title="inventory 1 lists imaginary, a robot the vendor does not have; inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 lists imaginary, a robot the vendor does not have; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3">✗</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td><span class="badge no">caught</span></td></tr>
+</table></div>
+<div class="panel"><b>Runs 4, 5 and 6 are the ones that matter.</b> In run 4 the vendor accepted r2's order, started the robot, and answered with a 503 instead of the mission id. The first adapter treated the 503 as transient and sent the create again; the vendor, which queues orders for a busy robot, accepted it as a second order. The adapter's report says every mission done, and from where it stood that was true; the ledger shows two accepted orders for one command. In this simulation the second order starts where the first ended, so the robot does not move again; on a real fleet a duplicated command can be a second pick, or a second trip into space another robot was promised. In runs 5 and 6 the vendor accepted the order and then closed the connection, or answered 500; the first adapter reported the command failed, with an error the contract does not allow, while r2 was already running it. The second adapter's runs 11, 12 and 13 are the same scenarios, with one order per command.</div>
+<p class="kicker">The independent trial</p>
+<h2>The exam: three fresh AIs write the adapter cold</h2>
+<p>In plain words: the first adapter on this page was written by the same AI that built the page, which is a bit like marking your own homework. So we set an exam. Three fresh agents, Claude Haiku, Claude Sonnet and Claude Opus, got the same <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/adapter/trial/PROMPT.md">exam paper</a> (EXTERNAL · source repo ↗): the contract, the rules they would be judged by (six at the time; the shape and inventory rules came later and check things the contract already asked for), how the platform's client reports errors, and the vendor's API description. Open book on that, closed book on everything else. Each ran as a one-shot Claude Code session in an empty folder with every customization switched off and no tools at all, so the exam paper was the only thing in the room (well, that and the folder's name, which had "plimsoll" in it). Their transcripts were checked afterwards: no tool calls, and none of this repository's text.</p>
+<p>Each got one practice question, the plain nominal scenario, could see how it went, and could hand in up to three times. All three aced the practice first time. Haiku handed in straight away; Sonnet and Opus each rewrote theirs anyway (after passing!) and kept the second version. The other five scenarios were the real exam, and they had not seen them. Their adapters ran here exactly as written.</p>
+<svg class="art" viewBox="0 0 1100 280" role="img" aria-labelledby="tr-t tr-d">
+<title id="tr-t">How the trial ran</title>
+<desc id="tr-d">The exam paper goes to three agents, Claude Haiku, Sonnet and Opus, with no tools. Each tries one practice question, the nominal scenario, and sees the result, up to three times. What they hand in runs over all six scenarios in the sandbox; the grader reads the vendor's ledger and the verdict is signed. A dotted red line from this repository's agent instructions to the agents marks the leak described below.</desc>
+<defs><marker id="ar4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker><marker id="ar5" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#c2410c"/></marker></defs>
+<rect x="20" y="104" width="170" height="86" rx="10" fill="#fff" stroke="#bed4e5"/>
+<text x="36" y="130" font-size="14" font-weight="650" font-family="system-ui">The exam paper</text>
+<text x="36" y="150" font-size="11.5" fill="#5a5a5a" font-family="system-ui">contract, rules,</text>
+<text x="36" y="168" font-size="11.5" fill="#5a5a5a" font-family="system-ui">error shape, API</text>
+<path d="M190 147H232" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<rect x="240" y="60" width="170" height="48" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="256" y="82" font-size="13" font-weight="650" font-family="system-ui">Claude Haiku</text><text x="256" y="99" font-size="11" fill="#5a5a5a" font-family="system-ui">no tools</text>
+<rect x="240" y="123" width="170" height="48" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="256" y="145" font-size="13" font-weight="650" font-family="system-ui">Claude Sonnet</text><text x="256" y="162" font-size="11" fill="#5a5a5a" font-family="system-ui">no tools</text>
+<rect x="240" y="186" width="170" height="48" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="256" y="208" font-size="13" font-weight="650" font-family="system-ui">Claude Opus</text><text x="256" y="225" font-size="11" fill="#5a5a5a" font-family="system-ui">no tools</text>
+<rect x="470" y="70" width="200" height="56" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="486" y="94" font-size="13" font-weight="650" font-family="system-ui">Practice question</text><text x="486" y="113" font-size="11" fill="#5a5a5a" font-family="system-ui">nominal only, result shown</text>
+<path d="M410 84H424M410 147H424M410 210H424M424 84V210" fill="none" stroke="#5687a7" stroke-width="2"/>
+<path d="M424 92H464" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<path d="M470 120 C 452 126, 446 128, 430 128" fill="none" stroke="#5687a7" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#ar4)"/>
+<text x="432" y="150" font-size="10.5" fill="#5a5a5a" font-family="system-ui">up to 3 tries each</text>
+<path d="M424 210H464" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<text x="428" y="202" font-size="10.5" fill="#5a5a5a" font-family="system-ui">hand in</text>
+<rect x="470" y="182" width="200" height="56" rx="10" fill="#eef1f5" stroke="#b9c3cf" stroke-width="2"/><text x="486" y="206" font-size="13" font-weight="650" font-family="system-ui">The real exam</text><text x="486" y="225" font-size="11" fill="#5a5a5a" font-family="system-ui">6 scenarios, in the sandbox</text>
+<path d="M670 210H714" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<rect x="720" y="182" width="170" height="56" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="736" y="206" font-size="13" font-weight="650" font-family="system-ui">The grader</text><text x="736" y="225" font-size="11" fill="#5a5a5a" font-family="system-ui">reads the vendor's ledger</text>
+<path d="M890 210H934" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<rect x="940" y="182" width="140" height="56" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="956" y="206" font-size="13" font-weight="650" font-family="system-ui">Verdict</text><text x="956" y="225" font-size="11" fill="#5a5a5a" font-family="system-ui">signed, per run</text>
+<rect x="760" y="30" width="270" height="50" rx="10" fill="#fdecea" stroke="#f1bdbd"/><text x="776" y="52" font-size="12.5" font-weight="650" fill="#8a1c1c" font-family="system-ui">This repository's agent instructions</text><text x="776" y="70" font-size="11" fill="#8a1c1c" font-family="system-ui">kept out of this run by safe mode</text>
+<path d="M760 48 C 640 18, 460 22, 400 58" fill="none" stroke="#c2410c" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#ar5)"/>
+<text x="476" y="26" font-size="11" font-weight="650" fill="#8a1c1c" font-family="system-ui">leaked in the first run, blocked in this one</text><path d="M548 30l12 12M560 30l-12 12" stroke="#8a1c1c" stroke-width="3" stroke-linecap="round"/>
+</svg>
+<div class="cards">
+<div class="card no-card">
+  <div class="head"><b>Claude Haiku's adapter</b><span class="badge no">5 of 6 passed</span></div>
+  <div class="step mono">117 lines · <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/adapter/trial/haiku/final.js">final.js (EXTERNAL · source repo ↗)</a></div>
+  <div class="chips"><span class="chip ok">nominal: passed</span><span class="chip ok">a fault: passed</span><span class="chip no">an overloaded vendor: failed</span><span class="chip ok">a lost answer: passed</span><span class="chip ok">a dropped connection: passed</span><span class="chip ok">a server error after accepting: passed</span></div>
+  <ul class="small"><li>an overloaded vendor, run 16: one order per command: run16-c2 became no order</li></ul>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Claude Sonnet's adapter</b><span class="badge no">5 of 6 passed</span></div>
+  <div class="step mono">130 lines · <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/adapter/trial/sonnet/final.js">final.js (EXTERNAL · source repo ↗)</a></div>
+  <div class="chips"><span class="chip ok">nominal: passed</span><span class="chip ok">a fault: passed</span><span class="chip no">an overloaded vendor: failed</span><span class="chip ok">a lost answer: passed</span><span class="chip ok">a dropped connection: passed</span><span class="chip ok">a server error after accepting: passed</span></div>
+  <ul class="small"><li>an overloaded vendor, run 22: one order per command: run22-c2 became no order; run22-c3 became no order</li></ul>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Claude Opus's adapter</b><span class="badge ok">6 of 6 passed</span></div>
+  <div class="step mono">215 lines · <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/adapter/trial/opus/final.js">final.js (EXTERNAL · source repo ↗)</a></div>
+  <div class="chips"><span class="chip ok">nominal: passed</span><span class="chip ok">a fault: passed</span><span class="chip ok">an overloaded vendor: passed</span><span class="chip ok">a lost answer: passed</span><span class="chip ok">a dropped connection: passed</span><span class="chip ok">a server error after accepting: passed</span></div>
+  <ul class="small"></ul>
+</div>
+</div>
+<p><b>How it went.</b> Two of the three tripped on the same question, the overloaded vendor, in the same way. They knocked on a busy door, waited about a second, and went home, leaving a polite note that said "unresolved". Honest, which counts for a lot, but the robot never got its job. In numbers: Claude Haiku's adapter tries a create four times over about 1.2 seconds, Claude Sonnet's five times over about 1.5 seconds, and this vendor stays overloaded for longer than that (it refuses the next four requests, and the broker's breaker holds calls back for a second after each refusal). Claude Opus's adapter tries up to eight times with growing pauses, inside a thirty-second budget, and got in. How long the overload would last was never on the exam paper; on a real fleet it is not written down anywhere either.</p>
+<div class="panel"><b>Full disclosure: we sat this exam twice.</b> The first time, Claude Code quietly handed each agent this repository's agent instructions, which named three of the hidden scenarios (a robot fault, an overloaded vendor, a lost acknowledgement) and said the first adapter's mistake was re-sending a create. We only found out by auditing the transcripts afterwards, so we threw that run out and set the exam again in an empty room: that's the run on this page. The results came out the same shape both times: Opus six of six, Haiku and Sonnet five of six, tripping on the same question. So the leak bought them nothing, but now nobody has to take that on trust. <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/adapter/trial/README.md">The trial's record</a> (EXTERNAL · source repo ↗) has both runs, the audits and the exact feedback each agent saw.</div>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>We set an exam, then went looking for answers we might have left on the desk. We had left a few. So we cleared the desk, emptied the room and set it again, and got the same marks. You'd think that would feel like wasted effort. It feels like the only part anyone should believe, because Feynman's first principle applies to the people grading as well.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Richard P. Feynman:</b> “The first principle is that you must not fool yourself—and you are the easiest person to fool.”</p><p class="src">“Cargo Cult Science”, Caltech commencement address, 1974, as published by Caltech. <a href="https://calteches.library.caltech.edu/51/2/CargoCult.htm">Caltech's text (EXTERNAL · source text ↗)</a></p></div>
+</div>
+<p class="note">Three agents, one task, one sample each: this is not a model ranking. Nor are they comparable with the second adapter, which was rewritten with the harness and every scenario in view, and repaired twice after reviews.</p>
+<p class="note">Not run here: a vendor that answers after the broker's 60-second limit on a call (by the broker's code the adapter would get the same 502 as a dropped connection, but no run on this page shows it), two dispatches of one command at once, and a vendor that forgets the command IDs it has accepted. Each is a case the rules would judge; none is evidence here.</p>
+<h3>Every run</h3>
+<div class="cards">
+<div class="card ok-card">
+  <div class="head"><b>Run 1 · The first adapter, nominal</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js nominal adapter-v1.js · 508 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>26 served; 1 finding, agent-fixable</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">12888625</dd>
+    <dt>Record</dt><dd class="mono small">5cce0b1a3fe99e0d1696cd778cbb02722dca91fa404cffb19b67c1b35bc8ddeb</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 2 · The first adapter, a fault</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js fault adapter-v1.js · 479 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
+    <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
+    <dt>Brokered calls</dt><dd>24 served; 1 finding, agent-fixable</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">74e9b0ba</dd>
+    <dt>Record</dt><dd class="mono small">949b95f9f8a7b46f9f0f4ced0046cf5d74f42bc8242c5e44a147e09ad01f5743</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 3 · The first adapter, an overloaded vendor</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js overload adapter-v1.js · 3015 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>28 served, 8 shed; 1 finding, agent-fixable</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 2</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 6</li><li>503 answered: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">91c87570</dd>
+    <dt>Record</dt><dd class="mono small">d1fe0b45862a2cecd9961a1a4da4b1ba4b75ead838c13ced6ec85c0eeda3fe18</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 4 · The first adapter, a lost answer</b><span class="badge no">failed</span></div>
+  <div class="step mono">node harness.js lost_ack adapter-v1.js · 1152 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
+    <dt>Rules</dt><dd>one order per command: run04-c2 became 2 orders (m2, m3); 14 status reads</dd>
+    <dt>Brokered calls</dt><dd>28 served; 1 finding, agent-fixable</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 14</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip bad">r2 ×2</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">379be07d</dd>
+    <dt>Record</dt><dd class="mono small">a7ea8927c5df2ed68582404652fc6e1c3e16a501c95bc8665811eeef87a5dcbe</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 5 · The first adapter, a dropped connection</b><span class="badge no">failed</span></div>
+  <div class="step mono">node harness.js dropped adapter-v1.js · 458 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
+    <dt>Rules</dt><dd>kept the contract&#39;s shapes: run05-c2: dispatch threw an error coded &#34;&#34;, not refused or unresolved; ended as it should: m2 (run05-c2) is running, want done; the report is true: run05-c2: the adapter reported an error (host api 502: host api unavailable) and the vendor holds the order as m2; 9 status reads</dd>
+    <dt>Brokered calls</dt><dd>22 served; 1 finding, agent-fixable</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">5164e9c5</dd>
+    <dt>Record</dt><dd class="mono small">1dbf486f5eccd9fcb361f5b711a49752a9b02f0dde8cd1500315f6d60aac76cd</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 6 · The first adapter, a server error after accepting</b><span class="badge no">failed</span></div>
+  <div class="step mono">node harness.js server_error adapter-v1.js · 551 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
+    <dt>Rules</dt><dd>kept the contract&#39;s shapes: run06-c2: dispatch threw an error coded &#34;&#34;, not refused or unresolved; ended as it should: m2 (run06-c2) is running, want done; the report is true: run06-c2: the adapter reported an error (host api 500: {&#34;error&#34;:&#34;acknowledgement lost&#34;}) and the vendor holds the order as m2; 9 status reads</dd>
+    <dt>Brokered calls</dt><dd>22 served; 1 finding, agent-fixable</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">09b37aa2</dd>
+    <dt>Record</dt><dd class="mono small">100bfc4290988b2d0c186243b03b1bc6e58fc627918a0f2ab6d706daf8f5e37a</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 7 · The boundary probe</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node probe.js http://127.0.0.1:35895 · 332 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>nothing special: the probe is what tries things</dd>
+    <dt>Rules</dt><dd>every rule held; no missions</dd>
+    <dt>Brokered calls</dt><dd>0 served, 1 denied; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×0</span><span class="chip">r2 ×0</span><span class="chip">r3 ×0</span></dd>
+    <dt>Credential</dt><dd class="mono small"></dd>
+    <dt>Record</dt><dd class="mono small">3df17e36b127918933ed36aa14c0a081c072d28b01e9621b9f700823d4df5258</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 8 · The second adapter, nominal</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js nominal adapter-v2.js · 505 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>20 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">7b6fc606</dd>
+    <dt>Record</dt><dd class="mono small">2210d3a62b2d299c547430ae97bf05965b3c7cb5682f097f9241e3e638bbe9fd</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 9 · The second adapter, a fault</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js fault adapter-v2.js · 478 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
+    <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
+    <dt>Brokered calls</dt><dd>18 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">97f9bade</dd>
+    <dt>Record</dt><dd class="mono small">11f84bbbb764839a170383c0abcbe7db6f0509f4bf8b670ab33d05e5139519b9</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 10 · The second adapter, an overloaded vendor</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js overload adapter-v2.js · 3084 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>22 served, 8 shed; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 2</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 6</li><li>503 answered: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">706d62c0</dd>
+    <dt>Record</dt><dd class="mono small">0baac6bbdac029190c530226c6a1b4c3eb5982583b9b8ffd1ca3bc41ee572e87</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 11 · The second adapter, a lost answer</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js lost_ack adapter-v2.js · 1092 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">cfb74711</dd>
+    <dt>Record</dt><dd class="mono small">d44570d5381e7cde773e919c368af2884ad5896bdbd4c2e5226f82b99a7da2bd</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 12 · The second adapter, a dropped connection</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js dropped adapter-v2.js · 762 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">5662d30b</dd>
+    <dt>Record</dt><dd class="mono small">666db9c848d0193a00decb41ad31f2a06956c9cdfd16ef2a1b97d125dff6a3ef</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 13 · The second adapter, a server error after accepting</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js server_error adapter-v2.js · 788 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">ed17775d</dd>
+    <dt>Record</dt><dd class="mono small">0406bb5bedde13245ef27910549a07336f6e3d2ad97070fa89b7ca2eaac54f81</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 14 · Claude Haiku&#39;s adapter, nominal</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js nominal trial/haiku.js · 2599 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>20 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">554406d3</dd>
+    <dt>Record</dt><dd class="mono small">69766702e008540308ac1e7e68b7ecc91937c8a2a14e2e29e7845046e2db27fd</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 15 · Claude Haiku&#39;s adapter, a fault</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js fault trial/haiku.js · 2098 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
+    <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
+    <dt>Brokered calls</dt><dd>18 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">49b1fc70</dd>
+    <dt>Record</dt><dd class="mono small">1ac0f93c59b5238e8b041040d3168233e55bf16052afbd8a20b5a4b581f2f442</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 16 · Claude Haiku&#39;s adapter, an overloaded vendor</b><span class="badge no">failed</span></div>
+  <div class="step mono">node harness.js overload trial/haiku.js · 5409 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
+    <dt>Rules</dt><dd>one order per command: run16-c2 became no order; 9 status reads</dd>
+    <dt>Brokered calls</dt><dd>17 served, 5 shed; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 2</li><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li><li>503 answered: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×0</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">832eed48</dd>
+    <dt>Record</dt><dd class="mono small">6aa19a04eb0fa0d5bf4f3c4513bcb0585560432ad46eac7afc71d6d6a093cbb5</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 17 · Claude Haiku&#39;s adapter, a lost answer</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js lost_ack trial/haiku.js · 3168 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">69479b2d</dd>
+    <dt>Record</dt><dd class="mono small">be79ba421a7523a76e05c01598004b3eebe46c7ee2d8d1f8dca3312fbf1ade22</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 18 · Claude Haiku&#39;s adapter, a dropped connection</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js dropped trial/haiku.js · 2813 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">77092d3e</dd>
+    <dt>Record</dt><dd class="mono small">6a88de5befda0eb65352ce58cc59b9db83be0df3a39e58da6f61ab3d4d55af1f</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 19 · Claude Haiku&#39;s adapter, a server error after accepting</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js server_error trial/haiku.js · 3105 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">f04b5ec2</dd>
+    <dt>Record</dt><dd class="mono small">abf1fade6bdba8d33675b7e6de90833e1f5174e12496450b70603379e68d8ec5</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 20 · Claude Sonnet&#39;s adapter, nominal</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js nominal trial/sonnet.js · 798 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>20 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">31dba055</dd>
+    <dt>Record</dt><dd class="mono small">39038e8bfdc76b9c81707443ed8d30ed3747fc836b40bdd11c9e1c6105958c1e</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 21 · Claude Sonnet&#39;s adapter, a fault</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js fault trial/sonnet.js · 679 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
+    <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
+    <dt>Brokered calls</dt><dd>18 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">d3cf4f85</dd>
+    <dt>Record</dt><dd class="mono small">17895fe53b47c4e10d8b39417f2c3fda9681da2477ca0d98283e65cd188356d5</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 22 · Claude Sonnet&#39;s adapter, an overloaded vendor</b><span class="badge no">failed</span></div>
+  <div class="step mono">node harness.js overload trial/sonnet.js · 3468 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
+    <dt>Rules</dt><dd>one order per command: run22-c2 became no order; run22-c3 became no order; 4 status reads</dd>
+    <dt>Brokered calls</dt><dd>11 served, 8 shed; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 2</li><li>GET /missions/*: 4</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li><li>503 answered: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×0</span><span class="chip">r3 ×0</span></dd>
+    <dt>Credential</dt><dd class="mono small">0301e6cd</dd>
+    <dt>Record</dt><dd class="mono small">f54b3e0aa9efdb20f72292d34d2938eefd178b3542b2fa09062723139323cfce</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 23 · Claude Sonnet&#39;s adapter, a lost answer</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js lost_ack trial/sonnet.js · 1233 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">42896242</dd>
+    <dt>Record</dt><dd class="mono small">c24a3aee135d51c08c3e1a3b0d0bd2972c1eacdd5d9bdc4e3bdc97d2f976cf7b</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 24 · Claude Sonnet&#39;s adapter, a dropped connection</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js dropped trial/sonnet.js · 890 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">7091a647</dd>
+    <dt>Record</dt><dd class="mono small">3279a70e2af9bcac7cd00eb39bbfe15c1d69beaf262eba71a2f7de9105eec06a</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 25 · Claude Sonnet&#39;s adapter, a server error after accepting</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js server_error trial/sonnet.js · 896 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">01546a0a</dd>
+    <dt>Record</dt><dd class="mono small">1043e1cb8bcee36164a3022922d2ad615fd9335383d2f887496ae636828f77e5</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 26 · Claude Opus&#39;s adapter, nominal</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js nominal trial/opus.js · 1863 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>20 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">3a8f6b8f</dd>
+    <dt>Record</dt><dd class="mono small">f57d9e77e827722dd1230a4a0f87c51d61776ba83f7c044a089ae8d21607a9ae</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 27 · Claude Opus&#39;s adapter, a fault</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js fault trial/opus.js · 1578 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
+    <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
+    <dt>Brokered calls</dt><dd>18 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">5e7cfd78</dd>
+    <dt>Record</dt><dd class="mono small">4116c97ee14840c71e1a0dd95cdf05f9bef0a864ac441eb3755f11bce01eb537</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 28 · Claude Opus&#39;s adapter, an overloaded vendor</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js overload trial/opus.js · 7230 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>23 served, 2 shed; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 7</li><li>503 answered: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">99141980</dd>
+    <dt>Record</dt><dd class="mono small">86c5a8c86c736186cb2a3d427e3dbe596b3ce7d6161a0c6aab5a371093eeb019</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 29 · Claude Opus&#39;s adapter, a lost answer</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js lost_ack trial/opus.js · 2411 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">b125e6a0</dd>
+    <dt>Record</dt><dd class="mono small">7ded6a55ca1c32c4a0dea6cbd21940a381bfd6c8aee887169dbb2b027be5d508</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 30 · Claude Opus&#39;s adapter, a dropped connection</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js dropped trial/opus.js · 2140 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">449cb805</dd>
+    <dt>Record</dt><dd class="mono small">cdfbc058c6ad1a3a82b13729d95645bc765975833957c16a047c2f7d6f8e6eb4</dd>
+  </dl>
+</div>
+<div class="card ok-card">
+  <div class="head"><b>Run 31 · Claude Opus&#39;s adapter, a server error after accepting</b><span class="badge ok">passed</span></div>
+  <div class="step mono">node harness.js server_error trial/opus.js · 2068 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
+    <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>21 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">fd212dfc</dd>
+    <dt>Record</dt><dd class="mono small">29f6ae569d2954893af578001f438ca094b1568b9d73cd9c1782fcbebc898cee</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 32 · Broken on purpose: every order sent to (0, 0)</b><span class="badge no">caught</span></div>
+  <div class="step mono">node harness.js nominal broken/wrong-target.js · 1014 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>the right robot and target: m1 (run32-c1) went to (0, 0), not (3, 0); m2 (run32-c2) went to (0, 0), not (10, 4); m3 (run32-c3) went to (0, 0), not (0, 15); m4 (run32-c4) went to (0, 0), not (50, 50); robot at the target: m1 (run32-c1) ended done with r1 at (0, 0); the target is (3, 0); m2 (run32-c2) ended done with r2 at (0, 0); the target is (10, 4); m3 (run32-c3) ended done with r3 at (0, 0); the target is (0, 15); 22 status reads</dd>
+    <dt>Brokered calls</dt><dd>29 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 22</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">4d260d28</dd>
+    <dt>Record</dt><dd class="mono small">22ddfdb4923581e630d69fa4021752af341efcd50bd2272236768f127384b21c</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 33 · Broken on purpose: r1&#39;s orders sent to r3</b><span class="badge no">caught</span></div>
+  <div class="step mono">node harness.js nominal broken/wrong-robot.js · 942 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>the right robot and target: m1 (run33-c1) went to r3, not r1; m4 (run33-c4) went to r3, not r1; 32 status reads</dd>
+    <dt>Brokered calls</dt><dd>39 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 32</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×0</span><span class="chip">r2 ×1</span><span class="chip">r3 ×3</span></dd>
+    <dt>Credential</dt><dd class="mono small">f1ff522a</dd>
+    <dt>Record</dt><dd class="mono small">256f84199d2e48b23fd49ac91118be559fdacbda9e00287a71eef9a53a61bda0</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 34 · Broken on purpose: a failure reported as done</b><span class="badge no">caught</span></div>
+  <div class="step mono">node harness.js fault broken/false-success.js · 539 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
+    <dt>Rules</dt><dd>the report is true: run34-c2: the adapter reported m2 done, the vendor says failed; 11 status reads</dd>
+    <dt>Brokered calls</dt><dd>18 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">4ca8b2b2</dd>
+    <dt>Record</dt><dd class="mono small">f0295c03719c3cc8cfbc855aebf29fbd26bb3ad58c151a5c6d1d09e4d7b2396f</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 35 · Broken on purpose: a cancel that sends nothing</b><span class="badge no">caught</span></div>
+  <div class="step mono">node harness.js nominal broken/no-cancel.js · 585 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>ended as it should: m4 (run35-c4) is running, want cancelled; 17 status reads</dd>
+    <dt>Brokered calls</dt><dd>23 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 17</li><li>GET /robots: 2</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">a764ade5</dd>
+    <dt>Record</dt><dd class="mono small">191fe713505cd978c3e75d26576e3611ada44afbda673c0acd7111fc1a3a7efe</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 36 · Broken on purpose: a wait that reports no state</b><span class="badge no">caught</span></div>
+  <div class="step mono">node harness.js nominal broken/no-state.js · 551 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>kept the contract&#39;s shapes: run36-c1: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:3}; run36-c2: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:4}; run36-c3: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:5}; run36-c4: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:1}; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>20 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">11d10cf7</dd>
+    <dt>Record</dt><dd class="mono small">0185580c1c2e8744035ffaa12a9e65b06ad40c478a33005a51742d1b633a2952</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 37 · Broken on purpose: an empty inventory</b><span class="badge no">caught</span></div>
+  <div class="step mono">node harness.js nominal broken/empty-inventory.js · 520 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>the inventory is the vendor&#39;s: inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>18 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">5adacd52</dd>
+    <dt>Record</dt><dd class="mono small">261a4009ea6a764ca93504c1c8c6044854404fe45e572cbf0197c8129a4d2c49</dd>
+  </dl>
+</div>
+<div class="card no-card">
+  <div class="head"><b>Run 38 · Broken on purpose: an invented robot</b><span class="badge no">caught</span></div>
+  <div class="step mono">node harness.js nominal broken/invented-robot.js · 518 ms · container tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
+    <dt>Rules</dt><dd>kept the contract&#39;s shapes: inventory 1: robot imaginary has status &#34;banana&#34;, not idle, moving or fault; inventory 2: robot imaginary has status &#34;banana&#34;, not idle, moving or fault; the inventory is the vendor&#39;s: inventory 1 lists imaginary, a robot the vendor does not have; inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 lists imaginary, a robot the vendor does not have; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3; 13 status reads</dd>
+    <dt>Brokered calls</dt><dd>18 served; no finding</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
+    <dt>Credential</dt><dd class="mono small">9b465cb0</dd>
+    <dt>Record</dt><dd class="mono small">00450abb0c6284c9e429482cef7085c5d0e9eedd438582a6abe8dad27385ac80</dd>
+  </dl>
+</div>
+</div>
+<p class="note">A brokered call is one the sandbox sent through the client and the broker served or refused; the vendor's counts are what reached it. They differ where the broker shed (the overload run: the breaker opened on the vendor's 503, further calls were refused at the broker for the cooldown, the health route was probed, and the adapter's retries got through once the vendor recovered) and where it denied (the probe's bypass, which never reached the vendor).</p>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>The vendor accepted the same command twice, and the adapter reported that all was well, because from where it stood, all was. Ask the adapter how it went and it will tell you. Ask the vendor's books and they will tell you something else. Dijkstra said testing shows the presence of bugs, never their absence, and this page is pleased to report a presence.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Edsger W. Dijkstra:</b> “Program testing can be a very effective way to show the presence of bugs, but is hopelessly inadequate for showing their absence.”</p><p class="src">“The Humble Programmer”, ACM Turing Lecture, 1972 (EWD340). <a href="https://www.cs.utexas.edu/~EWD/transcriptions/EWD03xx/EWD340.html">EWD340 transcription (EXTERNAL · source text ↗)</a></p></div>
+</div>
+
+<p class="kicker">Step 5</p>
+<h2>The boundary probe: three ways out, and a search for the key</h2>
+<p>Run 7 is not an adapter. It is a step under the same grant that tries what hostile adapter code would try, and reports what happened. Its rules: <span class="badge ok">refused by the client</span> <span class="badge ok">refused by the broker</span> <span class="badge ok">no network</span> <span class="badge ok">no credential</span> <span class="badge ok">the vendor saw nothing</span> </p>
+<svg class="art" viewBox="0 0 1040 270" role="img" aria-labelledby="walls-t walls-d">
+<title id="walls-t">The container, its injected client, the broker door, the vendor outside, and three attempts that fail</title>
+<desc id="walls-d">A large rounded box is the container. Inside it, the adapter and the injected client. On its right wall, a door labelled broker leads to the broker on the host and the vendor beyond. Three arrows from the adapter: one stops at the client with not permitted; one goes around the client to the door and stops with 403; one goes to the top wall and ends with no interface. A magnifying glass at the bottom finds no credential.</desc>
+<defs><marker id="ar2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#c2410c"/></marker></defs>
+<rect x="20" y="20" width="680" height="230" rx="16" fill="#eef1f5" stroke="#b9c3cf" stroke-width="3"/>
+<text x="36" y="46" font-size="13" fill="#5a5a5a" font-family="system-ui">the container: read-only root, sized tmpfs, no network interface but loopback</text>
+<rect x="60" y="120" width="150" height="60" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="76" y="146" font-size="13" font-family="system-ui">probe.js</text><text x="76" y="166" font-size="11.5" fill="#5a5a5a" font-family="system-ui">hostile adapter code</text>
+<rect x="330" y="120" width="190" height="60" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="346" y="146" font-size="13" font-family="system-ui">injected client</text><text x="346" y="166" font-size="11.5" fill="#5a5a5a" font-family="system-ui">checks the allow list first</text>
+<rect x="690" y="130" width="20" height="46" rx="4" fill="#fff" stroke="#5687a7" stroke-width="2"/><text x="676" y="196" font-size="11" font-weight="650" font-family="system-ui">broker</text>
+<rect x="760" y="120" width="120" height="60" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="776" y="146" font-size="13" font-family="system-ui">the broker</text><text x="776" y="166" font-size="11.5" fill="#5a5a5a" font-family="system-ui">on the host</text>
+<rect x="920" y="120" width="100" height="60" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="936" y="146" font-size="13" font-family="system-ui">vendor</text><text x="936" y="166" font-size="11.5" fill="#5a5a5a" font-family="system-ui">never reached</text>
+<path d="M210 150H318" stroke="#c2410c" stroke-width="2.5" marker-end="url(#ar2)"/><text x="222" y="140" font-size="11.5" fill="#8a1c1c" font-family="system-ui">1. DELETE /robots/r1</text><text x="232" y="202" font-size="12" font-weight="650" fill="#8a1c1c" font-family="system-ui">not permitted</text>
+<path d="M210 170 C280 230, 560 230, 680 160" fill="none" stroke="#c2410c" stroke-width="2.5" marker-end="url(#ar2)"/><text x="330" y="238" font-size="11.5" fill="#8a1c1c" font-family="system-ui">2. the same request, straight at the broker socket, skipping the client</text><text x="700" y="112" font-size="12" font-weight="650" fill="#8a1c1c" font-family="system-ui">403</text>
+<path d="M135 120 L135 72 L296 72" fill="none" stroke="#c2410c" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#ar2)"/><text x="146" y="96" font-size="11.5" fill="#8a1c1c" font-family="system-ui">3. fetch(the vendor's URL)</text><text x="308" y="76" font-size="12" font-weight="650" fill="#8a1c1c" font-family="system-ui">no route: the wall has no door here</text>
+<circle cx="560" cy="60" r="16" fill="none" stroke="#5687a7" stroke-width="3"/><path d="M572 72L592 92" stroke="#5687a7" stroke-width="4" stroke-linecap="round"/><text x="600" y="62" font-size="11.5" fill="#5a5a5a" font-family="system-ui">4. a search of the room for the credential</text><text x="600" y="80" font-size="12" font-weight="650" fill="#1e6b2f" font-family="system-ui">nothing: it was never in here</text>
+<text x="760" y="204" font-size="11" fill="#5a5a5a" font-family="system-ui">the credential lives here, minted per run,</text><text x="760" y="220" font-size="11" fill="#5a5a5a" font-family="system-ui">attached after the route is authorized</text>
+</svg>
+<div class="three">
+  <div class="panel"><b>1. A catalog-only route, through the client</b><p class="mono small">refused: host api call not permitted by sandbox capability: DELETE /robots/r1</p><p class="note">The injected client checks the allow list before sending. That check is the guest's own code.</p></div>
+  <div class="panel"><b>2. The same route, bypassing the client</b><p class="mono small">broker answered 403 forbidden by sandbox capability allowlist</p><p class="note">A raw request on the broker socket, skipping the client. The broker on the host refuses it: this is the check that counts, and the trace counts it as denied.</p></div>
+  <div class="panel"><b>3. A direct request to the vendor</b><p class="mono small">failed: EPERM</p><p class="note">The container has no network interface but loopback. The vendor's address, which the host can reach, is unreachable from inside.</p></div>
+</div>
+<div class="panel"><b>4. The hunt for the credential.</b> Environment entries that look like a credential: 0. The client's methods: <span class="mono">call cancelMission createMission decommissionRobot del get getMission getRobot health listRobots patch post put updateFirmware </span>; none of their source mentions a bearer. The credential is minted per run on the host and attached by the broker after the route is authorized; the container never holds it. Over the 38 runs the vendor verified 37 different credentials, one per run that reached it (the probe's reached nothing): each a JWT signed for this vendor, naming the caller, living 95 s.</div>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>Three ways out of the room and a search of the room for the key. None of it worked, which is the only acceptable result. As for what is stopping code from doing as it pleases: something, actually. A wall, a door with a list on it, and a key kept in another building.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Gary O'Reilly:</b> “They can write their own code. What's stopping them replicating themselves with code?”</p><p><b>Geoffrey Hinton:</b> “Nothing.” [laughter]</p><p class="src">StarTalk, “Is AI Hiding Its Full Power? With Geoffrey Hinton”, 28 February 2026, at 1:10:16. <a href="https://www.youtube.com/watch?v=l6ZcFa8pybE&amp;t=4210s">StarTalk video at 1:10:16 (EXTERNAL · video ↗)</a></p></div>
+</div>
+
+<p class="kicker">Step 6</p>
+<h2>The evidence: trust nobody on this page, check the signatures</h2>
+<p>Two signed files sit beside this page, both signed by the <code>attest</code> signer's key (Ed25519, key id <span class="mono">23d3123cb4fbd889b5d30d049940e22f40bb021cb6a6954e1abea212da535e37</span>, in <a href="harness.pub">harness.pub</a>), a process outside the daemon:</p>
+<ul>
+  <li><a href="bundle.jsonl">bundle.jsonl</a>, the run records. Every run answered with a record: SHA-256 digests of the request as sent and the result as returned, the provider, the tier, the environment identity and the daemon's clock. The daemon only hashes; the harness recomputed both digests before signing each.</li>
+  <li><a href="qualification.jsonl">qualification.jsonl</a>, the verdicts. One statement per run, bound to that run's record by its digest: the scenario, the plan, the vendor's ledger, the credential the vendor saw, each rule's outcome and the verdict. The verifier checks each statement's adapter, plan and report against the run's signed request and output, and rebuilds the verdict from the ledger: it does not take the signer's word for the verdict, only for the ledger.</li>
+</ul>
+<pre>go run ./examples/adapter -verify docs/examples/adapter</pre>
+<div class="two">
+  <div class="panel">
+    <div class="controls" id="checkpick" role="group" aria-label="evidence check"></div>
+    <p id="tamper-what" class="small"></p>
+    <p><span class="badge ok" id="tamper-badge">verified</span></p>
+    <p class="note" id="tamper-detail"></p>
+  </div>
+  <div class="wide"><table>
+<tr><th>Check</th><th>Verdict</th><th>Detail</th></tr>
+<tr><td>The run records as the harness wrote them</td><td><span class="badge ok">verified</span></td><td class="small">39 entries: 38 run records, each signed with both digests recomputed, and the closing checkpoint</td></tr>
+<tr><td>The run records with run 1&#39;s output changed from completed:true to completed:false</td><td><span class="badge no">refused</span></td><td class="small">entry 1: attest: broken bundle chain: the line&#39;s link signs other content</td></tr>
+<tr><td>The qualification statements as written</td><td><span class="badge ok">verified</span></td><td class="small">38 statements: each bound to its run&#39;s record; its adapter, plan and report matched to that run&#39;s signed request and output; its verdict rebuilt from its evidence</td></tr>
+<tr><td>Run 4&#39;s statement with its ledger edited to one order for r2 and its verdict to pass, signature kept</td><td><span class="badge no">refused</span></td><td class="small">statement 4: the signature does not verify</td></tr>
+<tr><td>Run 4&#39;s statement re-signed with the right key, its verdict changed to pass over the same ledger</td><td><span class="badge no">refused</span></td><td class="small">statement 4 (run 4): its verdict &#34;pass&#34; does not follow from its evidence, which gives &#34;fail&#34;</td></tr>
+<tr><td>Run 4&#39;s failing verdict re-signed onto run 11&#39;s record, the second adapter&#39;s</td><td><span class="badge no">refused</span></td><td class="small">statement 11 (run 11): the request&#39;s plan.json is not the statement&#39;s plan</td></tr>
+</table></div>
+</div>
+<p class="note">A record states the daemon's evidence, not hardware attestation. What a signature proves is that these bytes were seen by whoever holds this key; what the tier proves is in <a href="https://github.com/plimsollmark/plimsoll/blob/main/README.md">the README's provider table</a>. A ledger is the vendor's account as the signer read it from the simulated vendor after the run: the verifier can rebuild a verdict from it, but cannot check it against the vendor, and nothing on this page vouches for the key.</p>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>You may trust the daemon. You may trust the signer. You may even trust this page. The page's advice is to trust none of them and check the signatures, which takes a second and settles exactly one question: whether these are the bytes that key signed. Whether to trust the key is still yours to settle.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Ronald Reagan:</b> “The maxim is: Dovorey no provorey -- trust, but verify.”</p><p class="src">Remarks at the signing of the INF Treaty, 8 December 1987, as transcribed by the Reagan Library. <a href="https://www.reaganlibrary.gov/archives/speech/remarks-signing-intermediate-range-nuclear-forces-treaty">Reagan Library transcript (EXTERNAL · source text ↗)</a></p></div>
+</div>
+
+<h2>Rerun it</h2>
+<pre>make docker-images &amp;&amp; go run ./examples/adapter</pre>
+<p class="note">Needs docker. <code>SANDBOX_DOCKER_RUNTIME=runsc</code> runs it under gVisor, the kernel tier. The simulated vendor is deterministic, so the call counts and verdicts above reproduce; the millisecond timings, the credentials and the key do not. The same matrix runs in <code>sandbox/docker_adapter_test.go</code> in the docker suite, and the published files verify offline in <code>examples/adapter</code>'s own tests.</p>
+
+<script>
+(function () {
+  var FLOOR = {"degraded":4,"faultAt":2,"planned":{"r1":2,"r2":1,"r3":1},"runs":[{"n":1,"group":"first","scenario":"nominal","adapter":"adapter-v1.js","title":"The first adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"26 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":2,"group":"first","scenario":"fault","adapter":"adapter-v1.js","title":"The first adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"24 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":3,"group":"first","scenario":"overload","adapter":"adapter-v1.js","title":"The first adapter, an overloaded vendor","label":"passed","badge":"ok","verdict":"every rule held","calls":"28 served, 8 shed","polls":13,"retries":10,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":4,"group":"first","scenario":"lost_ack","adapter":"adapter-v1.js","title":"The first adapter, a lost answer","label":"failed","badge":"no","verdict":"one order per command: run04-c2 became 2 orders (m2, m3)","calls":"28 served","polls":14,"retries":1,"orders":{"r1":2,"r2":2,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"order","robot":"r2","mission":"m3"},{"kind":"order","robot":"r3","mission":"m4"},{"kind":"start","robot":"r3","mission":"m4"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"start","robot":"r2","mission":"m3"},{"kind":"done","robot":"r2","mission":"m3","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m4","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m4","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m4","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m4","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m4","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m5"},{"kind":"start","robot":"r1","mission":"m5"},{"kind":"cancelled","robot":"r1","mission":"m5","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":10,"y":4},"m4":{"x":0,"y":15},"m5":{"x":3,"y":0}}},{"n":5,"group":"first","scenario":"dropped","adapter":"adapter-v1.js","title":"The first adapter, a dropped connection","label":"failed","badge":"no","verdict":"kept the contract's shapes: run05-c2: dispatch threw an error coded \"\", not refused or unresolved; ended as it should: m2 (run05-c2) is running, want done; the report is true: run05-c2: the adapter reported an error (host api 502: host api unavailable) and the vendor holds the order as m2","calls":"22 served","polls":9,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}}],"stopped":{"m1":{"x":3,"y":0},"m2":null,"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":6,"group":"first","scenario":"server_error","adapter":"adapter-v1.js","title":"The first adapter, a server error after accepting","label":"failed","badge":"no","verdict":"kept the contract's shapes: run06-c2: dispatch threw an error coded \"\", not refused or unresolved; ended as it should: m2 (run06-c2) is running, want done; the report is true: run06-c2: the adapter reported an error (host api 500: {\"error\":\"acknowledgement lost\"}) and the vendor holds the order as m2","calls":"22 served","polls":9,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}}],"stopped":{"m1":{"x":3,"y":0},"m2":null,"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":7,"group":"probe","scenario":"nominal","adapter":"probe.js","title":"The boundary probe","label":"passed","badge":"ok","verdict":"every rule held","calls":"0 served, 1 denied","polls":0,"retries":0,"orders":{"r1":0,"r2":0,"r3":0}},{"n":8,"group":"second","scenario":"nominal","adapter":"adapter-v2.js","title":"The second adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run08-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run08-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run08-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run08-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":9,"group":"second","scenario":"fault","adapter":"adapter-v2.js","title":"The second adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run09-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run09-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run09-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run09-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":10,"group":"second","scenario":"overload","adapter":"adapter-v2.js","title":"The second adapter, an overloaded vendor","label":"passed","badge":"ok","verdict":"every rule held","calls":"22 served, 8 shed","polls":13,"retries":10,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run10-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"order","robot":"r2","mission":"m2","command":"run10-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run10-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run10-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":11,"group":"second","scenario":"lost_ack","adapter":"adapter-v2.js","title":"The second adapter, a lost answer","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":1,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run11-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run11-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run11-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run11-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run11-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":12,"group":"second","scenario":"dropped","adapter":"adapter-v2.js","title":"The second adapter, a dropped connection","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":1,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run12-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run12-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run12-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run12-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run12-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":13,"group":"second","scenario":"server_error","adapter":"adapter-v2.js","title":"The second adapter, a server error after accepting","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":1,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run13-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run13-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run13-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run13-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run13-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":14,"group":"trial","scenario":"nominal","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run14-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run14-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run14-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run14-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":15,"group":"trial","scenario":"fault","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run15-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run15-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run15-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run15-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":16,"group":"trial","scenario":"overload","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, an overloaded vendor","label":"failed","badge":"no","verdict":"one order per command: run16-c2 became no order","calls":"17 served, 5 shed","polls":9,"retries":0,"orders":{"r1":2,"r2":0,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run16-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"order","robot":"r3","mission":"m2","command":"run16-c3"},{"kind":"start","robot":"r3","mission":"m2"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m2","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m2","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m2","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m2","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m2","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m3","command":"run16-c4"},{"kind":"start","robot":"r1","mission":"m3"},{"kind":"cancelled","robot":"r1","mission":"m3","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":0,"y":15},"m3":{"x":3,"y":0}}},{"n":17,"group":"trial","scenario":"lost_ack","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a lost answer","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run17-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run17-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run17-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run17-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run17-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":18,"group":"trial","scenario":"dropped","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a dropped connection","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run18-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run18-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run18-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run18-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run18-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":19,"group":"trial","scenario":"server_error","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a server error after accepting","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run19-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run19-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run19-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run19-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run19-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":20,"group":"trial","scenario":"nominal","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run20-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run20-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run20-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run20-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":21,"group":"trial","scenario":"fault","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run21-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run21-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run21-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run21-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":22,"group":"trial","scenario":"overload","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, an overloaded vendor","label":"failed","badge":"no","verdict":"one order per command: run22-c2 became no order; run22-c3 became no order","calls":"11 served, 8 shed","polls":4,"retries":0,"orders":{"r1":2,"r2":0,"r3":0},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run22-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"order","robot":"r1","mission":"m2","command":"run22-c4"},{"kind":"start","robot":"r1","mission":"m2"},{"kind":"cancelled","robot":"r1","mission":"m2","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":3,"y":0}}},{"n":23,"group":"trial","scenario":"lost_ack","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a lost answer","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run23-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run23-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run23-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run23-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run23-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":24,"group":"trial","scenario":"dropped","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a dropped connection","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run24-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run24-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run24-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run24-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run24-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":25,"group":"trial","scenario":"server_error","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a server error after accepting","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run25-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run25-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run25-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run25-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run25-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":26,"group":"trial","scenario":"nominal","adapter":"trial/opus.js","title":"Claude Opus's adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run26-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run26-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run26-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run26-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":27,"group":"trial","scenario":"fault","adapter":"trial/opus.js","title":"Claude Opus's adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run27-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run27-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run27-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run27-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":28,"group":"trial","scenario":"overload","adapter":"trial/opus.js","title":"Claude Opus's adapter, an overloaded vendor","label":"passed","badge":"ok","verdict":"every rule held","calls":"23 served, 2 shed","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run28-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"order","robot":"r2","mission":"m2","command":"run28-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run28-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run28-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":29,"group":"trial","scenario":"lost_ack","adapter":"trial/opus.js","title":"Claude Opus's adapter, a lost answer","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run29-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run29-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run29-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run29-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run29-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":30,"group":"trial","scenario":"dropped","adapter":"trial/opus.js","title":"Claude Opus's adapter, a dropped connection","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run30-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run30-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run30-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run30-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run30-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":31,"group":"trial","scenario":"server_error","adapter":"trial/opus.js","title":"Claude Opus's adapter, a server error after accepting","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run31-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run31-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run31-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run31-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run31-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":32,"group":"broken","scenario":"nominal","adapter":"broken/wrong-target.js","title":"Broken on purpose: every order sent to (0, 0)","label":"caught","badge":"no","verdict":"the right robot and target: m1 (run32-c1) went to (0, 0), not (3, 0); m2 (run32-c2) went to (0, 0), not (10, 4); m3 (run32-c3) went to (0, 0), not (0, 15); m4 (run32-c4) went to (0, 0), not (50, 50); robot at the target: m1 (run32-c1) ended done with r1 at (0, 0); the target is (3, 0); m2 (run32-c2) ended done with r2 at (0, 0); the target is (10, 4); m3 (run32-c3) ended done with r3 at (0, 0); the target is (0, 15)","calls":"29 served","polls":22,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":33,"group":"broken","scenario":"nominal","adapter":"broken/wrong-robot.js","title":"Broken on purpose: r1's orders sent to r3","label":"caught","badge":"no","verdict":"the right robot and target: m1 (run33-c1) went to r3, not r1; m4 (run33-c4) went to r3, not r1","calls":"39 served","polls":32,"retries":0,"orders":{"r1":0,"r2":1,"r3":3}},{"n":34,"group":"broken","scenario":"fault","adapter":"broken/false-success.js","title":"Broken on purpose: a failure reported as done","label":"caught","badge":"no","verdict":"the report is true: run34-c2: the adapter reported m2 done, the vendor says failed","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":35,"group":"broken","scenario":"nominal","adapter":"broken/no-cancel.js","title":"Broken on purpose: a cancel that sends nothing","label":"caught","badge":"no","verdict":"ended as it should: m4 (run35-c4) is running, want cancelled","calls":"23 served","polls":17,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":36,"group":"broken","scenario":"nominal","adapter":"broken/no-state.js","title":"Broken on purpose: a wait that reports no state","label":"caught","badge":"no","verdict":"kept the contract's shapes: run36-c1: wait returned no state of done, failed, cancelled or timeout: {\"polls\":3}; run36-c2: wait returned no state of done, failed, cancelled or timeout: {\"polls\":4}; run36-c3: wait returned no state of done, failed, cancelled or timeout: {\"polls\":5}; run36-c4: wait returned no state of done, failed, cancelled or timeout: {\"polls\":1}","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":37,"group":"broken","scenario":"nominal","adapter":"broken/empty-inventory.js","title":"Broken on purpose: an empty inventory","label":"caught","badge":"no","verdict":"the inventory is the vendor's: inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3","calls":"18 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":38,"group":"broken","scenario":"nominal","adapter":"broken/invented-robot.js","title":"Broken on purpose: an invented robot","label":"caught","badge":"no","verdict":"kept the contract's shapes: inventory 1: robot imaginary has status \"banana\", not idle, moving or fault; inventory 2: robot imaginary has status \"banana\", not idle, moving or fault; the inventory is the vendor's: inventory 1 lists imaginary, a robot the vendor does not have; inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 lists imaginary, a robot the vendor does not have; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3","calls":"18 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}}],"start":{"r1":{"x":0,"y":0},"r2":{"x":10,"y":0},"r3":{"x":0,"y":10}},"targets":{"r1":{"x":3,"y":0},"r2":{"x":10,"y":4},"r3":{"x":0,"y":15}}};
+  var CHECKS = [{what: "The run records as the harness wrote them", short: "records as written", verdict: "verified", badge: "ok", detail: "39 entries: 38 run records, each signed with both digests recomputed, and the closing checkpoint"},{what: "The run records with run 1\u0027s output changed from completed:true to completed:false", short: "a run\u0027s output changed", verdict: "refused", badge: "no", detail: "entry 1: attest: broken bundle chain: the line\u0027s link signs other content"},{what: "The qualification statements as written", short: "verdicts as written", verdict: "verified", badge: "ok", detail: "38 statements: each bound to its run\u0027s record; its adapter, plan and report matched to that run\u0027s signed request and output; its verdict rebuilt from its evidence"},{what: "Run 4\u0027s statement with its ledger edited to one order for r2 and its verdict to pass, signature kept", short: "a ledger edited", verdict: "refused", badge: "no", detail: "statement 4: the signature does not verify"},{what: "Run 4\u0027s statement re-signed with the right key, its verdict changed to pass over the same ledger", short: "a verdict re-signed", verdict: "refused", badge: "no", detail: "statement 4 (run 4): its verdict \u0022pass\u0022 does not follow from its evidence, which gives \u0022fail\u0022"},{what: "Run 4\u0027s failing verdict re-signed onto run 11\u0027s record, the second adapter\u0027s", short: "a verdict moved", verdict: "refused", badge: "no", detail: "statement 11 (run 11): the request\u0027s plan.json is not the statement\u0027s plan"},];
+  var svg = document.getElementById("floorsvg");
+  var NS = "http://www.w3.org/2000/svg";
+  var colors = { r1: "#2a78d6", r2: "#c2410c", r3: "#0f766e" };
+  var ids = ["r1", "r2", "r3"];
+  var px = function (x) { return 40 + x * 36; };
+  var py = function (y) { return 352 - y * 20; };
+  var el = function (name, attrs, text) { var e = document.createElementNS(NS, name); for (var k in attrs) e.setAttribute(k, attrs[k]); if (text) e.textContent = text; return e; };
+  var state = { scenario: "nominal", adapter: "adapter-v1.js", timer: null, pos: {}, orders: {} };
+
+  var grid = document.getElementById("grid");
+  for (var gx = 0; gx <= 13; gx++) grid.appendChild(el("line", { x1: px(gx), y1: py(0), x2: px(gx), y2: py(16) }));
+  for (var gy = 0; gy <= 16; gy += 2) grid.appendChild(el("line", { x1: px(0), y1: py(gy), x2: px(13), y2: py(gy) }));
+  var targets = document.getElementById("targets");
+  ids.forEach(function (id) {
+    var t = FLOOR.targets[id];
+    var g = el("g", {});
+    g.appendChild(el("line", { x1: px(t.x), y1: py(t.y), x2: px(t.x), y2: py(t.y) - 22, stroke: colors[id], "stroke-width": 2 }));
+    g.appendChild(el("path", { d: "M" + px(t.x) + " " + (py(t.y) - 22) + " l16 5 l-16 5 z", fill: colors[id] }));
+    g.appendChild(el("circle", { cx: px(t.x), cy: py(t.y), r: 5, fill: "none", stroke: colors[id], "stroke-width": 2 }));
+    g.appendChild(el("text", { x: px(t.x) + 20, y: py(t.y) - 14, "font-size": 11, fill: colors[id], "font-family": "system-ui" }, id + " target"));
+    targets.appendChild(g);
+  });
+  var robots = document.getElementById("robots");
+  var nodes = {};
+  ids.forEach(function (id) {
+    var g = el("g", { "class": "robot" });
+    g.appendChild(el("rect", { x: -14, y: -11, width: 28, height: 22, rx: 6, fill: "#fff", stroke: colors[id], "stroke-width": 2.5 }));
+    g.appendChild(el("circle", { cx: -5, cy: -2, r: 2.6, fill: colors[id] }));
+    g.appendChild(el("circle", { cx: 5, cy: -2, r: 2.6, fill: colors[id] }));
+    g.appendChild(el("path", { d: "M-5 5 Q0 9 5 5", fill: "none", stroke: colors[id], "stroke-width": 1.8 }));
+    g.appendChild(el("line", { x1: 0, y1: -11, x2: 0, y2: -18, stroke: colors[id], "stroke-width": 2 }));
+    g.appendChild(el("circle", { cx: 0, cy: -20, r: 2.5, fill: colors[id] }));
+    g.appendChild(el("text", { x: 0, y: 27, "text-anchor": "middle", "font-size": 12, "font-weight": 650, fill: colors[id], "font-family": "system-ui" }, id));
+    var badge = el("text", { x: -34, y: -14, "font-size": 11, "font-weight": 700, fill: "#8a1c1c", "font-family": "system-ui" }, "");
+    badge.setAttribute("class", "orders");
+    g.appendChild(badge);
+    robots.appendChild(g);
+    nodes[id] = { g: g, badge: badge, mouth: g.childNodes[3] };
+  });
+  var effects = document.getElementById("effects");
+  var vendorstate = document.getElementById("vendorstate");
+  var status = document.getElementById("status");
+
+  function place(id, x, y) { state.pos[id] = { x: x, y: y }; nodes[id].g.setAttribute("transform", "translate(" + px(x) + " " + py(y) + ")"); }
+  function reset() {
+    if (state.timer) { clearTimeout(state.timer); state.timer = null; }
+    ids.forEach(function (id) { var s = FLOOR.start[id]; place(id, s.x, s.y); nodes[id].badge.textContent = ""; nodes[id].mouth.setAttribute("d", "M-5 5 Q0 9 5 5"); nodes[id].g.setAttribute("opacity", "1"); state.orders[id] = 0; });
+    while (effects.firstChild) effects.removeChild(effects.firstChild);
+    notes = [];
+    vendorstate.textContent = "accepting requests";
+    status.textContent = "Press play.";
+    showOutcome();
+  }
+  function effect(x, y, text, color) {
+    var g = el("g", { "class": "fade" }), w = text.length * 6.6 + 10;
+    x = Math.max(8, Math.min(x, 552 - w));
+    g.appendChild(el("rect", { x: x - 4, y: y - 14, width: w, height: 20, rx: 6, fill: "#fff", stroke: color }));
+    g.appendChild(el("text", { x: x + 1, y: y, "font-size": 11.5, "font-weight": 650, fill: color, "font-family": "system-ui" }, text));
+    effects.appendChild(g);
+    return g;
+  }
+  function currentRun() {
+    var run = null;
+    FLOOR.runs.forEach(function (r) { if (r.scenario === state.scenario && r.adapter === state.adapter && r.events) run = r; });
+    return run;
+  }
+  var SAY = {
+    order: "{robot}: order {mission} accepted",
+    start: "{robot}: order {mission} starts",
+    repeat: "{robot}: the same command again; the vendor answers with {mission}, the order it already has",
+    conflict: "{robot}: a command ID reused with another target is refused",
+    answer_lost: "{robot}: order {mission} accepted and started, but the answer is a {status}",
+    dropped: "{robot}: order {mission} accepted and started, then the connection closes with no answer",
+    degraded: "the vendor is degraded: the next {status} requests answer 503",
+    refused: "the degraded vendor answers a request with 503",
+    recovered: "the vendor recovers",
+    move: "{robot}: a status read; one unit closer",
+    fault: "{robot}: faults at {pose}; order {mission} failed",
+    failed: "{robot}: queued order {mission} failed with the robot",
+    done: "{robot}: order {mission} done at {pose}",
+    cancelled: "{robot}: order {mission} cancelled"
+  };
+  var fmt = function (p) { return "(" + (+p.x.toFixed(2)) + ", " + (+p.y.toFixed(2)) + ")"; };
+  function say(e) {
+    return (SAY[e.kind] || e.kind).replace("{robot}", e.robot || "").replace("{mission}", e.mission || "").replace("{status}", e.status || "").replace("{pose}", e.pose ? fmt(e.pose) : "");
+  }
+  var notes = [];
+  function note(id, dy, text, color) {
+    notes.unshift({ text: id + ": " + text, color: color });
+    notes = notes.slice(0, 4);
+    while (effects.firstChild) effects.removeChild(effects.firstChild);
+    notes.forEach(function (n, i) { effect(150, 38 + i * 24, n.text, n.color); });
+  }
+  function apply(e) {
+    if (e.pose) place(e.robot, e.pose.x, e.pose.y);
+    switch (e.kind) {
+      case "order":
+        state.orders[e.robot]++;
+        if (state.orders[e.robot] > (FLOOR.planned[e.robot] || 0)) {
+          nodes[e.robot].badge.textContent = "×" + state.orders[e.robot];
+          note(e.robot, 62, state.orders[e.robot] + " orders, " + FLOOR.planned[e.robot] + " planned", "#8a1c1c");
+        }
+        break;
+      case "answer_lost": note(e.robot, 40, "answer lost (" + e.status + ")", "#8a5a00"); break;
+      case "dropped": note(e.robot, 40, "no answer", "#8a5a00"); break;
+      case "repeat": note(e.robot, 62, "same order back", "#1e6b2f"); break;
+      case "conflict": note(e.robot, 62, "refused: 409", "#8a1c1c"); break;
+      case "degraded": case "refused": vendorstate.textContent = "503: scheduler backlog"; break;
+      case "recovered": vendorstate.textContent = "accepting requests"; break;
+      case "fault": nodes[e.robot].mouth.setAttribute("d", "M-5 7 Q0 3 5 7"); note(e.robot, 30, "fault: obstacle", "#8a1c1c"); break;
+      case "failed": note(e.robot, 52, e.mission + " failed", "#8a1c1c"); break;
+      case "cancelled": note(e.robot, 30, e.mission + " cancelled", "#5a5a5a"); break;
+    }
+  }
+  function play() {
+    reset();
+    var run = currentRun();
+    if (!run) { status.textContent = "This combination was not run on this page."; return; }
+    var events = run.events, i = 0, matched = 0, checked = 0;
+    var tick = function () {
+      if (i >= events.length) {
+        state.timer = null;
+        status.textContent = "done. Orders on the vendor's ledger: r1 " + state.orders.r1 + ", r2 " + state.orders.r2 + ", r3 " + state.orders.r3 + ". Where the replay left each robot as its orders ended matches the signed ledger's stopping point for " + matched + " of " + checked + " orders.";
+        return;
+      }
+      var e = events[i++];
+      apply(e);
+      status.textContent = say(e);
+      var stop = run.stopped && run.stopped[e.mission];
+      if (stop && (e.kind === "done" || e.kind === "fault" || e.kind === "cancelled" || e.kind === "failed")) {
+        var p = state.pos[e.robot];
+        checked++;
+        if (Math.abs(p.x - stop.x) < 1e-6 && Math.abs(p.y - stop.y) < 1e-6) matched++;
+      }
+      state.timer = setTimeout(tick, e.kind === "move" ? 240 : 560);
+    };
+    tick();
+  }
+  function showOutcome() {
+    var run = null;
+    FLOOR.runs.forEach(function (r) { if (r.scenario === state.scenario && r.adapter === state.adapter) run = r; });
+    var titles = { nominal: "nominal", fault: "a fault", overload: "an overloaded vendor", lost_ack: "a lost answer", dropped: "a dropped connection", server_error: "a server error after accepting" };
+    var who = { "adapter-v1.js": "The first adapter", "adapter-v2.js": "The second adapter", "trial/haiku.js": "Claude Haiku's adapter", "trial/sonnet.js": "Claude Sonnet's adapter", "trial/opus.js": "Claude Opus's adapter" }[state.adapter];
+    document.getElementById("o-title").textContent = who + ", " + titles[state.scenario];
+    var badge = document.getElementById("o-badge");
+    if (!run) {
+      badge.className = "badge off"; badge.textContent = "not run";
+      document.getElementById("o-step").textContent = "this combination was not part of the run on this page";
+      ["o-verdict", "o-calls", "o-polls", "o-retries"].forEach(function (k) { document.getElementById(k).textContent = "—".replace("—", "not measured"); });
+      document.getElementById("o-orders").innerHTML = "";
+      document.getElementById("o-note").textContent = "The replay above still shows what the vendor would do.";
+      return;
+    }
+    badge.className = "badge " + run.badge; badge.textContent = run.label;
+    document.getElementById("o-step").textContent = "run " + run.n + " on this page";
+    document.getElementById("o-verdict").textContent = run.verdict;
+    document.getElementById("o-calls").textContent = run.calls;
+    document.getElementById("o-polls").textContent = run.polls;
+    document.getElementById("o-retries").textContent = run.retries;
+    var orders = document.getElementById("o-orders");
+    orders.innerHTML = "";
+    ids.forEach(function (id) { var c = document.createElement("span"); c.className = "chip" + (id === "r2" && run.orders[id] > 1 ? " bad" : ""); c.textContent = id + " ×" + run.orders[id]; orders.appendChild(c); });
+    document.getElementById("o-note").textContent = run.badge === "no" ? "Judged from the vendor's ledger, not from the adapter's report." : "Measured on this page's run; the replay above is the vendor's own record of it.";
+  }
+  document.getElementById("scenarios").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    this.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", "false"); });
+    b.setAttribute("aria-pressed", "true"); state.scenario = b.getAttribute("data-scenario"); reset();
+  });
+  document.getElementById("adapters").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-adapter]"); if (!b) return;
+    this.querySelectorAll("button[data-adapter]").forEach(function (x) { x.setAttribute("aria-pressed", "false"); });
+    b.setAttribute("aria-pressed", "true"); state.adapter = b.getAttribute("data-adapter"); reset();
+  });
+  document.getElementById("play").addEventListener("click", play);
+  document.getElementById("reset").addEventListener("click", reset);
+  reset();
+
+  var pick = document.getElementById("checkpick");
+  function showCheck(i) {
+    var c = CHECKS[i];
+    pick.querySelectorAll("button").forEach(function (b, j) { b.setAttribute("aria-pressed", j === i ? "true" : "false"); });
+    document.getElementById("tamper-what").textContent = c.what;
+    var b = document.getElementById("tamper-badge"); b.className = "badge " + c.badge; b.textContent = c.verdict;
+    document.getElementById("tamper-detail").textContent = c.detail;
+  }
+  CHECKS.forEach(function (c, i) {
+    var b = document.createElement("button");
+    b.className = "btn"; b.type = "button"; b.textContent = c.short;
+    b.addEventListener("click", function () { showCheck(i); });
+    pick.appendChild(b);
+  });
+  showCheck(0);
+})();
+</script>
+</main>
+</body>
+</html>

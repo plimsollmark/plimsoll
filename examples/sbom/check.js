@@ -89,13 +89,21 @@
   function attachments(bom) {
     const result = {};
     const evidence = bom.declarations.evidence;
-    if (evidence.length !== 1 || evidence[0]['bom-ref'] !== 'evidence-run-record') throw new Error('Run evidence missing');
-    for (const data of evidence[0].data) {
-      const a = data.contents.attachment;
-      if (result[data.name] || a.encoding !== 'base64') throw new Error('Duplicate or invalid attachment');
-      result[data.name] = from64(a.content);
+    if (evidence.length < 1 || evidence.length > 2 || evidence[0]['bom-ref'] !== 'evidence-run-record') throw new Error('Run evidence missing');
+    const take = (item, want) => {
+      if (item.data.length !== want.length) throw new Error('Unexpected attachments on ' + item['bom-ref']);
+      for (const data of item.data) {
+        const a = data.contents.attachment;
+        if (result[data.name] || a.encoding !== 'base64' || !want.includes(data.name)) throw new Error('Duplicate or invalid attachment');
+        result[data.name] = from64(a.content);
+      }
+    };
+    take(evidence[0], ['envelope.json', 'harness.pub', 'entry.json', 'exchange.json']);
+    if (evidence.length === 2) {
+      if (evidence[1]['bom-ref'] !== 'evidence-qualification') throw new Error('Qualification evidence missing');
+      take(evidence[1], ['statement.json']);
     }
-    for (const name of ['envelope.json', 'harness.pub', 'bundle.jsonl', 'exchange.json']) if (!result[name]) throw new Error('Missing ' + name);
+    for (const name of ['envelope.json', 'harness.pub', 'entry.json', 'exchange.json']) if (!result[name]) throw new Error('Missing ' + name);
     return result;
   }
   const pemDER = bytes => from64(decode.decode(bytes).replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s/g, ''));
@@ -113,6 +121,25 @@
     const got = properties(values);
     return Object.entries(expected).every(([k, v]) => got['plimsoll:' + k] === String(v));
   };
+  // A sealed in-toto statement under the attached key: one signature, this key's id,
+  // the given predicate type, and the signature over the DSSE pre-authentication encoding.
+  async function sealed(env, key, keyID, predicateType) {
+    const body = from64(env.payload), statement = JSON.parse(decode.decode(body)), sig = env.signatures?.[0];
+    const ok = env.payloadType === 'application/vnd.in-toto+json' && env.signatures.length === 1 && sig.keyid === keyID
+      && statement._type === 'https://in-toto.io/Statement/v1' && statement.predicateType === predicateType
+      && statement.subject?.length === 1 && await root.crypto.subtle.verify({name: 'Ed25519'}, key, from64(sig.sig), pae(env.payloadType, body));
+    return {ok, statement};
+  }
+  const ruleNames = {ran_to_the_end: 'ran to the end', kept_the_shapes: "kept the contract's shapes", inventory_is_true: "the inventory is the vendor's",
+    one_order_per_command: 'one order per command', right_robot_and_target: 'the right robot and target', ended_as_it_should: 'ended as it should',
+    robot_at_target: 'robot at the target', report_is_true: 'the report is true', refused_by_client: 'refused by the client',
+    refused_by_broker: 'refused by the broker', no_network: 'no network', no_credential: 'no credential', vendor_saw_nothing: 'the vendor saw nothing'};
+  // The verdict claim's words, built the same way the emitter builds them.
+  function verdictText(p) {
+    let s = `The platform's qualification statement, bound to this run's record, judges ${p.adapter.path} (SHA-256 ${p.adapter.sha256}) in scenario ${p.evidence.scenario.name} (${p.evidence.scenario.says}) by ${p.rules.length} rules read from the vendor's ledger, the vendor's record of its robots and the harness's plan, never from the program's own account:`;
+    p.rules.forEach((o, i) => { s += (i ? '; ' : ' ') + (ruleNames[o.rule] || o.rule) + ': ' + (o.held ? 'held' : 'broken') + (o.detail ? ` (${o.detail})` : ''); });
+    return s + `. Verdict: ${p.verdict}.`;
+  }
   async function check(bom, imageFiles = {}) {
     const lines = [];
     const add = (id, label, ok, detail = '') => lines.push({id, label, ok: Boolean(ok), detail});
@@ -143,14 +170,10 @@
         && tiers.indexOf(r.isolation) >= Math.max(1, tiers.indexOf(x.request.minimum_isolation))
         && (!x.request.minimum_isolation || tiers.includes(x.request.minimum_isolation))
         && r.session === '' && String(r.sequence) === '0' && r.previous_sha256 === '' && !r.unanswered && !p.unanswered);
-      const der = pemDER(attached['harness.pub']);
+      const der = pemDER(attached['harness.pub']), keyID = await hash(der);
       const key = await importPublicKey(bom);
-      const sig = env.signatures?.[0];
-      const sealed = env.payloadType === 'application/vnd.in-toto+json' && env.signatures.length === 1
-        && sig.keyid === await hash(der) && statement._type === 'https://in-toto.io/Statement/v1'
-        && statement.predicateType === 'https://plimsollmark.github.io/plimsoll/run-record/v1'
-        && await root.crypto.subtle.verify({name: 'Ed25519'}, key, from64(sig.sig), pae(env.payloadType, body));
-      add('seal', 'Ed25519 seal on the signed statement', sealed);
+      const record = await sealed(env, key, keyID, 'https://plimsollmark.github.io/plimsoll/run-record/v1');
+      add('seal', 'Ed25519 seal on the signed statement', record.ok);
       const program = bom.metadata.component, files = [...program.components].sort((a, b) => compareUTF8(a.name, b.name));
       const stored = x.request.project.files;
       let fileOK = files.length === stored.length && new Set(files.map(f => f.name)).size === files.length;
@@ -162,37 +185,83 @@
       add('files', 'Each file fingerprint matches its attached content', fileOK);
       const fileHash = await fileSetDigest(files);
       add('file-set', 'Program file-set fingerprint', equalHash(program.hashes, fileHash) && program.version === fileHash.slice(0, 12));
-      const image = bom.components[0], imageHash = r.software_identity.split('@sha256:')[1];
+      const selected = /^oci-manifest:[a-z0-9._/-]+@sha256:([a-f0-9]{64})$/.exec(r.software_identity);
+      const booted = !r.software_identity && /^dockercloud-image:sha256:([a-f0-9]{64})$/.exec(r.environment);
+      const imageHash = selected ? selected[1] : booted ? booted[1] : '';
+      const image = bom.components[0];
       const w = bom.formulation[0].workflows[0];
+      const grant = x.request.project.grant_profile;
       const ps = matchProperties(program.properties, {request_sha256: reqHash, result_sha256: resultHash, record_sha256: recHash})
         && matchProperties(w.outputs[0].properties, {result_sha256: resultHash})
         && matchProperties(image.properties, {environment: r.environment, software_identity: r.software_identity})
-        && image.version === 'sha256:' + imageHash && equalHash(image.hashes, imageHash)
+        && imageHash && image.version === 'sha256:' + imageHash && equalHash(image.hashes, imageHash)
         && w.uid === recHash && w.timeStart === timestamp(r.started_unix_ms) && w.timeEnd === timestamp(r.ended_unix_ms)
         && matchProperties(w.properties, {provider: r.provider, isolation: r.isolation, minimum_isolation: x.request.minimum_isolation,
-          timeout_ms: x.request.timeout_ms, grant: 'none', outcome: outcomes[outcomeNumber(x.response.project)]})
-        && (!r.policy || matchProperties(w.properties, {policy: r.policy})) && !x.request.project.grant_profile;
+          timeout_ms: x.request.timeout_ms, grant: grant || 'none', outcome: outcomes[outcomeNumber(x.response.project)]})
+        && (!r.policy || matchProperties(w.properties, {policy: r.policy}));
       add('properties', 'BOM fingerprints and run properties', ps);
+      const imageClaim = selected
+        ? `The daemon states that the run executed in the image whose OCI manifest digest is sha256:${imageHash} (environment ${r.environment}), verified before launch.`
+        : `The daemon states that the run executed in a Docker Cloud microVM booted from the image whose linux/amd64 manifest digest is sha256:${imageHash} (environment ${r.environment}), the provider's pin, which it compares with the digest the cloud reports each sandbox booted and refuses to run on a difference.`;
+      const tierTail = grant
+        ? `the stored request names host-API grant profile ${grant}, the run's only route out, served by the daemon's broker, and the result digest is ${resultHash}. Network beyond the grant is provider configuration; this record is not a network measurement.`
+        : `the stored request names no host-API grant and the result digest is ${resultHash}. The provider's no-grant configuration supplies network isolation; this record is not a network measurement.`;
       const expectedClaims = [
         `The program's ${files.length} files, file-set digest ${fileHash}, are the files in the stored request whose signed digest ${reqHash} covers them with the isolation floor and timeout.`,
-        `The daemon states that the run executed in the image whose OCI manifest digest is sha256:${imageHash} (environment ${r.environment}), verified before launch.`,
-        `The daemon states provider ${r.provider} and isolation tier ${r.isolation}, at or above requested floor ${x.request.minimum_isolation}, from ${timestamp(r.started_unix_ms)} to ${timestamp(r.ended_unix_ms)} UTC; the stored request names no host-API grant and the result digest is ${resultHash}. The provider's no-grant configuration supplies network isolation; this record is not a network measurement.`
+        imageClaim,
+        `The daemon states provider ${r.provider} and isolation tier ${r.isolation}, at or above requested floor ${x.request.minimum_isolation}, from ${timestamp(r.started_unix_ms)} to ${timestamp(r.ended_unix_ms)} UTC; ` + tierTail
       ];
-      add('claims', 'Every claim fingerprint matches the receipt', bom.declarations.claims.length === 3
-        && bom.declarations.claims.every((c, i) => c['bom-ref'] === 'claim-' + ['code', 'image', 'tier'][i]
-          && c.predicate === expectedClaims[i] && c.target === 'program' && c.evidence.length === 1 && c.evidence[0] === 'evidence-run-record'));
-      const bundleHash = await hash(attached['bundle.jsonl']);
-      const refs = program.externalReferences.filter(r => r.type === 'attestation');
-      add('bundle', 'Attached bundle fingerprint', matchProperties(bom.properties, {bundle_sha256: bundleHash})
-        && refs.length === 1 && equalHash(refs[0].hashes, bundleHash));
+      const qualified = Boolean(attached['statement.json']);
+      add('claims', 'Every claim fingerprint matches the receipt', bom.declarations.claims.length === (qualified ? 4 : 3)
+        && expectedClaims.every((want, i) => { const c = bom.declarations.claims[i]; return c['bom-ref'] === 'claim-' + ['code', 'image', 'tier'][i]
+          && c.predicate === want && c.target === 'program' && c.evidence.length === 1 && c.evidence[0] === 'evidence-run-record'; }));
+      // The attached bundle line: its link is the harness's seal over the line's content
+      // (the line without its last member, the link) at the index the BOM states.
+      const lineBytes = attached['entry.json'], entry = JSON.parse(decode.decode(lineBytes));
+      const marker = utf8(',"link":');
+      let cut = -1;
+      outer: for (let i = lineBytes.length - marker.length; i >= 0; i--) {
+        for (let j = 0; j < marker.length; j++) if (lineBytes[i + j] !== marker[j]) continue outer;
+        cut = i; break;
+      }
+      const bomProps = properties(bom.properties);
+      const link = entry.link ? await sealed(entry.link, key, keyID, 'https://plimsollmark.github.io/plimsoll/bundle-link/v1') : {ok: false, statement: {subject: [{}], predicate: {}}};
+      const place = link.statement.predicate;
+      const refs = program.externalReferences.filter(ref => ref.type === 'attestation' && ref.url.endsWith('bundle.jsonl'));
+      add('line', 'Bundle line sealed at its stated place; the whole bundle is referenced by fingerprint', cut > 0 && link.ok
+        && link.statement.subject[0].name === 'bundle-line' && link.statement.subject[0].digest.sha256 === place.entry_sha256
+        && !place.checkpoint && place.entry_sha256 === await hash(concat([lineBytes.slice(0, cut), utf8('}')]))
+        && String(place.index) === bomProps['plimsoll:bundle_line']
+        && entry.envelope.payload === env.payload && entry.envelope.signatures.length === 1 && entry.envelope.signatures[0].sig === env.signatures[0].sig
+        && refs.length === 1 && equalHash(refs[0].hashes, bomProps['plimsoll:bundle_sha256']));
+      if (qualified) {
+        const st = JSON.parse(decode.decode(attached['statement.json']));
+        const verdict = await sealed(st, key, keyID, 'https://plimsollmark.github.io/plimsoll/examples/adapter/qualification/v1');
+        const q = verdict.statement.predicate || {};
+        add('statement', "Referee's statement sealed under the same key and bound to this record", verdict.ok
+          && verdict.statement.subject[0].name === 'run-record' && verdict.statement.subject[0].digest.sha256 === recHash
+          && String(q.run) === bomProps['plimsoll:bundle_line']);
+        const judged = stored.find(f => f.path === q.adapter?.path), harness = stored.find(f => f.path === 'harness.js');
+        const judgedOK = judged && await hash(utf8(judged.content)) === q.adapter.sha256
+          && (q.evidence?.kind !== 'adapter' || (harness && await hash(utf8(harness.content)) === q.harness_sha256));
+        const held = Array.isArray(q.rules) && q.rules.length > 0 && q.rules.every(o => o.held);
+        const claim = bom.declarations.claims[3], map = bom.declarations.attestations[0].map[3];
+        const qrefs = program.externalReferences.filter(ref => ref.type === 'attestation' && ref.url.endsWith('qualification.jsonl'));
+        add('verdict', 'Verdict claim and conformance score say what the sealed statement says; the judged files are the stored ones', judgedOK
+          && (q.verdict === 'pass') === held && (q.verdict === 'pass' || q.verdict === 'fail')
+          && claim?.['bom-ref'] === 'claim-verdict' && claim.target === 'program' && claim.predicate === verdictText(q)
+          && claim.evidence.length === 2 && claim.evidence[0] === 'evidence-qualification' && claim.evidence[1] === 'evidence-run-record'
+          && map?.requirement === 'req-verdict' && map.conformance.score === (held ? 1 : 0)
+          && qrefs.length === 1 && equalHash(qrefs[0].hashes, bomProps['plimsoll:qualification_sha256']));
+      }
       if (image.externalReferences?.length) {
         const name = 'image-' + imageHash.slice(0, 12) + '.cdx.json';
         const bytes = from64(imageFiles[name] || '');
         const label = JSON.parse(decode.decode(bytes));
         const references = image.externalReferences;
-        const pages = program.externalReferences.find(r => r.type === 'documentation').url.replace(/index\.html$/, '');
+        const pages = program.externalReferences.find(ref => ref.type === 'documentation').url.replace(/index\.html$/, '');
         add('image', 'Image label fingerprint, manifest and BOM-Link', references.length === 2
-          && references.every(r => r.type === 'bom') && references[0].url === pages + name
+          && references.every(ref => ref.type === 'bom') && references[0].url === pages + name
           && equalHash(references[0].hashes, await hash(bytes)) && label.metadata.component.version === image.version
           && references[1].url === 'urn:cdx:' + label.serialNumber.replace('urn:uuid:', '') + '/' + label.version + '#' + encodeURIComponent(label.metadata.component['bom-ref']));
       }

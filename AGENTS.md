@@ -121,7 +121,7 @@ option is intentionally only process-tier.
   `plimsoll/sandbox-wasm-cc` from the sim image: the C half of wasi-sdk 27 (clang and
   a wasm32-wasip1 libc with libm), pinned by the same image digest the sim build
   uses, so a project step can compile C to a WebAssembly module with no network.
-- [examples/](examples/), eleven runnable programs: `minimal` (one snippet and the
+- [examples/](examples/), twelve runnable programs: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
   the injected client and being refused by the broker anyway, then the identical
   request succeeding under a separate per-run grant that lists it), `daemon` (the
@@ -161,13 +161,45 @@ option is intentionally only process-tier.
   sessions bundle, once `attest` has accepted it, stated as an Agent Action Capsule under
   draft-mih-scitt-agent-action-capsule-05 and checked by that project's Go and Python
   verifiers; the page it writes is `docs/examples/capsule/`), and `sbom`
-  ([examples/sbom](examples/sbom/README.md), its own Go module): two signed single
-  project runs, one with a failed network attempt, converted deterministically
-  into CycloneDX 1.6 bills of materials with the original bundle as evidence.
-  Its `-check` rebuilds every derived field from that verified bundle and can pin
-  an independently trusted key; it starts no sandbox. Its page is
+  ([examples/sbom](examples/sbom/README.md), its own Go module): signed single
+  project runs converted deterministically into CycloneDX 1.6 bills of materials,
+  one per run: two under gVisor (one with a failed network attempt), the same two
+  requests on Docker Cloud (tier `vm`), and two adapter runs whose signed
+  qualification verdict is a fourth claim with a conformance score of 1 or 0. Each BOM
+  attaches its own bundle line and references the whole bundle by digest
+  (`attest.VerifyEntry` checks a line alone, `qualify.VerifyOne` one statement).
+  Its `-check` rebuilds every derived field from that verified line, checks the chain
+  and the checks across runs when the bundle is supplied, and can pin an
+  independently trusted key; it starts no sandbox. Its page is
   `docs/examples/sbom/index.html`; `make sbom-suite` vets and race-tests the module
   offline, rejecting altered evidence, file substitutions and changed claims.
+  `adapter` ([examples/adapter](examples/adapter/), needs docker): the loop a platform
+  needs when an AI writes the code that integrates a vendor's device API. A fictional
+  fleet vendor's OpenAPI document (eight operations; its create takes an optional
+  `command_id` the vendor answers a repeat of with the original order) is the one source:
+  specgen derives the grant's allow list, the injected client and the description; the
+  operator grants six routes, and the profile's `jwt` token mints a credential per run that
+  the simulated vendor ([examples/adapter/fleetsim](examples/adapter/fleetsim/)) verifies.
+  plimsolld runs the platform's harness, which only records what the adapter returns, over
+  six scenarios (nominal, a robot fault, an overloaded vendor whose 503s open the broker's
+  breaker, a lost answer, a dropped connection the broker answers 502, and a 500 after the
+  order was accepted), beside a boundary probe and seven adapters broken on purpose. The
+  verdict is made on the host by [examples/adapter/qualify](examples/adapter/qualify/): eight
+  rules, the same for every scenario, over every returned value, the plan, the vendor's
+  ledger and the vendor's record of its robots, never the adapter's account of itself.
+  `adapter-v1.js` (written in the session that built the example, not an independent trial)
+  fails three scenarios; `adapter-v2.js` passes all six. Three fresh agents (Claude Haiku,
+  Sonnet and Opus) wrote adapters from [a prompt](examples/adapter/trial/PROMPT.md) in clean
+  sessions (`claude -p --safe-mode --tools ""` in an empty directory) with a practice scenario
+  per round; their results and the audit are in [the trial's record](examples/adapter/trial/README.md),
+  beside a first run whose context leaked. The floor on the page replays the
+  vendor's own event log. Every record is signed by the `attest` harness, and every verdict too,
+  as a qualification statement bound to its run's record (`qualification.jsonl`);
+  `go run ./examples/adapter -verify DIR` rebuilds each verdict from its evidence and checks it
+  against the signed request and output, and `examples/adapter`'s own test does so for the
+  published files. The page it writes is `docs/examples/adapter/index.html`;
+  `sandbox/docker_adapter_test.go` holds the matrix of broken rules, the call counts, the read
+  budget and the refusals.
   The records state the daemon's evidence, never hardware attestation. The examples that run the daemon build it from source
   through [examples/internal/daemonproc](examples/internal/daemonproc/).
 - [measurements/](measurements/): timing programs (`session-latency`, `warm-pool`) that call

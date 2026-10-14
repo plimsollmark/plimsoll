@@ -244,6 +244,7 @@ described from its own documentation, with plimsoll's weak points beside them:
 | [Same run, different sandboxes ↗](https://plimsollmark.github.io/plimsoll/examples/providers/index.html) | The cart-pole run from the top of this page, on local `runc` and gVisor, an OpenShell gateway, E2B and Docker Cloud Sandboxes: three isolation tiers, two Node versions, and one fingerprint, the same one the first report published. Reproduce the configured rows with `go run ./examples/providers`; the cloud rows are billed. |
 | [One sandbox, five calls ↗](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html) | A session on an OpenShell sandbox: a failing test, a patch, the test passing without the files being sent again, and a leftover process that is gone by the next call. Each call's run record (the daemon's statement of what was sent, what came back and where it ran) is signed and linked to the previous one. The verifier accepts the signed set, and refuses it when one call is dropped or one byte is changed. Reproduce with `go run ./examples/sessions` and a gateway. |
 | [The efficiency advisor's report ↗](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html) | The advisor reads the API calls a run made and points out wasteful patterns. One measured run: the same question asked of an API as 13 calls, then as 1, and the advisor's finding that names the route that answers it in one call. |
+| [An AI-written vendor adapter, judged by the vendor's ledger ↗](https://plimsollmark.github.io/plimsoll/examples/adapter/index.html) | One OpenAPI document becomes the grant, the injected client and the description an agent reads; an AI-written adapter runs in the sandbox against a simulated fleet vendor over six scenarios, under a credential minted per run, beside a boundary probe and seven adapters broken on purpose, and three fresh AI agents write their own adapters for an exam with one practice question. The verdict is made on the host by eight rules applied to every value the adapter returned and to the vendor's own ledger, never the adapter's account of itself: when the vendor loses an answer, the first adapter re-sends the order and the ledger shows two orders for one command while its report is clean. The rewrite names every order with a command ID and passes. Every run's record and every verdict is signed, and the verifier rebuilds each verdict from its evidence. Reproduce with `make docker-images && go run ./examples/adapter`; check the published files with `go run ./examples/adapter -verify docs/examples/adapter`. |
 | [Twelve interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | How a run is executed, the providers, the API broker, and connecting an AI agent. Static pages: no network calls, no analytics, no third-party scripts. |
 
 ## Status, plainly
@@ -266,8 +267,9 @@ described from its own documentation, with plimsoll's weak points beside them:
   content hash. `sbom` runs `make sbom-suite`: the separate
   [INTERNAL · CycloneDX example guide →](examples/sbom/README.md), which writes signed run
   evidence as a standard bill of materials (a parts list), is vetted and
-  race-tested offline. It reproduces both published BOMs and their page and
-  checks signatures, schema validity and refusal of altered mapped fields.
+  race-tested offline. It reproduces all six published BOMs and their page and
+  checks signatures, schema validity, the qualification verdicts and refusal of
+  altered mapped fields.
   It starts no sandbox; a skipped test fails the job. `audit-docker` also follows `audit` and
   runs `make docker-suite` with the images prepared, in required mode: a missing
   daemon, a missing image or a skipped test fails the job. A green `audit-docker`

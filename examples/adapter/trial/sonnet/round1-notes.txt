@@ -1,0 +1,5 @@
+- `dispatch` always sends `command_id`, and retries only with that same id, so the vendor returns the original mission rather than creating a second one. Timeouts, 5xx and 502 are retried five times and then throw `unresolved`. Other 4xx answers, including a 409 conflict, throw `refused`.
+- Ids outside the vendor's 8–64 `[A-Za-z0-9_-]` alphabet are mapped by an injective escape, so distinct commands stay distinct. Ids longer than 64 characters are truncated, which could collide; I didn't handle that.
+- `dispatch` checks that the answer's robot and command match before returning the mission id.
+- `wait` counts only successful status reads as polls. Transient errors are retried after a short pause, capped at 30. A `failed` mission is returned as is and never retried.
+- `cancel` and `inventory` retry transient errors only. `cancel` returns the vendor's mission object.

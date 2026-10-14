@@ -1,0 +1,2 @@
+- **Only change:** the read-only fallback lookup in `dispatch` (`findMission`) now tries each call at most twice (`LOOKUP_TRIES`) instead of five times. This roughly halves how long `dispatch` can run when the vendor stops answering entirely, so the "every call returned or threw" rule is safer.
+- **Unchanged:** all behaviour that passed the nominal scenario, including the same `command_id` on every attempt, the refused vs. unresolved rules, the polling and cancel semantics.

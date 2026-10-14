@@ -1,0 +1,18 @@
+Round 1 result: your adapter was tried once in the platform's development scenario, and this is what the platform shows you.
+
+Development scenario (nominal: three idle robots, every order can complete). The harness ran these commands: run01-c1: r1 to (3, 0); run01-c2: r2 to (10, 4); run01-c3: r3 to (0, 15); run01-c4: r1 to (50, 50), cancelled as soon as placed; 
+
+The harness exited 0 and printed:
+{"scenario":"nominal","adapter":"adapter.js","completed":true,"commands":[{"id":"run01-c1","robot":"r1","mission":"m1","state":"done","polls":3,"error":"","code":""},{"id":"run01-c2","robot":"r2","mission":"m2","state":"done","polls":4,"error":"","code":""},{"id":"run01-c3","robot":"r3","mission":"m3","state":"done","polls":5,"error":"","code":""},{"id":"run01-c4","robot":"r1","mission":"m4","state":"cancelled","polls":1,"error":"","code":""}],"polls":13,"retries":0,"inventory":3,"statuses":{"r1":"idle","r2":"idle","r3":"idle"},"errors":[]}
+
+The six rules, from the vendor's ledger:
+- ran_to_the_end: held
+- one_order_per_command: held
+- right_robot_and_target: held
+- ended_as_it_should: held
+- robot_at_target: held
+- report_is_true: held
+
+Verdict in this scenario: pass.
+
+Other scenarios exist and are not disclosed. This is still the same closed-book task: no tools. Reply with a revised complete adapter.js in one ```js block, or reply KEEP to keep this one. You have up to two more rounds.

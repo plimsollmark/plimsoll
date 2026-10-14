@@ -33,7 +33,42 @@
   .wide { overflow-x: auto; }
   ul li { margin: 4px 0; }
   a { color: var(--blue); }
-  @media (max-width: 900px) { .tiles { grid-template-columns: 1fr 1fr; } }
+  .kicker { color: #6b6b66; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin: 30px 0 -4px; }
+  .diagram { width: 100%; height: auto; display: block; background: #f7fafc; border-radius: 12px; margin: 10px 0; }
+  .diagram text { font-family: system-ui, sans-serif; font-size: 13px; fill: var(--ink); }
+  .diagram text.sub { font-size: 11.5px; fill: var(--ink2); }
+  .diagram text.tag { font-size: 11px; font-weight: 650; }
+  .chain { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0; margin: 12px 0; }
+  .capsule { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; width: 190px; position: relative; transition: box-shadow .2s, border-color .2s; }
+  .capsule .pill { display: inline-block; width: 34px; height: 16px; border-radius: 8px; background: linear-gradient(90deg, #2a78d6 50%, #e6f0fb 50%); border: 1px solid #1f5fae; vertical-align: middle; margin-right: 6px; }
+  .capsule b { font-size: 14px; }
+  .capsule .what { font-size: 12.5px; color: var(--ink2); margin: 4px 0; min-height: 2.6em; }
+  .capsule .ids { font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--ink2); }
+  .capsule.hit { border-color: #c2410c; box-shadow: 0 0 0 3px #fde6dc; }
+  .capsule.gone { opacity: .35; border-style: dashed; }
+  .link { align-self: center; width: 34px; text-align: center; color: #5687a7; font-size: 20px; }
+  .link small { display: block; font-size: 9px; color: var(--ink2); margin-top: -6px; }
+  .link .arrow { display: inline-block; }
+  .chain .link:last-child { display: none; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
+  .btn { font: inherit; font-size: 13.5px; padding: 6px 12px; border-radius: 999px; border: 1px solid #cdd6e0; background: #fff; color: var(--ink); cursor: pointer; }
+  .btn[aria-pressed="true"] { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 10px; }
+  .narrator { background: #fffdf6; border: 1px solid #e8dfc8; border-radius: 12px; padding: .8rem .9rem; font-size: .92rem; }
+  .narrator .who { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: #6b6b66; margin-bottom: .3rem; }
+  .narrator .who small { text-transform: none; letter-spacing: 0; }
+  .narrator p { margin: 0; }
+  .realquote { background: #f6f9fc; border: 1px solid #d9e4ee; border-radius: 12px; padding: .8rem .9rem; font-size: .92rem; }
+  .realquote .who { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: #6b6b66; margin-bottom: .3rem; }
+  .realquote p { margin: 0 0 .25rem; }
+  .realquote .src { color: var(--ink2); font-size: .8rem; }
+  .asides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; }
+  .catch { margin: 6px 0 0; padding: 0; list-style: none; }
+  .catch li { display: grid; grid-template-columns: 170px 1fr auto; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13.5px; align-items: start; }
+  .catch li:first-child { border-top: 0; }
+  p, td, li { overflow-wrap: anywhere; }
+  @media (prefers-reduced-motion: reduce) { .mover { display: none; } .capsule { transition: none; } }
+  @media (max-width: 900px) { .tiles { grid-template-columns: 1fr 1fr; } .asides { grid-template-columns: 1fr; } .catch li { grid-template-columns: 1fr; } .capsule { width: 100%; } .link { width: 100%; padding: 4px 0; } .link .arrow { transform: rotate(90deg); } }
 </style>
 </head>
 <body>
@@ -48,6 +83,45 @@
   <div class="tile"><div class="k">Stated from</div><div class="v">backfilled</div><div class="n">records made 28 Sept, stated as capsules afterwards</div></div>
   <div class="tile"><div class="k">Import time</div><div class="v" style="font-size:16px">{{.ImportedAt}}</div><div class="n">pass it to reproduce every capsule ID</div></div>
 </div>
+
+<p class="kicker">From a run to a capsule</p>
+<h2>What signed what, and who checked it</h2>
+<p>A run record is the daemon's statement about one call: what was sent, what came back, where it ran. The attest harness checks that statement against the stored bytes and signs it. This program is a collector: it reads the signed bundle afterwards, verifies it first, and states each accepted record as a capsule, which it signs with a producer key. Three independent verifiers then check the result. Follow the dot.</p>
+<svg class="diagram" viewBox="0 0 1100 250" role="img" aria-labelledby="cap-t cap-d">
+<title id="cap-t">From plimsolld's run record through the attest harness to a capsule and its three verifiers</title>
+<desc id="cap-d">Left to right: plimsolld writes a run record; the attest harness checks and signs it into a bundle; this program, a collector, verifies the bundle and states each record as a capsule; the capsule is signed with a producer key into a store, one JSON file per capsule, chained by parent; three verifiers check the store: plimsoll's attest in Go, the capsule project's in Go, and its Python reference verifier.</desc>
+<defs><marker id="car" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker></defs>
+<path id="caproute" d="M110 86 L270 86 L450 86 L640 86 L830 86 L830 150 L960 150" fill="none" stroke="none"/>
+<rect x="18" y="44" width="180" height="84" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="34" y="72">plimsolld</text><text class="sub" x="34" y="92">one run record per call</text><text class="sub" x="34" y="112">digests, tier, image, times</text>
+<path d="M198 86H232" stroke="#5687a7" stroke-width="2" marker-end="url(#car)"/>
+<rect x="238" y="44" width="180" height="84" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="254" y="72">attest harness</text><text class="sub" x="254" y="92">checks the stored bytes</text><text class="sub" x="254" y="112">signs; chains the session</text>
+<path d="M418 86H452" stroke="#5687a7" stroke-width="2" marker-end="url(#car)"/>
+<rect x="458" y="44" width="180" height="84" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="474" y="72">this program</text><text class="sub" x="474" y="92">a collector: verifies first,</text><text class="sub" x="474" y="112">then states each capsule</text>
+<path d="M638 86H672" stroke="#5687a7" stroke-width="2" marker-end="url(#car)"/>
+<rect x="678" y="44" width="180" height="84" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="694" y="72">capsule store</text><text class="sub" x="694" y="92">one JSON file each,</text><text class="sub" x="694" y="112">COSE-signed, chained</text>
+<path d="M768 128V170" stroke="#5687a7" stroke-width="2" marker-end="url(#car)"/>
+<rect x="590" y="176" width="110" height="56" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="602" y="198" font-size="12">plimsoll attest</text><text class="sub" x="602" y="218">Go: the bundle</text>
+<rect x="712" y="176" width="110" height="56" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="724" y="198" font-size="12">capsule-emit-go</text><text class="sub" x="724" y="218">Go: each capsule</text>
+<rect x="834" y="176" width="130" height="56" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="846" y="198" font-size="12">agent-action-capsule</text><text class="sub" x="846" y="218">Python: the store</text>
+<text class="sub" x="880" y="72">three verifiers,</text><text class="sub" x="880" y="92">no code shared</text><text class="sub" x="880" y="112">between Go and Python</text>
+<text class="sub" x="20" y="246">The daemon only hashes and holds no key. The harness holds the key that signs records; the collector holds the key that signs capsules; each verifier holds only public halves.</text>
+<circle class="mover" r="7" fill="#c2410c" stroke="#fff" stroke-width="2"><animateMotion dur="6s" repeatCount="indefinite"><mpath href="#caproute"/></animateMotion></circle>
+</svg>
+
+<h2>The chain, and how to break it</h2>
+<p>Each capsule names the one before it as its parent, so the five form a chain. Pick a way to tamper with it and see which verifier noticed, from the checks actually run for this page. One of the five is not caught by a store check, on purpose; the note under the picker says why.</p>
+<div class="chain" id="chain">
+{{range .Capsules}}<div class="capsule" data-seq="{{.Sequence}}"><span class="pill" aria-hidden="true"></span><b>call {{.Sequence}}</b><div class="what">{{.Result}}</div><div class="ids">capsule {{short .ID}}<br>record {{short .Record}}</div></div><div class="link" aria-hidden="true"><span class="arrow">→</span><small>follows</small></div>
+{{end}}</div>
+<div class="controls" id="breakers" role="group" aria-label="tamper with the chain">
+  <button class="btn" type="button" data-case="verdict" aria-pressed="false">change call 3's verdict</button>
+  <button class="btn" type="button" data-case="resign" aria-pressed="false">reuse call 3's signature for another ID</button>
+  <button class="btn" type="button" data-case="flip" aria-pressed="false">flip one bit of call 3's signature</button>
+  <button class="btn" type="button" data-case="middle" aria-pressed="false">remove call 3</button>
+  <button class="btn" type="button" data-case="last" aria-pressed="false">remove the last call</button>
+  <button class="btn" type="button" data-case="none" aria-pressed="true">as published</button>
+</div>
+<div class="panel"><p id="break-say"><b>As published.</b> Every verifier accepted the chain; the rows below are the checks that ran.</p><ul class="catch" id="break-rows"></ul></div>
 
 <h2>The capsules</h2>
 <div class="wide"><table>
@@ -64,6 +138,10 @@
 <p class="note">The Python verifier is the capsule project's reference implementation (<code>agent-action-capsule</code> 0.6.0, with its own canonicalization and SHA-256), so it shares no code with the Go emitter that built the capsules. Signatures are checked twice: in Go by the emitter's <code>VerifyEnvelope</code> (go-cose), and in Python by the project's own <code>verify_producer_envelope</code>, which reaches COSE_Sign1 through <a href="https://github.com/action-state-group/scitt-cose">scitt-cose ↗</a> 0.4.0. scitt-cose implements COSE_Sign1 from scratch rather than wrapping a COSE library, so the two signature checks share no COSE code either.</p>
 <p class="note">The last two rows differ on purpose. Removing a capsule from the middle of the chain is caught because the next capsule names it as its parent. Removing the last one is not caught by a store check, because nothing names it; that is what the capsule project's witnessed log is for, and these capsules were not sent to one. plimsoll's bundle ends in a signed statement of how many calls the session made and which record was last, so its verifier catches a missing tail on its own.</p>
 
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>Nobody can say why the model wrote what it wrote; that is a trillion numbers' business. A capsule does not try. It says what was done, where, with what result, and who signed for it, which is one file and one signature. The why stays in the weights; the what goes in the store.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Geoffrey Hinton:</b> “It's a trillion real numbers and nobody quite knows how they work.”</p><p class="src">StarTalk, 28 February 2026, at 52:01, on what a large language model is. <a href="https://www.youtube.com/watch?v=l6ZcFa8pybE&amp;t=3118s">StarTalk video at 52:01 (EXTERNAL · video ↗)</a></p></div>
+</div>
 <h2>How a plimsoll outcome reads as a capsule</h2>
 <div class="wide"><table>
 <tr><th>plimsoll outcome</th><th><code>verdict_class</code></th><th><code>effect.status</code></th><th>Derived <code>effect_mode</code></th><th><code>reason_digest</code></th></tr>
@@ -86,6 +164,10 @@
 <li><strong>Refusals are missing.</strong> The specification requires a capsule for every verdict, refusals included, and calls a success-only trail survivorship-biased. plimsoll answers a refused run with an error that carries no record today, so there is nothing to state a <code>blocked</code> or <code>denied</code> capsule from.</li>
 </ul>
 
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>Knuth once warned a colleague that he had only proved his code correct, not tried it. These capsules make the opposite claim, and only that one: the code was tried, in this room, and this is what came back. Nobody here claims it was correct.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Donald E. Knuth:</b> “Beware of bugs in the above code; I have only proved it correct, not tried it.”</p><p class="src">The last sentence of a 1977 memo to Peter van Emde Boas, as Knuth tells it on his own FAQ page. <a href="https://www-cs-faculty.stanford.edu/~knuth/faq.html">Knuth's FAQ (EXTERNAL · author's page ↗)</a></p></div>
+</div>
 <h2>Check it yourself</h2>
 <pre>git clone https://github.com/plimsollmark/plimsoll &amp;&amp; cd plimsoll/examples/capsule
 go run . -out /tmp/capsule-check            # Go 1.27; same capsule IDs, new signatures
@@ -93,6 +175,56 @@ go run . -out /tmp/capsule-check            # Go 1.27; same capsule IDs, new sig
 pip install "agent-action-capsule[envelope]==0.6.0"
 agent-action-capsule verify --store ../../docs/examples/capsule/capsules</pre>
 <p class="note">Files beside this page: <a href="https://github.com/plimsollmark/plimsoll/tree/main/docs/examples/capsule/capsules">capsules/ ↗</a> (one JSON file per capsule, named by its ID: the store the Python verifier reads), <a href="https://plimsollmark.github.io/plimsoll/examples/capsule/envelopes.jsonl">envelopes.jsonl</a> (each capsule's COSE_Sign1 signature, base64), and <a href="https://plimsollmark.github.io/plimsoll/examples/capsule/producer.pub">producer.pub</a>. The import this page states used the bundle <span class="mono">{{.Batch}}</span>.</p>
+<script>
+(function () {
+  var CHECKS = [{{range .Checks}}{verifier: "{{.Verifier}}", what: "{{.What}}", want: "{{.Want}}", got: "{{.Got}}", ok: {{if .OK}}true{{else}}false{{end}}, skipped: {{if .Skipped}}true{{else}}false{{end}}},
+  {{end}}];
+  var CASES = {
+    none:    { match: function (w) { return !/changed|removed|different|flipped|presented/.test(w); }, hit: [], gone: [],
+               say: "<b>As published.</b> Every verifier accepted the chain; the rows below are the checks that ran." },
+    verdict: { match: function (w) { return /verdict changed/.test(w); }, hit: [3], gone: [],
+               say: "<b>Call 3's verdict changed from executed to denied.</b> The capsule ID is a digest of the capsule's content, so the changed capsule no longer matches its own ID, and a denied verdict with a confirmed effect contradicts the specification's rule. Both Go and Python refuse it." },
+    resign:  { match: function (w) { return /different capsule ID|presented for call 4/.test(w); }, hit: [3, 4], gone: [],
+               say: "<b>Call 3's signature presented for another capsule ID.</b> The signature is over the capsule ID, so it does not transfer: the Go verifier and the Python one with scitt-cose both refuse it." },
+    flip:    { match: function (w) { return /one bit flipped/.test(w); }, hit: [3], gone: [],
+               say: "<b>One bit of call 3's signature flipped.</b> The COSE_Sign1 signature no longer verifies against the producer key. Refused." },
+    middle:  { match: function (w) { return /call 3's capsule removed|with its last call removed/.test(w); }, hit: [4], gone: [3],
+               say: "<b>Call 3 removed from the store.</b> Call 4 names call 3 as its parent, and the parent is not there: the chain check refuses. plimsoll's own bundle check refuses a dropped call the same way, because the next line's link names the missing one." },
+    last:    { match: function (w) { return /the last call's capsule/.test(w); }, hit: [], gone: [5],
+               say: "<b>The last call removed.</b> Nothing names call 5 as its parent, so a store check cannot see that it is missing, and the Python verifier accepts the shortened store. That is not a flaw in the verifier: catching a missing tail needs an expected final checkpoint or a witnessed log, which plimsoll's bundle carries and a bare store does not." }
+  };
+  var chain = document.getElementById("chain");
+  var rows = document.getElementById("break-rows");
+  var say = document.getElementById("break-say");
+  function show(name) {
+    var c = CASES[name];
+    chain.querySelectorAll(".capsule").forEach(function (el) {
+      var seq = Number(el.getAttribute("data-seq"));
+      el.classList.toggle("hit", c.hit.indexOf(seq) >= 0);
+      el.classList.toggle("gone", c.gone.indexOf(seq) >= 0);
+    });
+    say.innerHTML = c.say;
+    rows.innerHTML = "";
+    CHECKS.forEach(function (k) {
+      if (!c.match(k.what)) return;
+      var li = document.createElement("li");
+      var a = document.createElement("span"); a.textContent = k.verifier;
+      var b = document.createElement("span"); b.textContent = k.what + " → " + k.got;
+      var d = document.createElement("span"); d.className = "badge " + (k.skipped ? "" : k.ok ? "ok" : "no"); d.textContent = k.skipped ? "not run" : k.ok ? "as expected" : "not as expected";
+      li.appendChild(a); li.appendChild(b); li.appendChild(d);
+      rows.appendChild(li);
+    });
+    if (!rows.firstChild) { var li = document.createElement("li"); li.textContent = "no check on this page covers that case"; rows.appendChild(li); }
+  }
+  document.getElementById("breakers").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    this.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", "false"); });
+    b.setAttribute("aria-pressed", "true");
+    show(b.getAttribute("data-case"));
+  });
+  show("none");
+})();
+</script>
 </main>
 </body>
 </html>

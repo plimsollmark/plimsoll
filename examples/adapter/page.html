@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>An AI-written vendor adapter, judged by the vendor's ledger: two orders for one command caught, the rewrite passes, every verdict signed</title>
+<meta name="description" content="One OpenAPI document becomes the grant, the client and the description; an AI-written vendor adapter runs inside plimsoll's sandbox against a simulated fleet API over five scenarios, under a credential minted per run; the verdict is made from the vendor's own ledger, not the adapter's report; a lost answer makes the first adapter place two orders for one command; the rewrite passes; four adapters broken on purpose are each caught; every record and every verdict is signed and verified.">
+<link rel="canonical" href="{{.PageURL}}">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="An AI-written vendor adapter, judged by the vendor's ledger, caught placing two orders for one command">
+<meta property="og:description" content="One OpenAPI document becomes the grant, the client and the description; an AI-written vendor adapter runs in the sandbox against a simulated fleet API; a lost answer makes it place two orders for one command; the vendor's ledger catches it; the rewrite passes; every record and verdict is signed.">
+<meta property="og:url" content="{{.PageURL}}">
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --mut: #6b6b66; --blue: #2a78d6; --green: #1e6b2f; --red: #8a1c1c; --amber: #8a5a00; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; --r1: #2a78d6; --r2: #c2410c; --r3: #0f766e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 48px; }
+  h1 { font-size: 27px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 34px 0 8px; }
+  h3 { font-size: 15px; margin: 18px 0 6px; }
+  p { margin: 6px 0; }
+  a { color: var(--blue); }
+  p, td, li, .panel, .card { overflow-wrap: anywhere; }
+  .sub { color: var(--ink2); margin-bottom: 18px; }
+  .kicker { color: var(--mut); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin: 30px 0 -4px; }
+  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 14px 0 6px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .k { color: var(--ink2); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  .tile .v { font-size: 22px; font-weight: 650; margin-top: 2px; }
+  .tile .n { color: var(--ink2); font-size: 12.5px; margin-top: 2px; }
+  pre { margin: 0; padding: 10px 12px; background: #fff; border: 1px solid var(--line); border-radius: 8px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
+  code, .mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .mono { word-break: break-all; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink2); font-weight: 600; font-size: 13px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-weight: 650; font-size: 13px; white-space: nowrap; }
+  .badge.ok { background: #e6f4ea; color: var(--green); }
+  .badge.no { background: #fdecea; color: var(--red); }
+  .badge.off { background: #f1f1ee; color: var(--ink2); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-top: 10px; }
+  .note { color: var(--ink2); font-size: 13px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .wide { overflow-x: auto; }
+  ol.loop li { margin: 6px 0; }
+  .small { font-size: 13px; }
+  .diagram { width: 100%; height: auto; display: block; background: #f7fafc; border-radius: 12px; margin: 10px 0; }
+  .diagram text { font-family: system-ui, sans-serif; font-size: 13px; fill: var(--ink); }
+  .diagram text.sub { font-size: 11.5px; fill: var(--ink2); }
+  .diagram text.tag { font-size: 11px; font-weight: 650; }
+  .art { width: 100%; height: auto; display: block; margin: 10px auto; max-width: 1040px; }
+  .narrator { background: #fffdf6; border: 1px solid #e8dfc8; border-radius: 12px; padding: .8rem .9rem; font-size: .92rem; }
+  .narrator .who { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: var(--mut); margin-bottom: .3rem; }
+  .narrator .who small { text-transform: none; letter-spacing: 0; }
+  .narrator p { margin: 0; }
+  .realquote { background: #f6f9fc; border: 1px solid #d9e4ee; border-radius: 12px; padding: .8rem .9rem; font-size: .92rem; }
+  .realquote .who { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: var(--mut); margin-bottom: .3rem; }
+  .realquote p { margin: 0 0 .25rem; }
+  .realquote .src { color: var(--ink2); font-size: .8rem; }
+  .asides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .card.no-card { border-color: #e7b3b3; background: #fffafa; }
+  .card .head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .card .head b { font-size: 15.5px; }
+  .card .step { color: var(--mut); font-size: 12px; margin: 2px 0 8px; }
+  .card dl { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; margin: 8px 0 0; font-size: 13.5px; }
+  .card dt { color: var(--ink2); }
+  .card dd { margin: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-block; background: #eef2f6; border: 1px solid #d9e1ea; border-radius: 999px; padding: 2px 9px; font-size: 12.5px; font-weight: 600; }
+  .chip.bad, .chip.no { background: #fdecea; border-color: #f1bdbd; color: var(--red); }
+  .chip.ok { background: #e6f4ea; border-color: #b9dcc3; color: var(--green); }
+  .chip.warn { background: #fff4df; border-color: #ecd49a; color: var(--amber); }
+  .matrix td, .matrix th { text-align: center; padding: 6px 8px; }
+  .matrix td:first-child, .matrix th:first-child { text-align: left; min-width: 250px; }
+  .matrix th { font-size: 12px; }
+  .matrix td.held { color: var(--green); font-weight: 700; }
+  .matrix td.broke { color: var(--red); background: #fdecea; font-weight: 700; cursor: help; }
+  .matrix tr.group td { background: #f4f6f8; color: var(--ink2); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; text-align: left; }
+  dl.rules { display: grid; grid-template-columns: 200px 1fr; gap: 4px 12px; font-size: 13.5px; margin: 10px 0; }
+  dl.rules dt { font-weight: 650; }
+  dl.rules dd { margin: 0; color: var(--ink2); }
+  .counts { columns: 2; column-gap: 14px; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 0; padding: 0; list-style: none; }
+  .floor { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; align-items: start; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
+  .btn { font: inherit; font-size: 13.5px; padding: 6px 12px; border-radius: 999px; border: 1px solid #cdd6e0; background: #fff; color: var(--ink); cursor: pointer; }
+  .btn[aria-pressed="true"] { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .btn.play { background: #1e6b2f; color: #fff; border-color: #1e6b2f; }
+  .status { min-height: 3.2em; font-size: 14px; }
+  .robot { transition: transform .38s ease; }
+  .fade { animation: pop .5s ease; }
+  @keyframes pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) { .robot { transition: none; } .fade { animation: none; } }
+  @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, 1fr); } .two, .three, .asides, .cards, .floor { grid-template-columns: 1fr; } .card dl, dl.rules { grid-template-columns: 1fr; } .counts { columns: 1; } }
+</style>
+</head>
+<body>
+<main>
+<h1>An AI-written vendor adapter, judged by the vendor's own ledger: two orders for one command caught, the rewrite passes, every verdict signed</h1>
+<p class="sub">Run on {{.Date}} through plimsolld on the <b>{{.Provider}}</b> provider at the <b>{{.Tier}}</b> tier ({{.Runtime}}); project image {{.Environment}}; software identity {{.Software}}; policy {{.Policy}}. <a href="{{.SourceURL}}">Source</a> · <a href="{{.HomeURL}}">plimsoll</a></p>
+
+<div class="tiles">
+  <div class="tile"><div class="k">Runs</div><div class="v">{{.Passed}} of {{.Total}}</div><div class="n">passed; the first adapter failed {{.FirstFailed}} scenarios, the independent agents' adapters passed {{.TrialPassed}} of {{.TrialRuns}}, and all {{.BrokenCaught}} adapters broken on purpose were caught</div></div>
+  <div class="tile"><div class="k">Calls, nominal</div><div class="v">{{.V1Calls}} → {{.V2Calls}}</div><div class="n">brokered calls, first adapter, then second after the finding</div></div>
+  <div class="tile"><div class="k">Boundary</div><div class="v">3 refusals</div><div class="n">client, broker, no network; no credential found</div></div>
+  <div class="tile"><div class="k">Credentials</div><div class="v">{{.Credentials}} for {{.Total}} runs</div><div class="n">a JWT minted per run, living {{.CredentialLife}} s; the probe's never reached the vendor</div></div>
+  <div class="tile"><div class="k">Signed</div><div class="v">{{.Total}} + {{.Total}}</div><div class="n">run records and verdicts; each verdict rebuilt from its evidence</div></div>
+</div>
+
+<p class="kicker">In plain words</p>
+<h2>What's an adapter, and why bother checking one?</h2>
+<p>Every robot vendor speaks its own API: its own routes, its own JSON, its own way of saying "busy, try later". A platform that runs robots from many vendors doesn't want to learn every dialect, so it writes down one small contract of four functions: list the robots, send one somewhere, wait until it gets there, cancel. An <b>adapter</b> is the few dozen lines that translate those four functions into one vendor's API. Think of a travel plug adapter: the platform is the plug, the vendor is the wall socket, and the adapter had better not swap live and neutral.</p>
+<p>These days an AI writes the adapter, and it usually works on the first try. The question is what it does on a bad day: the vendor takes the order and loses the answer, the connection drops, the server says 500 after the order already went through. Get that wrong and a robot gets the same job twice, or the platform is told a job failed while the robot is halfway there. This page puts adapters through exactly those moments, inside plimsoll's sandbox, and judges them by what the vendor's own books say happened, not by what the adapter says about itself.</p>
+<svg class="art" viewBox="0 0 1100 260" role="img" aria-labelledby="ad-t ad-d">
+<title id="ad-t">Where an adapter sits</title>
+<desc id="ad-d">The platform's four functions on the left call the adapter, which sits inside plimsoll's sandbox and reaches the vendor's API only through the broker. The vendor drives three robots and keeps a ledger of what it actually did; the grader reads that ledger to reach the verdict.</desc>
+<defs><marker id="ar3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker></defs>
+<rect x="20" y="40" width="220" height="150" rx="12" fill="#eaf3fb" stroke="#bed4e5"/>
+<text x="36" y="66" font-size="14" font-weight="650" font-family="system-ui">The platform</text>
+<text x="36" y="94" font-size="12" font-family="ui-monospace, monospace">inventory()</text>
+<text x="36" y="118" font-size="12" font-family="ui-monospace, monospace">dispatch(robot, target, id)</text>
+<text x="36" y="142" font-size="12" font-family="ui-monospace, monospace">wait(mission)</text>
+<text x="36" y="166" font-size="12" font-family="ui-monospace, monospace">cancel(mission)</text>
+<path d="M240 115H318" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="296" y="26" width="270" height="174" rx="14" fill="none" stroke="#b9c3cf" stroke-width="2" stroke-dasharray="6 5"/>
+<text x="310" y="46" font-size="11.5" fill="#5a5a5a" font-family="system-ui">plimsoll's sandbox: no network, no credential</text>
+<rect x="326" y="70" width="200" height="92" rx="10" fill="#fff5df" stroke="#dfc790"/>
+<text x="342" y="98" font-size="14" font-weight="650" font-family="system-ui">The adapter</text>
+<text x="342" y="120" font-size="12" fill="#5a5a5a" font-family="system-ui">written by an AI</text>
+<text x="342" y="140" font-size="12" fill="#8a5a00" font-weight="650" font-family="system-ui">the thing under test</text>
+<rect x="556" y="100" width="20" height="30" rx="4" fill="#fff" stroke="#5687a7" stroke-width="2"/>
+<text x="540" y="148" font-size="10.5" font-weight="650" font-family="system-ui">broker</text>
+<path d="M526 115H552M576 115H598" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="604" y="40" width="252" height="150" rx="12" fill="#eaf3fb" stroke="#bed4e5"/>
+<text x="620" y="66" font-size="14" font-weight="650" font-family="system-ui">The vendor's API</text>
+<text x="620" y="94" font-size="11.5" font-family="ui-monospace, monospace">GET /robots</text>
+<text x="620" y="118" font-size="11.5" font-family="ui-monospace, monospace">POST /robots/{id}/missions</text>
+<text x="620" y="142" font-size="11.5" font-family="ui-monospace, monospace">GET /missions/{id}</text>
+<text x="620" y="166" font-size="11.5" font-family="ui-monospace, monospace">POST /missions/{id}/cancel</text>
+<path d="M856 115H902" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<g transform="translate(934 112)"><rect x="-14" y="-11" width="28" height="22" rx="6" fill="#fff" stroke="#2a78d6" stroke-width="2.5"/><circle cx="-5" cy="-2" r="2.6" fill="#2a78d6"/><circle cx="5" cy="-2" r="2.6" fill="#2a78d6"/><path d="M-5 5 Q0 9 5 5" fill="none" stroke="#2a78d6" stroke-width="1.8"/></g>
+<g transform="translate(990 112)"><rect x="-14" y="-11" width="28" height="22" rx="6" fill="#fff" stroke="#c2410c" stroke-width="2.5"/><circle cx="-5" cy="-2" r="2.6" fill="#c2410c"/><circle cx="5" cy="-2" r="2.6" fill="#c2410c"/><path d="M-5 5 Q0 9 5 5" fill="none" stroke="#c2410c" stroke-width="1.8"/></g>
+<g transform="translate(1046 112)"><rect x="-14" y="-11" width="28" height="22" rx="6" fill="#fff" stroke="#0f766e" stroke-width="2.5"/><circle cx="-5" cy="-2" r="2.6" fill="#0f766e"/><circle cx="5" cy="-2" r="2.6" fill="#0f766e"/><path d="M-5 5 Q0 9 5 5" fill="none" stroke="#0f766e" stroke-width="1.8"/></g>
+<text x="940" y="152" font-size="11.5" fill="#5a5a5a" font-family="system-ui">three robots, simulated</text>
+<path d="M730 190V206" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="640" y="212" width="180" height="34" rx="8" fill="#fff" stroke="#bed4e5"/>
+<text x="654" y="234" font-size="12" font-family="system-ui">the vendor's ledger</text>
+<path d="M640 229H558" stroke="#1e6b2f" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="296" y="212" width="258" height="34" rx="8" fill="#e9f5ed" stroke="#a9ccb6"/>
+<text x="310" y="234" font-size="12" font-family="system-ui">the grader: the verdict comes from here</text>
+</svg>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>Nobody gets paged about the happy path. You get paged about the vendor that took the order, then forgot to mention it. An adapter is mostly a polite letter to a server you have never met, and Lamport described what can go wrong with that in one sentence in 1987. It still reads like an incident report.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Leslie Lamport:</b> “A distributed system is one in which the failure of a computer you didn't even know existed can render your own computer unusable.”</p><p class="src">Email to the SRC src-t list, 28 May 1987, published on Lamport's site. <a href="https://lamport.azurewebsites.net/pubs/distributed-system.txt">the 1987 email (EXTERNAL · author's page ↗)</a></p></div>
+</div>
+
+<p class="kicker">The whole loop on one picture</p>
+<h2>One document in, one signed verdict out</h2>
+<p>A platform that lets an AI write the code which integrates a vendor's device has to answer five questions before that code touches anything real: what may it call, with whose credential, did it do the job, what did it cost the vendor, and what is the evidence. This page is one pass through that loop with plimsoll, using a fictional fleet vendor and a simulated instance of its API. Nothing here is a robot; everything here is the code path a robot platform would use.</p>
+<svg class="diagram" viewBox="0 0 1100 300" role="img" aria-labelledby="loop-t loop-d">
+<title id="loop-t">The loop: an OpenAPI document becomes a grant, a client and a description; an agent writes the adapter; the sandbox runs it through the broker against the simulated vendor; every run's record and verdict is signed</title>
+<desc id="loop-d">Boxes left to right: the vendor's OpenAPI document; specgen producing the allow list, the client and the description; the agent writing adapter.js; the sandbox running the harness and the adapter, with the broker as its only door; the simulated vendor with its ledger. Below: the run record and the vendor's ledger both go to the signer, which signs the record and the verdict made from the ledger.</desc>
+<defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker></defs>
+<rect x="18" y="52" width="190" height="86" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="34" y="80">The vendor's document</text><text class="sub" x="34" y="100">OpenAPI, {{len .Operations}} operations</text><text class="sub" x="34" y="120">the one source</text>
+<path d="M208 95H240" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<circle cx="262" cy="95" r="16" fill="#fff5df" stroke="#dfc790"/><path d="M255 95h14M262 88v14" stroke="#b08a2e" stroke-width="2"/><text class="tag" x="240" y="128">specgen</text>
+<path d="M280 95H306" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="312" y="40" width="200" height="30" rx="8" fill="#e9f5ed" stroke="#a9ccb6"/><text x="324" y="60">allow: {{len .Allow}} routes of {{len .Catalog}}</text>
+<rect x="312" y="80" width="200" height="30" rx="8" fill="#e9f5ed" stroke="#a9ccb6"/><text x="324" y="100">client: fleet.* methods</text>
+<rect x="312" y="120" width="200" height="30" rx="8" fill="#e9f5ed" stroke="#a9ccb6"/><text x="324" y="140">description for the agent</text>
+<path d="M512 135H546" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="552" y="52" width="150" height="86" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="568" y="80">The agent</text><text class="sub" x="568" y="100">reads the contract</text><text class="sub" x="568" y="120">writes adapter.js</text>
+<path d="M702 95H736" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="742" y="30" width="190" height="130" rx="12" fill="#eef1f5" stroke="#b9c3cf" stroke-width="2"/><text x="758" y="56">The sandbox</text><text class="sub" x="758" y="76">harness + adapter</text><text class="sub" x="758" y="94">no network interface</text><text class="sub" x="758" y="112">no credential inside</text>
+<rect x="918" y="78" width="28" height="36" rx="4" fill="#fff" stroke="#5687a7" stroke-width="2"/><text class="tag" x="912" y="130">broker</text><text class="sub" x="900" y="146">the one door</text>
+<path d="M946 95H978" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="984" y="52" width="104" height="86" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="998" y="80">Vendor</text><text class="sub" x="998" y="100">simulated</text><text class="sub" x="998" y="120">keeps a ledger</text>
+<path d="M512 55 L742 44" stroke="#a9ccb6" stroke-width="1.5" stroke-dasharray="4 4"/>
+<text class="sub" x="530" y="24">the allow list is what the broker enforces</text>
+<path d="M836 160V196" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="742" y="204" width="190" height="66" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="758" y="230">Run record</text><text class="sub" x="758" y="250">digests, tier, image, times</text>
+<path d="M932 237H978" stroke="#5687a7" stroke-width="2" marker-end="url(#ar)"/>
+<path d="M1036 138V196" stroke="#5687a7" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar)"/><text class="sub" x="1042" y="174">ledger</text>
+<rect x="984" y="204" width="104" height="66" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="998" y="228">Signed</text><text class="sub" x="998" y="246">record and</text><text class="sub" x="998" y="262">verdict</text>
+<text class="sub" x="20" y="286">Nothing in the sandbox is trusted, the platform's harness included: it runs beside the adapter, so its report is a claim. The document, the grant, the vendor's ledger, the grader and the signer are outside it.</text>
+</svg>
+<ol class="loop">
+  <li><b>One document.</b> The vendor's OpenAPI document describes {{len .Operations}} operations. <code>plimsoll-specgen</code> derives three artifacts from it: the route list a grant allows, the typed client the sandbox injects, and the description an agent reads. The three cannot drift, because none of them is written by hand.</li>
+  <li><b>One contract, eight rules.</b> The platform states four functions every vendor adapter must export, and the eight rules it judges every adapter by. The harness runs the platform's commands through an adapter and reports what the adapter said. That report is a claim: the verdict is made on the host, after the run, from the plan and the vendor's own ledger, which the adapter cannot write.</li>
+  <li><b>One agent, said plainly.</b> The first adapter, <code>adapter-v1.js</code>, was written from the prompt beside it by the AI that built this example, in the same session, before the scenario that caught it existed. It is not an independent agent's answer: its author also wrote the harness.</li>
+  <li><b>Runs under a grant.</b> plimsolld runs the harness and the adapter in a locked-down container. The only way out is the brokered client: six routes of the vendor's eight, a credential the daemon mints for each run (a JWT the vendor verifies) that never enters the container, and a metadata-only trace of what was called. A probe shows the other two routes, a direct request and a hunt for the credential all failing.</li>
+  <li><b>Defects, a finding, a rewrite, two signatures.</b> When the vendor accepts an order and loses only the answer, the first adapter sends it again and the ledger shows two orders for one command while the adapter's report is clean; when the connection drops, it reports a failure for an order the robot is already running. The efficiency advisor also names the batch route the operator declared. The rewrite names every order with the platform's command ID, which the vendor uses to answer a repeat with the original order, and passes all five scenarios. Four adapters broken on purpose show each rule catching what it is for. Every run's record is signed, and so is every verdict, bound to its record; the verifier rebuilds each verdict from its evidence.</li>
+</ol>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>Nobody wants to write the fortieth vendor adapter by hand, so an agent writes it. Everyone else here keeps exactly one job: the document says what exists, the grant says what is allowed, the vendor keeps the books, a grader outside the building reads them, and a signer outside it signs for the lot. Nobody gets two of those jobs, least of all the one who wrote the code.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Geoffrey Hinton:</b> “I sure as hell don't want to put them in by hand. I don't even want to tell my graduate students to put them in.”</p><p><b>Chuck Nice:</b> “Yeah, that's what they're there for, professor.” [laughter]</p><p class="src">StarTalk, 28 February 2026, at 24:45, on setting a billion connection strengths. <a href="https://www.youtube.com/watch?v=l6ZcFa8pybE&amp;t=1475s">StarTalk video at 24:45 (EXTERNAL · video ↗)</a></p></div>
+</div>
+
+<p class="kicker">Step 1</p>
+<h2>The vendor's document, and what was generated from it</h2>
+<p>{{.SpecTitle}}, version {{.SpecVersion}}. The operator grants the six operations the contract needs and leaves two in the catalog: a decommission and a firmware install are not something an untested adapter gets to do.</p>
+<div class="wide"><table>
+<tr><th>Operation</th><th>Route</th><th>Summary</th><th>In the grant</th></tr>
+{{range .Operations}}<tr><td class="mono">{{.ID}}</td><td class="mono">{{.Method}} {{.Path}}</td><td>{{.Summary}}</td><td><span class="badge {{.Badge}}">{{.Label}}</span></td></tr>
+{{end}}</table></div>
+<div class="two" style="margin-top:14px">
+  <div><h3>The profile's <code>allow</code> ({{len .Allow}} routes)</h3><pre>{{range .Allow}}{{.}}
+{{end}}</pre><p class="note">Also declared: <code>batch_of</code> {{.BatchOf}}, the operator's statement that one request to the collection returns what the per-item calls did; and <code>health_check</code> {{.HealthCheck}}, the route the broker probes while shedding.</p></div>
+  <div><h3>The client the sandbox injects (<code>preamble.js</code>)</h3><pre>{{.Preamble}}</pre></div>
+</div>
+<h3>The description the agent was shown</h3>
+<pre>{{.Description}}</pre>
+<p class="note">The description lists the vendor's whole surface, eight operations; the grant allows six. The broker holds the grant's line whatever the code was told, which the probe below demonstrates.</p>
+
+<p class="kicker">Step 2</p>
+<h2>The contract</h2>
+<pre>{{.Contract}}</pre>
+<p>The harness runs the commands of <code>plan.json</code>, which the platform writes for each run (four commands, each with its own ID; the fourth is cancelled as soon as it is placed), and prints one <code>ADAPTER-REPORT</code> line: the mission and state the adapter reported for each command. It shares a process with the adapter, so nothing it prints is evidence; it records every value the adapter returned, as returned, so the host can check each one. The verdict comes from eight rules, the same in every scenario, applied on the host to those values, the plan, the vendor's ledger and the vendor's own record of its robots:</p>
+<dl class="rules">
+{{range .AdapterRules}}<dt>{{.Name}}</dt><dd>{{.Says}}</dd>
+{{end}}</dl>
+<p class="note">A scenario changes what the vendor does, and through its data (which robot faults) what each order should end as; it never adds a rule. Full text: <a href="{{.RepoURL}}/blob/main/examples/adapter/contract/CONTRACT.md">CONTRACT.md</a>; the rules: <a href="{{.RepoURL}}/blob/main/examples/adapter/qualify/qualify.go">qualify.go</a>.</p>
+
+<p class="kicker">Step 3</p>
+<h2>The first adapter, and the rewrite</h2>
+<p>The instruction the first adapter was written from, in <a href="{{.RepoURL}}/blob/main/examples/adapter/adapter/PROMPT.md">PROMPT.md</a>, with the contract and the vendor document as they stood then (no command ID). Its author was the AI that built this example, in the same session, so this is a worked example, not an independent trial of an agent:</p>
+<pre>{{.PromptHead}}</pre>
+<div class="two" style="margin-top:14px">
+  <div><h3>adapter-v1.js, inventory()</h3><pre>{{.InventoryV1}}</pre><p class="note">The list, then one read per robot: the agent was not told whether the list carries state, so it fetched each robot to be sure. Correct, and one request per robot.</p></div>
+  <div><h3>adapter-v2.js, inventory()</h3><pre>{{.InventoryV2}}</pre><p class="note">After the finding: the declared batch route alone. Both files: <a href="{{.RepoURL}}/tree/main/examples/adapter/adapter">examples/adapter/adapter</a>.</p></div>
+</div>
+<h3>adapter-v2.js, dispatch()</h3>
+<pre>{{.DispatchV2}}</pre>
+<p class="note">The other change. Every create carries the platform's command ID; when the answer is an error or never arrives, the same create goes again, and the vendor answers a command ID it has already accepted with that original order. A refusal comes back as code <code>refused</code>, and an answer it never gets after the retries as <code>unresolved</code>, never as a guess. An earlier rewrite read the robot back after an error and adopted whatever mission it found. A review showed that still placed a second order when the first had already finished, and could report another command's order as its own; this one does neither, and a docker test places a stranger's order on the robot first to show it. Three later repairs came from further review and testing: a 500 is no longer taken as a refusal (the scenario "a server error after accepting" holds it to that), <code>wait</code>'s <code>maxPolls</code> now counts failed reads too (a docker test makes it keep a budget of one), and a status answer naming another mission counts as a failed read, never as this mission's state.</p>
+{{if .HasFinding}}
+<div class="panel">
+<p><b>The finding, on the first adapter's nominal run</b> (pattern <code>{{.Finding.Pattern}}</code>, severity {{.Finding.Severity}}, remedy {{.Finding.Remedy}}): {{.Finding.Detail}}</p>
+<p>Suggested route: <code>{{.Finding.SuggestedMethod}} {{.Finding.SuggestedRoute}}</code>, which the profile declares as the batch form of <code>{{.Finding.Method}} {{.Finding.Route}}</code> and grants, so the finding came back to the caller on the run result. Measured: {{.Finding.ExtraCalls}} calls beyond one, {{.Finding.BytesMoved}} bytes moved across the flagged calls; the added latency is a model (summed round trips beyond one call), not wall time lost.</p>
+<p class="note">The advisor is computed after the run over the broker's metadata-only trace: route templates, counts, sizes and timings, never a path, a body or a credential. It never calls a model, and it changes nothing about execution: a run with advice is byte-identical to one without. In the nominal scenario the first adapter made {{.V1Calls}} brokered calls and the second {{.V2Calls}}; the vendor's own counts, by route, are on each run's card below.</p>
+</div>
+{{end}}
+
+<p class="kicker">Step 4</p>
+<h2>The floor: replay the six scenarios</h2>
+<p>The floor replays the vendor's own record of this page's runs: every order, start, status read, fault, refusal and cancel, in the order it happened (a mission moves its robot one unit toward the target on every read of that robot's state). Pick a scenario and an adapter and press play. At the end it checks where it drew each robot against where the signed ledger says each order stopped. The panel beside the floor shows that run's verdict.</p>
+<div class="floor">
+  <div>
+    <div class="controls" id="scenarios" role="group" aria-label="scenario">
+      <button class="btn" type="button" data-scenario="nominal" aria-pressed="true">nominal</button>
+      <button class="btn" type="button" data-scenario="fault" aria-pressed="false">a fault</button>
+      <button class="btn" type="button" data-scenario="overload" aria-pressed="false">an overloaded vendor</button>
+      <button class="btn" type="button" data-scenario="lost_ack" aria-pressed="false">a lost answer</button>
+      <button class="btn" type="button" data-scenario="dropped" aria-pressed="false">a dropped connection</button>
+      <button class="btn" type="button" data-scenario="server_error" aria-pressed="false">a server error</button>
+    </div>
+    <div class="controls" id="adapters" role="group" aria-label="adapter">
+      <button class="btn" type="button" data-adapter="adapter-v1.js" aria-pressed="true">the first adapter</button>
+      <button class="btn" type="button" data-adapter="adapter-v2.js" aria-pressed="false">the second adapter</button>
+      <button class="btn" type="button" data-adapter="trial/haiku.js" aria-pressed="false">Haiku's</button>
+      <button class="btn" type="button" data-adapter="trial/sonnet.js" aria-pressed="false">Sonnet's</button>
+      <button class="btn" type="button" data-adapter="trial/opus.js" aria-pressed="false">Opus's</button>
+      <button class="btn play" type="button" id="play">Play</button>
+      <button class="btn" type="button" id="reset">Reset</button>
+    </div>
+    <svg id="floorsvg" class="art" viewBox="0 0 560 390" role="img" aria-label="The floor: three robots, their targets, and what each scenario does to them">
+      <rect x="0" y="0" width="560" height="390" rx="12" fill="#f7fafc"/>
+      <g id="grid" stroke="#e3e9f0" stroke-width="1"></g>
+      <g id="targets"></g>
+      <g id="trails" fill="none" stroke-width="2" stroke-dasharray="3 4"></g>
+      <g id="robots"></g>
+      <g id="vendorbox"><rect x="400" y="14" width="146" height="54" rx="10" fill="#fff" stroke="#bed4e5"/><text x="416" y="36" font-size="13" fill="#1a1a1a" font-family="system-ui">Vendor</text><text id="vendorstate" x="416" y="56" font-size="12" fill="#5a5a5a" font-family="system-ui">accepting requests</text></g>
+      <g id="effects"></g>
+    </svg>
+    <div class="status" id="status" aria-live="polite">Press play.</div>
+  </div>
+  <div class="card" id="outcome">
+    <div class="head"><b id="o-title">The first adapter, nominal</b><span class="badge ok" id="o-badge">passed</span></div>
+    <div class="step" id="o-step">measured on this page's run</div>
+    <dl>
+      <dt>Rules</dt><dd id="o-verdict"></dd>
+      <dt>Brokered calls</dt><dd id="o-calls"></dd>
+      <dt>Status reads</dt><dd id="o-polls"></dd>
+      <dt>Retries</dt><dd id="o-retries"></dd>
+      <dt>Orders on the ledger</dt><dd class="chips" id="o-orders"></dd>
+    </dl>
+    <p class="note" id="o-note"></p>
+  </div>
+</div>
+
+<h2>The verdicts: {{.Total}} runs, judged by the same eight rules</h2>
+<p>Each row is one run; each column a rule. A cross marks a rule the vendor's ledger shows broken; hover or tap it for the ledger's own words. The probe, which is not an adapter, has rules of its own (step 5).</p>
+<div class="wide"><table class="matrix">
+<tr><th>Run</th>{{range .AdapterRules}}<th title="{{.Says}}">{{.Name}}</th>{{end}}<th>Verdict</th></tr>
+{{range .Matrix}}<tr><td><b>{{.N}}</b> {{.Title}}</td>{{range .Rules}}<td class="{{.Class}}" title="{{.Detail}}">{{.Mark}}</td>{{end}}<td><span class="badge {{.Badge}}">{{.Label}}</span></td></tr>
+{{end}}</table></div>
+<div class="panel"><b>Runs {{.RunLost1}}, {{.RunDrop1}} and {{.RunErr1}} are the ones that matter.</b> In run {{.RunLost1}} the vendor accepted r2's order, started the robot, and answered with a 503 instead of the mission id. The first adapter treated the 503 as transient and sent the create again; the vendor, which queues orders for a busy robot, accepted it as a second order. The adapter's report says every mission done, and from where it stood that was true; the ledger shows two accepted orders for one command. In this simulation the second order starts where the first ended, so the robot does not move again; on a real fleet a duplicated command can be a second pick, or a second trip into space another robot was promised. In runs {{.RunDrop1}} and {{.RunErr1}} the vendor accepted the order and then closed the connection, or answered 500; the first adapter reported the command failed, with an error the contract does not allow, while r2 was already running it. The second adapter's runs {{.RunLost2}}, {{.RunDrop2}} and {{.RunErr2}} are the same scenarios, with one order per command.</div>
+<p class="kicker">The independent trial</p>
+<h2>The exam: three fresh AIs write the adapter cold</h2>
+<p>In plain words: the first adapter on this page was written by the same AI that built the page, which is a bit like marking your own homework. So we set an exam. Three fresh agents, Claude Haiku, Claude Sonnet and Claude Opus, got the same <a href="{{.RepoURL}}/blob/main/examples/adapter/trial/PROMPT.md">exam paper</a> (EXTERNAL · source repo ↗): the contract, the rules they would be judged by (six at the time; the shape and inventory rules came later and check things the contract already asked for), how the platform's client reports errors, and the vendor's API description. Open book on that, closed book on everything else. Each ran as a one-shot Claude Code session in an empty folder with every customization switched off and no tools at all, so the exam paper was the only thing in the room (well, that and the folder's name, which had "plimsoll" in it). Their transcripts were checked afterwards: no tool calls, and none of this repository's text.</p>
+<p>Each got one practice question, the plain nominal scenario, could see how it went, and could hand in up to three times. All three aced the practice first time. Haiku handed in straight away; Sonnet and Opus each rewrote theirs anyway (after passing!) and kept the second version. The other five scenarios were the real exam, and they had not seen them. Their adapters ran here exactly as written.</p>
+<svg class="art" viewBox="0 0 1100 280" role="img" aria-labelledby="tr-t tr-d">
+<title id="tr-t">How the trial ran</title>
+<desc id="tr-d">The exam paper goes to three agents, Claude Haiku, Sonnet and Opus, with no tools. Each tries one practice question, the nominal scenario, and sees the result, up to three times. What they hand in runs over all six scenarios in the sandbox; the grader reads the vendor's ledger and the verdict is signed. A dotted red line from this repository's agent instructions to the agents marks the leak described below.</desc>
+<defs><marker id="ar4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker><marker id="ar5" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#c2410c"/></marker></defs>
+<rect x="20" y="104" width="170" height="86" rx="10" fill="#fff" stroke="#bed4e5"/>
+<text x="36" y="130" font-size="14" font-weight="650" font-family="system-ui">The exam paper</text>
+<text x="36" y="150" font-size="11.5" fill="#5a5a5a" font-family="system-ui">contract, rules,</text>
+<text x="36" y="168" font-size="11.5" fill="#5a5a5a" font-family="system-ui">error shape, API</text>
+<path d="M190 147H232" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<rect x="240" y="60" width="170" height="48" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="256" y="82" font-size="13" font-weight="650" font-family="system-ui">Claude Haiku</text><text x="256" y="99" font-size="11" fill="#5a5a5a" font-family="system-ui">no tools</text>
+<rect x="240" y="123" width="170" height="48" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="256" y="145" font-size="13" font-weight="650" font-family="system-ui">Claude Sonnet</text><text x="256" y="162" font-size="11" fill="#5a5a5a" font-family="system-ui">no tools</text>
+<rect x="240" y="186" width="170" height="48" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="256" y="208" font-size="13" font-weight="650" font-family="system-ui">Claude Opus</text><text x="256" y="225" font-size="11" fill="#5a5a5a" font-family="system-ui">no tools</text>
+<rect x="470" y="70" width="200" height="56" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="486" y="94" font-size="13" font-weight="650" font-family="system-ui">Practice question</text><text x="486" y="113" font-size="11" fill="#5a5a5a" font-family="system-ui">nominal only, result shown</text>
+<path d="M410 84H424M410 147H424M410 210H424M424 84V210" fill="none" stroke="#5687a7" stroke-width="2"/>
+<path d="M424 92H464" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<path d="M470 120 C 452 126, 446 128, 430 128" fill="none" stroke="#5687a7" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#ar4)"/>
+<text x="432" y="150" font-size="10.5" fill="#5a5a5a" font-family="system-ui">up to 3 tries each</text>
+<path d="M424 210H464" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<text x="428" y="202" font-size="10.5" fill="#5a5a5a" font-family="system-ui">hand in</text>
+<rect x="470" y="182" width="200" height="56" rx="10" fill="#eef1f5" stroke="#b9c3cf" stroke-width="2"/><text x="486" y="206" font-size="13" font-weight="650" font-family="system-ui">The real exam</text><text x="486" y="225" font-size="11" fill="#5a5a5a" font-family="system-ui">6 scenarios, in the sandbox</text>
+<path d="M670 210H714" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<rect x="720" y="182" width="170" height="56" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="736" y="206" font-size="13" font-weight="650" font-family="system-ui">The grader</text><text x="736" y="225" font-size="11" fill="#5a5a5a" font-family="system-ui">reads the vendor's ledger</text>
+<path d="M890 210H934" stroke="#5687a7" stroke-width="2" marker-end="url(#ar4)"/>
+<rect x="940" y="182" width="140" height="56" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="956" y="206" font-size="13" font-weight="650" font-family="system-ui">Verdict</text><text x="956" y="225" font-size="11" fill="#5a5a5a" font-family="system-ui">signed, per run</text>
+<rect x="760" y="30" width="270" height="50" rx="10" fill="#fdecea" stroke="#f1bdbd"/><text x="776" y="52" font-size="12.5" font-weight="650" fill="#8a1c1c" font-family="system-ui">This repository's agent instructions</text><text x="776" y="70" font-size="11" fill="#8a1c1c" font-family="system-ui">kept out of this run by safe mode</text>
+<path d="M760 48 C 640 18, 460 22, 400 58" fill="none" stroke="#c2410c" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#ar5)"/>
+<text x="476" y="26" font-size="11" font-weight="650" fill="#8a1c1c" font-family="system-ui">leaked in the first run, blocked in this one</text><path d="M548 30l12 12M560 30l-12 12" stroke="#8a1c1c" stroke-width="3" stroke-linecap="round"/>
+</svg>
+<div class="cards">
+{{range .Trial}}<div class="card {{.Badge}}-card">
+  <div class="head"><b>{{.Name}}'s adapter</b><span class="badge {{.Badge}}">{{.Label}}</span></div>
+  <div class="step mono">{{.Lines}} lines · <a href="{{$.RepoURL}}/blob/main/examples/adapter/trial/{{.Dir}}/final.js">final.js (EXTERNAL · source repo ↗)</a></div>
+  <div class="chips">{{range .Cells}}<span class="chip {{.Badge}}">{{.Scenario}}: {{.Label}}</span>{{end}}</div>
+  <ul class="small">{{range .Notes}}<li>{{.}}</li>{{end}}</ul>
+</div>
+{{end}}</div>
+<p><b>How it went.</b> Two of the three tripped on the same question, the overloaded vendor, in the same way. They knocked on a busy door, waited about a second, and went home, leaving a polite note that said "unresolved". Honest, which counts for a lot, but the robot never got its job. In numbers: Claude Haiku's adapter tries a create four times over about 1.2 seconds, Claude Sonnet's five times over about 1.5 seconds, and this vendor stays overloaded for longer than that (it refuses the next four requests, and the broker's breaker holds calls back for a second after each refusal). Claude Opus's adapter tries up to eight times with growing pauses, inside a thirty-second budget, and got in. How long the overload would last was never on the exam paper; on a real fleet it is not written down anywhere either.</p>
+<div class="panel"><b>Full disclosure: we sat this exam twice.</b> The first time, Claude Code quietly handed each agent this repository's agent instructions, which named three of the hidden scenarios (a robot fault, an overloaded vendor, a lost acknowledgement) and said the first adapter's mistake was re-sending a create. We only found out by auditing the transcripts afterwards, so we threw that run out and set the exam again in an empty room: that's the run on this page. The results came out the same shape both times: Opus six of six, Haiku and Sonnet five of six, tripping on the same question. So the leak bought them nothing, but now nobody has to take that on trust. <a href="{{.RepoURL}}/blob/main/examples/adapter/trial/README.md">The trial's record</a> (EXTERNAL · source repo ↗) has both runs, the audits and the exact feedback each agent saw.</div>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>We set an exam, then went looking for answers we might have left on the desk. We had left a few. So we cleared the desk, emptied the room and set it again, and got the same marks. You'd think that would feel like wasted effort. It feels like the only part anyone should believe, because Feynman's first principle applies to the people grading as well.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Richard P. Feynman:</b> “The first principle is that you must not fool yourself—and you are the easiest person to fool.”</p><p class="src">“Cargo Cult Science”, Caltech commencement address, 1974, as published by Caltech. <a href="https://calteches.library.caltech.edu/51/2/CargoCult.htm">Caltech's text (EXTERNAL · source text ↗)</a></p></div>
+</div>
+<p class="note">Three agents, one task, one sample each: this is not a model ranking. Nor are they comparable with the second adapter, which was rewritten with the harness and every scenario in view, and repaired twice after reviews.</p>
+<p class="note">Not run here: a vendor that answers after the broker's 60-second limit on a call (by the broker's code the adapter would get the same 502 as a dropped connection, but no run on this page shows it), two dispatches of one command at once, and a vendor that forgets the command IDs it has accepted. Each is a case the rules would judge; none is evidence here.</p>
+<h3>Every run</h3>
+<div class="cards">
+{{range .Runs}}<div class="card {{.Badge}}-card">
+  <div class="head"><b>Run {{.N}} · {{.Title}}</b><span class="badge {{.Badge}}">{{.Label}}</span></div>
+  <div class="step mono">{{.Step}} · {{.Millis}} ms · {{.Isolation}} tier</div>
+  <dl>
+    <dt>The vendor</dt><dd>{{.Vendor}}</dd>
+    <dt>Rules</dt><dd>{{.Verdict}}; {{.PollsTxt}}</dd>
+    <dt>Brokered calls</dt><dd>{{.Calls}}; {{.AdviceTxt}}</dd>
+    <dt>Vendor counted</dt><dd><ul class="counts">{{range .Vendor2}}<li>{{.}}</li>{{end}}</ul></dd>
+    <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×{{index .Orders 0}}</span><span class="{{.R2Class}}">r2 ×{{index .Orders 1}}</span><span class="chip">r3 ×{{index .Orders 2}}</span></dd>
+    <dt>Credential</dt><dd class="mono small">{{.Credential}}</dd>
+    <dt>Record</dt><dd class="mono small">{{.Record}}</dd>
+  </dl>
+</div>
+{{end}}</div>
+<p class="note">A brokered call is one the sandbox sent through the client and the broker served or refused; the vendor's counts are what reached it. They differ where the broker shed (the overload run: the breaker opened on the vendor's 503, further calls were refused at the broker for the cooldown, the health route was probed, and the adapter's retries got through once the vendor recovered) and where it denied (the probe's bypass, which never reached the vendor).</p>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>The vendor accepted the same command twice, and the adapter reported that all was well, because from where it stood, all was. Ask the adapter how it went and it will tell you. Ask the vendor's books and they will tell you something else. Dijkstra said testing shows the presence of bugs, never their absence, and this page is pleased to report a presence.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Edsger W. Dijkstra:</b> “Program testing can be a very effective way to show the presence of bugs, but is hopelessly inadequate for showing their absence.”</p><p class="src">“The Humble Programmer”, ACM Turing Lecture, 1972 (EWD340). <a href="https://www.cs.utexas.edu/~EWD/transcriptions/EWD03xx/EWD340.html">EWD340 transcription (EXTERNAL · source text ↗)</a></p></div>
+</div>
+
+<p class="kicker">Step 5</p>
+<h2>The boundary probe: three ways out, and a search for the key</h2>
+<p>Run {{.RunProbe}} is not an adapter. It is a step under the same grant that tries what hostile adapter code would try, and reports what happened. Its rules: {{range .ProbeRuleCells}}<span class="badge {{.Badge}}">{{.Name}}</span> {{end}}</p>
+<svg class="art" viewBox="0 0 1040 270" role="img" aria-labelledby="walls-t walls-d">
+<title id="walls-t">The container, its injected client, the broker door, the vendor outside, and three attempts that fail</title>
+<desc id="walls-d">A large rounded box is the container. Inside it, the adapter and the injected client. On its right wall, a door labelled broker leads to the broker on the host and the vendor beyond. Three arrows from the adapter: one stops at the client with not permitted; one goes around the client to the door and stops with 403; one goes to the top wall and ends with no interface. A magnifying glass at the bottom finds no credential.</desc>
+<defs><marker id="ar2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#c2410c"/></marker></defs>
+<rect x="20" y="20" width="680" height="230" rx="16" fill="#eef1f5" stroke="#b9c3cf" stroke-width="3"/>
+<text x="36" y="46" font-size="13" fill="#5a5a5a" font-family="system-ui">the container: read-only root, sized tmpfs, no network interface but loopback</text>
+<rect x="60" y="120" width="150" height="60" rx="10" fill="#fff5df" stroke="#dfc790"/><text x="76" y="146" font-size="13" font-family="system-ui">probe.js</text><text x="76" y="166" font-size="11.5" fill="#5a5a5a" font-family="system-ui">hostile adapter code</text>
+<rect x="330" y="120" width="190" height="60" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text x="346" y="146" font-size="13" font-family="system-ui">injected client</text><text x="346" y="166" font-size="11.5" fill="#5a5a5a" font-family="system-ui">checks the allow list first</text>
+<rect x="690" y="130" width="20" height="46" rx="4" fill="#fff" stroke="#5687a7" stroke-width="2"/><text x="676" y="196" font-size="11" font-weight="650" font-family="system-ui">broker</text>
+<rect x="760" y="120" width="120" height="60" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="776" y="146" font-size="13" font-family="system-ui">the broker</text><text x="776" y="166" font-size="11.5" fill="#5a5a5a" font-family="system-ui">on the host</text>
+<rect x="920" y="120" width="100" height="60" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text x="936" y="146" font-size="13" font-family="system-ui">vendor</text><text x="936" y="166" font-size="11.5" fill="#5a5a5a" font-family="system-ui">never reached</text>
+<path d="M210 150H318" stroke="#c2410c" stroke-width="2.5" marker-end="url(#ar2)"/><text x="222" y="140" font-size="11.5" fill="#8a1c1c" font-family="system-ui">1. DELETE /robots/r1</text><text x="232" y="202" font-size="12" font-weight="650" fill="#8a1c1c" font-family="system-ui">not permitted</text>
+<path d="M210 170 C280 230, 560 230, 680 160" fill="none" stroke="#c2410c" stroke-width="2.5" marker-end="url(#ar2)"/><text x="330" y="238" font-size="11.5" fill="#8a1c1c" font-family="system-ui">2. the same request, straight at the broker socket, skipping the client</text><text x="700" y="112" font-size="12" font-weight="650" fill="#8a1c1c" font-family="system-ui">403</text>
+<path d="M135 120 L135 72 L296 72" fill="none" stroke="#c2410c" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#ar2)"/><text x="146" y="96" font-size="11.5" fill="#8a1c1c" font-family="system-ui">3. fetch(the vendor's URL)</text><text x="308" y="76" font-size="12" font-weight="650" fill="#8a1c1c" font-family="system-ui">no route: the wall has no door here</text>
+<circle cx="560" cy="60" r="16" fill="none" stroke="#5687a7" stroke-width="3"/><path d="M572 72L592 92" stroke="#5687a7" stroke-width="4" stroke-linecap="round"/><text x="600" y="62" font-size="11.5" fill="#5a5a5a" font-family="system-ui">4. a search of the room for the credential</text><text x="600" y="80" font-size="12" font-weight="650" fill="#1e6b2f" font-family="system-ui">nothing: it was never in here</text>
+<text x="760" y="204" font-size="11" fill="#5a5a5a" font-family="system-ui">the credential lives here, minted per run,</text><text x="760" y="220" font-size="11" fill="#5a5a5a" font-family="system-ui">attached after the route is authorized</text>
+</svg>
+<div class="three">
+  <div class="panel"><b>1. A catalog-only route, through the client</b><p class="mono small">{{.Probe.ThroughClient}}</p><p class="note">The injected client checks the allow list before sending. That check is the guest's own code.</p></div>
+  <div class="panel"><b>2. The same route, bypassing the client</b><p class="mono small">{{.Probe.BypassClient}}</p><p class="note">A raw request on the broker socket, skipping the client. The broker on the host refuses it: this is the check that counts, and the trace counts it as denied.</p></div>
+  <div class="panel"><b>3. A direct request to the vendor</b><p class="mono small">{{.Probe.Direct}}</p><p class="note">The container has no network interface but loopback. The vendor's address, which the host can reach, is unreachable from inside.</p></div>
+</div>
+<div class="panel"><b>4. The hunt for the credential.</b> Environment entries that look like a credential: {{len .Probe.CredentialHunt.Env}}. The client's methods: <span class="mono">{{range .Probe.CredentialHunt.ClientKeys}}{{.}} {{end}}</span>; none of their source mentions a bearer. The credential is minted per run on the host and attached by the broker after the route is authorized; the container never holds it. Over the {{.Total}} runs the vendor verified {{.Credentials}} different credentials, one per run that reached it (the probe's reached nothing): each a JWT signed for this vendor, naming the caller, living {{.CredentialLife}} s.</div>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>Three ways out of the room and a search of the room for the key. None of it worked, which is the only acceptable result. As for what is stopping code from doing as it pleases: something, actually. A wall, a door with a list on it, and a key kept in another building.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Gary O'Reilly:</b> “They can write their own code. What's stopping them replicating themselves with code?”</p><p><b>Geoffrey Hinton:</b> “Nothing.” [laughter]</p><p class="src">StarTalk, “Is AI Hiding Its Full Power? With Geoffrey Hinton”, 28 February 2026, at 1:10:16. <a href="https://www.youtube.com/watch?v=l6ZcFa8pybE&amp;t=4210s">StarTalk video at 1:10:16 (EXTERNAL · video ↗)</a></p></div>
+</div>
+
+<p class="kicker">Step 6</p>
+<h2>The evidence: trust nobody on this page, check the signatures</h2>
+<p>Two signed files sit beside this page, both signed by the <code>attest</code> signer's key (Ed25519, key id <span class="mono">{{.KeyID}}</span>, in <a href="harness.pub">harness.pub</a>), a process outside the daemon:</p>
+<ul>
+  <li><a href="bundle.jsonl">bundle.jsonl</a>, the run records. Every run answered with a record: SHA-256 digests of the request as sent and the result as returned, the provider, the tier, the environment identity and the daemon's clock. The daemon only hashes; the harness recomputed both digests before signing each.</li>
+  <li><a href="qualification.jsonl">qualification.jsonl</a>, the verdicts. One statement per run, bound to that run's record by its digest: the scenario, the plan, the vendor's ledger, the credential the vendor saw, each rule's outcome and the verdict. The verifier checks each statement's adapter, plan and report against the run's signed request and output, and rebuilds the verdict from the ledger: it does not take the signer's word for the verdict, only for the ledger.</li>
+</ul>
+<pre>go run ./examples/adapter -verify docs/examples/adapter</pre>
+<div class="two">
+  <div class="panel">
+    <div class="controls" id="checkpick" role="group" aria-label="evidence check"></div>
+    <p id="tamper-what" class="small"></p>
+    <p><span class="badge ok" id="tamper-badge">verified</span></p>
+    <p class="note" id="tamper-detail"></p>
+  </div>
+  <div class="wide"><table>
+<tr><th>Check</th><th>Verdict</th><th>Detail</th></tr>
+{{range .Checks}}<tr><td>{{.What}}</td><td><span class="badge {{.Badge}}">{{.Verdict}}</span></td><td class="small">{{.Detail}}</td></tr>
+{{end}}</table></div>
+</div>
+<p class="note">A record states the daemon's evidence, not hardware attestation. What a signature proves is that these bytes were seen by whoever holds this key; what the tier proves is in <a href="{{.RepoURL}}/blob/main/README.md">the README's provider table</a>. A ledger is the vendor's account as the signer read it from the simulated vendor after the run: the verifier can rebuild a verdict from it, but cannot check it against the vendor, and nothing on this page vouches for the key.</p>
+<div class="asides">
+  <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>You may trust the daemon. You may trust the signer. You may even trust this page. The page's advice is to trust none of them and check the signatures, which takes a second and settles exactly one question: whether these are the bytes that key signed. Whether to trust the key is still yours to settle.</p></div>
+  <div class="realquote"><div class="who">Real quote</div><p><b>Ronald Reagan:</b> “The maxim is: Dovorey no provorey -- trust, but verify.”</p><p class="src">Remarks at the signing of the INF Treaty, 8 December 1987, as transcribed by the Reagan Library. <a href="https://www.reaganlibrary.gov/archives/speech/remarks-signing-intermediate-range-nuclear-forces-treaty">Reagan Library transcript (EXTERNAL · source text ↗)</a></p></div>
+</div>
+
+<h2>Rerun it</h2>
+<pre>make docker-images &amp;&amp; go run ./examples/adapter</pre>
+<p class="note">Needs docker. <code>SANDBOX_DOCKER_RUNTIME=runsc</code> runs it under gVisor, the kernel tier. The simulated vendor is deterministic, so the call counts and verdicts above reproduce; the millisecond timings, the credentials and the key do not. The same matrix runs in <code>sandbox/docker_adapter_test.go</code> in the docker suite, and the published files verify offline in <code>examples/adapter</code>'s own tests.</p>
+
+<script>
+(function () {
+  var FLOOR = {{.FloorJSON}};
+  var CHECKS = [{{range .Checks}}{what: "{{.What}}", short: "{{.Short}}", verdict: "{{.Verdict}}", badge: "{{.Badge}}", detail: "{{.Detail}}"},{{end}}];
+  var svg = document.getElementById("floorsvg");
+  var NS = "http://www.w3.org/2000/svg";
+  var colors = { r1: "#2a78d6", r2: "#c2410c", r3: "#0f766e" };
+  var ids = ["r1", "r2", "r3"];
+  var px = function (x) { return 40 + x * 36; };
+  var py = function (y) { return 352 - y * 20; };
+  var el = function (name, attrs, text) { var e = document.createElementNS(NS, name); for (var k in attrs) e.setAttribute(k, attrs[k]); if (text) e.textContent = text; return e; };
+  var state = { scenario: "nominal", adapter: "adapter-v1.js", timer: null, pos: {}, orders: {} };
+
+  var grid = document.getElementById("grid");
+  for (var gx = 0; gx <= 13; gx++) grid.appendChild(el("line", { x1: px(gx), y1: py(0), x2: px(gx), y2: py(16) }));
+  for (var gy = 0; gy <= 16; gy += 2) grid.appendChild(el("line", { x1: px(0), y1: py(gy), x2: px(13), y2: py(gy) }));
+  var targets = document.getElementById("targets");
+  ids.forEach(function (id) {
+    var t = FLOOR.targets[id];
+    var g = el("g", {});
+    g.appendChild(el("line", { x1: px(t.x), y1: py(t.y), x2: px(t.x), y2: py(t.y) - 22, stroke: colors[id], "stroke-width": 2 }));
+    g.appendChild(el("path", { d: "M" + px(t.x) + " " + (py(t.y) - 22) + " l16 5 l-16 5 z", fill: colors[id] }));
+    g.appendChild(el("circle", { cx: px(t.x), cy: py(t.y), r: 5, fill: "none", stroke: colors[id], "stroke-width": 2 }));
+    g.appendChild(el("text", { x: px(t.x) + 20, y: py(t.y) - 14, "font-size": 11, fill: colors[id], "font-family": "system-ui" }, id + " target"));
+    targets.appendChild(g);
+  });
+  var robots = document.getElementById("robots");
+  var nodes = {};
+  ids.forEach(function (id) {
+    var g = el("g", { "class": "robot" });
+    g.appendChild(el("rect", { x: -14, y: -11, width: 28, height: 22, rx: 6, fill: "#fff", stroke: colors[id], "stroke-width": 2.5 }));
+    g.appendChild(el("circle", { cx: -5, cy: -2, r: 2.6, fill: colors[id] }));
+    g.appendChild(el("circle", { cx: 5, cy: -2, r: 2.6, fill: colors[id] }));
+    g.appendChild(el("path", { d: "M-5 5 Q0 9 5 5", fill: "none", stroke: colors[id], "stroke-width": 1.8 }));
+    g.appendChild(el("line", { x1: 0, y1: -11, x2: 0, y2: -18, stroke: colors[id], "stroke-width": 2 }));
+    g.appendChild(el("circle", { cx: 0, cy: -20, r: 2.5, fill: colors[id] }));
+    g.appendChild(el("text", { x: 0, y: 27, "text-anchor": "middle", "font-size": 12, "font-weight": 650, fill: colors[id], "font-family": "system-ui" }, id));
+    var badge = el("text", { x: -34, y: -14, "font-size": 11, "font-weight": 700, fill: "#8a1c1c", "font-family": "system-ui" }, "");
+    badge.setAttribute("class", "orders");
+    g.appendChild(badge);
+    robots.appendChild(g);
+    nodes[id] = { g: g, badge: badge, mouth: g.childNodes[3] };
+  });
+  var effects = document.getElementById("effects");
+  var vendorstate = document.getElementById("vendorstate");
+  var status = document.getElementById("status");
+
+  function place(id, x, y) { state.pos[id] = { x: x, y: y }; nodes[id].g.setAttribute("transform", "translate(" + px(x) + " " + py(y) + ")"); }
+  function reset() {
+    if (state.timer) { clearTimeout(state.timer); state.timer = null; }
+    ids.forEach(function (id) { var s = FLOOR.start[id]; place(id, s.x, s.y); nodes[id].badge.textContent = ""; nodes[id].mouth.setAttribute("d", "M-5 5 Q0 9 5 5"); nodes[id].g.setAttribute("opacity", "1"); state.orders[id] = 0; });
+    while (effects.firstChild) effects.removeChild(effects.firstChild);
+    notes = [];
+    vendorstate.textContent = "accepting requests";
+    status.textContent = "Press play.";
+    showOutcome();
+  }
+  function effect(x, y, text, color) {
+    var g = el("g", { "class": "fade" }), w = text.length * 6.6 + 10;
+    x = Math.max(8, Math.min(x, 552 - w));
+    g.appendChild(el("rect", { x: x - 4, y: y - 14, width: w, height: 20, rx: 6, fill: "#fff", stroke: color }));
+    g.appendChild(el("text", { x: x + 1, y: y, "font-size": 11.5, "font-weight": 650, fill: color, "font-family": "system-ui" }, text));
+    effects.appendChild(g);
+    return g;
+  }
+  function currentRun() {
+    var run = null;
+    FLOOR.runs.forEach(function (r) { if (r.scenario === state.scenario && r.adapter === state.adapter && r.events) run = r; });
+    return run;
+  }
+  var SAY = {
+    order: "{robot}: order {mission} accepted",
+    start: "{robot}: order {mission} starts",
+    repeat: "{robot}: the same command again; the vendor answers with {mission}, the order it already has",
+    conflict: "{robot}: a command ID reused with another target is refused",
+    answer_lost: "{robot}: order {mission} accepted and started, but the answer is a {status}",
+    dropped: "{robot}: order {mission} accepted and started, then the connection closes with no answer",
+    degraded: "the vendor is degraded: the next {status} requests answer 503",
+    refused: "the degraded vendor answers a request with 503",
+    recovered: "the vendor recovers",
+    move: "{robot}: a status read; one unit closer",
+    fault: "{robot}: faults at {pose}; order {mission} failed",
+    failed: "{robot}: queued order {mission} failed with the robot",
+    done: "{robot}: order {mission} done at {pose}",
+    cancelled: "{robot}: order {mission} cancelled"
+  };
+  var fmt = function (p) { return "(" + (+p.x.toFixed(2)) + ", " + (+p.y.toFixed(2)) + ")"; };
+  function say(e) {
+    return (SAY[e.kind] || e.kind).replace("{robot}", e.robot || "").replace("{mission}", e.mission || "").replace("{status}", e.status || "").replace("{pose}", e.pose ? fmt(e.pose) : "");
+  }
+  var notes = [];
+  function note(id, dy, text, color) {
+    notes.unshift({ text: id + ": " + text, color: color });
+    notes = notes.slice(0, 4);
+    while (effects.firstChild) effects.removeChild(effects.firstChild);
+    notes.forEach(function (n, i) { effect(150, 38 + i * 24, n.text, n.color); });
+  }
+  function apply(e) {
+    if (e.pose) place(e.robot, e.pose.x, e.pose.y);
+    switch (e.kind) {
+      case "order":
+        state.orders[e.robot]++;
+        if (state.orders[e.robot] > (FLOOR.planned[e.robot] || 0)) {
+          nodes[e.robot].badge.textContent = "×" + state.orders[e.robot];
+          note(e.robot, 62, state.orders[e.robot] + " orders, " + FLOOR.planned[e.robot] + " planned", "#8a1c1c");
+        }
+        break;
+      case "answer_lost": note(e.robot, 40, "answer lost (" + e.status + ")", "#8a5a00"); break;
+      case "dropped": note(e.robot, 40, "no answer", "#8a5a00"); break;
+      case "repeat": note(e.robot, 62, "same order back", "#1e6b2f"); break;
+      case "conflict": note(e.robot, 62, "refused: 409", "#8a1c1c"); break;
+      case "degraded": case "refused": vendorstate.textContent = "503: scheduler backlog"; break;
+      case "recovered": vendorstate.textContent = "accepting requests"; break;
+      case "fault": nodes[e.robot].mouth.setAttribute("d", "M-5 7 Q0 3 5 7"); note(e.robot, 30, "fault: obstacle", "#8a1c1c"); break;
+      case "failed": note(e.robot, 52, e.mission + " failed", "#8a1c1c"); break;
+      case "cancelled": note(e.robot, 30, e.mission + " cancelled", "#5a5a5a"); break;
+    }
+  }
+  function play() {
+    reset();
+    var run = currentRun();
+    if (!run) { status.textContent = "This combination was not run on this page."; return; }
+    var events = run.events, i = 0, matched = 0, checked = 0;
+    var tick = function () {
+      if (i >= events.length) {
+        state.timer = null;
+        status.textContent = "done. Orders on the vendor's ledger: r1 " + state.orders.r1 + ", r2 " + state.orders.r2 + ", r3 " + state.orders.r3 + ". Where the replay left each robot as its orders ended matches the signed ledger's stopping point for " + matched + " of " + checked + " orders.";
+        return;
+      }
+      var e = events[i++];
+      apply(e);
+      status.textContent = say(e);
+      var stop = run.stopped && run.stopped[e.mission];
+      if (stop && (e.kind === "done" || e.kind === "fault" || e.kind === "cancelled" || e.kind === "failed")) {
+        var p = state.pos[e.robot];
+        checked++;
+        if (Math.abs(p.x - stop.x) < 1e-6 && Math.abs(p.y - stop.y) < 1e-6) matched++;
+      }
+      state.timer = setTimeout(tick, e.kind === "move" ? 240 : 560);
+    };
+    tick();
+  }
+  function showOutcome() {
+    var run = null;
+    FLOOR.runs.forEach(function (r) { if (r.scenario === state.scenario && r.adapter === state.adapter) run = r; });
+    var titles = { nominal: "nominal", fault: "a fault", overload: "an overloaded vendor", lost_ack: "a lost answer", dropped: "a dropped connection", server_error: "a server error after accepting" };
+    var who = { "adapter-v1.js": "The first adapter", "adapter-v2.js": "The second adapter", "trial/haiku.js": "Claude Haiku's adapter", "trial/sonnet.js": "Claude Sonnet's adapter", "trial/opus.js": "Claude Opus's adapter" }[state.adapter];
+    document.getElementById("o-title").textContent = who + ", " + titles[state.scenario];
+    var badge = document.getElementById("o-badge");
+    if (!run) {
+      badge.className = "badge off"; badge.textContent = "not run";
+      document.getElementById("o-step").textContent = "this combination was not part of the run on this page";
+      ["o-verdict", "o-calls", "o-polls", "o-retries"].forEach(function (k) { document.getElementById(k).textContent = "—".replace("—", "not measured"); });
+      document.getElementById("o-orders").innerHTML = "";
+      document.getElementById("o-note").textContent = "The replay above still shows what the vendor would do.";
+      return;
+    }
+    badge.className = "badge " + run.badge; badge.textContent = run.label;
+    document.getElementById("o-step").textContent = "run " + run.n + " on this page";
+    document.getElementById("o-verdict").textContent = run.verdict;
+    document.getElementById("o-calls").textContent = run.calls;
+    document.getElementById("o-polls").textContent = run.polls;
+    document.getElementById("o-retries").textContent = run.retries;
+    var orders = document.getElementById("o-orders");
+    orders.innerHTML = "";
+    ids.forEach(function (id) { var c = document.createElement("span"); c.className = "chip" + (id === "r2" && run.orders[id] > 1 ? " bad" : ""); c.textContent = id + " ×" + run.orders[id]; orders.appendChild(c); });
+    document.getElementById("o-note").textContent = run.badge === "no" ? "Judged from the vendor's ledger, not from the adapter's report." : "Measured on this page's run; the replay above is the vendor's own record of it.";
+  }
+  document.getElementById("scenarios").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    this.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", "false"); });
+    b.setAttribute("aria-pressed", "true"); state.scenario = b.getAttribute("data-scenario"); reset();
+  });
+  document.getElementById("adapters").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-adapter]"); if (!b) return;
+    this.querySelectorAll("button[data-adapter]").forEach(function (x) { x.setAttribute("aria-pressed", "false"); });
+    b.setAttribute("aria-pressed", "true"); state.adapter = b.getAttribute("data-adapter"); reset();
+  });
+  document.getElementById("play").addEventListener("click", play);
+  document.getElementById("reset").addEventListener("click", reset);
+  reset();
+
+  var pick = document.getElementById("checkpick");
+  function showCheck(i) {
+    var c = CHECKS[i];
+    pick.querySelectorAll("button").forEach(function (b, j) { b.setAttribute("aria-pressed", j === i ? "true" : "false"); });
+    document.getElementById("tamper-what").textContent = c.what;
+    var b = document.getElementById("tamper-badge"); b.className = "badge " + c.badge; b.textContent = c.verdict;
+    document.getElementById("tamper-detail").textContent = c.detail;
+  }
+  CHECKS.forEach(function (c, i) {
+    var b = document.createElement("button");
+    b.className = "btn"; b.type = "button"; b.textContent = c.short;
+    b.addEventListener("click", function () { showCheck(i); });
+    pick.appendChild(b);
+  });
+  showCheck(0);
+})();
+</script>
+</main>
+</body>
+</html>
