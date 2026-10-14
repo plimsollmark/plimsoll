@@ -52,7 +52,7 @@ type mappingRow struct{ Field, Source string }
 type pageData struct {
 	Runs            []pageRun
 	Outside, Limits string
-	Pages           string
+	Pages, Floor    string
 	StepCount       int
 	Contrast        *pageStep
 	ReceiptScript   template.JS
@@ -152,7 +152,10 @@ func execute(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	data := pageData{Limits: limits, Pages: o.Pages, ReceiptScript: template.JS(receiptJS)}
+	data := pageData{Limits: limits, Pages: o.Pages, Floor: runs[0].Request.GetMinimumIsolation(), ReceiptScript: template.JS(receiptJS)}
+	if data.Floor == "" {
+		data.Floor = "process"
+	}
 	transcript := *outsidePath
 	if transcript == "" {
 		transcript = filepath.Join(filepath.Dir(*bundlePath), "outside-plimsoll.txt")
