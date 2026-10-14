@@ -254,7 +254,7 @@ described from its own documentation, with plimsoll's weak points beside them:
   self-review ledgers are not published either. [SECURITY.md](SECURITY.md) says what
   exists, what it is worth, and what you can check yourself instead.
 - **CI runs the gate, in the open, and each check means what it ran.** The
-  [audit workflow](.github/workflows/audit.yml) has four jobs. `audit` runs plain
+  [audit workflow](.github/workflows/audit.yml) has five jobs. `audit` runs plain
   `make audit` on every push to `main` and every pull request: build, vet, race tests, lint,
   `buf lint`, a generated-code drift check, and `govulncheck`. After `audit`, `clients`
   runs `make clients-suite`: `npm ci` in `clients/typescript` and
@@ -263,7 +263,12 @@ described from its own documentation, with plimsoll's weak points beside them:
   `capsule` runs `make capsule-suite`: the capsule example, its own Go module outside
   the root build, vetted and race-tested with the capsule project's Python reference
   verifier installed from a lockfile that names each package's exact version and
-  content hash. `audit-docker` also follows `audit` and
+  content hash. `sbom` runs `make sbom-suite`: the separate
+  [INTERNAL · CycloneDX example guide →](examples/sbom/README.md), which writes signed run
+  evidence as a standard bill of materials (a parts list), is vetted and
+  race-tested offline. It reproduces both published BOMs and their page and
+  checks signatures, schema validity and refusal of altered mapped fields.
+  It starts no sandbox; a skipped test fails the job. `audit-docker` also follows `audit` and
   runs `make docker-suite` with the images prepared, in required mode: a missing
   daemon, a missing image or a skipped test fails the job. A green `audit-docker`
   therefore means the docker suite ran under runc with the shipped seccomp profile

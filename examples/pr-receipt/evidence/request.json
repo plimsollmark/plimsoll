@@ -1,0 +1,25 @@
+{
+  "protocol": 3,
+  "minimumIsolation": "kernel",
+  "traceId": "pr-receipt-0",
+  "timeoutMs": 30000,
+  "project": {
+    "files": [
+      {
+        "path": "package.json",
+        "content": "{\"private\":true,\"scripts\":{\"test\":\"node test.mjs\"}}\n"
+      },
+      {
+        "path": "sum.mjs",
+        "content": "export const sum = values => values.reduce((total, value) => total + value, 0);\n"
+      },
+      {
+        "path": "test.mjs",
+        "content": "import assert from 'node:assert/strict';\nimport {sum} from './sum.mjs';\nassert.equal(sum([10, 20, -5]), 25);\nassert.equal(sum([]), 0);\nconsole.log('two sum checks passed');\n"
+      }
+    ],
+    "steps": [
+      "npm test"
+    ]
+  }
+}

@@ -1,0 +1,72 @@
+# Copy to .github/workflows/pr-receipt.yml in a JavaScript project.
+# Pin PLIMSOLL_RECEIPT_REF to a full published commit containing examples/sbom.
+# Project code runs only inside plimsoll. Nothing posts a PR comment.
+name: pull-request receipt
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  receipt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLIMSOLL_REF: ${{ vars.PLIMSOLL_RECEIPT_REF }}
+      TEST_COMMAND: ${{ vars.PLIMSOLL_TEST_COMMAND || 'npm test' }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - name: Require an immutable plimsoll pin
+        shell: bash
+        run: |
+          [[ "$PLIMSOLL_REF" =~ ^[a-f0-9]{40}$ ]] || { echo 'Set PLIMSOLL_RECEIPT_REF to a published full commit SHA containing examples/sbom'; exit 1; }
+      - name: Check out the pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: project
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out trusted pinned plimsoll tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: plimsollmark/plimsoll
+          ref: ${{ env.PLIMSOLL_REF }}
+          path: tools/plimsoll
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: tools/plimsoll/go.mod
+      - name: Install the pinned gVisor release
+        run: sudo ./tools/plimsoll/docker/install-gvisor.sh
+      - name: Keep the installed runtime and select the manifest-capable image store
+        id: docker_config
+        run: |
+          python3 - <<'PYCONFIG' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          config = json.loads(Path('/etc/docker/daemon.json').read_text())
+          config.setdefault('features', {})['containerd-snapshotter'] = True
+          print('config=' + json.dumps(config, separators=(',', ':')))
+          PYCONFIG
+      - name: Set up pinned Docker with that runtime configuration
+        uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70
+        with:
+          version: v29.9.0
+          daemon-config: ${{ steps.docker_config.outputs.config }}
+      # Trusted Dockerfile only. No dependency installation from the PR on the host.
+      - name: Build the project toolchain image
+        run: docker build -t plimsoll/sandbox:latest tools/plimsoll/docker
+      - name: Run the project and check its receipt
+        id: run
+        env:
+          PLIMSOLL_SOURCE: ${{ github.workspace }}/tools/plimsoll
+        run: ./tools/plimsoll/examples/pr-receipt/receipt.sh "$GITHUB_WORKSPACE/project" "$GITHUB_WORKSPACE/receipt"
+      - name: Upload the checked receipt and bundle
+        if: ${{ always() && steps.run.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: plimsoll-pr-${{ github.event.pull_request.number }}
+          path: receipt/
+          if-no-files-found: error

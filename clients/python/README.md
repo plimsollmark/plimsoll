@@ -260,6 +260,124 @@ What the operator sets, and what the tools do not do:
   `allow_code_execution` only warns and points to hosted sandboxes (checked in CrewAI 1.15.23);
   this tool is the self-hosted option.
 
+## Agent workspace
+
+`Workspace` (`plimsoll_client.workspace`) is a shell, files and search over one session, for an
+agent framework's tools: `exec`, `read`, `write`, `edit`, `glob`, `grep`, and `persist` and
+`hydrate` for the whole tree. The framework adapters that serve a shell to an agent are naming
+layers over it, so what the daemon guarantees (the floor the session was opened with, a run
+record on every call, no network) holds the same for each.
+
+Every operation is one project call of the session, and every step is one of the module's fixed
+scripts: the command and every argument travel as files under `.plimsoll-shell/` in the work
+directory, which the daemon writes before the step runs. Nothing an agent writes becomes a step.
+The shell's working directory and its exported variables persist between commands through two
+files there (`cwd`, `env`); files persist as in any session. What does not persist: a process a
+command leaves running (the session's sweep ends it with the call), and `exit` in a command ends
+the step before its state is saved. Output limits are the daemon's, reported by the truncation
+flags on the outcome; `read` returns at most `max_bytes` (8 MiB at most, the artifact budget), and
+`persist` fails past that budget. Paths are resolved against the work directory, not the shell's
+current directory; an absolute path inside the work directory is accepted.
+
+```python
+from plimsoll_client import Client, Workspace
+
+client = Client("http://127.0.0.1:8080")  # a daemon whose project image carries python3
+with Workspace(client.open_session(minimum_isolation="kernel")) as w:
+    w.write("src/app.py", "print('hello')\n")
+    out = w.exec("cd src && python3 app.py")
+    print(out.exit_code, out.stdout_text, out.cwd)  # 0 hello /work/src
+    print(w.grep("print", "src"))                    # src/app.py:1:print('hello')
+    w.edit("src/app.py", "hello", "goodbye")
+    snapshot = w.persist()                           # a tar of the tree, to hydrate elsewhere
+```
+
+The real thing is checked on a docker session by `tests/docker_workspace_check.py`, which
+`make docker-suite` runs (`TestPythonWorkspaceDocker`); `tests/test_workspace.py` checks what is
+sent against a fake session.
+
+## Claude Managed Agents, self-hosted worker
+
+`plimsoll_client.anthropic_worker` (extra `anthropic`, `pip install "plimsoll-client[anthropic]"`)
+serves the six tools a Claude Managed Agents session sends to a self-hosted worker (`bash`,
+`read`, `write`, `edit`, `glob`, `grep`) from a plimsoll session instead of the worker host.
+The worker dispatches tool calls by name, so `PlimsollTools.tools` stands in for the SDK's
+`beta_agent_toolset_20260401` under the same names and input schemas:
+
+```python
+import asyncio, os
+from anthropic import AsyncAnthropic
+from anthropic.lib.environments import EnvironmentWorker
+from plimsoll_client import Client
+from plimsoll_client.anthropic_worker import PlimsollTools
+
+async def main() -> None:
+    tools = PlimsollTools(Client("https://plimsoll.internal", token=os.environ["PLIMSOLL_TOKEN"]),
+                          minimum_isolation="kernel")
+    async with AsyncAnthropic(auth_token=os.environ["ANTHROPIC_ENVIRONMENT_KEY"]) as client:
+        await EnvironmentWorker(
+            client,
+            environment_id=os.environ["ANTHROPIC_ENVIRONMENT_ID"],
+            environment_key=os.environ["ANTHROPIC_ENVIRONMENT_KEY"],
+            workdir="/workspace",
+            tools=tools.tools,
+        ).run()
+
+asyncio.run(main())
+```
+
+What it gives: the environment key stays on the worker host and the sandbox holds no
+credential; the sandbox has no network; every tool call is a plimsoll call with a run
+record; each Managed Agents session gets one plimsoll session, opened at the floor you name
+(`kernel` by default) on the first tool call and closed when the runner exits the `bash`
+tool (or by `PlimsollTools.close`); the skills the worker downloaded under
+`<workdir>/skills/` are written into the sandbox at open, executable bits kept. The tools
+keep the built-ins' wording, so a model sees what it would see on the host.
+
+Limits, stated so the model sees them: memory stores are not supported (`/mnt/memory`
+stays a copy on the worker host, invisible to `bash` in the sandbox); `read` returns text
+only (no images or PDFs); a background job does not survive a call; `cd` and `export`
+persist through files, not a process (see Agent workspace). Tested in
+`frameworks/anthropic/` with the SDK's own tool classes and call path, against an
+in-memory workspace and the in-memory session daemon, with no call to api.anthropic.com.
+
+## OpenAI Agents SDK, sandbox provider
+
+`plimsoll_client.openai_sandbox` (extra `openai-agents`, `pip install "plimsoll-client[openai-agents]"`)
+is a sandbox provider for the Agents SDK's `SandboxAgent`: `PlimsollSandboxClient` creates,
+resumes and deletes sessions, `PlimsollSandboxSession` runs the agent's commands and files in
+one plimsoll session through the Agent workspace above. The SDK's maintainers keep
+third-party providers out of the SDK, so this one lives here.
+
+```python
+import os
+from agents.sandbox import SandboxAgent, SandboxRunConfig
+from plimsoll_client import Client
+from plimsoll_client.openai_sandbox import PlimsollSandboxClient, PlimsollSandboxClientOptions
+
+provider = PlimsollSandboxClient(Client("https://plimsoll.internal", token=os.environ["PLIMSOLL_TOKEN"]))
+agent = SandboxAgent(name="coder", instructions="Write and run the script.")
+run_config = SandboxRunConfig(
+    client=provider,
+    options=PlimsollSandboxClientOptions(minimum_isolation="kernel", languages=("python",), timeout=120),
+)
+```
+
+What it gives: every command and file operation is a plimsoll call with a run record; the
+session is opened at the floor the options name (`kernel` by default); no credential and no
+network in the sandbox; the SDK's snapshots and `RunState` work as with any provider, since
+`persist_workspace` and `hydrate_workspace` are the workspace's tar.
+
+Limits, stated in the docstrings: the work directory is the daemon's (`/work` on docker),
+learned from the sandbox at create unless the manifest names it; `resume` opens a new
+session and the SDK restores the snapshot into it (this client cannot re-attach to a session
+another process opened, and the persisted state carries the session's public fingerprint,
+never its ID); no PTY, no exposed ports, no manifest users or groups; a background process
+does not survive a command. Tested in `frameworks/openai_agents/` with the SDK's base
+classes, state round trip and exec path against an in-memory workspace and the in-memory
+session daemon, with no model call; the sandbox-side behaviour of the SDK's own file helpers
+on a real session is not yet checked on docker.
+
 ## What the client checks
 
 - **The base URL.** It must be an absolute `http` or `https` URL with no user name,

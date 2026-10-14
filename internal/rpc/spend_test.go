@@ -24,7 +24,7 @@ import (
 // the day is refused not dispatched, reason capacity. A new UTC day starts from zero,
 // and a run settled after midnight charges nothing to the new day.
 func TestSpendCapReservesChargesAndRefuses(t *testing.T) {
-	now := time.Date(2026, 10, 3, 23, 0, 0, 0, time.UTC)
+	now := fixedSpendTestTime().Add(11 * time.Hour)
 	c := NewSpendCap(1000)
 	c.now = func() time.Time { return now }
 
@@ -267,7 +267,7 @@ func (*leakingMetered) RunJavaScript(ctx context.Context, _ sandbox.Request) (sa
 // and charged to it for the part it ran after midnight when it settles (a run
 // previously counted only in the day it started).
 func TestARunAcrossMidnightCountsInTheNewDay(t *testing.T) {
-	now := time.Date(2026, 10, 3, 23, 59, 0, 0, time.UTC)
+	now := fixedSpendTestTime().Add(11*time.Hour + 59*time.Minute)
 	c := NewSpendCap(150)
 	c.now = func() time.Time { return now }
 	settle, err := c.reserve("alice", 0, 100*time.Second)
@@ -305,7 +305,7 @@ func TestARunAcrossMidnightCountsInTheNewDay(t *testing.T) {
 // held changes nothing, one past it charges what ran and holds the new reach from now,
 // and a stop charges what ran and holds nothing, so a suspended session spends nothing.
 func TestSessionMeterChargesOnlyRunningTime(t *testing.T) {
-	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	now := fixedSpendTestTime()
 	c := NewSpendCap(0)
 	c.now = func() time.Time { return now }
 	spent := func() float64 { a, _ := c.spent("alice"); return a }
@@ -341,7 +341,7 @@ func TestSessionMeterChargesOnlyRunningTime(t *testing.T) {
 // A cover the allowance cannot take is refused, not dispatched, reason capacity, in the
 // session's words, and the session stays covered as far as it was.
 func TestSessionMeterRefusalKeepsTheSessionCovered(t *testing.T) {
-	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	now := fixedSpendTestTime()
 	c := NewSpendCap(0)
 	c.now = func() time.Time { return now }
 	spent := func() float64 { a, _ := c.spent("alice"); return a }
@@ -368,7 +368,7 @@ func TestSessionMeterRefusalKeepsTheSessionCovered(t *testing.T) {
 // that window reaching past it, the part after midnight is the new day's (round-3
 // review: it left the books at the settle, so the new day's allowance never saw it).
 func TestALeakedRunSettledBeforeMidnightCountsInTheNewDay(t *testing.T) {
-	now := time.Date(2026, 10, 3, 23, 59, 0, 0, time.UTC)
+	now := fixedSpendTestTime().Add(11*time.Hour + 59*time.Minute)
 	c := NewSpendCap(1000)
 	c.now = func() time.Time { return now }
 	settle, err := c.reserve("alice", 0, 100*time.Second) // window ends 00:00:40
@@ -394,7 +394,7 @@ func TestALeakedRunSettledBeforeMidnightCountsInTheNewDay(t *testing.T) {
 // so the sandbox can bill past the window, and the books let it go at the window's end
 // and at the midnight in between (round-7 review, 2026-10-08).
 func TestALeakedRunOwesUntilTheProvidersDeadline(t *testing.T) {
-	now := time.Date(2026, 10, 3, 23, 59, 0, 0, time.UTC)
+	now := fixedSpendTestTime().Add(11*time.Hour + 59*time.Minute)
 	c := NewSpendCap(1000)
 	c.now = func() time.Time { return now }
 	settle, err := c.reserve("alice", 0, 100*time.Second) // window ends 00:00:40
@@ -428,7 +428,7 @@ func TestALeakedRunOwesUntilTheProvidersDeadline(t *testing.T) {
 // the provider's own lifetime for it, never refused, and each midnight before that end
 // counts the rest in the new day.
 func TestOweChargesALeakedSandboxAcrossMidnight(t *testing.T) {
-	now := time.Date(2026, 10, 3, 23, 0, 0, 0, time.UTC)
+	now := fixedSpendTestTime().Add(11 * time.Hour)
 	c := NewSpendCap(100)
 	c.now = func() time.Time { return now }
 	if got := c.owe("alice", now.Add(2*time.Hour)); got != 7200 {

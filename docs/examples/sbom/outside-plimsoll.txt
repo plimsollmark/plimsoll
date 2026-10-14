@@ -1,0 +1,13 @@
+# record: af0fa2597b817e6bff801ac2c6d3fcef1cb51661c9cce1a5e4a1bd1c29687927
+# step: node egress.js
+# The same egress attempt outside plimsoll
+#
+# Command, run on the developer machine on 2026-10-13 with the node on PATH (v26.3.1),
+# default network, no sandbox, no record of any kind:
+#
+#   node egress.js
+#
+# Output and exit code, pasted by hand (there is no signed record to cite):
+
+egress: reached example.com, status 200
+exit code: 0

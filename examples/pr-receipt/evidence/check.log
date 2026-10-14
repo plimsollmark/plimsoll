@@ -1,0 +1,8 @@
+PASS: CycloneDX 1.6 schema (vendored, offline).
+PASS: DSSE envelope signature and run-record digest.
+PASS: bundle signatures, checkpoint links, stored request and result digests.
+PASS: exchange.json equals the bundle's protobuf messages and reproduces their digests.
+PASS: file-set digest recomputed from file components and bound to the signed request.
+PASS: every mapped field and claim matches the verified exchange.
+PASS: attached key matches independently trusted key.
+LIMIT: names, page URL and assessor label are unsigned presentation; runtime assertions remain the daemon's statements.

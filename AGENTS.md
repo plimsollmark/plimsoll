@@ -121,7 +121,7 @@ option is intentionally only process-tier.
   `plimsoll/sandbox-wasm-cc` from the sim image: the C half of wasi-sdk 27 (clang and
   a wasm32-wasip1 libc with libm), pinned by the same image digest the sim build
   uses, so a project step can compile C to a WebAssembly module with no network.
-- [examples/](examples/) — ten runnable programs: `minimal` (one snippet and the
+- [examples/](examples/), eleven runnable programs: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
   the injected client and being refused by the broker anyway, then the identical
   request succeeding under a separate per-run grant that lists it), `daemon` (the
@@ -160,7 +160,15 @@ option is intentionally only process-tier.
   emitter needs Go 1.27 and dependencies plimsoll does not take on: each call in the
   sessions bundle, once `attest` has accepted it, stated as an Agent Action Capsule under
   draft-mih-scitt-agent-action-capsule-05 and checked by that project's Go and Python
-  verifiers; the page it writes is `docs/examples/capsule/`). The examples that run the daemon build it from source
+  verifiers; the page it writes is `docs/examples/capsule/`), and `sbom`
+  ([examples/sbom](examples/sbom/README.md), its own Go module): two signed single
+  project runs, one with a failed network attempt, converted deterministically
+  into CycloneDX 1.6 bills of materials with the original bundle as evidence.
+  Its `-check` rebuilds every derived field from that verified bundle and can pin
+  an independently trusted key; it starts no sandbox. Its page is
+  `docs/examples/sbom/index.html`; `make sbom-suite` vets and race-tests the module
+  offline, rejecting altered evidence, file substitutions and changed claims.
+  The records state the daemon's evidence, never hardware attestation. The examples that run the daemon build it from source
   through [examples/internal/daemonproc](examples/internal/daemonproc/).
 - [measurements/](measurements/): timing programs (`session-latency`, `warm-pool`) that call
   the providers directly and write their raw samples and page into
@@ -1015,7 +1023,10 @@ pinned separately by go.mod `tool` directives.
 add-on and Trigger.dev tests in required mode), `make capsule-suite` (the capsule
 example's own Go module, vetted and race-tested with the capsule project's Python
 reference verifier installed from `examples/capsule/requirements.txt`, which names each
-package's exact version and content hash) and `make docker-suite` under runc.
+  package's exact version and content hash), `make sbom-suite` (the separate
+  CycloneDX example module, vetted and race-tested offline against the published
+  evidence and embedded schemas, with any skipped test failing the suite) and
+  `make docker-suite` under runc.
 The docker suite also runs under runsc in a separate workflow, so a runsc failure
 cannot mask the runc result; what each green check proves is in
 [CONTRIBUTING.md](CONTRIBUTING.md). The client and provider jobs run their required

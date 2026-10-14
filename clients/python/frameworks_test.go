@@ -56,6 +56,7 @@ func TestPythonFrameworks(t *testing.T) {
 			})
 		}),
 		"PLIMSOLL_WASM_URL="+serve(t, quiet(rpc.NewSandboxService(sandboxtest.Wasm())), nil, nil),
+		"PLIMSOLL_SESSIONS_URL="+fakeSessionsURL(t),
 		"PLIMSOLL_INTEGRATION_REQUIRED=1",
 		"PYTHONPATH=src",
 		"PYTHONDONTWRITEBYTECODE=1",

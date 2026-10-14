@@ -17,6 +17,7 @@ from ._transport import MAX_RESPONSE_BYTES, CancelHandle
 from ._version import __version__
 from .aio import AsyncClient, AsyncSession
 from .client import PROTOCOL, Client, Session
+from .workspace import ExecOutcome, Workspace, WorkspacePathError, WorkspaceTooLargeError
 from .errors import (
     AnswerNotBoundError,
     AtCapacityError,
@@ -73,6 +74,10 @@ __all__ = [
     "MAX_RESPONSE_BYTES",
     "Client",
     "Session",
+    "Workspace",
+    "ExecOutcome",
+    "WorkspacePathError",
+    "WorkspaceTooLargeError",
     "AsyncClient",
     "AsyncSession",
     "CancelHandle",

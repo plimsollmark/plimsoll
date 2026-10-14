@@ -23,6 +23,13 @@ gate is the project's full check, `make audit`. In CI:
   example's lockfile, which names each package's exact version and content hash, so
   the public capsule page's checks run on every push. A missing verifier or a skipped
   test fails the job.
+- Its `sbom` job runs `make sbom-suite` after `audit`: the
+  [INTERNAL · CycloneDX example guide →](examples/sbom/README.md), outside the root build,
+  is vetted and race-tested against the published evidence and embedded schemas
+  offline. CycloneDX is a standard for bills of materials (parts lists); this
+  example converts signed execution records into that format. No sandbox or
+  paid service is used; a skipped test fails the job. Run this additional target
+  locally when changing the example or its published outputs.
 - It then runs `make docker-suite` with the images prepared, so the docker,
   <dfn>*seccomp*</dfn>, <dfn>*broker*</dfn> and smoke tests, which need a real docker
   daemon, run on every push to `main` and every pull request under

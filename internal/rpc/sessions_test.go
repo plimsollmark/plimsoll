@@ -1585,7 +1585,9 @@ func TestMeteredSessionCallRefusedKeepsTheSession(t *testing.T) {
 func TestMeteredSessionThatCannotSuspendOrPayIsClosed(t *testing.T) {
 	svc, p, ctx := meteredSessionService(190)
 	p.FailedSuspends = 1
-	clock := time.Now()
+	// Keep the 150-second advance within one UTC day. A real-time clock near
+	// midnight renews the daily allowance, so this is then a different scenario.
+	clock := fixedSpendTestTime()
 	svc.Spend.now = func() time.Time { return clock }
 	open, err := svc.OpenSession(ctx, openReq())
 	if err != nil {

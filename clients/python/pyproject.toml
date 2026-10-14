@@ -17,12 +17,14 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-# Framework adapters are optional imports (plimsoll_client.adk, .agno, .crewai);
+# Framework adapters are optional imports (plimsoll_client.adk, .agno, .crewai, .anthropic_worker, .openai_sandbox);
 # the lower bounds are the versions their suites run against (clients/python/frameworks/).
 [project.optional-dependencies]
 adk = ["google-adk>=2.11.0,<3"]
 agno = ["agno>=3.1.1,<4"]
 crewai = ["crewai>=1.15.23,<2"]
+anthropic = ["anthropic>=1.13.0,<2"]
+openai-agents = ["openai-agents>=0.23.1,<1"]
 
 [project.urls]
 Homepage = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python"

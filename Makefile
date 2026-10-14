@@ -164,10 +164,13 @@ docker-suite:
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
 	     $(NO_PAID_KEYS) go test -race ./sandbox ./docker -run '$(DOCKER_TESTS)' -skip 'Live$$' -count=1 -parallel $(DOCKER_PARALLEL) -v; \
 	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
+	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
+	     $(NO_PAID_KEYS) go test ./clients/python -run TestPythonWorkspaceDocker -count=1 -v; \
+	   echo $$? > tmp/docker-suite-python.status; } 2>&1 | tee -a tmp/docker-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/docker-suite.log; then \
 	   echo "docker-suite: required coverage was skipped:" >&2; \
 	   grep -E '^ *--- SKIP' tmp/docker-suite.log >&2; exit 1; fi
-	@exit "$$(cat tmp/docker-suite.status)"
+	@s="$$(cat tmp/docker-suite.status)"; [ "$$s" = 0 ] || exit "$$s"; exit "$$(cat tmp/docker-suite-python.status)"
 
 # One virtual environment per Python framework adapter, installed from its directory's lock:
 # requirements.in names the framework version, requirements.txt is every package it pulls in,
@@ -249,6 +252,21 @@ capsule-suite:
 capsule-lock:
 	@[ -x tmp/piptools/bin/pip-compile ] || { python3 -m venv tmp/piptools && tmp/piptools/bin/pip install --quiet --disable-pip-version-check pip-tools; }
 	tmp/piptools/bin/pip-compile -q --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url -o examples/capsule/requirements.txt examples/capsule/requirements.in
+
+# This nested module uses its embedded schemas and published signed bundle only.
+# No sandbox is created and no hosted service or credential is used.
+.PHONY: sbom-suite
+## sbom-suite: vet and race-test examples/sbom offline; a skipped test FAILS
+sbom-suite:
+	@mkdir -p tmp
+	@[ -w tmp ] || { echo "sbom-suite: tmp/ is not writable" >&2; exit 1; }
+	@{ (cd examples/sbom && $(NO_PAID_KEYS) go vet ./... && \
+	   $(NO_PAID_KEYS) go test -race -count=1 -v ./...); \
+	   echo $$? > tmp/sbom-suite.status; } 2>&1 | tee tmp/sbom-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/sbom-suite.log; then \
+	   echo "sbom-suite: required coverage was skipped:" >&2; \
+	   grep -E '^ *--- SKIP' tmp/sbom-suite.log >&2; exit 1; fi
+	@status="$$(cat tmp/sbom-suite.status)"; [ "$$status" = 0 ] || exit "$$status"; echo "sbom-suite: OK"
 
 ## e2b-suite: the live E2B tests (needs E2B_API_KEY)
 e2b-suite:

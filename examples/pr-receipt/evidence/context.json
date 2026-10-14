@@ -1,0 +1,11 @@
+{
+  "pull_request": "0",
+  "tested_head": null,
+  "changed_files": [
+    "package.json",
+    "sum.mjs",
+    "test.mjs"
+  ],
+  "command": "npm test",
+  "context_is_unsigned": true
+}
