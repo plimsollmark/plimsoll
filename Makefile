@@ -207,14 +207,14 @@ py-frameworks-lock:
 # Python, Python framework adapter, TypeScript client, add-on and Trigger.dev suites.
 # Keep the go test exit status despite tee, and fail on any Go test skip in case a
 # future test bypasses PLIMSOLL_REQUIRE_CLIENTS.
-## clients-suite: install both npm dependency sets and the Python framework environments, then run the Python, framework adapter, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS
+## clients-suite: install both npm dependency sets and the Python framework environments, then run the Python, framework adapter, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS (TestPythonWorkspaceDocker needs the docker images and is docker-suite's, so it is excluded here rather than skipped)
 clients-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "clients-suite: tmp/ is not writable" >&2; exit 1; }
 	@{ (cd clients/typescript && $(NO_PAID_KEYS) npm ci --userconfig=/dev/null) && \
 	   (cd examples/trigger-chat && $(NO_PAID_KEYS) npm ci --userconfig=/dev/null) && \
 	   $(MAKE) --no-print-directory py-frameworks && \
-	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) go test ./clients/python/ ./clients/typescript/ -count=1 -v; \
+	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) go test ./clients/python/ ./clients/typescript/ -skip TestPythonWorkspaceDocker -count=1 -v; \
 	   echo $$? > tmp/clients-suite.status; } 2>&1 | tee tmp/clients-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/clients-suite.log; then \
 	   echo "clients-suite: required coverage was skipped:" >&2; \
