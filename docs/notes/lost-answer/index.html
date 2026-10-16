@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>One lost answer, two robot orders, and an adapter that said everything went fine</title>
+<title>Two pizzas arrive, but you tried to order one</title>
 <meta name="description" content="You phone in a pizza order, the line drops right after &quot;got it&quot;, you call back and order again, and two pizzas arrive. Software does this to robots. One scenario from plimsoll&#x27;s fleet adapter example, followed end to end: how an order number prevents it, how a grader catches it without trusting the code that caused it, what an honest &quot;I don&#x27;t know&quot; looks like, and what a signed receipt does and does not prove.">
 <meta name="author" content="Carroll Guertin">
 <meta property="og:type" content="article">
-<meta property="og:title" content="One lost answer, two robot orders, and an adapter that said everything went fine">
+<meta property="og:title" content="Two pizzas arrive, but you tried to order one">
 <meta property="og:description" content="You phone in a pizza order, the line drops right after &quot;got it&quot;, you call back and order again, and two pizzas arrive. Software does this to robots. One scenario from plimsoll&#x27;s fleet adapter example, followed end to end: how an order number prevents it, how a grader catches it without trusting the code that caused it, what an honest &quot;I don&#x27;t know&quot; looks like, and what a signed receipt does and does not prove.">
 <meta property="og:url" content="https://plimsollmark.github.io/plimsoll/notes/lost-answer/index.html">
 <link rel="canonical" href="https://plimsollmark.github.io/plimsoll/notes/lost-answer/index.html">
@@ -47,9 +47,9 @@ footer { margin-top:2.6rem; padding-top:1rem; border-top:1px solid var(--rule);
 <body><main>
 <nav><a href="../../index.html">plimsoll</a> / <a href="../index.html">notes</a></nav>
 <article>
-<h1>One lost answer, two robot orders, and an adapter that said everything went fine</h1>
+<h1>Two pizzas arrive, but you tried to order one</h1>
 <p class="byline">Carroll Guertin, 2026-10-16</p>
-<p>You phone a pizza place. They say "got it", and the line drops before you hear it. Did the order go in? You call back and order again. Forty minutes later two pizzas arrive, and you are now a person who owns two pizzas. 🍕🍕</p>
+<p>You phone a pizza place. They say "got it", and the line drops before you hear it. Did the order go in? You call back and order again. Two pizzas arrive, but you tried to order one. 🍕🍕</p>
 <figure class="fig"><svg role="img" aria-label="The same bug at home and at work. At home: the line drops right after the pizza place says got it, you order again, and two pizzas arrive. At work: the vendor&#x27;s answer is lost after it accepted order m2, the first adapter orders again with no order number, the vendor makes order m3, and robot r2 gets two jobs while the adapter reports that all is done." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 440" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
 <title>The same bug at home and at work. At home: the line drops right after the pizza place says got it, you order again, and two pizzas arrive. At work: the vendor's answer is lost after it accepted order m2, the first adapter orders again with no order number, the vendor makes order m3, and robot r2 gets two jobs while the adapter reports that all is done.</title>
 <defs><marker id="pizza-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/></marker></defs>
