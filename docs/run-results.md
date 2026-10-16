@@ -124,8 +124,8 @@ and the reason is visible in what each one can answer.
   with no compiler, no package manager and no useful file system: it genuinely cannot
   build a project, and it says so with `ErrUnsupported` rather than failing halfway.
   `Describe`, the RPC that reports what a daemon can do, reports `supports_project` so
-  a gateway can advertise only what it will actually run. A tool that appears in the
-  menu and then refuses half its requests teaches an agent to distrust the whole menu.
+  a gateway can advertise only what it will actually run. A <dfn>*tool*</dfn> (one named
+  action a host offers its model) that appears in the menu and then refuses half its requests teaches an agent to distrust the whole menu.
 - **They cost differently.** A snippet is small and fast; a project starts a larger
   image, writes files and runs a compiler. Measured through the docker provider on one
   machine (24 cores, Linux 6.6 under WSL2, Docker 29.1.3, local images, median of 20

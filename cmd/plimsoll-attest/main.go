@@ -20,6 +20,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -52,6 +54,11 @@ const usage = `usage:
                                                 of links and session chains; with -expect, that
                                                 it holds exactly the requests your own log lists,
                                                 one request digest (request_sha256) per line
+  plimsoll-attest verify-entry -pub FILE -line N BUNDLE
+                                                check one call line on its own: its signature,
+                                                its stored request and response, and its link;
+                                                not the bundle around it, nor (for a session
+                                                call) that its session's chain is whole
   plimsoll-attest replay -daemon URL -pub FILE BUNDLE
                                                 verify the bundle as verify does, then run each
                                                 single run again and each session in a fresh
@@ -75,6 +82,8 @@ func main() {
 		err = run(os.Args[2:], os.Stdout)
 	case "verify":
 		err = verify(os.Args[2:], os.Stdout)
+	case "verify-entry":
+		err = verifyEntry(os.Args[2:], os.Stdout)
 	case "replay":
 		err = replay(os.Args[2:], os.Stdout)
 	default:
@@ -456,6 +465,108 @@ func verify(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintln(stdout)
 	return nil
+}
+
+// verifyEntry checks one line of a bundle on its own (attest.VerifyEntry), for a line
+// whose bundle is not whole yet, such as a call of a session still open. It says what
+// the check does not establish: verify, over a whole bundle, is unchanged.
+func verifyEntry(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("verify-entry", flag.ContinueOnError)
+	pubPath := fs.String("pub", "", "the harness's public key (PEM PKIX Ed25519)")
+	line := fs.Int("line", 0, "the line to check, from 1")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *pubPath == "" || *line < 1 || fs.NArg() != 1 {
+		return errors.New("verify-entry needs -pub FILE, -line N (from 1) and one BUNDLE")
+	}
+	pub, err := loadPublic(*pubPath)
+	if err != nil {
+		return err
+	}
+	entry, err := readLine(fs.Arg(0), *line)
+	if err != nil {
+		return err
+	}
+	// A checkpoint and a session's close statement carry no call; VerifyEntry would
+	// refuse them as a link over other content, which reads as tampering.
+	if len(entry.Request) == 0 && len(entry.Response) == 0 {
+		return fmt.Errorf("line %d of %s holds no call: it is a checkpoint or a session's close statement, which plimsoll-attest verify checks with the whole bundle", *line, fs.Arg(0))
+	}
+	rec, link, err := attest.VerifyEntry(attest.NewVerifier(pub), entry)
+	if err != nil {
+		return err
+	}
+	if link.Index != uint64(*line) {
+		// The line's place is the bundle's chain, whether the run was a session's or not.
+		return fmt.Errorf("%w: line %d's link says it was written as line %d", attest.ErrLink, *line, link.Index)
+	}
+	what := "a single run"
+	if rec.Session != "" {
+		what = fmt.Sprintf("call %d of session %s…", rec.Sequence, prefix(rec.Session, 12))
+	}
+	if rec.Unanswered != "" {
+		what += fmt.Sprintf(", which ended without an answer (%s) and may have run", rec.Unanswered)
+	}
+	fmt.Fprintf(stdout, "entry verified: line %d, signed by key %s: record %s, %s; the signed record states provider %s and isolation %q. "+
+		"It authenticates the recorded messages, not that what the guest printed is true. "+
+		"Not established by this check: the bundle around the line, and for a session call that its session's chain is whole; plimsoll-attest verify checks a whole bundle\n",
+		*line, attest.KeyID(pub), rec.SHA256, what, rec.Provider, rec.Isolation)
+	return nil
+}
+
+// readLine reads line n of a bundle and nothing after it, parsing that line alone with
+// the bundle reader's strict rules: a line being written after it, or a malformed line
+// elsewhere, does not stop a stored line from being checked. Lines before it are only
+// counted, in bounded memory.
+func readLine(path string, n int) (attest.Entry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return attest.Entry{}, err
+	}
+	defer f.Close()
+	br := bufio.NewReaderSize(f, 64<<10)
+	for i := 1; i < n; i++ {
+		for {
+			_, err := br.ReadSlice('\n')
+			if err == nil {
+				break
+			}
+			if errors.Is(err, bufio.ErrBufferFull) {
+				continue
+			}
+			if errors.Is(err, io.EOF) {
+				return attest.Entry{}, fmt.Errorf("%s has %d lines, not %d", path, i-1, n)
+			}
+			return attest.Entry{}, err
+		}
+	}
+	var line []byte
+	for {
+		chunk, err := br.ReadSlice('\n')
+		line = append(line, chunk...)
+		if len(line) > attest.MaxLineBytes {
+			return attest.Entry{}, fmt.Errorf("%w: line %d of %s is longer than a bundle line may be", attest.ErrLine, n, path)
+		}
+		if err == nil {
+			break
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			if len(line) == 0 {
+				return attest.Entry{}, fmt.Errorf("%s has %d lines, not %d", path, n-1, n)
+			}
+			return attest.Entry{}, fmt.Errorf("%w: line %d of %s is not finished (no newline): it may still be being written", attest.ErrLine, n, path)
+		}
+		return attest.Entry{}, err
+	}
+	entries, err := attest.ReadBundle(bytes.NewReader(line))
+	if err != nil {
+		return attest.Entry{}, fmt.Errorf("line %d of %s: %w", n, path, err)
+	}
+	return entries[0], nil
 }
 
 func replay(args []string, stdout io.Writer) error {

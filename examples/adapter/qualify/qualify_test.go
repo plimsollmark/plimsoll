@@ -23,13 +23,17 @@ func done(id, robot, cmd string, t fleetsim.Pose) fleetsim.Order {
 }
 
 // good is a clean run of plan p: one order per command, each done where it should be,
-// the cancelled one cancelled, and a report that says so.
+// the cancelled one cancelled, the one the vendor went silent about still running and
+// reported unresolved, and a report that says so.
 func good(p Plan, s fleetsim.Scenario) Evidence {
-	e := Evidence{Kind: KindAdapter, Scenario: s, Plan: p, Report: &Report{Completed: true}}
+	e := Evidence{Kind: KindAdapter, Scenario: s, Plan: p, Report: &Report{Completed: true}, Reads: map[string]int{}}
 	for _, id := range []string{"r1", "r2", "r3"} {
 		status := "idle"
-		if id == s.FaultRobot {
+		if id == s.FaultRobot || id == s.OutOfService {
 			status = "fault"
+		}
+		if id == s.Silent {
+			status = "moving"
 		}
 		e.Robots = append(e.Robots, fleetsim.RobotState{ID: id, Status: status, Battery: 90})
 	}
@@ -43,11 +47,22 @@ func good(p Plan, s fleetsim.Scenario) Evidence {
 	}
 	e.Report.Inventories = []InventoryCall{inv(), inv()}
 	for i, c := range p.Commands {
+		if Expected(c, s) == Refused {
+			e.Report.Commands = append(e.Report.Commands, ReportedCommand{ID: c.ID, Robot: c.Robot, Error: "command " + c.ID + " was not placed: host api 409", Code: Refused})
+			continue
+		}
 		o := done(fmt.Sprintf("m%d", i+1), c.Robot, c.ID, c.Target)
+		if Expected(c, s) == Unresolved {
+			o.Status, o.History, o.StoppedAt = "running", []string{"queued", "running"}, nil
+			e.Ledger = append(e.Ledger, o)
+			e.Report.Commands = append(e.Report.Commands, ReportedCommand{ID: c.ID, Robot: c.Robot, Error: "command " + c.ID + ": no answer; the vendor may or may not hold the order", Code: Unresolved})
+			continue
+		}
 		if want := Expected(c, s); want != "done" {
 			o.Status, o.History = want, []string{"queued", "running", want}
 		}
 		e.Ledger = append(e.Ledger, o)
+		e.Reads[o.ID] = 3
 		waited, _ := json.Marshal(map[string]any{"state": o.Status, "polls": 3})
 		e.Report.Commands = append(e.Report.Commands, ReportedCommand{ID: c.ID, Robot: c.Robot, Mission: o.ID, Dispatched: json.RawMessage(`"` + o.ID + `"`),
 			State: o.Status, Polls: 3, MaxPolls: 40, Waited: waited})
@@ -79,6 +94,21 @@ func TestRules(t *testing.T) {
 	if got := failed(t, good(p, fault)); got != nil {
 		t.Fatalf("a clean fault run failed %v", got)
 	}
+	refused := fleetsim.Scenarios[fleetsim.ScenarioRefused]
+	if got := failed(t, good(p, refused)); got != nil {
+		t.Fatalf("a clean refused run failed %v", got)
+	}
+	silent := fleetsim.Scenarios[fleetsim.ScenarioSilent]
+	if got := failed(t, good(p, silent)); got != nil {
+		t.Fatalf("a clean silent run failed %v", got)
+	}
+	// The silent order's true mission, found some other way, with a wait that ran out:
+	// as honest as unresolved.
+	trueMission := func(e *Evidence) {
+		e.Reads["m2"] = 40
+		e.Report.Commands[1] = ReportedCommand{ID: e.Plan.Commands[1].ID, Robot: "r2", Mission: "m2", Dispatched: json.RawMessage(`"m2"`),
+			State: "timeout", Polls: 40, MaxPolls: 40, Waited: json.RawMessage(`{"state":"timeout","polls":40}`)}
+	}
 	cases := map[string]struct {
 		scenario fleetsim.Scenario
 		edit     func(e *Evidence)
@@ -102,7 +132,13 @@ func TestRules(t *testing.T) {
 			e.Ledger = e.Ledger[1:]
 			e.Report.Commands[0].Mission, e.Report.Commands[0].State, e.Report.Commands[0].Error, e.Report.Commands[0].Code = "", "", "refused", "refused"
 		}, []string{"one_order_per_command"}},
-		"a failure reported as done": {fault, func(e *Evidence) { e.Report.Commands[1].State = "done" }, []string{"report_is_true"}},
+		"a failure reported as done":                  {fault, func(e *Evidence) { e.Report.Commands[1].State = "done" }, []string{"report_is_true"}},
+		"a refusal reported without the refused code": {refused, func(e *Evidence) { e.Report.Commands[2].Code = "" }, []string{"kept_the_shapes", "report_is_true"}},
+		"a refusal reported as unresolved":            {refused, func(e *Evidence) { e.Report.Commands[2].Code = "unresolved" }, []string{"report_is_true"}},
+		"a refused robot shown idle": {refused, func(e *Evidence) {
+			b, _ := json.Marshal([]map[string]any{{"id": "r1", "status": "idle", "battery": 90}, {"id": "r2", "status": "idle", "battery": 90}, {"id": "r3", "status": "idle", "battery": 90}})
+			e.Report.Inventories[1].Returned = b
+		}, []string{"inventory_is_true"}},
 		"a cancel that did nothing": {nominal, func(e *Evidence) {
 			e.Ledger[3].Status, e.Ledger[3].History, e.Ledger[3].StoppedAt = "running", []string{"queued", "running"}, nil
 			e.Report.Commands[3].State = "timeout"
@@ -137,6 +173,47 @@ func TestRules(t *testing.T) {
 		"more reads than the budget": {nominal, func(e *Evidence) {
 			e.Report.Commands[0].Waited = json.RawMessage(`{"state":"done","polls":41}`)
 		}, []string{"kept_the_shapes"}},
+		// A review of 15 October 2026 found these three false passes.
+		"a wait that threw after the mission ended": {nominal, func(e *Evidence) {
+			c := &e.Report.Commands[0]
+			c.Waited, c.State, c.Polls, c.Error = nil, "", 0, "wait failed after the mission ended"
+		}, []string{"kept_the_shapes"}},
+		"fewer reads reported than the vendor served": {nominal, func(e *Evidence) { e.Reads["m1"] = 20 }, []string{"report_is_true"}},
+		"more reads at the vendor than the budget, reported": {nominal, func(e *Evidence) {
+			e.Reads["m1"], e.Report.Commands[0].Polls, e.Report.Commands[0].Waited = 41, 41, json.RawMessage(`{"state":"done","polls":41}`)
+		}, []string{"kept_the_shapes"}},
+		"the cancelled command's budget is the platform's, not the report's": {nominal, func(e *Evidence) {
+			e.Reads["m4"], e.Report.Commands[3].Polls, e.Report.Commands[3].Waited = 6, 6, json.RawMessage(`{"state":"cancelled","polls":6}`)
+		}, []string{"kept_the_shapes"}},
+		"a null battery": {nominal, func(e *Evidence) {
+			e.Report.Inventories[0].Returned = json.RawMessage(`[{"id":"r1","status":"idle","battery":null},{"id":"r2","status":"idle","battery":90},{"id":"r3","status":"idle","battery":90}]`)
+		}, []string{"kept_the_shapes"}},
+		// The silent scenario: the order exists, nothing about it is answered.
+		"an unanswered order reported as refused":       {silent, func(e *Evidence) { e.Report.Commands[1].Code = Refused }, []string{"report_is_true"}},
+		"an unanswered order reported with no code":     {silent, func(e *Evidence) { e.Report.Commands[1].Code = "" }, []string{"kept_the_shapes", "report_is_true"}},
+		"an unanswered order's true mission, timed out": {silent, trueMission, nil},
+		"an unanswered order under an invented mission": {silent, func(e *Evidence) {
+			trueMission(e)
+			e.Report.Commands[1].Mission = "m7"
+		}, []string{"report_is_true"}},
+		"an unanswered order reported done": {silent, func(e *Evidence) {
+			trueMission(e)
+			e.Report.Commands[1].State, e.Report.Commands[1].Waited = "done", json.RawMessage(`{"state":"done","polls":40}`)
+		}, []string{"report_is_true"}},
+		// The night review's two reproductions.
+		"an unresolved report that read past the budget": {silent, func(e *Evidence) { e.Reads["m2"] = 41 }, []string{"kept_the_shapes"}},
+		"an honest timeout on an order that ended later": {nominal, func(e *Evidence) {
+			c := &e.Report.Commands[0]
+			c.State, c.Polls, c.Waited = "timeout", 40, json.RawMessage(`{"state":"timeout","polls":40}`)
+		}, nil},
+		"a timeout after the vendor answered that it ended": {nominal, func(e *Evidence) {
+			c := &e.Report.Commands[0]
+			c.State, c.Polls, c.Waited = "timeout", 40, json.RawMessage(`{"state":"timeout","polls":40}`)
+			e.Told = map[string]int{"m1": 1}
+		}, []string{"report_is_true"}},
+		"an unanswered order placed twice": {silent, func(e *Evidence) {
+			e.Ledger = append(e.Ledger, fleetsim.Order{ID: "m9", Robot: "r2", CommandID: e.Plan.Commands[1].ID, Target: e.Plan.Commands[1].Target, Status: "queued", History: []string{"queued"}})
+		}, []string{"one_order_per_command"}},
 		"an error with no contract code": {nominal, func(e *Evidence) {
 			e.Ledger = e.Ledger[1:]
 			e.Report.Commands[0] = ReportedCommand{ID: e.Plan.Commands[0].ID, Error: "boom", Code: "oops"}

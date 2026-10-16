@@ -236,6 +236,13 @@ The digest names that record; it is not a signature or a proof that the guest
 computed honestly. See the [Trigger.dev feature and deployment guide](https://github.com/plimsollmark/plimsoll/blob/main/docs/trigger-dev.md)
 for the three properties together.
 
+The model sees only a run record's digest (`recordSha256`). The record itself, checked by
+the client, goes to `onRecord(record, key)`, once for every call that ran: an answered call's,
+and the version 3 record a session call that may have run carries on its error. That is where an
+application keeps receipts (a store, or a signer such as plimsoll's `attest` harness); a refusal
+calls nothing, since nothing ran. An `onRecord` that throws, or returns a promise that rejects, is
+logged and never changes the result the model gets.
+
 Closing a sandbox checks the daemon's count of calls against the chain the client saw; a
 mismatch means the daemon counted a call the client has no answer for (one that ended in an
 abort, a timeout, a dropped connection or a proxy's error), or, if none did, that someone

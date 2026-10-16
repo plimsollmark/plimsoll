@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>An AI-written vendor adapter, judged by the vendor's ledger: two orders for one command caught, the rewrite passes, every verdict signed</title>
-<meta name="description" content="One OpenAPI document becomes the grant, the client and the description; an AI-written vendor adapter runs inside plimsoll's sandbox against a simulated fleet API over five scenarios, under a credential minted per run; the verdict is made from the vendor's own ledger, not the adapter's report; a lost answer makes the first adapter place two orders for one command; the rewrite passes; four adapters broken on purpose are each caught; every record and every verdict is signed and verified.">
+<meta name="description" content="One OpenAPI document becomes the grant, the client and the description; an AI-written vendor adapter runs inside plimsoll's sandbox against a simulated fleet API over eight scenarios, under a credential minted per run; the verdict is made from the vendor's own ledger, not the adapter's report; a lost answer makes the first adapter place two orders for one command; the rewrite passes; ten adapters broken on purpose are each caught; every record and every verdict is signed and verified.">
 <link rel="canonical" href="{{.PageURL}}">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="plimsoll">
@@ -192,7 +192,7 @@
   <li><b>One contract, eight rules.</b> The platform states four functions every vendor adapter must export, and the eight rules it judges every adapter by. The harness runs the platform's commands through an adapter and reports what the adapter said. That report is a claim: the verdict is made on the host, after the run, from the plan and the vendor's own ledger, which the adapter cannot write.</li>
   <li><b>One agent, said plainly.</b> The first adapter, <code>adapter-v1.js</code>, was written from the prompt beside it by the AI that built this example, in the same session, before the scenario that caught it existed. It is not an independent agent's answer: its author also wrote the harness.</li>
   <li><b>Runs under a grant.</b> plimsolld runs the harness and the adapter in a locked-down container. The only way out is the brokered client: six routes of the vendor's eight, a credential the daemon mints for each run (a JWT the vendor verifies) that never enters the container, and a metadata-only trace of what was called. A probe shows the other two routes, a direct request and a hunt for the credential all failing.</li>
-  <li><b>Defects, a finding, a rewrite, two signatures.</b> When the vendor accepts an order and loses only the answer, the first adapter sends it again and the ledger shows two orders for one command while the adapter's report is clean; when the connection drops, it reports a failure for an order the robot is already running. The efficiency advisor also names the batch route the operator declared. The rewrite names every order with the platform's command ID, which the vendor uses to answer a repeat with the original order, and passes all five scenarios. Four adapters broken on purpose show each rule catching what it is for. Every run's record is signed, and so is every verdict, bound to its record; the verifier rebuilds each verdict from its evidence.</li>
+  <li><b>Defects, a finding, a rewrite, two signatures.</b> When the vendor accepts an order and loses only the answer, the first adapter sends it again and the ledger shows two orders for one command while the adapter's report is clean; when the connection drops, it reports a failure for an order the robot is already running. The efficiency advisor also names the batch route the operator declared. The rewrite names every order with the platform's command ID, which the vendor uses to answer a repeat with the original order, and passes all eight scenarios. Ten adapters broken on purpose show each rule catching what it is for. Every run's record is signed, and so is every verdict, bound to its record; the verifier rebuilds each verdict from its evidence.</li>
 </ol>
 <div class="asides">
   <div class="narrator"><div class="who">The Professor <small>(a fictional narrator)</small></div><p>Nobody wants to write the fortieth vendor adapter by hand, so an agent writes it. Everyone else here keeps exactly one job: the document says what exists, the grant says what is allowed, the vendor keeps the books, a grader outside the building reads them, and a signer outside it signs for the lot. Nobody gets two of those jobs, least of all the one who wrote the code.</p></div>
@@ -244,18 +244,13 @@
 {{end}}
 
 <p class="kicker">Step 4</p>
-<h2>The floor: replay the six scenarios</h2>
+<h2 id="floor">The floor: replay the eight scenarios</h2>
 <p>The floor replays the vendor's own record of this page's runs: every order, start, status read, fault, refusal and cancel, in the order it happened (a mission moves its robot one unit toward the target on every read of that robot's state). Pick a scenario and an adapter and press play. At the end it checks where it drew each robot against where the signed ledger says each order stopped. The panel beside the floor shows that run's verdict.</p>
 <div class="floor">
   <div>
     <div class="controls" id="scenarios" role="group" aria-label="scenario">
-      <button class="btn" type="button" data-scenario="nominal" aria-pressed="true">nominal</button>
-      <button class="btn" type="button" data-scenario="fault" aria-pressed="false">a fault</button>
-      <button class="btn" type="button" data-scenario="overload" aria-pressed="false">an overloaded vendor</button>
-      <button class="btn" type="button" data-scenario="lost_ack" aria-pressed="false">a lost answer</button>
-      <button class="btn" type="button" data-scenario="dropped" aria-pressed="false">a dropped connection</button>
-      <button class="btn" type="button" data-scenario="server_error" aria-pressed="false">a server error</button>
-    </div>
+{{range $i, $sc := .Scenarios}}      <button class="btn" type="button" data-scenario="{{$sc.Name}}" aria-pressed="{{if eq $i 0}}true{{else}}false{{end}}">{{$sc.Title}}</button>
+{{end}}    </div>
     <div class="controls" id="adapters" role="group" aria-label="adapter">
       <button class="btn" type="button" data-adapter="adapter-v1.js" aria-pressed="true">the first adapter</button>
       <button class="btn" type="button" data-adapter="adapter-v2.js" aria-pressed="false">the second adapter</button>
@@ -300,10 +295,10 @@
 <p class="kicker">The independent trial</p>
 <h2>The exam: three fresh AIs write the adapter cold</h2>
 <p>In plain words: the first adapter on this page was written by the same AI that built the page, which is a bit like marking your own homework. So we set an exam. Three fresh agents, Claude Haiku, Claude Sonnet and Claude Opus, got the same <a href="{{.RepoURL}}/blob/main/examples/adapter/trial/PROMPT.md">exam paper</a> (EXTERNAL · source repo ↗): the contract, the rules they would be judged by (six at the time; the shape and inventory rules came later and check things the contract already asked for), how the platform's client reports errors, and the vendor's API description. Open book on that, closed book on everything else. Each ran as a one-shot Claude Code session in an empty folder with every customization switched off and no tools at all, so the exam paper was the only thing in the room (well, that and the folder's name, which had "plimsoll" in it). Their transcripts were checked afterwards: no tool calls, and none of this repository's text.</p>
-<p>Each got one practice question, the plain nominal scenario, could see how it went, and could hand in up to three times. All three aced the practice first time. Haiku handed in straight away; Sonnet and Opus each rewrote theirs anyway (after passing!) and kept the second version. The other five scenarios were the real exam, and they had not seen them. Their adapters ran here exactly as written.</p>
+<p>Each got one practice question, the plain nominal scenario, could see how it went, and could hand in up to three times. All three aced the practice first time. Haiku handed in straight away; Sonnet and Opus each rewrote theirs anyway (after passing!) and kept the second version. The other scenarios were the real exam, and they had not seen them: five at the time, then a sixth (a refused order) and a seventh (a vendor that never answers), both added on 15 October 2026, which their adapters met here for the first time. Their adapters ran here exactly as written.</p>
 <svg class="art" viewBox="0 0 1100 280" role="img" aria-labelledby="tr-t tr-d">
 <title id="tr-t">How the trial ran</title>
-<desc id="tr-d">The exam paper goes to three agents, Claude Haiku, Sonnet and Opus, with no tools. Each tries one practice question, the nominal scenario, and sees the result, up to three times. What they hand in runs over all six scenarios in the sandbox; the grader reads the vendor's ledger and the verdict is signed. A dotted red line from this repository's agent instructions to the agents marks the leak described below.</desc>
+<desc id="tr-d">The exam paper goes to three agents, Claude Haiku, Sonnet and Opus, with no tools. Each tries one practice question, the nominal scenario, and sees the result, up to three times. What they hand in runs over all eight scenarios in the sandbox; the grader reads the vendor's ledger and the verdict is signed. A dotted red line from this repository's agent instructions to the agents marks the leak described below.</desc>
 <defs><marker id="ar4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker><marker id="ar5" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#c2410c"/></marker></defs>
 <rect x="20" y="104" width="170" height="86" rx="10" fill="#fff" stroke="#bed4e5"/>
 <text x="36" y="130" font-size="14" font-weight="650" font-family="system-ui">The exam paper</text>
@@ -505,6 +500,10 @@
     conflict: "{robot}: a command ID reused with another target is refused",
     answer_lost: "{robot}: order {mission} accepted and started, but the answer is a {status}",
     dropped: "{robot}: order {mission} accepted and started, then the connection closes with no answer",
+    silenced: "{robot}: order {mission} accepted and started, then the vendor's gateway answers 504; from here on nothing about {robot} is answered",
+    unanswered: "{robot}: {status} answered 504; the vendor does nothing",
+    out_of_service: "{robot}: in fault before the run starts; the vendor refuses its orders",
+    rejected: "{robot}: an order for a robot in fault is refused with 409",
     degraded: "the vendor is degraded: the next {status} requests answer 503",
     refused: "the degraded vendor answers a request with 503",
     recovered: "the vendor recovers",
@@ -537,8 +536,12 @@
         break;
       case "answer_lost": note(e.robot, 40, "answer lost (" + e.status + ")", "#8a5a00"); break;
       case "dropped": note(e.robot, 40, "no answer", "#8a5a00"); break;
+      case "silenced": note(e.robot, 40, "504: and silence from here on", "#8a5a00"); break;
+      case "unanswered": note(e.robot, 40, "504 again", "#8a5a00"); break;
       case "repeat": note(e.robot, 62, "same order back", "#1e6b2f"); break;
       case "conflict": note(e.robot, 62, "refused: 409", "#8a1c1c"); break;
+      case "out_of_service": nodes[e.robot].mouth.setAttribute("d", "M-5 7 Q0 3 5 7"); note(e.robot, 30, "in fault from the start", "#8a1c1c"); break;
+      case "rejected": note(e.robot, 62, "order refused: 409", "#8a1c1c"); break;
       case "degraded": case "refused": vendorstate.textContent = "503: scheduler backlog"; break;
       case "recovered": vendorstate.textContent = "accepting requests"; break;
       case "fault": nodes[e.robot].mouth.setAttribute("d", "M-5 7 Q0 3 5 7"); note(e.robot, 30, "fault: obstacle", "#8a1c1c"); break;
@@ -566,14 +569,14 @@
         checked++;
         if (Math.abs(p.x - stop.x) < 1e-6 && Math.abs(p.y - stop.y) < 1e-6) matched++;
       }
-      state.timer = setTimeout(tick, e.kind === "move" ? 240 : 560);
+      state.timer = setTimeout(tick, e.kind === "move" ? 240 : e.kind === "unanswered" ? 120 : 560);
     };
     tick();
   }
   function showOutcome() {
     var run = null;
     FLOOR.runs.forEach(function (r) { if (r.scenario === state.scenario && r.adapter === state.adapter) run = r; });
-    var titles = { nominal: "nominal", fault: "a fault", overload: "an overloaded vendor", lost_ack: "a lost answer", dropped: "a dropped connection", server_error: "a server error after accepting" };
+    var titles = FLOOR.titles;
     var who = { "adapter-v1.js": "The first adapter", "adapter-v2.js": "The second adapter", "trial/haiku.js": "Claude Haiku's adapter", "trial/sonnet.js": "Claude Sonnet's adapter", "trial/opus.js": "Claude Opus's adapter" }[state.adapter];
     document.getElementById("o-title").textContent = who + ", " + titles[state.scenario];
     var badge = document.getElementById("o-badge");
@@ -609,6 +612,20 @@
   document.getElementById("play").addEventListener("click", play);
   document.getElementById("reset").addEventListener("click", reset);
   reset();
+  // A link may open the floor on a scenario, and an adapter: #floor/lost_ack/adapter-v2.js.
+  function fromHash() {
+    var m = /^#floor\/([a-z_]+)(?:\/(.+))?$/.exec(location.hash);
+    if (!m) return;
+    var sc = document.querySelector('#scenarios button[data-scenario="' + m[1] + '"]');
+    var want = null, ad = null;
+    if (m[2]) { try { want = decodeURIComponent(m[2]); } catch (e) { return; } }
+    document.querySelectorAll("#adapters button[data-adapter]").forEach(function (b) { if (b.getAttribute("data-adapter") === want) ad = b; });
+    if (sc) sc.click();
+    if (ad) ad.click();
+    if (sc || ad) document.getElementById("floor").scrollIntoView();
+  }
+  fromHash();
+  window.addEventListener("hashchange", fromHash);
 
   var pick = document.getElementById("checkpick");
   function showCheck(i) {

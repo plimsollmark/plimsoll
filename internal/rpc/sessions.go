@@ -125,10 +125,10 @@ func (e *sessionEntry) endErr() error {
 		switch {
 		case replaced:
 			return &sandbox.SessionEndedError{Reason: sandbox.SessionReplaced,
-				Detail: "the daemon closed it to open a newer session for the same owner, which was at its cap"}
+				Detail: "the daemon closed it to open a newer session for the same owner, which was at its cap", Public: true}
 		case unclaimed:
 			return &sandbox.SessionEndedError{Reason: sandbox.SessionUnclaimed,
-				Detail: "no request named it before its first idle timeout, so the daemon closed it; nothing ran in it, so a new session loses nothing"}
+				Detail: "no request named it before its first idle timeout, so the daemon closed it; nothing ran in it, so a new session loses nothing", Public: true}
 		}
 	}
 	return err
@@ -1057,7 +1057,7 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	// session must say so in its own answer.
 	var se *sandbox.SessionEndedError
 	if errors.As(e.endErr(), &se) {
-		out.Ended, out.EndDetail = sessionEndWire(se.Reason), wireString(se.Detail)
+		out.Ended, out.EndDetail = sessionEndWire(se.Reason), wireString(publicEndDetail(se))
 	}
 	return connect.NewResponse(out), nil
 }

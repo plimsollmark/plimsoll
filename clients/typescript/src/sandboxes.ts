@@ -36,6 +36,7 @@ import { createHash } from "node:crypto";
 
 import { PlimsollClient, type Info, type Isolation, type Language, type ProjectResult, type Session } from "./client.ts";
 import { PlimsollError, type Refusal } from "./errors.ts";
+import type { RunRecord } from "./record.ts";
 
 export type SessionMode = "auto" | "always" | "never";
 
@@ -180,6 +181,14 @@ export type CodeSandboxesOptions = {
    * rejects, is logged the same way; it never stops a close or the next open.
    */
   onCloseError?: (key: SandboxKey, err: unknown) => void;
+  /**
+   * Called with every run record this instance checked: an answered call's, and the one
+   * a session call that may have run carries on its error. The tool's result gives the
+   * model only the record's digest, so this is where an application keeps the receipt
+   * (a store, a signer). Never called for a refusal: nothing ran. A callback that
+   * throws, or returns a promise that rejects, is logged; it never changes the result.
+   */
+  onRecord?: (record: RunRecord, key: SandboxKey | undefined) => void | Promise<void>;
 };
 
 /** What the executeCode tool takes. */
@@ -456,7 +465,7 @@ export class CodeSandboxes {
     });
     const opts = { timeoutMs: this.#opts.timeoutMs, minimumIsolation: this.#floor, signal };
     if (key === undefined || !persistent) {
-      return this.#fresh(info, language, input.code, files, opts);
+      return this.#fresh(key, info, language, input.code, files, opts);
     }
     let retried = false;
     for (;;) {
@@ -474,6 +483,7 @@ export class CodeSandboxes {
         session = await beforeDispatch(() => untilAborted(entry.session, signal));
         // From here the cell may have been sent: an unmarked error stays unmarked.
         const r = await session.runCell({ language, code: input.code, files }, opts);
+        this.#record(r.record, key);
         // Read once the call has answered: the session runs its calls in order, so of
         // calls made at once only the first to answer finds the sandbox new.
         const first = !entry.answered;
@@ -493,6 +503,7 @@ export class CodeSandboxes {
           recordSha256: r.record.sha256,
         };
       } catch (e) {
+        if (e instanceof PlimsollError && e.record) this.#record(e.record, key);
         // Aborted while its sandbox opened: nothing was sent, and a sandbox no call has
         // used is not kept for a call that has gone (the open finishes, then closes).
         if (!session && signal?.aborted) {
@@ -549,6 +560,7 @@ export class CodeSandboxes {
   // A fresh sandbox for one call: the files, the code and a runner that prints the
   // last expression, as one project.
   async #fresh(
+    key: SandboxKey | undefined,
     info: Info,
     language: Language,
     code: string,
@@ -568,6 +580,7 @@ export class CodeSandboxes {
         });
       }
       const r = await this.client.runJavaScript(snippetRunner(code), opts);
+      this.#record(r.record, key);
       return {
         ...this.#cut(language, r.exitCode, r.timedOut, r.stdout, r.stderr, r.stdoutTruncated || r.stderrTruncated),
         stateKept: false,
@@ -584,6 +597,7 @@ export class CodeSandboxes {
       },
       opts,
     );
+    this.#record(r.record, key);
     const step = r.steps[0];
     if (!step) {
       // No step report: the outcome says what ended the run (a timeout, a lost report),
@@ -599,8 +613,8 @@ export class CodeSandboxes {
       ...this.#cut(language, step.exitCode, step.timedOut || r.outcome === "timed_out", step.stdout, step.stderr, step.stdoutTruncated || step.stderrTruncated),
       stateKept: false,
       filesPersist: false,
-        isolation: r.isolation,
-        recordSha256: r.record.sha256,
+      isolation: r.isolation,
+      recordSha256: r.record.sha256,
     };
   }
 
@@ -716,6 +730,19 @@ export class CodeSandboxes {
       void Promise.resolve(callback(key, err)).catch(callbackFailed);
     } catch (e) {
       callbackFailed(e);
+    }
+  }
+
+  // Never throws, for the same reason: a receipt store's failure must not turn a
+  // result the model should see into an error.
+  #record(record: RunRecord, key: SandboxKey | undefined): void {
+    const callback = this.#opts.onRecord;
+    if (!callback) return;
+    const failed = (e: unknown) => console.warn(`plimsoll: onRecord failed for record ${record.sha256}:`, errorText(e));
+    try {
+      void Promise.resolve(callback(record, key)).catch(failed);
+    } catch (e) {
+      failed(e);
     }
   }
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/plimsollmark/plimsoll/examples/adapter/fleetsim"
 	"github.com/plimsollmark/plimsoll/examples/adapter/qualify"
+	"github.com/plimsollmark/plimsoll/examples/adapter/trial/practice"
 	"github.com/plimsollmark/plimsoll/internal/specgen"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -28,9 +30,8 @@ import (
 // counts, the overload scenario's shedding, the second adapter never taking an order
 // that is not its command's, and the boundary probe's refusals.
 
-// adapterGrant builds the grant the example's profile carries: the generated allow
-// list minus the two catalog-only operations, the generated client, and the health
-// route for the broker's breaker.
+// adapterGrant builds the grant the example's profile carries (practice.Grant), and checks
+// the spec's batch extension the profile also declares.
 func adapterGrant(t *testing.T, baseURL, token string) *sandbox.HostAPIGrant {
 	t.Helper()
 	spec, err := os.ReadFile("../examples/adapter/vendor/fleet.openapi.json")
@@ -41,35 +42,28 @@ func adapterGrant(t *testing.T, baseURL, token string) *sandbox.HostAPIGrant {
 	if err != nil {
 		t.Fatalf("specgen: %v", err)
 	}
-	var allow []sandbox.HostRoute
-	for _, r := range gen.Allow {
-		if r.Method == "DELETE" || strings.HasSuffix(r.Path, "/firmware") {
-			continue
-		}
-		allow = append(allow, r)
+	if gen.BatchOf["GET /robots"] == nil {
+		t.Fatalf("the spec's batch extension was not picked up: %v", gen.BatchOf)
 	}
-	if len(allow) != 6 {
-		t.Fatalf("granted %d routes, want 6: %+v", len(allow), allow)
+	grant, err := practice.Grant(spec, baseURL, sandbox.StaticToken(token))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if gen.HealthCheck != "GET /health" || gen.BatchOf["GET /robots"] == nil {
-		t.Fatalf("the spec's extensions were not picked up: health %q, batch_of %v", gen.HealthCheck, gen.BatchOf)
-	}
-	return &sandbox.HostAPIGrant{
-		BaseURL:     baseURL,
-		Allow:       allow,
-		Global:      "fleet",
-		Minter:      sandbox.StaticToken(token),
-		Preamble:    gen.Preamble,
-		HealthCheck: &sandbox.HostRoute{Method: "GET", Path: "/health"},
-	}
+	return grant
 }
 
 func adapterFiles(t *testing.T) []sandbox.File {
 	t.Helper()
 	var files []sandbox.File
-	for _, name := range []string{"contract/harness.js", "adapter/adapter-v1.js", "adapter/adapter-v2.js", "adapter/probe.js",
-		"adapter/broken/wrong-target.js", "adapter/broken/wrong-robot.js", "adapter/broken/false-success.js", "adapter/broken/no-cancel.js",
-		"adapter/broken/no-state.js", "adapter/broken/empty-inventory.js", "adapter/broken/invented-robot.js"} {
+	broken, err := filepath.Glob("../examples/adapter/adapter/broken/*.js")
+	if err != nil || len(broken) == 0 {
+		t.Fatalf("no adapters broken on purpose: %v", err)
+	}
+	names := []string{"contract/harness.js", "adapter/adapter-v1.js", "adapter/adapter-v2.js", "adapter/probe.js"}
+	for _, p := range broken {
+		names = append(names, "adapter/broken/"+filepath.Base(p))
+	}
+	for _, name := range names {
 		b, err := os.ReadFile("../examples/adapter/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -135,7 +129,7 @@ func TestDockerAdapterExample(t *testing.T) {
 		if res.Outcome != sandbox.ProjectOutcomeCompleted || len(res.Steps) != 1 {
 			t.Fatalf("outcome %v (%s), %d steps", res.Outcome, res.Detail, len(res.Steps))
 		}
-		ev := qualify.Evidence{Kind: qualify.KindAdapter, Scenario: sim.Scenario(), Plan: plan, Ledger: sim.Ledger(), Robots: sim.Robots(),
+		ev := qualify.Evidence{Kind: qualify.KindAdapter, Scenario: sim.Scenario(), Plan: plan, Ledger: sim.Ledger(), Robots: sim.Robots(), Reads: sim.Reads(), Told: sim.Told(),
 			Report: qualify.ReadReport(res.Steps[0].Stdout), ExitCode: res.Steps[0].ExitCode}
 		if ev.Report == nil {
 			t.Fatalf("no report line; stdout %q stderr %q", res.Steps[0].Stdout, res.Steps[0].Stderr)
@@ -173,10 +167,14 @@ func TestDockerAdapterExample(t *testing.T) {
 		{fleetsim.ScenarioLostAck, "adapter-v1.js", []string{"one_order_per_command"}},
 		{fleetsim.ScenarioDropped, "adapter-v1.js", []string{"kept_the_shapes", "ended_as_it_should", "report_is_true"}},
 		{fleetsim.ScenarioServerError, "adapter-v1.js", []string{"kept_the_shapes", "ended_as_it_should", "report_is_true"}},
+		{fleetsim.ScenarioRefused, "adapter-v1.js", []string{"kept_the_shapes", "report_is_true"}},
+		{fleetsim.ScenarioSilent, "adapter-v1.js", []string{"kept_the_shapes", "inventory_is_true", "report_is_true"}},
 		{fleetsim.ScenarioFault, "adapter-v2.js", nil},
 		{fleetsim.ScenarioLostAck, "adapter-v2.js", nil},
 		{fleetsim.ScenarioDropped, "adapter-v2.js", nil},
 		{fleetsim.ScenarioServerError, "adapter-v2.js", nil},
+		{fleetsim.ScenarioRefused, "adapter-v2.js", nil},
+		{fleetsim.ScenarioSilent, "adapter-v2.js", nil},
 		{fleetsim.ScenarioNominal, "broken/wrong-target.js", []string{"right_robot_and_target", "robot_at_target"}},
 		{fleetsim.ScenarioNominal, "broken/wrong-robot.js", []string{"right_robot_and_target"}},
 		{fleetsim.ScenarioFault, "broken/false-success.js", []string{"report_is_true"}},
@@ -184,6 +182,9 @@ func TestDockerAdapterExample(t *testing.T) {
 		{fleetsim.ScenarioNominal, "broken/no-state.js", []string{"kept_the_shapes"}},
 		{fleetsim.ScenarioNominal, "broken/empty-inventory.js", []string{"inventory_is_true"}},
 		{fleetsim.ScenarioNominal, "broken/invented-robot.js", []string{"kept_the_shapes", "inventory_is_true"}},
+		{fleetsim.ScenarioNominal, "broken/throwing-wait.js", []string{"kept_the_shapes"}},
+		{fleetsim.ScenarioNominal, "broken/undercounted-reads.js", []string{"kept_the_shapes", "report_is_true"}},
+		{fleetsim.ScenarioSilent, "broken/unanswered-as-refused.js", []string{"report_is_true"}},
 	}
 	for _, m := range matrix {
 		t.Run(m.adapter+" "+m.scenario, func(t *testing.T) {
@@ -192,6 +193,26 @@ func TestDockerAdapterExample(t *testing.T) {
 			}
 		})
 	}
+	// The silent scenario: v2 sends c2's create with its command ID until its attempts run
+	// out, every one answered 504, then reports unresolved; the vendor holds one order.
+	t.Run("adapter-v2.js silent: unresolved after its attempts", func(t *testing.T) {
+		r := run(t, fleetsim.ScenarioSilent, "adapter-v2.js", nil)
+		if len(r.failed) != 0 {
+			t.Errorf("failed rules %v", r.failed)
+		}
+		if c := r.ev.Report.Commands[1]; c.Code != "unresolved" || c.Mission != "" {
+			t.Errorf("c2 reported mission %q, code %q; want unresolved", c.Mission, c.Code)
+		}
+		if got := sim.Counts()["POST /robots/*/missions"]; got != 3+40 {
+			t.Errorf("the vendor saw %d creates, want 43 (c1, c3 and c4 once, c2 40 times)", got)
+		}
+		if got := sim.Unanswered(); got != 39 {
+			t.Errorf("the vendor answered %d requests 504 after the first, want 39", got)
+		}
+		if n := sim.Orders()["r2"]; n != 1 {
+			t.Errorf("r2 holds %d orders, want 1", n)
+		}
+	})
 	t.Run("adapter-v1.js nominal: one read per robot", func(t *testing.T) {
 		r := run(t, fleetsim.ScenarioNominal, "adapter-v1.js", nil)
 		if len(r.failed) != 0 {
@@ -336,4 +357,46 @@ const a = require("./adapter-v2.js");
 			t.Errorf("probe rules: %+v (the client's refusal never reaches the broker, so exactly one denial)", outcomes)
 		}
 	})
+}
+
+// The trial's development scenario runs an agent's adapter in the sandbox, never on the
+// host (a security scan of 2026-10-16 found the helper running it under the host's node,
+// with the operator's environment): the passing adapter passes, a broken one fails, and an
+// adapter reading the environment and the host's files finds neither the operator's
+// variables nor the host's home.
+func TestDockerPracticeRunsTheAdapterInTheSandbox(t *testing.T) {
+	// Not parallel: it sets a variable in this process's environment.
+	d := sessionDocker(t)
+	read := func(name string) string {
+		t.Helper()
+		b, err := os.ReadFile("../examples/adapter/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	spec, harness := []byte(read("vendor/fleet.openapi.json")), read("contract/harness.js")
+	ctx := context.Background()
+	good, err := practice.Run(ctx, d, spec, harness, read("adapter/adapter-v2.js"))
+	if err != nil || !good.Pass || !strings.HasSuffix(good.Text, "Verdict in this scenario: pass.\n") {
+		t.Fatalf("the passing adapter: %v\n%s", err, good.Text)
+	}
+	bad, err := practice.Run(ctx, d, spec, harness, read("adapter/broken/false-success.js"))
+	if err != nil || bad.Pass || !strings.Contains(bad.Text, "BROKEN: ") {
+		t.Fatalf("a broken adapter: %v\n%s", err, bad.Text)
+	}
+	const canary = "PRACTICE_CANARY_7f3a"
+	t.Setenv("PLIMSOLL_PRACTICE_CANARY", canary)
+	home, _ := os.UserHomeDir()
+	snoop := `const fs = require("fs");
+let home = "unreadable"; try { home = fs.readdirSync(` + "`" + home + "`" + `).join(","); } catch (e) { home = "unreadable: " + e.code; }
+console.error("ENV " + JSON.stringify(process.env) + " HOME " + home);
+` + read("adapter/adapter-v2.js")
+	seen, err := practice.Run(ctx, d, spec, harness, snoop)
+	if err != nil || !seen.Pass {
+		t.Fatalf("the snooping adapter: %v\n%s", err, seen.Text)
+	}
+	if strings.Contains(seen.Text, canary) || !strings.Contains(seen.Text, "HOME unreadable") {
+		t.Fatalf("the adapter saw the operator's environment or home:\n%s", seen.Text)
+	}
 }

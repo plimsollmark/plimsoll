@@ -68,10 +68,10 @@ not an artifact. Each workflow artifact is labelled `plimsoll-pr-<number>`.
 The program limit is 30 seconds, enough for the small demonstration while keeping
 a slow command bounded; longer suites need an explicit timeout extension.
 
-[INTERNAL · dated local exercise status →](evidence/README.md) records the
-2026-10-13 attempt with the small sum program in
-[INTERNAL · fixture →](fixture/test.mjs). Startup refused the isolated process-ID
-namespace before code was sent, because the host process-limit check could not
-read Docker's host cgroup. No new signed run was obtained. The dated instructions
-let a host-side agent finish it without weakening that check. The number 0 labels
-the local exercise; no actual pull request or hosted workflow is asserted here.
+[INTERNAL · one real local run →](evidence/README.md) holds the signed receipt of the
+small sum program in [INTERNAL · fixture →](fixture/test.mjs), run by this script under
+gVisor on 2026-10-16. `make receipt-suite` runs the script the same way and fails if its
+output names a directory of the machine that made it; the script then moves that output aside
+and leaves the output directory empty, so a workflow that uploads it after a failure publishes
+nothing. The number 0 labels the local
+exercise; no actual pull request or hosted workflow is asserted here.

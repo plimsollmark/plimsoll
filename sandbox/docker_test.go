@@ -1056,3 +1056,23 @@ func TestRunProjectStepOutputKeepsItsBytes(t *testing.T) {
 		t.Fatalf("stderr = % x, want fe", got)
 	}
 }
+
+// A session's read-back does not depend on the order docker lists its mounts in,
+// which varies between inspects, and still sees a changed mount.
+func TestDockerSecuritySnapshotIgnoresMountOrder(t *testing.T) {
+	t.Parallel()
+	const a = `{"Type":"bind","Source":"/h/resolv.conf","Destination":"/etc/resolv.conf","RW":false}`
+	const b = `{"Type":"bind","Source":"/h/host-api.sock","Destination":"/run/host-api.sock","RW":true}`
+	snap := func(mounts string) string {
+		return dockerInspect{Image: "sha256:x", HostConfig: json.RawMessage(`{"NetworkMode":"none"}`), Mounts: json.RawMessage(mounts)}.securitySnapshot()
+	}
+	if snap("["+a+","+b+"]") != snap("["+b+", "+a+"]") {
+		t.Fatal("the same mounts in another order read as a changed container")
+	}
+	if snap("["+a+","+b+"]") == snap("["+a+","+strings.Replace(b, `"RW":true`, `"RW":false`, 1)+"]") {
+		t.Fatal("a changed mount read as the same container")
+	}
+	if snap("["+a+"]") == snap("["+a+","+b+"]") {
+		t.Fatal("an added mount read as the same container")
+	}
+}

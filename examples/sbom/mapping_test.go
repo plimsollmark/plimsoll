@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -39,7 +40,7 @@ func fixtures(t *testing.T) ([]source, []byte, []byte) {
 }
 
 // verdictFixtures are the two adapter runs the published page carries a verdict for:
-// line 8 (adapter-v2, nominal, pass) and line 4 (adapter-v1, lost_ack, fail).
+// line 10 (adapter-v2, nominal, pass) and line 4 (adapter-v1, lost_ack, fail).
 func verdictFixtures(t *testing.T) []source {
 	t.Helper()
 	read := func(name string) []byte {
@@ -49,7 +50,7 @@ func verdictFixtures(t *testing.T) []source {
 		}
 		return b
 	}
-	s, err := qualified(read("bundle.jsonl"), read("harness.pub"), read("qualification.jsonl"), "https://plimsollmark.github.io/plimsoll/examples/adapter/", []int{8, 4})
+	s, err := qualified(read("bundle.jsonl"), read("harness.pub"), read("qualification.jsonl"), "https://plimsollmark.github.io/plimsoll/examples/adapter/", []int{10, 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +415,7 @@ func TestCLIReproducesOutputsAndReportsChecks(t *testing.T) {
 	if err := execute([]string{"-check", verdict, "-check-bundle", "../../docs/examples/adapter/bundle.jsonl", "-check-qualification", "../../docs/examples/adapter/qualification.jsonl", "-trusted-pub", "../../docs/examples/adapter/harness.pub"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"PASS: the attached line is line 8 of the referenced bundle", "PASS: the attached statement is one of the referenced qualification file's 38", "verdict re-evaluated"} {
+	for _, want := range []string{"PASS: the attached line is line 10 of the referenced bundle", "PASS: the attached statement is one of the referenced qualification file's 51", "verdict re-evaluated"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in: %s", want, out.String())
 		}
@@ -506,9 +507,57 @@ func TestVerdictClaimIsBoundToTheStatement(t *testing.T) {
 		}
 		return b
 	}
-	for _, line := range []int{39, 40} {
+	for _, line := range []int{52, 53} {
 		if _, err := qualified(read("bundle.jsonl"), read("harness.pub"), read("qualification.jsonl"), defaults().Pages, []int{line}); err == nil {
 			t.Fatalf("line %d accepted", line)
+		}
+	}
+}
+
+// -line writes one run's BOM from one bundle line, the path a caller takes that converts
+// runs as they happen; for the published bundle it must write the published BOMs exactly.
+func TestOneLineModeReproducesThePublishedBOMs(t *testing.T) {
+	plain, _, _ := fixtures(t)
+	dir := scratch(t)
+	base := []string{"-bundle", "../../docs/examples/sbom/bundle.jsonl", "-pub", "../../docs/examples/sbom/harness.pub", "-out", dir, "-pages", "https://plimsollmark.github.io/plimsoll/examples/sbom/"}
+	for _, s := range plain {
+		var out bytes.Buffer
+		if err := execute(append(base, "-line", strconv.FormatUint(s.Line.Index, 10)), &out); err != nil {
+			t.Fatalf("line %d: %v", s.Line.Index, err)
+		}
+		name := "run-" + s.Record.SHA256[:12] + ".cdx.json"
+		got, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := os.ReadFile(filepath.Join("../../docs/examples/sbom", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("line %d: the BOM differs from the published %s", s.Line.Index, name)
+		}
+		if !strings.Contains(out.String(), "wrote "+name) || !strings.Contains(out.String(), "PASS: altered envelope refused") {
+			t.Errorf("line %d: the checks were not reported:\n%s", s.Line.Index, out.String())
+		}
+	}
+	entries, err := os.ReadFile("../../docs/examples/sbom/bundle.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := strconv.Itoa(bytes.Count(entries, []byte("\n")))
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"the checkpoint line", append(base, "-line", last)},
+		{"a line past the end", append(base, "-line", "99")},
+		{"no -pages", []string{"-bundle", base[1], "-pub", base[3], "-out", dir, "-line", "1"}},
+		{"no -out", []string{"-bundle", base[1], "-pub", base[3], "-pages", base[7], "-line", "1"}},
+		{"a qualification flag", append(base, "-line", "1", "-qualified-runs", "1")},
+	} {
+		if err := execute(c.args, &bytes.Buffer{}); err == nil {
+			t.Errorf("%s: -line accepted it", c.name)
 		}
 	}
 }

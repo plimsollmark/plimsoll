@@ -135,7 +135,8 @@
   standard library only. The TypeScript client has no runtime dependencies; its two
   add-ons import the agent framework they plug into (the SDK of <dfn>Trigger.dev</dfn>, a
   hosted job runner for TypeScript, with the <code>ai</code> package, or Mastra's core),
-  and their tool's input schema imports <code>zod</code>; all of these are optional peer
+  and the input schema of their <dfn>tool</dfn>, the named action each add-on offers an
+  agent's model, imports <code>zod</code>; all of these are optional peer
   dependencies the application installs itself.</p>
 
   <div class="card bad">

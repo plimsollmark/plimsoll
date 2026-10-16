@@ -44,6 +44,12 @@ func TestRefuseCellReportsTheSessionsEnd(t *testing.T) {
 	if reason, ok := NotDispatchedReason(err); !ok || reason != RefusalEnvironment || !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("launch on a live session: %v; want unsupported, not dispatched, environment", err)
 	}
+	// The launch error can carry an exec's stderr, so it travels marked private, and is
+	// still the launch error.
+	var pe *PrivateError
+	if !errors.As(err, &pe) || pe.Error() != launch.Error() || !errors.Is(err, sessionkit.ErrLaunch) {
+		t.Fatalf("launch on a live session: %v; want the launch error marked private", err)
+	}
 
 	// A caller whose context ended while the interpreter started gave up; the image is
 	// not to blame.

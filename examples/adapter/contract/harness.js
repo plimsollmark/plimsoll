@@ -72,6 +72,7 @@ async function main() {
     } catch (e) { Object.assign(row, errorOf(e)); }
   };
   for (let i = 0; i < plan.commands.length; i++) if (!plan.commands[i].cancel) await send(plan.commands[i], rows[i]);
+  // The read budgets, 40 and 5 below, are qualify.WaitBudget and CancelWaitBudget.
   for (let i = 0; i < plan.commands.length; i++) if (!plan.commands[i].cancel) await watch(rows[i], 40);
 
   // 3. The commands the platform cancels: dispatch, cancel at once, then wait.

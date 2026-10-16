@@ -358,6 +358,36 @@ func (l *fingerprintLiar) CloseSession(context.Context, *connect.Request[plimsol
 	return connect.NewResponse(&plimsollv1.CloseSessionResponse{}), nil
 }
 
+// stallingLiar is a fingerprintLiar whose close never answers.
+type stallingLiar struct{ fingerprintLiar }
+
+func (*stallingLiar) CloseSession(ctx context.Context, _ *connect.Request[plimsollv1.CloseSessionRequest]) (*connect.Response[plimsollv1.CloseSessionResponse], error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// The close of a session refused at open runs within its own budget, so a close that
+// stalls cannot hold the refusal past it (the MCP server's whole-call deadline relies on
+// this).
+func TestARejectedOpensCloseIsBounded(t *testing.T) {
+	old := rejectedCloseBudget
+	rejectedCloseBudget = 200 * time.Millisecond
+	t.Cleanup(func() { rejectedCloseBudget = old })
+	mux := http.NewServeMux()
+	path, h := rpc.NewHandler(&stallingLiar{})
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	start := time.Now()
+	_, err := newRemote(t, srv.URL).OpenSession(context.Background(), SessionOptions{})
+	if connect.CodeOf(err) != connect.CodeDataLoss {
+		t.Fatalf("a mismatched fingerprint: %v; want DataLoss", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("the refusal took %v; the stalled close should have been cut at its budget", took)
+	}
+}
+
 // A session whose fingerprint does not match its ID is refused, and closed first: it
 // exists on the daemon either way, and nothing else holds its ID.
 func TestSessionFingerprintMismatchClosesTheSession(t *testing.T) {

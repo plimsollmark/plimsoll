@@ -124,3 +124,32 @@ func TestWasmNativeBridgeWithoutGrantFailsClosed(t *testing.T) {
 		t.Fatalf("grant-free run produced a trace: %+v", res.CallTrace)
 	}
 }
+
+// An answer outside 2xx rejects with the status and the body as fields, beside the
+// message's "host api STATUS: BODY", so an adapter can branch on e.status instead of
+// parsing the message. Every client variant builds it with the same hostError.
+func TestHostAPIErrorCarriesStatusAndBody(t *testing.T) {
+	t.Parallel()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"error":"command_id reused"}`)
+	}))
+	defer upstream.Close()
+	grant := &HostAPIGrant{BaseURL: upstream.URL, Allow: []HostRoute{{Method: "POST", Path: "/v1/missions"}}, Minter: StaticToken("t")}
+	res, err := testWasm().RunJavaScript(context.Background(), Request{
+		Code:  `host.post("/v1/missions", {}).then(function(){console.log("resolved")}, function(e){console.log(e.status + "|" + e.body.error + "|" + e.message)})`,
+		Grant: grant,
+	})
+	if err != nil {
+		t.Fatalf("RunJavaScript: %v", err)
+	}
+	if got := strings.TrimSpace(res.Stdout); got != `409|command_id reused|host api 409: {"error":"command_id reused"}` {
+		t.Fatalf("stdout %q stderr %q", res.Stdout, res.Stderr)
+	}
+	for name, tmpl := range map[string]string{"docker": hostNetClientTmpl, "e2b and dockercloud": hostE2BClientTmpl, "wasm": hostWasmClientTmpl} {
+		if strings.Contains(tmpl, `new Error("host api " + res`) || strings.Contains(tmpl, `new Error("host api " + response`) || !strings.Contains(tmpl, "function hostError(") {
+			t.Errorf("the %s client builds a host api error without hostError", name)
+		}
+	}
+}

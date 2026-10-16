@@ -1,6 +1,6 @@
 # The dependency list, and who checks the checkers
 
-Four direct dependencies, one library banned by name with the reason attached, and the fixed tool versions that make a passing gate mean something.
+Four direct dependencies, one library banned by name with the reason attached, and the fixed versions of the gate's programs that make a passing gate mean something.
 
 Part of the [plimsoll README](../README.md).
 

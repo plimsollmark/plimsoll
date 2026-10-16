@@ -327,3 +327,139 @@ func TestServerErrorAfterAccepting(t *testing.T) {
 		t.Fatalf("repeat: %d %v", code, m)
 	}
 }
+
+// In the refused scenario r3 is in fault from the start: the vendor lists it so,
+// answers an order for it with 409 and places none, and logs both.
+func TestRefusedScenarioRefusesTheFaultedRobot(t *testing.T) {
+	v := newVendor(t, ScenarioRefused)
+	if code, _ := v.create("r3", 0, 15, "run01-c3"); code != http.StatusConflict {
+		t.Fatalf("an order for the robot in fault answered %d, want 409", code)
+	}
+	if code, _ := v.create("r1", 3, 0, "run01-c1"); code != http.StatusCreated {
+		t.Fatalf("an order for an idle robot answered %d", code)
+	}
+	if n := len(v.s.Ledger()); n != 1 {
+		t.Fatalf("the ledger holds %d orders, want 1 (r3's refused)", n)
+	}
+	for _, r := range v.s.Robots() {
+		if want := map[string]string{"r1": "moving", "r2": "idle", "r3": "fault"}[r.ID]; r.Status != want {
+			t.Errorf("%s is %s, want %s", r.ID, r.Status, want)
+		}
+	}
+	events, _ := v.s.Events()
+	if len(events) == 0 || events[0].Kind != "out_of_service" || events[0].Robot != "r3" || !slices.ContainsFunc(events, func(e Event) bool { return e.Kind == "rejected" && e.Robot == "r3" }) {
+		t.Errorf("events %+v: want out_of_service for r3 first and a rejected order", events)
+	}
+}
+
+// The vendor counts every status read of a mission, a refused one included, and forgets
+// them at a reset: the count the read budget is held to.
+func TestStatusReadsAreCountedPerMission(t *testing.T) {
+	v := newVendor(t, ScenarioOverload)
+	_, m := v.create("r1", 3, 0, "")
+	id, _ := m["mission_id"].(string)
+	for range DegradedRequests + 2 {
+		v.call("GET", "/missions/"+id, nil)
+	}
+	v.call("GET", "/robots", nil)
+	if got := v.s.Reads(); got[id] != DegradedRequests+2 || len(got) != 1 {
+		t.Fatalf("reads %v, want %d of %s", got, DegradedRequests+2, id)
+	}
+	v.s.Reset(ScenarioNominal)
+	if got := v.s.Reads(); len(got) != 0 {
+		t.Errorf("a reset kept the reads: %v", got)
+	}
+}
+
+// In the silent scenario r2's first order is accepted, started and answered 504, and then
+// nothing about r2 is answered or done: a repeat, a new order, a read of r2, a read or a
+// cancel of its order. The fleet list, health and the other robots are answered, the reads
+// of r2's order are still counted, and the order keeps running on the list's ticks alone.
+func TestSilentScenarioAnswersNothingAboutTheRobot(t *testing.T) {
+	v := newVendor(t, ScenarioSilent)
+	if code, _ := v.create("r2", 10, 4, "run01-c2"); code != http.StatusGatewayTimeout {
+		t.Fatalf("the first order answered %d, want 504", code)
+	}
+	if o := v.order("m1"); o.Status != "running" || o.CommandID != "run01-c2" {
+		t.Fatalf("the order was not placed and started: %+v", o)
+	}
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/robots/r2"}, {"GET", "/missions/m1"}, {"POST", "/missions/m1/cancel"},
+	} {
+		if code, _ := v.call(c.method, c.path, nil); code != http.StatusGatewayTimeout {
+			t.Errorf("%s %s answered %d, want 504", c.method, c.path, code)
+		}
+	}
+	if code, _ := v.create("r2", 10, 4, "run01-c2"); code != http.StatusGatewayTimeout {
+		t.Errorf("a repeat answered %d, want 504", code)
+	}
+	if code, _ := v.create("r2", 10, 4, "run01-c2-again"); code != http.StatusGatewayTimeout {
+		t.Errorf("a new order for r2 answered %d, want 504", code)
+	}
+	if n := len(v.s.Ledger()); n != 1 {
+		t.Fatalf("the ledger holds %d orders, want 1: nothing after the first is done", n)
+	}
+	if o := v.order("m1"); o.Status != "running" || o.Steps != 0 {
+		t.Fatalf("an unanswered read or cancel changed the order: %+v", o)
+	}
+	if code, _ := v.call("GET", "/health", nil); code != http.StatusOK {
+		t.Errorf("health answered %d", code)
+	}
+	if code, _ := v.create("r1", 3, 0, "run01-c1"); code != http.StatusCreated {
+		t.Errorf("an order for r1 answered %d", code)
+	}
+	if code, m := v.call("GET", "/robots", nil); code != http.StatusOK || len(m["robots"].([]any)) != 3 {
+		t.Fatalf("the fleet list answered %d: %v", code, m)
+	}
+	if o := v.order("m1"); o.Steps != 1 {
+		t.Errorf("the fleet list should tick r2's order once; steps %d", o.Steps)
+	}
+	if got := v.s.Reads()["m1"]; got != 1 {
+		t.Errorf("reads of m1 %d, want 1: an unanswered read is a read", got)
+	}
+	if got := v.s.Unanswered(); got != 5 {
+		t.Errorf("unanswered %d, want 5", got)
+	}
+	events, _ := v.s.Events()
+	var silenced, unanswered int
+	for _, e := range events {
+		switch e.Kind {
+		case "silenced":
+			silenced++
+		case "unanswered":
+			unanswered++
+		}
+	}
+	if silenced != 1 || unanswered != 5 {
+		t.Errorf("events: %d silenced and %d unanswered, want 1 and 5", silenced, unanswered)
+	}
+}
+
+// The vendor counts the answers that told the caller an order had ended: a read or a cancel
+// of a terminal order, never one of a running order, and never in the silent scenario's 504s.
+func TestToldCountsOnlyAnswersShowingTheEnd(t *testing.T) {
+	v := newVendor(t, ScenarioNominal)
+	v.create("r1", 3, 0, "cmd-told-0001") // three steps from (0, 0)
+	for range 3 {
+		v.call("GET", "/missions/m1", nil)
+	}
+	if got := v.s.Told()["m1"]; got != 1 {
+		t.Fatalf("told %d after the read that ended it, want 1", got)
+	}
+	v.call("POST", "/missions/m1/cancel", nil)
+	if got := v.s.Told()["m1"]; got != 2 {
+		t.Fatalf("told %d after a cancel of the ended order, want 2", got)
+	}
+	v.create("r2", 10, 4, "cmd-told-0002")
+	v.call("GET", "/missions/m2", nil)
+	if got := v.s.Told()["m2"]; got != 0 {
+		t.Fatalf("told %d about a running order, want 0", got)
+	}
+	// A repeated create answers with the order's status: an ended order's repeat tells too.
+	if code, m := v.create("r1", 3, 0, "cmd-told-0001"); code != http.StatusOK || m["status"] != "done" {
+		t.Fatalf("repeat: %d %v", code, m)
+	}
+	if got := v.s.Told()["m1"]; got != 3 {
+		t.Fatalf("told %d after a repeat of the ended order, want 3", got)
+	}
+}

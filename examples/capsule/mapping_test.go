@@ -325,7 +325,7 @@ func TestOtherBundleNeedsItsOwnSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src.operator != defaultOperator || src.developer != defaultDeveloper || src.importedAt.Format(time.RFC3339) != publishedImportedAt {
+	if !src.published || src.operator != defaultOperator || src.developer != defaultDeveloper || src.importedAt.Format(time.RFC3339) != publishedImportedAt {
 		t.Errorf("the published bundle did not take the published defaults: %+v", src)
 	}
 	other := append([]byte("{}\n"), published...)
@@ -344,7 +344,7 @@ func TestOtherBundleNeedsItsOwnSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src.operator != "o" || src.developer != "d" || !src.importedAt.Equal(time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)) {
+	if src.published || src.operator != "o" || src.developer != "d" || !src.importedAt.Equal(time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("another bundle's source: %+v", src)
 	}
 	sum := sha256.Sum256(other)

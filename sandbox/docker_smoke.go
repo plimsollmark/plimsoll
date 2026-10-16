@@ -241,6 +241,10 @@ try {
   interfaces = fs.readFileSync("/proc/net/dev", "utf8").split("\n").slice(2)
     .map(l => l.split(":")[0].trim()).filter(Boolean).slice(0, 16).map(n => n.slice(0, 32));
 } catch (e) {}
+// The resolver configuration the guest sees, which must be plimsoll's fixed file and
+// nothing of the host's.
+let resolv = null;
+try { resolv = fs.readFileSync("/etc/resolv.conf", "latin1").slice(0, 4096); } catch (e) {}
 let banner = null;
 `
 	// Bounded three ways: head -c caps the bytes, the timeout caps the wait, and a
@@ -254,7 +258,7 @@ let banner = null;
   banner = { error: String((e && e.message) || e).slice(0, 200) };
 }
 `
-	const finish = `function finish(socket) { process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, pids, ids, interfaces, banner, socket })); }
+	const finish = `function finish(socket) { process.stdout.write(JSON.stringify({ rootWritable, mounts, writable, pids, ids, interfaces, resolv, banner, socket })); }
 `
 	// The connect is bounded by its own timeout and every outcome, including a
 	// refusal, is reported as data rather than thrown, so the storage evidence above
@@ -352,6 +356,7 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 			Groups []string `json:"groups"`
 		} `json:"ids"`
 		Interfaces []string `json:"interfaces"`
+		Resolv     *string  `json:"resolv"`
 		Banner     *struct {
 			Head  string `json:"head"`
 			Error string `json:"error"`
@@ -402,6 +407,9 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 		return errors.New("root filesystem accepted a write; --read-only is not in force")
 	}
 	if err := checkLoopbackOnly(report.Interfaces); err != nil {
+		return err
+	}
+	if err := checkGuestResolvConf(report.Resolv); err != nil {
 		return err
 	}
 	if report.IDs == nil {
@@ -459,6 +467,32 @@ func checkLoopbackOnly(ifaces []string) error {
 		return nil
 	}
 	return fmt.Errorf("the container's network interfaces are %q, not loopback alone; --network none is not in force", ifaces)
+}
+
+// checkGuestResolvConf holds the guest's /etc/resolv.conf to guestResolvConf byte for
+// byte, so no search domain, nameserver, option or other line of the host's reaches
+// guest code whatever the host's file holds. An unreadable file fails too. The error
+// states counts, never the file's values, which may be the host's.
+func checkGuestResolvConf(got *string) error {
+	if got == nil {
+		return errors.New("the probe could not read the container's /etc/resolv.conf")
+	}
+	if *got == guestResolvConf {
+		return nil
+	}
+	var search, nameservers, other int
+	for _, line := range strings.Split(*got, "\n") {
+		switch f := strings.Fields(line); {
+		case len(f) == 0 || strings.HasPrefix(f[0], "#") || strings.HasPrefix(f[0], ";"):
+		case f[0] == "search" || f[0] == "domain":
+			search++
+		case f[0] == "nameserver":
+			nameservers++
+		default:
+			other++
+		}
+	}
+	return fmt.Errorf("the container's /etc/resolv.conf is not the fixed file plimsoll mounts (%d bytes: %d search or domain lines, %d nameserver lines, %d other lines), so the host's resolver settings may reach guest code", len(*got), search, nameservers, other)
 }
 
 // smokeSnippet runs one snippet exactly as runs do (runSnippet): the start script, then

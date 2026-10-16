@@ -52,22 +52,54 @@ import (
 // and the docker suite proves a proxy in the client config and a hook in the image
 // never reach guest code.
 
-// dockerClientConfig is an empty directory this process owns, given to every docker
-// command as its client config. Made once; a failure fails every docker command. It
-// must be a fresh private directory: a fixed path in a shared temp directory could be
-// made first by another user, with a `proxies` setting in it. Nothing removes it when
-// the process exits, so it holds dockerAliveSocket, which the process listens on for
-// its life, and reapDeadHostDirs removes a config directory whose socket refuses
-// (docker_hostdirs.go). The docker CLI reads only its own files there.
-var dockerClientConfig = sync.OnceValues(func() (string, error) {
+// dockerHostFiles are the files the docker provider keeps on the host for this
+// process's life, in one fresh private directory (0700) it owns: a fixed path in a
+// shared temp directory could be made first by another user, with a `proxies` setting
+// in it. Nothing removes the directory when the process exits, so it holds
+// dockerAliveSocket, which the process listens on for its life, and reapDeadHostDirs
+// removes one whose socket refuses (docker_hostdirs.go).
+type dockerHostFiles struct {
+	// dir is the private directory itself.
+	dir string
+	// config is the docker CLI's client config, given to every docker command: an
+	// empty directory, so no client setting of the host applies.
+	config string
+	// resolvConf holds guestResolvConf, mounted read-only over /etc/resolv.conf in
+	// every container the provider starts (lockdownFlags). Preflight checks it is
+	// still there, since every container start fails without it.
+	resolvConf string
+	// lock is the open directory whose lock keeps systemd-tmpfiles from aging these
+	// files away (holdHostDir); kept here so it is never closed.
+	lock *os.File
+}
+
+// dockerProcessFiles makes dockerHostFiles once. A failure fails every docker command
+// (dockerCommand), so no container can start without its resolv.conf.
+var dockerProcessFiles = sync.OnceValues(func() (dockerHostFiles, error) {
 	dir, err := os.MkdirTemp("", "plimsoll-docker-config-")
 	if err != nil {
-		return "", err
+		return dockerHostFiles{}, err
+	}
+	f := dockerHostFiles{dir: dir, config: filepath.Join(dir, "config"), resolvConf: filepath.Join(dir, "resolv.conf")}
+	fail := func(what string, err error) (dockerHostFiles, error) {
+		if f.lock != nil {
+			_ = f.lock.Close()
+		}
+		_ = os.RemoveAll(dir)
+		return dockerHostFiles{}, fmt.Errorf("docker private directory: %s: %w", what, err)
+	}
+	if f.lock, err = holdHostDir(dir); err != nil {
+		return fail("lock", err)
+	}
+	if err := os.Mkdir(f.config, 0o700); err != nil {
+		return fail("client config", err)
+	}
+	if err := writeGuestResolvConf(f.resolvConf); err != nil {
+		return fail("guest resolv.conf", err)
 	}
 	l, err := net.Listen("unix", filepath.Join(dir, dockerAliveSocket))
 	if err != nil {
-		_ = os.RemoveAll(dir)
-		return "", fmt.Errorf("docker client config: liveness socket: %w", err)
+		return fail("liveness socket", err)
 	}
 	go func() {
 		for {
@@ -82,10 +114,55 @@ var dockerClientConfig = sync.OnceValues(func() (string, error) {
 			_ = c.Close()
 		}
 	}()
-	return dir, nil
+	return f, nil
 })
 
-// dockerAliveSocket is the liveness socket in the docker client config directory.
+// guestResolvConf is the whole /etc/resolv.conf every docker container of plimsoll's
+// sees. Without it docker writes one built from the host's resolver files, even under
+// --network none: the host's search domains (a tailnet name, a corporate domain), its
+// non-loopback nameservers, its options, any line docker does not recognise, and a
+// comment naming the host file (measured on Docker Engine 29.1.3 under runc and runsc,
+// 2026-10-14; docker's own resolvconf.Generate). Docker's flags cannot fix it:
+// --dns-search . and --dns replace the search domains and nameservers, but the other
+// lines and the comment still come from the host. A container with no network needs
+// no resolver; the one nameserver is loopback, inside the container's own empty
+// network namespace, and a lookup ends as it did with docker's file: getaddrinfo with
+// EAI_AGAIN (at once under glibc, after its 5 s timeout under musl) and Node's
+// dns.resolve with ECONNREFUSED at once (measured under runc and runsc, 2026-10-14).
+const guestResolvConf = "# No network in this sandbox: plimsoll mounts this file in place of the host's resolver settings.\nnameserver 127.0.0.1\n"
+
+// writeGuestResolvConf writes guestResolvConf to a new file at path, readable by the
+// guest uid whatever this process's umask.
+func writeGuestResolvConf(path string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(guestResolvConf); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o444)
+}
+
+// checkGuestResolvConfFile refuses a resolv.conf at path that is gone or no longer
+// holds guestResolvConf: every container mounts it, so without it every start fails,
+// and a changed one would give guest code something else.
+func checkGuestResolvConfFile(path string) error {
+	b, err := os.ReadFile(path)
+	switch {
+	case err != nil:
+		return fmt.Errorf("the resolv.conf plimsoll mounts into every container is unreadable (%w); restart to make a new one", err)
+	case string(b) != guestResolvConf:
+		return fmt.Errorf("the resolv.conf plimsoll mounts into every container, %s, was changed (%d bytes); restart to make a new one", path, len(b))
+	}
+	return nil
+}
+
+// dockerAliveSocket is the liveness socket in the private directory.
 const dockerAliveSocket = "alive.sock"
 
 // dockerCLIEnv is the whole environment the docker CLI gets: PATH, so it can find
@@ -96,11 +173,11 @@ func dockerCLIEnv() []string {
 }
 
 // dockerCommand is the one way the docker provider starts the docker CLI (see the
-// warning above). A failure to make the config directory is returned by the
+// warning above). A failure to make the private directory is returned by the
 // command's Start, Run or Output.
 func dockerCommand(ctx context.Context, args ...string) *exec.Cmd {
-	dir, err := dockerClientConfig()
-	cmd := exec.CommandContext(ctx, "docker", append([]string{"--config", dir}, args...)...)
+	files, err := dockerProcessFiles()
+	cmd := exec.CommandContext(ctx, "docker", append([]string{"--config", files.config}, args...)...)
 	cmd.Env = dockerCLIEnv()
 	if err != nil {
 		cmd.Err = fmt.Errorf("docker: no private client config directory: %w", err)

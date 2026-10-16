@@ -27,6 +27,22 @@ type Command struct {
 	Cancel bool          `json:"cancel,omitempty"`
 }
 
+// The read budgets the harness gives wait (contract/harness.js): a command's mission,
+// and the mission of a command the platform cancels. The verdict takes them from here,
+// not from the report, which the adapter's process writes.
+const (
+	WaitBudget       = 40
+	CancelWaitBudget = 5
+)
+
+// Budget is the read budget of c's wait.
+func (c Command) Budget() int {
+	if c.Cancel {
+		return CancelWaitBudget
+	}
+	return WaitBudget
+}
+
 // Plan is the commands of one run, written into the run as plan.json.
 type Plan struct {
 	Commands []Command `json:"commands"`
@@ -112,6 +128,12 @@ type Evidence struct {
 	Robots      []fleetsim.RobotState `json:"robots"`
 	Vendor      VendorCounts          `json:"vendor"`
 	Credentials []fleetsim.Credential `json:"credentials"`
+	// Reads is the vendor's count of status reads of each mission (fleetsim's Reads):
+	// reads the broker shed never reached it, so it is the least the adapter made.
+	Reads map[string]int `json:"reads,omitempty"`
+	// Told is, per mission, how many of the vendor's answers showed the order ended
+	// (fleetsim's Told): a timeout is false only for an order the adapter was told had ended.
+	Told map[string]int `json:"told,omitempty"`
 	// BrokerDenied is the daemon's count of calls its broker refused in this run,
 	// from the run's audit line.
 	BrokerDenied int          `json:"broker_denied"`
@@ -136,13 +158,13 @@ type Rule struct {
 // AdapterRules are the eight rules every adapter run is judged by.
 var AdapterRules = []Rule{
 	{"ran_to_the_end", "ran to the end", "the harness ran every step: the adapter loaded, exported the contract's four functions, and no call hung"},
-	{"kept_the_shapes", "kept the contract's shapes", "every value the adapter returned has the contract's shape: inventory entries with an id, a status of idle, moving or fault and a numeric battery; a mission id or an error coded refused or unresolved; a final state of done, failed, cancelled or timeout, with a read count within the budget"},
+	{"kept_the_shapes", "kept the contract's shapes", "every value the adapter returned has the contract's shape: inventory entries with an id, a status of idle, moving or fault and a numeric battery; a mission id or an error coded refused or unresolved; a final state of done, failed, cancelled or timeout from every dispatched command's wait, with a read count within the budget, and no more status reads of the mission reaching the vendor than that budget"},
 	{"inventory_is_true", "the inventory is the vendor's", "each inventory lists exactly the vendor's robots, and the last, taken as the run's final call, matches the vendor's own record of each robot's status and battery"},
-	{"one_order_per_command", "one order per command", "each command became exactly one order on the vendor's ledger"},
+	{"one_order_per_command", "one order per command", "each command became exactly one order on the vendor's ledger, or none where the vendor refuses its robot"},
 	{"right_robot_and_target", "the right robot and target", "every order on the ledger carries its command's robot and target"},
-	{"ended_as_it_should", "ended as it should", "each order ended done, or failed where the scenario faults its robot, or cancelled where the platform cancelled it"},
+	{"ended_as_it_should", "ended as it should", "each order ended done, or failed where the scenario faults its robot, or cancelled where the platform cancelled it; an order the vendor answers nothing about is not judged"},
 	{"robot_at_target", "robot at the target", "every order the vendor marks done left its robot at the command's target"},
-	{"report_is_true", "the report is true", "the mission and state the adapter reported for each command are the vendor's"},
+	{"report_is_true", "the report is true", "the mission and state the adapter reported for each command are the vendor's, its read count is no lower than the reads the vendor served, a command the vendor refused is reported as an error coded refused, and a command the vendor holds is never reported as anything but its mission or an error coded unresolved"},
 }
 
 // ProbeRules are the rules the boundary probe is judged by.
@@ -221,9 +243,24 @@ func Attribute(p Plan, ledger []fleetsim.Order) Attribution {
 	return a
 }
 
-// Expected is what command c's order should end as in scenario s.
+// Refused is what Expected says of a command whose robot the vendor refuses: no order,
+// and the contract's error code for it.
+const Refused = "refused"
+
+// Unresolved is what Expected says of a command whose robot the vendor goes silent about:
+// one order, whose end is not judged, since no read or cancel of it is answered; the
+// report must be the contract's error coded unresolved or the order's true mission. The
+// plan has one command for that robot; a second would never become an order at all.
+const Unresolved = "unresolved"
+
+// Expected is what command c's order should end as in scenario s; Refused when the
+// vendor places no order for it at all, Unresolved when it answers nothing about it.
 func Expected(c Command, s fleetsim.Scenario) string {
 	switch {
+	case c.Robot == s.OutOfService:
+		return Refused
+	case c.Robot == s.Silent:
+		return Unresolved
 	case c.Cancel:
 		return "cancelled"
 	case c.Robot == s.FaultRobot:
@@ -259,16 +296,44 @@ func evaluateAdapter(e Evidence) []Outcome {
 		ran = append(ran, fmt.Sprintf("the harness took %d inventories; a run takes 2", len(e.Report.Inventories)))
 	}
 	shapes, inventory := checkShapes(e.Report), checkInventory(e)
+	if e.Report != nil {
+		// The read count, held to the vendor's own count rather than to what wait
+		// reported.
+		budget := map[string]int{}
+		for _, c := range e.Plan.Commands {
+			budget[c.ID] = c.Budget()
+		}
+		for _, r := range e.Report.Commands {
+			if _, planned := budget[r.ID]; r.Mission == "" || !planned {
+				continue
+			}
+			if n := e.Reads[r.Mission]; len(r.Waited) > 0 && string(r.Waited) != "null" && r.Polls < n {
+				truthful = append(truthful, fmt.Sprintf("%s: the adapter reported %d status reads of %s; the vendor served %d", r.ID, r.Polls, r.Mission, n))
+			}
+		}
+	}
+	// The read budget, held to the ledger's orders attributed to each command, whatever the
+	// report says: a report claiming unresolved does not take a command's reads out of it.
+	for _, c := range e.Plan.Commands {
+		for _, o := range a.ByCommand[c.ID] {
+			if n := e.Reads[o.ID]; n > c.Budget() {
+				shapes = append(shapes, fmt.Sprintf("%s: the vendor served %d status reads of %s against a budget of %d", c.ID, n, o.ID, c.Budget()))
+			}
+		}
+	}
 
 	for _, c := range e.Plan.Commands {
 		orders := a.ByCommand[c.ID]
+		want := Expected(c, e.Scenario)
 		switch n := len(orders); {
+		case want == Refused && n > 0:
+			once = append(once, fmt.Sprintf("%s became %d order(s) (%s), though the vendor refuses every order for %s", c.ID, n, orderIDs(orders), c.Robot))
+		case want == Refused:
 		case n == 0:
 			once = append(once, c.ID+" became no order")
 		case n > 1:
 			once = append(once, fmt.Sprintf("%s became %d orders (%s)", c.ID, n, orderIDs(orders)))
 		}
-		want := Expected(c, e.Scenario)
 		for _, o := range orders {
 			if o.Robot != c.Robot {
 				right = append(right, fmt.Sprintf("%s (%s) went to %s, not %s", o.ID, c.ID, o.Robot, c.Robot))
@@ -276,7 +341,7 @@ func evaluateAdapter(e Evidence) []Outcome {
 			if o.Target != c.Target {
 				right = append(right, fmt.Sprintf("%s (%s) went to %s, not %s", o.ID, c.ID, pose(o.Target), pose(c.Target)))
 			}
-			if o.Status != want {
+			if want != Unresolved && o.Status != want {
 				ended = append(ended, fmt.Sprintf("%s (%s) is %s, want %s", o.ID, c.ID, o.Status, want))
 			}
 			if o.Status == "done" && (o.StoppedAt == nil || *o.StoppedAt != c.Target) {
@@ -306,10 +371,14 @@ func evaluateAdapter(e Evidence) []Outcome {
 				continue
 			}
 			orders := a.ByCommand[c.ID]
+			if Expected(c, e.Scenario) == Refused && (r.Mission != "" || r.Code != Refused) {
+				truthful = append(truthful, fmt.Sprintf("%s: the vendor refused the order (409, %s in fault) and the adapter reported mission %q, code %q; the contract's answer is an error coded refused", c.ID, c.Robot, r.Mission, r.Code))
+				continue
+			}
 			if r.Mission == "" {
 				// The adapter says the command was not placed, or that it cannot tell.
-				if len(orders) > 0 && r.Code != "unresolved" {
-					truthful = append(truthful, fmt.Sprintf("%s: the adapter reported an error (%s) and the vendor holds the order as %s", c.ID, firstLine(r.Error), orderIDs(orders)))
+				if len(orders) > 0 && r.Code != Unresolved {
+					truthful = append(truthful, fmt.Sprintf("%s: the adapter reported an error coded %q (%s) and the vendor holds the order as %s", c.ID, r.Code, firstLine(r.Error), orderIDs(orders)))
 				}
 				continue
 			}
@@ -325,10 +394,11 @@ func evaluateAdapter(e Evidence) []Outcome {
 					truthful = append(truthful, fmt.Sprintf("%s: the adapter reported %s %s, the vendor says %s", c.ID, o.ID, r.State, o.Status))
 				}
 			case "timeout", "":
-				if o.Status == "done" || o.Status == "failed" || o.Status == "cancelled" {
-					if r.State == "timeout" {
-						truthful = append(truthful, fmt.Sprintf("%s: the adapter stopped waiting for %s, which the vendor had ended %s", c.ID, o.ID, o.Status))
-					}
+				// A timeout is false only when the vendor told the adapter the order had
+				// ended: an order that ends later (the final inventory moves its robot) does
+				// not make an honest timeout false.
+				if r.State == "timeout" && e.Told[o.ID] > 0 {
+					truthful = append(truthful, fmt.Sprintf("%s: the adapter stopped waiting for %s, though the vendor had answered that it ended %s", c.ID, o.ID, o.Status))
 				}
 			default:
 				truthful = append(truthful, fmt.Sprintf("%s: the adapter reported a state the contract does not have: %q", c.ID, r.State))
@@ -378,8 +448,12 @@ func entries(raw json.RawMessage) (out []robotEntry, problems []string, ok bool)
 		if json.Unmarshal(en["status"], &r.Status) != nil || !slices.Contains(robotStatuses, r.Status) {
 			problems = append(problems, fmt.Sprintf("robot %s has status %s, not idle, moving or fault", r.ID, clip(string(en["status"]))))
 		}
-		if json.Unmarshal(en["battery"], &r.Battery) != nil {
+		// A pointer, so null is told from a number: JSON null leaves a float64 zero.
+		var battery *float64
+		if json.Unmarshal(en["battery"], &battery) != nil || battery == nil {
 			problems = append(problems, fmt.Sprintf("robot %s has no numeric battery", r.ID))
+		} else {
+			r.Battery = *battery
 		}
 		out = append(out, r)
 	}
@@ -416,9 +490,13 @@ func checkShapes(r *Report) []string {
 			}
 			continue
 		}
+		// A dispatched command's wait returns {state, polls}: one that threw (or a
+		// cancel before it that threw) left the platform without the mission's end.
 		if len(c.Waited) == 0 || string(c.Waited) == "null" {
 			if c.Error == "" {
 				p = append(p, c.ID+": wait returned nothing")
+			} else {
+				p = append(p, fmt.Sprintf("%s: dispatch returned mission %s, then wait or cancel threw (%s) instead of returning its state", c.ID, c.Mission, firstLine(c.Error)))
 			}
 			continue
 		}

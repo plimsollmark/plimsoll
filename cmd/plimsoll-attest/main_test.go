@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -319,5 +320,104 @@ func TestAFailedAppendLeavesTheBundleAsItWas(t *testing.T) {
 	var out bytes.Buffer
 	if err := verify([]string{"-pub", prefixPath + ".pub", "-expect", expect, path}, &out); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// verify-entry checks a line on its own where the bundle is not whole (here, no
+// checkpoint yet), says what it does not establish, and refuses a changed line.
+func TestVerifyEntryChecksOneLine(t *testing.T) {
+	dir := t.TempDir()
+	prefixPath := filepath.Join(dir, "harness")
+	if err := keygen([]string{"-out", prefixPath}); err != nil {
+		t.Fatal(err)
+	}
+	signer, err := loadSigner(prefixPath + ".key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bundle bytes.Buffer
+	h := attest.NewHarness(signer, &bundle)
+	for _, id := range []string{"t-1", "t-2"} {
+		req := &plimsollv1.RunRequest{Protocol: 1, TraceId: id, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "console.log('" + id + "')"}}}
+		resp := &plimsollv1.RunResponse{Sandbox: "fake", Isolation: "vm",
+			Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte(id + "\n")}}}
+		resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req)}, resp)
+		if err := h.Record(req, resp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(dir, "open.jsonl")
+	if err := os.WriteFile(path, bundle.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pub := prefixPath + ".pub"
+	var out bytes.Buffer
+	if err := verify([]string{"-pub", pub, path}, &out); err == nil {
+		t.Fatal("verify accepted a bundle with no checkpoint")
+	}
+	for _, line := range []string{"1", "2"} {
+		out.Reset()
+		if err := verifyEntry([]string{"-pub", pub, "-line", line, path}, &out); err != nil {
+			t.Fatalf("line %s: %v", line, err)
+		}
+		if !strings.HasPrefix(out.String(), "entry verified: line "+line) || !strings.Contains(out.String(), "Not established by this check: the bundle around the line") {
+			t.Errorf("line %s: %s", line, out.String())
+		}
+	}
+	if err := verifyEntry([]string{"-pub", pub, "-line", "3", path}, &out); err == nil || !strings.Contains(err.Error(), "has 2 lines") {
+		t.Errorf("a line past the end: %v", err)
+	}
+	lines := strings.SplitN(bundle.String(), "\n", 3)
+	var e attest.Entry
+	if err := json.Unmarshal([]byte(lines[1]), &e); err != nil {
+		t.Fatal(err)
+	}
+	e.Response[len(e.Response)-1] ^= 1
+	changed, _ := json.Marshal(e)
+	tampered := filepath.Join(dir, "tampered.jsonl")
+	if err := os.WriteFile(tampered, []byte(lines[0]+"\n"+string(changed)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyEntry([]string{"-pub", pub, "-line", "2", tampered}, &out); err == nil {
+		t.Error("verify-entry accepted a line whose stored response was changed")
+	}
+	if err := verifyEntry([]string{"-pub", pub, "-line", "1", tampered}, &out); err != nil {
+		t.Errorf("the unchanged line beside it: %v", err)
+	}
+	// A line copied out of its bundle signs its place there: checked as line 1 it is a
+	// broken bundle chain, not a session's, since it is a single run.
+	alone := filepath.Join(dir, "alone.jsonl")
+	if err := os.WriteFile(alone, []byte(lines[1]+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyEntry([]string{"-pub", pub, "-line", "1", alone}, &out); !errors.Is(err, attest.ErrLink) || errors.Is(err, attest.ErrChain) || !strings.Contains(err.Error(), "written as line 2") {
+		t.Errorf("line 2 checked out of place: %v", err)
+	}
+	// A stored line checks while a later one is half written (a crash mid-append), and
+	// the half-written one is refused as unfinished.
+	torn := filepath.Join(dir, "torn.jsonl")
+	if err := os.WriteFile(torn, []byte(lines[0]+"\n"+lines[1][:len(lines[1])/2]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyEntry([]string{"-pub", pub, "-line", "1", torn}, &out); err != nil {
+		t.Errorf("a stored line before a torn one: %v", err)
+	}
+	if err := verifyEntry([]string{"-pub", pub, "-line", "2", torn}, &out); err == nil || !strings.Contains(err.Error(), "not finished") {
+		t.Errorf("the torn line: %v", err)
+	}
+	// A checkpoint holds no call: verify-entry says so, rather than reporting its
+	// link as one over other content, which would read as tampering.
+	if err := h.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+	whole := filepath.Join(dir, "whole.jsonl")
+	if err := os.WriteFile(whole, bundle.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verify([]string{"-pub", pub, whole}, &out); err != nil {
+		t.Fatalf("the whole bundle: %v", err)
+	}
+	if err := verifyEntry([]string{"-pub", pub, "-line", "3", whole}, &out); err == nil || !strings.Contains(err.Error(), "holds no call") {
+		t.Errorf("the checkpoint line: %v", err)
 	}
 }

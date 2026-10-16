@@ -515,3 +515,58 @@ globalThis.timer = setInterval(() => {
 		t.Fatalf("the project call reported %q; want the step's own output", project.Steps[0].Stdout)
 	}
 }
+
+// A guest process over the memory limit: under runc the kernel kills that process alone
+// and the session goes on; under gVisor it ends the whole sandbox, and the session's end
+// then says it ran out of memory, not only that its main process ended.
+// A cell over the memory limit: under gVisor the whole sandbox dies, and the over-limit call
+// itself must come back with the session's end naming the limit, not a bare exit 1 with the
+// end found only by the next call. Under runc only the interpreter dies and the session goes on.
+func TestDockerSessionCellOutOfMemoryEndsTheCall(t *testing.T) {
+	d := sessionDocker(t)
+	s := openDockerSession(t, d)
+	ctx := context.Background()
+	if res, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript, Code: "1 + 1"}); err != nil || res.ExitCode != 0 {
+		t.Fatalf("warm-up cell: %+v %v", res, err)
+	}
+	t0 := time.Now()
+	res, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguageJavaScript,
+		Code: "const b = Buffer.alloc(1024 * 1024 * 1024); b.fill(7); b.length"})
+	t.Logf("the cell over the limit answered after %v: exit %d, stdout %q, stderr %.200q, err %v", time.Since(t0), res.ExitCode, res.Stdout, res.Stderr, err)
+	if d.Runtime != "runsc" {
+		if s.Err() != nil {
+			t.Fatalf("under %q a process over the limit ended the session: %v", d.Runtime, s.Err())
+		}
+		return
+	}
+	if !errors.Is(err, sandbox.ErrSessionEnded) {
+		t.Fatalf("the cell over the limit answered %+v, %v; want the session's end on this call", res, err)
+	}
+	if !strings.Contains(err.Error(), "ran out of memory") || !strings.Contains(err.Error(), d.Memory) {
+		t.Fatalf("the end does not name the memory limit %s: %v", d.Memory, err)
+	}
+}
+
+func TestDockerSessionOutOfMemoryIsNamed(t *testing.T) {
+	d := sessionDocker(t)
+	s := openDockerSession(t, d)
+	res, err := sessionJS(t, s, `const b = Buffer.alloc(1024 * 1024 * 1024); b.fill(7); console.log(b.length)`)
+	t.Logf("the call over the limit: exit %d, stdout %q, stderr %.300q, err %v", res.ExitCode, res.Stdout, res.Stderr, err)
+	if d.Runtime != "runsc" {
+		if s.Err() != nil {
+			t.Fatalf("under %q a process over the limit ended the session: %v", d.Runtime, s.Err())
+		}
+		return
+	}
+	if err != nil && !errors.Is(err, sandbox.ErrSessionEnded) {
+		t.Logf("the call over the limit: %v", err)
+	}
+	if s.Err() == nil {
+		if _, nerr := sessionJS(t, s, `console.log("after")`); !errors.Is(nerr, sandbox.ErrSessionEnded) {
+			t.Fatalf("a call after the sandbox ran out of memory: %v, want the session's end", nerr)
+		}
+	}
+	if got := sandbox.SessionEndReason(s.Err()); got != sandbox.SessionMainProcessEnded || !strings.Contains(s.Err().Error(), "ran out of memory") {
+		t.Fatalf("the session ended with %v: %v; want main_process_ended naming the memory limit", got, s.Err())
+	}
+}

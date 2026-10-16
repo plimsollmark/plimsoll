@@ -14,8 +14,9 @@ import (
 // dockerHostDirPrefixes name the host directories the docker provider makes: those
 // that hold a Unix socket mounted into a container (a run's broker, brokerForRun; a
 // session's, startDockerSessionBroker; the smoke test's, startSmokeSocket), each
-// removed when its owner closes it, and the process's docker client config
-// (dockerClientConfig), which nothing removes at exit. Every one holds a socket its
+// removed when its owner closes it, and the process's private directory
+// (dockerProcessFiles: the docker client config and the resolv.conf every container
+// mounts), which nothing removes at exit. Every one holds a socket its
 // owner listens on while it lives, so one whose sockets all refuse a connection was
 // left by a process that died.
 var dockerHostDirPrefixes = []string{"crsbx-broker", "crsbx-session-broker", "crsbx-smoke-sock", "plimsoll-docker-config-"}

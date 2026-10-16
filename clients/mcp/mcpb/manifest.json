@@ -1,0 +1,92 @@
+{
+  "manifest_version": "0.3",
+  "name": "plimsoll",
+  "display_name": "plimsoll",
+  "version": "0.1.0",
+  "description": "Run Python or JavaScript in a plimsoll sandbox and get the isolation tier it ran behind and its checked run record",
+  "long_description": "plimsoll runs code an AI writes behind a stated isolation boundary. This extension starts the plimsoll MCP server, which sends code to a plimsoll daemon you can reach and returns the output, the isolation tier, and the digest of a run record the client recomputed before accepting the answer; get_record returns the record.",
+  "author": {
+    "name": "plimsollmark",
+    "url": "https://github.com/plimsollmark"
+  },
+  "homepage": "https://github.com/plimsollmark/plimsoll/tree/main/clients/mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plimsollmark/plimsoll"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "sandbox",
+    "code-execution",
+    "mcp"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/plimsoll-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/plimsoll-mcp",
+      "args": [],
+      "env": {
+        "PLIMSOLL_URL": "${user_config.daemon_url}",
+        "PLIMSOLL_TOKEN": "${user_config.token}",
+        "PLIMSOLL_MIN_ISOLATION": "${user_config.min_isolation}"
+      },
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/server/plimsoll-mcp.exe"
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "run_code",
+      "description": "Run Python or JavaScript, fresh or in a sandbox from open_sandbox"
+    },
+    {
+      "name": "open_sandbox",
+      "description": "Open a sandbox that keeps files and interpreter state between calls"
+    },
+    {
+      "name": "close_sandbox",
+      "description": "Close a sandbox from open_sandbox"
+    },
+    {
+      "name": "get_record",
+      "description": "The checked run record of a run_code call"
+    },
+    {
+      "name": "server_info",
+      "description": "This server's tools and version, and what the daemon states"
+    }
+  ],
+  "user_config": {
+    "daemon_url": {
+      "type": "string",
+      "title": "plimsolld URL",
+      "description": "The plimsoll daemon the code runs on, such as http://127.0.0.1:8080. Cleartext HTTP is accepted only to this machine.",
+      "default": "http://127.0.0.1:8080",
+      "required": true
+    },
+    "token": {
+      "type": "string",
+      "title": "plimsolld caller token",
+      "description": "A caller token with the code:run scope, created with plimsoll-clients.",
+      "sensitive": true,
+      "required": true
+    },
+    "min_isolation": {
+      "type": "string",
+      "title": "Weakest isolation tier accepted",
+      "description": "vm, kernel or container. kernel (a verified gVisor runtime) unless you choose otherwise; container for a plain docker daemon, which does not keep hostile code off your kernel.",
+      "default": "kernel",
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32"
+    ]
+  }
+}

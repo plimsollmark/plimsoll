@@ -90,6 +90,7 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		}
 	}
 	if slices.Contains(langs, sandbox.LanguagePython) {
+		t.Run("UnreapedChildOfAPythonCellLeavesTheSessionUsable", func(t *testing.T) { pythonChildUnreaped(t, p, cfg) })
 		t.Run("InterpreterIdentityCannotBeSubstituted", func(t *testing.T) { interpreterNotSubstituted(t, p, cfg) })
 		t.Run("ForgedRelayIdentityIsNotKept", func(t *testing.T) { forgedRelayIdentity(t, p, cfg) })
 		t.Run("WorkDirectoryModulesDoNotRunAtInterpreterStart", func(t *testing.T) { pythonShadowFiles(t, p, cfg) })
@@ -359,6 +360,27 @@ globalThis.kept = "yes"; "spawned"`, 30*time.Second)
 		t.Fatalf("a child of the interpreter outlived its cell: %s", got)
 	}
 	if got := cell(t, s, sandbox.LanguageJavaScript, "kept", 30*time.Second); strings.TrimSpace(got.Stdout) != "'yes'" {
+		t.Fatalf("the interpreter did not survive: %+v", got)
+	}
+}
+
+// Python, unlike Node, does not reap a child it started until it waits for it, so the
+// sweep's kill leaves a child of a kept interpreter a zombie for as long as the
+// interpreter idles. A zombie must not read as a live process: under gVisor its /proc
+// entry lists no threads at all, as a process whose leader has exited while another
+// thread runs also does (measured 2026-10-15), and a sweep that took the zombie for
+// live ended the session after every such cell. The session goes on, the child is
+// gone, and the interpreter keeps its state.
+func pythonChildUnreaped(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	res := cell(t, s, sandbox.LanguagePython, "import subprocess\nchild = subprocess.Popen(['sleep', '7792'])\nkept = 'yes'\n'spawned'", 30*time.Second)
+	if res.ExitCode != 0 {
+		t.Fatalf("spawn: %+v", res)
+	}
+	if got := strings.TrimSpace(js(t, s, procsRunning("sleep 7792"), 10*time.Second).Stdout); got != "[]" {
+		t.Fatalf("a child of the interpreter outlived its cell: %s", got)
+	}
+	if got := cell(t, s, sandbox.LanguagePython, "kept", 30*time.Second); strings.TrimSpace(got.Stdout) != "'yes'" || got.InterpreterStarted {
 		t.Fatalf("the interpreter did not survive: %+v", got)
 	}
 }

@@ -181,14 +181,20 @@ option is intentionally only process-tier.
   operator grants six routes, and the profile's `jwt` token mints a credential per run that
   the simulated vendor ([examples/adapter/fleetsim](examples/adapter/fleetsim/)) verifies.
   plimsolld runs the platform's harness, which only records what the adapter returns, over
-  six scenarios (nominal, a robot fault, an overloaded vendor whose 503s open the broker's
-  breaker, a lost answer, a dropped connection the broker answers 502, and a 500 after the
-  order was accepted), beside a boundary probe and seven adapters broken on purpose. The
+  eight scenarios (nominal, a robot fault, an overloaded vendor whose 503s open the broker's
+  breaker, a lost answer, a dropped connection the broker answers 502, a 500 after the
+  order was accepted, a robot in fault from the start whose orders the vendor refuses
+  with 409, which the contract's adapter reports as an error coded refused, and a vendor
+  whose gateway answers 504 to everything about one robot once its first order is in, so
+  the order's outcome stays unknown and the contract's answer is an error coded
+  unresolved; a 504 rather than a closed connection, since an HTTP client may replay an
+  idempotent read once on a reused connection that closes, which would corrupt the
+  vendor's read count), beside a boundary probe and ten adapters broken on purpose. The
   verdict is made on the host by [examples/adapter/qualify](examples/adapter/qualify/): eight
   rules, the same for every scenario, over every returned value, the plan, the vendor's
   ledger and the vendor's record of its robots, never the adapter's account of itself.
   `adapter-v1.js` (written in the session that built the example, not an independent trial)
-  fails three scenarios; `adapter-v2.js` passes all six. Three fresh agents (Claude Haiku,
+  fails five scenarios; `adapter-v2.js` passes all eight. Three fresh agents (Claude Haiku,
   Sonnet and Opus) wrote adapters from [a prompt](examples/adapter/trial/PROMPT.md) in clean
   sessions (`claude -p --safe-mode --tools ""` in an empty directory) with a practice scenario
   per round; their results and the audit are in [the trial's record](examples/adapter/trial/README.md),
@@ -219,7 +225,45 @@ option is intentionally only process-tier.
   id, never a session ID) and `/mastra` (keyed by thread and resource).
   `go test ./clients/typescript/` serves the real RPC handler and runs its node suites.
   [examples/trigger-chat](examples/trigger-chat/) is the Trigger.dev chat agent, tested
-  through Trigger.dev's `mockChatAgent`.
+  through Trigger.dev's `mockChatAgent`. `CodeSandboxes`' `onRecord` hands the application
+  every checked run record (the model gets only its digest).
+- [clients/mcp/](clients/mcp/): the plimsoll MCP server, a Go module of its own (official Go
+  SDK v1.8.0, MCP 2026-07-28 and the 2025 revisions) so the SDK never enters plimsolld's
+  module. Over the checked Go client: `run_code` (fresh without a handle, through runner files
+  the TypeScript suite keeps byte-equal to its `RUNNERS`), `open_sandbox` and `close_sandbox`
+  (a server-minted handle the model passes back, never the daemon's session ID; the open is
+  awaited and checked; an open at the cap is refused and names the idle sandboxes, since
+  nothing is closed for room; a close the daemon did not confirm is reported as such),
+  `get_record` (checked records, 256 in memory) and `server_info` (the registered tools and a
+  digest over their names, descriptions, schemas and annotations, plus the daemon's
+  `Describe`). Results are one JSON value with a `summary` field; failures are JSON with `ran`
+  (`no` or `maybe`, never retried). Configured from `PLIMSOLL_*` variables; floor `kernel`;
+  each sandbox asks for a bounded lifetime, since a host may kill the server before it closes
+  them. One lifecycle owner (`server/lifecycle.go`): a call rechecks its sandbox once it holds
+  the turn, opens reserve their place, every session it lets go gets one close, owned by one
+  goroutine to the end and only awaited by everyone else, shutdown cancels calls and waits for
+  every close. With a signing key and a receipts directory every checked exchange is signed
+  with `attest.Harness` into files the process alone writes (run segments whole after every
+  run, one file per session whole at its signed close), each result naming its line;
+  `plimsoll-attest verify-entry` checks one line on its own. `make mcp-suite` vets, lints,
+  race-tests (the real RPC handler over fake providers, the built binary over stdio, a raw 2025
+  `initialize`) and runs govulncheck. The default transport is stdio; the optional
+  single-owner HTTP transport ([clients/mcp/remotehttp](clients/mcp/remotehttp/),
+  [operator guide](clients/mcp/REMOTE.md)) has passkey sign-in, explicit consent,
+  persisted OAuth credentials, connector-scoped handles and records, shared limits
+  and a private local control socket. It requires authenticated kernel/VM execution
+  and signed receipts; enrollment-only serving exposes neither OAuth nor tools.
+  An embedder of package server may offer named file bundles (`Config.Kits`: `run_code` and
+  `open_sandbox` then take `kit`), turn lines of a run's output into PNG images sent as image
+  content (`Config.Pictures`), and register tools of its own through the same admission and
+  failure handling (`server.Extend`; `server.ExtendRun` for a tool that runs code, which
+  `run_code`'s receipts cap and cap on calls in flight then cover too), which can read the
+  records the server kept (`Server.Kept`) and their receipts (`Server.ReceiptFor`). A
+  picture is sent only as a PNG that decodes within 4096 pixels a side and 4 megapixels,
+  re-encoded; its title and the notes on dropped ones are bounded. `Config.Panels` serves in-chat
+  pages (MCP Apps: `ui://` resources of type `text/html;profile=mcp-app`, the
+  `io.modelcontextprotocol/ui` extension declared), which a tool names with `PanelMeta`; with none configured the tool surface is unchanged (the
+  tour's recorded digest checks it).
 - [docs/trainers/](docs/trainers/) — dependency-free interactive lessons covering
   the execution model, architecture, providers, dependencies, the API broker and
   its capacity signal, MCP/agent integration, customer patterns, and the efficiency
@@ -413,7 +457,7 @@ and its hardened-mode envelope.
 | Value     | Provider | Isolation | Notes |
 |-----------|----------|-----------|-------|
 | `wasm`    | in-process QuickJS via wazero | process tier, lowest latency | JS snippets and snippet grants through a direct host function; no projects. An engine escape lands in plimsolld. |
-| `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. Every container declares its lifetime as a label (a run's is its deadline); a run whose `docker run` does not exit 0 has its container removed at once, and `ReconcileOrphans` removes any container past its lifetime plus 5 minutes that no open session or pool holds. |
+| `docker`  | locked-down `docker run` | container under runc; kernel tier only after verified runsc Preflight | self-host/dev. Snippet and project JS grants both use a host-side Unix broker; a project preloads the same client into every step (`node --import`). Under runsc the runtime must be registered with `--host-uds=open` (the installer does) or the guest cannot reach the broker socket; the smoke test proves it can. Every container gets plimsoll's fixed `/etc/resolv.conf` (one loopback nameserver, no search domain), mounted read-only from the process's private host directory, in place of the file docker builds from the host's resolver settings, which put the host's search domains and nameservers in front of guest code even under `--network none` (found 2026-10-14; docker's `--dns` flags cannot replace it, since docker still copies the host's other lines and names the host file in a comment). The directory holds a BSD lock for the process's life, which systemd-tmpfiles honors, and Preflight refuses if the file is gone or changed, since every container start would fail without it. Every container declares its lifetime as a label (a run's is its deadline); a run whose `docker run` does not exit 0 has its container removed at once, and `ReconcileOrphans` removes any container past its lifetime plus 5 minutes that no open session or pool holds. |
 | `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. No redirect from envd or the control plane is followed (a followed one would carry the envd and traffic tokens, or the API key, wherever a guest answering on envd's port pointed it), with the default HTTP client or an embedder's. A sandbox ID that is not letters, digits and dashes is never put in envd's host name or a path, and a vendor's error body is cut to 512 bytes with credentials scrubbed before it enters an error. Sandboxes are stamped with a per-instance metadata ID and a lease key tracked from before the create request until the kill has finished ([sandbox/internal/lease](sandbox/internal/lease/), the rule E2B, Docker Cloud and OpenShell share); `ReconcileOrphans` (run periodically by the daemon) reaps stamped microVMs whose key is not tracked, at any age, so a slow create is never reaped and a leak from a malformed or lost create response or failed teardown waits for no clock. |
 | `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | speaks two APIs through one internal transport interface, chosen by `SANDBOX_DOCKERCLOUD_API` and never switched at run time, both through the live suite on 2026-10-04: `rest`, the API Docker documents since launch, kept as the backup until it covers what `connect` does, which states no image identity (it reports no booted digest, so hardened mode requires `connect`), caps a run at 270 s (an exec ends with its 300 s endpoint credential, one cached per sandbox) and refuses grants, failing startup if a guard URL is set (after the guard's rule the REST API will not report the sandbox's policy, so the rule cannot be verified; a live tripwire watches for that to change); and `connect` (default), Docker's pre-launch sandboxes-api v0.36.0, now undocumented, the only API with grants and image evidence. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
 | `openshell` | NVIDIA OpenShell sandbox through a gateway | container (the gateway's docker driver; any other driver is refused) | built by plimsolld, not `Build`. Keeps sessions (a sweep of every non-own process after each call, `sleep` as the main process, a read-back before each call). Each run creates a sandbox with no network rules (the gateway's deny-all default) and `/tmp` as the only writable directory (a `noexec` tmpfs of `SANDBOX_DISK_MB` when that is set), reads it back and refuses any difference, runs the payload over the streamed exec (the deadline cancels the stream, which kills the command's process group; a `setsid` descendant lives until the delete), and deletes the sandbox off the result path, holding the run's capacity until the delete is through (`sandbox.HoldCapacity`; admitters wrap their release with `sandbox.WithCapacity`); `Drain` waits for those deletes at shutdown. Every sandbox declares its lifetime, so `ReconcileOrphans` also reaps what a crashed instance left behind, once that lifetime plus 5 minutes has passed. Grants keep the no-grant policy: a relay in the sandbox pairs the guest's socket connections with connections plimsoll dials in through `ForwardTcp` (session tokens revoked at the run's end), and plimsoll serves the shared broker on them. Module runs: `ErrUnsupported`. Operator setup, grants and the smoke test: [docs/openshell.md](docs/openshell.md). |
@@ -615,7 +659,10 @@ the promised mounts are the **only** ones that accept writes at all (device-node
 mounts like docker's `/dev/null`-masked proc paths are excluded: their writes
 discard rather than persist), that loopback is its only network interface (what
 `--network none` gives under runc and runsc alike; a structural check, so an offline
-host cannot pass it by accident), and that its cgroup's `pids.max` is exactly the
+host cannot pass it by accident), that its `/etc/resolv.conf` is byte for byte the
+fixed file plimsoll mounts there (one loopback nameserver, no search domain; docker
+would otherwise write the host's search domains and nameservers into it even under
+`--network none`), and that its cgroup's `pids.max` is exactly the
 configured process limit (a runtime can accept `--pids-limit` without applying it;
 an unreadable value or a non-positive `PidsLimit` fails closed). Under runsc the guest
 reads gVisor's emulated cgroup files, which say `max` whatever was set, while runsc
@@ -734,7 +781,9 @@ A grant is a **per-run** capability: it rides on `Request.Grant` /
 for each dispatch. (Two runs may intentionally select the same profile or static
 token.) Without one the run is **fully isolated (no network)**. A `HostAPIGrant` is
 opt-in and **domain-agnostic**: it lets agent code call an HTTP host API via an
-injected generic client (`host.get/put/post/del/call`).
+injected generic client (`host.get/put/post/del/call`); an answer outside 2xx rejects
+with an Error whose message reads `host api STATUS: BODY` and which carries `status`
+and `body` (parsed JSON when it parses) as fields.
 It is **off by default twice over**: a nil grant means no network, and a grant with
 an empty `Allow` list reaches nothing — the embedder injects the exact routes it
 permits (`[]HostRoute`, with `*` wildcard segments). The shared broker accepts only
@@ -903,7 +952,14 @@ on every handler plimsolld serves and in the guard handler itself), and the RPC 
 open connections. A session holds one call waiting for its turn; a further one is refused, not
 dispatched, reason `capacity`. An internal fault reaches the caller as `internal error
 <id>` only; its text (which can carry a vendor's response body or docker's stderr) goes
-to the log under that ID, cut to 4 KiB. Refused credentials are counted and logged at
+to the log under that ID, cut to 4 KiB. A deadline or a cancellation reaches it as a fixed
+sentence, with an ID too when its text said more than Go's own (an interrupted HTTP request
+names its URL). A typed refusal keeps its words except the parts its provider wrapped with
+`sandbox.Private` (the raw text of a failed exec, say), each told as an ID the same way. A session's end reaches the caller with its detail only when the
+provider marked that detail public (`SessionEndedError.Public`: words it composed itself, such
+as a memory limit or a container's state); any other detail, a raw docker or vendor error
+among them, is told as an error ID in both the message and the typed detail, the text in the
+log under it. Refused credentials are counted and logged at
 most every 30 s, never the token; a caller token (imported, or `PLIMSOLL_TOKEN`) is at
 least 32 characters. Go's
 native unencrypted HTTP/2 supports prior-knowledge h2c; HTTP/1.1 Upgrade h2c is not
@@ -1057,8 +1113,9 @@ example's own Go module, vetted and race-tested with the capsule project's Pytho
 reference verifier installed from `examples/capsule/requirements.txt`, which names each
   package's exact version and content hash), `make sbom-suite` (the separate
   CycloneDX example module, vetted and race-tested offline against the published
-  evidence and embedded schemas, with any skipped test failing the suite) and
-  `make docker-suite` under runc.
+  evidence and embedded schemas, with any skipped test failing the suite), `make mcp-suite`
+  (the MCP server's own module: vet, lint, race tests, govulncheck, any skipped test failing
+  it) and `make docker-suite` under runc.
 The docker suite also runs under runsc in a separate workflow, so a runsc failure
 cannot mask the runc result; what each green check proves is in
 [CONTRIBUTING.md](CONTRIBUTING.md). The client and provider jobs run their required

@@ -94,7 +94,10 @@
   same <dfn>floor</dfn></b>, meaning the weakest <dfn>isolation tier</dfn> (how strong the
   wall around a run is) that a request accepts. What changes is which process owns the
   <dfn>provider</dfn>, the backend that runs the code; the proof that it is ready; and the
-  permissions a run carries.</p>
+  permissions a run carries. To connect an AI application directly, use the
+  <a href="mcp.html"><dfn>MCP</dfn> server (INTERNAL · trainer site →)</a>, the program that offers
+  sandbox actions to the application's model over the Model Context Protocol.
+  It is available from source; its packaged installs await publication.</p>
 
   <!-- 01 ─────────────────────────────────────────────────────────────────── -->
   <section id="plugs" aria-labelledby="h-plugs">
@@ -165,7 +168,7 @@
         Standard library only, Python 3.10 or later,
         with <code>AsyncClient</code> for programs built on Python's asyncio.</li>
         <li><b>TypeScript</b>: <code>npm install @plimsollmark/client</code>. No runtime
-        dependencies, Node 22.18 or later. Its <code>executeCode</code> tool for chat agents
+        dependencies, Node 22.18 or later. Its <code>executeCode</code> <dfn>tool</dfn> (one named action an agent's model can call) for chat agents
         is covered in <a href="agent-products.html#conversation">Agent products (INTERNAL · trainer site →)</a>.</li>
       </ul>
       <p>None of them follows a redirect. A 307 or 308 answer would otherwise make a client

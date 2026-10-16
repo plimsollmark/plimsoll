@@ -11,7 +11,8 @@ outside the daemon that drives runs and checks their results, recomputes the dig
 its own copy of the request and the result, refuses a record that does not match, and
 signs the ones that do. The split is deliberate: the daemon runs hostile code (the
 `wasm` <dfn>*provider*</dfn>, one of the backends that can run the code, runs it inside
-the daemon's own process), so a signing key inside the daemon would be one engine
+the daemon's own process), so a <dfn>*signing key*</dfn> (a private key whose signatures anyone holding the
+public key can check) inside the daemon would be one engine
 <dfn>*escape*</dfn> (a bug that lets code act outside its sandbox) away from forging
 every record.
 
@@ -345,8 +346,16 @@ go run ./cmd/plimsoll-attest keygen -out harness          # harness.key (0600), 
 PLIMSOLL_CALLER_TOKEN=... go run ./cmd/plimsoll-attest run \
   -daemon http://127.0.0.1:8746 -key harness.key -bundle runs.jsonl request.json
 go run ./cmd/plimsoll-attest verify -pub harness.pub runs.jsonl
+go run ./cmd/plimsoll-attest verify-entry -pub harness.pub -line 3 runs.jsonl
 go run ./cmd/plimsoll-attest replay -daemon http://127.0.0.1:8746 -pub harness.pub runs.jsonl
 ```
+
+`verify-entry` checks one call line on its own (`attest.VerifyEntry`): its signature, its
+stored request and response against the signed record, and its link at the place it
+states. It is for a line whose bundle is not whole yet, such as a call of a session still
+open, whose chain has no close statement and so fails `verify`. It says what it does not
+establish: that the line is in the bundle its holder names, that the bundle around it is
+whole, and, for a session call, that its session's chain is. `verify` is unchanged.
 
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as
 `{"protocol": 3, "javascript": {"code": "console.log(1)"}}`. The token comes from the

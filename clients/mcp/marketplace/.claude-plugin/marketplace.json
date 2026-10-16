@@ -1,0 +1,15 @@
+{
+  "name": "plimsoll",
+  "description": "plimsoll for Claude Code: run code in a checked sandbox and get its run record",
+  "owner": { "name": "plimsollmark" },
+  "plugins": [
+    {
+      "name": "plimsoll",
+      "source": "./plimsoll",
+      "description": "Run Python or JavaScript in a plimsoll sandbox from Claude Code. Each result names the isolation tier the code ran behind and the digest of its run record, which get_record returns.",
+      "homepage": "https://github.com/plimsollmark/plimsoll/tree/main/clients/mcp#readme",
+      "category": "security",
+      "keywords": ["mcp", "sandbox", "code-execution", "run-record"]
+    }
+  ]
+}

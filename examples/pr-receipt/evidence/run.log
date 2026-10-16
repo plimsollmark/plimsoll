@@ -1,2 +1,2 @@
 ran on docker (kernel): PROJECT_OUTCOME_COMPLETED, 1 steps
-record 26e4dd7e7e7b80d3df939d2c3ae35afcf37bf6f316554751a3f84cff6c440f31 signed into /home/cagst/projects/coderunner/tmp/pr-receipt-evidence/bundle.jsonl; request 9c22ca06c67bb05a7e262c4aacc18ae38d6e623283cf44ecf001b7bc6768874f (the line for verify -expect)
+record 4e72b664433be0f44b8a0736bb384fe820c5d393f2f5176820a5f0fa5e22ac34 signed into bundle.jsonl; request 9c22ca06c67bb05a7e262c4aacc18ae38d6e623283cf44ecf001b7bc6768874f (the line for verify -expect)

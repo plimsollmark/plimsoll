@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "The tools scripts/release.sh runs, pinned with their content hashes in package-lock.json and installed with npm ci.",
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2"
+  }
+}

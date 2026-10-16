@@ -79,8 +79,27 @@ const MaxDiskEntries = 200000
 //   - A true zombie (every thread read, every one dead) ends the loop, but only after
 //     it has been signalled, so a process misread as one is killed before any round
 //     can be called clean.
+//   - gVisor lists no threads under task/ for a zombie, and none for a process whose
+//     leader has exited while another thread runs either; both read Z (measured
+//     2026-10-15 under runsc), so live() reads both as running. Their thread count
+//     tells them apart, as on Linux: the half-exited process counts its live threads
+//     beside the leader, a zombie counts the leader alone. Inside the kill loop only,
+//     where a process resolves only once a SIGKILL to it succeeded, a process that
+//     lists no threads and reads Z or X with a count of exactly 1 (lone) is dead: a
+//     Python cell's child, killed by the sweep and not yet reaped by its idle
+//     interpreter, is such a zombie, and once ended every session it ran in. The read
+//     alone proves nothing: a stat read can catch a dead leader while a non-leader
+//     thread execs into its PID and read X with one thread (reproduced in review under
+//     runsc, 2026-10-15). What makes it sound is the kill that must come first: gVisor
+//     applies a SIGKILL to every thread, an exec in progress included, so the thread
+//     taking over the PID dies anyway. live() itself is unchanged, so the lister and
+//     the identity check, where no kill comes first, read such a process as running,
+//     as before.
 const clearFn = `function kthread(f){return (Number(f[6])&0x200000)!==0}
 function gone(e){return !!e&&(e.code==="ENOENT"||e.code==="ESRCH")}
+function lone(d){let tasks;try{tasks=fs.readdirSync("/proc/"+d+"/task")}catch{return false}
+if(tasks.length!==0)return false;let st;try{st=fs.readFileSync("/proc/"+d+"/stat","latin1")}catch{return false}
+const f=st.slice(st.lastIndexOf(")")+2).split(" ");return (f[0]==="Z"||f[0]==="X")&&f[17]==="1"}
 function live(d){let tasks;try{tasks=fs.readdirSync("/proc/"+d+"/task")}catch{return true}
 if(tasks.length===0)return true;
 for(const t of tasks){let st;
@@ -103,7 +122,7 @@ let st;try{st=fs.readFileSync("/proc/"+d+"/stat","latin1")}catch(e){if(!gone(e))
 const f=st.slice(st.lastIndexOf(")")+2).split(" ");if(kthread(f))continue;
 let cmd;try{cmd=fs.readFileSync("/proc/"+d+"/cmdline").toString("hex")}catch(e){if(!gone(e))unresolved++;continue}
 const id=d+":"+f[19];if(keep.has(id+":"+cmd))continue;
-doomed.push([+d,id]);if(live(d)||!hit.has(id))unresolved++}
+doomed.push([+d,id]);if(!hit.has(id)||(live(d)&&!lone(d)))unresolved++}
 if(unresolved===0)return {rounds,killed};
 if(++rounds>50)return null;
 for(const [p,id] of doomed){try{process.kill(p,"SIGKILL");killed++;hit.add(id)}catch(e){if(gone(e))hit.add(id)}}

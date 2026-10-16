@@ -717,6 +717,14 @@ func hostWasmPreamble(global string, allow []HostRoute) string {
 
 const hostNetClientTmpl = `
 globalThis[__HOST_JSON__] = (function () {
+  // An answer outside 2xx rejects with an Error whose message keeps the long-standing
+  // "host api STATUS: BODY" form, and which carries the status as a number and the
+  // body (parsed JSON when it parses), so code can branch on e.status.
+  function hostError(status, text, data) {
+    const e = new Error("host api " + status + ": " + text);
+    e.status = status; e.body = data;
+    return e;
+  }
   const socket = process.env.HOST_API_SOCKET;
   // Allowlist baked in host-side; the client offers only Allow-ed calls. Mirrors the
   // Go routeAllowed check (decoded==raw, no query/fragment, no . / .. segments,
@@ -759,7 +767,7 @@ globalThis[__HOST_JSON__] = (function () {
         res.on("end", () => {
           let data; try { data = JSON.parse(text); } catch { data = text; }
           if (res.statusCode >= 200 && res.statusCode < 300) resolve(data);
-          else reject(new Error("host api " + res.statusCode + ": " + text));
+          else reject(hostError(res.statusCode, text, data));
         });
       });
       req.on("error", reject);
@@ -786,6 +794,14 @@ globalThis[__HOST_JSON__] = (function () {
 
 const hostE2BClientTmpl = `
 globalThis[__HOST_JSON__] = (function () {
+  // An answer outside 2xx rejects with an Error whose message keeps the long-standing
+  // "host api STATUS: BODY" form, and which carries the status as a number and the
+  // body (parsed JSON when it parses), so code can branch on e.status.
+  function hostError(status, text, data) {
+    const e = new Error("host api " + status + ": " + text);
+    e.status = status; e.body = data;
+    return e;
+  }
   const __guardURL = __GUARD_URL_JSON__;
   const __allow = __ALLOW_JSON__;
   function __segMatch(pattern, segs) {
@@ -820,7 +836,7 @@ globalThis[__HOST_JSON__] = (function () {
     const text = await response.text();
     let data; try { data = JSON.parse(text); } catch { data = text; }
     if (response.status >= 200 && response.status < 300) return data;
-    throw new Error("host api " + response.status + ": " + text);
+    throw hostError(response.status, text, data);
   }
   function call(method, path, body) {
     method = String(method).toUpperCase();
@@ -843,6 +859,14 @@ globalThis[__HOST_JSON__] = (function () {
 
 const hostWasmClientTmpl = `
 globalThis[__HOST_JSON__] = (function () {
+  // An answer outside 2xx rejects with an Error whose message keeps the long-standing
+  // "host api STATUS: BODY" form, and which carries the status as a number and the
+  // body (parsed JSON when it parses), so code can branch on e.status.
+  function hostError(status, text, data) {
+    const e = new Error("host api " + status + ": " + text);
+    e.status = status; e.body = data;
+    return e;
+  }
   const __allow = __ALLOW_JSON__;
   function __segMatch(pattern, segs) {
     const ps = pattern.split("/");
@@ -886,7 +910,7 @@ globalThis[__HOST_JSON__] = (function () {
     let data;
     try { data = JSON.parse(response.body); } catch { data = response.body; }
     if (response.status >= 200 && response.status < 300) return Promise.resolve(data);
-    return Promise.reject(new Error("host api " + response.status + ": " + response.body));
+    return Promise.reject(hostError(response.status, response.body, data));
   }
   return {
     call,

@@ -31,7 +31,7 @@ DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite modproxy tools tools-check help
+.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
@@ -253,6 +253,16 @@ capsule-lock:
 	@[ -x tmp/piptools/bin/pip-compile ] || { python3 -m venv tmp/piptools && tmp/piptools/bin/pip install --quiet --disable-pip-version-check pip-tools; }
 	tmp/piptools/bin/pip-compile -q --generate-hashes --allow-unsafe --strip-extras --no-emit-index-url -o examples/capsule/requirements.txt examples/capsule/requirements.in
 
+.PHONY: receipt-suite
+## receipt-suite: run examples/pr-receipt/receipt.sh end to end (docker, runsc, the containerd image store); a skipped test FAILS
+receipt-suite:
+	@mkdir -p tmp
+	@{ RECEIPT_SUITE=1 $(NO_PAID_KEYS) go test ./examples/pr-receipt -run TestReceiptScriptEndToEnd -count=1 -v; \
+	   echo $$? > tmp/receipt-suite.status; } 2>&1 | tee tmp/receipt-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/receipt-suite.log; then \
+	   echo "receipt-suite: required coverage was skipped" >&2; exit 1; fi
+	@status="$$(cat tmp/receipt-suite.status)"; [ "$$status" = 0 ] || exit "$$status"; echo "receipt-suite: OK"
+
 # This nested module uses its embedded schemas and published signed bundle only.
 # No sandbox is created and no hosted service or credential is used.
 .PHONY: sbom-suite
@@ -267,6 +277,18 @@ sbom-suite:
 	   echo "sbom-suite: required coverage was skipped:" >&2; \
 	   grep -E '^ *--- SKIP' tmp/sbom-suite.log >&2; exit 1; fi
 	@status="$$(cat tmp/sbom-suite.status)"; [ "$$status" = 0 ] || exit "$$status"; echo "sbom-suite: OK"
+
+## mcp-suite: the MCP server's own module (clients/mcp): vet, lint, race tests (the real RPC handler over fake providers, the built binary over stdio) and govulncheck, since it ships as a binary; any skipped test FAILS
+mcp-suite:
+	@mkdir -p tmp
+	@[ -w tmp ] || { echo "mcp-suite: tmp/ is not writable" >&2; exit 1; }
+	@{ (cd clients/mcp && $(NO_PAID_KEYS) go vet ./... && golangci-lint run ./... && \
+	   $(NO_PAID_KEYS) go test -race -count=1 -v ./... && govulncheck ./...); \
+	   echo $$? > tmp/mcp-suite.status; } 2>&1 | tee tmp/mcp-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/mcp-suite.log; then \
+	   echo "mcp-suite: required coverage was skipped:" >&2; \
+	   grep -E '^ *--- SKIP' tmp/mcp-suite.log >&2; exit 1; fi
+	@status="$$(cat tmp/mcp-suite.status)"; [ "$$status" = 0 ] || exit "$$status"; echo "mcp-suite: OK"
 
 ## e2b-suite: the live E2B tests (needs E2B_API_KEY)
 e2b-suite:

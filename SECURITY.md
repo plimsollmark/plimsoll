@@ -179,7 +179,8 @@ These follow from what plimsoll is, not from a flaw in it, and no setting remove
   written by the guest's code, and by whatever that code read. It can contain text
   written to steer the agent that reads it (<dfn>*prompt injection*</dfn>: instructions
   hidden in data so that a model follows them). plimsoll does not inspect output. Treat
-  it as data: show it to the model as a tool result, and do not let a tool result widen
+  it as data: show it to the model as the result of a <dfn>*tool*</dfn> (one named action the
+  model can call), and do not let a tool result widen
   what the agent may do, such as which grant profile it may select next.
 - **The docker provider's daemon access is root on that host.** plimsolld drives the
   docker daemon, and whoever can drive a docker daemon can start a container that

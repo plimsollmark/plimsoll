@@ -18,6 +18,8 @@
 #                 Missing prerequisites or any skipped Go test fails the job.
 #   capsule       `make capsule-suite`: the separate capsule example module and
 #                 its hash-pinned Python reference verifier.
+#   mcp           `make mcp-suite`: the MCP server's own Go module, its binary over
+#                 stdio included, linted and scanned for known vulnerabilities.
 #   sbom          `make sbom-suite`: the separate CycloneDX example module with
 #                 pinned schemas, signed fixtures and integrity checks, offline.
 #
@@ -159,6 +161,25 @@ jobs:
         run: make capsule-suite
 
   # The CycloneDX example is a separate module. Its evidence checks are offline.
+  mcp:
+    needs: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: clients/mcp/go.mod
+
+      - name: Install the pinned gate tools
+        run: make tools
+
+      - name: make mcp-suite
+        run: make mcp-suite
+
   sbom:
     needs: audit
     runs-on: ubuntu-latest

@@ -69,6 +69,11 @@ var ErrEnded = errors.New("sandbox: the session has ended")
 type EndedError struct {
 	Reason End
 	Detail string
+	// Public marks Detail as fit to tell a caller: words the provider composed itself (a
+	// limit, a container's state), never an error's raw text, which can carry host paths,
+	// addresses or a vendor's answer. A daemon tells a caller only a public detail and logs
+	// any other; a detail is private unless its producer says otherwise.
+	Public bool
 }
 
 func (e *EndedError) Error() string {
@@ -222,7 +227,7 @@ func (l *Life) Activate(reg *Registry, expires time.Time, disk int64) bool {
 func (l *Life) Abandon() {
 	l.mu.Lock()
 	if l.end == nil {
-		l.end = &EndedError{Reason: Closed, Detail: "abandoned before a caller held it"}
+		l.end = &EndedError{Reason: Closed, Detail: "abandoned before a caller held it", Public: true}
 	}
 	if l.timer != nil {
 		l.timer.Stop()
@@ -258,12 +263,27 @@ func (l *Life) Err() error {
 // removal has returned: a session layer gives back the session's capacity on Done,
 // and until then the sandbox still holds its memory (review F9).
 func (l *Life) Finish(reason End, detail string) {
+	l.finish(&EndedError{Reason: reason, Detail: detail})
+}
+
+// FinishSaying is Finish with a detail the provider composed itself, which a caller may be told.
+func (l *Life) FinishSaying(reason End, detail string) {
+	l.finish(&EndedError{Reason: reason, Detail: detail, Public: true})
+}
+
+// FinishWith ends the session as end says, its detail public or not as end marks it.
+func (l *Life) FinishWith(end *EndedError) {
+	l.finish(&EndedError{Reason: end.Reason, Detail: end.Detail, Public: end.Public})
+}
+
+func (l *Life) finish(end *EndedError) {
+	reason, detail := end.Reason, end.Detail
 	l.mu.Lock()
 	if l.end != nil {
 		l.mu.Unlock()
 		return
 	}
-	l.end = &EndedError{Reason: reason, Detail: detail}
+	l.end = end
 	if l.timer != nil {
 		l.timer.Stop()
 	}
@@ -409,7 +429,7 @@ func (l *Life) prepare(ctx context.Context) error {
 	case err == nil:
 		return nil
 	case errors.As(err, &end):
-		l.Finish(end.Reason, end.Detail)
+		l.FinishWith(end)
 		return l.h.Refuse.Ended(l.Err())
 	case ctx.Err() != nil:
 		return l.h.Refuse.GaveUp(ctx)
@@ -470,7 +490,7 @@ func (l *Life) Quiesce(ctx context.Context) error {
 	}
 	detail := fmt.Sprintf("the quiesce before a call exited %d (err %v)", out.ExitCode, err)
 	if end := l.h.Unproven(l.ctx, detail); end != nil {
-		l.Finish(end.Reason, end.Detail)
+		l.FinishWith(end)
 	}
 	if l.Err() != nil {
 		return l.h.Refuse.Ended(l.Err())
@@ -500,15 +520,15 @@ func (l *Life) boundary() {
 			l.Interps.Settled()
 			return
 		case SweepOverBudget:
-			l.Finish(DiskExceeded, l.overBudget(disk))
+			l.FinishSaying(DiskExceeded, l.overBudget(disk))
 			return
 		case SweepUnmeasurable:
-			l.Finish(DiskExceeded, l.unmeasurable())
+			l.FinishSaying(DiskExceeded, l.unmeasurable())
 			return
 		}
 	}
 	if end := l.h.Unproven(l.ctx, fmt.Sprintf("the sweep exited %d (err %v)", out.ExitCode, err)); end != nil {
-		l.Finish(end.Reason, end.Detail)
+		l.FinishWith(end)
 	}
 }
 

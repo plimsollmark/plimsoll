@@ -123,7 +123,7 @@ func trainerProse(t *testing.T) map[string]string {
 func plimsollSource(t *testing.T) string {
 	t.Helper()
 	var b strings.Builder
-	for _, dir := range []string{"../../sandbox", "../../internal", "../../cmd", "../../client"} {
+	for _, dir := range []string{"../../sandbox", "../../internal", "../../cmd", "../../client", "../../clients/mcp"} {
 		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -301,7 +301,7 @@ func goAPIFromSource(t *testing.T) goAPIIndex {
 		types:    map[string]map[string]bool{},
 		exported: map[string]bool{},
 	}
-	files := shippingGoFiles(t, "../../sandbox", "../../internal", "../../cmd", "../../client")
+	files := shippingGoFiles(t, "../../sandbox", "../../internal", "../../cmd", "../../client", "../../clients/mcp")
 	for _, parsed := range files {
 		pkg := parsed.file.Name.Name
 		if index.packages[pkg] == nil {

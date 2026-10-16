@@ -1,0 +1,29 @@
+{
+  "name": "@plimsollmark/mcp",
+  "version": "0.1.0",
+  "description": "The plimsoll MCP server: Claude Code, Codex and Claude Desktop run code in a checked sandbox and get its run record",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/plimsollmark/plimsoll/tree/main/clients/mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plimsollmark/plimsoll.git",
+    "directory": "clients/mcp"
+  },
+  "bin": {
+    "plimsoll-mcp": "bin/plimsoll-mcp.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@plimsollmark/mcp-darwin-arm64": "0.1.0",
+    "@plimsollmark/mcp-darwin-x64": "0.1.0",
+    "@plimsollmark/mcp-linux-arm64": "0.1.0",
+    "@plimsollmark/mcp-linux-x64": "0.1.0",
+    "@plimsollmark/mcp-win32-x64": "0.1.0"
+  },
+  "mcpName": "io.github.plimsollmark/plimsoll"
+}

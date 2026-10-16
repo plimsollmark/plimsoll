@@ -25,6 +25,12 @@
 // Scenarios are set by the host between runs, never by the sandbox; Scenarios lists
 // them as data.
 //
+// In the silent scenario the vendor's gateway stops answering about one robot after its
+// first order: every later request about that robot is answered 504 and does nothing.
+// A 504 and not a closed connection, because an HTTP client may replay an idempotent
+// request once when a reused connection closes before answering (Go's does), and a
+// replayed read would reach the vendor twice and corrupt the read count it keeps.
+//
 // Two catalog-only operations exist so a grant that omits them can be shown refusing
 // them: DELETE /robots/{id} and POST /robots/{id}/firmware. The server counts any
 // request that reaches them separately; in a correct run that count stays zero.
@@ -49,7 +55,7 @@ import (
 
 // Version names this simulator's behaviour. A qualification statement carries it, so a
 // verdict says which vendor it was made against.
-const Version = "fleetsim/2"
+const Version = "fleetsim/3"
 
 // Scenario names the host may set.
 const (
@@ -60,6 +66,12 @@ const (
 	ScenarioDropped  = "dropped"
 	// ScenarioServerError is the lost answer with a 500 in place of the 503.
 	ScenarioServerError = "server_error"
+	// ScenarioRefused has r3 in fault before the run starts: the vendor refuses every
+	// order for it, so an adapter's refused path runs.
+	ScenarioRefused = "refused"
+	// ScenarioSilent has r2's first order accepted and started, and then nothing about
+	// r2 answered, so the order's outcome stays unknown to the adapter to the end.
+	ScenarioSilent = "silent"
 )
 
 // DegradedRequests is how many requests the overload scenario refuses with 503 after
@@ -88,6 +100,14 @@ type Scenario struct {
 	// DropAnswer is the robot whose first order is accepted and never answered: the
 	// vendor closes the connection.
 	DropAnswer string `json:"drop_answer,omitempty"`
+	// OutOfService is the robot in fault when the run starts; the vendor answers every
+	// order for it with 409 and places none.
+	OutOfService string `json:"out_of_service,omitempty"`
+	// Silent is the robot whose first order is accepted, started and answered 504, after
+	// which the vendor's gateway answers 504 to every request about it (an order for it,
+	// a read of it, a read or cancel of any of its orders) and does nothing. The fleet
+	// list is still answered.
+	Silent string `json:"silent,omitempty"`
 }
 
 // Scenarios are the scenarios this simulator runs, by name.
@@ -103,10 +123,14 @@ var Scenarios = map[string]Scenario{
 		DropAnswer: "r2"},
 	ScenarioServerError: {Name: ScenarioServerError, Says: "r2's first order is accepted and started, but its answer is a 500",
 		LoseAnswer: "r2", LoseStatus: 500},
+	ScenarioRefused: {Name: ScenarioRefused, Says: "r3 is in fault before the run starts, and the vendor refuses every order for it with a 409",
+		OutOfService: "r3"},
+	ScenarioSilent: {Name: ScenarioSilent, Says: "r2's first order is accepted and started, then the vendor's gateway answers 504 to every request about r2 and does nothing; the fleet list is still answered",
+		Silent: "r2"},
 }
 
 // ScenarioOrder is the order the example and its test run the scenarios in.
-var ScenarioOrder = []string{ScenarioNominal, ScenarioFault, ScenarioOverload, ScenarioLostAck, ScenarioDropped, ScenarioServerError}
+var ScenarioOrder = []string{ScenarioNominal, ScenarioFault, ScenarioOverload, ScenarioLostAck, ScenarioDropped, ScenarioServerError, ScenarioRefused, ScenarioSilent}
 
 // StartPoses is where each robot stands after Reset; the page's floor replay draws
 // the same fleet.
@@ -295,11 +319,15 @@ type Server struct {
 	commands     map[string]string // command_id -> mission ID
 	degradedLeft int
 	counts       map[string]int // "METHOD /route/template" -> requests served (any status)
+	reads        map[string]int // mission ID -> status reads that reached the vendor (any status)
+	told         map[string]int // mission ID -> answers that told the caller the order had ended
 	refused      int            // 503s answered in the overload scenario
 	reached      map[string]int // catalog-only routes that received a request
 	unauthorized int
 	orders       map[string]int // orders accepted per robot
 	answerFaults map[string]bool
+	silenced     bool // the silent scenario's robot has had its first order
+	unanswered   int  // requests the silent scenario answered 504
 	illegal      int
 	credentials  []Credential
 	events       []Event
@@ -335,15 +363,23 @@ func (s *Server) Reset(name string) {
 	s.commands = map[string]string{}
 	s.degradedLeft = 0
 	s.counts = map[string]int{}
+	s.reads = map[string]int{}
+	s.told = map[string]int{}
 	s.refused = 0
 	s.reached = map[string]int{}
 	s.unauthorized = 0
 	s.orders = map[string]int{}
 	s.answerFaults = map[string]bool{}
+	s.silenced = false
+	s.unanswered = 0
 	s.illegal = 0
 	s.credentials = nil
 	s.events = nil
 	s.eventsLost = 0
+	if rb := s.robots[sc.OutOfService]; rb != nil {
+		rb.Status = "fault"
+		s.events = append(s.events, Event{Kind: "out_of_service", Robot: rb.ID, Pose: posePtr(rb.Pose)})
+	}
 }
 
 func (s *Server) event(e Event) {
@@ -398,6 +434,34 @@ func (s *Server) Ledger() []Order {
 			o.StoppedAt = &p
 		}
 		out = append(out, o)
+	}
+	return out
+}
+
+// Reads is how many status reads of each mission reached the vendor, refused ones
+// included: the vendor's own count, which an adapter cannot write. A read the broker
+// shed never reached it, so this is the least the adapter made.
+func (s *Server) Reads() map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]int, len(s.reads))
+	for k, v := range s.reads {
+		out[k] = v
+	}
+	return out
+}
+
+// Told is, per mission, how many answers the vendor sent (a status read, a cancel, or a repeated
+// create, each of which carries the order's status) that showed the order in a terminal state:
+// whether the caller was ever told it had ended. A final state reached later, after the caller
+// stopped asking, is not in it. It counts answers the vendor wrote, not answers the broker
+// delivered: one lost on the way would still count, which the verdict's wording allows for.
+func (s *Server) Told() map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]int, len(s.told))
+	for k, v := range s.told {
+		out[k] = v
 	}
 	return out
 }
@@ -460,6 +524,13 @@ func (s *Server) Reached() map[string]int {
 	return out
 }
 
+// Unanswered is how many requests the silent scenario answered 504.
+func (s *Server) Unanswered() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unanswered
+}
+
 // Unauthorized is how many requests arrived without a credential auth accepts.
 func (s *Server) Unauthorized() int {
 	s.mu.Lock()
@@ -501,6 +572,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.counts[template]++
+	if template == "GET /missions/*" {
+		s.reads[segs[1]]++ // a read the degraded or silent vendor refuses is a read too
+	}
+	if s.silenced && s.about(template, segs) == s.scenario.Silent {
+		s.unanswered++
+		s.event(Event{Kind: "unanswered", Robot: s.scenario.Silent, Status: template})
+		writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "gateway timeout: the fleet service did not answer"})
+		return
+	}
 	if s.degradedLeft > 0 {
 		s.degradedLeft--
 		s.refused++
@@ -513,6 +593,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handler(w, r, segs)
+}
+
+// about is the robot a request concerns: the robot its path names, or the robot of the
+// order its path names; "" for the fleet list, health, an order the vendor does not hold,
+// and the catalog-only routes, which must reach their handler to be counted.
+func (s *Server) about(template string, segs []string) string {
+	switch template {
+	case "GET /robots/*", "POST /robots/*/missions":
+		return segs[1]
+	case "GET /missions/*", "POST /missions/*/cancel":
+		if m := s.missions[segs[1]]; m != nil {
+			return m.Robot
+		}
+	}
+	return ""
 }
 
 type handlerFunc func(w http.ResponseWriter, r *http.Request, segs []string)
@@ -590,13 +685,16 @@ func (s *Server) createMission(w http.ResponseWriter, r *http.Request, segs []st
 				writeJSON(w, http.StatusConflict, map[string]string{"error": "command_id already names an order for another robot or target"})
 				return
 			}
-			// The same command again: the original order, not a new one.
+			// The same command again: the original order, not a new one. Its answer carries the
+			// order's status, so an ended order's repeat tells the caller it ended.
 			s.event(Event{Kind: "repeat", Robot: m.Robot, Mission: m.ID, Command: m.CommandID})
+			s.tell(m)
 			writeJSON(w, http.StatusOK, map[string]any{"mission_id": m.ID, "robot": m.Robot, "status": m.Status, "command_id": m.CommandID, "repeated": true})
 			return
 		}
 	}
 	if rb.Status == "fault" {
+		s.event(Event{Kind: "rejected", Robot: rb.ID, Command: body.CommandID})
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "robot is in fault"})
 		return
 	}
@@ -628,6 +726,13 @@ func (s *Server) createMission(w http.ResponseWriter, r *http.Request, segs []st
 		writeJSON(w, status, map[string]string{"error": "acknowledgement lost"})
 		return
 	}
+	if rb.ID == s.scenario.Silent && !s.silenced {
+		// The order is in, the robot is moving, and from here on nothing about it answers.
+		s.silenced = true
+		s.event(Event{Kind: "silenced", Robot: rb.ID, Mission: m.ID})
+		writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "gateway timeout: the fleet service did not answer"})
+		return
+	}
 	if rb.ID == s.scenario.DropAnswer && !s.answerFaults["drop"] {
 		// The order is in, the robot is moving, and no answer comes at all.
 		s.answerFaults["drop"] = true
@@ -650,7 +755,15 @@ func (s *Server) getMission(w http.ResponseWriter, _ *http.Request, segs []strin
 		return
 	}
 	s.tick(s.robots[m.Robot])
+	s.tell(m)
 	writeJSON(w, http.StatusOK, m)
+}
+
+// tell notes an answer about m that shows it ended.
+func (s *Server) tell(m *mission) {
+	if m.Status == "done" || m.Status == "failed" || m.Status == "cancelled" {
+		s.told[m.ID]++
+	}
 }
 
 func (s *Server) cancelMission(w http.ResponseWriter, _ *http.Request, segs []string) {
@@ -672,6 +785,7 @@ func (s *Server) cancelMission(w http.ResponseWriter, _ *http.Request, segs []st
 		rb.queued = slices.DeleteFunc(rb.queued, func(id string) bool { return id == m.ID })
 	}
 	// A terminal order is answered as it is: cancelling it changes nothing.
+	s.tell(m)
 	writeJSON(w, http.StatusOK, m)
 }
 

@@ -1,0 +1,34 @@
+{
+  "name": "plimsoll",
+  "description": "Run Python or JavaScript in a plimsoll sandbox: the output, the isolation tier it ran behind, and the run record the client checked",
+  "version": "0.1.0",
+  "author": { "name": "plimsollmark" },
+  "homepage": "https://github.com/plimsollmark/plimsoll/tree/main/clients/mcp#readme",
+  "repository": "https://github.com/plimsollmark/plimsoll",
+  "license": "Apache-2.0",
+  "keywords": ["mcp", "sandbox", "code-execution"],
+  "userConfig": {
+    "daemon_url": {
+      "type": "string",
+      "title": "plimsolld URL",
+      "description": "The plimsoll daemon the code runs on, such as http://127.0.0.1:8080. Cleartext HTTP is accepted only to this machine.",
+      "default": "http://127.0.0.1:8080",
+      "required": true
+    },
+    "token": {
+      "type": "string",
+      "title": "plimsolld caller token",
+      "description": "A caller token with the code:run scope, created with plimsoll-clients. Kept in secure storage, not in settings.json.",
+      "sensitive": true,
+      "required": true
+    },
+    "min_isolation": {
+      "type": "string",
+      "title": "Weakest isolation tier accepted",
+      "description": "kernel (a verified gVisor runtime) unless you choose otherwise; container for a plain docker daemon, which does not keep hostile code off your kernel.",
+      "default": "kernel",
+      "options": ["vm", "kernel", "container"],
+      "required": true
+    }
+  }
+}

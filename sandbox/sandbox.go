@@ -43,6 +43,25 @@ var ErrInsufficientIsolation = errors.New("sandbox isolation requirement not met
 // not automatically retry a non-idempotent run.
 var ErrIsolationEvidenceMismatch = errors.New("sandbox result isolation evidence does not meet the request")
 
+// PrivateError marks the part of an error whose text a provider did not compose: docker's
+// stderr, a vendor's answer, a socket path, an address. A provider wraps such an error with
+// Private (through %w) where it would otherwise reach a caller inside a typed refusal, whose
+// text a caller is shown; the RPC layer replaces the marked text with an error ID and logs it
+// under that ID. An internal fault, a deadline and a cancellation need no mark: their text
+// is never shown.
+type PrivateError struct{ Err error }
+
+// Private marks err's text as not for a caller (see PrivateError); nil stays nil.
+func Private(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PrivateError{Err: err}
+}
+
+func (e *PrivateError) Error() string { return e.Err.Error() }
+func (e *PrivateError) Unwrap() error { return e.Err }
+
 // IsolationClass ranks how strong a provider's boundary is around hostile code —
 // the single most security-relevant fact about a run, which the provider name
 // alone hides ("docker" is a real kernel boundary under gVisor but only

@@ -101,19 +101,20 @@ func TestReapRemovesConfigDirsDeadProcessesLeft(t *testing.T) {
 	}
 }
 
-// This process's own config directory is never taken for a dead one, however old: it
+// This process's own private directory is never taken for a dead one, however old: it
 // holds a socket the process listens on for its life.
 func TestReapKeepsThisProcessesConfigDir(t *testing.T) {
-	dir, err := dockerClientConfig()
+	files, err := dockerProcessFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := files.dir
 	old := time.Now().Add(-2 * time.Minute)
 	if err := os.Chtimes(dir, old, old); err != nil {
 		t.Fatal(err)
 	}
 	reapDeadHostDirs(filepath.Dir(dir), time.Now())
 	if _, err := os.Stat(dir); err != nil {
-		t.Fatalf("this process's config directory was removed: %v", err)
+		t.Fatalf("this process's private directory was removed: %v", err)
 	}
 }

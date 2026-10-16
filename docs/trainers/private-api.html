@@ -81,7 +81,7 @@
   <p class="promise">When a language model asks which warehouses are short on stock,
   which process calls which? This page follows the actual messages from the model to the
   application hosting it, which speaks <dfn>MCP</dfn> (Model Context Protocol, the open
-  standard an AI application uses to offer tools to a model), then through a Node gateway
+  standard an AI application uses to offer <dfn>tools</dfn>, named actions a model can call, to a model), then through a Node gateway
   (the company's web server) and a Go dataplane (the service that does the real work),
   into plimsoll, and back out to a private inventory API. <b>Stockroom is a worked
   example, not a product.</b> Every process boundary and every message on the wire below
@@ -191,7 +191,7 @@
     <h2 id="h-wire">The bytes on each hop</h2>
     <p>A protocol is the contract between two sides: where the bytes go, what shape they
     have, who answers, and what the receiver does next. Pick a hop, one step from one
-    process to the next. "stdio" means the host starts the MCP server as a child process
+    process to the next. "<dfn>stdio</dfn>" (standard input and output) means the host starts the MCP server as a child process
     and talks to it over its standard input and output. The Connect hops carry
     <dfn>protobuf</dfn> messages, in Google's schema-defined binary format.</p>
     <div class="control">

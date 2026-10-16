@@ -1,7 +1,7 @@
 # Caller credentials
 
 A **caller** is a program that is allowed to talk to `plimsolld`: for example, an
-<dfn>*MCP*</dfn> gateway (a server that offers tools to AI models over the Model
+<dfn>*MCP*</dfn> gateway (a server that offers <dfn>*tools*</dfn>, named actions a model can call, to AI models over the Model
 Context Protocol), a program that hosts an AI agent, or a test <dfn>*harness*</dfn> (a
 program that drives runs and checks their results). Each caller has an id, a bearer
 token (the secret it sends in its `Authorization` header), and a list of scopes, the

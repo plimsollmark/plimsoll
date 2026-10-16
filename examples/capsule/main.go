@@ -127,7 +127,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("plimsoll's verifier refused the bundle, so nothing was stated: %w", err)
 	}
-	checks = append(checks, ran("plimsoll attest (Go)", "the published session bundle: every signature, every record against its stored request and response, the bundle's chain of links and its checkpoint, the session's chain and its close statement",
+	which := "the session bundle"
+	if src.published {
+		which = "the published session bundle"
+	}
+	checks = append(checks, ran("plimsoll attest (Go)", which+": every signature, every record against its stored request and response, the bundle's chain of links and its checkpoint, the session's chain and its close statement",
 		"accepted", fmt.Sprintf("accepted: %s, %s", plural(rep.Runs, "single run"), plural(len(rep.Sessions), "session")), true))
 	tail, err := dropLastCall(entries)
 	if err != nil {
@@ -186,14 +190,22 @@ func run() error {
 			return fmt.Errorf("check failed: %s, %s: want %s, got %s", c.Verifier, c.What, c.Want, c.Got)
 		}
 	}
-	if err := render(filepath.Join(*outDir, "index.html"), caps, checks, src, len(entries)); err != nil {
-		return err
+	// The page tells the published session's story (its five calls, the session example
+	// they came from), so another bundle gets the capsules, envelopes and checks only.
+	if src.published {
+		if err := render(filepath.Join(*outDir, "index.html"), caps, checks, src, len(entries)); err != nil {
+			return err
+		}
 	}
 	for _, c := range caps {
 		fmt.Printf("call %d | %-8s | %s | record %s | %s\n", c.Sequence, c.Verdict, c.ID, c.Record[:16], c.Result)
 	}
 	for _, c := range checks {
 		fmt.Printf("check    | %-30s | %s -> %s\n", c.Verifier, c.What, c.Got)
+	}
+	if !src.published {
+		fmt.Printf("page     | none: the page describes the published bundle; %d capsules in %s; imported-at %s\n", len(caps), filepath.Join(*outDir, "capsules"), src.importedAt.Format(time.RFC3339))
+		return nil
 	}
 	fmt.Printf("page     | wrote %s with %d capsules; imported-at %s\n", filepath.Join(*outDir, "index.html"), len(caps), src.importedAt.Format(time.RFC3339))
 	return nil

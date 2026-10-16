@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/csv"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -17,10 +18,11 @@ import (
 )
 
 // DockerSandbox executes JavaScript in a throwaway, locked-down container. The
-// code is piped to `node -` on stdin (no host mounts, no escaping games). The
-// container has no network, a read-only root, dropped capabilities, a non-root
-// user, and memory/PID/CPU caps — so hostile code is contained and cannot reach
-// the host, the bridge, or the network.
+// code is piped to `node -` on stdin (no escaping games). Its only host mounts are
+// a fixed read-only resolv.conf and the broker socket of a granted run or a
+// session. The container has no network, a read-only root, dropped capabilities,
+// a non-root user, and memory/PID/CPU caps, so hostile code is contained and
+// cannot reach the host, the bridge, or the network.
 //
 // For a real host/VM boundary against hostile code, set Runtime to "runsc"
 // (gVisor): docker then runs the container under a user-space kernel instead of
@@ -369,11 +371,31 @@ func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime string) []string {
 	// bind-mounted unix socket (see brokerForRun), so egress is restricted to
 	// exactly the broker, nothing else.
 	args = append(args, "--network", "none")
+	// And no resolver setting of the host: docker would write the host's search
+	// domains and nameservers into /etc/resolv.conf even under --network none
+	// (guestResolvConf says what reached a guest). A fixed file of plimsoll's is
+	// mounted over it, read-only; a bind mount, unlike -v, refuses a missing source.
+	// The file is made with the private directory dockerCommand needs, so no container
+	// starts without it.
+	files, _ := dockerProcessFiles()
+	args = append(args, "--mount", bindMountSpec(files.resolvConf, "/etc/resolv.conf"))
 	if workTmpfs {
 		workFlag := fmt.Sprintf("/work:rw,noexec,nosuid,size=%dm,mode=1777", d.workDiskMB())
 		args = append(args, "--tmpfs", workFlag, "--workdir", "/work")
 	}
 	return args
+}
+
+// bindMountSpec is docker's --mount value for a read-only bind of the host file
+// source at target. Docker reads the value as one CSV record, so each field is
+// written by encoding/csv: a comma or quote in a temp directory's path stays inside
+// its field.
+func bindMountSpec(source, target string) string {
+	var b strings.Builder
+	w := csv.NewWriter(&b)
+	_ = w.Write([]string{"type=bind", "source=" + source, "target=" + target, "readonly"})
+	w.Flush()
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func (d *DockerSandbox) Name() string { return "docker" }

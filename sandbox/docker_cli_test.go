@@ -37,14 +37,47 @@ func TestDockerCommandGetsNoDaemonEnvironment(t *testing.T) {
 	if len(cmd.Args) < 4 || cmd.Args[1] != "--config" || cmd.Args[3] != "ps" {
 		t.Fatalf("args %q; want --config <dir> first", cmd.Args)
 	}
-	// Nothing docker reads: the one entry is the liveness socket the reaper checks
-	// (docker_hostdirs.go), and it is a socket, not a file a setting could be in.
-	entries, err := os.ReadDir(cmd.Args[2])
-	if err != nil || len(entries) != 1 || entries[0].Name() != dockerAliveSocket || entries[0].Type()&fs.ModeSocket == 0 {
-		t.Fatalf("the client config directory %s: %v, %v; want only the liveness socket %s", cmd.Args[2], entries, err, dockerAliveSocket)
+	// Nothing docker reads: the client config is an empty directory.
+	if entries, err := os.ReadDir(cmd.Args[2]); err != nil || len(entries) != 0 {
+		t.Fatalf("the client config directory %s: %v, %v; want it empty", cmd.Args[2], entries, err)
 	}
-	if fi, err := os.Stat(cmd.Args[2]); err != nil || fi.Mode().Perm() != 0o700 {
-		t.Fatalf("the client config directory's mode: %v, %v; want 0700", fi, err)
+	// Beside it in the private directory, the liveness socket the reaper checks
+	// (docker_hostdirs.go) and the resolv.conf containers mount, nothing else.
+	files, err := dockerProcessFiles()
+	if err != nil || filepath.Dir(cmd.Args[2]) != files.dir || files.config != cmd.Args[2] {
+		t.Fatalf("the client config %s is not in the private directory %+v (%v)", cmd.Args[2], files, err)
+	}
+	entries, err := os.ReadDir(files.dir)
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("the private directory %s: %v, %v; want the config directory, the liveness socket and resolv.conf", files.dir, entries, err)
+	}
+	for _, e := range entries {
+		var want fs.FileMode
+		switch e.Name() {
+		case "config":
+			want = fs.ModeDir
+		case dockerAliveSocket:
+			want = fs.ModeSocket
+		case "resolv.conf":
+			want = 0
+		default:
+			t.Fatalf("the private directory holds %s", e.Name())
+		}
+		if e.Type() != want {
+			t.Fatalf("%s has type %v, want %v", e.Name(), e.Type(), want)
+		}
+	}
+	for _, dir := range []string{files.dir, files.config} {
+		if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Fatalf("%s's mode: %v, %v; want 0700", dir, fi, err)
+		}
+	}
+	// The guest uid reads resolv.conf through its mount; nobody writes it.
+	if fi, err := os.Stat(files.resolvConf); err != nil || fi.Mode().Perm() != 0o444 {
+		t.Fatalf("resolv.conf's mode: %v, %v; want 0444", fi, err)
+	}
+	if b, err := os.ReadFile(files.resolvConf); err != nil || string(b) != guestResolvConf {
+		t.Fatalf("resolv.conf holds %q (%v), want guestResolvConf", b, err)
 	}
 	for _, kv := range dockerResolveCommand(context.Background(), "context", "inspect").Env {
 		if strings.Contains(kv, "canary") {
@@ -605,5 +638,31 @@ func TestGuestUIDOnlyForDocker(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "SANDBOX_GUEST_UID") {
 			t.Errorf("provider %q with SANDBOX_GUEST_UID: %v; want refused", provider, err)
 		}
+	}
+}
+
+// Preflight refuses a resolv.conf that is gone or changed, naming no content of it.
+func TestCheckGuestResolvConfFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good")
+	if err := writeGuestResolvConf(good); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkGuestResolvConfFile(good); err != nil {
+		t.Fatalf("the fixed file refused: %v", err)
+	}
+	if err := writeGuestResolvConf(good); err == nil {
+		t.Fatal("a second write over an existing file succeeded")
+	}
+	if err := checkGuestResolvConfFile(filepath.Join(dir, "gone")); err == nil {
+		t.Fatal("a missing file accepted")
+	}
+	changed := filepath.Join(dir, "changed")
+	if err := os.WriteFile(changed, []byte("search canary.example\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkGuestResolvConfFile(changed); err == nil || strings.Contains(err.Error(), "canary") {
+		t.Fatalf("a changed file: %v", err)
 	}
 }

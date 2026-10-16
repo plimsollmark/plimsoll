@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>One lost answer, two robot orders, and an adapter that said everything went fine</title>
+<meta name="description" content="You phone in a pizza order, the line drops right after &quot;got it&quot;, you call back and order again, and two pizzas arrive. Software does this to robots. One scenario from plimsoll&#x27;s fleet adapter example, followed end to end: how an order number prevents it, how a grader catches it without trusting the code that caused it, what an honest &quot;I don&#x27;t know&quot; looks like, and what a signed receipt does and does not prove.">
+<meta name="author" content="Carroll Guertin">
+<meta property="og:type" content="article">
+<meta property="og:title" content="One lost answer, two robot orders, and an adapter that said everything went fine">
+<meta property="og:description" content="You phone in a pizza order, the line drops right after &quot;got it&quot;, you call back and order again, and two pizzas arrive. Software does this to robots. One scenario from plimsoll&#x27;s fleet adapter example, followed end to end: how an order number prevents it, how a grader catches it without trusting the code that caused it, what an honest &quot;I don&#x27;t know&quot; looks like, and what a signed receipt does and does not prove.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/notes/lost-answer/index.html">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/notes/lost-answer/index.html">
+<style>
+:root { color-scheme: light; --ink:#1a1a1a; --mut:#5d5d5d; --rule:#dcd7cd;
+        --bg:#fbfaf7; --card:#ffffff; --accent:#0f4a85; }
+* { box-sizing: border-box; }
+body { margin:0; padding:2.2rem 1.3rem 4rem; background:var(--bg); color:var(--ink);
+       font:16px/1.65 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+main { max-width: 46rem; margin: 0 auto; }
+nav { font-size:.85rem; color:var(--mut); margin-bottom:1.6rem; }
+nav a { color:var(--mut); }
+h1 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.85rem;
+     line-height:1.25; margin:0 0 .4rem; letter-spacing:-.01em; }
+h2 { font-family: Georgia,'Times New Roman',serif; font-weight:600; font-size:1.3rem;
+     margin:2.2rem 0 .5rem; }
+.byline { color:var(--mut); font-size:.9rem; margin:0 0 1.8rem; }
+a { color:var(--accent); }
+code { background:#f0ede6; padding:.1rem .3rem; border-radius:3px;
+       font:.86em ui-monospace,SFMono-Regular,Menlo,monospace; }
+pre { background:#f5f2ec; border:1px solid var(--rule); border-radius:7px; padding:.75rem .9rem;
+      overflow-x:auto; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+pre code { background:none; padding:0; font:inherit; }
+.wrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; width:100%; font-size:.92rem; background:var(--card); }
+th, td { text-align:left; vertical-align:top; padding:.45rem .6rem; border-bottom:1px solid var(--rule); }
+th { font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--mut);
+     border-bottom:1.5px solid #c9c3b7; }
+th code { text-transform:none; letter-spacing:0; }
+ul.notes { padding-left:1.1rem; }
+ul.notes li { margin:.6rem 0; }
+ul.notes .d { color:var(--mut); font-size:.85rem; }
+figure.fig { margin:1.6rem 0; }
+figure.fig svg { display:block; width:100%; max-width:620px; height:auto; margin:0 auto; }
+figure.fig figcaption { font-size:.86rem; color:var(--mut); margin:.5rem auto 0; max-width:620px; }
+footer { margin-top:2.6rem; padding-top:1rem; border-top:1px solid var(--rule);
+         font-size:.82rem; color:var(--mut); }
+@media (max-width: 760px) { body { padding:1.4rem .9rem 3rem; } h1 { font-size:1.5rem; } }
+</style></head>
+<body><main>
+<nav><a href="../../index.html">plimsoll</a> / <a href="../index.html">notes</a></nav>
+<article>
+<h1>One lost answer, two robot orders, and an adapter that said everything went fine</h1>
+<p class="byline">Carroll Guertin, 2026-10-16</p>
+<p>You phone a pizza place. They say "got it", and the line drops before you hear it. Did the order go in? You call back and order again. Forty minutes later two pizzas arrive, and you are now a person who owns two pizzas. 🍕🍕</p>
+<figure class="fig"><svg role="img" aria-label="The same bug at home and at work. At home: the line drops right after the pizza place says got it, you order again, and two pizzas arrive. At work: the vendor&#x27;s answer is lost after it accepted order m2, the first adapter orders again with no order number, the vendor makes order m3, and robot r2 gets two jobs while the adapter reports that all is done." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 440" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<title>The same bug at home and at work. At home: the line drops right after the pizza place says got it, you order again, and two pizzas arrive. At work: the vendor's answer is lost after it accepted order m2, the first adapter orders again with no order number, the vendor makes order m3, and robot r2 gets two jobs while the adapter reports that all is done.</title>
+<defs><marker id="pizza-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/></marker></defs>
+<rect width="540" height="440" rx="16" fill="#fbfaf7"/>
+<text x="10" y="24" font-size="17" font-weight="700" fill="#1a1a1a">🍕 At home</text>
+<g stroke="#1a1a1a" stroke-width="2" fill="#fff">
+<rect x="6" y="34" width="172" height="172" rx="14"/><rect x="184" y="34" width="172" height="172" rx="14"/><rect x="362" y="34" width="172" height="172" rx="14"/>
+</g>
+<rect x="74" y="46" width="94" height="36" rx="18" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
+<text x="121" y="70" font-size="17" font-weight="700" fill="#1e7a3c" text-anchor="middle">Got it!</text>
+<text x="42" y="140" font-size="40" text-anchor="middle">📞</text>
+<text x="146" y="140" font-size="34" text-anchor="middle">🏪</text>
+<path d="M66,124 L86,124 L92,114 L98,134 L104,114 L110,134 L116,124 L124,124" fill="none" stroke="#b3261e" stroke-width="2.5" stroke-linejoin="round"/>
+<text x="95" y="160" font-size="14" font-style="italic" fill="#b3261e" text-anchor="middle">*click*</text>
+<text x="92" y="192" font-size="15" fill="#1a1a1a" text-anchor="middle">The line drops.</text>
+<rect x="234" y="46" width="112" height="56" rx="16" fill="#fdf3d6" stroke="#b07d10" stroke-width="1.5"/>
+<text x="290" y="69" font-size="15" fill="#1a1a1a" text-anchor="middle">Hi, one large,</text>
+<text x="290" y="89" font-size="15" fill="#1a1a1a" text-anchor="middle">please!</text>
+<text x="212" y="148" font-size="40">🤔</text>
+<text x="300" y="140" font-size="13" fill="#5d5d5d" text-anchor="middle">did it go in?</text>
+<text x="300" y="158" font-size="13" fill="#5d5d5d" text-anchor="middle">who knows</text>
+<text x="270" y="192" font-size="15" fill="#1a1a1a" text-anchor="middle">You order again.</text>
+<text x="448" y="66" font-size="14" font-style="italic" fill="#5d5d5d" text-anchor="middle">🔔 ding dong</text>
+<text x="448" y="136" font-size="48" text-anchor="middle">🍕🍕</text>
+<text x="448" y="192" font-size="15" fill="#1a1a1a" text-anchor="middle">Two pizzas arrive.</text>
+<text x="10" y="242" font-size="17" font-weight="700" fill="#1a1a1a">🤖 At work: the first adapter</text>
+<g stroke="#1a1a1a" stroke-width="2" fill="#fff">
+<rect x="6" y="252" width="172" height="182" rx="14"/><rect x="184" y="252" width="172" height="182" rx="14"/><rect x="362" y="252" width="172" height="182" rx="14"/>
+</g>
+<text x="34" y="292" font-size="26" text-anchor="middle">🔌</text>
+<text x="150" y="292" font-size="26" text-anchor="middle">🏢</text>
+<line x1="52" y1="283" x2="128" y2="283" stroke="#1a1a1a" stroke-width="2" marker-end="url(#pizza-arr)"/>
+<text x="92" y="276" font-size="12" fill="#1a1a1a" text-anchor="middle">r2 to (10,4)</text>
+<text x="92" y="316" font-size="12" fill="#1e7a3c" text-anchor="middle">order m2 is in ✓</text>
+<rect x="18" y="328" width="148" height="50" rx="10" fill="#fbe4e1" stroke="#b3261e" stroke-width="1.5"/>
+<text x="92" y="350" font-size="17" font-weight="700" fill="#b3261e" text-anchor="middle">503</text>
+<text x="92" y="369" font-size="13" fill="#b3261e" text-anchor="middle">acknowledgement lost</text>
+<text x="92" y="418" font-size="15" fill="#1a1a1a" text-anchor="middle">The answer is lost.</text>
+<text x="212" y="292" font-size="26" text-anchor="middle">🔌</text>
+<text x="328" y="292" font-size="26" text-anchor="middle">🏢</text>
+<line x1="230" y1="283" x2="306" y2="283" stroke="#1a1a1a" stroke-width="2" marker-end="url(#pizza-arr)"/>
+<text x="270" y="276" font-size="12" fill="#1a1a1a" text-anchor="middle">r2 to (10,4)</text>
+<text x="270" y="316" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">no order number</text>
+<rect x="206" y="328" width="128" height="50" rx="6" fill="#fdf3d6" stroke="#b07d10" stroke-width="1.5"/>
+<text x="270" y="350" font-size="13" fill="#5d5d5d" text-anchor="middle">a new order:</text>
+<text x="270" y="369" font-size="17" font-weight="700" fill="#1a1a1a" text-anchor="middle">m3</text>
+<text x="270" y="418" font-size="15" fill="#1a1a1a" text-anchor="middle">It orders again.</text>
+<text x="404" y="322" font-size="44" text-anchor="middle">🤖</text>
+<text x="404" y="342" font-size="12" fill="#5d5d5d" text-anchor="middle">r2</text>
+<rect x="444" y="266" width="76" height="30" rx="5" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="482" y="286" font-size="14" fill="#1a1a1a" text-anchor="middle">job m2 ✓</text>
+<rect x="444" y="302" width="76" height="30" rx="5" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="482" y="322" font-size="14" fill="#1a1a1a" text-anchor="middle">job m3 ✓</text>
+<rect x="374" y="356" width="148" height="32" rx="16" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
+<text x="448" y="377" font-size="14" fill="#1e7a3c" text-anchor="middle">🔌 “All done!” 🎉</text>
+<text x="448" y="418" font-size="15" fill="#1a1a1a" text-anchor="middle">Robot gets two jobs.</text>
+</svg><figcaption>The same bug twice: at home a dropped line gets you two pizzas, at work a lost answer gets robot r2 two jobs.</figcaption></figure>
+<p>Software does this to robots. This note follows exactly that failure through a small example I built: how to catch it without trusting the code that caused it, and what the sandbox it ran in did that an ordinary test could not.</p>
+<h2 id="who-s-who">Who's who</h2>
+<p>I run code that AI agents write inside sandboxes, through a small open-source service I built called plimsoll. One kind of code platforms now let AI write is the adapter: the piece that translates between the platform's own system and a vendor's API (the list of requests the vendor's computers accept). Here the vendor runs a fleet of warehouse robots.</p>
+<div class="wrap"><table><thead><tr><th>who</th><th>what it is</th><th>in the pizza story</th></tr></thead><tbody><tr><td>🤖 robot r2</td><td>one of the vendor's three robots</td><td>the oven</td></tr><tr><td>🏢 the vendor</td><td>a pretend robot company, fleetsim: a simulator I wrote</td><td>the pizza place</td></tr><tr><td>🔌 the adapter</td><td>AI-written JavaScript that places and tracks orders for the platform</td><td>you, on the phone</td></tr><tr><td>📦 the sandbox</td><td>a locked box the adapter runs in, with no network and no way into my machine</td><td>a phone booth with one line out</td></tr><tr><td>🛂 the broker</td><td>plimsoll's gatekeeper: it forwards only six kinds of request and adds a key that works for this one run</td><td>the switchboard operator</td></tr><tr><td>📒 the ledger</td><td>the vendor's own list of every order it accepted</td><td>the tickets on the kitchen rail</td></tr><tr><td>⚖️ the grader</td><td>eight rules checked after the run, against the ledger and the robots</td><td>the manager who reads the rail, not your story</td></tr><tr><td>🧾 the receipt</td><td>a signed record of exactly what went into the sandbox and what came out</td><td>a tamper-evident envelope</td></tr></tbody></table></div>
+<p>The idea the whole example rests on: the adapter's account of itself counts for nothing. A grader that asks the adapter how it went is asking the waiter whether the waiter did a good job.</p>
+<figure class="fig"><svg role="img" aria-label="Who talks to whom. The harness and the AI-written adapter run inside the sandbox, which has no network and no key. The adapter&#x27;s only way out is a door to the broker, which lets through six of the vendor&#x27;s eight routes and adds a key made for this run only. The vendor holds three robots and its ledger. The receipt is a signed copy of what went into the sandbox and what came out. The grader takes the ledger as evidence and the adapter&#x27;s report, from the receipt, as a claim to check." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 380" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<title>Who talks to whom. The harness and the AI-written adapter run inside the sandbox, which has no network and no key. The adapter's only way out is a door to the broker, which lets through six of the vendor's eight routes and adds a key made for this run only. The vendor holds three robots and its ledger. The receipt is a signed copy of what went into the sandbox and what came out. The grader takes the ledger as evidence and the adapter's report, from the receipt, as a claim to check.</title>
+<defs>
+<marker id="map-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/></marker>
+<marker id="map-arrm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5d5d5d"/></marker>
+</defs>
+<rect width="540" height="380" rx="16" fill="#fbfaf7"/>
+<rect x="8" y="10" width="212" height="226" rx="16" fill="#e3edf8" stroke="#0f4a85" stroke-width="2.5"/>
+<text x="22" y="36" font-size="17" font-weight="700" fill="#0f4a85">📦 the sandbox</text>
+<text x="22" y="56" font-size="13" fill="#0f4a85">no network, no key, no way</text>
+<text x="22" y="72" font-size="13" fill="#0f4a85">into the machine it runs on</text>
+<rect x="20" y="86" width="182" height="44" rx="10" fill="#fff" stroke="#0f4a85" stroke-width="1.5"/>
+<text x="32" y="114" font-size="15" fill="#1a1a1a">🧪 harness (test driver)</text>
+<line x1="111" y1="130" x2="111" y2="150" stroke="#1a1a1a" stroke-width="2" marker-end="url(#map-arr)"/>
+<text x="118" y="146" font-size="12" fill="#5d5d5d">commands</text>
+<rect x="20" y="154" width="182" height="44" rx="10" fill="#fff" stroke="#0f4a85" stroke-width="1.5"/>
+<text x="32" y="182" font-size="15" fill="#1a1a1a">🔌 adapter (AI-written)</text>
+<rect x="210" y="148" width="20" height="58" rx="3" fill="#f2c14e" stroke="#1a1a1a" stroke-width="1.5"/>
+<circle cx="225" cy="178" r="2.2" fill="#1a1a1a"/>
+<line x1="202" y1="176" x2="210" y2="176" stroke="#1a1a1a" stroke-width="2"/>
+<line x1="231" y1="178" x2="242" y2="178" stroke="#1a1a1a" stroke-width="2" marker-end="url(#map-arr)"/>
+<rect x="244" y="118" width="138" height="118" rx="12" fill="#fdf3d6" stroke="#b07d10" stroke-width="2"/>
+<text x="313" y="142" font-size="16" font-weight="700" fill="#1a1a1a" text-anchor="middle">🛂 broker</text>
+<text x="313" y="164" font-size="13" fill="#1a1a1a" text-anchor="middle">lets through 6 of</text>
+<text x="313" y="181" font-size="13" fill="#1a1a1a" text-anchor="middle">the vendor's 8 routes</text>
+<text x="313" y="205" font-size="13" fill="#1a1a1a" text-anchor="middle">🔑 adds a key made</text>
+<text x="313" y="222" font-size="13" fill="#1a1a1a" text-anchor="middle">for this run only</text>
+<line x1="383" y1="178" x2="393" y2="178" stroke="#1a1a1a" stroke-width="2" marker-end="url(#map-arr)"/>
+<rect x="394" y="10" width="138" height="226" rx="16" fill="#fff" stroke="#1a1a1a" stroke-width="2"/>
+<text x="406" y="36" font-size="17" font-weight="700" fill="#1a1a1a">🏢 the vendor</text>
+<text x="463" y="82" font-size="26" text-anchor="middle">🤖🤖🤖</text>
+<text x="463" y="100" font-size="12" fill="#5d5d5d" text-anchor="middle">r1 · r2 · r3</text>
+<rect x="406" y="120" width="114" height="100" rx="6" fill="#fdf3d6" stroke="#b07d10" stroke-width="1.5"/>
+<text x="463" y="142" font-size="15" font-weight="700" fill="#1a1a1a" text-anchor="middle">📒 ledger</text>
+<text x="463" y="164" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#1a1a1a" text-anchor="middle">m1 · r1</text>
+<text x="463" y="182" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#1a1a1a" text-anchor="middle">m2 · r2</text>
+<text x="463" y="200" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#5d5d5d" text-anchor="middle">…</text>
+<line x1="470" y1="222" x2="470" y2="266" stroke="#1a1a1a" stroke-width="2" marker-end="url(#map-arr)"/>
+<text x="478" y="250" font-size="12" fill="#1a1a1a">evidence</text>
+<rect x="8" y="270" width="198" height="98" rx="12" fill="#fff" stroke="#1a1a1a" stroke-width="2"/>
+<text x="20" y="296" font-size="16" font-weight="700" fill="#1a1a1a">🧾 the receipt</text>
+<text x="20" y="318" font-size="13" fill="#1a1a1a">a signed copy of what</text>
+<text x="20" y="336" font-size="13" fill="#1a1a1a">went in and what came</text>
+<text x="20" y="354" font-size="13" fill="#1a1a1a">out, and of each verdict</text>
+<line x1="70" y1="238" x2="70" y2="266" stroke="#5d5d5d" stroke-width="2" marker-end="url(#map-arrm)"/>
+<rect x="250" y="270" width="282" height="98" rx="12" fill="#fff" stroke="#1a1a1a" stroke-width="2"/>
+<text x="264" y="296" font-size="16" font-weight="700" fill="#1a1a1a">⚖️ the grader</text>
+<text x="264" y="318" font-size="13" fill="#1a1a1a">8 rules, read off the ledger and</text>
+<text x="264" y="336" font-size="13" fill="#1a1a1a">the robots after the run; the</text>
+<text x="264" y="354" font-size="13" fill="#1a1a1a">adapter's “all fine!” is a claim</text>
+<line x1="207" y1="330" x2="246" y2="330" stroke="#5d5d5d" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#map-arrm)"/>
+<text x="228" y="322" font-size="11" font-style="italic" fill="#5d5d5d" text-anchor="middle">report</text>
+</svg><figcaption>Who talks to whom: the adapter's only way out is the broker's door, and the grader reads the vendor's ledger, not the adapter.</figcaption></figure>
+<h2 id="the-setup">The setup</h2>
+<p>The vendor publishes an OpenAPI document (a machine-readable menu) of eight operations. Its "create an order" takes an optional <code>command_id</code>, which is your order number, and the menu says what a repeat does: "a create repeated with a command_id already accepted answers with that original mission instead of a new one". Call back with the order number and they say "yep, that one's in the oven".</p>
+<p>The adapter runs in the sandbox and reaches the vendor only through the broker. The broker allows six of the eight operations and adds a credential (the key the vendor checks on every request) minted for that one run, so the adapter never holds the vendor's real key. A harness, the test driver, hands the adapter the same short list of commands in eight scenarios: a normal day, a robot that breaks, a robot broken from the start, an overloaded vendor, and four ways for an answer to go missing. It writes down whatever the adapter reports, and then the grader decides. One of the eight rules is <code>one_order_per_command</code>: each command becomes exactly one order on the vendor's ledger.</p>
+<h2 id="the-lost-answer">The lost answer</h2>
+<p>In the <code>lost_ack</code> scenario ("ack" is short for acknowledgement, the "got it"), the vendor accepts the second command's order, starts the robot, and then answers with HTTP status 503 (a server's "something went wrong, try later") and the body "acknowledgement lost". The order exists; the adapter is told it failed. The line dropped right after "got it".</p>
+<p>The example's first adapter, <code>adapter-v1.js</code>, does what most of us would do: it calls back and orders again. It sends no <code>command_id</code>, so the vendor cannot tell a retry from a new order, and places a second one. Robot r2 drives to (10,4), finishes, and then drives to (10,4) again, like someone who walked into the kitchen and forgot why. The adapter reports the second order, m3, as done. From where it sits, everything went fine. 🎉</p>
+<p>The vendor's event log for that command, as the example page replays it (the number is the event's place in the log):</p>
+<div class="wrap"><table><thead><tr><th>#</th><th>first adapter</th><th>second adapter</th></tr></thead><tbody><tr><td>2</td><td>order m2 for r2</td><td>order m2 for r2, command <code>run13-c2</code></td></tr><tr><td>3</td><td>r2 starts m2</td><td>r2 starts m2</td></tr><tr><td>4</td><td>answer lost (503)</td><td>answer lost (503)</td></tr><tr><td>5</td><td><strong>order m3 for r2</strong></td><td>repeat of <code>run13-c2</code>, answered with m2</td></tr><tr><td>14</td><td>m2 done at (10,4)</td><td>m2 done at (10,4)</td></tr><tr><td>15, 16</td><td>r2 starts m3, m3 done at (10,4)</td><td>nothing more for r2</td></tr></tbody></table></div>
+<p>The grader reads the rail, not the waiter. The first adapter's run fails one rule of eight, <code>one_order_per_command</code>: "run04-c2 became 2 orders (m2, m3)". The second adapter, <code>adapter-v2.js</code>, calls back with the same order number; the vendor says "that's m2", the ledger holds one order for the command, and the run passes all eight rules. You can replay <a href="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html#floor/lost_ack/adapter-v1.js">the first adapter's run</a> and <a href="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html#floor/lost_ack/adapter-v2.js">the second's</a> on the example page: press Play and watch r2 do its extra lap.</p>
+<figure class="fig"><svg role="img" aria-label="Both adapters report that all is done. On the vendor&#x27;s ledger the first adapter&#x27;s command became two orders, m2 and m3, so it fails one rule. The second adapter&#x27;s repeat carried the command&#x27;s ID, run13-c2, the vendor answered with m2, the ledger holds one order, and it passes all eight rules." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 352" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<title>Both adapters report that all is done. On the vendor's ledger the first adapter's command became two orders, m2 and m3, so it fails one rule. The second adapter's repeat carried the command's ID, run13-c2, the vendor answered with m2, the ledger holds one order, and it passes all eight rules.</title>
+<rect width="540" height="352" rx="16" fill="#fbfaf7"/>
+<text x="12" y="28" font-size="17" font-weight="700" fill="#1a1a1a">🔌 The first adapter</text>
+<rect x="12" y="44" width="150" height="40" rx="20" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
+<text x="87" y="69" font-size="15" fill="#1e7a3c" text-anchor="middle">“All done!” 🎉</text>
+<text x="87" y="108" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">what the adapter says</text>
+<text x="190" y="38" font-size="13" fill="#5d5d5d">📒 what the vendor's ledger says</text>
+<line x1="186" y1="50" x2="410" y2="50" stroke="#5d5d5d" stroke-width="4" stroke-linecap="round"/>
+<rect x="196" y="54" width="96" height="78" rx="4" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="244" y="82" font-size="19" font-weight="700" fill="#1a1a1a" text-anchor="middle">m2</text>
+<text x="244" y="102" font-size="12" fill="#1a1a1a" text-anchor="middle">r2 to (10,4)</text>
+<text x="244" y="120" font-size="11" fill="#5d5d5d" text-anchor="middle">no order number</text>
+<rect x="302" y="54" width="96" height="78" rx="4" fill="#fff" stroke="#1a1a1a" stroke-width="1.5" transform="rotate(3 350 93)"/>
+<text x="350" y="84" font-size="19" font-weight="700" fill="#1a1a1a" text-anchor="middle" transform="rotate(3 350 93)">m3</text>
+<text x="350" y="104" font-size="12" fill="#1a1a1a" text-anchor="middle" transform="rotate(3 350 93)">r2 to (10,4)</text>
+<text x="350" y="122" font-size="11" fill="#5d5d5d" text-anchor="middle" transform="rotate(3 350 93)">no order number</text>
+<g transform="rotate(-7 474 92)">
+<rect x="424" y="50" width="102" height="84" rx="10" fill="#fbe4e1" stroke="#b3261e" stroke-width="3"/>
+<text x="475" y="82" font-size="20" font-weight="800" fill="#b3261e" text-anchor="middle">✗ FAIL</text>
+<text x="475" y="104" font-size="13" fill="#b3261e" text-anchor="middle">2 orders for</text>
+<text x="475" y="121" font-size="13" fill="#b3261e" text-anchor="middle">1 command</text>
+</g>
+<line x1="12" y1="168" x2="528" y2="168" stroke="#dcd7cd" stroke-width="1.5"/>
+<text x="12" y="200" font-size="17" font-weight="700" fill="#1a1a1a">🔌 The second adapter</text>
+<rect x="12" y="216" width="150" height="40" rx="20" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
+<text x="87" y="241" font-size="15" fill="#1e7a3c" text-anchor="middle">“All done!” 🎉</text>
+<text x="87" y="280" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">the very same words</text>
+<line x1="186" y1="222" x2="410" y2="222" stroke="#5d5d5d" stroke-width="4" stroke-linecap="round"/>
+<rect x="196" y="226" width="96" height="78" rx="4" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="244" y="254" font-size="19" font-weight="700" fill="#1a1a1a" text-anchor="middle">m2</text>
+<text x="244" y="274" font-size="12" fill="#1a1a1a" text-anchor="middle">r2 to (10,4)</text>
+<text x="244" y="292" font-size="11" font-family="ui-monospace,Menlo,monospace" fill="#0f4a85" text-anchor="middle">#run13-c2</text>
+<rect x="302" y="236" width="108" height="58" rx="14" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/>
+<text x="356" y="259" font-size="12" fill="#0f4a85" text-anchor="middle">🏢 “run13-c2?</text>
+<text x="356" y="279" font-size="12" fill="#0f4a85" text-anchor="middle">That one's m2.”</text>
+<g transform="rotate(-7 474 264)">
+<rect x="424" y="222" width="102" height="84" rx="10" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="3"/>
+<text x="475" y="254" font-size="20" font-weight="800" fill="#1e7a3c" text-anchor="middle">✓ PASS</text>
+<text x="475" y="276" font-size="13" fill="#1e7a3c" text-anchor="middle">all 8 rules</text>
+<text x="475" y="293" font-size="13" fill="#1e7a3c" text-anchor="middle">hold</text>
+</g>
+<text x="270" y="338" font-size="13" font-style="italic" fill="#5d5d5d" text-anchor="middle">Same words from both. Only the ledger tells them apart.</text>
+</svg><figcaption>Both adapters say "all done". The ledger says one of them ordered twice.</figcaption></figure>
+<p>Where that bug came from matters. <code>adapter-v1.js</code> was written in the same session that built the example, so it is not an independent trial. When three models (Claude Haiku, Sonnet and Opus) each wrote an adapter from the contract (the vendor's menu plus the rules) in a clean session with no tools, all three used the order number. The point is not that AI gets this wrong. It is that a platform can check it without taking the adapter's word for it.</p>
+<h2 id="when-nobody-can-know">When nobody can know</h2>
+<p>The harder case is the <code>silent</code> scenario. The vendor accepts the order, and from then on its gateway (the front desk in front of its servers) answers 504, "the server behind me did not answer", to everything about that robot. The phone just rings. Nothing the adapter can do will tell it whether the pizza is coming.</p>
+<p>The second adapter's patience is 40 calls per operation, retries included, a quarter of a second apart. It uses all of them over about ten seconds, hears 40 rings and no answer, and returns an error coded <code>unresolved</code>: "no answer after 40 attempts; the vendor may or may not hold the order". That is the honest answer, and the contract asks for exactly that. (The vendor does hold it, as m2, still running.)</p>
+<p>The example also carries ten adapters broken on purpose, each in one way. One of them gives up after three tries and reports <code>refused</code>, which a platform reads as "nothing happened, safe to order again". The grader fails it on <code>report_is_true</code>: "the adapter reported an error coded "refused" ... and the vendor holds the order as m2". Believing it would put a second order on the robot, which is where we came in. 🍕🍕</p>
+<figure class="fig"><svg role="img" aria-label="The silent vendor. The second adapter calls 40 times over about ten seconds, gets no answer, and reports unresolved: the vendor may or may not hold the order. That is honest. A broken adapter gives up after three tries and reports refused, which tells the platform nothing happened and it is safe to order again, but the vendor holds the order as m2, so believing it means a second order." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 330" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<title>The silent vendor. The second adapter calls 40 times over about ten seconds, gets no answer, and reports unresolved: the vendor may or may not hold the order. That is honest. A broken adapter gives up after three tries and reports refused, which tells the platform nothing happened and it is safe to order again, but the vendor holds the order as m2, so believing it means a second order.</title>
+<rect width="540" height="330" rx="16" fill="#fbfaf7"/>
+<text x="12" y="28" font-size="17" font-weight="700" fill="#1a1a1a">🔌 The second adapter: 40 rings, no answer</text>
+<circle cx="40" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="62" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="84" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="106" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="128" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="150" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="172" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="194" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="216" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="238" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="260" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="282" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="304" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="326" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="348" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="370" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="392" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="414" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="436" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="458" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="40" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="62" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="84" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="106" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="128" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="150" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="172" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="194" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="216" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="238" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="260" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="282" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="304" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="326" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="348" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="370" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="392" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="414" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="436" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="458" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/>
+<text x="490" y="68" font-size="13" fill="#5d5d5d" text-anchor="middle">≈ 10 s</text>
+<rect x="12" y="96" width="516" height="62" rx="12" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
+<text x="26" y="121" font-size="15" font-weight="700" fill="#1e7a3c">✓ reports “unresolved”, which is the honest answer</text>
+<text x="26" y="144" font-size="13" fill="#1a1a1a">“no answer after 40 attempts; the vendor may or may not hold the order”</text>
+<line x1="12" y1="180" x2="528" y2="180" stroke="#dcd7cd" stroke-width="1.5"/>
+<text x="12" y="210" font-size="17" font-weight="700" fill="#1a1a1a">🔌 A broken adapter: 3 rings, then a guess</text>
+<circle cx="40" cy="234" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="62" cy="234" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="84" cy="234" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/>
+<text x="112" y="239" font-size="13" font-style="italic" fill="#5d5d5d">“eh, must not have gone in”</text>
+<rect x="12" y="256" width="516" height="62" rx="12" fill="#fbe4e1" stroke="#b3261e" stroke-width="1.5"/>
+<text x="26" y="281" font-size="15" font-weight="700" fill="#b3261e">✗ reports “refused”: nothing happened, safe to order again</text>
+<text x="26" y="304" font-size="13" fill="#1a1a1a">The vendor holds the order as m2. Order again and you know what comes. 🍕🍕</text>
+</svg><figcaption>Forty rings and an honest "I don't know", against three rings and a confident guess.</figcaption></figure>
+<h2 id="what-plimsoll-did-here-and-what-it-didn-t">What plimsoll did here, and what it didn't</h2>
+<p>Fair question by now: the double order is a bug in the adapter, so what did plimsoll do about it? It did not prevent it. No sandbox stops code from ordering twice when ordering is its job. What plimsoll changes is everything around the bug: whether you can run an AI's code against the vendor at all, what that code can reach while it runs, and whether anyone can check the verdict afterwards.</p>
+<figure class="fig"><svg role="img" aria-label="The same AI-written adapter without plimsoll and with it. Without: it runs on your machine next to your files, holds the vendor&#x27;s real key, can call all eight routes including decommissioning a robot, sends every retry to a vendor already answering 503, its report of all done is believed so the double order is found in production, and the only proof is a log its operator can edit. With: it runs in a locked container with no network, never sees a key because one is made per run and added outside, reaches six routes of eight and a raw DELETE gets 403, the broker&#x27;s breaker holds calls back while the vendor recovers, the ledger is checked by the example&#x27;s grader so the double order is caught in a test, and a signed receipt fails if one byte changes." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 444" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<title>The same AI-written adapter without plimsoll and with it. Without: it runs on your machine next to your files, holds the vendor's real key, can call all eight routes including decommissioning a robot, sends every retry to a vendor already answering 503, its report of all done is believed so the double order is found in production, and the only proof is a log its operator can edit. With: it runs in a locked container with no network, never sees a key because one is made per run and added outside, reaches six routes of eight and a raw DELETE gets 403, the broker's breaker holds calls back while the vendor recovers, the ledger is checked by the example's grader so the double order is caught in a test, and a signed receipt fails if one byte changes.</title>
+<rect width="540" height="444" rx="16" fill="#fbfaf7"/>
+<rect x="6" y="8" width="260" height="402" rx="14" fill="#fff" stroke="#b3261e" stroke-width="2" stroke-dasharray="7 5"/>
+<rect x="274" y="8" width="260" height="402" rx="14" fill="#fff" stroke="#1e7a3c" stroke-width="2.5"/>
+<text x="136" y="40" font-size="18" font-weight="700" fill="#b3261e" text-anchor="middle">😬 Without plimsoll</text>
+<text x="404" y="40" font-size="18" font-weight="700" fill="#1e7a3c" text-anchor="middle">😌 With plimsoll</text>
+<text x="34" y="92" font-size="24" text-anchor="middle">💻</text><text x="58" y="82" font-size="14" fill="#1a1a1a">runs on your machine,</text><text x="58" y="101" font-size="14" fill="#1a1a1a">next to your files</text><text x="302" y="92" font-size="24" text-anchor="middle">📦</text><text x="326" y="82" font-size="14" fill="#1a1a1a">a locked container with</text><text x="326" y="101" font-size="14" fill="#1a1a1a">no network at all</text><line x1="18" y1="114" x2="254" y2="114" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="114" x2="522" y2="114" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="150" font-size="24" text-anchor="middle">🔑</text><text x="58" y="140" font-size="14" fill="#1a1a1a">holds the vendor's</text><text x="58" y="159" font-size="14" fill="#1a1a1a">real key</text><text x="302" y="150" font-size="24" text-anchor="middle">🔑</text><text x="326" y="140" font-size="14" fill="#1a1a1a">never sees a key: one is</text><text x="326" y="159" font-size="14" fill="#1a1a1a">made per run, added outside</text><line x1="18" y1="172" x2="254" y2="172" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="172" x2="522" y2="172" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="208" font-size="24" text-anchor="middle">🗑️</text><text x="58" y="198" font-size="14" fill="#1a1a1a">can call all 8 routes,</text><text x="58" y="217" font-size="14" fill="#1a1a1a">decommission a robot too</text><text x="302" y="208" font-size="24" text-anchor="middle">🛂</text><text x="326" y="198" font-size="14" fill="#1a1a1a">6 routes of 8; a raw</text><text x="326" y="217" font-size="14" fill="#1a1a1a">DELETE gets 403</text><line x1="18" y1="230" x2="254" y2="230" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="230" x2="522" y2="230" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="266" font-size="24" text-anchor="middle">🌊</text><text x="58" y="256" font-size="14" fill="#1a1a1a">every retry lands on a</text><text x="58" y="275" font-size="14" fill="#1a1a1a">vendor saying 503</text><text x="302" y="266" font-size="24" text-anchor="middle">🛂</text><text x="326" y="256" font-size="14" fill="#1a1a1a">the breaker holds calls</text><text x="326" y="275" font-size="14" fill="#1a1a1a">back while it recovers</text><line x1="18" y1="288" x2="254" y2="288" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="288" x2="522" y2="288" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="324" font-size="24" text-anchor="middle">🎉</text><text x="58" y="314" font-size="14" fill="#1a1a1a">“all done” is believed:</text><text x="58" y="333" font-size="14" fill="#1a1a1a">🍕🍕 found in production</text><text x="302" y="324" font-size="24" text-anchor="middle">⚖️</text><text x="326" y="314" font-size="14" fill="#1a1a1a">the ledger is checked*:</text><text x="326" y="333" font-size="14" fill="#1a1a1a">🍕🍕 caught in a test</text><line x1="18" y1="346" x2="254" y2="346" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="346" x2="522" y2="346" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="382" font-size="24" text-anchor="middle">📝</text><text x="58" y="372" font-size="14" fill="#1a1a1a">the proof is a log</text><text x="58" y="391" font-size="14" fill="#1a1a1a">its operator can edit</text><text x="302" y="382" font-size="24" text-anchor="middle">🧾</text><text x="326" y="372" font-size="14" fill="#1a1a1a">a signed receipt; change</text><text x="326" y="391" font-size="14" fill="#1a1a1a">one byte and it fails</text>
+<text x="270" y="432" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">* the grader ships with the example; plimsoll runs the code it judges</text>
+</svg><figcaption>The same adapter, run two ways. Each row on the right is shown by the published evidence or a check in this note.</figcaption></figure>
+<p>Without something like plimsoll, the usual way to find out whether an AI's adapter works is to run it: on a laptop, in CI (the servers that run a project's tests), or in production behind a switch. Then the adapter is just another program and gets what programs get: your files, your network, and the vendor's real key in its environment, where any line of it can read it or send it somewhere. Its "all done" is believed, because nothing else is keeping count, and the two pizzas show up in production.</p>
+<p>In this example the right-hand column was tested, not promised. The boundary probe, a step that is not an adapter and tries what hostile code would, ran under the same grant. A request straight to the vendor failed with <code>ECONNREFUSED</code>, since the sandbox has no network. A raw <code>DELETE /robots/r1</code> that skipped the injected client got 403 from the broker. A search of its environment and its client found no credential, because the broker adds the key on the host after the route is checked. Over the 51 runs the vendor saw 50 different keys, one per run that reached it, each living 95 seconds. And when the vendor was overloaded, the broker's breaker opened on each 503 and held the adapter's next calls back for a second, so retries could not pile onto a vendor that had just said it was struggling.</p>
+<p>One row is the example, not plimsoll: the grader is ordinary code that ships with the example, and you could write a ledger check without plimsoll. What you cannot easily do without something like it is run that check on code you did not write and do not trust, with the vendor's real key nowhere in reach, and hand someone else the evidence.</p>
+<p>I can vouch for the first row personally. In both trial runs, on 14 and 15 October, the helper that gave each AI agent its practice result (it ran the agent's draft adapter on one scenario and sent back what happened) ran that adapter with my machine's own Node, outside any sandbox. Nobody noticed for two days, until a security review flagged it. Nothing bad happened, which is luck, not design. The helper now runs adapters in the sandbox through the real broker, and a test plants a secret variable and checks that the adapter can neither read it nor list my home directory.</p>
+<h2 id="the-receipt">The receipt</h2>
+<p>Every run is sealed into a signed record, the tamper-evident envelope: a hash (a fingerprint that changes if any byte changes) of exactly what went into the sandbox and what came out, signed with a key the test run made for itself. Each verdict is sealed too, and tied to its run. One line of the published file can be checked on its own. Here is the second adapter's lost-answer run, from a clone of the repository:</p>
+<pre><code>$ go build -o plimsoll-attest ./cmd/plimsoll-attest
+$ cd docs/examples/adapter
+$ ../../../plimsoll-attest verify-entry -pub harness.pub -line 13 bundle.jsonl
+entry verified: line 13, signed by key 02c7b7eed354d6297e60f1f69eb7579acc1fcdc5a35cd1c398f05ddf5fd94fc7: record 3c54bdfe1ccb0b753d9e44238afc250fc7e7212f5aa444242f5fe59319ac674e, a single run; the signed record states provider docker and isolation &quot;kernel&quot;. It authenticates the recorded messages, not that what the guest printed is true. Not established by this check: the bundle around the line, and for a session call that its session&#x27;s chain is whole; plimsoll-attest verify checks a whole bundle</code></pre>
+<p>Now change one byte. In run 13's stored answer the adapter checked on its order 4 times; make it 5 in a copy and check again:</p>
+<pre><code>$ ../../../plimsoll-attest verify-entry -pub harness.pub -line 13 bundle-altered.jsonl
+plimsoll-attest: attest: broken bundle chain: the line&#x27;s link signs other content</code></pre>
+<p>Seal broken. 🧾✂️</p>
+<figure class="fig"><svg role="img" aria-label="The receipt as a sealed envelope. Line 13 as signed says the adapter checked on its order 4 times, and it verifies. Change the 4 to a 5 in a copy and the seal breaks: broken bundle chain, the line&#x27;s link signs other content." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 250" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<title>The receipt as a sealed envelope. Line 13 as signed says the adapter checked on its order 4 times, and it verifies. Change the 4 to a 5 in a copy and the seal breaks: broken bundle chain, the line's link signs other content.</title>
+<rect width="540" height="250" rx="16" fill="#fbfaf7"/>
+<text x="102" y="38" font-size="15" font-weight="700" fill="#1a1a1a" text-anchor="middle">line 13, as signed</text>
+<text x="438" y="38" font-size="15" font-weight="700" fill="#1a1a1a" text-anchor="middle">a copy, one byte changed</text>
+<rect x="12" y="60" width="180" height="110" rx="8" fill="#fff" stroke="#1a1a1a" stroke-width="2"/><path d="M17,62 L102,118 L187,62" fill="none" stroke="#1a1a1a" stroke-width="2"/><circle cx="102" cy="118" r="20" fill="#b3261e"/><text x="102" y="125" font-size="18" text-anchor="middle">🧾</text><rect x="348" y="60" width="180" height="110" rx="8" fill="#fff" stroke="#1a1a1a" stroke-width="2"/><path d="M353,62 L438,118 L523,62" fill="none" stroke="#1a1a1a" stroke-width="2"/><circle cx="438" cy="118" r="20" fill="#b3261e"/><text x="438" y="125" font-size="18" text-anchor="middle">🧾</text><path d="M420,104 L434,116 L428,124 L444,130 L440,138" fill="none" stroke="#fbfaf7" stroke-width="3.5" stroke-linejoin="round"/>
+<text x="102" y="158" font-size="13" fill="#1a1a1a" text-anchor="middle">order checked 4 times</text>
+<text x="438" y="158" font-size="13" font-weight="700" fill="#b3261e" text-anchor="middle">order checked 5 times</text>
+<path d="M206,114 L324,114" stroke="#1a1a1a" stroke-width="2" fill="none"/><path d="M318,108 L328,114 L318,120 z" fill="#1a1a1a"/>
+<text x="266" y="104" font-size="13" fill="#5d5d5d" text-anchor="middle">4 → 5</text>
+<text x="266" y="134" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">a tiny edit</text>
+<text x="102" y="200" font-size="15" font-weight="700" fill="#1e7a3c" text-anchor="middle">✓ entry verified</text>
+<text x="438" y="200" font-size="15" font-weight="700" fill="#b3261e" text-anchor="middle">✗ broken bundle chain</text>
+<text x="438" y="222" font-size="12" fill="#b3261e" text-anchor="middle">“the line's link signs other content”</text>
+<text x="102" y="222" font-size="12" fill="#1e7a3c" text-anchor="middle">signed by key 02c7b7ee…</text>
+</svg><figcaption>The receipt as a sealed envelope: one changed byte and the seal breaks.</figcaption></figure>
+<p>And <code>go run ./examples/adapter -verify docs/examples/adapter</code> rebuilds every verdict from its evidence: "verified: 51 run records and 51 qualification statements, every verdict rebuilt from its evidence".</p>
+<h2 id="what-this-does-not-prove">What this does not prove</h2>
+<p>A seal proves who sealed the envelope, not that the letter inside is true. Concretely: the vendor is my simulator, and the ledger is its own account, read by the signer after the run; you can rebuild a verdict from it, but not check it against a real robot company. A signature proves these bytes were seen by whoever holds the key, and nothing on the page vouches for the key. The record states what plimsoll's server says about the sandbox (docker under gVisor, a layer that gives the sandbox a kernel of its own, which plimsoll calls the "kernel" tier); that is configuration and startup checks, not hardware attestation (a chip vouching for the software it runs). The event log in the table above is drawn for reading; the signed parts are the ledger, the robots and the reports.</p>
+<p>And this exam is not hard for current models. Opus's adapter passed all eight scenarios, and Haiku's and Sonnet's failed only the overloaded vendor, by hanging up before it recovered and saying so. What the example shows is the grading, not a leaderboard.</p>
+<p>If you build integrations like this: give every command an order number the vendor honours, let "I don't know" be an answer the adapter is allowed to give, judge the adapter by the vendor's state, not its story, and run it where it cannot reach your keys.</p>
+<h2 id="try-it">Try it</h2>
+<p><code>go run ./examples/adapter -verify docs/examples/adapter</code> checks the published evidence with nothing but Go. The full run, <code>go run ./examples/adapter</code>, needs docker; it builds plimsoll's server from source and does all 51 runs (<code>SANDBOX_DOCKER_RUNTIME=runsc</code> for gVisor, as the published evidence was). The contract, the vendor, the grader and the broken adapters are in <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/adapter" rel="noopener">examples/adapter &#8599;</a>. plimsoll is Apache-2.0: <a href="https://github.com/plimsollmark/plimsoll" rel="noopener">https://github.com/plimsollmark/plimsoll &#8599;</a></p>
+</article>
+<footer><a href="../index.html">More notes</a> · <a href="../../index.html">plimsoll documentation</a></footer>
+</main></body></html>

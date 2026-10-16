@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -669,12 +669,21 @@ test("after a call that ended without an answer, the next call gets a new sandbo
 // session usable: the conversation's next call runs in the same sandbox (v0.15.0
 // review, L22).
 test("after an unanswered call the Session checked, the conversation keeps its sandbox", { skip: !process.env.PLIMSOLL_BREAKING_URL && "run through `go test ./clients/typescript`" }, async () => {
-  const s = new CodeSandboxes({ minimumIsolation: "container", client: new PlimsollClient({ baseUrl: process.env.PLIMSOLL_BREAKING_URL! }), languages: ["javascript"] });
+  const records: { sequence: bigint; unanswered: string; key: unknown }[] = [];
+  const s = new CodeSandboxes({
+    minimumIsolation: "container",
+    client: new PlimsollClient({ baseUrl: process.env.PLIMSOLL_BREAKING_URL! }),
+    languages: ["javascript"],
+    onRecord: (r, key) => void records.push({ sequence: r.sequence, unanswered: r.unanswered, key }),
+  });
   const first = await s.run("k", { code: "1", language: "javascript" });
   assert.equal(first.freshSandbox, true);
   await assert.rejects(s.run("k", { code: "2", language: "javascript" }), (e: unknown) => e instanceof PlimsollError && e.record?.sequence === 2n);
   const third = await s.run("k", { code: "3", language: "javascript" });
   assert.equal(third.freshSandbox, undefined, "the sandbox is the same one");
+  assert.deepEqual(records.map((r) => r.sequence), [1n, 2n, 3n], "the unanswered call's checked record is a receipt too");
+  assert.ok(records[1]!.unanswered !== "" && records[0]!.unanswered === "", "only the second is a version 3 record");
+  assert.ok(records.every((r) => r.key === "k"));
   await s.disposeAll();
 });
 
@@ -914,7 +923,8 @@ test("a daemon's per-owner cap holds across instances, and a replaced sandbox's 
 });
 
 test("a fresh run with no step report says the code may have run, with no invented exit code", { skip }, async () => {
-  const s = new CodeSandboxes({ minimumIsolation: "container", client: new PlimsollClient({ baseUrl: echoUrl! }) });
+  const seen: string[] = [];
+  const s = new CodeSandboxes({ minimumIsolation: "container", client: new PlimsollClient({ baseUrl: echoUrl! }), onRecord: (r) => void seen.push(r.sha256) });
   const err = await s.run(undefined, { code: "# ECHO:NOSTEP" }).then(
     () => assert.fail("answered as a result"),
     (e: unknown) => e as PlimsollError,
@@ -923,6 +933,39 @@ test("a fresh run with no step report says the code may have run, with no invent
   assert.equal(err.notDispatched, undefined, "unmarked: it may have run");
   assert.match(err.message, /^The code may have run, and there is no checked answer for it: plimsoll: the run ended protocol_error without a step report/);
   assert.equal((err.result as { outcome: string }).outcome, "protocol_error");
+  assert.deepEqual(seen, [(err.result as { record: { sha256: string } }).record.sha256], "the checked record of a run with no step report is still kept");
+});
+
+test("onRecord gets every answered call's checked record, and its failure changes no result", { skip }, async () => {
+  const got: { sha256: string; session: string; key: unknown }[] = [];
+  const onRecord = (r: { sha256: string; session: string }, key: unknown) => void got.push({ sha256: r.sha256, session: r.session, key });
+  const keep = new CodeSandboxes({ minimumIsolation: "container", client: new PlimsollClient({ baseUrl: sessionsUrl! }), onRecord });
+  const fresh = new CodeSandboxes({ minimumIsolation: "container", client: new PlimsollClient({ baseUrl: echoUrl! }), onRecord });
+  const snippet = new CodeSandboxes({ minimumIsolation: "process", client: new PlimsollClient({ baseUrl: wasmUrl! }), languages: ["javascript"], onRecord });
+  const a = await keep.run("conv", { code: "x = 1" });
+  const b = await fresh.run(undefined, { code: "1" });
+  const c = await snippet.run("conv", { code: "1" });
+  assert.deepEqual(got.map((g) => g.sha256), [a.recordSha256, b.recordSha256, c.recordSha256]);
+  assert.notEqual(got[0]!.session, "", "the session call's record names its session");
+  assert.equal(got[1]!.session, "", "the fresh call's does not");
+  assert.deepEqual(got.map((g) => g.key), ["conv", undefined, "conv"]);
+  await keep.disposeAll();
+
+  const warned: unknown[][] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => void warned.push(args);
+  try {
+    for (const onRecord of [() => { throw new Error("store down"); }, () => Promise.reject(new Error("store down"))]) {
+      const s = new CodeSandboxes({ minimumIsolation: "container", client: new PlimsollClient({ baseUrl: echoUrl! }), onRecord });
+      const r = await s.run(undefined, { code: "1" });
+      assert.equal(r.exitCode, 0, "the result is the model's, whatever the receipt store did");
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.warn = warn;
+  }
+  assert.equal(warned.length, 2);
+  assert.ok(warned.every((w) => /^plimsoll: onRecord failed for record [0-9a-f]{64}:$/.test(String(w[0])) && /store down/.test(String(w[1]))));
 });
 
 test("a cut never ends on half of a surrogate pair", { skip }, async () => {
@@ -959,4 +1002,12 @@ test("the default close warning names the key by a digest, never its IDs", { ski
   assert.equal(warned.length, 1);
   assert.doesNotMatch(warned[0], /alice|example|chat-1/);
   assert.match(warned[0], new RegExp(keyDigest(key)));
+});
+
+// The Go MCP server (clients/mcp) embeds these runners as files for its fresh calls;
+// this keeps the two copies one.
+test("the MCP server's runner files are these runners, byte for byte", () => {
+  for (const [language, file] of [["python", "run.py"], ["javascript", "run.cjs"]] as const) {
+    assert.equal(readFileSync(new URL(`../../mcp/server/runners/${file}`, import.meta.url), "utf8"), RUNNERS[language].source, file);
+  }
 });

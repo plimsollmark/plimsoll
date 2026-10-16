@@ -218,7 +218,7 @@
   summary: Readiness and headroom
   x-plimsoll-health-check: true</code></pre></li>
       <li><b>specgen refuses the wrong shape.</b><small>A tag on an operation that is not a GET, or on a path with a parameter, makes generation fail, and two tagged routes are an error rather than a guess.</small></li>
-      <li><b>One line comes out.</b><small>Beside the route list, the preamble (the client library code placed before the guest's code) and the tool description (the text an agent's model reads about the tool), the generator writes a one-line health file, only when the document tags a route.</small><pre><code>plimsoll-specgen -emit health   # GET /status</code></pre></li>
+      <li><b>One line comes out.</b><small>Beside the route list, the preamble (the client library code placed before the guest's code) and the <dfn>tool</dfn> description (the text an agent's model reads about the tool, the named action it can call), the generator writes a one-line health file, only when the document tags a route.</small><pre><code>plimsoll-specgen -emit health   # GET /status</code></pre></li>
       <li><b>The profile gets the field.</b><small>Paste it as <code>health_check</code> in the grant profile. The routes and the client library came from the same document, so nothing is copied by hand and nothing drifts out of step.</small></li>
     </ol>
   </section>

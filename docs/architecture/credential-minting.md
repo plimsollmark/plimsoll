@@ -9,7 +9,7 @@ creates a fresh token; static mode returns the configured bearer token unchanged
 
 The caller is the program that holds a plimsolld client token, never the model: for
 example an <dfn>*MCP*</dfn> server (MCP is the standard protocol an AI application uses
-to offer tools to a model), a gateway, or any program built on the Go client. The model
+to offer <dfn>*tools*</dfn>, named actions a model can call, to a model), a gateway, or any program built on the Go client. The model
 writes the code, the caller submits it, and that code then runs as the
 <dfn>*guest*</dfn>, the code inside the sandbox. Guest code gets functions it can call,
 not the credential; the <dfn>*broker*</dfn>, the part of plimsoll outside the sandbox that
@@ -27,7 +27,7 @@ makes each API call for the guest, holds it.
   JWT grant names the caller as its token's subject, so the RPC layer refuses one when
   there is no authenticated identity to name. The caller can select a profile name, but
   cannot replace its routes, scopes, audience (the API the token is meant for), or
-  signing key.
+  the secret it is signed with.
 - **Mint once, use throughout the run.** `TokenMinter.Mint` receives the caller's
   identity, the allowed routes, the declared scopes, and the run's time budget. JWT mode
   signs with HS256, meaning HMAC-SHA256 with a secret shared by the issuer and the target

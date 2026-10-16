@@ -91,6 +91,7 @@ type source struct {
 	developer  string
 	batch      string // the bundle's own digest
 	importedAt time.Time
+	published  bool // the published bundle, whose story the page tells
 }
 
 // recordRefType is the source_ref type for a plimsoll run record. It is not in

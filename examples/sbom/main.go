@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/plimsollmark/plimsoll/attest"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -192,8 +193,9 @@ func execute(args []string, out io.Writer) error {
 	qualifiedBundle := f.String("qualified-bundle", "../../docs/examples/adapter/bundle.jsonl", "a bundle whose runs the platform's qualification statements speak for; empty for none")
 	qualifiedPub := f.String("qualified-pub", "../../docs/examples/adapter/harness.pub", "that bundle's public key")
 	qualificationPath := f.String("qualification", "../../docs/examples/adapter/qualification.jsonl", "its qualification statements, one DSSE envelope per line")
-	qualifiedRuns := f.String("qualified-runs", "8,4", "the lines of that bundle to write verdict BOMs for")
+	qualifiedRuns := f.String("qualified-runs", "10,4", "the lines of that bundle to write verdict BOMs for")
 	qualifiedPages := f.String("qualified-pages", "https://plimsollmark.github.io/plimsoll/examples/adapter/", "absolute base URL ending in / where that bundle and qualification file are published")
+	line := f.Int("line", 0, "write only the BOM of this line of -bundle, with its checks, and no page: for a caller that converts runs as they happen; needs -out and -pages")
 	f.StringVar(&o.Name, "name", o.Name, "program display name, unsigned")
 	f.StringVar(&o.ImageName, "image-name", o.ImageName, "image display name, unsigned")
 	f.StringVar(&o.Operator, "operator", o.Operator, "self-assessor display name, unsigned")
@@ -243,6 +245,18 @@ func execute(args []string, out io.Writer) error {
 	if *trustedPath != "" || *checkBundle != "" || *checkQualification != "" {
 		return fmt.Errorf("-trusted-pub, -check-bundle and -check-qualification require -check")
 	}
+	if *line != 0 {
+		given := map[string]bool{}
+		f.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
+		if !given["out"] || !given["pages"] {
+			return fmt.Errorf("-line needs -out and -pages: the defaults are the published example's")
+		}
+		for _, name := range []string{"qualified-bundle", "qualified-pub", "qualification", "qualified-runs", "qualified-pages", "outside"} {
+			if given[name] {
+				return fmt.Errorf("-%s does not apply to -line", name)
+			}
+		}
+	}
 	if err := o.validate(); err != nil {
 		return err
 	}
@@ -253,6 +267,9 @@ func execute(args []string, out io.Writer) error {
 	pem, err := readInput(*pubPath)
 	if err != nil {
 		return err
+	}
+	if *line != 0 {
+		return writeOne(bundle, pem, *line, o, *outDir, *imagePath, filepath.Dir(*bundlePath), out)
 	}
 	runs, err := sources(bundle, pem, o.Pages)
 	if err != nil {
@@ -470,6 +487,59 @@ func execute(args []string, out io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(out, "verified %d single runs (%d with a qualification verdict); wrote index.html; schema and integrity checks passed; altered evidence refused\n", len(runs), len(data.Verdicts))
+	return nil
+}
+
+// writeOne writes the BOM of line n of a verified bundle and prints the checks it
+// passed, the refusals of altered copies included. The other lines need not be runs it
+// can map: only line n becomes a BOM. The image's own BOM is found as the full run
+// finds it (explicit, or its digest-named sibling in dir). A caller that converts runs as they happen passes
+// the signed file up to that run's checkpoint as the bundle, so the digest the BOM
+// cites never moves when later runs are appended.
+func writeOne(bundle, pem []byte, n int, o options, outDir, imagePath, dir string, out io.Writer) error {
+	pub, entries, err := verifiedBundle(bundle, pem)
+	if err != nil {
+		return err
+	}
+	// verifiedBundle followed the links, so entries[i] is line i+1.
+	if n < 1 || n > len(entries) || len(entries[n-1].Request) == 0 {
+		return fmt.Errorf("-line %d: the bundle's line %d is not a run", n, n)
+	}
+	s, err := lineSource(attest.NewVerifier(pub), entries[n-1])
+	if err != nil {
+		return err
+	}
+	s.PEM = pem
+	s.Shared = shared{Pages: o.Pages, BundleSHA256: digest(bundle), bundle: bundle}
+	o.Name = s.displayName(o.Name)
+	manifest, _, _ := imageDigest(s.Record)
+	if o.ImageBOM, err = readImageBOM(imagePath, dir, "sha256:"+manifest); err != nil {
+		return err
+	}
+	raw, err := buildBOM(s, o)
+	if err != nil {
+		return err
+	}
+	have := sharedFiles{Bundle: bundle}
+	checks, err := checkBOM(raw, pem, o.ImageBOM, have)
+	if err != nil {
+		return fmt.Errorf("generated BOM refused: %w", err)
+	}
+	tamper, err := tamperChecks(raw, pem, o.ImageBOM, have)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return err
+	}
+	name := "run-" + s.Record.SHA256[:12] + ".cdx.json"
+	if err := os.WriteFile(filepath.Join(outDir, name), raw, 0644); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "wrote", name)
+	for _, c := range append(checks, tamper...) {
+		fmt.Fprintln(out, c)
+	}
 	return nil
 }
 

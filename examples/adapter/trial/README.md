@@ -42,7 +42,7 @@ which states the working directory, so they could see the folder name
 ## Results
 
 Judged like every other adapter on [the page](../../../docs/examples/adapter/index.html), through
-plimsolld over all six scenarios, by the eight rules (the two added after the first run,
+plimsolld over all six scenarios (a seventh, a refused order, and an eighth, a vendor that never answers, were added on 15 October 2026; the page runs these adapters on both too, unseen, and all three pass them), by the eight rules (the two added after the first run,
 "kept the contract's shapes" and "the inventory is the vendor's", check obligations the contract
 already stated):
 

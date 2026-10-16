@@ -97,8 +97,8 @@ rules. See [docs/capability-grants.md](docs/capability-grants.md).
 
 ## Use it from an agent framework
 
-These agent frameworks can hand their model's code to plimsoll through a tool or code
-executor of their own (<dfn>*Trigger.dev*</dfn>, one of them, is a hosted TypeScript job
+These agent frameworks can hand their model's code to plimsoll through a <dfn>*tool*</dfn> (one named action an AI
+application offers its model) or code executor of their own (<dfn>*Trigger.dev*</dfn>, one of them, is a hosted TypeScript job
 runner). Each row names what to install, the guide, and a page that replays recorded calls
 from that framework's tool to a sandbox and back, refusals included.
 
@@ -121,7 +121,7 @@ for several calls, each call is a <dfn>*cell*</dfn>, code run inside the
 interpreter kept for that conversation:
 variables and files can survive the next call. Each tool result says whether
 they can survive, whether this call started fresh, the isolation tier it ran
-behind, and the SHA-256 of the <dfn>*run record*</dfn>, a receipt for what was
+behind, and the SHA-256 of the <dfn>*run record*</dfn>, a statement of what was
 sent and returned that the client checked before returning. The caller sets a
 minimum tier, so a weaker provider refuses before running code.
 
@@ -244,8 +244,8 @@ described from its own documentation, with plimsoll's weak points beside them:
 | [Same run, different sandboxes ↗](https://plimsollmark.github.io/plimsoll/examples/providers/index.html) | The cart-pole run from the top of this page, on local `runc` and gVisor, an OpenShell gateway, E2B and Docker Cloud Sandboxes: three isolation tiers, two Node versions, and one fingerprint, the same one the first report published. Reproduce the configured rows with `go run ./examples/providers`; the cloud rows are billed. |
 | [One sandbox, five calls ↗](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html) | A session on an OpenShell sandbox: a failing test, a patch, the test passing without the files being sent again, and a leftover process that is gone by the next call. Each call's run record (the daemon's statement of what was sent, what came back and where it ran) is signed and linked to the previous one. The verifier accepts the signed set, and refuses it when one call is dropped or one byte is changed. Reproduce with `go run ./examples/sessions` and a gateway. |
 | [The efficiency advisor's report ↗](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html) | The advisor reads the API calls a run made and points out wasteful patterns. One measured run: the same question asked of an API as 13 calls, then as 1, and the advisor's finding that names the route that answers it in one call. |
-| [An AI-written vendor adapter, judged by the vendor's ledger ↗](https://plimsollmark.github.io/plimsoll/examples/adapter/index.html) | One OpenAPI document becomes the grant, the injected client and the description an agent reads; an AI-written adapter runs in the sandbox against a simulated fleet vendor over six scenarios, under a credential minted per run, beside a boundary probe and seven adapters broken on purpose, and three fresh AI agents write their own adapters for an exam with one practice question. The verdict is made on the host by eight rules applied to every value the adapter returned and to the vendor's own ledger, never the adapter's account of itself: when the vendor loses an answer, the first adapter re-sends the order and the ledger shows two orders for one command while its report is clean. The rewrite names every order with a command ID and passes. Every run's record and every verdict is signed, and the verifier rebuilds each verdict from its evidence. Reproduce with `make docker-images && go run ./examples/adapter`; check the published files with `go run ./examples/adapter -verify docs/examples/adapter`. |
-| [Twelve interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | How a run is executed, the providers, the API broker, and connecting an AI agent. Static pages: no network calls, no analytics, no third-party scripts. |
+| [An AI-written vendor adapter, judged by the vendor's ledger ↗](https://plimsollmark.github.io/plimsoll/examples/adapter/index.html) | One OpenAPI document becomes the grant, the injected client and the description an agent reads; an AI-written adapter runs in the sandbox against a simulated fleet vendor over eight scenarios (a refused order and a vendor that never answers among them), under a credential minted per run, beside a boundary probe and ten adapters broken on purpose, and three fresh AI agents write their own adapters for an exam with one practice question. The verdict is made on the host by eight rules applied to every value the adapter returned and to the vendor's own ledger, never the adapter's account of itself: when the vendor loses an answer, the first adapter re-sends the order and the ledger shows two orders for one command while its report is clean. The rewrite names every order with a command ID and passes. Every run's record and every verdict is signed, and the verifier rebuilds each verdict from its evidence. Reproduce with `make docker-images && go run ./examples/adapter`; check the published files with `go run ./examples/adapter -verify docs/examples/adapter`. |
+| [Thirteen interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | How a run is executed, the providers, the API broker, and connecting an AI agent. Static pages: no network calls, no analytics, no third-party scripts. |
 
 ## Status, plainly
 
@@ -255,7 +255,7 @@ described from its own documentation, with plimsoll's weak points beside them:
   self-review ledgers are not published either. [SECURITY.md](SECURITY.md) says what
   exists, what it is worth, and what you can check yourself instead.
 - **CI runs the gate, in the open, and each check means what it ran.** The
-  [audit workflow](.github/workflows/audit.yml) has five jobs. `audit` runs plain
+  [audit workflow](.github/workflows/audit.yml) has six jobs. `audit` runs plain
   `make audit` on every push to `main` and every pull request: build, vet, race tests, lint,
   `buf lint`, a generated-code drift check, and `govulncheck`. After `audit`, `clients`
   runs `make clients-suite`: `npm ci` in `clients/typescript` and
@@ -270,7 +270,11 @@ described from its own documentation, with plimsoll's weak points beside them:
   race-tested offline. It reproduces all six published BOMs and their page and
   checks signatures, schema validity, the qualification verdicts and refusal of
   altered mapped fields.
-  It starts no sandbox; a skipped test fails the job. `audit-docker` also follows `audit` and
+  It starts no sandbox; a skipped test fails the job. `mcp` runs `make mcp-suite`: the server
+  that lets AI assistants run code through plimsoll (`clients/mcp`, its own Go module) is vetted,
+  linted and race-tested, through the real RPC handler with stand-in backends and the built
+  program over its standard input and output, then scanned with `govulncheck`; a skipped test
+  fails the job. `audit-docker` also follows `audit` and
   runs `make docker-suite` with the images prepared, in required mode: a missing
   daemon, a missing image or a skipped test fails the job. A green `audit-docker`
   therefore means the docker suite ran under runc with the shipped seccomp profile

@@ -180,15 +180,15 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 	// else holds its ID), but its close is not signed: it names whatever fingerprint the
 	// daemon chose.
 	if s.fingerprint != record.SessionFingerprint(s.id) {
-		_, _ = s.close(context.WithoutCancel(ctx), false)
+		s.closeRejected(ctx)
 		return nil, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: the daemon's session fingerprint does not match its session ID", record.ErrChain))
 	}
 	if err := sandbox.CheckResultIsolation(s.isolation, opts.MinimumIsolation); err != nil {
-		_, _ = s.close(context.WithoutCancel(ctx), false)
+		s.closeRejected(ctx)
 		return nil, connect.NewError(connect.CodeDataLoss, err)
 	}
 	if !opts.Software.Allows(m.GetSoftwareIdentity()) {
-		_, _ = s.close(context.WithoutCancel(ctx), false)
+		s.closeRejected(ctx)
 		return nil, connect.NewError(connect.CodeDataLoss, sandbox.ErrSoftwareMismatch)
 	}
 	return s, nil
@@ -199,6 +199,20 @@ func durationMs(d time.Duration) uint32 {
 		return 0
 	}
 	return uint32(min(d.Milliseconds(), int64(^uint32(0))))
+}
+
+// rejectedCloseBudget bounds closing a session refused at its open. The close runs
+// detached from the open's context, so a caller that gave up still has the sandbox
+// closed, but within its own budget: the caller is waiting for the refusal, and a
+// close that stalls would otherwise hold it up to the HTTP client's limit. The daemon
+// ends a session it never hears from again at its lifetime.
+var rejectedCloseBudget = 10 * time.Second
+
+// closeRejected closes a session refused at open, unsigned and within its budget.
+func (s *Session) closeRejected(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rejectedCloseBudget)
+	defer cancel()
+	_, _ = s.close(ctx, false)
 }
 
 // Fingerprint is the SHA-256 of the session ID, as the session's records carry it.
@@ -386,7 +400,7 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 		s.calls, s.last = r.Sequence, r.SHA256
 		if ur, ok := s.r.recorder.(UnansweredRecorder); ok {
 			if rerr := ur.RecordUnanswered(record.AsRunRequest(msg), rec); rerr != nil {
-				return nil, nil, fmt.Errorf("%w: %w", ErrNotRecorded, &UnansweredCallError{Record: r, Err: err})
+				return nil, nil, fmt.Errorf("%w (%w): %w", ErrNotRecorded, rerr, &UnansweredCallError{Record: r, Err: err})
 			}
 		}
 		return nil, nil, &UnansweredCallError{Record: r, Err: err}

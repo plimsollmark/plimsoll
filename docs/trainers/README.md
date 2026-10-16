@@ -31,7 +31,8 @@ The lessons then run in this order:
    run the code), and dependencies.
 2. Build with it: client integrations; designing a product in which an AI agent reaches
    plimsoll through <dfn>*MCP*</dfn> (Model Context Protocol, the standard an AI
-   application uses to offer tools to a model); making that tool describe itself (schemas,
+   application uses to offer <dfn>*tools*</dfn>, named actions a model can call, to a
+   model); making that tool describe itself (schemas,
    annotations, typed sandbox globals, a test that catches drift); and customer recipes.
 3. Go deeper: compare how each provider carries a sandboxed program's API calls to the
    <dfn>*broker*</dfn>, the part of plimsoll that makes those calls and holds the

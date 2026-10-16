@@ -34,7 +34,10 @@ signed evidence.
 The exact message each agent received after its first answer is
 [round1-message.txt](round1-message.txt); all three were identical, since all three passed.
 The development runner in [devscenario](../devscenario/main.go) now prints the rules as they
-stand; at the time it printed six.
+stand; at the time it printed six. At the time it also ran each adapter under the host's node,
+beside a stand-in for the broker; since 16 October it runs it in a docker sandbox through the
+real broker ([practice](../practice/practice.go)), since an agent's adapter is never run on the
+host.
 
 ## What each agent could do
 

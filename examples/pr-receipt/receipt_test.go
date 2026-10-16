@@ -108,3 +108,78 @@ func TestReceiptShellSyntax(t *testing.T) {
 		t.Fatalf("%s: %v", out, err)
 	}
 }
+
+// TestReceiptScriptEndToEnd runs receipt.sh as published: a real run under gVisor, the
+// bundle verified, the BOM written and checked against the run's key, and nothing in the
+// output naming a directory of the machine that made it. It needs docker with runsc and
+// the containerd image store, so only make receipt-suite runs it (RECEIPT_SUITE=1), and
+// that target fails on a skip.
+func TestReceiptScriptEndToEnd(t *testing.T) {
+	if os.Getenv("RECEIPT_SUITE") != "1" {
+		t.Skip("make receipt-suite runs this: docker, runsc and the containerd image store")
+	}
+	runtimes, err := exec.Command("docker", "info", "-f", "{{range $k, $v := .Runtimes}}{{$k}} {{end}}").CombinedOutput()
+	if err != nil || !strings.Contains(" "+string(runtimes), " runsc ") {
+		t.Fatalf("receipt.sh runs under runsc; docker reports runtimes %q (%v)", runtimes, err)
+	}
+	store, err := exec.Command("docker", "info", "-f", "{{json .DriverStatus}}").CombinedOutput()
+	if err != nil || !strings.Contains(string(store), "io.containerd.snapshotter") {
+		t.Fatalf("the receipt's BOM needs the containerd image store; docker reports %q (%v)", store, err)
+	}
+	dir := receiptScratch(t)
+	project := filepath.Join(dir, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"package.json", "sum.mjs", "test.mjs"} {
+		b, err := os.ReadFile(filepath.Join("fixture", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(project, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}} {
+		if out, err := receiptCommand(t, nil, "git", append([]string{"-C", project}, args...)...); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	out := filepath.Join(dir, "out")
+	if log, err := receiptCommand(t, []string{"TEST_COMMAND=npm test", "PR_NUMBER=0"}, "bash", "receipt.sh", project, out); err != nil {
+		t.Fatalf("receipt.sh: %v\n%s", err, log)
+	}
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join(out, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	if got := read("status.txt"); got != "PASS\n" {
+		t.Errorf("status.txt = %q, want PASS", got)
+	}
+	if got := read("run.log"); !strings.Contains(got, " signed into bundle.jsonl; ") {
+		t.Errorf("run.log does not name the bundle by its relative name:\n%s", got)
+	}
+	if got := read("check.log"); !strings.Contains(got, "PASS: attached key matches independently trusted key.") {
+		t.Errorf("check.log has no trusted-key pass:\n%s", got)
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		body := read(e.Name())
+		for _, local := range []string{dir, root, home} {
+			if len(local) > 1 && strings.Contains(body, local) {
+				t.Errorf("%s names the local directory %s", e.Name(), local)
+			}
+		}
+	}
+}

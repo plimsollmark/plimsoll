@@ -17,8 +17,8 @@ Grep the tree for `SEAM(` to find the markers in the code.
 
 ## Forensic logging
 
-**The idea.** Some agent platforms sell a "forensic audit trail of every tool the agent
-called": a log of the full request and response of every API call the agent's code made.
+**The idea.** Some agent platforms sell a "forensic audit trail of every <dfn>*tool*</dfn> the agent
+called" (a tool: one named action the agent's model can call): a log of the full request and response of every API call the agent's code made.
 In plimsoll those calls go through the <dfn>*broker*</dfn>, the part of plimsoll that makes
 each API call for the sandboxed code: it checks the call against the run's
 <dfn>*grant*</dfn> (its permission to call listed routes of one API), attaches the

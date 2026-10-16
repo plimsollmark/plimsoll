@@ -94,8 +94,8 @@
 
   <p class="eyebrow">plimsoll trainer · 05 / AI agents</p>
   <h1>Agent products</h1>
-  <p class="promise"><dfn>Code mode</dfn> replaces a menu of read-only tools with one
-  <code>run_code</code> tool: the agent writes a short program against a small SDK, and the
+  <p class="promise"><dfn>Code mode</dfn> replaces a menu of read-only <dfn>tools</dfn> (named actions a
+  model can call) with one <code>run_code</code> tool: the agent writes a short program against a small SDK, and the
   program runs in a sandbox. The agent's host offers that tool to the model over
   <dfn>MCP</dfn> (Model Context Protocol), the tool-calling standard most agent hosts
   speak. <b>It makes the agent's interface narrower, not its permissions wider.</b> The way to check that is to follow one
@@ -316,8 +316,11 @@
   </ul>
 
   <footer>
-    <p>The gateway on this page is a design, not a product plimsoll ships: plimsoll is the
-    daemon in the third layer and the broker inside it. Every environment variable, error
+    <p>The multi-customer gateway on this page is a design. To connect a local AI
+    application to the daemon, plimsoll now ships an
+    <a href="mcp.html">MCP server (INTERNAL · trainer site →)</a>, available from source.
+    It offers five actions, manages sandbox handles and can sign each checked exchange.
+    Every environment variable, error
     name and limit here is checked against the daemon's source by the tests in this
     directory. Nothing on this page calls a network.</p>
   </footer>

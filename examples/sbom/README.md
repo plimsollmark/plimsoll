@@ -26,7 +26,7 @@ From this directory:
 go run .
 go run . -check ../../docs/examples/sbom/run-c7e245a369dd.cdx.json \
   -trusted-pub ../../docs/examples/sbom/harness.pub
-go run . -check ../../docs/examples/sbom/run-2210d3a62b2d.cdx.json \
+go run . -check ../../docs/examples/sbom/run-40a5c260c313.cdx.json \
   -check-bundle ../../docs/examples/adapter/bundle.jsonl \
   -check-qualification ../../docs/examples/adapter/qualification.jsonl \
   -trusted-pub ../../docs/examples/adapter/harness.pub
@@ -42,10 +42,16 @@ evidence and schema checks themselves are offline.
 
 Flags: `-bundle`, `-pub`, `-name`, `-image-name`, `-operator`, `-pages`, `-out`,
 `-outside`, `-image-bom`; for the verdicts `-qualified-bundle`, `-qualified-pub`,
-`-qualification`, `-qualified-runs` (bundle line numbers, default `8,4`) and
+`-qualification`, `-qualified-runs` (bundle line numbers, default `10,4`) and
 `-qualified-pages` (where that bundle and its statements are published; an empty
 `-qualified-bundle` writes no verdict BOMs); for checking `-check`, `-trusted-pub`,
-`-check-bundle` and `-check-qualification`. `go run . -h` prints defaults. `-outside`
+`-check-bundle` and `-check-qualification`; for one run `-line`. `go run . -h` prints
+defaults. `-line N` (with `-bundle`, `-pub`, and an explicit `-out` and `-pages`) writes only
+the BOM of the bundle's line N and prints the checks it passed, the refusals of altered copies
+included, with no page; the other lines need not be runs it can map. It is the path for a
+caller that converts runs as they happen: give it the signed file up to that run's checkpoint,
+so the bundle digest the BOM cites never moves as later runs are appended. On the published
+bundle it writes the published BOMs byte for byte (the reproduction test checks). `-outside`
 optionally names an unsigned comparison transcript; without it, a file named
 `outside-plimsoll.txt` beside the bundle is included if present. Missing explicit
 inputs fail. Session bundles, non-project runs and runs whose record states no image

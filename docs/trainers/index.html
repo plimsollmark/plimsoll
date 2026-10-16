@@ -27,8 +27,18 @@
     <header class="catalog-head">
       <p class="catalog-eyebrow">interactive field guide</p>
       <h2>Lessons on running code you do not trust.</h2>
-      <p>Twelve compact trainers, each one page, with no build step and no network calls. They cover the walls plimsoll can put around code, called <dfn>isolation tiers</dfn>, and how the daemon proves each one; how to call it from Go, Python, TypeScript or an AI agent; and how sandboxed code can use an API without ever holding its key. That is the job of the <dfn>broker</dfn>, the part of plimsoll that makes API calls for the code, and four trainers go deeper into it: how it connects to each kind of sandbox, a worked example with a private API, the efficiency advisor that reads a run's API calls afterwards, and how it backs off from an overloaded API. Each new word is defined where it first appears and collected in the <a href="glossary.html">glossary (INTERNAL · trainer site →)</a>.</p>
+      <p>Thirteen compact trainers, each one page, with no build step and no network calls. They cover the walls plimsoll can put around code, called <dfn>isolation tiers</dfn>, and how the daemon proves each one; how to call it from Go, Python, TypeScript or an AI agent; and how sandboxed code can use an API without ever holding its key. That is the job of the <dfn>broker</dfn>, the part of plimsoll that makes API calls for the code, and four trainers go deeper into it: how it connects to each kind of sandbox, a worked example with a private API, the efficiency advisor that reads a run's API calls afterwards, and how it backs off from an overloaded API. Each new word is defined where it first appears and collected in the <a href="glossary.html">glossary (INTERNAL · trainer site →)</a>.</p>
     </header>
+
+    <section class="catalog-grid" aria-label="Recorded server tutorial">
+      <a class="catalog-card" href="mcp.html" style="--card-accent:#177f99">
+        <span class="catalog-number">12 / RUN IT FROM YOUR AGENT</span>
+        <h2>The MCP server</h2>
+        <p>Eight real examples and one safety scene: replay each call, follow a notebook that remembers, stop a runaway loop, judge retries and verify a signed <dfn>receipt</dfn>, a stored exchange signed with a private key, in your browser.</p>
+        <div class="catalog-topics"><span>recorded calls</span><span>retry game</span><span>signature check</span><span>install picker</span></div>
+        <span class="catalog-cta">Follow a real call →</span>
+      </a>
+    </section>
 
     <h2 class="catalog-section-title">Learn the system</h2>
     <section class="catalog-grid" aria-label="System trainers">
@@ -78,7 +88,7 @@
       <a class="catalog-card" href="agent-products.html" style="--card-accent:#c06c26">
         <span class="catalog-number">05 / AI AGENTS</span>
         <h2>Agent products</h2>
-        <p>Design a <code>run_code</code> tool for an AI agent over <dfn>MCP</dfn>, the standard way an AI application offers tools to a model: who is calling, strict limits on each request, quotas, failure messages the agent can act on, and a code tool that keeps one sandbox per conversation.</p>
+        <p>Design a <code>run_code</code> <dfn>tool</dfn> (one named action an AI application offers its model) for an AI agent over <dfn>MCP</dfn>, the standard way an AI application offers tools to a model: who is calling, strict limits on each request, quotas, failure messages the agent can act on, and a code tool that keeps one sandbox per conversation.</p>
         <div class="catalog-topics"><span>MCP</span><span>agents</span><span>identity</span><span>quotas</span></div>
         <span class="catalog-cta">Design the product surface →</span>
       </a>

@@ -30,6 +30,11 @@ gate is the project's full check, `make audit`. In CI:
   example converts signed execution records into that format. No sandbox or
   paid service is used; a skipped test fails the job. Run this additional target
   locally when changing the example or its published outputs.
+- Its `mcp` job runs `make mcp-suite` after `audit`: the server that lets AI assistants run
+  code through plimsoll (`clients/mcp`, its own Go module, outside the root build) is vetted,
+  linted and race-tested, through the real RPC handler with stand-in backends and the built
+  program over its standard input and output, then scanned with govulncheck.
+  A skipped test fails the job.
 - It then runs `make docker-suite` with the images prepared, so the docker,
   <dfn>*seccomp*</dfn>, <dfn>*broker*</dfn> and smoke tests, which need a real docker
   daemon, run on every push to `main` and every pull request under

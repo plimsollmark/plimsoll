@@ -366,8 +366,8 @@ func (s *dockerSession) hooks() sessionkit.Hooks {
 		Dirs:    dockerSessionDirs,
 		// No restart: a restart would lose the files, which live in tmpfs mounts.
 		Unproven: func(_ context.Context, sweep string) *sessionkit.EndedError {
-			if reason, detail, ended := s.containerEnd(); ended {
-				return &SessionEndedError{Reason: reason, Detail: detail}
+			if end := s.containerEnd(); end != nil {
+				return end
 			}
 			return &SessionEndedError{Reason: SessionBoundaryFailed, Detail: sweep}
 		},
@@ -464,9 +464,10 @@ func (s *dockerSession) execAs(ctx context.Context, user string, argv, env []str
 type dockerInspect struct {
 	Image string `json:"Image"`
 	State struct {
-		Status  string `json:"Status"`
-		Running bool   `json:"Running"`
-		Paused  bool   `json:"Paused"`
+		Status    string `json:"Status"`
+		Running   bool   `json:"Running"`
+		Paused    bool   `json:"Paused"`
+		OOMKilled bool   `json:"OOMKilled"`
 	} `json:"State"`
 	Config struct {
 		User   string            `json:"User"`
@@ -556,11 +557,21 @@ func (i dockerInspect) verifyAtOpen(imageID string) error {
 
 // securitySnapshot is the read-back compared before every call: the image, the
 // whole HostConfig (resources, runtime, mounts, capabilities, security options),
-// the mounts, the networks and the user. Run state is compared on its own.
+// the mounts, the networks and the user. Run state is compared on its own. Docker
+// lists a container's mounts in no fixed order (a container with two bind mounts
+// had them listed in both orders across 40 inspects, 2026-10-14), so the mounts
+// and the networks are sorted; an unreadable mount list is kept whole.
 func (i dockerInspect) securitySnapshot() string {
 	networks := make([]string, 0, len(i.NetworkSettings.Networks))
 	for name := range i.NetworkSettings.Networks {
 		networks = append(networks, name)
+	}
+	slices.Sort(networks)
+	mounts := i.Mounts
+	var list []json.RawMessage
+	if json.Unmarshal(i.Mounts, &list) == nil {
+		slices.SortFunc(list, func(a, b json.RawMessage) int { return bytes.Compare(a, b) })
+		mounts, _ = json.Marshal(list)
 	}
 	b, _ := json.Marshal(struct {
 		Image      string
@@ -568,7 +579,7 @@ func (i dockerInspect) securitySnapshot() string {
 		HostConfig json.RawMessage
 		Mounts     json.RawMessage
 		Networks   []string
-	}{i.Image, i.Config.User, i.HostConfig, i.Mounts, networks})
+	}{i.Image, i.Config.User, i.HostConfig, mounts, networks})
 	return string(b)
 }
 
@@ -634,11 +645,11 @@ func (s *dockerSession) readBack(ctx context.Context) error {
 	case err != nil:
 		return fmt.Errorf("the session's container could not be read back: %w", err)
 	case insp.State.Paused:
-		return &SessionEndedError{Reason: SessionSandboxChanged, Detail: "the container was paused by someone else"}
+		return &SessionEndedError{Reason: SessionSandboxChanged, Detail: "the container was paused by someone else", Public: true}
 	case !insp.State.Running:
-		return &SessionEndedError{Reason: SessionMainProcessEnded, Detail: "the container is " + insp.State.Status}
+		return &SessionEndedError{Reason: SessionMainProcessEnded, Detail: s.exited(insp), Public: true}
 	case insp.securitySnapshot() != s.snapshot:
-		return &SessionEndedError{Reason: SessionSandboxChanged, Detail: "the container's configuration changed since open"}
+		return &SessionEndedError{Reason: SessionSandboxChanged, Detail: "the container's configuration changed since open", Public: true}
 	}
 	return nil
 }
@@ -647,33 +658,87 @@ func (s *dockerSession) readBack(ctx context.Context) error {
 // may be docker's, not its command's, and says how the session ends when the
 // container no longer runs as opened: gone or stopped; paused, which the session does
 // only between calls with its turn held, so someone else did; or unreadable, which
-// leaves the call's outcome unknown. ended is false while it still runs.
-func (s *dockerSession) containerEnd() (reason SessionEnd, detail string, ended bool) {
+// leaves the call's outcome unknown. It is nil while the container still runs.
+func (s *dockerSession) containerEnd() *SessionEndedError {
 	ctx, cancel := context.WithTimeout(context.Background(), dockerControlBudget)
 	defer cancel()
+	return s.containerEndWithin(ctx)
+}
+
+// containerEndWithin is containerEnd within ctx: the session's end, nil while the container
+// runs as opened. Docker's own error text stays private (it can name the daemon's socket).
+func (s *dockerSession) containerEndWithin(ctx context.Context) *SessionEndedError {
 	insp, err := s.inspect(ctx)
 	switch {
 	case errors.Is(err, errContainerGone):
-		return SessionMainProcessEnded, "the container no longer exists", true
+		return &SessionEndedError{Reason: SessionMainProcessEnded, Detail: "the container no longer exists", Public: true}
 	case err != nil:
-		return SessionBoundaryFailed, "the container could not be read back: " + err.Error(), true
+		return &SessionEndedError{Reason: SessionBoundaryFailed, Detail: "the container could not be read back: " + err.Error()}
 	case insp.State.Paused:
-		return SessionSandboxChanged, "the container was paused by someone else", true
+		return &SessionEndedError{Reason: SessionSandboxChanged, Detail: "the container was paused by someone else", Public: true}
 	case !insp.State.Running:
-		return SessionMainProcessEnded, "the container is " + insp.State.Status, true
+		return &SessionEndedError{Reason: SessionMainProcessEnded, Detail: s.exited(insp), Public: true}
 	}
-	return 0, "", false
+	return nil
+}
+
+// exited says how a session's container that no longer runs ended, naming the memory
+// limit when docker records a kill by it: under gVisor one process over the limit ends
+// the whole sandbox, so a guest that used too much memory sees its session end, and the
+// end should say why.
+func (s *dockerSession) exited(insp dockerInspect) string {
+	if insp.State.OOMKilled {
+		return fmt.Sprintf("the container is %s: it ran out of memory (the sandbox's limit is %s)", insp.State.Status, s.d.Memory)
+	}
+	return "the container is " + insp.State.Status
+}
+
+// dockerEndGrace bounds the wait, after a cell's interpreter ended, for docker to report the
+// container's end. Under gVisor a process over the memory limit ends the whole sandbox, but
+// docker can record the container as stopped after the interpreter's relay has broken: in the
+// lab on 16 October 2026 a Python cell over 1024 MB answered a bare exit 1, and docker reported
+// the memory kill 80 ms later, to the next call. An interpreter ends on its own rarely (a crash,
+// os._exit), so only such calls pay for the wait, and only while the container goes on running.
+const dockerEndGrace = 2 * time.Second
+
+// stoppedWithin is stopped, then looked at again every 100 ms while grace lasts. One deadline,
+// inside the call's own, bounds the whole watch, every look included, so a slow docker cannot
+// hold the session's turn (and the sweep that follows the call) past it. A look that runs out of
+// that time ends nothing: the first look, with its own budget, found the container running.
+func (s *dockerSession) stoppedWithin(ctx context.Context, grace time.Duration) bool {
+	if s.stopped() {
+		return true
+	}
+	watch, cancel := context.WithTimeout(ctx, grace)
+	defer cancel()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-watch.Done():
+			return false
+		case <-tick.C:
+		}
+		end := s.containerEndWithin(watch)
+		if watch.Err() != nil {
+			return false
+		}
+		if end != nil {
+			s.life.FinishWith(end)
+			return true
+		}
+	}
 }
 
 // stopped is the check after a call that exited non-zero: when the container no
 // longer runs as opened (containerEnd), the exit status is docker's, not the call's,
 // and the session has ended.
 func (s *dockerSession) stopped() bool {
-	reason, detail, ended := s.containerEnd()
-	if ended {
-		s.life.Finish(reason, detail)
+	end := s.containerEnd()
+	if end != nil {
+		s.life.FinishWith(end)
 	}
-	return ended
+	return end != nil
 }
 
 // admit is the checks a call makes before it takes its turn: the floor against the
@@ -976,12 +1041,16 @@ func (s *dockerSession) RunCell(ctx context.Context, req CellRequest) (CellResul
 		Language: string(req.Language), Code: req.Code, Files: cellFiles(req.Files),
 		Work: dockerSessionWork, OutCap: s.d.maxOutput(), ErrCap: s.d.maxOutput(),
 	})
-	return SessionCellResult(runCtx, fail, out, err, time.Since(start), s.manifest, dockerImageIdentity(s.imageID), s.Err, func() error {
-		if s.stopped() {
+	res, err := SessionCellResult(runCtx, fail, out, err, time.Since(start), s.manifest, dockerImageIdentity(s.imageID), s.Err, func() error {
+		if s.stoppedWithin(runCtx, dockerEndGrace) {
 			return s.Err()
 		}
 		return nil
 	}, func(err error) error { return s.life.CallError(runCtx, err) })
+	if err == nil {
+		res.Duration = time.Since(start) // the watch for the container's end included
+	}
+	return res, err
 }
 
 // Drain stops the session pool and removes its members, refuses every open from

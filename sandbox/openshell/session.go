@@ -267,7 +267,7 @@ func (s *session) admit(ctx context.Context, grant *sandbox.HostAPIGrant, floor 
 func (s *session) readBack(ctx context.Context) error {
 	resp, err := s.p.client.GetSandbox(ctx, connect.NewRequest(&openshellv1.GetSandboxRequest{WorkspaceScope: ws(), Name: s.b.name}))
 	if connect.CodeOf(err) == connect.CodeNotFound {
-		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: "the sandbox no longer exists"}
+		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: "the sandbox no longer exists", Public: true}
 	}
 	if err != nil {
 		return fmt.Errorf("openshell get sandbox: %w", err)

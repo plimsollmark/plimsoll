@@ -281,7 +281,7 @@ func (s *e2bSession) hooks() sessionkit.Hooks {
 		// No restart: a cold boot would lose the files and the memory the session keeps.
 		Unproven: func(ctx context.Context, sweep string) *sessionkit.EndedError {
 			if _, err := s.e.record(ctx, s.machine().id); errors.Is(err, errE2BNotFound) {
-				return &SessionEndedError{Reason: SessionSandboxChanged, Detail: "the sandbox no longer exists"}
+				return &SessionEndedError{Reason: SessionSandboxChanged, Detail: "the sandbox no longer exists", Public: true}
 			}
 			return &SessionEndedError{Reason: SessionBoundaryFailed, Detail: sweep}
 		},
@@ -415,7 +415,7 @@ func (s *e2bSession) resume(ctx context.Context) error {
 func (s *e2bSession) readBack(ctx context.Context) error {
 	rec, err := s.e.record(ctx, s.machine().id)
 	if errors.Is(err, errE2BNotFound) {
-		return &SessionEndedError{Reason: SessionSandboxChanged, Detail: "the sandbox no longer exists"}
+		return &SessionEndedError{Reason: SessionSandboxChanged, Detail: "the sandbox no longer exists", Public: true}
 	}
 	if err != nil {
 		return err

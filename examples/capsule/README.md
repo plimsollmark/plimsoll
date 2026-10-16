@@ -37,7 +37,8 @@ differ on each run, because each run makes its own key and writes only the publi
 Any other bundle (`-bundle`, with its harness key in `-pub`) must be given `-operator`,
 `-developer` and `-imported-at`: the published defaults name the sessions example and an
 import in the past, which would be false of someone else's records, so the program
-refuses to apply them.
+refuses to apply them. Such a bundle gets its capsules, their envelopes, the producer key and
+every check, printed, but no page: the page tells the published session's story.
 
 **This is its own Go module.** The capsule emitter needs Go 1.27 and brings dependencies
 (COSE and CBOR libraries) that plimsoll's own module does not take on: plimsoll is a

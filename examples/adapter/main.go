@@ -5,8 +5,8 @@
 // grant's allow list, the typed client the sandbox injects and the description an
 // agent is shown. plimsolld, built from this checkout and started on loopback with the
 // docker provider, runs the platform's harness with an adapter against a simulated
-// vendor API: the first adapter over five scenarios, a boundary probe, the rewritten
-// second adapter over the same five, and four adapters broken on purpose. Every run
+// vendor API: the first adapter over eight scenarios, a boundary probe, the rewritten
+// second adapter over the same eight, and ten adapters broken on purpose. Every run
 // reaches the vendor only through the grant, under a credential minted for that run.
 //
 // The harness only reports. The verdict is made here, on the host, by package qualify,
@@ -42,6 +42,7 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -50,6 +51,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -187,6 +189,7 @@ type pageData struct {
 	Contract, PromptHead                                         string
 	InventoryV1, InventoryV2, DispatchV2                         string
 	Runs                                                         []scenarioRun
+	Scenarios                                                    []scenarioChoice
 	Finding                                                      sandbox.AdviceFinding
 	HasFinding                                                   bool
 	V1Calls, V2Calls                                             int
@@ -205,6 +208,9 @@ type pageData struct {
 	FloorJSON                                                    template.JS
 	PageURL, SourceURL, HomeURL, RepoURL                         string
 }
+
+// scenarioChoice is one scenario button on the floor, in fleetsim.ScenarioOrder.
+type scenarioChoice struct{ Name, Title string }
 
 func run(ctx context.Context, out string) error {
 	workDir, err := os.MkdirTemp("", "plimsoll-adapter-*")
@@ -236,7 +242,7 @@ func run(ctx context.Context, out string) error {
 		return err
 	}
 
-	files, texts, err := readInputs()
+	files, texts, err := readInputs(runPlan())
 	if err != nil {
 		return err
 	}
@@ -402,7 +408,7 @@ func run(ctx context.Context, out string) error {
 		// The evidence, the verdict made from it, and the statement that signs both.
 		stdout := string(res.Steps[0].Stdout)
 		ev := qualify.Evidence{
-			Kind: qualify.KindAdapter, Scenario: sim.Scenario(), Plan: r.Plan, Ledger: sim.Ledger(), Robots: sim.Robots(),
+			Kind: qualify.KindAdapter, Scenario: sim.Scenario(), Plan: r.Plan, Ledger: sim.Ledger(), Robots: sim.Robots(), Reads: sim.Reads(), Told: sim.Told(),
 			Vendor:      qualify.VendorCounts{CatalogOnly: sim.Reached(), Unauthorized: sim.Unauthorized()},
 			Credentials: creds, BrokerDenied: r.Audit.Denied, ExitCode: res.Steps[0].ExitCode,
 		}
@@ -543,6 +549,9 @@ func run(ctx context.Context, out string) error {
 		data.Trial = append(data.Trial, v)
 	}
 	data.Runs = plan
+	for _, sc := range fleetsim.ScenarioOrder {
+		data.Scenarios = append(data.Scenarios, scenarioChoice{Name: sc, Title: scenarioTitles[sc]})
+	}
 	floor, err := floorJSON(plan)
 	if err != nil {
 		return err
@@ -660,7 +669,7 @@ func floorJSON(runs []scenarioRun) (template.JS, error) {
 	for _, c := range qualify.NewPlan(0).Commands {
 		planned[c.Robot]++
 	}
-	b, err := json.Marshal(map[string]any{"start": fleetsim.StartPoses, "targets": targets, "planned": planned, "faultAt": fleetsim.FaultAtStep, "degraded": fleetsim.DegradedRequests, "runs": outs})
+	b, err := json.Marshal(map[string]any{"start": fleetsim.StartPoses, "targets": targets, "planned": planned, "faultAt": fleetsim.FaultAtStep, "degraded": fleetsim.DegradedRequests, "titles": scenarioTitles, "runs": outs})
 	if err != nil {
 		return "", err
 	}
@@ -672,13 +681,14 @@ func floorJSON(runs []scenarioRun) (template.JS, error) {
 var trialModels = []struct{ dir, name string }{{"haiku", "Claude Haiku"}, {"sonnet", "Claude Sonnet"}, {"opus", "Claude Opus"}}
 
 // runPlan is the runs, in order: the first adapter over every scenario, the probe, the
-// second adapter over every scenario, and four adapters broken on purpose. WantFail is
+// second adapter over every scenario, and ten adapters broken on purpose. WantFail is
 // the rules each must fail, checked after the run; nil means every rule must hold.
 // scenarioTitles names each scenario in plain words.
 var scenarioTitles = map[string]string{
 	fleetsim.ScenarioNominal: "nominal", fleetsim.ScenarioFault: "a fault", fleetsim.ScenarioOverload: "an overloaded vendor",
 	fleetsim.ScenarioLostAck: "a lost answer", fleetsim.ScenarioDropped: "a dropped connection",
-	fleetsim.ScenarioServerError: "a server error after accepting",
+	fleetsim.ScenarioServerError: "a server error after accepting", fleetsim.ScenarioRefused: "a refused order",
+	fleetsim.ScenarioSilent: "a vendor that never answers",
 }
 
 func runPlan() []scenarioRun {
@@ -687,6 +697,11 @@ func runPlan() []scenarioRun {
 		fleetsim.ScenarioLostAck:     {"one_order_per_command"},
 		fleetsim.ScenarioDropped:     {"kept_the_shapes", "ended_as_it_should", "report_is_true"},
 		fleetsim.ScenarioServerError: {"kept_the_shapes", "ended_as_it_should", "report_is_true"},
+		// It throws the vendor's 409 on as it came, with no code: not the contract's refused.
+		fleetsim.ScenarioRefused: {"kept_the_shapes", "report_is_true"},
+		// It throws the vendor's 504 on as it came, with no code: not the contract's
+		// unresolved. Its inventory reads each robot after the list, and throws on r2's.
+		fleetsim.ScenarioSilent: {"kept_the_shapes", "inventory_is_true", "report_is_true"},
 	}
 	var runs []scenarioRun
 	for _, sc := range fleetsim.ScenarioOrder {
@@ -712,6 +727,9 @@ func runPlan() []scenarioRun {
 		scenarioRun{Group: "broken", Title: "Broken on purpose: a wait that reports no state", Scenario: fleetsim.ScenarioNominal, Adapter: "broken/no-state.js", WantFail: []string{"kept_the_shapes"}},
 		scenarioRun{Group: "broken", Title: "Broken on purpose: an empty inventory", Scenario: fleetsim.ScenarioNominal, Adapter: "broken/empty-inventory.js", WantFail: []string{"inventory_is_true"}},
 		scenarioRun{Group: "broken", Title: "Broken on purpose: an invented robot", Scenario: fleetsim.ScenarioNominal, Adapter: "broken/invented-robot.js", WantFail: []string{"kept_the_shapes", "inventory_is_true"}},
+		scenarioRun{Group: "broken", Title: "Broken on purpose: a wait that throws after the mission ends", Scenario: fleetsim.ScenarioNominal, Adapter: "broken/throwing-wait.js", WantFail: []string{"kept_the_shapes"}},
+		scenarioRun{Group: "broken", Title: "Broken on purpose: reads past the budget, one read reported", Scenario: fleetsim.ScenarioNominal, Adapter: "broken/undercounted-reads.js", WantFail: []string{"kept_the_shapes", "report_is_true"}},
+		scenarioRun{Group: "broken", Title: "Broken on purpose: an order the vendor never answered, reported as refused", Scenario: fleetsim.ScenarioSilent, Adapter: "broken/unanswered-as-refused.js", WantFail: []string{"report_is_true"}},
 	)
 }
 
@@ -885,42 +903,96 @@ func verifyDir(dir string) (int, error) {
 }
 
 // readInputs loads the files every run carries (plan.json is added per run) and the two
-// texts the page quotes.
-func readInputs() ([]sandbox.File, map[string]string, error) {
-	base := filepath.Join("examples", "adapter")
+// texts the page quotes. What is carried is declared by the runs themselves: the harness, each
+// run's adapter, and the second adapter, which the adapters broken on purpose build on. Each
+// is opened through a handle confined to the example's directory (os.Root refuses a path or a
+// link, a parent directory's included, that leads out of it) and must be a regular file, so
+// nothing beside the declared files can enter a published bundle.
+func readInputs(runs []scenarioRun) ([]sandbox.File, map[string]string, error) {
+	root, err := os.OpenRoot(filepath.Join("examples", "adapter"))
+	if err != nil {
+		return nil, nil, err
+	}
+	defer root.Close()
+	names := map[string]bool{"harness.js": true, "adapter-v2.js": true}
+	for _, r := range runs {
+		names[r.Adapter] = true
+	}
+	carried := make([]string, 0, len(names))
+	for n := range names {
+		if n != "harness.js" {
+			carried = append(carried, n)
+		}
+	}
+	sort.Strings(carried)
+	carried = append([]string{"harness.js"}, carried...)
 	texts := map[string]string{}
 	var files []sandbox.File
-	for _, f := range []struct {
-		name, path string
-		carried    bool
-	}{
-		{"harness.js", filepath.Join(base, "contract", "harness.js"), true},
-		{"adapter-v1.js", filepath.Join(base, "adapter", "adapter-v1.js"), true},
-		{"adapter-v2.js", filepath.Join(base, "adapter", "adapter-v2.js"), true},
-		{"probe.js", filepath.Join(base, "adapter", "probe.js"), true},
-		{"broken/wrong-target.js", filepath.Join(base, "adapter", "broken", "wrong-target.js"), true},
-		{"broken/wrong-robot.js", filepath.Join(base, "adapter", "broken", "wrong-robot.js"), true},
-		{"broken/false-success.js", filepath.Join(base, "adapter", "broken", "false-success.js"), true},
-		{"broken/no-cancel.js", filepath.Join(base, "adapter", "broken", "no-cancel.js"), true},
-		{"broken/no-state.js", filepath.Join(base, "adapter", "broken", "no-state.js"), true},
-		{"broken/empty-inventory.js", filepath.Join(base, "adapter", "broken", "empty-inventory.js"), true},
-		{"broken/invented-robot.js", filepath.Join(base, "adapter", "broken", "invented-robot.js"), true},
-		{"trial/haiku.js", filepath.Join(base, "trial", "haiku", "final.js"), true},
-		{"trial/sonnet.js", filepath.Join(base, "trial", "sonnet", "final.js"), true},
-		{"trial/opus.js", filepath.Join(base, "trial", "opus", "final.js"), true},
-		{"CONTRACT.md", filepath.Join(base, "contract", "CONTRACT.md"), false},
-		{"PROMPT.md", filepath.Join(base, "adapter", "PROMPT.md"), false},
-	} {
-		b, err := os.ReadFile(f.path)
+	read := func(name, path string, carry bool) error {
+		f, err := root.Open(path)
 		if err != nil {
+			return err
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("examples/adapter/%s: not a regular file", path)
+		}
+		b, err := io.ReadAll(io.LimitReader(f, maxInputBytes+1))
+		if err != nil {
+			return err
+		}
+		if len(b) > maxInputBytes {
+			return fmt.Errorf("examples/adapter/%s: over %d bytes", path, maxInputBytes)
+		}
+		texts[name] = string(b)
+		if carry {
+			files = append(files, sandbox.File{Path: name, Content: string(b)})
+		}
+		return nil
+	}
+	for _, name := range carried {
+		path, ok := sourceOf(name)
+		if !ok {
+			return nil, nil, fmt.Errorf("a run names %q, which is not an adapter this example knows", name)
+		}
+		if err := read(name, path, true); err != nil {
 			return nil, nil, err
 		}
-		texts[f.name] = string(b)
-		if f.carried {
-			files = append(files, sandbox.File{Path: f.name, Content: string(b)})
+	}
+	for name, path := range map[string]string{"CONTRACT.md": filepath.Join("contract", "CONTRACT.md"), "PROMPT.md": filepath.Join("adapter", "PROMPT.md")} {
+		if err := read(name, path, false); err != nil {
+			return nil, nil, err
 		}
 	}
 	return files, texts, nil
+}
+
+// maxInputBytes caps one carried file: the largest, an adapter, is a few kilobytes.
+const maxInputBytes = 1 << 20
+
+// sourceOf is the source path, within examples/adapter, of a carried file's name: the harness,
+// the two adapters and the probe, one adapter broken on purpose, or a trial agent's final adapter.
+func sourceOf(name string) (string, bool) {
+	switch {
+	case name == "harness.js":
+		return filepath.Join("contract", name), true
+	case name == "adapter-v1.js" || name == "adapter-v2.js" || name == "probe.js":
+		return filepath.Join("adapter", name), true
+	case strings.HasPrefix(name, "broken/") && strings.HasSuffix(name, ".js") && !strings.ContainsAny(name[len("broken/"):], `/\`):
+		return filepath.Join("adapter", "broken", name[len("broken/"):]), true
+	case strings.HasPrefix(name, "trial/") && strings.HasSuffix(name, ".js"):
+		dir := strings.TrimSuffix(name[len("trial/"):], ".js")
+		for _, m := range trialModels {
+			if m.dir == dir {
+				return filepath.Join("trial", dir, "final.js"), true
+			}
+		}
+	}
+	return "", false
 }
 
 // operationRows reads the operations off the document for the page's table, marking

@@ -181,6 +181,15 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 			return err
 		}
 	}
+	// The resolv.conf every container mounts in place of the host's (lockdownFlags):
+	// one a temp-directory cleaner took would fail every start, so readiness says so.
+	files, err := dockerProcessFiles()
+	if err != nil {
+		return err
+	}
+	if err := checkGuestResolvConfFile(files.resolvConf); err != nil {
+		return err
+	}
 	if err := d.validateWritableBudget(); err != nil {
 		return err
 	}

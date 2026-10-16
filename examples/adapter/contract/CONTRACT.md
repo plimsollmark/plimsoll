@@ -55,13 +55,13 @@ scenario:
 | Rule | Holds when |
 |---|---|
 | ran to the end | the harness ran every step: the adapter loaded, exported the four functions, and no call hung |
-| kept the contract's shapes | every value returned has the shape above: inventory entries with an id, a status of `idle`, `moving` or `fault` and a numeric battery; a mission id, or an Error coded `refused` or `unresolved`; a state of `done`, `failed`, `cancelled` or `timeout` with a read count within `maxPolls` |
+| kept the contract's shapes | every value returned has the shape above: inventory entries with an id, a status of `idle`, `moving` or `fault` and a numeric battery; a mission id, or an Error coded `refused` or `unresolved`; from every dispatched command's wait, a state of `done`, `failed`, `cancelled` or `timeout` with a read count within `maxPolls`, and no more status reads of the mission reaching the vendor than `maxPolls` (the vendor counts them) |
 | the inventory is the vendor's | each inventory lists exactly the vendor's robots, and the last, the run's final call, matches the vendor's record of each one's status and battery |
 | one order per command | each command became exactly one order on the vendor's ledger |
 | the right robot and target | every order on the ledger carries its command's robot and target |
-| ended as it should | each order ended done, or failed where the scenario faults its robot, or cancelled where the platform cancelled it |
+| ended as it should | each order ended done, or failed where the scenario faults its robot, or cancelled where the platform cancelled it; an order the vendor answers nothing about is not judged |
 | robot at the target | every order the vendor marks done left its robot at the command's target |
-| the report is true | the mission and state the adapter reported for each command are the vendor's |
+| the report is true | the mission and state the adapter reported for each command are the vendor's, its read count is no lower than the reads the vendor served, a command the vendor refused is reported as an Error coded `refused`, and a command the vendor holds is never reported as anything but its mission or an Error coded `unresolved` |
 
 | Scenario | What the vendor does |
 |---|---|
@@ -71,3 +71,22 @@ scenario:
 | `lost_ack` | r2's first order is accepted and started, but its answer is a 503 |
 | `dropped` | r2's first order is accepted and started, then the connection closes with no answer (the broker answers the adapter 502) |
 | `server_error` | r2's first order is accepted and started, but its answer is a 500 |
+| `refused` | r3 is in fault before the run starts, and the vendor refuses every order for it with a 409 |
+| `silent` | r2's first order is accepted and started, then the vendor's gateway answers 504 to every request about r2 (an order for it, a repeat, a read of r2, a read or cancel of its orders) and does nothing; the fleet list is still answered |
+
+A 409 from the vendor's create means one of two things, which its body tells apart: the robot
+cannot take orders (`{"error": "robot is in fault"}`, as in `refused`: the contract's answer is
+an Error coded `refused`), or the `command_id` already names an order for another robot or
+target (`{"error": "command_id already names an order for another robot or target"}`).
+
+The platform's broker stands between the adapter and the vendor. After the vendor answers 503 or
+429, the broker's circuit breaker answers further calls 503 itself, without reaching the vendor,
+for the vendor's Retry-After (at most 30 seconds); after a 503 it asks the vendor's health route
+about once a second and lets calls through again as soon as that answers. A call the broker shed
+never reached the vendor, so retrying a create with the same `command_id` is safe, and an adapter
+that stops retrying a 503 sooner can leave a command with no order (in `overload`, it does).
+
+In `silent` nothing the adapter can ask about r2's order is answered, so its outcome stays unknown
+to the end: the contract's answer is an Error coded `unresolved`, within the run's time (the
+harness stops a run that has not finished after 75 seconds). The order's mission is also an
+honest answer, if the adapter can find it another way.

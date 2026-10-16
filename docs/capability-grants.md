@@ -1,6 +1,6 @@
 # Capability grants
 
-How agent-written code calls your API without ever receiving the credential, the base URL, or general network access; how the policy and the model-facing tool description are generated from one source; and how plimsoll protects the API from the agent.
+How agent-written code calls your API without ever receiving the credential, the base URL, or general network access; how the policy and the model-facing <dfn>*tool*</dfn> description (a tool is one named action an AI application offers its model, and its description is what the model reads about it) are generated from one source; and how plimsoll protects the API from the agent.
 
 Part of the [plimsoll README](../README.md).
 

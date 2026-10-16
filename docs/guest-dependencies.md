@@ -71,7 +71,7 @@ Four choices in that file matter:
   account in the image, and drops Linux capabilities (the kernel's separate root
   privileges) at run time. So a file only `node` can read is unreadable to a run, `HOME`
   is `/`, and `os.userInfo()` (and Python's `getpass.getuser()`) fails: give a package's
-  files to everyone (`chmod -R a+rX`), or add a passwd line for the guest uid if a tool
+  files to everyone (`chmod -R a+rX`), or add a passwd line for the guest uid if a program
   needs a user name.
 
 **A private registry** supplies its credential to the build only, through a BuildKit

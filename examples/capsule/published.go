@@ -64,6 +64,7 @@ func sourceFor(bundle []byte, operator, developer, importedAt string) (source, e
 		return source{}, fmt.Errorf("-imported-at: %w", err)
 	}
 	src := publishedSource(bundle, at.UTC())
+	src.published = digest == publishedBundleSHA256
 	if operator != "" {
 		src.operator = operator
 	}

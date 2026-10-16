@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>plimsoll owner approval</title>
+<style>:root{color-scheme:light;--ink:#233744;--line:#d6e0e4;--accent:#126f83}*{box-sizing:border-box}body{margin:0;background:#f5f8f9;color:var(--ink);font:17px/1.6 system-ui,sans-serif}main{max-width:760px;margin:40px auto;padding:26px;background:white;border:1px solid var(--line);border-radius:18px}h1{line-height:1.2;font-size:2rem;margin:12px 0}h2{font-size:1.1rem}.eyebrow{color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.09em;font-size:.8rem}.card{padding:16px;border:1px solid var(--line);border-radius:12px;margin:16px 0}.muted{color:#506975;font-size:.9rem}.origin,code{overflow-wrap:anywhere}button{font:inherit;padding:11px 18px;border:1px solid var(--accent);border-radius:9px;background:var(--accent);color:white;cursor:pointer}button.secondary{background:white;color:var(--ink);border-color:var(--line)}button:disabled{opacity:.55;cursor:default}input{display:block;width:100%;padding:10px;font:inherit;border:1px solid var(--line);border-radius:8px;margin:8px 0 14px}form.actions{margin-top:12px;display:flex;gap:12px;flex-wrap:wrap}#status{min-height:2em;font-weight:600}svg{max-width:100%;height:auto}@media(max-width:600px){main{margin:12px;padding:20px}h1{font-size:1.7rem}}:focus-visible{outline:3px solid #dfaa25;outline-offset:3px}</style></head>
+<body><main data-tx="{{.Seal}}" data-csrf="{{.TX.CSRF}}" data-enrollment="{{.TX.Enrollment}}">
+<p class="eyebrow">plimsoll · owner approval</p>
+{{if .TX.Enrollment}}
+<h1>Enroll an owner passkey</h1><p>A passkey lets your device prove it is yours with its PIN, fingerprint or face check. Its private key stays with your authenticator.</p>
+<div class="card"><label for="enrollCode">One-time code from the local operator</label><input id="enrollCode" type="password" autocomplete="off" spellcheck="false"><button id="authenticate" type="button">Create a passkey</button></div>
+<p class="muted">This code opens one enrollment attempt and expires after five minutes, so an old setup window cannot stay usable. If you cancel, request a fresh code locally. Enroll a second passkey as a backup. Creating a passkey does not enable code execution or approve a connector.</p>
+{{else}}
+<h1>Connect an AI application</h1><p>You are granting continuing permission to run code in your plimsoll sandboxes.</p>
+<div class="card"><h2>Who is asking</h2><p><b>{{.TX.Client.Name}}</b></p><p class="origin"><code>{{.TX.Client.ID}}</code></p><p>Answers return to <b class="origin">{{.TX.Redirect}}</b>.</p><p class="muted">An allowed callback does not prove which account started this request. Continue only if you just added this connection yourself. A registered client's display name is not verified identity.</p></div>
+<div class="card"><h2>What this connection can do</h2><p>Run Python and JavaScript, open and delete sandboxes, and read checked execution records. Chats using this connector share its files and variables. A separate connector grant has a separate workspace.</p>
+<svg width="320" viewBox="0 0 320 145" role="img" aria-label="This connector reaches its own sandbox files and interpreter state"><rect x="8" y="1" width="302" height="50" rx="9" fill="#eaf4f6" stroke="#b7d1d7"/><text x="160" y="32" text-anchor="middle" fill="#233744" font-size="15">This connector</text><path d="M160 56v23m-5-7 5 7 5-7" fill="none" stroke="#126f83" stroke-width="2"/><rect x="8" y="86" width="302" height="54" rx="9" fill="#f5f8f9" stroke="#b7d1d7"/><text x="160" y="109" text-anchor="middle" fill="#233744" font-size="15">Its sandbox files and<tspan x="160" dy="19">interpreter state</tspan></text></svg>
+<p class="muted">Each access credential lasts 15 minutes to limit theft. Refresh authority ends after 30 days, or seven idle days, to bound old and abandoned connections. Your operator can revoke it sooner. The caller token for the daemon is never given to this application or the model.</p></div>
+<button id="authenticate" type="button">Sign in with a passkey</button>
+<form class="actions" action="/oauth/authorize" method="post"><input type="hidden" name="tx" value="{{.Seal}}"><input type="hidden" name="csrf" value="{{.TX.CSRF}}"><button id="approve" name="decision" value="approve" disabled>Approve this connection</button><button class="secondary" name="decision" value="deny">Deny</button></form>
+{{end}}
+<p id="status" role="status" aria-live="polite"></p><p class="muted origin">Passkey site: <b>{{.Origin}}</b>. Your passkey signs for this site; a lookalike site cannot supply an assertion for this origin.</p>
+</main><script nonce="{{.Nonce}}">
+'use strict';
+const main=document.querySelector('main'),button=document.getElementById('authenticate'),status=document.getElementById('status');
+const enrollment=main.dataset.enrollment==='true';
+const decode=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+const encode=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function send(path,extra){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tx:main.dataset.tx,csrf:main.dataset.csrf,...extra})});if(!response.ok)throw Error('The request was refused. Start a fresh connection or enrollment.');return response.json();}
+button.addEventListener('click',async()=>{button.disabled=true;status.textContent='Waiting for your device approval…';try{
+const prefix=enrollment?'/owner/enroll':'/owner/login';
+const options=await send(prefix+'/options',enrollment?{code:document.getElementById('enrollCode').value}:{});
+const p=options.publicKey;p.challenge=decode(p.challenge);if(p.user)p.user.id=decode(p.user.id);for(const name of ['allowCredentials','excludeCredentials'])if(p[name])p[name]=p[name].map(c=>({...c,id:decode(c.id)}));
+const credential=enrollment?await navigator.credentials.create({publicKey:p}):await navigator.credentials.get({publicKey:p});
+if(!credential)throw Error('No passkey was returned.');const r=credential.response;
+const response={clientDataJSON:encode(r.clientDataJSON)};
+if(enrollment){response.attestationObject=encode(r.attestationObject);response.transports=r.getTransports?r.getTransports():[];}else{response.authenticatorData=encode(r.authenticatorData);response.signature=encode(r.signature);response.userHandle=r.userHandle?encode(r.userHandle):null;}
+await send(prefix+'/finish',{session:options.session,credential:{id:credential.id,rawId:encode(credential.rawId),type:credential.type,response,clientExtensionResults:credential.getClientExtensionResults(),authenticatorAttachment:credential.authenticatorAttachment}});
+if(enrollment){document.getElementById('enrollCode').value='';status.textContent='Passkey enrolled. Ask the local operator to enable the service, or enroll a backup passkey.';}else{document.getElementById('approve').disabled=false;status.textContent='Passkey verified. Review the permissions, then approve or deny this connection.';}
+}catch(e){status.textContent=e.message;button.disabled=false;}});
+</script></body></html>

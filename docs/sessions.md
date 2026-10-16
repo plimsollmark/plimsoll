@@ -147,7 +147,8 @@ The defaults are starting points, not measurements of real use:
 - 30 minutes bounds how long a session's sandbox lives after its daemon crashes: a
   running daemon's cleanup of leftover sandboxes deletes it once the lifetime plus a
   5-minute margin has passed.
-- 5 minutes is long enough for a slow model's turn between tool calls, and short enough
+- 5 minutes is long enough for a slow model's turn between <dfn>*tool*</dfn> calls (a tool is one named action the
+  model can call, such as run_code), and short enough
   that an abandoned session gives back its slot soon.
 - 1 GiB leaves room for a `node_modules` tree and a build's output.
 
@@ -377,7 +378,9 @@ A docker session is the container a project run gets, kept for the session:
 - **The same walls.** The project image, launched by the content ID the startup checks
   inspected, with the run's flags: a read-only root, no network, every writable directory
   (`/tmp`, `/dev/shm`, `/work`) a size-capped in-memory filesystem, all capabilities
-  dropped, the process limit, and gVisor when `SANDBOX_DOCKER_RUNTIME=runsc`.
+  dropped, the process limit, plimsoll's fixed read-only `/etc/resolv.conf` (so no
+  resolver setting of the host, such as its search domains, reaches the session's
+  code), and gVisor when `SANDBOX_DOCKER_RUNTIME=runsc`.
 - **A main process that does nothing.** Docker's own init runs as process 1 and starts
   `sleep`. The init matters: a process killed between calls whose parent is gone becomes
   process 1's child, and a process 1 that never collects its dead children would keep

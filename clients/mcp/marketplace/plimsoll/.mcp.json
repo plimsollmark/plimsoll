@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "plimsoll": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/launch.mjs"
+      ],
+      "env": {
+        "PLIMSOLL_URL": "${user_config.daemon_url}",
+        "PLIMSOLL_TOKEN": "${user_config.token}",
+        "PLIMSOLL_MIN_ISOLATION": "${user_config.min_isolation}"
+      }
+    }
+  }
+}

@@ -496,6 +496,10 @@
         <dt>QuickJS</dt>
         <dd>A small JavaScript engine; plimsoll embeds a build of it, compiled to WebAssembly, for its wasm provider.</dd>
       </div>
+      <div class="entry" id="receipt">
+        <dt>receipt</dt>
+        <dd>A line the MCP server writes for each checked call when a signing key and a receipts directory are configured: the recorded request and answer with the signed run record, which plimsoll-attest verify-entry can check on its own later.</dd>
+      </div>
       <div class="entry" id="rpc">
         <dt>RPC</dt>
         <dd>Remote procedure call: one program sending a request to another over the network and getting an answer back.</dd>
@@ -536,6 +540,14 @@
         <dt>side channel</dt>
         <dd>A way to learn about another program through how long or how hard something works, such as shared CPU caches, rather than through any permission.</dd>
       </div>
+      <div class="entry" id="signing-key">
+        <dt>signing key</dt>
+        <dd>A private key that signs statements so that anyone holding the matching public key can check them; the MCP server signs each receipt with an Ed25519 key read from a file only its owner can read.</dd>
+      </div>
+      <div class="entry" id="stdio">
+        <dt>stdio</dt>
+        <dd>Standard input and output: the two byte streams every program starts with, which an MCP host connects to a local MCP server so the two exchange messages with no network between them.</dd>
+      </div>
       <div class="entry" id="supply-chain">
         <dt>supply chain</dt>
         <dd>Everything outside your own code that ends up in what you run: dependencies, base images, build tools, and the people and servers that publish them.</dd>
@@ -563,6 +575,10 @@
       <div class="entry" id="token-bucket">
         <dt>token bucket</dt>
         <dd>A rate limit that allows short bursts: each caller's allowance refills at a steady rate and each run spends one unit of it.</dd>
+      </div>
+      <div class="entry" id="tool">
+        <dt>tool</dt>
+        <dd>One named action an MCP server offers a model, with a schema for its arguments and one for its result; run_code is one, and the model calls it by name.</dd>
       </div>
       <div class="entry" id="trajectory">
         <dt>trajectory</dt>

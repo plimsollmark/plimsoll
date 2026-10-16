@@ -50,7 +50,8 @@
     "docs/trainers/private-api.html",
     "docs/efficiency-advisor.md",
     "docs/capability-grants.md",
-    "docs/architecture/credential-minting.md"
+    "docs/architecture/credential-minting.md",
+    "docs/trainers/mcp.html"
   ],
   "chapters": [
     {"anchor": "what-runs-your-container", "title": "What actually runs your container"}
@@ -459,6 +460,12 @@
       "definition": "A small JavaScript engine; plimsoll embeds a build of it, compiled to WebAssembly, for its wasm provider."
     },
     {
+      "term": "receipt",
+      "anchor": "receipt",
+      "variants": ["receipts"],
+      "definition": "A line the MCP server writes for each checked call when a signing key and a receipts directory are configured: the recorded request and answer with the signed run record, which plimsoll-attest verify-entry can check on its own later."
+    },
+    {
       "term": "RPC",
       "anchor": "rpc",
       "variants": ["RPCs", "remote procedure call"],
@@ -523,6 +530,18 @@
       "definition": "A way to learn about another program through how long or how hard something works, such as shared CPU caches, rather than through any permission."
     },
     {
+      "term": "signing key",
+      "anchor": "signing-key",
+      "variants": ["signing keys"],
+      "definition": "A private key that signs statements so that anyone holding the matching public key can check them; the MCP server signs each receipt with an Ed25519 key read from a file only its owner can read."
+    },
+    {
+      "term": "stdio",
+      "anchor": "stdio",
+      "variants": [],
+      "definition": "Standard input and output: the two byte streams every program starts with, which an MCP host connects to a local MCP server so the two exchange messages with no network between them."
+    },
+    {
       "term": "supply chain",
       "anchor": "supply-chain",
       "variants": ["supply-chain"],
@@ -563,6 +582,12 @@
       "anchor": "token-bucket",
       "variants": ["token-bucket"],
       "definition": "A rate limit that allows short bursts: each caller's allowance refills at a steady rate and each run spends one unit of it."
+    },
+    {
+      "term": "tool",
+      "anchor": "tool",
+      "variants": ["tools"],
+      "definition": "One named action an MCP server offers a model, with a schema for its arguments and one for its result; run_code is one, and the model calls it by name."
     },
     {
       "term": "trajectory",

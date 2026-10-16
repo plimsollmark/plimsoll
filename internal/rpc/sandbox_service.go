@@ -497,28 +497,51 @@ func isInfraErr(err error) bool {
 // configured provider structurally cannot do is Unimplemented; admission shedding
 // is ResourceExhausted; anything else is an internal fault. When the provider
 // marked the error as refused before dispatch, the NotDispatched detail is
-// attached; an unmarked error carries none, whatever its code. An internal fault's
-// text can carry a vendor's response body, envd's or docker's stderr, or host
-// configuration, so the caller gets a generic message with an ID and the text goes to
-// the log under that ID, cut to internalErrorLogBytes.
+// attached; an unmarked error carries none, whatever its code.
+//
+// A caller is shown only text plimsoll composed. An internal fault's text can carry a
+// vendor's response body, envd's or docker's stderr, or host configuration, and a deadline's
+// or a cancellation's is whatever the context interrupted (an HTTP request names its URL), so
+// those get a fixed sentence with an ID, the text going to the log under that ID, cut to
+// internalErrorLogBytes. A typed refusal's text is shown, but for the parts its provider
+// marked sandbox.Private, each told as an ID the same way.
 func mapSandboxErr(err error) error {
 	code := sandboxErrCode(err)
-	shown := err
-	if code == connect.CodeInternal {
-		id := internalErrorID()
-		text := err.Error()
-		if len(text) > internalErrorLogBytes {
-			text = text[:internalErrorLogBytes] + "...(cut)"
+	var text string
+	switch code {
+	case connect.CodeInternal:
+		text = fmt.Sprintf("internal error %s; the daemon's log holds its detail", logKept("internal error answered to a caller", err.Error()))
+	case connect.CodeDeadlineExceeded, connect.CodeCanceled:
+		sentinel, sentence := context.DeadlineExceeded, "the deadline passed before the call finished"
+		if code == connect.CodeCanceled {
+			sentinel, sentence = context.Canceled, "the call was canceled before it finished"
 		}
-		slog.Warn("internal error answered to a caller", "error_id", id, "error", wireString(text))
-		shown = fmt.Errorf("internal error %s; the daemon's log holds its detail", id)
+		text = sentence
+		if err.Error() != sentinel.Error() {
+			text = fmt.Sprintf("%s (error %s; the daemon's log holds its detail)", sentence, logKept("a context error's detail kept from the caller", err.Error()))
+		}
+	default:
+		text = withoutPrivate(err)
+	}
+	// A session's end travels as a typed detail, so a caller learns why without
+	// parsing the message; a detail its provider did not mark public is told as an ID,
+	// in the message too.
+	var se *sandbox.SessionEndedError
+	var told string
+	if errors.As(err, &se) {
+		told = publicEndDetail(se)
+		if told != se.Detail && se.Detail != "" && code != connect.CodeInternal {
+			text = strings.ReplaceAll(text, se.Detail, told)
+		}
+	}
+	// The caller reads text; the daemon's own code after this still reads err's chain.
+	shown := err
+	if text != err.Error() {
+		shown = retold{text: text, err: err}
 	}
 	ce := connect.NewError(code, shown)
-	// A session's end travels as a typed detail, so a caller learns why without
-	// parsing the message.
-	var se *sandbox.SessionEndedError
-	if errors.As(err, &se) {
-		if d, derr := connect.NewErrorDetail(&plimsollv1.SessionEnded{Reason: sessionEndWire(se.Reason), Detail: wireString(se.Detail)}); derr == nil {
+	if se != nil {
+		if d, derr := connect.NewErrorDetail(&plimsollv1.SessionEnded{Reason: sessionEndWire(se.Reason), Detail: wireString(told)}); derr == nil {
 			ce.AddDetail(d)
 		}
 	}
@@ -531,6 +554,72 @@ func mapSandboxErr(err error) error {
 // internalErrorLogBytes bounds an internal error's text in the log: enough for any
 // message plimsoll writes, short of the megabyte a vendor's error body can be.
 const internalErrorLogBytes = 4096
+
+// logKept logs text a caller is not shown, cut to internalErrorLogBytes, under a fresh ID,
+// and returns the ID.
+func logKept(msg, text string) string {
+	id := internalErrorID()
+	if len(text) > internalErrorLogBytes {
+		text = text[:internalErrorLogBytes] + "...(cut)"
+	}
+	slog.Warn(msg, "error_id", id, "error", wireString(text))
+	return id
+}
+
+// retold is an error whose text a caller is told in place of err's, with err's chain
+// kept for errors.Is and errors.As.
+type retold struct {
+	text string
+	err  error
+}
+
+func (r retold) Error() string { return r.text }
+func (r retold) Unwrap() error { return r.err }
+
+// withoutPrivate is err's text with the text of every sandbox.PrivateError in its tree
+// told as an ID. Should a marked text not appear verbatim in err's (a wrapper rendered it
+// otherwise), nothing of err's text is shown: the mark says it is not for the caller, in
+// any form.
+func withoutPrivate(err error) string {
+	text := err.Error()
+	for _, pe := range privateParts(err) {
+		kept := pe.Error()
+		if kept == "" {
+			continue
+		}
+		if !strings.Contains(text, kept) {
+			return fmt.Sprintf("a refusal whose detail the daemon's log holds (error %s)", logKept("a refusal's private detail kept from the caller", err.Error()))
+		}
+		text = strings.ReplaceAll(text, kept, "the daemon's log holds its detail (error "+logKept("a refusal's private detail kept from the caller", kept)+")")
+	}
+	return text
+}
+
+// privateParts walks err's tree (Unwrap() error and Unwrap() []error) for PrivateErrors,
+// outermost first, not descending into one: its own text covers what it wraps.
+func privateParts(err error) []*sandbox.PrivateError {
+	var found []*sandbox.PrivateError
+	var walk func(error)
+	walk = func(e error) {
+		if e == nil {
+			return
+		}
+		if pe, ok := e.(*sandbox.PrivateError); ok {
+			found = append(found, pe)
+			return
+		}
+		switch u := e.(type) {
+		case interface{ Unwrap() []error }:
+			for _, c := range u.Unwrap() {
+				walk(c)
+			}
+		case interface{ Unwrap() error }:
+			walk(u.Unwrap())
+		}
+	}
+	walk(err)
+	return found
+}
 
 // internalErrorID joins a caller's generic error to its log line.
 func internalErrorID() string {
@@ -566,6 +655,23 @@ func sandboxErrCode(err error) connect.Code {
 // by the runner, an outcome detail built from stderr); protobuf strings require
 // valid UTF-8, and without this guard a completed run could fail during response
 // serialization and disappear as an unstructured transport error.
+// publicEndDetail is what a caller is told of a session's end: the detail when its provider
+// marked it public (words it composed itself: a limit, a container's state), else an error ID,
+// with the detail itself in the daemon's log under it. A raw error can name the docker
+// socket, a host path, an address or a vendor's answer, none of which a caller should see.
+func publicEndDetail(se *sandbox.SessionEndedError) string {
+	if se.Public || se.Detail == "" {
+		return se.Detail
+	}
+	id := internalErrorID()
+	text := se.Detail
+	if len(text) > internalErrorLogBytes {
+		text = text[:internalErrorLogBytes] + "...(cut)"
+	}
+	slog.Warn("a session's end detail kept from the caller", "error_id", id, "reason", se.Reason.String(), "detail", wireString(text))
+	return fmt.Sprintf("the daemon's log holds its detail (error %s)", id)
+}
+
 func wireString(s string) string {
 	return strings.ToValidUTF8(s, "\uFFFD")
 }

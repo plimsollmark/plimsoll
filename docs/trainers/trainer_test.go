@@ -15,6 +15,7 @@ var trainerPages = []string{
 	"dependencies.html",
 	"integrations.html",
 	"agent-products.html",
+	"mcp.html",
 	"discoverability.html",
 	"customer-examples.html",
 	"brokering.html",

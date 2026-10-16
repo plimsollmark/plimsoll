@@ -230,7 +230,8 @@ func RefuseCell(ctx context.Context, err, end error) (refusal error, ok bool) {
 	case errors.Is(err, sessionkit.ErrLaunch) && ctx.Err() != nil:
 		return RefuseGaveUp(ctx), true
 	case errors.Is(err, sessionkit.ErrLaunch):
-		return NotDispatched(RefusalEnvironment, fmt.Errorf("%w: %v", ErrUnsupported, err)), true
+		// The launch error can carry the text of a failed docker or gateway exec.
+		return NotDispatched(RefusalEnvironment, fmt.Errorf("%w: %v: %w", ErrUnsupported, sessionkit.ErrLaunch, Private(err))), true
 	case errors.Is(err, sessionkit.ErrFiles):
 		return NotDispatched(RefusalRequest, fmt.Errorf("%w: %v", ErrInvalidRequest, err)), true
 	case errors.Is(err, sessionkit.ErrUnsent):

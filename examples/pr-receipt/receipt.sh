@@ -69,16 +69,31 @@ done
 python3 "$script_dir/prepare.py" "$project_dir" "$output_dir"
 "$work_dir/plimsoll-attest" keygen -out "$key_dir/harness"
 cp "$key_dir/harness.pub" "$output_dir/harness.pub"
-env -u PLIMSOLL_CALLER_TOKEN -u PLIMSOLL_ATTEST_KEY "$work_dir/plimsoll-attest" run -daemon "http://127.0.0.1:$port" -key "$key_dir/harness.key" \
-  -bundle "$output_dir/bundle.jsonl" "$output_dir/request.json" > "$output_dir/run.log"
+# Run from the output directory with relative names: the tool prints the bundle path it
+# was given, and the log is published, so an absolute path would name this machine's layout.
+(cd "$output_dir" && env -u PLIMSOLL_CALLER_TOKEN -u PLIMSOLL_ATTEST_KEY "$work_dir/plimsoll-attest" run -daemon "http://127.0.0.1:$port" -key "$key_dir/harness.key" \
+  -bundle bundle.jsonl request.json > run.log)
 "$work_dir/plimsoll-attest" verify -pub "$output_dir/harness.pub" "$output_dir/bundle.jsonl" > "$output_dir/verify.log"
 # PLIMSOLL_PAGES is where this output directory will be published, so the BOM's
 # attestation reference and the page's links point at this run's own evidence.
 "$work_dir/sbom" -bundle "$output_dir/bundle.jsonl" -pub "$output_dir/harness.pub" \
   -pages "${PLIMSOLL_PAGES:-https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/}" \
-  -name "pull-request-${PR_NUMBER:-0}" -out "$output_dir" > "$output_dir/emit.log"
+  -name "pull-request-${PR_NUMBER:-0}" -qualified-bundle "" -out "$output_dir" > "$output_dir/emit.log"
 for bom in "$output_dir"/run-*.cdx.json; do
   "$work_dir/sbom" -check "$bom" -trusted-pub "$output_dir/harness.pub" > "$output_dir/check.log"
+done
+# Everything in the output directory is published: refuse it if any file names a
+# directory of this machine's (the checkout, the project, the output, the home). A
+# workflow may upload the output even after a failure (a failed command still gets a
+# receipt), so a refused output is moved aside and the output directory left empty.
+for local_path in "$source_dir" "$project_dir" "$output_dir" "$HOME"; do
+  [ "${#local_path}" -gt 1 ] || continue
+  if grep -rlF -- "$local_path" "$output_dir" >&2; then
+    refused="$output_dir.refused.$$"
+    mv -- "$output_dir" "$refused" && mkdir -- "$output_dir"
+    echo "The files above name the local directory $local_path; nothing here is fit to publish (moved aside to ${refused##*/})" >&2
+    exit 1
+  fi
 done
 # A normal failed command still gets a signed receipt. Publish the artifacts,
 # then fail the job from the recorded result, never from guest-printed text.
