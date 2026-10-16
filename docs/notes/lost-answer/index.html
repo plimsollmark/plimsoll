@@ -109,10 +109,78 @@ footer { margin-top:2.6rem; padding-top:1rem; border-top:1px solid var(--rule);
 </svg><figcaption>The same bug twice: at home a dropped line gets you two pizzas, at work a lost reply gets robot r2 two jobs.</figcaption></figure>
 <p>Software has the same problem, and well-known fixes for it. What is new is who writes the code that is supposed to use those fixes: more and more companies let AI write the small programs that connect their systems to another company's machines. I built a test of one such program, and this is what happened when a reply got lost.</p>
 <h2 id="the-setup">The setup</h2>
-<p><strong>The robot company</strong> (the vendor). A pretend one: a simulator I wrote, with three warehouse robots. It takes jobs over the internet ("send robot r2 to shelf (10,4)") and keeps its own list of every job it accepted, the ledger, like the tickets on a pizza kitchen's rail.</p>
-<p><strong>The adapter.</strong> The program under test, written by an AI agent. It takes jobs from a platform (the software of a business that uses the robots) and sends them to the robot company.</p>
+<p><strong>The robot company</strong> (the vendor). A pretend one: a simulator I wrote, with three warehouse robots. It takes jobs over the internet ("send robot r2 to shelf (10,4)") and keeps its own list of every job it accepted, the ledger: the pizza kitchen's rail of orders.</p>
+<figure class="fig"><svg role="img" aria-label="The ledger as a pizza kitchen&#x27;s rail of orders: the five tickets from the first adapter&#x27;s lost-reply run. m1, robot r1 to (3,0), done. m2, robot r2 to (10,4), done. m3, robot r2 to (10,4) again, done. m4, robot r3 to (0,15), done. m5, robot r1 to (50,50), cancelled. m2 and m3 are one job ordered twice." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 300" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<title>The ledger as a pizza kitchen's rail of orders: the five tickets from the first adapter's lost-reply run. m1, robot r1 to (3,0), done. m2, robot r2 to (10,4), done. m3, robot r2 to (10,4) again, done. m4, robot r3 to (0,15), done. m5, robot r1 to (50,50), cancelled. m2 and m3 are one job ordered twice.</title>
+<rect width="540" height="300" rx="16" fill="#fbfaf7"/>
+<text x="20" y="32" font-size="16" font-weight="700" fill="#1a1a1a">📒 The ledger: the robot company's rail of orders</text>
+<rect x="14" y="48" width="10" height="20" rx="2" fill="#7c858d"/>
+<rect x="516" y="48" width="10" height="20" rx="2" fill="#7c858d"/>
+<rect x="18" y="52" width="504" height="11" rx="5" fill="#a7b0b8"/>
+<rect x="22" y="54" width="496" height="3" rx="1.5" fill="#d5dbe0"/>
+<g transform="rotate(-2 74.0 60)">
+<rect x="32" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
+<rect x="30" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#cfc8ba" stroke-width="1.2"/>
+<text x="74.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
+<text x="74.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m1</text>
+<line x1="40" y1="126" x2="108" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
+<text x="74.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r1</text>
+<text x="74.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (3,0)</text>
+<text x="74.0" y="192" font-size="12" fill="#1e7a3c" text-anchor="middle">✓ done</text>
+</g>
+<g transform="rotate(1.5 172.0 60)">
+<rect x="130" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
+<rect x="128" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#b3261e" stroke-width="2"/>
+<text x="172.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
+<text x="172.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m2</text>
+<line x1="138" y1="126" x2="206" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
+<text x="172.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r2</text>
+<text x="172.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (10,4)</text>
+<text x="172.0" y="192" font-size="12" fill="#1e7a3c" text-anchor="middle">✓ done</text>
+</g>
+<g transform="rotate(-1 270.0 60)">
+<rect x="228" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
+<rect x="226" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#b3261e" stroke-width="2"/>
+<text x="270.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
+<text x="270.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m3</text>
+<line x1="236" y1="126" x2="304" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
+<text x="270.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r2</text>
+<text x="270.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (10,4)</text>
+<text x="270.0" y="192" font-size="12" fill="#1e7a3c" text-anchor="middle">✓ done</text>
+</g>
+<g transform="rotate(2 368.0 60)">
+<rect x="326" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
+<rect x="324" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#cfc8ba" stroke-width="1.2"/>
+<text x="368.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
+<text x="368.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m4</text>
+<line x1="334" y1="126" x2="402" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
+<text x="368.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r3</text>
+<text x="368.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (0,15)</text>
+<text x="368.0" y="192" font-size="12" fill="#1e7a3c" text-anchor="middle">✓ done</text>
+</g>
+<g transform="rotate(-1.5 466.0 60)">
+<rect x="424" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
+<rect x="422" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#cfc8ba" stroke-width="1.2"/>
+<text x="466.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
+<text x="466.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m5</text>
+<line x1="432" y1="126" x2="500" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
+<text x="466.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r1</text>
+<text x="466.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (50,50)</text>
+<text x="466.0" y="192" font-size="12" fill="#5d5d5d" text-anchor="middle">✗ cancelled</text>
+</g>
+<rect x="61.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
+<rect x="159.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
+<rect x="257.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
+<rect x="355.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
+<rect x="453.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
+<path d="M172.0 216 v8 H270.0 v-8" fill="none" stroke="#b3261e" stroke-width="2"/>
+<text x="221.0" y="246" font-size="14" font-weight="700" fill="#b3261e" text-anchor="middle">one job, two tickets</text>
+<text x="221.0" y="264" font-size="12" fill="#b3261e" text-anchor="middle">robot r2 sent to (10,4) twice</text>
+<text x="270.0" y="290" font-size="11" font-style="italic" fill="#5d5d5d" text-anchor="middle">from the test's sealed record of the first adapter's lost-reply run</text>
+</svg><figcaption>The ledger is the kitchen's rail of orders. After the first adapter's lost reply, it holds two tickets for one job.</figcaption></figure>
+<p><strong>The adapter.</strong> The program being tested, written by an AI agent. It takes jobs from a platform (the software of a business that uses the robots) and sends them to the robot company.</p>
 <p><strong>The sandbox.</strong> The adapter runs inside plimsoll, a small open-source tool I built for running code you don't trust. Think of a locked room: no internet, and no way into the server it runs on. Its one way out is a gatekeeper, the broker, which passes on only some kinds of request and adds the robot company's password on the way out, so the adapter never sees it.</p>
-<p><strong>The exam.</strong> The adapter gets the same four jobs in eight situations: a normal day, a broken robot, an overloaded company, and several ways for a reply to get lost. Then a grader marks it. A grader is a small program that marks the test the way a teacher marks an exam: here it checks eight rules by comparing what the adapter says happened with the robot company's ledger, and it never takes the adapter's word. plimsoll doesn't grade anything itself. The test and its grader come with the example; plimsoll is where the AI's code runs during the test, kept away from everything else, with every result sealed so anyone can recheck the grade.</p>
+<p><strong>The exam.</strong> Before a business lets an AI-written adapter loose on real robots, it wants to know the adapter does the right thing, especially when something goes wrong. So the adapter sits an exam: it gets the same four jobs in eight situations (a normal day, a broken robot, an overloaded company, and several ways for a reply to get lost), and afterwards a grader marks it. A grader is a small program that marks the exam the way a teacher would: here it checks eight rules by comparing what the adapter says happened with the robot company's ledger, and it never takes the adapter's word. plimsoll doesn't grade anything itself. The exam and its grader come with the example; plimsoll is where the AI's code runs while it sits the exam, kept away from everything else, with every result sealed so anyone can recheck the grade.</p>
 <figure class="fig"><svg role="img" aria-label="Who talks to whom. The test driver and the AI-written adapter run inside the sandbox, a locked room with no internet and no password. The adapter&#x27;s only way out is a door to the broker, a gatekeeper that passes on six of the robot company&#x27;s eight kinds of request and adds a password made for this run only. The robot company holds three robots and its ledger, its list of every order it accepted. The receipt is a sealed copy of what went into the sandbox and what came out. The grader takes the ledger as evidence and the adapter&#x27;s own report as a claim to check." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 380" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
 <title>Who talks to whom. The test driver and the AI-written adapter run inside the sandbox, a locked room with no internet and no password. The adapter's only way out is a door to the broker, a gatekeeper that passes on six of the robot company's eight kinds of request and adds a password made for this run only. The robot company holds three robots and its ledger, its list of every order it accepted. The receipt is a sealed copy of what went into the sandbox and what came out. The grader takes the ledger as evidence and the adapter's own report as a claim to check.</title>
 <defs>
