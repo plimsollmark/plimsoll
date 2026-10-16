@@ -33,7 +33,10 @@
 //
 // Two catalog-only operations exist so a grant that omits them can be shown refusing
 // them: DELETE /robots/{id} and POST /robots/{id}/firmware. The server counts any
-// request that reaches them separately; in a correct run that count stays zero.
+// request that reaches them separately; in a correct run that count stays zero. The
+// delete is real: it removes the robot from the fleet, fails its orders, and later
+// requests about it answer 404, so a request that reaches it has a consequence the
+// fleet's state shows (Robots), not just a count.
 package fleetsim
 
 import (
@@ -164,7 +167,7 @@ type Order struct {
 // (an order accepted and answered with the error in Status), dropped (an order accepted
 // and the connection closed), degraded, refused (a request the degraded vendor answered
 // 503), recovered, start (a queued order starts), move, fault, failed (a queued order
-// failed by a fault), done, cancelled.
+// failed by a fault), done, cancelled, decommissioned (a robot removed by DELETE).
 type Event struct {
 	Kind    string `json:"kind"`
 	Robot   string `json:"robot,omitempty"`
@@ -623,7 +626,7 @@ func (s *Server) route(method string, segs []string) (string, handlerFunc) {
 	case method == "GET" && len(segs) == 2 && segs[0] == "robots":
 		return "GET /robots/*", s.getRobot
 	case method == "DELETE" && len(segs) == 2 && segs[0] == "robots":
-		return "DELETE /robots/*", s.catalogOnly("DELETE /robots/*")
+		return "DELETE /robots/*", s.decommission
 	case method == "POST" && len(segs) == 3 && segs[0] == "robots" && segs[2] == "missions":
 		return "POST /robots/*/missions", s.createMission
 	case method == "POST" && len(segs) == 3 && segs[0] == "robots" && segs[2] == "firmware":
@@ -773,6 +776,12 @@ func (s *Server) cancelMission(w http.ResponseWriter, _ *http.Request, segs []st
 		return
 	}
 	rb := s.robots[m.Robot]
+	if rb == nil {
+		// Its robot was decommissioned, which already ended it: answered as it stands.
+		s.tell(m)
+		writeJSON(w, http.StatusOK, m)
+		return
+	}
 	switch m.Status {
 	case "running":
 		s.end(m, "cancelled", "", rb.Pose)
@@ -787,6 +796,30 @@ func (s *Server) cancelMission(w http.ResponseWriter, _ *http.Request, segs []st
 	// A terminal order is answered as it is: cancelling it changes nothing.
 	s.tell(m)
 	writeJSON(w, http.StatusOK, m)
+}
+
+// decommission removes the robot from the fleet: its running order and its queue fail,
+// it leaves the fleet's order, and later requests about it answer 404. Counted in
+// reached like the other catalog-only operation; the example's grant omits it.
+func (s *Server) decommission(w http.ResponseWriter, _ *http.Request, segs []string) {
+	s.reached["DELETE /robots/*"]++
+	rb := s.robots[segs[1]]
+	if rb == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such robot"})
+		return
+	}
+	if m := s.missions[rb.Mission]; m != nil && m.Status == "running" {
+		s.end(m, "failed", "robot decommissioned", rb.Pose)
+	}
+	for _, id := range rb.queued {
+		if q := s.missions[id]; q != nil && q.Status == "queued" {
+			s.end(q, "failed", "robot decommissioned", rb.Pose)
+		}
+	}
+	delete(s.robots, rb.ID)
+	s.order = slices.DeleteFunc(s.order, func(id string) bool { return id == rb.ID })
+	s.event(Event{Kind: "decommissioned", Robot: rb.ID, Pose: posePtr(rb.Pose)})
+	writeJSON(w, http.StatusOK, map[string]string{"id": rb.ID, "status": "decommissioned"})
 }
 
 func (s *Server) catalogOnly(template string) handlerFunc {
@@ -835,7 +868,9 @@ func (s *Server) startNext(rb *robot) {
 // tick advances a moving robot one unit toward its target, or faults it where the
 // scenario says.
 func (s *Server) tick(rb *robot) {
-	if rb.Mission == "" {
+	// A decommissioned robot is gone from the fleet while its orders stay on the
+	// ledger, so a read of one of them arrives with no robot to advance.
+	if rb == nil || rb.Mission == "" {
 		return
 	}
 	m := s.missions[rb.Mission]

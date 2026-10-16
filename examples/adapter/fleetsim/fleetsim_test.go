@@ -463,3 +463,65 @@ func TestToldCountsOnlyAnswersShowingTheEnd(t *testing.T) {
 		t.Fatalf("told %d after a repeat of the ended order, want 3", got)
 	}
 }
+
+// DELETE /robots/{id} is real: the robot leaves the fleet, its running order fails, and
+// later reads of it answer 404. The request is counted as reaching a catalog-only route.
+func TestDecommissionRemovesTheRobot(t *testing.T) {
+	v := newVendor(t, ScenarioNominal)
+	if code, _ := v.create("r1", 3, 0, "cmd-decommission-1"); code != 201 {
+		t.Fatalf("create: %d", code)
+	}
+	code, body := v.call("DELETE", "/robots/r1", nil)
+	if code != 200 || body["status"] != "decommissioned" {
+		t.Fatalf("DELETE answered %d %v", code, body)
+	}
+	if code, _ := v.call("GET", "/robots/r1", nil); code != 404 {
+		t.Errorf("GET of a decommissioned robot answered %d, want 404", code)
+	}
+	ids := []string{}
+	for _, r := range v.s.Robots() {
+		ids = append(ids, r.ID)
+	}
+	if !slices.Equal(ids, []string{"r2", "r3"}) {
+		t.Errorf("fleet after the delete: %v", ids)
+	}
+	if o := v.order("m1"); o.Status != "failed" {
+		t.Errorf("r1's order after the delete: %s", o.Status)
+	}
+	if n := v.s.Reached()["DELETE /robots/*"]; n != 1 {
+		t.Errorf("reached count %d, want 1", n)
+	}
+	if code, _ := v.call("DELETE", "/robots/r1", nil); code != 404 {
+		t.Errorf("a second DELETE answered %d, want 404", code)
+	}
+	v.noIllegal()
+}
+
+// A decommissioned robot leaves its orders on the ledger, so a read or a cancel of one
+// arrives with no robot behind it. Both are answered with the order as it stands, which
+// the delete already failed, and neither disturbs the fleet.
+func TestOrdersOfADecommissionedRobotAreStillReadable(t *testing.T) {
+	v := newVendor(t, ScenarioNominal)
+	if code, _ := v.create("r1", 3, 0, "cmd-decommission-2"); code != 201 {
+		t.Fatalf("create: %d", code)
+	}
+	if code, _ := v.call("DELETE", "/robots/r1", nil); code != 200 {
+		t.Fatalf("DELETE: %d", code)
+	}
+	code, body := v.call("GET", "/missions/m1", nil)
+	if code != 200 || body["status"] != "failed" {
+		t.Errorf("a read of the order answered %d %v, want 200 failed", code, body)
+	}
+	code, body = v.call("POST", "/missions/m1/cancel", nil)
+	if code != 200 || body["status"] != "failed" {
+		t.Errorf("a cancel of the order answered %d %v, want 200 failed", code, body)
+	}
+	ids := []string{}
+	for _, r := range v.s.Robots() {
+		ids = append(ids, r.ID)
+	}
+	if !slices.Equal(ids, []string{"r2", "r3"}) {
+		t.Errorf("fleet after the reads: %v", ids)
+	}
+	v.noIllegal()
+}
