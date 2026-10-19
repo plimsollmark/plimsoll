@@ -190,8 +190,16 @@ test("unknown fetch causes, aborts and answer-read failures remain unmarked", as
   const ac = new AbortController();
   const canceled = new PlimsollClient({ baseUrl: "http://127.0.0.1", fetch: async () => { ac.abort(); throw error; } });
   await assert.rejects(canceled.describe(ac.signal), (e: unknown) => e instanceof PlimsollError && e.code === "canceled" && e.notDispatched === undefined);
+  // The deadline is AbortSignal.timeout, whose timer does not keep Node's event loop alive.
+  // A real fetch holds a socket that does; this fake holds a timer in its place, or the test
+  // runner can find the loop empty before the deadline fires and cancel every later test.
   const expired = new PlimsollClient({ baseUrl: "http://127.0.0.1", requestTimeoutMs: 1, fetch: async (_input, init) => {
-    await new Promise<void>((resolve) => init!.signal!.addEventListener("abort", () => resolve(), { once: true }));
+    const held = setTimeout(() => {}, 60_000);
+    try {
+      await new Promise<void>((resolve) => init!.signal!.addEventListener("abort", () => resolve(), { once: true }));
+    } finally {
+      clearTimeout(held);
+    }
     throw error;
   } });
   await assert.rejects(expired.describe(), (e: unknown) => e instanceof PlimsollError && e.code === "deadline_exceeded" && e.notDispatched === undefined);
