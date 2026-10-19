@@ -23,7 +23,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -31,7 +30,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -40,6 +38,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/examples/internal/daemonproc"
 
 	"github.com/plimsollmark/plimsoll/client"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -105,7 +105,7 @@ func run(ctx context.Context, reportPath string) error {
 	upstream := httptest.NewServer(api)
 	defer upstream.Close()
 
-	token, clientsPath, err := writeClientsFile(workDir)
+	token, clientsPath, err := daemonproc.ClientsFile(workDir, callerID)
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func run(ctx context.Context, reportPath string) error {
 	if err != nil {
 		return err
 	}
-	addr, err := freeAddr()
+	addr, err := daemonproc.FreeAddr()
 	if err != nil {
 		return err
 	}
@@ -526,24 +526,6 @@ func writeGrantsFile(dir, baseURL string) (string, error) {
 	return path, nil
 }
 
-// writeClientsFile creates the multi-client auth file. Tokens are stored as SHA-256
-// hex, never in the clear.
-func writeClientsFile(dir string) (token, path string, err error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", "", err
-	}
-	token = hex.EncodeToString(raw)
-	sum := sha256.Sum256([]byte(token))
-	path = filepath.Join(dir, "clients.json")
-	body := fmt.Sprintf(`{"clients":[{"id":%q,"token_sha256":%q,"scopes":["code:run"]}]}`,
-		callerID, hex.EncodeToString(sum[:]))
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		return "", "", err
-	}
-	return token, path, nil
-}
-
 // buildDaemon compiles plimsolld from the checkout so the example runs the code in
 // this tree rather than whatever happens to be installed.
 func buildDaemon(ctx context.Context, dir string) (string, error) {
@@ -606,16 +588,6 @@ func waitForReady(ctx context.Context, baseURL string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return errors.New("plimsolld did not become ready within 30s")
-}
-
-// freeAddr reserves a loopback port by binding it and handing back the address.
-func freeAddr() (string, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", err
-	}
-	addr := listener.Addr().String()
-	return addr, listener.Close()
 }
 
 // writeReport renders the run as one self-contained page: no scripts or styles are

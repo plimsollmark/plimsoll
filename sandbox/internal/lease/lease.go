@@ -4,14 +4,21 @@
 // Every provider that creates sandboxes outside this process follows one rule. A key
 // naming the resource is tracked before the create request is sent, and the resource is
 // stamped with this instance's identity (and, where the name is not the key, the key);
-// the key is untracked once the delete has finished or given up. ReconcileOrphans then
+// the key is untracked once cleanup's owner lets it go. E2B, Docker Cloud and OpenShell
+// do so once the delete has finished or given up. ReconcileOrphans then
 // reaps exactly what carries this instance's stamp and no tracked key: a create whose
 // answer never arrived, a teardown whose retries all failed. No age window is needed,
 // because nothing in flight is untracked. What other instances left is reaped by the
 // lifetime its creator declared, never through this set.
+// Agent-sandbox retains a failed deletion's key and capacity until deletion is confirmed;
+// its reconciler separately claims those pending keys without taking over a live run.
 package lease
 
-import "sync"
+import (
+	"maps"
+	"slices"
+	"sync"
+)
 
 // Set is the keys of one provider instance's resources in flight. The zero value is
 // empty and ready to use.
@@ -51,4 +58,11 @@ func (s *Set) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.keys)
+}
+
+// Keys returns a sorted snapshot of the tracked keys, detached from the set.
+func (s *Set) Keys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.keys))
 }

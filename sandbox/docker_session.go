@@ -913,8 +913,8 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	if err != nil || !out.exited {
 		return ProjectResult{Sandbox: s.d.Name(), Isolation: s.tier, CallTrace: fail.CallTrace}, s.life.CallError(runCtx, err)
 	}
-	report, found, parseErr := runnerwire.Parse(out.stdout, key)
-	if !found {
+	res, reported := RunnerReport(s.d.Name(), s.tier, out.stdout, key)
+	if !reported {
 		if s.stopped() {
 			return ProjectResult{Sandbox: s.d.Name(), Isolation: s.tier, CallTrace: fail.CallTrace}, s.Err()
 		}
@@ -929,15 +929,7 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 		fail.Outcome, fail.Detail = ProjectOutcomeProtocolError, fmt.Sprintf("the runner did not report (it exited %d)", out.exitCode)
 		return fail, nil
 	}
-	if errors.Is(parseErr, runnerwire.ErrUnauthenticated) {
-		fail.Outcome, fail.Detail = ProjectOutcomeProtocolError, "no authenticated runner report"
-		return fail, nil
-	}
-	if parseErr != nil {
-		fail.Outcome, fail.Detail = ProjectOutcomeProtocolError, "could not parse sandbox result"
-		return fail, nil
-	}
-	res := projectResultFromReport(s.d.Name(), s.tier, report, fail.CallTrace)
+	res.CallTrace = fail.CallTrace
 	res.SoftwareIdentity, res.EnvironmentIdentity = s.manifest, dockerImageIdentity(s.imageID)
 	return res, nil
 }

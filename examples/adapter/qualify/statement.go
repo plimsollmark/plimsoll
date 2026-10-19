@@ -65,21 +65,8 @@ func Verdict(pass bool) string {
 // recordSHA256, in a DSSE envelope, with the same key and encoding the attest harness
 // uses for run records.
 func Sign(key ed25519.PrivateKey, recordSHA256 string, p Predicate) (attest.Envelope, error) {
-	payload, err := json.Marshal(statement{
-		Type:          attest.StatementType,
-		Subject:       []attest.Subject{{Name: attest.SubjectName, Digest: map[string]string{"sha256": recordSHA256}}},
-		PredicateType: PredicateType,
-		Predicate:     p,
-	})
-	if err != nil {
-		return attest.Envelope{}, err
-	}
-	sig := ed25519.Sign(key, attest.PAE(attest.PayloadType, payload))
-	return attest.Envelope{
-		PayloadType: attest.PayloadType,
-		Payload:     base64.StdEncoding.EncodeToString(payload),
-		Signatures:  []attest.Signature{{KeyID: attest.KeyID(key.Public().(ed25519.PublicKey)), Sig: base64.StdEncoding.EncodeToString(sig)}},
-	}, nil
+	return attest.NewSigner(key).SignStatement(PredicateType,
+		[]attest.Subject{{Name: attest.SubjectName, Digest: map[string]string{"sha256": recordSHA256}}}, p)
 }
 
 // Verified is one statement that passed Verify.
@@ -197,27 +184,15 @@ func check(p Predicate, subject, record string, entry attest.Entry) error {
 
 // open checks env's signature and returns its predicate and subject digest.
 func open(pub ed25519.PublicKey, env attest.Envelope) (Predicate, string, error) {
-	if env.PayloadType != attest.PayloadType || len(env.Signatures) != 1 || env.Signatures[0].KeyID != attest.KeyID(pub) {
-		return Predicate{}, "", errors.New("not one signature by this key")
-	}
-	payload, err := base64.StdEncoding.DecodeString(env.Payload)
+	var p Predicate
+	subjects, err := attest.NewVerifier(pub).OpenStatement(env, PredicateType, &p)
 	if err != nil {
 		return Predicate{}, "", err
 	}
-	sig, err := base64.StdEncoding.DecodeString(env.Signatures[0].Sig)
-	if err != nil || !ed25519.Verify(pub, attest.PAE(env.PayloadType, payload), sig) {
-		return Predicate{}, "", errors.New("the signature does not verify")
+	if len(subjects) != 1 || subjects[0].Name != attest.SubjectName || len(subjects[0].Digest) != 1 {
+		return Predicate{}, "", errors.New("not a qualification statement: its subject is not one run record")
 	}
-	var st statement
-	d := json.NewDecoder(bytes.NewReader(payload))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&st); err != nil {
-		return Predicate{}, "", err
-	}
-	if st.Type != attest.StatementType || st.PredicateType != PredicateType || len(st.Subject) != 1 || st.Subject[0].Name != attest.SubjectName {
-		return Predicate{}, "", errors.New("not a qualification statement")
-	}
-	return st.Predicate, st.Subject[0].Digest["sha256"], nil
+	return p, subjects[0].Digest["sha256"], nil
 }
 
 // matchRun checks p against what run's signed request carried and response printed.

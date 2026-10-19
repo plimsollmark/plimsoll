@@ -281,6 +281,32 @@
       costs nothing, but no automated run has a gateway to drive.</dd>
     </dl>
   </div>
+  <div class="card">
+    <h3>Kubernetes agent-sandbox <span class="tier">tier read from the runtime</span></h3>
+    <dl>
+      <dt>Needs outside the binary</dt>
+      <dd>A Kubernetes cluster, machines managed as one container system, with the <dfn>agent-sandbox</dfn> component and a warm pool of ready
+      pods. Each pod runs sandboxd, a command daemon, in plimsoll's toolchain image. Plimsolld
+      needs permission to create and delete claims and read the pod, template, runtime class,
+      node and network policies; it must also reach sandboxd on the pod network.</dd>
+      <dt>Fails when</dt>
+      <dd>The actual pod's image, security settings or selected network policies fail the
+      read-back checks, or the startup smoke test cannot prove the boundary. A changed
+      proven template or policy set requires a restart and new proof. Unknown runtime handlers
+      are refused: <dfn>runc</dfn>, the program that starts a standard container, is container; <dfn>runsc</dfn>, gVisor's runtime, is kernel; and the supported <dfn>Kata Containers</dfn> handlers, which give each pod its own virtual machine, are vm.</dd>
+      <dt>Worth knowing</dt>
+      <dd>Snippets and projects only, without grants, sessions or module runs. The Kubernetes
+      API client uses Go's standard HTTP library; no client-go dependency is linked. The
+      sandboxd protocol is vendored and generated separately from OpenShell's to avoid
+      duplicate protocol registrations. Under Kata, individual writable-volume limits are
+      not enforced, so a disk-budget setting is refused. The live suite is free on an
+      existing cluster; provisioning the cluster may cost money. Reported tiers rest on
+      configuration and behavioural checks; they are not cryptographic proof from the hardware.</dd>
+    </dl>
+    <p><a href="../agentsandbox.md">INTERNAL · operator guide →</a> ·
+    <a href="../examples/agentsandbox/index.html">INTERNAL · recorded runs and refusals →</a></p>
+  </div>
+
 
   <h2>Guest tools are baked, never fetched</h2>
   <p>A project run compiles and lints inside a sandbox with no network. That works
@@ -314,6 +340,10 @@
     <dt>The code generators</dt>
     <dd>Pinned by <code>go.mod</code> tool directives and run through the Go toolchain,
     so regeneration needs no network at all.</dd>
+    <dt>The agent-sandbox protocol</dt>
+    <dd>The sandboxd process protocol is copied from the pinned agent-sandbox release,
+    with its origin and license recorded in <code>third_party/agentsandbox/README.md</code>.
+    Its generated client is compiled into plimsolld, not downloaded when code runs.</dd>
     <dt>The OpenShell protocol</dt>
     <dd>OpenShell's protocol definitions, copied byte for byte from one tagged release,
     with each file's SHA-256 recorded in <code>third_party/openshell/README.md</code>. The

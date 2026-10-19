@@ -196,22 +196,6 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 
 // runnerSteps and runnerArtifacts copy the runner's decoded report into this
 // package's result types (the runner package cannot import this one).
-func runnerSteps(steps []runnerwire.Step) []StepResult {
-	var out []StepResult
-	for _, s := range steps {
-		out = append(out, StepResult(s))
-	}
-	return out
-}
-
-func runnerArtifacts(artifacts []runnerwire.Artifact) []Artifact {
-	var out []Artifact
-	for _, a := range artifacts {
-		out = append(out, Artifact(a))
-	}
-	return out
-}
-
 func (d *DockerSandbox) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult, error) {
 	if err := ValidateProjectRequest(req); err != nil {
 		return ProjectResult{Sandbox: d.Name(), Isolation: d.IsolationClass()}, err
@@ -322,8 +306,8 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, ended
 	}
 
-	report, found, parseErr := runnerwire.Parse(stdout.String(), reportKey)
-	if !found {
+	res, reported := RunnerReport(d.Name(), isolation, stdout.String(), reportKey)
+	if !reported {
 		// The runner never reported. Distinguish two very different causes:
 		//   - no start marker: almost always docker never started the container's
 		//     command, so the sandbox boundary never launched. That is an
@@ -345,43 +329,10 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		}
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: detail}, nil
 	}
-	if errors.Is(parseErr, runnerwire.ErrUnauthenticated) {
-		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: "no authenticated runner report"}, nil
-	}
-	if parseErr != nil {
-		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: "could not parse sandbox result"}, nil
-	}
-
 	// Metadata-only evidence of the run's brokered host.* calls; nil unless the run
 	// carried a grant that made calls. Never affects the outcome.
-	return projectResultFromReport(d.Name(), isolation, report, broker.finalTrace()), nil
-}
-
-// projectResultFromReport is a project result from the runner's authenticated
-// report, for a run's container and a session's alike.
-func projectResultFromReport(provider string, isolation IsolationClass, report runnerwire.Report, trace *CallTrace) ProjectResult {
-	res := ProjectResult{
-		Sandbox:            provider,
-		Isolation:          isolation,
-		Steps:              runnerSteps(report.Steps),
-		Artifacts:          runnerArtifacts(report.Artifacts),
-		ArtifactsTruncated: report.ArtifactsTruncated,
-		CallTrace:          trace,
-	}
-	// A runner-reported failure around step execution (illegal file path,
-	// unwritable file, over-budget result) is request-attributable: setup_failed.
-	// A step killed by its own time budget is a timed-out run, not a completed one;
-	// RunModule classifies the same event as timed_out, and the two operations must
-	// not disagree about what happened.
-	outcome, detail := report.Outcome()
-	res.Outcome, res.Detail = ProjectOutcomeCompleted, detail
-	switch outcome {
-	case runnerwire.SetupFailed:
-		res.Outcome = ProjectOutcomeSetupFailed
-	case runnerwire.TimedOut:
-		res.Outcome = ProjectOutcomeTimedOut
-	}
-	return res
+	res.CallTrace = broker.finalTrace()
+	return res, nil
 }
 
 // moduleResultsArtifact is the path, under /work, the worker writes its record to

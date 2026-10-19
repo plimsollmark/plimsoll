@@ -14,6 +14,8 @@ import (
 	cdx "github.com/CycloneDX/cyclonedx-go"
 	"github.com/plimsollmark/plimsoll/attest"
 	"github.com/plimsollmark/plimsoll/examples/adapter/qualify"
+	"github.com/plimsollmark/plimsoll/examples/sbom/cdxutil"
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 func fixtures(t *testing.T) ([]source, []byte, []byte) {
@@ -61,13 +63,15 @@ func verdictFixtures(t *testing.T) []source {
 }
 
 // have is what the emitter holds of a run's shared files: everything.
-func have(s source) sharedFiles { return sharedFiles{Bundle: s.Shared.bundle, Qualification: s.Shared.qualification} }
+func have(s source) sharedFiles {
+	return sharedFiles{Bundle: s.Shared.bundle, Qualification: s.Shared.qualification}
+}
 
 // imageFor is the example's one image label when run executed in that image, else nil:
 // the Docker Cloud runs booted a public node image that has no label here.
 func imageFor(t *testing.T, run source) *imageBOM {
 	t.Helper()
-	if d, _, _ := imageDigest(run.Record); d == "1c6cbab4a47d34da471ab4ab970709cbba18e2a3445fde884b5d90ec2c4c5b25" {
+	if d, _, _ := cdxutil.ImageDigest(run.Record); d == "1c6cbab4a47d34da471ab4ab970709cbba18e2a3445fde884b5d90ec2c4c5b25" {
 		return fixtureImage(t)
 	}
 	return nil
@@ -114,7 +118,7 @@ func TestPublishedBOMsReproduceAndVerify(t *testing.T) {
 			if !bytes.Equal(raw, published) {
 				t.Fatal("published BOM is not the deterministic output")
 			}
-			if err := validateSchema(raw); err != nil {
+			if err := cdxutil.ValidateSchema(raw); err != nil {
 				t.Fatal(err)
 			}
 			checks, err := checkBOM(raw, run.PEM, imageFor(t, run), have(run))
@@ -157,12 +161,12 @@ func TestPublishedBOMsReproduceAndVerify(t *testing.T) {
 				if !found {
 					t.Fatal("BOM file absent from signed request")
 				}
-				path, _ := hex.DecodeString(digest([]byte(file.Name)))
-				data, _ := hex.DecodeString(digest([]byte(content)))
+				path, _ := hex.DecodeString(cdxutil.Digest([]byte(file.Name)))
+				data, _ := hex.DecodeString(cdxutil.Digest([]byte(content)))
 				concatenated = append(concatenated, path...)
 				concatenated = append(concatenated, data...)
 			}
-			if digest(concatenated) != d {
+			if cdxutil.Digest(concatenated) != d {
 				t.Fatal("file-set algorithm differs from independent construction")
 			}
 			// Verify the envelope using precisely the key attached to this BOM.
@@ -234,7 +238,7 @@ func TestCoordinatedFileSubstitutionIsRejected(t *testing.T) {
 		program := component(d)
 		files := program["components"].([]any)
 		first := files[0].(map[string]any)
-		first["hashes"].([]any)[0].(map[string]any)["content"] = digest([]byte("substituted code"))
+		first["hashes"].([]any)[0].(map[string]any)["content"] = cdxutil.Digest([]byte("substituted code"))
 		var typed []cdx.Component
 		fileJSON, _ := json.Marshal(files)
 		if err := json.Unmarshal(fileJSON, &typed); err != nil {
@@ -256,7 +260,7 @@ func TestCoordinatedFileSubstitutionIsRejected(t *testing.T) {
 		}
 		claims[0].(map[string]any)["predicate"] = strings.ReplaceAll(old, original, fd)
 	})
-	if err := validateSchema(changed); err != nil {
+	if err := cdxutil.ValidateSchema(changed); err != nil {
 		t.Fatal("mutation should remain schema-valid:", err)
 	}
 	if _, err := checkBOM(changed, p, fixtureImage(t), have(s[0])); err == nil {
@@ -300,7 +304,7 @@ func TestEveryMappedFieldIsBound(t *testing.T) {
 	for name, edit := range edits {
 		t.Run(name, func(t *testing.T) {
 			changed := mutate(t, raw, edit)
-			if err := validateSchema(changed); err != nil {
+			if err := cdxutil.ValidateSchema(changed); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := checkBOM(changed, p, fixtureImage(t), have(s[1])); err == nil {
@@ -484,7 +488,7 @@ func TestVerdictClaimIsBoundToTheStatement(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := mutate(t, raw, edit)
-			if err := validateSchema(changed); err != nil {
+			if err := cdxutil.ValidateSchema(changed); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := checkBOM(changed, pass.PEM, fixtureImage(t), have(pass)); err == nil {
@@ -558,6 +562,51 @@ func TestOneLineModeReproducesThePublishedBOMs(t *testing.T) {
 	} {
 		if err := execute(c.args, &bytes.Buffer{}); err == nil {
 			t.Errorf("%s: -line accepted it", c.name)
+		}
+	}
+}
+
+// The agent-sandbox evidence page publishes one BOM per signed run, written by -line from
+// its bundle: each must be written exactly again, pass the schema and the checks, and name
+// the pod's pinned image as the identity. An environment that is not exactly
+// agentsandbox-image:sha256:<64 hex> states no identity this emitter maps.
+func TestAgentSandboxBOMsReproduce(t *testing.T) {
+	const published = "../../docs/examples/agentsandbox"
+	dir := scratch(t)
+	base := []string{"-bundle", published + "/bundle.jsonl", "-pub", published + "/harness.pub", "-out", dir,
+		"-pages", "https://plimsollmark.github.io/plimsoll/examples/agentsandbox/", "-image-name", "plimsoll-sandbox-agentsandbox"}
+	names, err := filepath.Glob(published + "/run-*.cdx.json")
+	if err != nil || len(names) != 2 {
+		t.Fatalf("published BOMs: %v, %v", names, err)
+	}
+	for _, line := range []string{"1", "3"} {
+		var out bytes.Buffer
+		if err := execute(append(base, "-line", line), &out); err != nil {
+			t.Fatalf("line %s: %v", line, err)
+		}
+		if !strings.Contains(out.String(), "PASS: altered envelope refused") {
+			t.Errorf("line %s: the checks were not reported:\n%s", line, out.String())
+		}
+	}
+	for _, name := range names {
+		want, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(filepath.Join(dir, filepath.Base(name)))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s is not what -line writes from the published bundle: %v", filepath.Base(name), err)
+		}
+		if err := cdxutil.ValidateSchema(got); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(got, []byte("a Kubernetes agent-sandbox pod running the image pinned by sha256:")) {
+			t.Errorf("%s does not name the pod's pinned image", filepath.Base(name))
+		}
+	}
+	for _, env := range []string{"agentsandbox-image:sha256:31d84a63", "agentsandbox-image:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430", "agentsandbox-image:sha256:31D84A633D71C261126EFC1F2B40EFDABC65E50857CE3F7CA6136E45C1B15430"} {
+		if _, _, ok := cdxutil.ImageDigest(sandbox.RunRecord{Environment: env}); ok {
+			t.Errorf("environment %q was mapped", env)
 		}
 	}
 }

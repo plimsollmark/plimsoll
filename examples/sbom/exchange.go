@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/plimsollmark/plimsoll/examples/sbom/cdxutil"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/record"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -40,7 +41,7 @@ func exchangeBytes(s source) ([]byte, error) {
 }
 
 func checkExchangeJSON(raw []byte, s source) error {
-	if err := uniqueJSON(raw); err != nil {
+	if err := cdxutil.UniqueJSON(raw); err != nil {
 		return err
 	}
 	var x exchangeJSON

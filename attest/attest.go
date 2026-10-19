@@ -179,12 +179,7 @@ func (s *Signer) Sign(rec sandbox.RunRecord) (Envelope, error) {
 	if err != nil {
 		return Envelope{}, err
 	}
-	sig := ed25519.Sign(s.key, PAE(PayloadType, payload))
-	return Envelope{
-		PayloadType: PayloadType,
-		Payload:     base64.StdEncoding.EncodeToString(payload),
-		Signatures:  []Signature{{KeyID: s.keyID, Sig: base64.StdEncoding.EncodeToString(sig)}},
-	}, nil
+	return s.envelope(payload), nil
 }
 
 // Verifier checks envelopes against one Ed25519 public key.

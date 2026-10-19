@@ -240,6 +240,10 @@
         <dt>admission</dt>
         <dd>The daemon's capacity check just before a run starts: it reserves a slot within the concurrency and memory limits, or refuses at once instead of queueing.</dd>
       </div>
+      <div class="entry" id="agent-sandbox">
+        <dt>agent-sandbox</dt>
+        <dd>A component of Kubernetes (a system for managing containers across machines) that lends a ready sandbox pod from a warm pool for one run; plimsoll checks the pod and its runtime before sending code, then deletes its claim.</dd>
+      </div>
       <div class="entry" id="attestation">
         <dt>attestation</dt>
         <dd>Cryptographic proof, usually rooted in the hardware, of exactly what software a machine is running; plimsoll's isolation tiers are evidence it collected, not attestation.</dd>
@@ -490,7 +494,7 @@
       </div>
       <div class="entry" id="provider">
         <dt>provider</dt>
-        <dd>The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud, openshell, or disabled, which runs nothing and is what an unset SANDBOX_PROVIDER selects.</dd>
+        <dd>The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud, openshell, agentsandbox, or disabled, which runs nothing and is what an unset SANDBOX_PROVIDER selects.</dd>
       </div>
       <div class="entry" id="quickjs">
         <dt>QuickJS</dt>

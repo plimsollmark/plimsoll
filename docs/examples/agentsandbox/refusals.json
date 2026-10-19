@@ -1,0 +1,86 @@
+{
+ "recorded": "2026-10-18T04:23:27Z",
+ "smoke": {
+  "kernel": "[   0.000000] Starting gVisor...",
+  "swept": 4902,
+  "writable": [
+   "/dev/shm",
+   "/tmp",
+   "/work"
+  ],
+  "egress": {
+   "tcp 1.1.1.1:443": "timeout",
+   "tcp 10.244.0.1:10250": "timeout",
+   "tcp 169.254.169.254:80": "timeout",
+   "tcp 172.24.0.2:6443": "timeout",
+   "tcp 8.8.8.8:53": "timeout"
+  },
+  "filled": [
+   "/tmp 32 MiB then ENOSPC",
+   "/work 128 MiB then ENOSPC"
+  ]
+ },
+ "runc_smoke": {
+  "seccomp": "2",
+  "queues": "created in /dev/mqueue, at most 819200 bytes for the guest's uid",
+  "swept": 4907
+ },
+ "pod_kernels": {
+  "gvisor": "Linux version 4.19.0-gvisor",
+  "remapped": "Linux version 6.6.87.2-microsoft-standard-WSL2"
+ },
+ "refusals": [
+  {
+   "id": "edited",
+   "title": "The template edited under a running daemon",
+   "did": "With the hardened daemon serving, one environment variable was added to the template's container, a field the per-run read-back does not decode, and the reconcile request was sent again.",
+   "caller": [
+    "plimsoll-attest: refused before dispatch (reason environment), so nothing ran; the bundle is unchanged: internal: internal error eb60cffd4ea34aee; the daemon's log holds its detail"
+   ],
+   "log": "agentsandbox: template evidence-gvisor changed after the startup smoke test proved it; plimsoll runs only on the template it proved, so restart plimsolld to prove this one",
+   "then": "With the edit removed, the next request was refused too, reason isolation, because the failed check had set the daemon's tier to unknown (“failed_precondition: sandbox isolation requirement not met: provider isolation unknown is below requested minimum kernel”). Readiness proved the template again 7 seconds after the edit was removed, and the same request then ran (“ran on agentsandbox (kernel): PROJECT_OUTCOME_COMPLETED, 2 steps”).",
+   "means": "Once the startup smoke test passes, only the template it proved runs, as a docker image tag re-pointed after startup is refused. A field plimsoll does not read cannot change under a running daemon."
+  },
+  {
+   "id": "hardened-runc",
+   "title": "Hardened mode on the runc pool",
+   "did": "The same hardened settings, pointed at the pool whose runtime class names runc.",
+   "caller": [],
+   "log": "provider \"agentsandbox\" reports isolation \"container\"; hardened mode requires vm (e2b, dockercloud) or verified kernel (docker with SANDBOX_DOCKER_RUNTIME=runsc, agentsandbox on a runsc runtime class)",
+   "then": "The daemon did not start.",
+   "means": "runc is an ordinary container, the container tier, and hardened mode serves only a VM or a verified user-space kernel."
+  },
+  {
+   "id": "floor",
+   "title": "A kernel floor on the runc pool",
+   "did": "The same settings without hardened mode: the daemon started at the container tier (its smoke test found a seccomp filter in force, mode 2), and the reconcile request, whose floor is kernel, was sent to it.",
+   "caller": [
+    "plimsoll-attest: refused before dispatch (reason isolation), so nothing ran; the bundle is unchanged: sandbox isolation requirement not met",
+    "failed_precondition: sandbox isolation requirement not met: provider isolation container is below requested minimum kernel"
+   ],
+   "log": "",
+   "then": "No pod was claimed.",
+   "means": "The floor is the caller's: a request states the weakest tier it accepts, and a provider that cannot meet it refuses before anything runs."
+  },
+  {
+   "id": "remapped-run",
+   "title": "A runsc handler that is not gVisor, under a running daemon",
+   "did": "With the hardened daemon serving after a passing smoke test under gVisor, the node's containerd configuration was edited so that its runsc handler starts ordinary runc containers, and the pool's pods were recreated. The runtime class still names runsc, so the Kubernetes API shows nothing different. A snippet that prints the kernel version was then sent.",
+   "caller": [
+    "plimsoll-attest: refused before dispatch (reason environment), so nothing ran; the bundle is unchanged: internal: internal error 63a568140598488b; the daemon's log holds its detail"
+   ],
+   "log": "agentsandbox: claim plimsoll-757ad683977cf1c7: the runtime class's handler is runsc but the guest's kernel log begins \"[178435.536685]  dump_header+0x51/0x260\", not gVisor's",
+   "then": "Before the fix this recording led to, the same setup let a daemon run this snippet and sign it at the kernel tier.",
+   "means": "A handler's name is configuration on each node, which the Kubernetes API does not show. So plimsoll's first command in every claimed pod, before any of the run's code, reads the kernel log and the seccomp mode as the guest, and a pod that does not match its tier is refused."
+  },
+  {
+   "id": "remapped-start",
+   "title": "The same node, a fresh daemon",
+   "did": "A new hardened daemon started against the remapped node.",
+   "caller": [],
+   "log": "sandbox smoke test: agentsandbox smoke: boundary test: agentsandbox: claim plimsoll-ded06d7ff709ec7b: the runtime class's handler is runsc but the guest's kernel log begins \"[178435.536685]  dump_header+0x51/0x260\", not gVisor's",
+   "then": "The daemon did not start. The node was then restored and the pool's pods recreated under gVisor.",
+   "means": "The startup smoke test claims pods as runs do, so it meets the same check."
+  }
+ ]
+}

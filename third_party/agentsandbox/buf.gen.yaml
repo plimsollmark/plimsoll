@@ -1,0 +1,20 @@
+# Generates the Go and Connect client for sandboxd's process service into
+# gen/go/agentsandbox. `make buf` runs every third_party/*/buf.gen.yaml after the root
+# template (whose `clean: true` empties gen/go first), then drift-checks gen/.
+#
+# The upstream file's go_package names agent-sandbox's own module, so the M option maps
+# it into this repository instead. Plugins are the repository's go.mod-pinned ones, run
+# through `go tool`.
+version: v2
+clean: true
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: gen/go/agentsandbox
+    opt:
+      - module=github.com/plimsollmark/plimsoll/gen/go/agentsandbox
+      - Mprocess/v1/process.proto=github.com/plimsollmark/plimsoll/gen/go/agentsandbox/processv1
+  - local: ["go", "tool", "protoc-gen-connect-go"]
+    out: gen/go/agentsandbox
+    opt:
+      - module=github.com/plimsollmark/plimsoll/gen/go/agentsandbox
+      - Mprocess/v1/process.proto=github.com/plimsollmark/plimsoll/gen/go/agentsandbox/processv1

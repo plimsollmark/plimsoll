@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>plimsoll on Kubernetes agent-sandbox: signed runs, their bills of materials, and five refusals</title>
+<meta name="description" content="Two real project runs on Kubernetes agent-sandbox under gVisor, through a hardened plimsoll daemon, each signed and converted to a CycloneDX bill of materials; the same requests' results compared with docker and Docker Cloud; and five refusals, among them a node whose gVisor handler was quietly swapped for an ordinary container.">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/agentsandbox/index.html">
+<style>
+  :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --blue: #2a78d6; --aqua: #1baf7a; --red: #b3261e; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 28px 24px 48px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 32px 0 8px; }
+  h3 { font-size: 15.5px; margin: 0 0 6px; }
+  p { margin: 6px 0; }
+  .sub { color: var(--ink2); margin-bottom: 18px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0 6px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .tile .k { color: var(--ink2); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  .tile .v { font-size: 20px; font-weight: 650; margin-top: 2px; }
+  .tile .n { color: var(--ink2); font-size: 12.5px; margin-top: 2px; }
+  pre { margin: 4px 0 8px; padding: 8px 10px; background: #fff; border: 1px solid var(--line); border-radius: 6px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
+  code, .mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .mono { word-break: break-all; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink2); font-weight: 600; font-size: 13px; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-weight: 600; font-size: 12.5px; }
+  .badge.ok { background: #e6f4ea; color: #1e6b2f; }
+  .badge.no { background: #fdecea; color: #8a1c1c; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-top: 12px; }
+  .refusal { border-left: 4px solid var(--red); }
+  .label { color: var(--ink2); font-size: 12.5px; font-weight: 600; margin-top: 8px; }
+  .note { color: var(--ink2); font-size: 13px; }
+  .wide { overflow-x: auto; }
+  dfn { font-style: normal; font-weight: 600; }
+  ol li, ul li { margin: 4px 0; }
+  a { color: var(--blue); }
+  @media (max-width: 900px) { .tiles { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
+<h1>plimsoll on Kubernetes agent-sandbox: signed runs, their bills of materials, and five refusals</h1>
+<p class="sub">plimsoll is a service that runs code an AI agent wrote and says, on every run, behind which boundary it ran. <dfn>Kubernetes agent-sandbox</dfn> is a Kubernetes project that keeps sandboxes as <dfn>pods</dfn> (Kubernetes' unit of one or more containers) in a <dfn>warm pool</dfn>, started ahead of time so a run does not wait for one. This page is two real runs through plimsoll on agent-sandbox, recorded on {{.Date}}, each signed and converted into a bill of materials, and five things plimsoll refused to do on the same cluster. Every claim below is either signed, and checkable with the commands at the end, or marked as a transcript.</p>
+
+<div class="tiles">
+  <div class="tile"><div class="k">Boundary</div><div class="v">gVisor · {{.Tier}}</div><div class="n">the tier plimsoll read and checked, in hardened mode</div></div>
+  <div class="tile"><div class="k">Signed runs</div><div class="v">{{len .Runs}}</div><div class="n">each with a CycloneDX bill of materials</div></div>
+  <div class="tile"><div class="k">Same request, 3 rooms</div><div class="v">{{if .AllSame}}same results{{else}}results differ{{end}}</div><div class="n">docker under gVisor and a Docker Cloud microVM ran the same request bytes</div></div>
+  <div class="tile"><div class="k">Refusals</div><div class="v">{{len .Rec.Refusals}}</div><div class="n">each before any code ran, or before the daemon served</div></div>
+</div>
+
+<h2>Words this page uses</h2>
+<ul>
+  <li><dfn>Tier</dfn>: how strong the wall between the code and the machine is. <code>container</code> is an ordinary container (runc): the code talks to the machine's own kernel through a filter. <code>kernel</code> is <dfn>gVisor</dfn>: a stand-in kernel that runs as an ordinary program, so the code never talks to the machine's kernel directly. <code>vm</code> is a separate virtual machine.</li>
+  <li><dfn>Runtime class</dfn>: the Kubernetes object a pod names to pick how its containers start. Its <dfn>handler</dfn> is a name, <code>runsc</code> for gVisor or <code>runc</code>, which each node maps to a program in its own configuration. The Kubernetes API shows the name, never the mapping.</li>
+  <li><dfn>Floor</dfn>: the weakest tier a request accepts. A provider that cannot meet it refuses before anything runs.</li>
+  <li><dfn>Run record</dfn>: what the daemon states about one run: SHA-256 <dfn>digests</dfn> (fingerprints that change if one byte changes) of the request and the result, the provider, the tier, the image, the times. A <dfn>harness</dfn> outside the daemon checks each record against the request and result it saw and signs it with its own key, into a <dfn>bundle</dfn> file.</li>
+  <li><dfn>Bill of materials</dfn> (BOM): a parts list. CycloneDX is a standard format for it that supply-chain tools read; here each run's BOM lists the program's files, the image, the steps, and the record's claims, with the signed evidence attached.</li>
+  <li><dfn>Hardened mode</dfn>: plimsoll's strict start. It refuses to serve unless every production rule holds: a VM or verified gVisor, a pinned image, per-caller authentication and limits, a stated memory, CPU and disk budget.</li>
+</ul>
+
+<h2>What happens on each run</h2>
+<div class="wide">
+<svg viewBox="0 0 1060 300" width="100%" style="min-width:760px" role="img" aria-label="A run: the caller sends a request to plimsolld, which reads the template, claims a pod from the warm pool, reads the pod back, runs its own probe in the pod, then the code; the harness signs the record into a bundle, and the SBOM example turns each line into a CycloneDX file.">
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5a5a5a"/></marker></defs>
+  <rect x="10" y="40" width="130" height="70" rx="8" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/>
+  <text x="24" y="66" font-size="14" font-weight="600" fill="#1a1a1a">The caller</text>
+  <text x="24" y="86" font-size="12" fill="#5a5a5a">code to run, and</text>
+  <text x="24" y="101" font-size="12" fill="#5a5a5a">the floor: kernel</text>
+  <line x1="140" y1="75" x2="186" y2="75" stroke="#5a5a5a" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="190" y="10" width="400" height="190" rx="8" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+  <text x="206" y="34" font-size="14" font-weight="600" fill="#1a1a1a">plimsolld, hardened</text>
+  <text x="206" y="58" font-size="12.5" fill="#1a1a1a">1. reads the template, runtime class and policies</text>
+  <text x="206" y="80" font-size="12.5" fill="#1a1a1a">2. claims one pod from the warm pool</text>
+  <text x="206" y="102" font-size="12.5" fill="#1a1a1a">3. reads that pod back: image digest, spec, policies</text>
+  <text x="206" y="124" font-size="12.5" fill="#b3261e" font-weight="600">4. its first command in the pod: kernel log, seccomp</text>
+  <text x="206" y="146" font-size="12.5" fill="#1a1a1a">5. sends the run's code; returns the result and the record</text>
+  <text x="206" y="168" font-size="12.5" fill="#1a1a1a">6. deletes the claim, so the pod is gone</text>
+  <text x="206" y="188" font-size="11.5" fill="#5a5a5a">any check that fails: refused, nothing ran</text>
+  <line x1="590" y1="105" x2="636" y2="105" stroke="#5a5a5a" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="640" y="40" width="190" height="130" rx="8" fill="#e6f4ea" stroke="#1baf7a" stroke-width="1.5"/>
+  <text x="654" y="64" font-size="14" font-weight="600" fill="#1e6b2f">One fresh pod</text>
+  <text x="654" y="86" font-size="12.5" fill="#1e6b2f">gVisor's kernel (runsc)</text>
+  <text x="654" y="108" font-size="12.5" fill="#1e6b2f">sandboxd, agent-sandbox's</text>
+  <text x="654" y="124" font-size="12.5" fill="#1e6b2f">daemon in the pod</text>
+  <text x="654" y="146" font-size="12.5" fill="#1e6b2f">the code, as uid 61000,</text>
+  <text x="654" y="162" font-size="12.5" fill="#1e6b2f">no network out</text>
+  <line x1="390" y1="200" x2="390" y2="232" stroke="#5a5a5a" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="190" y="236" width="400" height="56" rx="8" fill="#fff" stroke="#5a5a5a" stroke-width="1.2"/>
+  <text x="206" y="258" font-size="13" font-weight="600" fill="#1a1a1a">attest harness, outside the daemon</text>
+  <text x="206" y="278" font-size="12" fill="#5a5a5a">checks the record, signs it into bundle.jsonl</text>
+  <line x1="590" y1="264" x2="636" y2="264" stroke="#5a5a5a" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="640" y="236" width="300" height="56" rx="8" fill="#fff" stroke="#5a5a5a" stroke-width="1.2"/>
+  <text x="654" y="258" font-size="13" font-weight="600" fill="#1a1a1a">examples/sbom</text>
+  <text x="654" y="278" font-size="12" fill="#5a5a5a">one CycloneDX file per signed line</text>
+</svg>
+</div>
+<p>Step 4 is new. A handler's name is configuration on each node, which the Kubernetes API does not show, so before any of the run's code plimsoll runs one command of its own in the claimed pod, as the guest: the first line of the kernel log, which under gVisor is gVisor's own boot line, and the seccomp mode, which under runc must show a filter. The pod is fresh, so nothing of a guest's has run in it yet. On this cluster the check cost nothing measurable: the median snippet took 75 ms from claim to result with it and without it, over ten runs each. Refusal 4 below is why it exists.</p>
+
+<h2>The two signed runs</h2>
+<p>The program is a three-file invoice reconciliation an agent might write, the same one the <a href="../sbom/index.html">INTERNAL · CycloneDX example page →</a> uses; the second request adds one step that tries to fetch a web page.</p>
+{{range .Runs}}
+<div class="panel">
+<h3>{{.Title}}</h3>
+<table>
+  <tr><th>Outcome</th><td><span class="badge ok">{{.Outcome}}</span> in {{.Ms}} ms, started {{.Started}}</td></tr>
+  <tr><th>Tier</th><td><code>{{.Tier}}</code>, at or above the requested floor <code>{{.Floor}}</code></td></tr>
+  <tr><th>Image</th><td class="mono">sha256:{{.Image}}</td></tr>
+  <tr><th>Request digest</th><td class="mono">{{.Request}}</td></tr>
+  <tr><th>Result digest</th><td class="mono">{{.Result}}</td></tr>
+  <tr><th>Record digest</th><td class="mono">{{.Record}}</td></tr>
+  <tr><th>Signed</th><td>line {{.Line}} of <a href="bundle.jsonl">INTERNAL · bundle.jsonl →</a>, by the harness key in <a href="harness.pub">INTERNAL · harness.pub →</a></td></tr>
+  <tr><th>Bill of materials</th><td><a href="{{.BOM}}">INTERNAL · {{.BOM}} →</a></td></tr>
+</table>
+<table style="margin-top:8px">
+  <tr><th>Step</th><th>Exit</th><th>Time</th><th>Output</th></tr>
+  {{range .Steps}}<tr><td><code>{{.Command}}</code></td><td>{{.Exit}}</td><td>{{.Ms}} ms</td><td><pre>{{.Output}}</pre></td></tr>
+  {{end}}
+</table>
+</div>
+{{end}}
+<p class="note">The network step's exit 3 is the program's own report that its fetch failed: the pod has no route out, so the attempt times out. That is a result, not an error, and the run completed.</p>
+
+<h2>The same request in three rooms</h2>
+<p>The CycloneDX example sent these exact request bytes to docker under gVisor and to a Docker Cloud microVM. The request digest covers the files, steps, floor and timeout, so equal digests mean equal requests. The result digest covers what each step printed and its exit code, not how long it took.</p>
+{{range .Runs}}
+<div class="wide"><table style="margin-top:10px">
+  <tr><th colspan="5">{{.Title}} · request <span class="mono">{{short .Request}}</span></th></tr>
+  <tr><th>Provider</th><th>Tier</th><th>Image identity the record states</th><th>Result digest</th><th>Time</th></tr>
+  {{range .Rooms}}<tr><td>{{.Provider}}{{if .Here}} (this page){{end}}</td><td><code>{{.Tier}}</code></td><td class="mono">{{.Environment}}</td><td class="mono">{{short .Result}} {{if .SameResult}}<span class="badge ok">same</span>{{else}}<span class="badge no">differs</span>{{end}}</td><td>{{.Ms}} ms{{if .Page}} · <a href="{{.Page}}">INTERNAL · its BOM →</a>{{end}}</td></tr>
+  {{end}}
+</table></div>
+{{end}}
+{{if .AllSame}}<p>Both requests gave byte-identical results in all three rooms, the network step's failed fetch included: in each, the program's attempt timed out with nowhere to go.</p>{{else}}<p class="note">A different result digest is not by itself a failure: the network step's message names the error its fetch got, and an attempt that is refused reads differently from one that times out.</p>{{end}}
+
+<h2>Five refusals</h2>
+<p>Each of these is a transcript, unsigned: a refusal made before any code ran leaves no run record, since there is no result to state. The caller's lines are what <code>plimsoll-attest run</code> printed; the daemon's line is from its log, where an environment refusal's detail is kept, since it can carry the cluster's own error text.</p>
+{{range $i, $r := .Rec.Refusals}}
+<div class="panel refusal" id="{{$r.ID}}">
+<h3>{{$i | inc}}. {{$r.Title}}</h3>
+<div class="label">What was done</div><p>{{$r.Did}}</p>
+{{if $r.Caller}}<div class="label">What the caller got</div><pre>{{range $r.Caller}}{{.}}
+{{end}}</pre>{{end}}
+{{if $r.Log}}<div class="label">What the daemon logged</div><pre>{{$r.Log}}</pre>{{end}}
+<div class="label">Then</div><p>{{$r.Then}}</p>
+{{if eq $r.ID "remapped-run"}}<p>That run's record is published, signed by the same harness key: <a href="before-the-fix.jsonl">INTERNAL · before-the-fix.jsonl →</a>, record <span class="mono">{{short $.Before.Record}}</span>, provider {{$.Before.Provider}}, tier <code>{{$.Before.Tier}}</code>, exit {{$.Before.Exit}}. What the snippet printed:</p>
+<pre>{{$.Before.Stdout}}</pre>
+<p>The signature is genuine and the claim was wrong: a signature proves who stated a record and that it was not changed, not that the statement was true. That is why the tier has to be checked where the code runs.</p>{{end}}
+<div class="label">What it shows</div><p>{{$r.Means}}</p>
+</div>
+{{end}}
+
+<h2>What the startup smoke test proved</h2>
+<p>Before serving, the daemon claimed two pods as runs do and checked from inside what reading the configuration cannot show. Under gVisor: the kernel log begins <code>{{.Rec.Smoke.Kernel}}</code>; of {{.Rec.Smoke.Swept}} paths the guest could reach, writes succeeded only in {{range $i, $w := .Rec.Smoke.Writable}}{{if $i}}, {{end}}<code>{{$w}}</code>{{end}}; each volume refused writes once full ({{range $i, $f := .Rec.Smoke.Filled}}{{if $i}}; {{end}}{{$f}}{{end}}); and every connection out failed:</p>
+<pre>{{range .Egress}}{{.}}
+{{end}}</pre>
+<p>Under runc (refusal 3's daemon), the guest's seccomp mode was {{.Rec.RuncSmoke.Seccomp}}, a filter in force, and the guest could create POSIX message queues ({{.Rec.RuncSmoke.Queues}}), which the smoke test accepts only under a small per-user limit.</p>
+
+<h2>Check it yourself</h2>
+<p>From a checkout of the repository. The first command checks every signature, digest and link in the bundle; the second rebuilds a bill of materials from the signed line it attaches and compares it, pinning the harness key you trust.</p>
+<pre>go run ./cmd/plimsoll-attest verify -pub docs/examples/agentsandbox/harness.pub docs/examples/agentsandbox/bundle.jsonl
+cd examples/sbom
+go run . -check ../../docs/examples/agentsandbox/{{(index .Runs 0).BOM}} \
+  -trusted-pub ../../docs/examples/agentsandbox/harness.pub \
+  -check-bundle ../../docs/examples/agentsandbox/bundle.jsonl
+cd ../..
+go run ./examples/agentsandbox   # writes this page again from the files beside it</pre>
+<p>The harness key is the CycloneDX example's (key ID <span class="mono">{{.KeyID}}</span>): one operator's harness signed both pages' runs.</p>
+
+<h2>How this was recorded</h2>
+<ul>
+  <li>A kind cluster (Kubernetes in docker, one node) on one developer machine: Kubernetes 1.37.0, containerd 2.3.4, agent-sandbox v1.0.7, gVisor release-20260907.0.</li>
+  <li>The pool's template is the one in <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/agentsandbox-example.yaml">EXTERNAL · source repo ↗</a>, with the image pinned by the digest above and plimsolld's network as the only source allowed in.</li>
+  <li>plimsolld ran in a container on the cluster's network, since it reaches each pod's sandboxd at the pod's address, in hardened mode: a callers file, the pinned image required, 256 MiB, 1 CPU and 160 MiB of disk per run, 60 runs a minute per caller.</li>
+  <li>Refusals 4 and 5 needed root on the node: its containerd configuration was edited, which no caller and no pod can do. They stand for a node that joins a pool misconfigured, not for an attack.</li>
+  <li>The operator guide is <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/agentsandbox.md">EXTERNAL · source repo ↗</a>.</li>
+</ul>
+
+<h2>What this does not show</h2>
+<ul>
+  <li>A tier is configuration and provider evidence plus these checks, never attestation. gVisor's boot line is text a node's root could forge; the check catches a misconfigured node, not a hostile one.</li>
+  <li>One node on one machine. On a cluster of many nodes, each run's own check covers the node it lands on, and the startup smoke test covers only the nodes its two pods landed on.</li>
+  <li>Memory: on a node with swap, a gVisor pod can hold more than its limit (measured on this cluster: a 128 MiB pod held 1024 MiB, 932 of it in swap, where runc killed the same pod at 112 MiB). That is gVisor's open issue 15756, not something plimsoll can see from the API; the operator guide gives the node setting that stops it.</li>
+  <li>The refusals are transcripts. Only the two runs are signed.</li>
+</ul>
+</main>
+</body>
+</html>

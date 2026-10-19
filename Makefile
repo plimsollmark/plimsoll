@@ -15,10 +15,12 @@
 # docker-images`), E2B=1 (E2B_API_KEY in the environment), DOCKERCLOUD=1
 # (DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE or _STORE_IMAGE, and unless
 # SANDBOX_DOCKERCLOUD_API=rest SANDBOX_DOCKERCLOUD_API_URL) and/or OPENSHELL=1 (an OpenShell gateway and the
-# SANDBOX_OPENSHELL_* files) to include them. DOCKER=1, DOCKERCLOUD=1 and OPENSHELL=1
+# SANDBOX_OPENSHELL_* files) and/or AGENTSANDBOX=1 (an agent-sandbox cluster and the
+# SANDBOX_AGENTSANDBOX_* settings) to include them. DOCKER=1, DOCKERCLOUD=1, OPENSHELL=1 and AGENTSANDBOX=1
 # are requests for proof: those suites run in required mode, where missing
 # infrastructure or configuration fails the target instead of passing quietly. E2B and
-# dockercloud spend money; no CI job runs them, nor openshell, which needs a gateway.
+# dockercloud spend money; no CI job runs them, nor openshell, which needs a gateway, nor
+# agentsandbox, which needs a cluster.
 SECCOMP := $(CURDIR)/docker/seccomp.json
 
 # The docker suite's tests in ./sandbox and ./docker, by top-level name. Only
@@ -31,7 +33,7 @@ DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite modproxy tools tools-check help
+.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite agentsandbox-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
@@ -42,6 +44,7 @@ audit: tools-check build vet race lint buf vuln
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
 	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE or _STORE_IMAGE, and unless SANDBOX_DOCKERCLOUD_API=rest SANDBOX_DOCKERCLOUD_API_URL)"; fi
 	@if [ "$(OPENSHELL)" = "1" ]; then $(MAKE) openshell-suite; else echo "skip openshell-suite (set OPENSHELL=1 with a gateway and SANDBOX_OPENSHELL_GATEWAY_URL, _CA_FILE, _CERT_FILE, _KEY_FILE, _IMAGE)"; fi
+	@if [ "$(AGENTSANDBOX)" = "1" ]; then $(MAKE) agentsandbox-suite; else echo "skip agentsandbox-suite (set AGENTSANDBOX=1 with a cluster, AGENTSANDBOX_TIER and the SANDBOX_AGENTSANDBOX_* settings)"; fi
 	@echo "audit: OK"
 
 # A working copy may add steps of its own to the gate: local.mk, if present, appends
@@ -162,7 +165,7 @@ docker-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "docker-suite: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     $(NO_PAID_KEYS) go test -race ./sandbox ./docker -run '$(DOCKER_TESTS)' -skip 'Live$$' -count=1 -parallel $(DOCKER_PARALLEL) -v; \
+	     $(NO_PAID_KEYS) go test -race ./sandbox ./sandbox/openshell ./sandbox/agentsandbox ./docker -run '$(DOCKER_TESTS)' -skip 'Live$$' -count=1 -parallel $(DOCKER_PARALLEL) -v; \
 	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
 	     $(NO_PAID_KEYS) go test ./clients/python -run TestPythonWorkspaceDocker -count=1 -v; \
@@ -314,9 +317,12 @@ dockercloud-suite:
 # gateway (sandbox/openshell/live_test.go, cmd/plimsolld/openshell_live_test.go). It
 # is free, a local gateway on local docker, but needs a gateway, so it is opt-in and
 # a request for proof: OPENSHELL_LIVE=1 makes missing configuration fail, and a
-# skipped test fails the target. -p 1 runs the packages one after the other, because
+# skipped test fails the target. The packages run one after the other, because
 # the daemon test requires the gateway to hold no new plimsoll sandbox after the
-# daemon exits, and the provider tests would add some if they ran at the same time.
+# daemon exits, and the provider tests would add some if they ran at the same time
+# (the two run one after the other).
+# The daemon package runs only its OpenShell tests, since its other live tests need other
+# infrastructure and would skip here.
 #
 #   SANDBOX_OPENSHELL_GATEWAY_URL   e.g. https://127.0.0.1:17670
 #   SANDBOX_OPENSHELL_CA_FILE       the gateway CA (PEM)
@@ -327,12 +333,53 @@ dockercloud-suite:
 ## openshell-suite: the live OpenShell provider and daemon tests; a missing gateway or a skipped test FAILS
 openshell-suite:
 	@mkdir -p tmp
-	@{ OPENSHELL_LIVE=1 $(NO_PAID_KEYS) go test -p 1 ./sandbox/openshell ./cmd/plimsolld -run 'Live' -count=1 -v; \
+	@{ OPENSHELL_LIVE=1 $(NO_PAID_KEYS) go test ./sandbox/openshell -run 'Live' -count=1 -v && \
+	   OPENSHELL_LIVE=1 $(NO_PAID_KEYS) go test ./cmd/plimsolld -run 'OpenShell.*Live' -count=1 -v; \
 	   echo $$? > tmp/openshell-suite.status; } 2>&1 | tee tmp/openshell-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/openshell-suite.log; then \
 	   echo "openshell-suite: required coverage was skipped:" >&2; \
 	   grep -E '^ *--- SKIP' tmp/openshell-suite.log >&2; exit 1; fi
 	@exit "$$(cat tmp/openshell-suite.status)"
+
+# The live agent-sandbox suite: the provider's tests and a daemon test against a cluster
+# (sandbox/agentsandbox/live_test.go, cmd/plimsolld/agentsandbox_live_test.go), the
+# provider's first, since the daemon test requires the cluster to hold no new claim of
+# plimsoll's after the daemon exits. Free, but it needs a cluster, so it is opt-in and a
+# request for proof: missing configuration or a skipped test fails the target. The
+# settings are plimsolld's own (`plimsolld -h`) plus AGENTSANDBOX_TIER, the tier the
+# cluster was set up for (kernel, container or vm), stated outside the provider.
+#
+# The tests reach each pod at its address, so they run where the pod network is
+# routable. Inside the cluster that is anywhere; for a kind cluster on this host's docker,
+# set AGENTSANDBOX_NETWORK to kind's docker network and AGENTSANDBOX_POD_ROUTE to the pod
+# range through the node (for example '10.244.0.0/16 via 172.24.0.2'), and the suite
+# runs in a container on that network with that route, every file setting mounted
+# read-only at its own path.
+AGENTSANDBOX_SETTINGS := AGENTSANDBOX_TIER SANDBOX_AGENTSANDBOX_API_SERVER SANDBOX_AGENTSANDBOX_CA_FILE \
+	SANDBOX_AGENTSANDBOX_TOKEN_FILE SANDBOX_AGENTSANDBOX_NAMESPACE SANDBOX_AGENTSANDBOX_WARM_POOL \
+	SANDBOX_AGENTSANDBOX_RUNTIME_CLASS SANDBOX_AGENTSANDBOX_IMAGE SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE \
+	SANDBOX_MEMORY_MB SANDBOX_CPUS SANDBOX_DISK_MB SANDBOX_REQUIRE_PINNED_IMAGES
+AGENTSANDBOX_FILES := SANDBOX_AGENTSANDBOX_CA_FILE SANDBOX_AGENTSANDBOX_TOKEN_FILE SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE
+## agentsandbox-suite: the live agent-sandbox provider and daemon tests; a missing cluster or a skipped test FAILS
+agentsandbox-suite:
+	@mkdir -p tmp/agentsandbox-suite
+	@CGO_ENABLED=0 go test -c -o tmp/agentsandbox-suite/provider.test ./sandbox/agentsandbox
+	@CGO_ENABLED=0 go test -c -o tmp/agentsandbox-suite/daemon.test ./cmd/plimsolld
+	@{ if [ -n "$(AGENTSANDBOX_NETWORK)" ]; then \
+	     set --; \
+	     for v in $(AGENTSANDBOX_SETTINGS); do [ -n "$$(printenv $$v)" ] && set -- "$$@" -e "$$v"; done; \
+	     for v in $(AGENTSANDBOX_FILES); do f="$$(printenv $$v)"; [ -n "$$f" ] && set -- "$$@" -v "$$f:$$f:ro"; done; \
+	     docker run --rm --network "$(AGENTSANDBOX_NETWORK)" --cap-add NET_ADMIN -e AGENTSANDBOX_LIVE=1 "$$@" \
+	       -v "$(CURDIR)/tmp/agentsandbox-suite:/suite:ro" alpine:3 sh -c \
+	       "ip route add $(AGENTSANDBOX_POD_ROUTE) && /suite/provider.test -test.run Live -test.count=1 -test.v && /suite/daemon.test -test.run 'AgentSandbox.*Live' -test.count=1 -test.v"; \
+	   else \
+	     AGENTSANDBOX_LIVE=1 $(NO_PAID_KEYS) tmp/agentsandbox-suite/provider.test -test.run Live -test.count=1 -test.v && \
+	     AGENTSANDBOX_LIVE=1 $(NO_PAID_KEYS) tmp/agentsandbox-suite/daemon.test -test.run 'AgentSandbox.*Live' -test.count=1 -test.v; \
+	   fi; echo $$? > tmp/agentsandbox-suite.status; } 2>&1 | tee tmp/agentsandbox-suite.log
+	@if grep -qE '^ *--- SKIP' tmp/agentsandbox-suite.log; then \
+	   echo "agentsandbox-suite: required coverage was skipped:" >&2; \
+	   grep -E '^ *--- SKIP' tmp/agentsandbox-suite.log >&2; exit 1; fi
+	@exit "$$(cat tmp/agentsandbox-suite.status)"
 
 # The guarded-egress path is the one claim `make audit E2B=1` cannot make: its live
 # test skips unless three deployment-specific variables are set, and a skip inside a

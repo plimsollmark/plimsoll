@@ -21,6 +21,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1"
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 )
 
 const (
@@ -252,7 +253,7 @@ func (p *Provider) waitReady(ctx context.Context, name string) (*openshellv1.San
 		default:
 			return nil, fmt.Errorf("openshell create sandbox: sandbox reached phase %v instead of ready: %s", phase, conditionSummary(sb))
 		}
-		if err := sleepCtx(ctx, readyPoll); err != nil {
+		if err := providerkit.Sleep(ctx, readyPoll); err != nil {
 			return nil, err
 		}
 	}
@@ -447,7 +448,7 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 		sent <- err
 	}()
 
-	stdout, stderr := capture{limit: stdoutCap}, capture{limit: stderrCap}
+	stdout, stderr := providerkit.Capture{Limit: stdoutCap}, providerkit.Capture{Limit: stderrCap}
 	var out execOutput
 	var recvErr error
 	for !out.exited {
@@ -460,12 +461,12 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 		}
 		switch pl := ev.GetPayload().(type) {
 		case *openshellv1.ExecSandboxEvent_Stdout:
-			stdout.write(pl.Stdout.GetData())
+			stdout.Write(pl.Stdout.GetData())
 			if watch != nil {
 				watch(pl.Stdout.GetData())
 			}
 		case *openshellv1.ExecSandboxEvent_Stderr:
-			stderr.write(pl.Stderr.GetData())
+			stderr.Write(pl.Stderr.GetData())
 		case *openshellv1.ExecSandboxEvent_Exit:
 			out.exitCode, out.exited = int(pl.Exit.GetExitCode()), true
 		}
@@ -483,10 +484,10 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 			}
 			switch pl := ev.GetPayload().(type) {
 			case *openshellv1.ExecSandboxEvent_Stdout:
-				stdout.write(pl.Stdout.GetData())
+				stdout.Write(pl.Stdout.GetData())
 				out.lateOutput = true
 			case *openshellv1.ExecSandboxEvent_Stderr:
-				stderr.write(pl.Stderr.GetData())
+				stderr.Write(pl.Stderr.GetData())
 				out.lateOutput = true
 			}
 		}
@@ -498,8 +499,8 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 	cancel()
 	sendErr := <-sent
 	_ = stream.CloseResponse()
-	out.stdout, out.stdoutTruncated = stdout.buf, stdout.dropped
-	out.stderr, out.stderrTruncated = stderr.buf, stderr.dropped
+	out.stdout, out.stdoutTruncated = stdout.Buf, stdout.Dropped
+	out.stderr, out.stderrTruncated = stderr.Buf, stderr.Dropped
 	switch {
 	case out.exited:
 		return out, nil
@@ -509,27 +510,6 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 		return out, fmt.Errorf("openshell exec: the stream ended without an exit status: %w", sendErr)
 	default:
 		return out, errors.New("openshell exec: the stream ended without an exit status")
-	}
-}
-
-// capture keeps the first limit bytes written to it and records whether it dropped
-// any. The retained prefix is never annotated in-band.
-type capture struct {
-	buf     []byte
-	limit   int
-	dropped bool
-}
-
-func (c *capture) write(p []byte) {
-	if room := c.limit - len(c.buf); room > 0 {
-		if len(p) > room {
-			c.buf = append(c.buf, p[:room]...)
-			c.dropped = true
-		} else {
-			c.buf = append(c.buf, p...)
-		}
-	} else if len(p) > 0 {
-		c.dropped = true
 	}
 }
 
@@ -553,22 +533,10 @@ func (p *Provider) deleteLater(ctx context.Context, b box) {
 // after that is an orphan, and ReconcileOrphans reaps it.
 func (p *Provider) destroy(b box) {
 	defer p.leases.Untrack(b.name)
-	ctx, cancel := context.WithTimeout(context.Background(), deleteBudget)
-	defer cancel()
-	const attempts = 3
-	for i := 1; ; i++ {
-		err := p.deleteAndWait(ctx, b.name)
-		if err == nil {
-			return
-		}
-		if i == attempts || ctx.Err() != nil {
-			slog.Error("openshell: failed to delete sandbox; ReconcileOrphans will reap it",
-				"sandbox", b.name, "id", b.id, "attempts", i, "error", err)
-			return
-		}
-		if sleepCtx(ctx, time.Duration(i)*time.Second) != nil {
-			return
-		}
+	n, err := providerkit.Delete(deleteBudget, func(ctx context.Context) error { return p.deleteAndWait(ctx, b.name) })
+	if err != nil {
+		slog.Error("openshell: failed to delete sandbox; ReconcileOrphans will reap it",
+			"sandbox", b.name, "id", b.id, "attempts", n, "error", err)
 	}
 }
 
@@ -594,7 +562,7 @@ func (p *Provider) deleteAndWait(ctx context.Context, name string) error {
 		if err != nil {
 			return err
 		}
-		if err := sleepCtx(ctx, 100*time.Millisecond); err != nil {
+		if err := providerkit.Sleep(ctx, 100*time.Millisecond); err != nil {
 			return err
 		}
 	}
@@ -616,7 +584,7 @@ func (p *Provider) Drain(ctx context.Context) error {
 		return fmt.Errorf("openshell: sandboxes still being created: %w", ctx.Err())
 	}
 	for p.leases.Len() > 0 {
-		if err := sleepCtx(ctx, 50*time.Millisecond); err != nil {
+		if err := providerkit.Sleep(ctx, 50*time.Millisecond); err != nil {
 			return fmt.Errorf("openshell: %d sandboxes still undeleted: %w", p.leases.Len(), err)
 		}
 	}
@@ -732,17 +700,6 @@ func (p *Provider) gatewaySkew() (time.Duration, bool) {
 	p.skewMu.Lock()
 	defer p.skewMu.Unlock()
 	return p.skew, p.skewKnown
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) error {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
-	}
 }
 
 // sameStruct is proto.Equal for a Struct field, except that an absent Struct and an

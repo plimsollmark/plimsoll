@@ -17,13 +17,9 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,7 +49,7 @@ func run(ctx context.Context) error {
 	}
 	defer os.RemoveAll(workDir)
 
-	token, clientsPath, err := writeClientsFile(workDir)
+	token, clientsPath, err := daemonproc.ClientsFile(workDir, callerID)
 	if err != nil {
 		return err
 	}
@@ -193,27 +189,6 @@ func dial(baseURL, token string) (*client.Remote, error) {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
 	return remote, nil
-}
-
-// writeClientsFile creates the multi-client auth file. Tokens are stored as SHA-256
-// hex, never in the clear, so possessing the file does not give you a way in.
-// Outside an example, `plimsoll-clients create` writes the same file (see
-// docs/callers.md); this one is inlined so the program stays self-contained.
-func writeClientsFile(dir string) (token, path string, err error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", "", err
-	}
-	token = hex.EncodeToString(raw)
-	sum := sha256.Sum256([]byte(token))
-
-	path = filepath.Join(dir, "clients.json")
-	body := fmt.Sprintf(`{"clients":[{"id":%q,"token_sha256":%q,"scopes":["code:run"]}]}`,
-		callerID, hex.EncodeToString(sum[:]))
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		return "", "", err
-	}
-	return token, path, nil
 }
 
 // oneLine flattens a server error for display. Connect errors carry the server's

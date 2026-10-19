@@ -65,3 +65,32 @@ func TestHardenedPolicyDaemonBuiltProvider(t *testing.T) {
 		t.Fatalf("err = %v, demands a variable outside the provider's envelope", err)
 	}
 }
+
+// TestHardenedPolicyEnvelopeAtTheProvenTier: agentsandbox enforces a disk budget below the
+// vm tier and refuses one under Kata, so hardened mode requires SANDBOX_DISK_MB only once
+// the smoke test has proven a tier below vm; the pass before it, with the tier pending,
+// does not require it, since it cannot know which.
+func TestHardenedPolicyEnvelopeAtTheProvenTier(t *testing.T) {
+	dp := daemonProviders["agentsandbox"]
+	f := hardenedDockerFacts()
+	f.Provider = "agentsandbox"
+	env := map[string]string{"SANDBOX_MEMORY_MB": "256", "SANDBOX_CPUS": "1", "SANDBOX_REQUIRE_PINNED_IMAGES": "1"}
+	for _, c := range []struct {
+		tier     sandbox.IsolationClass
+		pending  bool
+		wantDisk bool
+	}{
+		{sandbox.IsolationUnknown, true, false},
+		{sandbox.IsolationKernel, false, true},
+		{sandbox.IsolationVM, false, false},
+	} {
+		f.Isolation, f.IsolationPending = c.tier, c.pending
+		err := enforceHardenedPolicy(getenvFrom(env), f)
+		if got := err != nil && strings.Contains(err.Error(), "SANDBOX_DISK_MB"); got != c.wantDisk || (err != nil && !c.wantDisk) {
+			t.Errorf("tier %s (pending %t): err = %v, want SANDBOX_DISK_MB required: %t", c.tier, c.pending, err, c.wantDisk)
+		}
+	}
+	if dp.hardenedEnvelopeAt == nil {
+		t.Fatal("agentsandbox names no tier-dependent envelope")
+	}
+}

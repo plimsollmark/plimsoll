@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/plimsollmark/plimsoll/attest"
+	"github.com/plimsollmark/plimsoll/examples/sbom/cdxutil"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -40,14 +41,14 @@ func main() {
 
 type pageRun struct {
 	Title, File, Record, RequestDigest, Image, Tier, Floor, Grant, Start, End, Outcome, JSON string
-	Anchor                                                                    string
-	Line                                                                      uint64
-	BundleURL, QualificationURL                                               string
-	Files                                                                     []pageFile
-	Steps                                                                     []pageStep
-	Checks                                                                    []string
-	Mappings                                                                  []mappingRow
-	Verdict                                                                   *pageVerdict
+	Anchor                                                                                   string
+	Line                                                                                     uint64
+	BundleURL, QualificationURL                                                              string
+	Files                                                                                    []pageFile
+	Steps                                                                                    []pageStep
+	Checks                                                                                   []string
+	Mappings                                                                                 []mappingRow
+	Verdict                                                                                  *pageVerdict
 }
 type pageFile struct{ Path, Content, Hash string }
 type pageStep struct {
@@ -79,26 +80,6 @@ type pageData struct {
 	ReceiptScript   template.JS
 	Images          []*imageBOM
 	ReceiptImages   template.JS
-}
-
-// Bound uploaded BOMs and bundles before materializing their nested attachments.
-// 32 MiB covers the RPC's request/result budgets plus base64 expansion in a BOM.
-const inputLimit = 32 << 20
-
-func readInput(path string) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, inputLimit+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > inputLimit {
-		return nil, fmt.Errorf("%s exceeds the 32 MiB input budget", path)
-	}
-	return b, nil
 }
 
 // parseLines is a comma-separated list of bundle line numbers.
@@ -154,10 +135,10 @@ func sharedFor(raw []byte, dir, explicitBundle, explicitQualification string) (s
 	wantBundle, wantQualification := referenced(raw)
 	read := func(explicit, name, want string) ([]byte, error) {
 		if explicit != "" {
-			return readInput(explicit)
+			return cdxutil.ReadInput(explicit)
 		}
-		b, err := readInput(filepath.Join(dir, name))
-		if err != nil || digest(b) != want {
+		b, err := cdxutil.ReadInput(filepath.Join(dir, name))
+		if err != nil || cdxutil.Digest(b) != want {
 			return nil, nil
 		}
 		return b, nil
@@ -207,13 +188,13 @@ func execute(args []string, out io.Writer) error {
 		return fmt.Errorf("unexpected positional arguments")
 	}
 	if *checkPath != "" {
-		raw, err := readInput(*checkPath)
+		raw, err := cdxutil.ReadInput(*checkPath)
 		if err != nil {
 			return err
 		}
 		var trusted []byte
 		if *trustedPath != "" {
-			trusted, err = readInput(*trustedPath)
+			trusted, err = cdxutil.ReadInput(*trustedPath)
 			if err != nil {
 				return err
 			}
@@ -260,11 +241,11 @@ func execute(args []string, out io.Writer) error {
 	if err := o.validate(); err != nil {
 		return err
 	}
-	bundle, err := readInput(*bundlePath)
+	bundle, err := cdxutil.ReadInput(*bundlePath)
 	if err != nil {
 		return err
 	}
-	pem, err := readInput(*pubPath)
+	pem, err := cdxutil.ReadInput(*pubPath)
 	if err != nil {
 		return err
 	}
@@ -276,15 +257,15 @@ func execute(args []string, out io.Writer) error {
 		return err
 	}
 	if *qualifiedBundle != "" {
-		qb, err := readInput(*qualifiedBundle)
+		qb, err := cdxutil.ReadInput(*qualifiedBundle)
 		if err != nil {
 			return err
 		}
-		qp, err := readInput(*qualifiedPub)
+		qp, err := cdxutil.ReadInput(*qualifiedPub)
 		if err != nil {
 			return err
 		}
-		qs, err := readInput(*qualificationPath)
+		qs, err := cdxutil.ReadInput(*qualificationPath)
 		if err != nil {
 			return err
 		}
@@ -311,7 +292,7 @@ func execute(args []string, out io.Writer) error {
 	if transcript == "" {
 		transcript = filepath.Join(filepath.Dir(*bundlePath), "outside-plimsoll.txt")
 	}
-	outside, err := readInput(transcript)
+	outside, err := cdxutil.ReadInput(transcript)
 	var pairedRecord, pairedStep string
 	if err == nil {
 		data.Outside = string(outside)
@@ -327,7 +308,7 @@ func execute(args []string, out io.Writer) error {
 	for _, s := range runs {
 		ro := o
 		ro.Name = s.displayName(o.Name)
-		manifest, _, _ := imageDigest(s.Record)
+		manifest, _, _ := cdxutil.ImageDigest(s.Record)
 		ro.ImageBOM, err = readImageBOM(*imagePath, filepath.Dir(*bundlePath), "sha256:"+manifest)
 		if err != nil {
 			return err
@@ -361,7 +342,7 @@ func execute(args []string, out io.Writer) error {
 			return fmt.Errorf("duplicate run filename %s", name)
 		}
 		outputs[name] = raw
-		p := pageRun{File: name, Anchor: "run-" + s.Record.SHA256[:12], Record: s.Record.SHA256, RequestDigest: s.Record.RequestSHA256, Image: s.Record.SoftwareIdentity, Tier: s.Record.Isolation, Floor: s.Request.GetMinimumIsolation(), Grant: s.grant(), Line: s.Line.Index, BundleURL: s.Shared.Pages + "bundle.jsonl", Start: timestamp(s.Record.Started.UnixMilli()), End: timestamp(s.Record.Ended.UnixMilli()), Outcome: outcomeText(s), JSON: string(raw), Checks: append(checks, tamper...), Mappings: mappingRows(raw)}
+		p := pageRun{File: name, Anchor: "run-" + s.Record.SHA256[:12], Record: s.Record.SHA256, RequestDigest: s.Record.RequestSHA256, Image: s.Record.SoftwareIdentity, Tier: s.Record.Isolation, Floor: s.Request.GetMinimumIsolation(), Grant: s.grant(), Line: s.Line.Index, BundleURL: s.Shared.Pages + "bundle.jsonl", Start: cdxutil.Timestamp(s.Record.Started.UnixMilli()), End: cdxutil.Timestamp(s.Record.Ended.UnixMilli()), Outcome: outcomeText(s), JSON: string(raw), Checks: append(checks, tamper...), Mappings: mappingRows(raw)}
 		if p.Image == "" {
 			p.Image = s.Record.Environment
 		}
@@ -413,7 +394,7 @@ func execute(args []string, out io.Writer) error {
 			}
 		}
 		for _, file := range s.Request.GetProject().GetFiles() {
-			p.Files = append(p.Files, pageFile{file.GetPath(), file.GetContent(), digest([]byte(file.GetContent()))})
+			p.Files = append(p.Files, pageFile{file.GetPath(), file.GetContent(), cdxutil.Digest([]byte(file.GetContent()))})
 		}
 		for _, step := range s.Response.GetProject().GetSteps() {
 			row := pageStep{step.GetCommand(), string(step.GetStdout()), string(step.GetStderr()), step.GetExitCode(), step.GetDurationMs(), step.GetTimedOut()}
@@ -463,7 +444,7 @@ func execute(args []string, out io.Writer) error {
 	}
 	for _, image := range data.Images {
 		path := filepath.Join(*outDir, image.File)
-		existing, err := readInput(path)
+		existing, err := cdxutil.ReadInput(path)
 		if err == nil {
 			if !bytes.Equal(existing, image.raw) {
 				return fmt.Errorf("refusing to overwrite image evidence %s", path)
@@ -510,9 +491,9 @@ func writeOne(bundle, pem []byte, n int, o options, outDir, imagePath, dir strin
 		return err
 	}
 	s.PEM = pem
-	s.Shared = shared{Pages: o.Pages, BundleSHA256: digest(bundle), bundle: bundle}
+	s.Shared = shared{Pages: o.Pages, BundleSHA256: cdxutil.Digest(bundle), bundle: bundle}
 	o.Name = s.displayName(o.Name)
-	manifest, _, _ := imageDigest(s.Record)
+	manifest, _, _ := cdxutil.ImageDigest(s.Record)
 	if o.ImageBOM, err = readImageBOM(imagePath, dir, "sha256:"+manifest); err != nil {
 		return err
 	}

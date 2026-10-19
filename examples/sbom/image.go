@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/plimsollmark/plimsoll/examples/sbom/cdxutil"
 )
 
 type imageBOM struct {
@@ -20,7 +22,7 @@ var imageVersionPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 var imageSerialPattern = regexp.MustCompile(`^urn:uuid:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
 func parseImageBOM(raw []byte, file, manifest string) (*imageBOM, error) {
-	if err := uniqueJSON(raw); err != nil {
+	if err := cdxutil.UniqueJSON(raw); err != nil {
 		return nil, err
 	}
 	var b struct {
@@ -50,7 +52,7 @@ func parseImageBOM(raw []byte, file, manifest string) (*imageBOM, error) {
 	if !imageVersionPattern.MatchString(manifest) || root.Version != manifest {
 		return nil, fmt.Errorf("image SBOM root version %q differs from the record's manifest %q", root.Version, manifest)
 	}
-	image := &imageBOM{File: file, SHA256: digest(raw), Manifest: manifest, Link: fmt.Sprintf("urn:cdx:%s/%d#%s", strings.TrimPrefix(b.Serial, "urn:uuid:"), b.Version, url.PathEscape(root.Ref)), Count: len(b.Components), raw: raw}
+	image := &imageBOM{File: file, SHA256: cdxutil.Digest(raw), Manifest: manifest, Link: fmt.Sprintf("urn:cdx:%s/%d#%s", strings.TrimPrefix(b.Serial, "urn:uuid:"), b.Version, url.PathEscape(root.Ref)), Count: len(b.Components), raw: raw}
 	image.Created = b.Metadata.Timestamp
 	if len(b.Metadata.Tools.Components) != 0 {
 		image.Generator, image.GeneratorVersion = b.Metadata.Tools.Components[0].Name, b.Metadata.Tools.Components[0].Version
@@ -69,7 +71,7 @@ func readImageBOM(explicit, dir, manifest string) (*imageBOM, error) {
 	if path == "" {
 		path = filepath.Join(dir, name)
 	}
-	raw, err := readInput(path)
+	raw, err := cdxutil.ReadInput(path)
 	if explicit == "" && os.IsNotExist(err) {
 		return nil, nil
 	}

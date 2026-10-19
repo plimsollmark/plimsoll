@@ -39,6 +39,7 @@ import (
 	"github.com/plimsollmark/plimsoll/attest"
 	"github.com/plimsollmark/plimsoll/client"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 const usage = `usage:
@@ -192,7 +193,7 @@ func run(args []string, stdout io.Writer) error {
 	defer cancel()
 	resp, rec, err := r.Exchange(ctx, req)
 	if err != nil {
-		return err // a run that failed has no record, and the bundle is unchanged
+		return runFailed(err) // a run that failed has no record, and the bundle is unchanged
 	}
 	fmt.Fprintf(stdout, "ran on %s (%s): %s\n", resp.GetSandbox(), resp.GetIsolation(), summary(resp))
 	if err := appendRun(*bundlePath, signer, got.req, got.resp, *shared); err != nil {
@@ -317,6 +318,18 @@ func keepUnsealed(bundle string, signer *attest.Signer, req *plimsollv1.RunReque
 		return "", err
 	}
 	return path, nil
+}
+
+// runFailed says what a failed run's error means for its caller: a refusal the daemon marked
+// as made before anything was dispatched ran nothing and names its reason; any other error
+// may have come after the code started, so it is never a safe automatic retry. The daemon
+// tells an environment refusal's detail only in its log, so the mark is the caller's one
+// account of it.
+func runFailed(err error) error {
+	if reason, ok := sandbox.NotDispatchedReason(err); ok {
+		return fmt.Errorf("refused before dispatch (reason %s), so nothing ran; the bundle is unchanged: %w", reason, err)
+	}
+	return fmt.Errorf("failed with no not-dispatched mark, so the code may have run; no record came back and the bundle is unchanged: %w", err)
 }
 
 // captured is a client.Recorder that keeps the one exchange of a run.

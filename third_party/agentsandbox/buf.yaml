@@ -1,0 +1,6 @@
+# Vendored agent-sandbox sandboxd protos (see README.md). A separate buf workspace from
+# the repository root's, so the root `buf lint` never sees upstream files while
+# `make buf` still generates and drift-checks them.
+version: v2
+modules:
+  - path: proto

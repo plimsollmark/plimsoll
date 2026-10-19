@@ -40,6 +40,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1/openshellv1connect"
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/sandboxv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
@@ -153,24 +154,6 @@ func TestResourceLimits(t *testing.T) {
 		if string(got) != tc.want {
 			t.Errorf("resourceLimits(%d, %v) = %s, want %s", tc.mem, tc.cpus, got, tc.want)
 		}
-	}
-}
-
-func TestCapture(t *testing.T) {
-	c := capture{limit: 5}
-	c.write([]byte("abc"))
-	c.write([]byte("de"))
-	if string(c.buf) != "abcde" || c.dropped {
-		t.Fatalf("exact fill: %q dropped=%v", c.buf, c.dropped)
-	}
-	c.write([]byte("f"))
-	if string(c.buf) != "abcde" || !c.dropped {
-		t.Fatalf("overflow: %q dropped=%v", c.buf, c.dropped)
-	}
-	c = capture{limit: 4}
-	c.write([]byte("abcdef"))
-	if string(c.buf) != "abcd" || !c.dropped {
-		t.Fatalf("split write: %q dropped=%v", c.buf, c.dropped)
 	}
 }
 
@@ -799,7 +782,7 @@ func TestReconcileOrphans(t *testing.T) {
 // finished), and a burst of calls afterwards costs one gateway call.
 func TestPreflightIsCached(t *testing.T) {
 	f, p := newFake(t)
-	p.pfTTL = preflightTTL
+	p.pf.TTL = preflightTTL
 	entered, release := make(chan struct{}), make(chan struct{})
 	f.info = func() (*openshellv1.GetGatewayInfoResponse, error) {
 		close(entered)
@@ -1278,7 +1261,7 @@ func (c lateTimer) Err() error                  { return nil }
 // the context's timer runs is still reported as the deadline, not as a transport
 // error (the rule is deadline.Expired, tested there).
 func TestDeadlineAwareDoesNotWaitForTheTimer(t *testing.T) {
-	if err := deadlineAware(lateTimer{context.Background(), time.Now().Add(-time.Millisecond)}, errors.New("stream reset")); !errors.Is(err, context.DeadlineExceeded) {
+	if err := providerkit.DeadlineAware(lateTimer{context.Background(), time.Now().Add(-time.Millisecond)}, errors.New("stream reset")); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadlineAware in the late-timer window: %v, want it to wrap DeadlineExceeded", err)
 	}
 }

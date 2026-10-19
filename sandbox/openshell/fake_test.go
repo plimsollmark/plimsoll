@@ -138,7 +138,7 @@ func newFake(t *testing.T) (*fakeGateway, *Provider) {
 	}
 	// Every Preflight checks the fake again, as the driver tests expect;
 	// TestPreflightIsCached turns the cache back on.
-	p.pfTTL = 0
+	p.pf.TTL = 0
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

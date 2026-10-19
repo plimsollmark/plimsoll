@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
@@ -210,6 +211,21 @@ const read = f => { try { return fs.readFileSync(f, "utf8").trim(); } catch (e) 
 })();
 `
 
+// smokeReport is what smokeProbeScript prints.
+type smokeReport struct {
+	Node          string            `json:"node"`
+	Swept         int               `json:"swept"`
+	Writable      []string          `json:"writable"`
+	WritableFiles []string          `json:"writableFiles"`
+	Egress        map[string]string `json:"egress"`
+	DNS           string            `json:"dns"`
+	MemoryMax     string            `json:"memoryMax"`
+	CPUMax        string            `json:"cpuMax"`
+	TmpMount      string            `json:"tmpMount"`
+	PidsMax       string            `json:"pidsMax"`
+	Interfaces    []string          `json:"interfaces"`
+}
+
 // smokeProbe runs the probe and checks the writable set, egress and limits.
 func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) error {
 	pctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -221,19 +237,7 @@ func (p *Provider) smokeProbe(ctx context.Context, b box, ev *smokeEvidence) err
 	if out.exitCode != 0 {
 		return fmt.Errorf("probe exited %d on image %q (an image without node cannot serve runs): %s", out.exitCode, p.cfg.Image, strings.TrimSpace(string(out.stderr)))
 	}
-	var report struct {
-		Node          string            `json:"node"`
-		Swept         int               `json:"swept"`
-		Writable      []string          `json:"writable"`
-		WritableFiles []string          `json:"writableFiles"`
-		Egress        map[string]string `json:"egress"`
-		DNS           string            `json:"dns"`
-		MemoryMax     string            `json:"memoryMax"`
-		CPUMax        string            `json:"cpuMax"`
-		TmpMount      string            `json:"tmpMount"`
-		PidsMax       string            `json:"pidsMax"`
-		Interfaces    []string          `json:"interfaces"`
-	}
+	var report smokeReport
 	if err := json.Unmarshal(out.stdout, &report); err != nil {
 		return fmt.Errorf("unparseable probe report %q: %w", truncate(out.stdout, 200), err)
 	}
@@ -471,7 +475,7 @@ process.stdout.write(String(n));`)
 			stop()
 			return fmt.Errorf("the hung command never started (%d of its processes seen)", n)
 		}
-		if err := sleepCtx(ctx, 100*time.Millisecond); err != nil {
+		if err := providerkit.Sleep(ctx, 100*time.Millisecond); err != nil {
 			stop()
 			return err
 		}
@@ -492,7 +496,7 @@ process.stdout.write(String(n));`)
 		if time.Now().After(deadline) {
 			return fmt.Errorf("cancelling the exec stream left %d of its processes running after %v; the run deadline would not stop hostile code", n, time.Since(cancelled).Round(time.Millisecond))
 		}
-		if err := sleepCtx(ctx, 100*time.Millisecond); err != nil {
+		if err := providerkit.Sleep(ctx, 100*time.Millisecond); err != nil {
 			return err
 		}
 	}

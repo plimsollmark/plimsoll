@@ -58,9 +58,11 @@ inputs fail. Session bundles, non-project runs and runs whose record states no i
 identity are refused. Granted runs are accepted: the `plimsoll:grant` property names
 the profile and the tier claim says the grant's routes were the run's only way out.
 OCI means Open Container Initiative, the standard container image format. The image
-identity is docker's selected OCI manifest (the containerd image store), or the
-linux/amd64 manifest Docker Cloud reported it booted; other providers are refused
-while their records state neither. `-image-name` is a simple lowercase display name;
+identity is docker's selected OCI manifest (the containerd image store), the
+linux/amd64 manifest Docker Cloud reported it booted, or the digest a Kubernetes
+agent-sandbox template pins its image by (an image index or a manifest, whichever the
+reference names), which the provider checks against each pod's image ID; other
+providers are refused while their records state none of these. `-image-name` is a simple lowercase display name;
 the image digest supplies identity. Inputs are capped at 32 MiB to cover the
 request/result budgets plus base64 attachment expansion while bounding parsing.
 
@@ -152,7 +154,7 @@ References:
 - [EXTERNAL · official CycloneDX 1.6 JSON reference ↗](https://www.cyclonedx.org/docs/1.6/json/)
 - [EXTERNAL · official attestations documentation ↗](https://cyclonedx.org/use-cases/attestations/)
 - [EXTERNAL · in-toto statement specification ↗](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md)
-- [INTERNAL · pinned schema provenance →](schema/README.md)
+- [INTERNAL · pinned schema provenance →](cdxutil/schema/README.md)
 - [INTERNAL · the adapter example, where the verdicts come from →](../adapter/)
 
 The page inlines `check.js`, also run by `check_test.mjs` under Node 22 or later

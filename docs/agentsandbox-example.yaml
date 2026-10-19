@@ -1,0 +1,122 @@
+# An example agent-sandbox setup that plimsoll's read-back accepts (docs/agentsandbox.md):
+# the service account plimsolld runs as, with only the access the provider uses; a gVisor
+# template whose pods sandboxd serves; and a warm pool of two. Replace the digest
+# placeholder with the SHA-256, in hex, of the token in SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE,
+# and give plimsolld's own pods the label app.kubernetes.io/name: plimsolld, which the
+# template's policy admits to sandboxd's port. The RuntimeClass assumes nodes whose
+# containerd has a runsc handler (gVisor's installation guide).
+#
+#   plimsolld: SANDBOX_PROVIDER=agentsandbox SANDBOX_AGENTSANDBOX_NAMESPACE=default
+#              SANDBOX_AGENTSANDBOX_WARM_POOL=plimsoll-run SANDBOX_AGENTSANDBOX_RUNTIME_CLASS=gvisor
+#              SANDBOX_AGENTSANDBOX_IMAGE=<the image> SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE=<file>
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata: {name: gvisor}
+handler: runsc
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: plimsoll, namespace: default}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: plimsoll, namespace: default}
+rules:
+- apiGroups: [extensions.agents.x-k8s.io]
+  resources: [sandboxclaims]
+  verbs: [create, get, list, delete]
+- apiGroups: [extensions.agents.x-k8s.io]
+  resources: [sandboxwarmpools, sandboxtemplates]
+  verbs: [get]
+- apiGroups: [agents.x-k8s.io]
+  resources: [sandboxes]
+  verbs: [get]
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [get]
+- apiGroups: [networking.k8s.io]
+  resources: [networkpolicies]
+  verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: plimsoll, namespace: default}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: plimsoll}
+subjects: [{kind: ServiceAccount, name: plimsoll, namespace: default}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: plimsoll-runtimeclasses}
+rules:
+- apiGroups: [node.k8s.io]
+  resources: [runtimeclasses]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: plimsoll-runtimeclasses}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: plimsoll-runtimeclasses}
+subjects: [{kind: ServiceAccount, name: plimsoll, namespace: default}]
+---
+# Under Kata only (the vm tier): each run reads its pod's node for the node's boot ID.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: plimsoll-nodes}
+rules:
+- apiGroups: [""]
+  resources: [nodes]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: plimsoll-nodes}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: plimsoll-nodes}
+subjects: [{kind: ServiceAccount, name: plimsoll, namespace: default}]
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata: {name: plimsoll-run, namespace: default}
+spec:
+  networkPolicy:
+    ingress:
+    - from:
+      - podSelector: {matchLabels: {app.kubernetes.io/name: plimsolld}}
+      ports:
+      - {port: 9090, protocol: TCP}
+  podTemplate:
+    spec:
+      runtimeClassName: gvisor
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      dnsPolicy: None
+      dnsConfig: {nameservers: [127.0.0.1]}
+      containers:
+      - name: sandboxd
+        image: plimsoll/sandbox-agentsandbox:dev  # built from docker/agentsandbox.Dockerfile; pin it by @sha256: in production
+        command: ["/usr/local/bin/sandboxd", "--root-dir=/work", "--rest-port=8080", "--grpc-port=9090", "--auth-token-sha256=<sha256 of the sandboxd token, hex>"]
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL], add: [SETUID, SETGID]}
+        resources:
+          limits: {memory: 256Mi, cpu: "1"}
+        ports: [{containerPort: 9090}]
+        terminationMessagePath: /root/termination-log
+        readinessProbe:
+          tcpSocket: {port: 9090}
+          periodSeconds: 2
+        volumeMounts:
+        - {name: work, mountPath: /work}
+        - {name: tmp, mountPath: /tmp}
+      volumes:
+      - {name: work, emptyDir: {medium: Memory, sizeLimit: 128Mi}}
+      - {name: tmp, emptyDir: {medium: Memory, sizeLimit: 32Mi}}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata: {name: plimsoll-run, namespace: default}
+spec:
+  replicas: 2
+  sandboxTemplateRef: {name: plimsoll-run}

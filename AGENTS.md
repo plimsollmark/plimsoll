@@ -55,6 +55,49 @@ option is intentionally only process-tier.
     generated gRPC client registers protobuf names OpenShell's Go SDK also registers.
     plimsolld builds it ([cmd/plimsolld/openshell.go](cmd/plimsolld/openshell.go));
     verified against a v0.1.2 gateway (2026-09-28).
+  - [sandbox/agentsandbox/](sandbox/agentsandbox/agentsandbox.go): Kubernetes agent-sandbox provider
+    (v1.0.7), its own package for the same reason as openshell, built by plimsolld
+    ([cmd/plimsolld/agentsandbox.go](cmd/plimsolld/agentsandbox.go); operator guide
+    [docs/agentsandbox.md](docs/agentsandbox.md)). One
+    SandboxClaim per run on a warm pool, deleted after (foreground, so the pod is gone); the
+    command goes to sandboxd, the daemon in each pod, over its gRPC process service
+    ([third_party/agentsandbox](third_party/agentsandbox/README.md), Connect's gRPC protocol over
+    cleartext HTTP/2), dropped to the guest uid by util-linux setpriv under env -i. The tier is
+    read, never configured: before any code is sent each pod is read back (the runtime class's
+    handler, runsc kernel, runc container, Kata's Cloud Hypervisor shims `kata-clh` and
+    `kata-clh-runtime-rs` and AKS Pod Sandboxing's `kata` vm, anything else refused; the image digest; no API token,
+    host namespace or non-emptyDir volume; fixed DNS; sandboxd started with plimsoll's token
+    digest; two capabilities) with every network policy that selects it (egress denied by one,
+    allowed by none); under runc a seccomp profile, and every volume a memory-backed emptyDir with
+    a size limit (a disk-backed one, and the kubelet's world-writable termination log, let a
+    guest write to the node's disk). Its startup smoke test claims two pods as runs do and proves
+    from inside what the read-back cannot see: the guest's identity, a write sweep, no mount strictly beneath a writable root under any tier, each volume
+    refusing at its limit, no connection out, gVisor's kernel log under the kernel tier, a
+    seccomp filter under runc, the runner's descriptors closed to a step; all three tiers pass it
+    on kind, and the vm tier on AKS Pod Sandboxing. Every run binds its actual pod to the checked template's execution boundary (volume limits and mounts, termination-log path, entrypoint and security context), allowing scheduling and Kubernetes defaults, and every accepted pod must keep the first pod's image digest. It repeats the tier and mount checks in its own pod before any of its code: plimsoll's
+    first command there, as the guest, reads the kernel log's first line (gVisor's boot line,
+    exactly, under the kernel tier; a Linux boot line under vm), the kernel's boot ID (under vm
+    not the one the pod's node reports, read from the node object, since a pod on the node's
+    kernel shares it) and the seccomp mode (a filter under runc), then checks its complete mount table against that pod's writable roots (no nested mount; direct tmpfs backing under the container and vm tiers), since a handler
+    is a name each node maps in configuration the API does not show (live on kind, a node's
+    runsc remapped to runc after startup had a run signed at the kernel tier until this check).
+    Pod specs and their decoded container fields form a closed allow list, including Kubernetes
+    defaults and RuntimeClass scheduling and overhead fields; unknown fields and exec handlers
+    in probes or lifecycle hooks are refused before dispatch. Network probes remain allowed.
+    The namespace network policy set is bound before the smoke test and checked through
+    both claims and afterwards; each policy is pinned by UID and its complete spec, so
+    an addition, removal, replacement or spec change refuses runs until a restart proves
+    the new set. An observed difference keeps runs refused even if the old set is restored;
+    metadata-only edits do not invalidate it.
+    After the smoke test, only the template it proved (name and spec by digest) is accepted, so a
+    field the read-back does not decode cannot change under a running daemon; every pod is
+    also held to a termination-log path outside the guest's writable roots, and sandboxd's
+    arguments to the `--name=value` form, which Go's flag parser cannot read otherwise. Under
+    Kata no emptyDir keeps its size limit (each is a tmpfs of the VM's own kernel), so the vm
+    tier refuses `SANDBOX_DISK_MB`, hardened mode does not require it there, and the smoke test
+    holds every writable root to a guest tmpfs instead of filling it. The
+    Kubernetes API is plain net/http, no client-go. Image recipe:
+    [docker/agentsandbox.Dockerfile](docker/agentsandbox.Dockerfile). Snippets and projects only.
   - [sandbox/disabled.go](sandbox/disabled.go) — refuses to execute (the default).
   - [sandbox/broker.go](sandbox/broker.go) — provider-neutral per-run host-API
     enforcement core (allowlist, credential injection, budgets, upstream HTTP,
@@ -76,7 +119,8 @@ option is intentionally only process-tier.
 - [record/](record/) and [attest/](attest/): run records. `record` computes the digests
   the daemon states on every run and the client checks; `attest` is the harness outside
   the daemon that signs checked records (DSSE around in-toto), verifies bundles and
-  session chains, and replays; [cmd/plimsoll-attest](cmd/plimsoll-attest/) is its CLI.
+  session chains, and replays, and signs a caller's own statements about checked runs
+  (`SignStatement`/`OpenStatement`, which refuse the run-record, link and close types); [cmd/plimsoll-attest](cmd/plimsoll-attest/) is its CLI.
   Spec: [docs/run-records.md](docs/run-records.md).
 - [clients/python/](clients/python/): the Python client (distribution `plimsoll-client`,
   import `plimsoll_client`; standard library only, Python 3.10 or later). It speaks
@@ -121,7 +165,7 @@ option is intentionally only process-tier.
   `plimsoll/sandbox-wasm-cc` from the sim image: the C half of wasi-sdk 27 (clang and
   a wasm32-wasip1 libc with libm), pinned by the same image digest the sim build
   uses, so a project step can compile C to a WebAssembly module with no network.
-- [examples/](examples/), twelve runnable programs: `minimal` (one snippet and the
+- [examples/](examples/), runnable examples: `minimal` (one snippet and the
   tier it ran behind), `grant` (the capability model, including a guest bypassing
   the injected client and being refused by the broker anyway, then the identical
   request succeeding under a separate per-run grant that lists it), `daemon` (the
@@ -173,6 +217,13 @@ option is intentionally only process-tier.
   independently trusted key; it starts no sandbox. Its page is
   `docs/examples/sbom/index.html`; `make sbom-suite` vets and race-tests the module
   offline, rejecting altered evidence, file substitutions and changed claims.
+  `agentsandbox` ([examples/agentsandbox](examples/agentsandbox/main.go)) writes
+  `docs/examples/agentsandbox/index.html` offline from the files published beside it: two
+  project runs recorded on a kind cluster through a hardened daemon under gVisor, signed by
+  the `attest` harness, their BOMs (`examples/sbom -line`), the same two requests' results
+  compared with the CycloneDX example's docker and Docker Cloud runs, the signed record of a run
+  the per-pod tier check now refuses, and five refusals as transcripts; its test rebuilds the
+  page byte for byte and refuses an altered bundle.
   `adapter` ([examples/adapter](examples/adapter/), needs docker): the loop a platform
   needs when an AI writes the code that integrates a vendor's device API. A fictional
   fleet vendor's OpenAPI document (eight operations; its create takes an optional
@@ -207,7 +258,8 @@ option is intentionally only process-tier.
   `sandbox/docker_adapter_test.go` holds the matrix of broken rules, the call counts, the read
   budget and the refusals.
   The records state the daemon's evidence, never hardware attestation. The examples that run the daemon build it from source
-  through [examples/internal/daemonproc](examples/internal/daemonproc/).
+  through [examples/internal/daemonproc](examples/internal/daemonproc/), which also writes their caller file.
+
 - [measurements/](measurements/): timing programs (`session-latency`, `warm-pool`) that call
   the providers directly and write their raw samples and page into
   [docs/measurements/](docs/measurements/); each page says how to rerun it. Not tests: the
@@ -449,7 +501,7 @@ running cannot swap a parent directory for a link between the check and the open
 `Build(getenv)` selects one and fails closed: malformed safety configuration and
 unrecognized provider names are explicit errors, and the default (unset) is
 **Disabled**, so execution is opt-in and never on by accident. plimsolld builds
-`openshell` itself, outside `Build`, so a program that imports package sandbox never
+`openshell` and `agentsandbox` itself, outside `Build`, so a program that imports package sandbox never
 links its generated protocol code: each such provider registers from its own file in
 [cmd/plimsolld/providers.go](cmd/plimsolld/providers.go)'s table, with its `-h` section
 and its hardened-mode envelope.
@@ -461,6 +513,7 @@ and its hardened-mode envelope.
 | `e2b`     | E2B Firecracker microVM | hardware-virtualized VM | isolated snippets/projects; grants require `E2B_GUARD_URL` and use E2B `allowOut` + deny-all plus the beta per-host header transform to reach the guard, which delegates the shared broker. Secured envd + public-traffic token; no-grant egress denied. No redirect from envd or the control plane is followed (a followed one would carry the envd and traffic tokens, or the API key, wherever a guest answering on envd's port pointed it), with the default HTTP client or an embedder's. A sandbox ID that is not letters, digits and dashes is never put in envd's host name or a path, and a vendor's error body is cut to 512 bytes with credentials scrubbed before it enters an error. Sandboxes are stamped with a per-instance metadata ID and a lease key tracked from before the create request until the kill has finished ([sandbox/internal/lease](sandbox/internal/lease/), the rule E2B, Docker Cloud and OpenShell share); `ReconcileOrphans` (run periodically by the daemon) reaps stamped microVMs whose key is not tracked, at any age, so a slow create is never reaped and a leak from a malformed or lost create response or failed teardown waits for no clock. |
 | `dockercloud` | Docker Cloud Sandboxes microVM | hardware-virtualized VM | speaks two APIs through one internal transport interface, chosen by `SANDBOX_DOCKERCLOUD_API` and never switched at run time, both through the live suite on 2026-10-04: `rest`, the API Docker documents since launch, kept as the backup until it covers what `connect` does, which states no image identity (it reports no booted digest, so hardened mode requires `connect`), caps a run at 270 s (an exec ends with its 300 s endpoint credential, one cached per sandbox) and refuses grants, failing startup if a guard URL is set (after the guard's rule the REST API will not report the sandbox's policy, so the rule cannot be verified; a live tripwire watches for that to change); and `connect` (default), Docker's pre-launch sandboxes-api v0.36.0, now undocumented, the only API with grants and image evidence. Each run boots a pinned linux/amd64 sandbox, refuses to run unless the read-back network policy is deny-all with exactly the entitled rules, wraps every exec in `timeout`/`head -c` (the API has neither bound), and deletes the sandbox on every exit path; `ReconcileOrphans` reaps untracked ones. Grants need `SANDBOX_DOCKERCLOUD_GUARD_URL` (`ErrUnsupported` otherwise); unlike E2B, the guest holds its own per-run guard credential, and the grant rule is applied through a REST call outside the published contract. Operator setup (token exchange, deny-all account policy, single-platform digest) and the full run and smoke-test sequence: [docs/dockercloud.md](docs/dockercloud.md). |
 | `openshell` | NVIDIA OpenShell sandbox through a gateway | container (the gateway's docker driver; any other driver is refused) | built by plimsolld, not `Build`. Keeps sessions (a sweep of every non-own process after each call, `sleep` as the main process, a read-back before each call). Each run creates a sandbox with no network rules (the gateway's deny-all default) and `/tmp` as the only writable directory (a `noexec` tmpfs of `SANDBOX_DISK_MB` when that is set), reads it back and refuses any difference, runs the payload over the streamed exec (the deadline cancels the stream, which kills the command's process group; a `setsid` descendant lives until the delete), and deletes the sandbox off the result path, holding the run's capacity until the delete is through (`sandbox.HoldCapacity`; admitters wrap their release with `sandbox.WithCapacity`); `Drain` waits for those deletes at shutdown. Every sandbox declares its lifetime, so `ReconcileOrphans` also reaps what a crashed instance left behind, once that lifetime plus 5 minutes has passed. Grants keep the no-grant policy: a relay in the sandbox pairs the guest's socket connections with connections plimsoll dials in through `ForwardTcp` (session tokens revoked at the run's end), and plimsoll serves the shared broker on them. Module runs: `ErrUnsupported`. Operator setup, grants and the smoke test: [docs/openshell.md](docs/openshell.md). |
+| `agentsandbox` | Kubernetes agent-sandbox (v1.0.7): a pod claimed from a warm pool | read from the runtime class's handler: `kata-clh`, `kata-clh-runtime-rs` and `kata` (Kata Containers on Cloud Hypervisor; `kata` is AKS Pod Sandboxing's) vm, `runsc` kernel, `runc` container, anything else refused | built by plimsolld, not `Build`; plimsolld runs in the cluster to reach each pod's sandboxd. One SandboxClaim per run, read back before any code is sent (the template's pod spec, the image by digest, every network policy that selects the pod) and deleted in the foreground after, holding the run's capacity until the pod is confirmed gone, even after deletion retries fail; reconciliation retries pending claims by name, with or without a deletion timestamp, and `Drain` names claims still left. The startup smoke test claims two pods as runs do (the guest's identity, a write sweep, every volume full at its limit or, under Kata, a tmpfs of the VM's kernel, no connection out, gVisor's kernel log, a Linux boot line and a boot ID not the node's, or a seccomp filter by tier, the runner's descriptors closed to a step), and every run holds its own pod to the tier the same way before any code is sent. `SANDBOX_MEMORY_MB` and `SANDBOX_CPUS` must equal the template's limits, `SANDBOX_DISK_MB` bounds the sum of its volumes (refused under Kata), `SANDBOX_PIDS` is refused. Snippets and projects only. Operator setup: [docs/agentsandbox.md](docs/agentsandbox.md). |
 | unset     | Disabled | n/a | returns `ErrDisabled`; any other value fails `Build`. |
 
 Relevant env: `SANDBOX_DOCKER_IMAGE`, `SANDBOX_DOCKER_PROJECT_IMAGE`,
@@ -505,6 +558,13 @@ and `SANDBOX_OPENSHELL_KEY_FILE` (the gateway and its mutual TLS files),
 OpenShell sets no swap limit), rejects `SANDBOX_PIDS`, and with `SANDBOX_DISK_MB`
 mounts a run's `/tmp` as a `noexec` tmpfs of that size through the sandbox's driver config,
 which needs the gateway's `allow_driver_config = true`; never a session's),
+`SANDBOX_AGENTSANDBOX_API_SERVER`, `SANDBOX_AGENTSANDBOX_CA_FILE` and
+`SANDBOX_AGENTSANDBOX_TOKEN_FILE` (the Kubernetes API server, its CA and a bearer token file
+read at every request; default the pod's service account), `SANDBOX_AGENTSANDBOX_NAMESPACE`,
+`SANDBOX_AGENTSANDBOX_WARM_POOL`, `SANDBOX_AGENTSANDBOX_RUNTIME_CLASS`,
+`SANDBOX_AGENTSANDBOX_IMAGE` (what the template must name) and
+`SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE` (the token sandboxd checks, by the SHA-256 digest the
+template starts it with),
 `SANDBOX_MAX_SESSIONS` (open sessions at once; default 0, sessions off; startup fails when
 set for a provider without sessions), `SANDBOX_MAX_SESSIONS_PER_CALLER` (open sessions one
 principal may hold, suspended ones included; default 0, no cap beyond the daemon's; a
@@ -1057,7 +1117,11 @@ current hash: after editing `docker/`, rebuild the images. Without them those te
 `make test` run with `-short`, which the docker test helpers (`requireDocker`,
 `sessionDocker`) read as skip, so a docker test reaches docker only through one of
 them. The docker suite also covers the oracle's anti-forgery tests
-and the gVisor installer's offline-bundle check (which needs `zstd`). Run the gate
+and the gVisor installer's offline-bundle check (which needs `zstd`), and runs, in its
+locked-down container, every Node program the OpenShell, agent-sandbox and E2B providers send
+into their sandboxes, which otherwise only their live suites run;
+`sandbox/guest_scripts_test.go`, in the ordinary gate, fails when a provider embeds one with
+no such test (`sandbox/internal/dockertest` gives any package the suite's docker). Run the gate
 as a non-root user: root defeats the runner guard two runnerwire tests exercise, so
 they skip.
 
@@ -1073,7 +1137,10 @@ Cloud Sandboxes suite, which fails rather than skips when that configuration is
 absent. `make audit OPENSHELL=1` (with a gateway and the `SANDBOX_OPENSHELL_*`
 settings) adds the live OpenShell suite, the provider's tests plus a daemon test
 against the gateway; it is free but needs a gateway, and it too fails rather than
-skips. `make help` lists individual targets.
+skips. `make audit AGENTSANDBOX=1` (with a cluster, `AGENTSANDBOX_TIER` and the
+`SANDBOX_AGENTSANDBOX_*` settings) adds the live agent-sandbox suite, the provider's tests plus a
+daemon test, run where the pod network is routable (in a container on a named docker network
+for kind); free, needs a cluster, fails rather than skips. `make help` lists individual targets.
 
 **The ordinary gate cannot spend.** A credential in the environment is not consent to
 spend: every test that creates a billable microVM skips unless the flag only its make

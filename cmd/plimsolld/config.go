@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -226,7 +227,7 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	// hostile-code boundary. f.Isolation is post-EnsureReady evidence, so for
 	// docker this is true only after the pinned daemon proved a runsc runtime.
 	if !f.IsolationPending && f.Isolation != sandbox.IsolationVM && f.Isolation != sandbox.IsolationKernel {
-		fail("provider %q reports isolation %q; hardened mode requires vm (e2b, dockercloud) or verified kernel (docker with SANDBOX_DOCKER_RUNTIME=runsc)",
+		fail("provider %q reports isolation %q; hardened mode requires vm (e2b, dockercloud, agentsandbox on a Kata runtime class) or verified kernel (docker with SANDBOX_DOCKER_RUNTIME=runsc, agentsandbox on a runsc runtime class)",
 			f.Provider, f.Isolation.String())
 	}
 
@@ -317,6 +318,9 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	switch {
 	case daemonBuilt:
 		required = dp.hardenedEnvelope
+		if dp.hardenedEnvelopeAt != nil && !f.IsolationPending {
+			required = append(slices.Clone(required), dp.hardenedEnvelopeAt(f.Isolation)...)
+		}
 	case !ok:
 		required = hardenedEnvelopeDefault
 	}

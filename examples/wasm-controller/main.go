@@ -25,7 +25,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/binary"
@@ -37,7 +36,6 @@ import (
 	"html"
 	"io"
 	"math"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -46,6 +44,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/examples/internal/daemonproc"
 
 	"github.com/plimsollmark/plimsoll/client"
 	"github.com/plimsollmark/plimsoll/examples/internal/wasmshim"
@@ -148,11 +148,11 @@ func realMain(out, image string) error {
 	if err != nil {
 		return err
 	}
-	token, clientsPath, err := writeClients(dir, "wasm-controller")
+	token, clientsPath, err := daemonproc.ClientsFile(dir, "wasm-controller")
 	if err != nil {
 		return err
 	}
-	addr, err := freeAddr()
+	addr, err := daemonproc.FreeAddr()
 	if err != nil {
 		return err
 	}
@@ -550,27 +550,6 @@ func buildDaemon(ctx context.Context, dir string) (string, error) {
 		return "", fmt.Errorf("build plimsolld (run this from the repository root): %w", err)
 	}
 	return binary, nil
-}
-
-func writeClients(dir, callerID string) (token, path string, err error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", "", err
-	}
-	token = hex.EncodeToString(raw)
-	sum := sha256.Sum256([]byte(token))
-	path = filepath.Join(dir, "clients.json")
-	body := fmt.Sprintf(`{"clients":[{"id":%q,"token_sha256":%q,"scopes":["code:run"]}]}`, callerID, hex.EncodeToString(sum[:]))
-	return token, path, os.WriteFile(path, []byte(body), 0o600)
-}
-
-func freeAddr() (string, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", err
-	}
-	defer l.Close()
-	return l.Addr().String(), nil
 }
 
 func startDaemon(ctx context.Context, binary, addr, clientsPath, image string, sink io.Writer) (*exec.Cmd, error) {

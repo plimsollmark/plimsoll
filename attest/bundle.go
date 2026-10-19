@@ -116,12 +116,7 @@ func (s *Signer) signLink(l Link) (Envelope, error) {
 	if err != nil {
 		return Envelope{}, err
 	}
-	sig := ed25519.Sign(s.key, PAE(PayloadType, payload))
-	return Envelope{
-		PayloadType: PayloadType,
-		Payload:     base64.StdEncoding.EncodeToString(payload),
-		Signatures:  []Signature{{KeyID: s.keyID, Sig: base64.StdEncoding.EncodeToString(sig)}},
-	}, nil
+	return s.envelope(payload), nil
 }
 
 // VerifyLink checks a link envelope's signature and statement.
@@ -256,12 +251,7 @@ func (s *Signer) Close(c SessionClose) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	sig := ed25519.Sign(s.key, PAE(PayloadType, payload))
-	return Entry{Envelope: Envelope{
-		PayloadType: PayloadType,
-		Payload:     base64.StdEncoding.EncodeToString(payload),
-		Signatures:  []Signature{{KeyID: s.keyID, Sig: base64.StdEncoding.EncodeToString(sig)}},
-	}}, nil
+	return Entry{Envelope: s.envelope(payload)}, nil
 }
 
 type closeStatement struct {

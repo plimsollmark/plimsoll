@@ -160,6 +160,12 @@
       <dfn>E2B</dfn> and <dfn>Docker Cloud Sandboxes</dfn>. <code>openshell</code> gets a
       container from a gateway server of <dfn>OpenShell</dfn>, NVIDIA's agent sandbox
       runtime.</li>
+      <li><code>agentsandbox</code> claims a ready pod, a group of containers scheduled together,
+      from <dfn>agent-sandbox</dfn>, a component of Kubernetes, a system for managing containers across machines, that keeps a pool of them warm.
+      Plimsoll reads the pod's runtime and checks it before sending code: <code>runsc</code>
+      gives the kernel tier, <code>runc</code> the container tier, and a verified <dfn>Kata Containers</dfn> runtime,
+      which puts the pod in its own virtual machine, the vm tier. Snippets and projects run;
+      <a href="glossary.html#grant">grants (INTERNAL · glossary →)</a>, <a href="glossary.html#session">sessions (INTERNAL · glossary →)</a> and <a href="glossary.html#module-run">module runs (INTERNAL · glossary →)</a> are not supported.</li>
       <li>A <dfn>grant</dfn> lets one run call listed routes of your API through the
       <dfn>broker</dfn>, the part of plimsoll that makes the call and holds the credential. From
       a microVM, the only way to the broker is the <dfn>guard</dfn>, an address on the plimsoll
@@ -221,6 +227,7 @@
             <button type="button" data-value="e2b">e2b<small>an E2B microVM</small></button>
             <button type="button" data-value="dockercloud">dockercloud<small>a Docker Cloud Sandboxes microVM</small></button>
             <button type="button" data-value="openshell">openshell<small>an NVIDIA OpenShell sandbox</small></button>
+            <button type="button" data-value="agentsandbox">agentsandbox<small>a checked Kubernetes pod</small></button>
           </div>
         </div>
         <div class="control" id="runtimeControl">
@@ -228,6 +235,15 @@
           <div class="seg" role="group" aria-label="Docker runtime" data-key="runtime">
             <button type="button" data-value="runc">runc<small>docker's default</small></button>
             <button type="button" data-value="runsc">runsc, verified<small>gVisor, confirmed at startup</small></button>
+          </div>
+        </div>
+        <div class="control" id="agentRuntimeControl" hidden>
+          <p class="control-label">Verified runtime handler <code>SANDBOX_AGENTSANDBOX_RUNTIME_CLASS</code></p>
+          <p class="small">A <dfn>RuntimeClass</dfn> names a runtime. This lesson assumes its mapping has passed the checks; the setting alone proves no tier.</p>
+          <div class="seg" role="group" aria-label="Verified agent-sandbox runtime" data-key="agentRuntime">
+            <button type="button" data-value="runsc">runsc<small>gVisor: kernel</small></button>
+            <button type="button" data-value="runc">runc<small>shared kernel: container</small></button>
+            <button type="button" data-value="kata">Kata<small>own virtual machine: vm</small></button>
           </div>
         </div>
         <div class="control" id="guardControl">
@@ -472,6 +488,18 @@
       survives calls and a suspend, an interpreter keeps what an earlier call defined or says
       it started fresh, and closing it ends it.</p>
     </div>
+    <div class="card">
+      <h3>Agent-sandbox checks each claimed pod</h3>
+      <p>The Kubernetes API supplies the actual pod's settings, image digest, runtime class
+      and selecting network policies. The startup smoke test then exercises two claimed
+      pods: guest identity, writable storage, no connection out and the runner's protected
+      descriptors. Each run checks its own pod's kernel and, for a virtual machine, a boot
+      identifier different from the node's. A failed check refuses any submitted code before it is sent.</p>
+      <p>Kata does not preserve the memory volumes' individual size limits, so this provider
+      refuses a disk-budget setting at the vm tier. These are configuration and behavioural
+      checks, never proof supplied by the hardware.</p>
+      <p><a href="../examples/agentsandbox/index.html">INTERNAL · recorded agent-sandbox runs and refusals →</a></p>
+    </div>
   </section>
 
   <!-- 04 ─────────────────────────────────────────────────────────────────── -->
@@ -586,9 +614,9 @@
     sandbox for many calls: the files a call writes are there for the next call, and a
     cleanup between calls ends what a call left running. An agent that edits, builds and tests
     in a loop pays for one sandbox, and its later steps see what its earlier steps wrote.
-    Sessions are off until the operator sets <code>SANDBOX_MAX_SESSIONS</code>. Two providers
+    Sessions are off until the operator sets <code>SANDBOX_MAX_SESSIONS</code>. Three providers
     keep them: <code>docker</code> with a project image configured, under either runtime,
-    and <code>openshell</code>. <code>Describe</code> says whether this daemon does
+    <code>openshell</code> and <code>e2b</code>. <code>Describe</code> says whether this daemon does
     (<code>supports_sessions</code>).</p>
     <details>
       <summary>What persists, and what does not <span class="what">the contract</span></summary>
@@ -600,7 +628,7 @@
     </details>
     <details>
       <summary>Docker, OpenShell and E2B <span class="what">same contract, three sandboxes</span></summary>
-      <div><p>On <code>docker</code> a session is one locked-down container from the project image, with a run's walls: a read-only root, no network, size-capped writable directories held in memory, every capability dropped. Every call is a <code>docker exec</code> into it, in <code>/work</code>, and before each call the session compares the container's security settings with what they were at open and ends on any difference. On <code>openshell</code> it is one gateway sandbox whose main process does nothing, read back from the gateway before every call. On <code>e2b</code> it is one E2B virtual machine where the session's code runs as a user that cannot become root, while plimsoll's cleanup runs as root; a suspend pauses the machine, which keeps the files but ends the interpreters, so the next cell starts a fresh one. All three run the same cleanup between calls. <code>dockercloud</code> and <code>wasm</code> keep no sessions.</p></div>
+      <div><p>On <code>docker</code> a session is one locked-down container from the project image, with a run's walls: a read-only root, no network, size-capped writable directories held in memory, every capability dropped. Every call is a <code>docker exec</code> into it, in <code>/work</code>, and before each call the session compares the container's security settings with what they were at open and ends on any difference. On <code>openshell</code> it is one gateway sandbox whose main process does nothing, read back from the gateway before every call. On <code>e2b</code> it is one E2B virtual machine where the session's code runs as a user that cannot become root, while plimsoll's cleanup runs as root; a suspend pauses the machine, which keeps the files but ends the interpreters, so the next cell starts a fresh one. All three run the same cleanup between calls. <code>agentsandbox</code>, <code>dockercloud</code> and <code>wasm</code> keep no sessions.</p></div>
     </details>
     <details>
       <summary>Opening one without waiting <span class="what">a warm pool</span></summary>
@@ -671,7 +699,7 @@
   'use strict';
   var TIERS = ['none', 'process', 'container', 'kernel', 'vm'];
   var MARK_Y = { none: 310, process: 285, container: 240, kernel: 195, vm: 150 };
-  var state = { provider: 'docker', runtime: 'runsc', guard: 'unset', payload: 'javascript', grant: 'none', floor: 'none' };
+  var state = { provider: 'docker', runtime: 'runsc', agentRuntime: 'runsc', guard: 'unset', payload: 'javascript', grant: 'none', floor: 'none' };
 
   function el(id) { return document.getElementById(id); }
   function evidence(s) {
@@ -679,6 +707,7 @@
     if (s.provider === 'wasm') return 'process';
     if (s.provider === 'docker') return s.runtime === 'runsc' ? 'kernel' : 'container';
     if (s.provider === 'openshell') return 'container';
+    if (s.provider === 'agentsandbox') return {runsc: 'kernel', runc: 'container', kata: 'vm'}[s.agentRuntime];
     return 'vm';
   }
   function meets(actual, min) { return TIERS.indexOf(actual) >= TIERS.indexOf(min); }
@@ -718,6 +747,10 @@
         rows.push({ k: 'dispatch', ok: false, v: 'a grant needs the forced, authenticated exit to the host-side guard, and none is configured · <b>ErrUnsupported → Unimplemented</b>' });
         return { rows: rows, ran: false, ev: ev, note: 'Refused outright rather than quietly downgraded. The credential and the route check must stay outside the hostile VM, and without a guard there is nowhere outside to put them.' };
       }
+    }
+    if (s.provider === 'agentsandbox' && s.grant === 'profile') {
+      rows.push({ k: 'dispatch', ok: false, v: 'agent-sandbox has no grant channel · <b>ErrUnsupported → Unimplemented</b>' });
+      return { rows: rows, ran: false, ev: ev, note: 'Snippets and projects are supported without grants. This provider has no sessions or module runs.' };
     }
     var transport = '';
     if (s.grant === 'profile' && s.payload !== 'module') {
@@ -774,6 +807,7 @@
     el('hull').setAttribute('aria-label', 'Hull with load-line marks. Provider proved ' + ev + '; caller floor ' + s.floor + '; ' + (d.ran ? 'the run was admitted.' : 'the request was refused.'));
     var cap = el('hullCaption');
     var who = { none: 'The Disabled provider paints no line at all.', process: 'WASM paints the P mark.', container: s.provider === 'openshell' ? 'OpenShell’s docker driver paints the C mark.' : 'Docker on runc paints the C mark.', kernel: 'Verified runsc paints the K mark.', vm: s.provider === 'dockercloud' ? 'Docker Cloud Sandboxes paints the V mark.' : 'E2B paints the V mark.' }[ev];
+    if (s.provider === 'agentsandbox') who = 'The checked agent-sandbox pod paints the ' + {container: 'C', kernel: 'K', vm: 'V'}[ev] + ' mark.';
     var water;
     if (s.floor === 'none') water = 'No floor is stated, so the water sits below every mark' + (d.ran ? ' and the run goes ahead.' : ', and the refusal comes from the provider itself.');
     else if (flooded) water = 'The caller demands ' + s.floor + ', so the water stands above the mark: refused before dispatch.';
@@ -789,6 +823,7 @@
       });
     });
     el('runtimeControl').hidden = s.provider !== 'docker';
+    el('agentRuntimeControl').hidden = s.provider !== 'agentsandbox';
     el('guardControl').hidden = s.provider !== 'e2b' && s.provider !== 'dockercloud';
     var g = el('grantControl');
     var note = el('grantNote');

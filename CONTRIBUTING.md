@@ -44,6 +44,12 @@ gate is the project's full check, `make audit`. In CI:
   the broker is the part of plimsoll that makes API calls for sandboxed code. That
   second job is in required mode: a missing image or a skipped test fails it rather
   than passing quietly.
+  The same suite also runs the small programs plimsoll sends into sandboxes it does not
+  run itself (on a Kubernetes cluster, and on the services described below): their startup
+  checks, and the relay that carries a sandbox's permitted API calls out. Those sandboxes
+  are reached only by live tests, so here each program runs in docker's locked-down
+  container instead, and a test fails the gate when one is sent with no docker test that
+  runs it.
 - The same suite also runs under <dfn>*runsc*</dfn>, the runtime of
   <dfn>*gVisor*</dfn> (a stand-in kernel that runs as an ordinary program), in the
   [gvisor workflow](.github/workflows/gvisor.yml).

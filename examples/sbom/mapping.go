@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"path"
 	"reflect"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,20 +15,17 @@ import (
 	cdx "github.com/CycloneDX/cyclonedx-go"
 	"github.com/plimsollmark/plimsoll/attest"
 	"github.com/plimsollmark/plimsoll/examples/adapter/qualify"
+	"github.com/plimsollmark/plimsoll/examples/sbom/cdxutil"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
-const repository = "https://github.com/plimsollmark/plimsoll"
 const limits = "The attached run record is signed; this BOM is unsigned. Agent authorship is supplied example context, not a record fact, and the execution layer cannot identify the model. Network isolation is provider configuration, not a separately signed runtime measurement; a granted run reaches only the routes its grant lists, and what reached the other side is not in this record. The run's times are the daemon's own unwitnessed clock. An attached key alone establishes consistency, not signer identity; use an independently trusted key. Display names and the assessor label are unsigned presentation. The attached bundle line proves itself; the whole bundle it belongs to is referenced by digest and checked when supplied. This is run evidence, not an inventory of the image's installed packages."
 const verdictLimits = " A qualification verdict is the platform's own signed account of one run against a simulated vendor, re-evaluated here from its evidence; it is not an independent audit, and the vendor's ledger is trusted as the signer read it."
 const reasoning = "Each claim restates the run record the daemon stated and the attest harness checked against the stored request and result and signed. The attached bundle line permits those checks to be repeated. This emitter did not observe execution. The tier is configuration and provider evidence plus startup smoke tests, never runtime attestation."
 const verdictReasoning = "The verdict is recomputed from the attached statement's evidence by the same rules the platform applied; the statement's seal is checked under the attached key, its subject is this run's signed record, and the files, step, report and exit code it names are checked against the stored request and response. The ledger is the simulated vendor's account as the platform read it; trusting it is trusting the signer."
 
 type object = map[string]any
-
-var selectedImagePattern = regexp.MustCompile(`^oci-manifest:[a-z0-9._/-]+@sha256:[a-f0-9]{64}$`)
-var dockerCloudImagePattern = regexp.MustCompile(`^dockercloud-image:sha256:[a-f0-9]{64}$`)
 
 // shared is what a BOM refers to by URL and digest rather than attaching: the bundle
 // its line belongs to and, for a qualified run, the file of qualification statements.
@@ -43,7 +39,7 @@ type shared struct {
 }
 
 type source struct {
-	PEM      []byte      // the harness's public key, as attached
+	PEM      []byte // the harness's public key, as attached
 	Entry    attest.Entry
 	Line     attest.Link // the line's signed place in its bundle
 	Record   sandbox.RunRecord
@@ -65,20 +61,6 @@ func (s source) displayName(given string) string {
 		return strings.TrimSuffix(path.Base(s.Verdict.Adapter.Path), ".js")
 	}
 	return given
-}
-
-// imageDigest is the digest of the image the daemon states the run executed in, with the
-// words for how the daemon knows it: docker's selected OCI manifest, verified before
-// launch; or the linux/amd64 manifest Docker Cloud reported it booted, checked against the
-// provider's pin. A run whose record states neither cannot be mapped.
-func imageDigest(r sandbox.RunRecord) (digest, how string, ok bool) {
-	switch {
-	case selectedImagePattern.MatchString(r.SoftwareIdentity):
-		return strings.Split(r.SoftwareIdentity, "@sha256:")[1], "the image whose OCI manifest digest is sha256:%s (environment %s), verified before launch", true
-	case r.SoftwareIdentity == "" && dockerCloudImagePattern.MatchString(r.Environment):
-		return strings.TrimPrefix(r.Environment, "dockercloud-image:sha256:"), "a Docker Cloud microVM booted from the image whose linux/amd64 manifest digest is sha256:%s (environment %s), the provider's pin, which it compares with the digest the cloud reports each sandbox booted and refuses to run on a difference", true
-	}
-	return "", "", false
 }
 
 func verifiedBundle(bundle, pem []byte) (ed25519.PublicKey, []attest.Entry, error) {
@@ -117,7 +99,7 @@ func sources(bundle, pem []byte, pages string) ([]source, error) {
 			return nil, err
 		}
 		s.PEM = pem
-		s.Shared = shared{Pages: pages, BundleSHA256: digest(bundle), bundle: bundle}
+		s.Shared = shared{Pages: pages, BundleSHA256: cdxutil.Digest(bundle), bundle: bundle}
 		runs = append(runs, s)
 	}
 	if len(runs) == 0 {
@@ -143,7 +125,7 @@ func lineSource(v *attest.Verifier, e attest.Entry) (source, error) {
 	if req.GetProject() == nil || resp.GetProject() == nil {
 		return source{}, fmt.Errorf("only answered single project runs are supported")
 	}
-	if _, _, ok := imageDigest(r); !ok {
+	if _, _, ok := cdxutil.ImageDigest(r); !ok {
 		return source{}, fmt.Errorf("run %s states no image identity this emitter can map", r.SHA256)
 	}
 	return source{Entry: e, Line: link, Record: r, Request: req, Response: resp}, nil
@@ -193,26 +175,10 @@ func qualified(bundle, pem, qualification []byte, pages string, lines []int) ([]
 		if !found {
 			return nil, fmt.Errorf("line %d has no qualification statement", n)
 		}
-		s.Shared.QualificationSHA256, s.Shared.qualification = digest(qualification), qualification
+		s.Shared.QualificationSHA256, s.Shared.qualification = cdxutil.Digest(qualification), qualification
 		out = append(out, *s)
 	}
 	return out, nil
-}
-
-func props(pairs ...string) []object {
-	p := make([]object, 0, len(pairs)/2)
-	for i := 0; i < len(pairs); i += 2 {
-		p = append(p, object{"name": "plimsoll:" + pairs[i], "value": pairs[i+1]})
-	}
-	return p
-}
-
-func hashes(value string) []object { return []object{{"alg": "SHA-256", "content": value}} }
-
-func attachment(name, kind string, content []byte) object {
-	return object{"name": name, "contents": object{"attachment": object{
-		"contentType": kind, "encoding": "base64", "content": base64.StdEncoding.EncodeToString(content),
-	}}}
 }
 
 func programFiles(s source) ([]object, string, error) {
@@ -221,9 +187,9 @@ func programFiles(s source) ([]object, string, error) {
 	slices.SortFunc(files, func(a, b *plimsollv1.ProjectFile) int { return strings.Compare(a.GetPath(), b.GetPath()) })
 	var mapped []object
 	for _, f := range files {
-		h := digest([]byte(f.GetContent()))
+		h := cdxutil.Digest([]byte(f.GetContent()))
 		components = append(components, cdx.Component{Type: cdx.ComponentTypeFile, Name: f.GetPath(), Hashes: &[]cdx.Hash{{Algorithm: cdx.HashAlgoSHA256, Value: h}}})
-		mapped = append(mapped, object{"type": "file", "name": f.GetPath(), "hashes": hashes(h), "properties": props("bytes", strconv.Itoa(len(f.GetContent())))})
+		mapped = append(mapped, object{"type": "file", "name": f.GetPath(), "hashes": cdxutil.Hashes(h), "properties": cdxutil.Props("bytes", strconv.Itoa(len(f.GetContent())))})
 	}
 	if len(mapped) == 0 {
 		return nil, "", fmt.Errorf("project has no files")
@@ -303,8 +269,8 @@ func buildBOM(s source, o options) ([]byte, error) {
 		return nil, err
 	}
 	r := s.Record
-	end, start := timestamp(r.Ended.UnixMilli()), timestamp(r.Started.UnixMilli())
-	imageDigest, imageHow, ok := imageDigest(r)
+	end, start := cdxutil.Timestamp(r.Ended.UnixMilli()), cdxutil.Timestamp(r.Started.UnixMilli())
+	imageDigest, imageHow, ok := cdxutil.ImageDigest(r)
 	if !ok {
 		return nil, fmt.Errorf("run %s states no image identity this emitter can map", r.SHA256)
 	}
@@ -326,19 +292,19 @@ func buildBOM(s source, o options) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	tool := object{"type": "application", "name": "plimsoll-sbom", "version": "0.2.0", "externalReferences": []object{{"type": "vcs", "url": repository}}}
-	programProps := props("author_kind", "agent", "author_kind_basis", "supplied example context, unverified", "request_sha256", r.RequestSHA256, "result_sha256", r.ResultSHA256, "record_sha256", r.SHA256)
+	tool := object{"type": "application", "name": "plimsoll-sbom", "version": "0.2.0", "externalReferences": []object{{"type": "vcs", "url": cdxutil.Repository}}}
+	programProps := cdxutil.Props("author_kind", "agent", "author_kind_basis", "supplied example context, unverified", "request_sha256", r.RequestSHA256, "result_sha256", r.ResultSHA256, "record_sha256", r.SHA256)
 	if s.Request.GetTraceId() != "" {
-		programProps = append(programProps, props("trace_id", s.Request.GetTraceId())...)
+		programProps = append(programProps, cdxutil.Props("trace_id", s.Request.GetTraceId())...)
 	}
 	grant := s.grant()
 	grantWords := "none"
 	if grant != "" {
 		grantWords = grant
 	}
-	workflowProps := props("provider", r.Provider, "isolation", r.Isolation, "minimum_isolation", s.Request.GetMinimumIsolation(), "timeout_ms", strconv.Itoa(int(s.Request.GetTimeoutMs())), "grant", grantWords, "outcome", strings.ToLower(strings.TrimPrefix(s.Response.GetProject().GetOutcome().String(), "PROJECT_OUTCOME_")))
+	workflowProps := cdxutil.Props("provider", r.Provider, "isolation", r.Isolation, "minimum_isolation", s.Request.GetMinimumIsolation(), "timeout_ms", strconv.Itoa(int(s.Request.GetTimeoutMs())), "grant", grantWords, "outcome", strings.ToLower(strings.TrimPrefix(s.Response.GetProject().GetOutcome().String(), "PROJECT_OUTCOME_")))
 	if r.Policy != "" {
-		workflowProps = append(workflowProps, props("policy", r.Policy)...)
+		workflowProps = append(workflowProps, cdxutil.Props("policy", r.Policy)...)
 	}
 	var tasks, dependencies []object
 	var kinds []string
@@ -356,7 +322,7 @@ func buildBOM(s source, o options) ([]byte, error) {
 		if !slices.Contains(kinds, kind) {
 			kinds = append(kinds, kind)
 		}
-		tasks = append(tasks, object{"bom-ref": "step-" + n, "uid": n, "name": commands[i], "taskTypes": []string{kind}, "steps": []object{{"commands": []object{{"executed": commands[i], "properties": props(
+		tasks = append(tasks, object{"bom-ref": "step-" + n, "uid": n, "name": commands[i], "taskTypes": []string{kind}, "steps": []object{{"commands": []object{{"executed": commands[i], "properties": cdxutil.Props(
 			"exit_code", strconv.Itoa(int(step.GetExitCode())), "duration_ms", strconv.FormatInt(step.GetDurationMs(), 10), "timed_out", strconv.FormatBool(step.GetTimedOut()), "stdout_truncated", strconv.FormatBool(step.GetStdoutTruncated()), "stderr_truncated", strconv.FormatBool(step.GetStderrTruncated()),
 		)}}}}})
 		dep := object{"ref": "step-" + n}
@@ -370,7 +336,7 @@ func buildBOM(s source, o options) ([]byte, error) {
 	}
 	workflow := object{"bom-ref": "run", "uid": r.SHA256, "name": "plimsoll run", "taskTypes": kinds, "timeStart": start, "timeEnd": end,
 		"inputs":          []object{{"resource": object{"ref": "program"}}},
-		"outputs":         []object{{"type": "other", "resource": object{"ref": "evidence-run-record"}, "properties": props("result_sha256", r.ResultSHA256)}},
+		"outputs":         []object{{"type": "other", "resource": object{"ref": "evidence-run-record"}, "properties": cdxutil.Props("result_sha256", r.ResultSHA256)}},
 		"runtimeTopology": []object{{"ref": "program", "dependsOn": []string{"image"}}}, "properties": workflowProps,
 	}
 	if len(tasks) != 0 {
@@ -397,9 +363,9 @@ func buildBOM(s source, o options) ([]byte, error) {
 			"confidence":  object{"score": 1, "rationale": "a signature check and a digest recomputation, not a judgement or a probability that the runtime assertion is true"}})
 	}
 	description := "An agent-style example program run once through plimsoll; authorship is supplied context, not verified evidence."
-	references := []object{{"type": "attestation", "url": s.Shared.Pages + "bundle.jsonl", "hashes": hashes(s.Shared.BundleSHA256)}}
-	bomProps := props("bundle_sha256", s.Shared.BundleSHA256, "bundle_line", strconv.FormatUint(s.Line.Index, 10), "emitter", "examples/sbom")
-	evidence := []object{{"bom-ref": "evidence-run-record", "propertyName": "plimsoll:run_record", "description": fmt.Sprintf("Public example evidence: DSSE envelope, signed body type %s, in-toto statement %s, predicate %s, key id %s. entry.json is line %d of the referenced bundle as stored: the exact binary protobuf request and response, the record's envelope and the harness's signed link placing the line. exchange.json is a plain JSON copy checked against those bytes.", attest.PayloadType, attest.StatementType, attest.PredicateType, keyID, s.Line.Index), "created": end, "author": object{"name": "plimsoll-attest key " + keyID}, "data": []object{attachment("envelope.json", "application/json", envelope), attachment("harness.pub", "application/x-pem-file", pem), attachment("entry.json", "application/json", line), attachment("exchange.json", "application/json", exchange)}}}
+	references := []object{{"type": "attestation", "url": s.Shared.Pages + "bundle.jsonl", "hashes": cdxutil.Hashes(s.Shared.BundleSHA256)}}
+	bomProps := cdxutil.Props("bundle_sha256", s.Shared.BundleSHA256, "bundle_line", strconv.FormatUint(s.Line.Index, 10), "emitter", "examples/sbom")
+	evidence := []object{{"bom-ref": "evidence-run-record", "propertyName": "plimsoll:run_record", "description": fmt.Sprintf("Public example evidence: DSSE envelope, signed body type %s, in-toto statement %s, predicate %s, key id %s. entry.json is line %d of the referenced bundle as stored: the exact binary protobuf request and response, the record's envelope and the harness's signed link placing the line. exchange.json is a plain JSON copy checked against those bytes.", attest.PayloadType, attest.StatementType, attest.PredicateType, keyID, s.Line.Index), "created": end, "author": object{"name": "plimsoll-attest key " + keyID}, "data": []object{cdxutil.Attachment("envelope.json", "application/json", envelope), cdxutil.Attachment("harness.pub", "application/x-pem-file", pem), cdxutil.Attachment("entry.json", "application/json", line), cdxutil.Attachment("exchange.json", "application/json", exchange)}}}
 	annotation := limits
 	if s.Verdict != nil {
 		statement, err := json.Marshal(*s.Statement)
@@ -408,9 +374,9 @@ func buildBOM(s source, o options) ([]byte, error) {
 		}
 		score, rationale := verdictConformance(*s.Verdict)
 		description = "A program an AI wrote against a simulated fleet vendor's API, run once through plimsoll under a per-run grant and judged by the platform's rules; authorship is supplied context, not verified evidence."
-		references = append(references, object{"type": "attestation", "url": s.Shared.Pages + "qualification.jsonl", "hashes": hashes(s.Shared.QualificationSHA256)})
-		bomProps = append(bomProps, props("qualification_sha256", s.Shared.QualificationSHA256)...)
-		evidence = append(evidence, object{"bom-ref": "evidence-qualification", "propertyName": "plimsoll:qualification", "description": fmt.Sprintf("The platform's qualification statement for this run: DSSE envelope, signed body type %s, in-toto statement %s, predicate %s, key id %s; its subject is this run's record. The referenced qualification file holds one such statement for every run of the referenced bundle.", attest.PayloadType, attest.StatementType, qualify.PredicateType, keyID), "created": end, "author": object{"name": "plimsoll-attest key " + keyID}, "data": []object{attachment("statement.json", "application/json", statement)}})
+		references = append(references, object{"type": "attestation", "url": s.Shared.Pages + "qualification.jsonl", "hashes": cdxutil.Hashes(s.Shared.QualificationSHA256)})
+		bomProps = append(bomProps, cdxutil.Props("qualification_sha256", s.Shared.QualificationSHA256)...)
+		evidence = append(evidence, object{"bom-ref": "evidence-qualification", "propertyName": "plimsoll:qualification", "description": fmt.Sprintf("The platform's qualification statement for this run: DSSE envelope, signed body type %s, in-toto statement %s, predicate %s, key id %s; its subject is this run's record. The referenced qualification file holds one such statement for every run of the referenced bundle.", attest.PayloadType, attest.StatementType, qualify.PredicateType, keyID), "created": end, "author": object{"name": "plimsoll-attest key " + keyID}, "data": []object{cdxutil.Attachment("statement.json", "application/json", statement)}})
 		claims = append(claims, object{"bom-ref": "claim-verdict", "target": "program", "predicate": verdictPredicate(*s.Verdict), "reasoning": verdictReasoning, "evidence": []string{"evidence-qualification", "evidence-run-record"}})
 		requirements = append(requirements, object{"bom-ref": "req-verdict", "identifier": "R4", "title": "the program met the platform's rules"})
 		maps = append(maps, object{"requirement": "req-verdict", "claims": []string{"claim-verdict"},
@@ -418,13 +384,13 @@ func buildBOM(s source, o options) ([]byte, error) {
 			"confidence":  object{"score": 1, "rationale": "a deterministic re-evaluation of the recorded evidence and a signature check, not a judgement or a probability"}})
 		annotation += verdictLimits
 	}
-	references = append(references, object{"type": "documentation", "url": o.Pages + "index.html"}, object{"type": "vcs", "url": repository})
-	doc := object{"bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1, "serialNumber": serial(r.SHA256),
+	references = append(references, object{"type": "documentation", "url": o.Pages + "index.html"}, object{"type": "vcs", "url": cdxutil.Repository})
+	doc := object{"bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1, "serialNumber": cdxutil.Serial(r.SHA256),
 		"metadata": object{"timestamp": end, "lifecycles": []object{{"phase": "operations"}}, "tools": object{"components": []object{tool}}, "component": object{
-			"type": "application", "bom-ref": "program", "name": o.Name, "version": fileDigest[:12], "hashes": hashes(fileDigest), "description": description, "components": files,
+			"type": "application", "bom-ref": "program", "name": o.Name, "version": fileDigest[:12], "hashes": cdxutil.Hashes(fileDigest), "description": description, "components": files,
 			"externalReferences": references, "properties": programProps,
 		}},
-		"components":  []object{{"type": "container", "bom-ref": "image", "name": o.ImageName, "version": "sha256:" + imageDigest, "purl": "pkg:oci/" + o.ImageName + "@sha256:" + imageDigest, "hashes": hashes(imageDigest), "properties": props("environment", r.Environment, "software_identity", r.SoftwareIdentity)}},
+		"components":  []object{{"type": "container", "bom-ref": "image", "name": o.ImageName, "version": "sha256:" + imageDigest, "purl": "pkg:oci/" + o.ImageName + "@sha256:" + imageDigest, "hashes": cdxutil.Hashes(imageDigest), "properties": cdxutil.Props("environment", r.Environment, "software_identity", r.SoftwareIdentity)}},
 		"formulation": []object{{"bom-ref": "formula", "workflows": []object{workflow}}},
 		"declarations": object{
 			"assessors": []object{{"bom-ref": "assessor", "thirdParty": false, "organization": object{"name": o.Operator}}}, "claims": claims,
@@ -441,41 +407,15 @@ func buildBOM(s source, o options) ([]byte, error) {
 			return nil, fmt.Errorf("image SBOM differs from run manifest")
 		}
 		doc["components"].([]object)[0]["externalReferences"] = []object{
-			{"type": "bom", "url": o.Pages + image.File, "hashes": hashes(image.SHA256)},
+			{"type": "bom", "url": o.Pages + image.File, "hashes": cdxutil.Hashes(image.SHA256)},
 			{"type": "bom", "url": image.Link},
 		}
 	}
-	return encodeBOM(doc)
+	return cdxutil.EncodeBOM(doc)
 }
 
 // Use the official Go model and JSON encoder, then restore explicit false for
 // self-assessment: the library's bool omitempty would otherwise omit that fact.
-func encodeBOM(doc object) ([]byte, error) {
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		return nil, err
-	}
-	var bom cdx.BOM
-	if err := cdx.NewBOMDecoder(bytes.NewReader(raw), cdx.BOMFileFormatJSON).Decode(&bom); err != nil {
-		return nil, err
-	}
-	var b bytes.Buffer
-	if err := cdx.NewBOMEncoder(&b, cdx.BOMFileFormatJSON).SetPretty(true).Encode(&bom); err != nil {
-		return nil, err
-	}
-	var encoded object
-	if err := json.Unmarshal(b.Bytes(), &encoded); err != nil {
-		return nil, err
-	}
-	encoded["declarations"].(map[string]any)["assessors"].([]any)[0].(map[string]any)["thirdParty"] = false
-	b.Reset()
-	encoder := json.NewEncoder(&b)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(encoded); err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
-}
 
 // sharedFiles are the files a BOM refers to by digest, when the checker has them: the
 // whole bundle and, for a qualified run, the whole qualification file. Either may be nil.
@@ -505,10 +445,10 @@ func decodeAttachments(e cdx.DeclarationEvidence, want []string) (map[string][]b
 }
 
 func checkBOM(raw, trustedPEM []byte, image *imageBOM, have sharedFiles) ([]string, error) {
-	if err := uniqueJSON(raw); err != nil {
+	if err := cdxutil.UniqueJSON(raw); err != nil {
 		return nil, err
 	}
-	if err := validateSchema(raw); err != nil {
+	if err := cdxutil.ValidateSchema(raw); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
 	var bom cdx.BOM
@@ -555,7 +495,7 @@ func checkBOM(raw, trustedPEM []byte, image *imageBOM, have sharedFiles) ([]stri
 		trust = "PASS: attached key matches independently trusted key."
 	}
 	var env attest.Envelope
-	if err := uniqueJSON(attached["envelope.json"]); err != nil {
+	if err := cdxutil.UniqueJSON(attached["envelope.json"]); err != nil {
 		return nil, err
 	}
 	d := json.NewDecoder(bytes.NewReader(attached["envelope.json"]))
@@ -585,7 +525,7 @@ func checkBOM(raw, trustedPEM []byte, image *imageBOM, have sharedFiles) ([]stri
 		return nil, err
 	}
 	if qualifiedBOM {
-		if err := uniqueJSON(statementBytes); err != nil {
+		if err := cdxutil.UniqueJSON(statementBytes); err != nil {
 			return nil, err
 		}
 		var st attest.Envelope
@@ -630,7 +570,7 @@ func checkBOM(raw, trustedPEM []byte, image *imageBOM, have sharedFiles) ([]stri
 	bundleLine := "LIMIT: the referenced bundle was not supplied; the attached line's own seal and link were checked, the chain around it was not."
 	qualificationLine := ""
 	if have.Bundle != nil {
-		if digest(have.Bundle) != selected.Shared.BundleSHA256 {
+		if cdxutil.Digest(have.Bundle) != selected.Shared.BundleSHA256 {
 			return nil, fmt.Errorf("the supplied bundle is not the one the BOM references")
 		}
 		_, entries, err := verifiedBundle(have.Bundle, attached["harness.pub"])
@@ -645,7 +585,7 @@ func checkBOM(raw, trustedPEM []byte, image *imageBOM, have sharedFiles) ([]stri
 		if qualifiedBOM {
 			qualificationLine = "LIMIT: the referenced qualification file was not supplied; the attached statement was checked against its run, the checks across runs were not."
 			if have.Qualification != nil {
-				if digest(have.Qualification) != selected.Shared.QualificationSHA256 {
+				if cdxutil.Digest(have.Qualification) != selected.Shared.QualificationSHA256 {
 					return nil, fmt.Errorf("the supplied qualification file is not the one the BOM references")
 				}
 				statements, err := qualify.ReadStatements(have.Qualification)

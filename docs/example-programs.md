@@ -1,16 +1,19 @@
 # The example programs
 
-Ten runnable Go programs and one TypeScript example in this repository, what each one proves, and the one to read if you only read one.
+Go programs, a shell recipe and a TypeScript example: what each shows, what it needs,
+and the one to read if you only read one. Part of the [plimsoll README](../README.md).
 
-Part of the [plimsoll README](../README.md).
+`minimal`, `grant`, `daemon` and `advisor` need no docker, credentials or daemon you
+start yourself. `oracle`, `wasm-controller`, `wasm-buck` and `adapter` need docker and
+the images `make docker-images` builds. `providers` additionally uses any hosted or
+gateway <dfn>*provider*</dfn>, a backend that runs the code, it has settings for, including paid services. `sessions` needs an
+<dfn>*OpenShell*</dfn> gateway, NVIDIA's server for creating sandboxes.
 
-The first four need no docker, no credentials and no daemon you start yourself. The next
-four need docker and the images `make docker-images` builds, and `examples/providers` also
-uses any paid or gateway <dfn>*providers*</dfn> (the backends that run the code) it has
-settings for. `examples/sessions` needs a gateway server of <dfn>*OpenShell*</dfn>, NVIDIA's agent
-sandbox runtime. Run them from the repository root, except `examples/capsule`, its own Go
-module (Go 1.27), which reads the signed bundle `examples/sessions` committed and runs from
-its own directory, as does the TypeScript example, last in the table, with npm.
+`agentsandbox`, `capsule` and `sbom` rebuild pages from recorded evidence offline.
+Run Go examples from the repository root; `capsule` (Go 1.27) and `sbom` have their
+own modules, so their commands change directory first. The pull-request [receipt (INTERNAL · glossary →)](trainers/glossary.html#receipt)
+recipe needs docker, [gVisor (INTERNAL · glossary →)](trainers/glossary.html#gvisor) and the containerd image store, which stores the exact
+image descriptions it records. The TypeScript example uses npm from its own directory.
 
 | Command | What it shows |
 |---|---|
@@ -24,6 +27,10 @@ its own directory, as does the TypeScript example, last in the table, with npm.
 | `go run ./examples/wasm-buck` | A controller in C for a <dfn>*buck converter*</dfn>, a power supply that steps a voltage down by switching it on and off many times a second. It uses the same adapter, runner and compile step, and holds 5 V out from 10 to 16 V in through a load that halves at an unknown moment. Two C runs and one JavaScript run of the same control law give one module hash, and in every scenario the C trajectory equals the JavaScript one byte for byte: the law calls no library function, and the compiler is told not to merge a multiply and an add into one step (which would round differently). The page it writes, live: [a buck converter controller in C](https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html), charts, tick by tick, the output voltage, the current through the converter's coil (inductor current) and the share of each cycle its switch is on (duty cycle) (source: `docs/examples/wasm-buck/index.html`). Its [README](../examples/wasm-buck/README.md) says what it does not prove. |
 | `go run ./examples/sessions` | A <dfn>*session*</dfn>, one sandbox kept for many calls ([sessions.md](sessions.md)), on an OpenShell sandbox through plimsolld. A <dfn>*harness*</dfn>, a program outside the daemon, signs every call's <dfn>*run record*</dfn>, the daemon's statement of what was sent, what came back and where it ran ([run-records.md](run-records.md)). The calls: a project whose test fails, a snippet that patches the file in place, the test passing without the files being sent again, a snippet that leaves a background process running, and a snippet that finds it gone. The signed set of records is verified, then refused once with one call dropped and once with one byte of output changed. The page it writes, live: [one sandbox, five calls](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html), with the signed set and the harness's public key beside it (source: `docs/examples/sessions/`). Needs a gateway and the five `SANDBOX_OPENSHELL_*` settings; spends nothing. |
 | `cd examples/capsule && go run .` | Each call of the sessions example's signed bundle, once the `attest` verifier accepted it, stated as an Agent Action Capsule and checked by that project's Go and Python verifiers. Its own Go module, because the capsule code needs Go 1.27 and dependencies plimsoll does not take on. |
+| `go run ./examples/adapter` | An AI-written adapter, code that connects a platform to a device vendor's API, tried against a simulated robot fleet. The host checks its reported answers against the vendor's ledger under faults, lost answers and refusals, and signs the qualification verdict, the result of those checks. Needs docker. [INTERNAL · adapter contract →](../examples/adapter/contract/CONTRACT.md); [INTERNAL · recorded fleet replay →](examples/adapter/index.html). |
+| `cd examples/sbom && go run .` | Signed run records converted to CycloneDX 1.6 software bills of materials, ingredients labels carrying the run's evidence. Offline conversion and checking; no new sandbox. [INTERNAL · converter guide →](../examples/sbom/README.md); [INTERNAL · interactive receipt checks →](examples/sbom/index.html). |
+| `go run ./examples/agentsandbox` | Rebuilds the evidence page from recorded Kubernetes <dfn>*agent-sandbox*</dfn> runs, the Kubernetes component that lends ready pods from a pool. It checks the signed records and refuses altered evidence; it starts no cluster. [INTERNAL · recorded runs, comparison and refusals →](examples/agentsandbox/index.html); [INTERNAL · live deployment guide →](agentsandbox.md). |
+| `make receipt-suite` | Exercises the pull-request receipt recipe locally: tracked project files and their test command run under gVisor, then a signed record and a bill of materials are checked. Needs docker, gVisor and the containerd image store. This command posts no comment. [INTERNAL · recipe and workflow template →](../examples/pr-receipt/README.md); [INTERNAL · recorded receipt →](../examples/pr-receipt/evidence/index.html). |
 | `examples/trigger-chat` (npm) | A <dfn>*Trigger.dev*</dfn> (a hosted job runner for TypeScript) chat agent with an `executeCode` <dfn>*tool*</dfn> (one named action the agent's model can call), written on Trigger.dev's own code-sandbox recipe with plimsoll as the sandbox, through the TypeScript client in `clients/typescript`. The tool runs Python or JavaScript and takes files, so the model hands the code another tool's output by path. On a daemon with sessions the run keeps one sandbox, warmed when a turn starts and closed right before the run sleeps, and every call runs in an interpreter that stays alive, so data loaded in one call is still in memory in the next; elsewhere each call runs fresh and the tool says nothing was kept. Its test drives two turns through Trigger.dev's offline harness and checks that one interpreter served every call, that a file reached it, and that the suspend closed the sandbox. Needs a plimsolld, a Trigger.dev project and a model key; its [README](../examples/trigger-chat/README.md) says how. |
 
 `examples/grant` is the one to read if you only read one. After each step it prints the

@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>An AI agent wrote the code that runs your robots. What else can that code do?</title>
-<meta name="description" content="An AI agent&#x27;s code sends jobs to a robot vendor with the business&#x27;s password in hand. What else could it do with that password, and how do you know? A small example: the code runs in plimsoll&#x27;s sandbox, a gatekeeper passes on only the requests it is allowed and adds a one-off password, every attempt to do more is refused and recorded, and the one bug no sandbox catches, a double order after a lost reply, is caught by the vendor&#x27;s own ledger.">
+<title>Two pizzas arrive, but you tried to order one</title>
+<meta name="description" content="A dropped call, an AI-written program, and a way to try it before trusting it with real jobs.">
 <meta name="author" content="Carroll Guertin">
 <meta property="og:type" content="article">
-<meta property="og:title" content="An AI agent wrote the code that runs your robots. What else can that code do?">
-<meta property="og:description" content="An AI agent&#x27;s code sends jobs to a robot vendor with the business&#x27;s password in hand. What else could it do with that password, and how do you know? A small example: the code runs in plimsoll&#x27;s sandbox, a gatekeeper passes on only the requests it is allowed and adds a one-off password, every attempt to do more is refused and recorded, and the one bug no sandbox catches, a double order after a lost reply, is caught by the vendor&#x27;s own ledger.">
+<meta property="og:title" content="Two pizzas arrive, but you tried to order one">
+<meta property="og:description" content="A dropped call, an AI-written program, and a way to try it before trusting it with real jobs.">
 <meta property="og:url" content="https://plimsollmark.github.io/plimsoll/notes/lost-answer/index.html">
 <link rel="canonical" href="https://plimsollmark.github.io/plimsoll/notes/lost-answer/index.html">
 <style>
@@ -47,307 +47,57 @@ footer { margin-top:2.6rem; padding-top:1rem; border-top:1px solid var(--rule);
 <body><main>
 <nav><a href="../../index.html">plimsoll</a> / <a href="../index.html">notes</a></nav>
 <article>
-<h1>An AI agent wrote the code that runs your robots. What else can that code do?</h1>
-<p class="byline">Carroll Guertin, 2026-10-16</p>
-<p>A business lets an AI agent run its warehouse robots. The agent does not press buttons. It writes a small program that sends each job to the robot company over the internet, and that program runs with the business's password for the robot company's system. Nobody reviewed it. It was written minutes ago. Before you let it run, you want three things: it can do nothing beyond its job, it never holds the password, and afterwards you can see exactly what it did.</p>
-<p>That is what plimsoll is for: a small open-source tool I built that runs code you don't trust in a locked room, with a gatekeeper on the only door and a sealed record of what went in and what came out. This note walks through one small example of it. The robot company in it is a simulator I wrote and its password is a fake one, so nothing was at risk; the mechanism is the same with a real vendor.</p>
-<h2 id="the-pieces">The pieces</h2>
-<p><strong>The robot company</strong> (the vendor). A pretend one, with three warehouse robots. Its system accepts eight kinds of request: check it is up, list the robots, look at one, send one somewhere, check on a job, cancel a job, and two you would not want a stray program making, deleting a robot from the fleet and changing a robot's software. It keeps its own list of every job it accepted, the ledger: the pizza kitchen's rail of orders.</p>
-<p><strong>The adapter.</strong> The business decides what jobs need doing. The adapter is the small program that passes each job on to the robot company. An AI agent wrote it.</p>
-<p><strong>The sandbox.</strong> The adapter runs inside plimsoll. Think of a locked room: no internet (its only network connection is to itself, which plimsoll checks each time it starts), and, between the room and the server it stands on, a second operating-system core (gVisor) that answers the code's requests in place of the server's own; this example did not try to get past it. Its one way out is a gatekeeper, the broker, which passes on six of the eight kinds of request (never the two dangerous ones) and adds the robot company's password on the way out, so the adapter never sees it. The password is made fresh for each run and dies 95 seconds later.</p>
-<figure class="fig"><svg role="img" aria-label="Who talks to whom. The test driver and the AI-written adapter run inside the sandbox, a locked room with no internet and no password. The adapter&#x27;s only way out is a door to the broker, a gatekeeper that passes on six of the robot company&#x27;s eight kinds of request and adds a password made for this run only. The robot company holds three robots and its ledger, its list of every order it accepted. The receipt is a sealed copy of what went into the sandbox and what came out. The grader takes the ledger as evidence and the adapter&#x27;s own report as a claim to check." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 380" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
-<title>Who talks to whom. The test driver and the AI-written adapter run inside the sandbox, a locked room with no internet and no password. The adapter's only way out is a door to the broker, a gatekeeper that passes on six of the robot company's eight kinds of request and adds a password made for this run only. The robot company holds three robots and its ledger, its list of every order it accepted. The receipt is a sealed copy of what went into the sandbox and what came out. The grader takes the ledger as evidence and the adapter's own report as a claim to check.</title>
-<defs>
-<marker id="map-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/></marker>
-<marker id="map-arrm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5d5d5d"/></marker>
-</defs>
-<rect width="540" height="380" rx="16" fill="#fbfaf7"/>
-<rect x="8" y="10" width="212" height="226" rx="16" fill="#e3edf8" stroke="#0f4a85" stroke-width="2.5"/>
-<text x="22" y="36" font-size="17" font-weight="700" fill="#0f4a85">📦 the sandbox</text>
-<text x="22" y="56" font-size="13" fill="#0f4a85">no internet, no password, no way</text>
-<text x="22" y="72" font-size="13" fill="#0f4a85">into the machine it runs on</text>
-<rect x="20" y="86" width="182" height="44" rx="10" fill="#fff" stroke="#0f4a85" stroke-width="1.5"/>
-<text x="32" y="114" font-size="15" fill="#1a1a1a">🧪 the exam (test driver)</text>
-<line x1="111" y1="130" x2="111" y2="150" stroke="#1a1a1a" stroke-width="2" marker-end="url(#map-arr)"/>
-<text x="118" y="146" font-size="12" fill="#5d5d5d">commands</text>
-<rect x="20" y="154" width="182" height="44" rx="10" fill="#fff" stroke="#0f4a85" stroke-width="1.5"/>
-<text x="32" y="182" font-size="15" fill="#1a1a1a">🔌 adapter (AI-written)</text>
-<rect x="210" y="148" width="20" height="58" rx="3" fill="#f2c14e" stroke="#1a1a1a" stroke-width="1.5"/>
-<circle cx="225" cy="178" r="2.2" fill="#1a1a1a"/>
-<line x1="202" y1="176" x2="210" y2="176" stroke="#1a1a1a" stroke-width="2"/>
-<line x1="231" y1="178" x2="242" y2="178" stroke="#1a1a1a" stroke-width="2" marker-end="url(#map-arr)"/>
-<rect x="244" y="118" width="138" height="118" rx="12" fill="#fdf3d6" stroke="#b07d10" stroke-width="2"/>
-<text x="313" y="142" font-size="16" font-weight="700" fill="#1a1a1a" text-anchor="middle">🛂 broker</text>
-<text x="313" y="164" font-size="13" fill="#1a1a1a" text-anchor="middle">lets through 6 of</text>
-<text x="313" y="181" font-size="13" fill="#1a1a1a" text-anchor="middle">8 kinds of request</text>
-<text x="313" y="205" font-size="13" fill="#1a1a1a" text-anchor="middle">🔑 adds a password</text>
-<text x="313" y="222" font-size="13" fill="#1a1a1a" text-anchor="middle">made for this run only</text>
-<line x1="383" y1="178" x2="393" y2="178" stroke="#1a1a1a" stroke-width="2" marker-end="url(#map-arr)"/>
-<rect x="394" y="10" width="138" height="226" rx="16" fill="#fff" stroke="#1a1a1a" stroke-width="2"/>
-<text x="406" y="36" font-size="17" font-weight="700" fill="#1a1a1a">🏢 the vendor</text>
-<text x="463" y="82" font-size="26" text-anchor="middle">🤖🤖🤖</text>
-<text x="463" y="100" font-size="12" fill="#5d5d5d" text-anchor="middle">r1 · r2 · r3</text>
-<rect x="406" y="120" width="114" height="100" rx="6" fill="#fdf3d6" stroke="#b07d10" stroke-width="1.5"/>
-<text x="463" y="142" font-size="15" font-weight="700" fill="#1a1a1a" text-anchor="middle">📒 ledger</text>
-<text x="463" y="164" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#1a1a1a" text-anchor="middle">m1 · r1</text>
-<text x="463" y="182" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#1a1a1a" text-anchor="middle">m2 · r2</text>
-<text x="463" y="200" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#5d5d5d" text-anchor="middle">…</text>
-<line x1="470" y1="222" x2="470" y2="266" stroke="#1a1a1a" stroke-width="2" marker-end="url(#map-arr)"/>
-<text x="478" y="250" font-size="12" fill="#1a1a1a">evidence</text>
-<rect x="8" y="270" width="198" height="98" rx="12" fill="#fff" stroke="#1a1a1a" stroke-width="2"/>
-<text x="20" y="296" font-size="16" font-weight="700" fill="#1a1a1a">🧾 the receipt</text>
-<text x="20" y="318" font-size="13" fill="#1a1a1a">a signed copy of what</text>
-<text x="20" y="336" font-size="13" fill="#1a1a1a">went in and what came</text>
-<text x="20" y="354" font-size="13" fill="#1a1a1a">out, and of each verdict</text>
-<line x1="70" y1="238" x2="70" y2="266" stroke="#5d5d5d" stroke-width="2" marker-end="url(#map-arrm)"/>
-<rect x="250" y="270" width="282" height="98" rx="12" fill="#fff" stroke="#1a1a1a" stroke-width="2"/>
-<text x="264" y="296" font-size="16" font-weight="700" fill="#1a1a1a">⚖️ the grader</text>
-<text x="264" y="318" font-size="13" fill="#1a1a1a">8 rules, read off the ledger and</text>
-<text x="264" y="336" font-size="13" fill="#1a1a1a">the robots after the run; the</text>
-<text x="264" y="354" font-size="13" fill="#1a1a1a">adapter's “all fine!” is a claim</text>
-<line x1="207" y1="330" x2="246" y2="330" stroke="#5d5d5d" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#map-arrm)"/>
-<text x="228" y="322" font-size="11" font-style="italic" fill="#5d5d5d" text-anchor="middle">report</text>
-</svg><figcaption>The adapter's only way out is the broker. The grader reads the robot company's ledger, not the adapter.</figcaption></figure>
-<h2 id="what-the-code-could-do-and-what-it-got">What the code could do, and what it got</h2>
-<p>With the password in hand and the internet available, a program like this could delete a robot, change its software, send the password to anyone, retry a failing request without end, or read whatever else is on the server it runs on. Not because the AI means harm. Code does what it says, including what it says by mistake, and an agent can be talked into things by text it reads along the way.</p>
-<p>So the example runs a step that behaves like hostile code, under exactly the rules the adapters get, and records what happens. It asked the gatekeeper to delete a robot: refused, that is not one of the six. It tried the same thing by a raw request that went around the gatekeeper's client: refused again. It tried to reach the robot company directly: no internet, the connection failed. It searched its surroundings for the password: nothing in its environment, nothing in the client it was given. Of those results, the gatekeeper's own refusal of the raw request and the robot company's record of what reached it are seen from outside the room; the other three are the step's own account, and they fit how the room is built: no network connection, and the password attached outside the door. Over the example's 51 runs the robot company saw 50 different passwords, one for each run that reached it, each dead within 95 seconds. And when the robot company was overloaded and said "try later", the gatekeeper held the adapter's next requests back for a second instead of letting it hammer the company.</p>
-<figure class="fig"><svg role="img" aria-label="The same AI-written adapter without plimsoll and with it. Without: it runs on the business&#x27;s servers with internet access, holds the robot company&#x27;s real password, can send all eight kinds of request including deleting a robot, sends every retry to a company already saying try later, its report of all done is believed so the double order is caught later, once it is live, and the only proof is a log anyone with access can edit. With: it runs in a locked room with no internet, never sees the password because a new one is made per run and added outside, can send only six kinds of request and deleting a robot is refused, the gatekeeper holds calls back while the company recovers, the ledger is checked by the test&#x27;s grader so the double order is caught before it is live, and a sealed receipt fails if one character changes." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 444" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
-<title>The same AI-written adapter without plimsoll and with it. Without: it runs on the business's servers with internet access, holds the robot company's real password, can send all eight kinds of request including deleting a robot, sends every retry to a company already saying try later, its report of all done is believed so the double order is caught later, once it is live, and the only proof is a log anyone with access can edit. With: it runs in a locked room with no internet, never sees the password because a new one is made per run and added outside, can send only six kinds of request and deleting a robot is refused, the gatekeeper holds calls back while the company recovers, the ledger is checked by the test's grader so the double order is caught before it is live, and a sealed receipt fails if one character changes.</title>
-<rect width="540" height="444" rx="16" fill="#fbfaf7"/>
-<rect x="6" y="8" width="260" height="402" rx="14" fill="#fff" stroke="#b3261e" stroke-width="2" stroke-dasharray="7 5"/>
-<rect x="274" y="8" width="260" height="402" rx="14" fill="#fff" stroke="#1e7a3c" stroke-width="2.5"/>
-<text x="136" y="40" font-size="18" font-weight="700" fill="#b3261e" text-anchor="middle">😬 Without plimsoll</text>
-<text x="404" y="40" font-size="18" font-weight="700" fill="#1e7a3c" text-anchor="middle">😌 With plimsoll</text>
-<text x="34" y="92" font-size="24" text-anchor="middle">🌐</text><text x="58" y="82" font-size="14" fill="#1a1a1a">runs on the business's</text><text x="58" y="101" font-size="14" fill="#1a1a1a">servers, with internet</text><text x="302" y="92" font-size="24" text-anchor="middle">📦</text><text x="326" y="82" font-size="14" fill="#1a1a1a">a locked room with</text><text x="326" y="101" font-size="14" fill="#1a1a1a">no internet at all</text><line x1="18" y1="114" x2="254" y2="114" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="114" x2="522" y2="114" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="150" font-size="24" text-anchor="middle">🔑</text><text x="58" y="140" font-size="14" fill="#1a1a1a">holds the company's</text><text x="58" y="159" font-size="14" fill="#1a1a1a">real password</text><text x="302" y="150" font-size="24" text-anchor="middle">🔑</text><text x="326" y="140" font-size="14" fill="#1a1a1a">never sees the password:</text><text x="326" y="159" font-size="14" fill="#1a1a1a">a fresh one is added per run</text><line x1="18" y1="172" x2="254" y2="172" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="172" x2="522" y2="172" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="208" font-size="24" text-anchor="middle">🗑️</text><text x="58" y="198" font-size="14" fill="#1a1a1a">can send all 8 kinds of request,</text><text x="58" y="217" font-size="14" fill="#1a1a1a">deleting a robot too</text><text x="302" y="208" font-size="24" text-anchor="middle">🛂</text><text x="326" y="198" font-size="14" fill="#1a1a1a">only 6 kinds of request;</text><text x="326" y="217" font-size="14" fill="#1a1a1a">deleting a robot is refused</text><line x1="18" y1="230" x2="254" y2="230" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="230" x2="522" y2="230" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="266" font-size="24" text-anchor="middle">🌊</text><text x="58" y="256" font-size="14" fill="#1a1a1a">every retry hits a company</text><text x="58" y="275" font-size="14" fill="#1a1a1a">already saying “try later”</text><text x="302" y="266" font-size="24" text-anchor="middle">🛂</text><text x="326" y="256" font-size="14" fill="#1a1a1a">the gatekeeper holds calls</text><text x="326" y="275" font-size="14" fill="#1a1a1a">back while it recovers</text><line x1="18" y1="288" x2="254" y2="288" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="288" x2="522" y2="288" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="324" font-size="24" text-anchor="middle">🎉</text><text x="58" y="314" font-size="14" fill="#1a1a1a">“all done” is believed:</text><text x="58" y="333" font-size="14" fill="#1a1a1a">🍕🍕 caught later, once it's live</text><text x="302" y="324" font-size="24" text-anchor="middle">⚖️</text><text x="326" y="314" font-size="14" fill="#1a1a1a">the ledger is checked*:</text><text x="326" y="333" font-size="14" fill="#1a1a1a">🍕🍕 caught before it's live</text><line x1="18" y1="346" x2="254" y2="346" stroke="#f0d2cd" stroke-width="1"/><line x1="286" y1="346" x2="522" y2="346" stroke="#cfe3d4" stroke-width="1"/><text x="34" y="382" font-size="24" text-anchor="middle">📝</text><text x="58" y="372" font-size="14" fill="#1a1a1a">the proof is a log</text><text x="58" y="391" font-size="14" fill="#1a1a1a">anyone with access can edit</text><text x="302" y="382" font-size="24" text-anchor="middle">🧾</text><text x="326" y="372" font-size="14" fill="#1a1a1a">a sealed receipt; change</text><text x="326" y="391" font-size="14" fill="#1a1a1a">one character and it fails</text>
-<text x="270" y="432" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">* the grader comes with the test; plimsoll runs the code it grades</text>
-</svg><figcaption>The same adapter, run two ways. Each row on the right was checked in this test.</figcaption></figure>
-<p>Every one of those refusals is in the sealed record, beside what the adapter was asked and what it answered. That is the second half of the point: not only that the code could not do more, but that anyone can check it could not.</p>
-<h2 id="what-a-sandbox-cannot-catch">What a sandbox cannot catch</h2>
-<p>You phone a pizza place. They say "got it", and the line drops before you hear it. Did the order go in? You call back and order again. Two pizzas arrive, but you tried to order one. 🍕🍕</p>
-<figure class="fig"><svg role="img" aria-label="The same bug at home and at work. At home: the line drops right after the pizza place says got it, you order again, and two pizzas arrive. At work: the robot company accepts order m2 but its reply never arrives, the first adapter orders again with no order number, the company makes order m3, and robot r2 gets two jobs while the adapter reports that all is done." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 440" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
-<title>The same bug at home and at work. At home: the line drops right after the pizza place says got it, you order again, and two pizzas arrive. At work: the robot company accepts order m2 but its reply never arrives, the first adapter orders again with no order number, the company makes order m3, and robot r2 gets two jobs while the adapter reports that all is done.</title>
-<defs><marker id="pizza-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/></marker></defs>
-<rect width="540" height="440" rx="16" fill="#fbfaf7"/>
-<text x="10" y="24" font-size="17" font-weight="700" fill="#1a1a1a">🍕 At home</text>
-<g stroke="#1a1a1a" stroke-width="2" fill="#fff">
-<rect x="6" y="34" width="172" height="172" rx="14"/><rect x="184" y="34" width="172" height="172" rx="14"/><rect x="362" y="34" width="172" height="172" rx="14"/>
-</g>
-<rect x="74" y="46" width="94" height="36" rx="18" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
-<text x="121" y="70" font-size="17" font-weight="700" fill="#1e7a3c" text-anchor="middle">Got it!</text>
-<text x="42" y="140" font-size="40" text-anchor="middle">📞</text>
-<text x="146" y="140" font-size="34" text-anchor="middle">🏪</text>
-<path d="M66,124 L86,124 L92,114 L98,134 L104,114 L110,134 L116,124 L124,124" fill="none" stroke="#b3261e" stroke-width="2.5" stroke-linejoin="round"/>
-<text x="95" y="160" font-size="14" font-style="italic" fill="#b3261e" text-anchor="middle">*click*</text>
-<text x="92" y="192" font-size="15" fill="#1a1a1a" text-anchor="middle">The line drops.</text>
-<rect x="234" y="46" width="112" height="56" rx="16" fill="#fdf3d6" stroke="#b07d10" stroke-width="1.5"/>
-<text x="290" y="69" font-size="15" fill="#1a1a1a" text-anchor="middle">Hi, one large,</text>
-<text x="290" y="89" font-size="15" fill="#1a1a1a" text-anchor="middle">please!</text>
-<text x="212" y="148" font-size="40">🤔</text>
-<text x="300" y="140" font-size="13" fill="#5d5d5d" text-anchor="middle">did it go in?</text>
-<text x="300" y="158" font-size="13" fill="#5d5d5d" text-anchor="middle">who knows</text>
-<text x="270" y="192" font-size="15" fill="#1a1a1a" text-anchor="middle">You order again.</text>
-<text x="448" y="66" font-size="14" font-style="italic" fill="#5d5d5d" text-anchor="middle">🔔 ding dong</text>
-<text x="448" y="136" font-size="48" text-anchor="middle">🍕🍕</text>
-<text x="448" y="192" font-size="15" fill="#1a1a1a" text-anchor="middle">Two pizzas arrive.</text>
-<text x="10" y="242" font-size="17" font-weight="700" fill="#1a1a1a">🤖 At work: the first adapter</text>
-<g stroke="#1a1a1a" stroke-width="2" fill="#fff">
-<rect x="6" y="252" width="172" height="182" rx="14"/><rect x="184" y="252" width="172" height="182" rx="14"/><rect x="362" y="252" width="172" height="182" rx="14"/>
-</g>
-<text x="34" y="292" font-size="26" text-anchor="middle">🔌</text>
-<text x="150" y="292" font-size="26" text-anchor="middle">🏢</text>
-<line x1="52" y1="283" x2="128" y2="283" stroke="#1a1a1a" stroke-width="2" marker-end="url(#pizza-arr)"/>
-<text x="92" y="276" font-size="12" fill="#1a1a1a" text-anchor="middle">r2 to (10,4)</text>
-<text x="92" y="316" font-size="12" fill="#1e7a3c" text-anchor="middle">order m2 is in ✓</text>
-<rect x="18" y="328" width="148" height="50" rx="10" fill="#fbe4e1" stroke="#b3261e" stroke-width="1.5"/>
-<text x="92" y="350" font-size="17" font-weight="700" fill="#b3261e" text-anchor="middle">error</text>
-<text x="92" y="369" font-size="13" fill="#b3261e" text-anchor="middle">reply never arrives</text>
-<text x="92" y="418" font-size="15" fill="#1a1a1a" text-anchor="middle">The answer is lost.</text>
-<text x="212" y="292" font-size="26" text-anchor="middle">🔌</text>
-<text x="328" y="292" font-size="26" text-anchor="middle">🏢</text>
-<line x1="230" y1="283" x2="306" y2="283" stroke="#1a1a1a" stroke-width="2" marker-end="url(#pizza-arr)"/>
-<text x="270" y="276" font-size="12" fill="#1a1a1a" text-anchor="middle">r2 to (10,4)</text>
-<text x="270" y="316" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">no order number</text>
-<rect x="206" y="328" width="128" height="50" rx="6" fill="#fdf3d6" stroke="#b07d10" stroke-width="1.5"/>
-<text x="270" y="350" font-size="13" fill="#5d5d5d" text-anchor="middle">a new order:</text>
-<text x="270" y="369" font-size="17" font-weight="700" fill="#1a1a1a" text-anchor="middle">m3</text>
-<text x="270" y="418" font-size="15" fill="#1a1a1a" text-anchor="middle">It orders again.</text>
-<text x="404" y="322" font-size="44" text-anchor="middle">🤖</text>
-<text x="404" y="342" font-size="12" fill="#5d5d5d" text-anchor="middle">r2</text>
-<rect x="444" y="266" width="76" height="30" rx="5" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
-<text x="482" y="286" font-size="14" fill="#1a1a1a" text-anchor="middle">job m2 ✓</text>
-<rect x="444" y="302" width="76" height="30" rx="5" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
-<text x="482" y="322" font-size="14" fill="#1a1a1a" text-anchor="middle">job m3 ✓</text>
-<rect x="374" y="356" width="148" height="32" rx="16" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
-<text x="448" y="377" font-size="14" fill="#1e7a3c" text-anchor="middle">🔌 “All done!” 🎉</text>
-<text x="448" y="418" font-size="15" fill="#1a1a1a" text-anchor="middle">Robot gets two jobs.</text>
-</svg><figcaption>The same bug twice: at home a dropped line gets you two pizzas, at work a lost reply gets robot r2 two jobs.</figcaption></figure>
-<p>Software has the same problem, and well-known fixes for it. The robot company lets you put a job number on each job, and promises that if the same number arrives twice, it hands back the original job instead of making a new one. That is the pizza place recognising your order number when you call back, and it is how real services already prevent double orders: Stripe, the payments company, calls it an <a href="https://docs.stripe.com/api/idempotent_requests" rel="noopener">idempotency key (EXTERNAL · official docs ↗) &#8599;</a>, and Amazon's cloud calls it a <a href="https://docs.aws.amazon.com/ec2/latest/devguide/ec2-api-idempotency.html" rel="noopener">client token (EXTERNAL · official docs ↗) &#8599;</a>.</p>
-<p>In one of the example's situations the company accepts the second job and starts the robot, but its reply, "got it", is lost on the way back. The adapter is told something went wrong. The first adapter did what most of us would: it sent the job again, with no job number. The company could not tell it was a repeat, so robot r2 went to shelf (10,4), finished, and went to (10,4) again. The second adapter sent the job again with the same job number, and the company answered "you already have that one". Robot r2 went once. Both adapters reported "all done".</p>
-<figure class="fig"><svg role="img" aria-label="The ledger as a pizza kitchen&#x27;s rail of orders: the five tickets from the first adapter&#x27;s lost-reply run. m1, robot r1 to (3,0), done. m2, robot r2 to (10,4), done. m3, robot r2 to (10,4) again, done. m4, robot r3 to (0,15), done. m5, robot r1 to (50,50), cancelled. m2 and m3 are one job ordered twice." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 300" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
-<title>The ledger as a pizza kitchen's rail of orders: the five tickets from the first adapter's lost-reply run. m1, robot r1 to (3,0), done. m2, robot r2 to (10,4), done. m3, robot r2 to (10,4) again, done. m4, robot r3 to (0,15), done. m5, robot r1 to (50,50), cancelled. m2 and m3 are one job ordered twice.</title>
-<rect width="540" height="300" rx="16" fill="#fbfaf7"/>
-<text x="20" y="32" font-size="16" font-weight="700" fill="#1a1a1a">📒 The ledger: the robot company's rail of orders</text>
-<rect x="14" y="48" width="10" height="20" rx="2" fill="#7c858d"/>
-<rect x="516" y="48" width="10" height="20" rx="2" fill="#7c858d"/>
-<rect x="18" y="52" width="504" height="11" rx="5" fill="#a7b0b8"/>
-<rect x="22" y="54" width="496" height="3" rx="1.5" fill="#d5dbe0"/>
-<g transform="rotate(-2 74.0 60)">
-<rect x="32" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
-<rect x="30" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#cfc8ba" stroke-width="1.2"/>
-<text x="74.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
-<text x="74.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m1</text>
-<line x1="40" y1="126" x2="108" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
-<text x="74.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r1</text>
-<text x="74.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (3,0)</text>
-<text x="74.0" y="192" font-size="12" fill="#1e7a3c" text-anchor="middle">✓ done</text>
-</g>
-<g transform="rotate(1.5 172.0 60)">
-<rect x="130" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
-<rect x="128" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#b3261e" stroke-width="2"/>
-<text x="172.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
-<text x="172.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m2</text>
-<line x1="138" y1="126" x2="206" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
-<text x="172.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r2</text>
-<text x="172.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (10,4)</text>
-<text x="172.0" y="192" font-size="12" fill="#1e7a3c" text-anchor="middle">✓ done</text>
-</g>
-<g transform="rotate(-1 270.0 60)">
-<rect x="228" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
-<rect x="226" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#b3261e" stroke-width="2"/>
-<text x="270.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
-<text x="270.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m3</text>
-<line x1="236" y1="126" x2="304" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
-<text x="270.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r2</text>
-<text x="270.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (10,4)</text>
-<text x="270.0" y="192" font-size="12" fill="#1e7a3c" text-anchor="middle">✓ done</text>
-</g>
-<g transform="rotate(2 368.0 60)">
-<rect x="326" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
-<rect x="324" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#cfc8ba" stroke-width="1.2"/>
-<text x="368.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
-<text x="368.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m4</text>
-<line x1="334" y1="126" x2="402" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
-<text x="368.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r3</text>
-<text x="368.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (0,15)</text>
-<text x="368.0" y="192" font-size="12" fill="#1e7a3c" text-anchor="middle">✓ done</text>
-</g>
-<g transform="rotate(-1.5 466.0 60)">
-<rect x="424" y="61" width="88" height="146" rx="3" fill="#e6e1d6"/>
-<rect x="422" y="58" width="88" height="146" rx="3" fill="#ffffff" stroke="#cfc8ba" stroke-width="1.2"/>
-<text x="466.0" y="88" font-size="10" letter-spacing="2" fill="#8a8578" text-anchor="middle">ORDER</text>
-<text x="466.0" y="114" font-size="22" font-weight="700" fill="#1a1a1a" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">m5</text>
-<line x1="432" y1="126" x2="500" y2="126" stroke="#cfc8ba" stroke-dasharray="3 3"/>
-<text x="466.0" y="148" font-size="14" fill="#1a1a1a" text-anchor="middle">🤖 r1</text>
-<text x="466.0" y="168" font-size="13" fill="#1a1a1a" text-anchor="middle">to (50,50)</text>
-<text x="466.0" y="192" font-size="12" fill="#5d5d5d" text-anchor="middle">✗ cancelled</text>
-</g>
-<rect x="61.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
-<rect x="159.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
-<rect x="257.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
-<rect x="355.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
-<rect x="453.0" y="50" width="26" height="15" rx="3" fill="#6b737a"/>
-<path d="M172.0 216 v8 H270.0 v-8" fill="none" stroke="#b3261e" stroke-width="2"/>
-<text x="221.0" y="246" font-size="14" font-weight="700" fill="#b3261e" text-anchor="middle">one job, two tickets</text>
-<text x="221.0" y="264" font-size="12" fill="#b3261e" text-anchor="middle">robot r2 sent to (10,4) twice</text>
-<text x="270.0" y="290" font-size="11" font-style="italic" fill="#5d5d5d" text-anchor="middle">from the test's sealed record of the first adapter's lost-reply run</text>
-</svg><figcaption>The ledger is the kitchen's rail of orders. After the first adapter's lost reply, it holds two tickets for one job.</figcaption></figure>
-<p>No sandbox stops a program from ordering twice when ordering is its job. What catches it is the ledger: compare what the adapter says happened with what the robot company actually holds. In the example that is an exam. Before the business lets an adapter near real robots, the adapter gets the same four jobs in eight situations (a normal day, a broken robot, an overloaded company, and several ways for a reply to get lost), and a grader marks it. A grader is a small program that marks the exam the way a teacher would: here it checks eight rules against the ledger and never takes the adapter's word. It fails the first adapter and passes the second. You can watch <a href="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html#floor/lost_ack/adapter-v1.js">the first run</a> and <a href="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html#floor/lost_ack/adapter-v2.js">the second</a>: press Play and see r2 make its extra trip.</p>
-<figure class="fig"><svg role="img" aria-label="Both adapters report that all is done. On the robot company&#x27;s ledger the first adapter&#x27;s command became two orders, m2 and m3, so it fails. The second adapter&#x27;s repeat carried the order number, run13-c2, the company answered with m2, the ledger holds one order, and it passes all eight rules." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 352" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
-<title>Both adapters report that all is done. On the robot company's ledger the first adapter's command became two orders, m2 and m3, so it fails. The second adapter's repeat carried the order number, run13-c2, the company answered with m2, the ledger holds one order, and it passes all eight rules.</title>
-<rect width="540" height="352" rx="16" fill="#fbfaf7"/>
-<text x="12" y="28" font-size="17" font-weight="700" fill="#1a1a1a">🔌 The first adapter</text>
-<rect x="12" y="44" width="150" height="40" rx="20" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
-<text x="87" y="69" font-size="15" fill="#1e7a3c" text-anchor="middle">“All done!” 🎉</text>
-<text x="87" y="108" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">what the adapter says</text>
-<text x="190" y="38" font-size="13" fill="#5d5d5d">📒 what the company's ledger says</text>
-<line x1="186" y1="50" x2="410" y2="50" stroke="#5d5d5d" stroke-width="4" stroke-linecap="round"/>
-<rect x="196" y="54" width="96" height="78" rx="4" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
-<text x="244" y="82" font-size="19" font-weight="700" fill="#1a1a1a" text-anchor="middle">m2</text>
-<text x="244" y="102" font-size="12" fill="#1a1a1a" text-anchor="middle">r2 to (10,4)</text>
-<text x="244" y="120" font-size="11" fill="#5d5d5d" text-anchor="middle">no order number</text>
-<rect x="302" y="54" width="96" height="78" rx="4" fill="#fff" stroke="#1a1a1a" stroke-width="1.5" transform="rotate(3 350 93)"/>
-<text x="350" y="84" font-size="19" font-weight="700" fill="#1a1a1a" text-anchor="middle" transform="rotate(3 350 93)">m3</text>
-<text x="350" y="104" font-size="12" fill="#1a1a1a" text-anchor="middle" transform="rotate(3 350 93)">r2 to (10,4)</text>
-<text x="350" y="122" font-size="11" fill="#5d5d5d" text-anchor="middle" transform="rotate(3 350 93)">no order number</text>
-<g transform="rotate(-7 474 92)">
-<rect x="424" y="50" width="102" height="84" rx="10" fill="#fbe4e1" stroke="#b3261e" stroke-width="3"/>
-<text x="475" y="82" font-size="20" font-weight="800" fill="#b3261e" text-anchor="middle">✗ FAIL</text>
-<text x="475" y="104" font-size="13" fill="#b3261e" text-anchor="middle">2 orders for</text>
-<text x="475" y="121" font-size="13" fill="#b3261e" text-anchor="middle">1 command</text>
-</g>
-<line x1="12" y1="168" x2="528" y2="168" stroke="#dcd7cd" stroke-width="1.5"/>
-<text x="12" y="200" font-size="17" font-weight="700" fill="#1a1a1a">🔌 The second adapter</text>
-<rect x="12" y="216" width="150" height="40" rx="20" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
-<text x="87" y="241" font-size="15" fill="#1e7a3c" text-anchor="middle">“All done!” 🎉</text>
-<text x="87" y="280" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">the very same words</text>
-<line x1="186" y1="222" x2="410" y2="222" stroke="#5d5d5d" stroke-width="4" stroke-linecap="round"/>
-<rect x="196" y="226" width="96" height="78" rx="4" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
-<text x="244" y="254" font-size="19" font-weight="700" fill="#1a1a1a" text-anchor="middle">m2</text>
-<text x="244" y="274" font-size="12" fill="#1a1a1a" text-anchor="middle">r2 to (10,4)</text>
-<text x="244" y="292" font-size="11" font-family="ui-monospace,Menlo,monospace" fill="#0f4a85" text-anchor="middle">#run13-c2</text>
-<rect x="302" y="236" width="108" height="58" rx="14" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/>
-<text x="356" y="259" font-size="12" fill="#0f4a85" text-anchor="middle">🏢 “run13-c2?</text>
-<text x="356" y="279" font-size="12" fill="#0f4a85" text-anchor="middle">That one's m2.”</text>
-<g transform="rotate(-7 474 264)">
-<rect x="424" y="222" width="102" height="84" rx="10" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="3"/>
-<text x="475" y="254" font-size="20" font-weight="800" fill="#1e7a3c" text-anchor="middle">✓ PASS</text>
-<text x="475" y="276" font-size="13" fill="#1e7a3c" text-anchor="middle">all 8 rules</text>
-<text x="475" y="293" font-size="13" fill="#1e7a3c" text-anchor="middle">hold</text>
-</g>
-<text x="270" y="338" font-size="13" font-style="italic" fill="#5d5d5d" text-anchor="middle">Same words from both. Only the ledger tells them apart.</text>
-</svg><figcaption>Both adapters say "all done". Only the ledger shows the double order.</figcaption></figure>
-<p>The harder case is when nobody can know. In another situation the company accepts the job and then stops answering anything about that robot. The second adapter tried 40 times over about ten seconds, then said so: "no answer after 40 attempts; the vendor may or may not hold the order". That honest "I don't know" is the right answer. The test also has ten adapters broken on purpose; one gives up after three tries and says the job was refused, which the business reads as "nothing happened, safe to send it again". The company does have the job, so the grader fails it. Believing it means two pizzas.</p>
-<figure class="fig"><svg role="img" aria-label="The silent vendor. The second adapter calls 40 times over about ten seconds, gets no answer, and reports unresolved: the vendor may or may not hold the order. That is honest. A broken adapter gives up after three tries and reports refused, which tells the business nothing happened and it is safe to order again, but the vendor holds the order as m2, so believing it means a second order." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 330" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
-<title>The silent vendor. The second adapter calls 40 times over about ten seconds, gets no answer, and reports unresolved: the vendor may or may not hold the order. That is honest. A broken adapter gives up after three tries and reports refused, which tells the business nothing happened and it is safe to order again, but the vendor holds the order as m2, so believing it means a second order.</title>
-<rect width="540" height="330" rx="16" fill="#fbfaf7"/>
-<text x="12" y="28" font-size="17" font-weight="700" fill="#1a1a1a">🔌 The second adapter: 40 rings, no answer</text>
-<circle cx="40" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="62" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="84" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="106" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="128" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="150" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="172" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="194" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="216" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="238" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="260" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="282" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="304" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="326" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="348" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="370" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="392" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="414" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="436" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="458" cy="52" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="40" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="62" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="84" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="106" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="128" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="150" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="172" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="194" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="216" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="238" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="260" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="282" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="304" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="326" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="348" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="370" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="392" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="414" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="436" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="458" cy="74" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/>
-<text x="490" y="68" font-size="13" fill="#5d5d5d" text-anchor="middle">≈ 10 s</text>
-<rect x="12" y="96" width="516" height="62" rx="12" fill="#e2f2e6" stroke="#1e7a3c" stroke-width="1.5"/>
-<text x="26" y="121" font-size="15" font-weight="700" fill="#1e7a3c">✓ reports “unresolved”, which is the honest answer</text>
-<text x="26" y="144" font-size="13" fill="#1a1a1a">“no answer after 40 attempts; the vendor may or may not hold the order”</text>
-<line x1="12" y1="180" x2="528" y2="180" stroke="#dcd7cd" stroke-width="1.5"/>
-<text x="12" y="210" font-size="17" font-weight="700" fill="#1a1a1a">🔌 A broken adapter: 3 rings, then a guess</text>
-<circle cx="40" cy="234" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="62" cy="234" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/><circle cx="84" cy="234" r="7.5" fill="#e3edf8" stroke="#0f4a85" stroke-width="1.5"/>
-<text x="112" y="239" font-size="13" font-style="italic" fill="#5d5d5d">“eh, must not have gone in”</text>
-<rect x="12" y="256" width="516" height="62" rx="12" fill="#fbe4e1" stroke="#b3261e" stroke-width="1.5"/>
-<text x="26" y="281" font-size="15" font-weight="700" fill="#b3261e">✗ reports “refused”: nothing happened, safe to order again</text>
-<text x="26" y="304" font-size="13" fill="#1a1a1a">The vendor holds the order as m2. Order again and you know what comes. 🍕🍕</text>
-</svg><figcaption>Forty tries and an honest "I don't know", against three tries and a confident guess.</figcaption></figure>
-<p>None of these checks is new. Job numbers prevent the double order, and businesses catch the ones that slip through by comparing their own records with the vendor's. plimsoll does not grade anything itself; the exam and its grader come with the example. What plimsoll adds is that you can run that exam, and later the real thing, on code an agent wrote, with the real password out of reach and every call on the record.</p>
+<h1>Two pizzas arrive, but you tried to order one</h1>
+<p class="byline">Carroll Guertin, 2026-10-19</p>
+<p>You phone a pizza place. The line drops before you hear whether they took your order. You call back and order again.</p>
+<p>Two pizzas arrive, but you tried to order one. 🍕🍕</p>
+<p>Now suppose an AI wrote the program placing the order. It says the job is done. How do you know whether the kitchen got one order or two?</p>
+<p>You could try the program against a fake shop and count the orders. That would tell you more than asking the AI whether its code works. But you still have to run code you don't trust. You don't want it holding the shop's password or calling whatever it likes.</p>
+<p>plimsoll is the sandbox service I built for running that code. In this example, the code gets no direct internet access and no vendor password. A separate program, the broker, checks its requests against the operations you allowed and adds the credential before passing them on.</p>
+<h2 id="the-kitchen-has-two-tickets">The kitchen has two tickets</h2>
+<p>The actual example uses warehouse robots. The AI-written program is an adapter: it turns the business's jobs into requests to the robot company. The company is a simulator, so these trials move no real robots.</p>
+<p>One trial goes like this. The company accepts a job, but the adapter gets an error instead of the confirmation. The first adapter sends the job again. The company accepts it again. The robot makes the same trip twice.</p>
+<p>The second adapter sends an order number with its first request and reuses it when it retries. The company recognises the number and returns the original job. The robot goes once. That number is an <strong>idempotency key</strong>, a way to say "this is the same order, even though I'm asking again". It is a standard technique; <a href="https://docs.stripe.com/api/idempotent_requests" rel="noopener">Stripe's explanation (EXTERNAL · official docs ↗) &#8599;</a> describes the same idea for payments.</p>
+<p>Both adapters report that the jobs are done. The company's own list of accepted jobs tells us which one ordered twice. Think of the tickets hanging over a pizza kitchen's counter: there are two tickets for the same meal, whatever the caller says.</p>
+<p>You can watch it happen. Open <a href="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html#floor/lost_ack/adapter-v1.js">the first adapter's run (INTERNAL · robot replay →)</a>, press Play, and watch robot r2 make its extra trip. Then open <a href="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html#floor/lost_ack/adapter-v2.js">the second adapter's run (INTERNAL · robot replay →)</a>. It goes once.</p>
+<h2 id="what-plimsoll-does-while-the-code-runs">What plimsoll does while the code runs</h2>
+<p>Ordering twice is a mistake an allowed program can make. The sandbox does not understand that you meant one pizza. The test catches it by comparing the adapter's answer with the company's records.</p>
+<p>plimsoll handles a different part of running the program. In this setup, the adapter can request a job and check its progress. It cannot use the broker to delete a robot or change its software, because those operations were not granted. The broker checks even a raw request that bypasses the supplied client. The vendor credential stays outside the sandbox.</p>
+<figure class="fig"><svg role="img" aria-label="The adapter runs in a sandbox. Outside it, the broker permits selected operations and adds the credential before sending a request to the simulated vendor. The example&#x27;s separate test compares the adapter&#x27;s report with the vendor&#x27;s ledger." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 284" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<title>The adapter runs in a sandbox. Outside it, the broker permits selected operations and adds the credential before sending a request to the simulated vendor. The example's separate test compares the adapter's report with the vendor's ledger.</title>
+<defs><marker id="boundary-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#536273"/></marker></defs>
+<rect x="1" y="1" width="618" height="282" rx="12" fill="#fbfaf7" stroke="#dcd7cd"/>
+<rect x="15" y="20" width="178" height="140" rx="10" fill="#eaf2fa" stroke="#31638c" stroke-width="2"/>
+<text x="30" y="46" fill="#255277" font-size="14" font-weight="700">INSIDE THE SANDBOX</text>
+<text x="30" y="78" fill="#1a1a1a" font-size="17" font-weight="600">AI-written adapter</text>
+<text x="30" y="110" fill="#455466" font-size="14">No vendor credential</text>
+<text x="30" y="133" fill="#455466" font-size="14">No direct internet here</text>
+<line x1="195" y1="88" x2="216" y2="88" stroke="#536273" stroke-width="2" marker-end="url(#boundary-arrow)"/>
+<rect x="221" y="20" width="180" height="140" rx="10" fill="#fff4d9" stroke="#a47b22" stroke-width="1.5"/>
+<text x="236" y="46" fill="#785a18" font-size="14" font-weight="700">OUTSIDE SANDBOX</text>
+<text x="236" y="78" fill="#1a1a1a" font-size="17" font-weight="600">Broker</text>
+<text x="236" y="110" fill="#455466" font-size="14">Checks each operation</text>
+<text x="236" y="133" fill="#455466" font-size="14">Adds the credential</text>
+<line x1="403" y1="88" x2="424" y2="88" stroke="#536273" stroke-width="2" marker-end="url(#boundary-arrow)"/>
+<rect x="430" y="20" width="175" height="140" rx="10" fill="#fff" stroke="#8b969f" stroke-width="1.5"/>
+<text x="445" y="46" fill="#536273" font-size="14" font-weight="700">SIMULATED VENDOR</text>
+<text x="445" y="78" fill="#1a1a1a" font-size="17" font-weight="600">Robot company</text>
+<text x="445" y="110" fill="#455466" font-size="14">Accepts jobs</text>
+<text x="445" y="133" fill="#455466" font-size="14">Keeps its own ledger</text>
+<rect x="15" y="185" width="590" height="79" rx="10" fill="#edf5ed" stroke="#759175"/>
+<text x="30" y="212" fill="#2f5937" font-size="14" font-weight="700">THE EXAMPLE'S TEST</text>
+<text x="30" y="240" fill="#1a1a1a" font-size="15">Compare the adapter's report with the jobs the vendor actually accepted.</text>
+</svg><figcaption>The adapter runs inside the sandbox. The broker checks allowed operations and adds the vendor credential outside it. The example's separate test checks the vendor's ledger.</figcaption></figure>
+<p>You can find the duplicate-order bug before this adapter gets real work, while restricting what its code can reach during the trial. Those access restrictions can also stay in place when you use it. They do not make every permitted request a good one. Connecting a real vendor and writing the checks are still your work.</p>
+<p>A sandbox, a proxy that adds credentials, and some logging can be assembled into a system like this. plimsoll packages the execution service, the rules for vendor access, and checked run records. The example adds the fake robot company and the program that checks its ledger. Whether that saves you work depends on what you already have.</p>
+<h2 id="sometimes-the-answer-is-i-don-t-know">Sometimes the answer is "I don't know"</h2>
+<p>Another trial has the company accept the job and then stop answering questions about it. The adapter cannot establish what happened. Saying "the order failed" would invite someone to send it again.</p>
+<p>The second adapter reports that the outcome is unresolved. The test accepts that answer. An honest account of what remains unknown is useful here; a confident guess can put another ticket in the kitchen.</p>
 <h2 id="the-receipt">The receipt</h2>
-<p>Every run, and every grade, is sealed into a record, like a tamper-evident envelope: a fingerprint of exactly what went into the sandbox and what came out. Anyone can check a line of the published record on their own computer. Change a single character, say how many times the adapter checked on its job, from 4 to 5, and the check fails.</p>
-<figure class="fig"><svg role="img" aria-label="The receipt as a sealed envelope. The record as sealed says the adapter checked on its order 4 times, and the seal checks out. Change the 4 to a 5 in a copy and the seal breaks: the signature no longer matches." xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 250" font-family="-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
-<title>The receipt as a sealed envelope. The record as sealed says the adapter checked on its order 4 times, and the seal checks out. Change the 4 to a 5 in a copy and the seal breaks: the signature no longer matches.</title>
-<rect width="540" height="250" rx="16" fill="#fbfaf7"/>
-<text x="102" y="38" font-size="15" font-weight="700" fill="#1a1a1a" text-anchor="middle">the record, as sealed</text>
-<text x="438" y="38" font-size="15" font-weight="700" fill="#1a1a1a" text-anchor="middle">a copy, one edit</text>
-<rect x="12" y="60" width="180" height="110" rx="8" fill="#fff" stroke="#1a1a1a" stroke-width="2"/><path d="M17,62 L102,118 L187,62" fill="none" stroke="#1a1a1a" stroke-width="2"/><circle cx="102" cy="118" r="20" fill="#b3261e"/><text x="102" y="125" font-size="18" text-anchor="middle">🧾</text><rect x="348" y="60" width="180" height="110" rx="8" fill="#fff" stroke="#1a1a1a" stroke-width="2"/><path d="M353,62 L438,118 L523,62" fill="none" stroke="#1a1a1a" stroke-width="2"/><circle cx="438" cy="118" r="20" fill="#b3261e"/><text x="438" y="125" font-size="18" text-anchor="middle">🧾</text><path d="M420,104 L434,116 L428,124 L444,130 L440,138" fill="none" stroke="#fbfaf7" stroke-width="3.5" stroke-linejoin="round"/>
-<text x="102" y="158" font-size="13" fill="#1a1a1a" text-anchor="middle">order checked 4 times</text>
-<text x="438" y="158" font-size="13" font-weight="700" fill="#b3261e" text-anchor="middle">order checked 5 times</text>
-<path d="M206,114 L324,114" stroke="#1a1a1a" stroke-width="2" fill="none"/><path d="M318,108 L328,114 L318,120 z" fill="#1a1a1a"/>
-<text x="266" y="104" font-size="13" fill="#5d5d5d" text-anchor="middle">4 → 5</text>
-<text x="266" y="134" font-size="12" font-style="italic" fill="#5d5d5d" text-anchor="middle">a tiny edit</text>
-<text x="102" y="200" font-size="15" font-weight="700" fill="#1e7a3c" text-anchor="middle">✓ seal intact</text>
-<text x="438" y="200" font-size="15" font-weight="700" fill="#b3261e" text-anchor="middle">✗ seal broken</text>
-<text x="438" y="222" font-size="12" fill="#b3261e" text-anchor="middle">the signature no longer matches</text>
-<text x="102" y="222" font-size="12" fill="#1e7a3c" text-anchor="middle">signed by key 02c7b7ee…</text>
-</svg><figcaption>One changed character and the seal breaks.</figcaption></figure>
-<h2 id="what-this-does-not-prove">What this does not prove</h2>
-<p>The robot company is my simulator and its password is fake, so these runs risked nothing; what they show is the mechanism. The example is a test bench, not a business's live system: it runs each adapter once per situation the way a business would run it per job, but nobody's robots were on the other end. The ledger is the simulator's own account, so you can recheck my grades, but not against a real robot company. The seal proves a record hasn't changed since it was sealed, not who sealed it: nothing on the page vouches for that. The record says the room was locked a certain way because plimsoll's setup and its startup checks say so, not because a chip vouched for it. And the exam is not hard for today's models: Opus's adapter passed all eight situations, and Haiku's and Sonnet's failed only the overloaded company, by giving up before it recovered and saying so. The example shows the room, the door and the receipts, not a leaderboard.</p>
-<p>If you let an agent's code touch a vendor: run it where it cannot reach your passwords, let it make only the requests its job needs, put a number on every order, let "I don't know" be an allowed answer, and judge the code by what the vendor actually holds rather than by what it says.</p>
-<h2 id="for-engineers">For engineers</h2>
-<p>The example is <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/adapter" rel="noopener">examples/adapter &#8599;</a> in plimsoll (Apache-2.0, <a href="https://github.com/plimsollmark/plimsoll" rel="noopener">https://github.com/plimsollmark/plimsoll &#8599;</a>). The vendor publishes an OpenAPI document of eight operations; the job number is the optional <code>command_id</code> on create, and the broker's grant allows six operations: not <code>decommissionRobot</code> (DELETE) and not <code>updateFirmware</code>. The two situations above are the scenarios <code>lost_ack</code> (the create succeeds, then the vendor answers 503 "acknowledgement lost") and <code>silent</code> (the vendor's gateway answers 504 to everything about the robot). The adapters are <code>adapter-v1.js</code> and <code>adapter-v2.js</code>. The grader's eight rules are checked against the vendor's ledger and robots; v1 fails <code>one_order_per_command</code> (one command, orders m2 and m3), and the broken adapter fails <code>report_is_true</code> (it reports <code>refused</code> while the vendor holds m2). v2 returns an error coded <code>unresolved</code> after 40 calls per operation, a quarter second apart. Each run gets order numbers of its own (<code>run04-c2</code> is the second command of run 4, v1's <code>lost_ack</code> run; <code>run13-c2</code> the same command in run 13, v2's), so a vendor that remembered numbers across runs would show it.</p>
-<p>The hostile step's results: <code>decommissionRobot</code> through the injected client was refused by the capability check, a raw <code>DELETE /robots/r1</code> that skipped the injected client got 403 from the broker, a direct request failed with <code>ECONNREFUSED</code> (the sandbox has no network), a search of the environment and the client's source found no credential, and the vendor saw 50 different credentials over the 51 runs, one per run that reached it, each a JWT living 95 s. Two of the probe's five rules are judged from outside the sandbox: the broker's denial count and the vendor's record of what reached it. The other three (the client's refusal, the failed direct request, the empty credential search) are graded from the probe's own report; they agree with the daemon's startup check, which proves from inside a throwaway container that loopback is its only network interface, and with the credential being attached by the broker on the host. The probe makes no attempt on the host itself. The broker's breaker opened on each 503 and held calls back for a second. The isolation is docker under gVisor, which plimsoll reports as the "kernel" tier: configuration and startup checks, not hardware attestation. The event log on the example page is drawn for reading; the signed parts are the ledger, the robots and the reports.</p>
-<p>Check one signed line (line 13 is v2's <code>lost_ack</code> run; the first output is shortened here), then make a copy whose line 13 says the adapter checked on its order 5 times instead of 4, one byte changed, and check that:</p>
-<pre><code>$ go build -o plimsoll-attest ./cmd/plimsoll-attest
-$ cd docs/examples/adapter
-$ ../../../plimsoll-attest verify-entry -pub harness.pub -line 13 bundle.jsonl
-entry verified: line 13, signed by key 02c7b7ee...: record 3c54bdfe..., a single run; the signed record states provider docker and isolation &quot;kernel&quot;. ...
-$ python3 -c &#x27;import base64,json; L=open(&quot;bundle.jsonl&quot;).read().split(&quot;\n&quot;); a=json.loads(L[12])[&quot;response&quot;]; b=base64.b64encode(base64.b64decode(a).replace(b&quot;\&quot;polls\&quot;:4&quot;,b&quot;\&quot;polls\&quot;:5&quot;,1)).decode(); L[12]=L[12].replace(a,b); open(&quot;bundle-altered.jsonl&quot;,&quot;w&quot;).write(&quot;\n&quot;.join(L))&#x27;
-$ ../../../plimsoll-attest verify-entry -pub harness.pub -line 13 bundle-altered.jsonl
-plimsoll-attest: attest: broken bundle chain: the line&#x27;s link signs other content</code></pre>
-<p><code>go run ./examples/adapter -verify docs/examples/adapter</code> rebuilds every verdict from the published evidence with nothing but Go ("verified: 51 run records and 51 qualification statements, every verdict rebuilt from its evidence"). <code>go run ./examples/adapter</code> does all 51 runs and needs docker (<code>SANDBOX_DOCKER_RUNTIME=runsc</code> for gVisor, as the published evidence was).</p>
+<p>The example also uses a recorder outside plimsoll to sign the run records, and it signs each test verdict with the evidence used to reach it. Someone else can check the saved files, detect changes, and recompute the verdict.</p>
+<p>The signature protects the saved account from alteration. It does not make the account true by itself. The checks still depend on the simulator, the test, and the machine running them. The broker records call details such as the operation and response status, rather than a full copy of every vendor request and response.</p>
+<p>This example uses a simulated vendor and gVisor, an extra kernel boundary between the code and the host machine. Its evidence comes from configuration and checks, not a hardware proof of what ran. It shows a way to restrict and test an adapter, not that the adapter is ready for every situation a real vendor might produce.</p>
+<p>Open the two replays and press Play. In the first, r2 makes the same trip twice. In the second, it goes once. Both adapters said they were done.</p>
 </article>
 <footer><a href="../index.html">More notes</a> · <a href="../../index.html">plimsoll documentation</a></footer>
 </main></body></html>

@@ -316,13 +316,20 @@ func TestStatementsVerifyAndRefuseChanges(t *testing.T) {
 	}
 	kept, _ := Rewrite(envs[0], func(p *Predicate) { p.Evidence.Ledger = p.Evidence.Ledger[1:] })
 	_, strangerKey, _ := ed25519.GenerateKey(rand.Reader)
-	stranger, _ := Sign(strangerKey, "", preds[0])
+	subject, _, err := Subject(envs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	stranger, err := Sign(strangerKey, subject, preds[0])
+	if err != nil {
+		t.Fatal(err)
+	}
 	for label, c := range map[string]struct {
 		envs []attest.Envelope
 		want string
 	}{
 		"an edited ledger, signature kept": {append([]attest.Envelope{kept}, envs[1:]...), "signature"},
-		"signed by another key":            {append([]attest.Envelope{stranger}, envs[1:]...), "not one signature by this key"},
+		"signed by another key":            {append([]attest.Envelope{stranger}, envs[1:]...), "no valid signature from this key"},
 		"a verdict that does not follow": {resign(0, func(p *Predicate) {
 			p.Evidence.Ledger = append(p.Evidence.Ledger, done("m9", "r2", "", fleetsim.Pose{X: 10, Y: 4}))
 		}), "does not follow"},

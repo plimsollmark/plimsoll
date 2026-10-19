@@ -13,6 +13,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/openshell/openshellv1"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
@@ -105,14 +106,14 @@ func (p *Provider) OpenSession(ctx context.Context, opts sandbox.SessionOptions)
 	// measured after each call instead.
 	b, labels, err := p.createBox(ctx, opts.Lifetime, sessionCommand, map[string]string{sessionLabel: "1"}, nil)
 	if err != nil {
-		return nil, deadlineAware(ctx, err)
+		return nil, providerkit.DeadlineAware(ctx, err)
 	}
 	s := &session{p: p, b: b, labels: labels, tier: tier, routes: sandbox.NewRouteBudget()}
 	s.life = sessionkit.NewLife(b.name, s.hooks())
 	if err := s.recordBaseline(ctx); err != nil {
 		s.life.Abandon()
 		p.deleteLater(ctx, b)
-		return nil, deadlineAware(ctx, err)
+		return nil, providerkit.DeadlineAware(ctx, err)
 	}
 	// Once Drain has begun the session is refused and its sandbox deleted, which Drain
 	// waits for (the sandbox stays tracked until then).
@@ -195,7 +196,7 @@ func (s *session) stop(ctx context.Context) error {
 		default:
 			return fmt.Errorf("openshell stop sandbox: phase %v while stopping", ph)
 		}
-		if err := sleepCtx(ctx, readyPoll); err != nil {
+		if err := providerkit.Sleep(ctx, readyPoll); err != nil {
 			return err
 		}
 	}
@@ -222,7 +223,7 @@ func (s *session) start(ctx context.Context) error {
 		default:
 			return fmt.Errorf("openshell start sandbox: phase %v instead of ready: %s", ph, conditionSummary(resp.Msg.GetSandbox()))
 		}
-		if err := sleepCtx(ctx, readyPoll); err != nil {
+		if err := providerkit.Sleep(ctx, readyPoll); err != nil {
 			return err
 		}
 	}
@@ -327,7 +328,7 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 	if err := req.Software.Check(""); err != nil {
 		return fail, err
 	}
-	timeout := clampTimeout(req.Timeout, snippetDefault, snippetMax)
+	timeout := providerkit.ClampTimeout(req.Timeout, snippetDefault, snippetMax)
 	if err := s.admit(ctx, req.Grant, req.MinimumIsolation); err != nil {
 		return fail, err
 	}
@@ -394,7 +395,7 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 	if err := req.Software.Check(""); err != nil {
 		return fail, err
 	}
-	timeout := clampTimeout(req.Timeout, projectDefault, projectMax)
+	timeout := providerkit.ClampTimeout(req.Timeout, projectDefault, projectMax)
 	key, err := runnerwire.NewKey()
 	if err != nil {
 		return fail, err
@@ -491,7 +492,7 @@ func (s *session) RunCell(ctx context.Context, req sandbox.CellRequest) (sandbox
 	if err := req.Software.Check(""); err != nil {
 		return fail, err
 	}
-	timeout := clampTimeout(req.Timeout, projectDefault, projectMax)
+	timeout := providerkit.ClampTimeout(req.Timeout, projectDefault, projectMax)
 	if err := s.admit(ctx, nil, req.MinimumIsolation); err != nil {
 		return fail, err
 	}

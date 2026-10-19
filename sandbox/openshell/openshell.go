@@ -55,6 +55,7 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/lease"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
@@ -267,12 +268,8 @@ type Provider struct {
 	skewKnown  bool
 	skewWarned bool
 
-	// The Preflight cache (preflightTTL; pfTTL is a field so tests can turn it off).
-	pfMu      sync.Mutex
-	pfTTL     time.Duration
-	pfAt      time.Time // when the last check finished; zero until one has
-	pfErr     error     // its answer
-	pfRunning bool      // a check is in flight
+	// pf caches Preflight for preflightTTL (a field so tests can turn it off).
+	pf providerkit.Check
 
 	mu       sync.Mutex
 	tier     sandbox.IsolationClass // evidence from the last driver check
@@ -335,8 +332,7 @@ func newProvider(cfg Config, client openshellv1connect.OpenShellClient) (*Provid
 		instance:   randHex(8),
 		killWait:   15 * time.Second,
 		staleAfter: staleMargin,
-		pfTTL:      preflightTTL,
-		pfErr:      errors.New("openshell: no gateway check has completed yet"),
+		pf:         providerkit.Check{TTL: preflightTTL, Err: errors.New("openshell: no gateway check has completed yet")},
 	}, nil
 }
 
@@ -406,41 +402,10 @@ func (p *Provider) Preflight(ctx context.Context) error {
 	if err := p.cfg.validate(); err != nil {
 		return err
 	}
-	p.pfMu.Lock()
-	if p.pfRunning || (!p.pfAt.IsZero() && time.Since(p.pfAt) < p.pfTTL) {
-		err := p.pfErr
-		p.pfMu.Unlock()
+	return p.pf.Run(ctx, driverCheckBudget, func(ctx context.Context) error {
+		_, err := p.checkDriver(ctx)
 		return err
-	}
-	p.pfRunning = true
-	p.pfMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), driverCheckBudget)
-	defer cancel()
-	_, err := p.checkDriver(ctx)
-	p.pfMu.Lock()
-	p.pfAt, p.pfErr, p.pfRunning = time.Now(), err, false
-	p.pfMu.Unlock()
-	return err
-}
-
-func clampTimeout(req, def, max time.Duration) time.Duration {
-	if req <= 0 {
-		req = def
-	}
-	if req > max {
-		req = max
-	}
-	return req
-}
-
-// deadlineAware keeps the caller's deadline recognizable: a create that ran out of
-// time is reported as context.DeadlineExceeded rather than as whatever transport
-// error the cancelled call produced.
-func deadlineAware(ctx context.Context, err error) error {
-	if ctxErr := deadline.Expired(ctx); ctxErr != nil && !errors.Is(err, ctxErr) {
-		return fmt.Errorf("%w: %v", ctxErr, err)
-	}
-	return err
+	})
 }
 
 // driverCheckBudget bounds one driver check, which runs detached from whoever asked for
@@ -473,7 +438,7 @@ func (p *Provider) ready(ctx context.Context, grant *sandbox.HostAPIGrant, floor
 		if ctx.Err() != nil {
 			reason = sandbox.RefusalCapacity
 		}
-		return tier, sandbox.NotDispatched(reason, deadlineAware(ctx, err))
+		return tier, sandbox.NotDispatched(reason, providerkit.DeadlineAware(ctx, err))
 	}
 	return tier, sandbox.CheckMinimumIsolation(tier, floor)
 }
@@ -487,7 +452,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	if err := req.Software.Check(""); err != nil {
 		return fail, err
 	}
-	timeout := clampTimeout(req.Timeout, snippetDefault, snippetMax)
+	timeout := providerkit.ClampTimeout(req.Timeout, snippetDefault, snippetMax)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	tier, err := p.ready(runCtx, req.Grant, req.MinimumIsolation)
@@ -497,14 +462,14 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	}
 	b, err := p.create(runCtx)
 	if err != nil {
-		return fail, deadlineAware(runCtx, err)
+		return fail, providerkit.DeadlineAware(runCtx, err)
 	}
 	defer p.deleteLater(ctx, b)
 	code, env := req.Code, map[string]string(nil)
 	var g *grantRun
 	if req.Grant != nil {
 		if g, err = p.startGrant(runCtx, b, req.Grant, timeout, nil); err != nil {
-			return fail, deadlineAware(runCtx, err)
+			return fail, providerkit.DeadlineAware(runCtx, err)
 		}
 		defer g.Close()
 		code, env = sandbox.HostClientSnippet(req.Code, req.Grant), g.env()
@@ -560,7 +525,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 	if err := req.Software.Check(""); err != nil {
 		return fail, err
 	}
-	timeout := clampTimeout(req.Timeout, projectDefault, projectMax)
+	timeout := providerkit.ClampTimeout(req.Timeout, projectDefault, projectMax)
 	// Every process in the sandbox can write the runner's stdout, so the report is
 	// authenticated with a per-run key that travels only in the plan (runnerwire).
 	key, err := runnerwire.NewKey()
@@ -584,13 +549,13 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 	}
 	b, err := p.create(runCtx)
 	if err != nil {
-		return fail, deadlineAware(runCtx, err)
+		return fail, providerkit.DeadlineAware(runCtx, err)
 	}
 	defer p.deleteLater(ctx, b)
 	var g *grantRun
 	if req.Grant != nil {
 		if g, err = p.startGrant(runCtx, b, req.Grant, timeout+runnerGrace, nil); err != nil {
-			return fail, deadlineAware(runCtx, err)
+			return fail, providerkit.DeadlineAware(runCtx, err)
 		}
 		defer g.Close()
 	}
@@ -625,8 +590,8 @@ func (p *Provider) runPlan(ctx context.Context, b box, tier sandbox.IsolationCla
 		}
 		return res, err
 	}
-	report, found, parseErr := runnerwire.Parse(string(out.stdout), key)
-	if !found {
+	parsed, reported := sandbox.RunnerReport(Name, tier, string(out.stdout), key)
+	if !reported {
 		// The sandbox started the command but the runner never reported: it may have
 		// been killed inside the sandbox (an OOM kill), or the image cannot run it.
 		// Execution state is unknown, so this is a protocol error. The detail is
@@ -635,30 +600,7 @@ func (p *Provider) runPlan(ctx context.Context, b box, tier sandbox.IsolationCla
 		res.Outcome, res.Detail = sandbox.ProjectOutcomeProtocolError, fmt.Sprintf("the runner did not report (it exited %d)", out.exitCode)
 		return res, nil
 	}
-	if errors.Is(parseErr, runnerwire.ErrUnauthenticated) {
-		res.Outcome, res.Detail = sandbox.ProjectOutcomeProtocolError, "no authenticated runner report"
-		return res, nil
-	}
-	if parseErr != nil {
-		res.Outcome, res.Detail = sandbox.ProjectOutcomeProtocolError, "could not parse sandbox result"
-		return res, nil
-	}
-	for _, s := range report.Steps {
-		res.Steps = append(res.Steps, sandbox.StepResult(s))
-	}
-	for _, a := range report.Artifacts {
-		res.Artifacts = append(res.Artifacts, sandbox.Artifact(a))
-	}
-	res.ArtifactsTruncated = report.ArtifactsTruncated
-	outcome, detail := report.Outcome()
-	res.Outcome, res.Detail = sandbox.ProjectOutcomeCompleted, detail
-	switch outcome {
-	case runnerwire.SetupFailed:
-		res.Outcome = sandbox.ProjectOutcomeSetupFailed
-	case runnerwire.TimedOut:
-		res.Outcome = sandbox.ProjectOutcomeTimedOut
-	}
-	return res, nil
+	return parsed, nil
 }
 
 // RunModule is unsupported: the module worker image is a docker provider recipe.

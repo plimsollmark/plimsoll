@@ -64,6 +64,12 @@
       "definition": "The daemon's capacity check just before a run starts: it reserves a slot within the concurrency and memory limits, or refuses at once instead of queueing."
     },
     {
+      "term": "agent-sandbox",
+      "anchor": "agent-sandbox",
+      "variants": [],
+      "definition": "A component of Kubernetes (a system for managing containers across machines) that lends a ready sandbox pod from a warm pool for one run; plimsoll checks the pod and its runtime before sending code, then deletes its claim."
+    },
+    {
       "term": "attestation",
       "anchor": "attestation",
       "variants": ["attestations", "attests", "attested"],
@@ -451,7 +457,7 @@
       "term": "provider",
       "anchor": "provider",
       "variants": ["providers"],
-      "definition": "The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud, openshell, or disabled, which runs nothing and is what an unset SANDBOX_PROVIDER selects."
+      "definition": "The backend that actually runs the code; each daemon uses exactly one: wasm, docker, e2b, dockercloud, openshell, agentsandbox, or disabled, which runs nothing and is what an unset SANDBOX_PROVIDER selects."
     },
     {
       "term": "QuickJS",

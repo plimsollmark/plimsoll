@@ -16,36 +16,15 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/dockertest"
 	"github.com/plimsollmark/plimsoll/sandbox/sessiontest"
 )
 
 // sessionDocker is the docker provider the session tests use, under the runtime and
-// seccomp profile the docker suite selects, skipping (or failing, when docker
-// coverage is required) without docker or its images.
+// seccomp profile the docker suite selects (dockertest.Sandbox).
 func sessionDocker(t *testing.T) *sandbox.DockerSandbox {
 	t.Helper()
-	skip := func(format string, args ...any) {
-		t.Helper()
-		if os.Getenv("SANDBOX_TEST_REQUIRE_DOCKER") == "1" {
-			t.Fatalf("docker coverage was required (SANDBOX_TEST_REQUIRE_DOCKER=1) but its infrastructure is missing: "+format, args...)
-		}
-		t.Skipf(format, args...)
-	}
-	if testing.Short() {
-		skip("skipping docker session test in -short mode")
-	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		skip("docker not available")
-	}
-	d := sandbox.DefaultDocker("")
-	d.Runtime = os.Getenv("SANDBOX_DOCKER_RUNTIME")
-	d.Seccomp = os.Getenv("SANDBOX_DOCKER_SECCOMP")
-	for _, img := range []string{d.Image, d.ProjectImage} {
-		if err := exec.Command("docker", "image", "inspect", img).Run(); err != nil {
-			skip("image %s is not present (run `make docker-images`)", img)
-		}
-	}
-	return d
+	return dockertest.Sandbox(t)
 }
 
 // pythonSessionDocker is sessionDocker with the Python image (the base image plus

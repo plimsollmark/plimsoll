@@ -211,6 +211,23 @@ func TestRunChecksTheBundleBeforeItRuns(t *testing.T) {
 	}
 }
 
+// A failed run says whether anything ran: a refusal marked not dispatched names its reason
+// (the daemon tells an environment refusal's detail only in its log, so the mark is all the
+// caller gets), and an unmarked error says the code may have run.
+func TestRunFailedSaysWhetherAnythingRan(t *testing.T) {
+	marked := runFailed(sandbox.NotDispatched(sandbox.RefusalEnvironment, errors.New("internal error 4c81")))
+	if !strings.Contains(marked.Error(), "refused before dispatch (reason environment), so nothing ran") {
+		t.Fatalf("a marked refusal: %v", marked)
+	}
+	if reason, ok := sandbox.NotDispatchedReason(marked); !ok || reason != sandbox.RefusalEnvironment {
+		t.Fatalf("the mark is kept on the returned error: %v %v", reason, ok)
+	}
+	unmarked := runFailed(errors.New("internal error 9f00"))
+	if !strings.Contains(unmarked.Error(), "may have run") || strings.Contains(unmarked.Error(), "nothing ran") {
+		t.Fatalf("an unmarked error: %v", unmarked)
+	}
+}
+
 // failAfter writes its first n bytes to w and fails from then on: a disk filling up
 // in the middle of a line.
 type failAfter struct {

@@ -5,6 +5,10 @@ package daemonproc
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -107,4 +111,37 @@ func (d *Daemon) Stop(grace time.Duration) error {
 		<-d.exited
 		return fmt.Errorf("plimsolld did not exit within %v of SIGTERM and was killed", grace)
 	}
+}
+
+// ClientsFile writes, in dir, a caller registry (PLIMSOLL_CLIENTS_FILE) naming one
+// caller, id, with the code:run scope, and returns a fresh random token for it and the
+// file's path. The file holds only the token's SHA-256, as the daemon reads it.
+func ClientsFile(dir, id string) (token, path string, err error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", err
+	}
+	token = hex.EncodeToString(raw)
+	sum := sha256.Sum256([]byte(token))
+	body, err := json.Marshal(map[string]any{"clients": []map[string]any{
+		{"id": id, "token_sha256": hex.EncodeToString(sum[:]), "scopes": []string{"code:run"}}}})
+	if err != nil {
+		return "", "", err
+	}
+	path = filepath.Join(dir, "clients.json")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return "", "", err
+	}
+	return token, path, nil
+}
+
+// FreeAddr returns a loopback address whose port was free a moment ago, for a daemon's
+// listener.
+func FreeAddr() (string, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	addr := l.Addr().String()
+	return addr, l.Close()
 }

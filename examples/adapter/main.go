@@ -32,7 +32,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	_ "embed"
 	"encoding/hex"
@@ -43,7 +42,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -268,7 +266,7 @@ func run(ctx context.Context, out string) error {
 	if err != nil {
 		return err
 	}
-	clientToken, clientsPath, err := writeClientsFile(workDir)
+	clientToken, clientsPath, err := daemonproc.ClientsFile(workDir, callerID)
 	if err != nil {
 		return err
 	}
@@ -1167,23 +1165,10 @@ func writeGrantsFile(dir, baseURL string, allow, catalog []string, batchOf map[s
 	return path, os.WriteFile(path, body, 0o600)
 }
 
-// writeClientsFile creates the multi-client auth file; the token is stored as its
-// SHA-256, never in the clear.
-func writeClientsFile(dir string) (token, path string, err error) {
-	token, err = randomHex(32)
-	if err != nil {
-		return "", "", err
-	}
-	sum := sha256.Sum256([]byte(token))
-	path = filepath.Join(dir, "clients.json")
-	body := fmt.Sprintf(`{"clients":[{"id":%q,"token_sha256":%q,"scopes":["code:run"]}]}`, callerID, hex.EncodeToString(sum[:]))
-	return token, path, os.WriteFile(path, []byte(body), 0o600)
-}
-
 // startDaemon starts plimsolld on a free loopback port with the docker provider, its
 // log captured so each run's audit line can be read back.
 func startDaemon(ctx context.Context, binary, clientsPath, grantsPath, secret string, sink *lineSink) (*daemonHandle, error) {
-	addr, err := freeAddr()
+	addr, err := daemonproc.FreeAddr()
 	if err != nil {
 		return nil, err
 	}
@@ -1244,16 +1229,6 @@ func (h *daemonHandle) Stop(grace time.Duration) {
 		_ = h.cmd.Process.Kill()
 		<-done
 	}
-}
-
-// freeAddr reserves a free loopback port and returns its address.
-func freeAddr() (string, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", err
-	}
-	addr := l.Addr().String()
-	return addr, l.Close()
 }
 
 // lineSink collects the daemon's log so a run's audit line can be found after it.

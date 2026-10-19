@@ -23,6 +23,9 @@ type daemonProvider struct {
 	// hardenedEnvelope is the resource envelope hardened mode requires for the
 	// provider: every dimension it enforces and none its configuration rejects.
 	hardenedEnvelope []string
+	// hardenedEnvelopeAt adds, once the tier is proven (the pass after the smoke test),
+	// what the provider enforces only at that tier; nil adds nothing.
+	hardenedEnvelopeAt func(sandbox.IsolationClass) []string
 	// pinnedImages makes hardened mode require SANDBOX_REQUIRE_PINNED_IMAGES=1.
 	pinnedImages bool
 }
