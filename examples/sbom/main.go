@@ -187,16 +187,25 @@ func execute(args []string, out io.Writer) error {
 	if f.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments")
 	}
+	given := map[string]bool{}
+	f.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
 	if *checkPath != "" {
 		raw, err := cdxutil.ReadInput(*checkPath)
 		if err != nil {
 			return err
 		}
 		var trusted []byte
-		if *trustedPath != "" {
-			trusted, err = cdxutil.ReadInput(*trustedPath)
-			if err != nil {
-				return err
+		if given["trusted-pub"] {
+			// A key that was asked for and is empty is an error, never no key: with no key
+			// the check uses the BOM's own attached key and passes for any signer.
+			if *trustedPath == "" {
+				return fmt.Errorf("-trusted-pub names no file")
+			}
+			if trusted, err = cdxutil.ReadInput(*trustedPath); err != nil {
+				return fmt.Errorf("-trusted-pub: %w", err)
+			}
+			if _, err := attest.ParsePublicKey(trusted); err != nil {
+				return fmt.Errorf("-trusted-pub %s: %w", *trustedPath, err)
 			}
 		}
 		var doc struct{ Components []struct{ Version string } }
@@ -223,12 +232,10 @@ func execute(args []string, out io.Writer) error {
 		}
 		return nil
 	}
-	if *trustedPath != "" || *checkBundle != "" || *checkQualification != "" {
+	if given["trusted-pub"] || *checkBundle != "" || *checkQualification != "" {
 		return fmt.Errorf("-trusted-pub, -check-bundle and -check-qualification require -check")
 	}
 	if *line != 0 {
-		given := map[string]bool{}
-		f.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
 		if !given["out"] || !given["pages"] {
 			return fmt.Errorf("-line needs -out and -pages: the defaults are the published example's")
 		}

@@ -8,6 +8,14 @@ project_dir="$(realpath "$1")"
 output_dir="$(realpath -m "$2")"
 case "$output_dir/" in "$project_dir/"*) echo 'Output must be outside the target project' >&2; exit 2;; esac
 if [ -e "$output_dir" ]; then echo 'Use a new output directory; evidence is never overwritten' >&2; exit 2; fi
+# An operator key a verifier already trusts, or (unset) a throwaway key made for this run.
+operator_key=''
+if [ -n "${PLIMSOLL_HARNESS_KEY:-}" ]; then
+  case "$PLIMSOLL_HARNESS_KEY" in *.key) ;; *) echo 'PLIMSOLL_HARNESS_KEY must name a .key file made by plimsoll-attest keygen' >&2; exit 2;; esac
+  operator_key="$(realpath -m "$PLIMSOLL_HARNESS_KEY")"
+  [ -f "$operator_key" ] && [ -f "${operator_key%.key}.pub" ] || { echo 'PLIMSOLL_HARNESS_KEY needs the .key file and the .pub beside it' >&2; exit 2; }
+  case "$operator_key" in "$project_dir/"*) echo 'The operator key must be outside the project, whose files go into the sandbox' >&2; exit 2;; esac
+fi
 if [ -n "${PLIMSOLL_REF:-}" ]; then
   [[ "$PLIMSOLL_REF" =~ ^[a-f0-9]{40}$ ]] || { echo 'PLIMSOLL_REF must be a full commit SHA' >&2; exit 2; }
   [ "$(git -C "$source_dir" rev-parse HEAD)" = "$PLIMSOLL_REF" ] || { echo 'Source checkout differs from PLIMSOLL_REF' >&2; exit 2; }
@@ -67,18 +75,24 @@ for ((i=0; i<120; i++)); do
 done
 [ "$ready" = 1 ] || { echo 'Daemon did not become ready' >&2; cat "$work_dir/daemon.log" >&2; exit 1; }
 python3 "$script_dir/prepare.py" "$project_dir" "$output_dir"
-"$work_dir/plimsoll-attest" keygen -out "$key_dir/harness"
-cp "$key_dir/harness.pub" "$output_dir/harness.pub"
+if [ -n "$operator_key" ]; then
+  signing_key="$operator_key"
+  cp "${operator_key%.key}.pub" "$output_dir/harness.pub"
+else
+  "$work_dir/plimsoll-attest" keygen -out "$key_dir/harness"
+  signing_key="$key_dir/harness.key"
+  cp "$key_dir/harness.pub" "$output_dir/harness.pub"
+fi
 # Run from the output directory with relative names: the tool prints the bundle path it
 # was given, and the log is published, so an absolute path would name this machine's layout.
-(cd "$output_dir" && env -u PLIMSOLL_CALLER_TOKEN -u PLIMSOLL_ATTEST_KEY "$work_dir/plimsoll-attest" run -daemon "http://127.0.0.1:$port" -key "$key_dir/harness.key" \
+(cd "$output_dir" && env -u PLIMSOLL_CALLER_TOKEN -u PLIMSOLL_ATTEST_KEY "$work_dir/plimsoll-attest" run -daemon "http://127.0.0.1:$port" -key "$signing_key" \
   -bundle bundle.jsonl request.json > run.log)
 "$work_dir/plimsoll-attest" verify -pub "$output_dir/harness.pub" "$output_dir/bundle.jsonl" > "$output_dir/verify.log"
 # PLIMSOLL_PAGES is where this output directory will be published, so the BOM's
 # attestation reference and the page's links point at this run's own evidence.
 "$work_dir/sbom" -bundle "$output_dir/bundle.jsonl" -pub "$output_dir/harness.pub" \
   -pages "${PLIMSOLL_PAGES:-https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/}" \
-  -name "pull-request-${PR_NUMBER:-0}" -qualified-bundle "" -out "$output_dir" > "$output_dir/emit.log"
+  -name "pull-request-${PR_NUMBER}" -qualified-bundle "" -out "$output_dir" > "$output_dir/emit.log"
 for bom in "$output_dir"/run-*.cdx.json; do
   "$work_dir/sbom" -check "$bom" -trusted-pub "$output_dir/harness.pub" > "$output_dir/check.log"
 done

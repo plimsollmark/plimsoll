@@ -14,6 +14,7 @@ jobs:
       PLIMSOLL_REF: ${{ vars.PLIMSOLL_RECEIPT_REF }}
       TEST_COMMAND: ${{ vars.PLIMSOLL_TEST_COMMAND || 'npm test' }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_REPOSITORY: ${{ github.repository }}
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
       - name: Require an immutable plimsoll pin

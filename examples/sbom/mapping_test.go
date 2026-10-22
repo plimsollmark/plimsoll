@@ -434,6 +434,21 @@ func TestCLIReproducesOutputsAndReportsChecks(t *testing.T) {
 	if err := execute([]string{"-check", bad}, &out); err == nil {
 		t.Fatal("invalid -check did not fail")
 	}
+	// A trusted key that is asked for and empty or unreadable must fail, not fall back to
+	// the BOM's own attached key, which passes for any signer.
+	empty := filepath.Join(dir, "empty.pub")
+	if err := os.WriteFile(empty, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	receipt := filepath.Join(dir, "run-c7e245a369dd.cdx.json")
+	for _, key := range []string{empty, "", bad} {
+		if err := execute([]string{"-check", receipt, "-trusted-pub", key}, &out); err == nil || !strings.Contains(err.Error(), "-trusted-pub") {
+			t.Fatalf("-trusted-pub %q: %v", key, err)
+		}
+	}
+	if err := execute([]string{"-trusted-pub", ""}, &out); err == nil {
+		t.Fatal("-trusted-pub without -check was accepted")
+	}
 	missingOutput := filepath.Join(dir, "refused-output")
 	if err := execute([]string{"-bundle", bad, "-out", missingOutput}, &out); err == nil {
 		t.Fatal("invalid bundle accepted")

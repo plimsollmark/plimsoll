@@ -333,7 +333,7 @@ Each of these answers one question, end to end.
 | [docs/architecture/credential-minting.md](docs/architecture/credential-minting.md) | Where does a per-run credential come from, and where does it stay? |
 | [docs/seams.md](docs/seams.md) | Where are the deliberate extension points? |
 | [Glossary ↗](https://plimsollmark.github.io/plimsoll/trainers/glossary.html) | What does this word mean? One plain sentence per term. |
-| [AGENTS.md](AGENTS.md) | The architecture reference: providers, the rules no change may break, and every environment variable. |
+| [AGENTS.md](AGENTS.md) | The architecture index: layout, providers, the rules no change may break, and where each subsystem's documentation lives; `plimsolld -h` lists every environment variable. |
 
 ## License
 

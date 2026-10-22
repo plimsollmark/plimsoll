@@ -2,12 +2,12 @@ module github.com/plimsollmark/plimsoll
 
 go 1.26.2
 
-// The canonical build uses the security-patched 1.26.9 toolchain (govulncheck is
-// clean there; earlier 1.26.x had stdlib advisories in the reverse-proxy and
-// HTTP/2 paths this TCB calls). A `toolchain` line binds only this module's own
-// build, not the version it requires of dependents, so build plimsolld with
-// >= 1.26.9.
-toolchain go1.26.9
+// The canonical build uses the security-patched 1.26.10 toolchain (govulncheck is
+// clean there; 1.26.9 has GO-2026-6809 in crypto/x509, and earlier 1.26.x had stdlib
+// advisories in the reverse-proxy and HTTP/2 paths this TCB calls). A `toolchain`
+// line binds only this module's own build, not the version it requires of
+// dependents, so build plimsolld with >= 1.26.10.
+toolchain go1.26.10
 
 require (
 	connectrpc.com/connect v1.20.0

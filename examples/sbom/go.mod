@@ -2,7 +2,7 @@ module github.com/plimsollmark/plimsoll/examples/sbom
 
 go 1.26.2
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/CycloneDX/cyclonedx-go v0.12.0

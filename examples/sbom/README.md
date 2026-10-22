@@ -112,7 +112,8 @@ this emitter's mapping, not an arbitrary CycloneDX verifier.
 
 An attached public key alone establishes internal consistency. An attacker can
 replace both evidence and key. `-trusted-pub` compares with a key obtained
-independently and refuses another signer. The example's adjacent keys are illustrative
+independently and refuses another signer; an empty path, an empty file or a file that is
+not a key is an error, never a fallback to the attached key. The example's adjacent keys are illustrative
 pins, not independent proof of a publisher's identity. Names, the page URL and
 assessor label remain unsigned presentation. Agent authorship is supplied context, not
 something the execution record proves. The record states what the daemon reported; it

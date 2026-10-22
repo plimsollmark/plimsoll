@@ -18,7 +18,7 @@ daemon loads.
 
 ## Create the first caller
 
-From a clone, with Go 1.26.9 or newer:
+From a clone, with Go 1.26.10 or newer:
 
 ```sh
 TOKEN="$(go run ./cmd/plimsoll-clients create \

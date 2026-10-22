@@ -16,6 +16,10 @@
       {
         "path": "test.mjs",
         "content": "import assert from 'node:assert/strict';\nimport {sum} from './sum.mjs';\nassert.equal(sum([10, 20, -5]), 25);\nassert.equal(sum([]), 0);\nconsole.log('two sum checks passed');\n"
+      },
+      {
+        "path": ".pr-receipt/subject.json",
+        "content": "{\n  \"commit\": \"627534fc71de105aeb7e71098970bb51d7096349\",\n  \"pull_request\": \"0\",\n  \"repository\": \"example/pr-receipt-fixture\"\n}\n"
       }
     ],
     "steps": [
