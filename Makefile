@@ -64,11 +64,24 @@ vet:
 # The nested modules replace the root module with ../, so a breaking change to the root
 # (routine under the no-backward-compatibility rule) breaks them with no error from
 # build or vet above. Their own suites test them; this builds and vets them on every gate.
+# A module whose go.mod asks for a newer Go than this one (examples/capsule) is built here
+# only where go may switch to that toolchain (GOTOOLCHAIN auto or ending +auto): under
+# GOTOOLCHAIN=local, which actions/setup-go sets in CI, or a fixed version, go refuses it,
+# so it is skipped with a line saying so, and its own suite (CI's capsule job) builds it
+# with the compiler it names.
 NESTED_MODULES := clients/mcp examples/sbom examples/capsule
 
-## modules: build and vet each nested module (clients/mcp, examples/sbom, examples/capsule) against this tree
+## modules: build and vet each nested module (clients/mcp, examples/sbom, examples/capsule) against this tree; one needing a newer Go is skipped, said so, where GOTOOLCHAIN forbids switching
 modules:
-	@for m in $(NESTED_MODULES); do echo "build and vet $$m"; (cd $$m && go build ./... && go vet ./...) || exit 1; done
+	@have=$$(go env GOVERSION); have=$${have#go}; tc=$$(go env GOTOOLCHAIN); \
+	 for m in $(NESTED_MODULES); do \
+	   need=$$(awk '$$1 == "go" { print $$2; exit }' $$m/go.mod); \
+	   case $$tc in auto|*+auto) newer= ;; *) newer=$$(printf '%s\n%s\n' "$$need" "$$have" | sort -V | tail -n 1) ;; esac; \
+	   if [ -n "$$newer" ] && [ "$$newer" != "$$have" ]; then \
+	     echo "skip $$m: its go.mod needs go $$need, this is go $$have with GOTOOLCHAIN=$$tc (its own suite builds it)"; continue; \
+	   fi; \
+	   echo "build and vet $$m"; (cd $$m && go build ./... && go vet ./...) || exit 1; \
+	 done
 
 # The live E2B and dockercloud tests skip only when their credentials are absent, and
 # `./...` selects them, so a key left in the shell (a secrets-manager wrapper, an

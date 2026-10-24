@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,6 +47,34 @@ func runWrapperOnHost(t *testing.T, limit, cap int, argv ...string) (stdout, std
 		t.Fatalf("the trailer says the command ran %v; the wrapper took %v", ran, elapsed)
 	}
 	return out.Bytes(), stderr, rc, elapsed, flooded
+}
+
+// TestDockerCloudWrapperUptimeUnderASecond: under gVisor each sandbox's clock starts at
+// zero, so a command can start and end in its first second. up must then still give
+// centiseconds that sh arithmetic reads as decimal: "0.89" glued into 089 is not octal,
+// and ended the wrapper with exit 2 and no trailer (CI under runsc, 2026-10-24).
+func TestDockerCloudWrapperUptimeUnderASecond(t *testing.T) {
+	t.Parallel()
+	var up string
+	for _, line := range strings.Split(dcExecWrapper, "\n") {
+		if strings.HasPrefix(line, "up() ") {
+			up = line
+		}
+	}
+	if up == "" {
+		t.Fatal("the wrapper defines no up()")
+	}
+	file := filepath.Join(t.TempDir(), "uptime")
+	up = strings.ReplaceAll(up, "/proc/uptime", file)
+	for uptime, want := range map[string]string{"0.89": "89", "0.08": "8", "0.00": "0", "12.34": "1234", "100.07": "10007"} {
+		if err := os.WriteFile(file, []byte(uptime+" 1.00\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command("sh", "-c", up+`; b=$(up); echo "$b $((b + 0))"`).CombinedOutput()
+		if err != nil || string(out) != want+" "+want+"\n" {
+			t.Errorf("uptime %s: %q (%v), want %s", uptime, out, err, want)
+		}
+	}
 }
 
 func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {

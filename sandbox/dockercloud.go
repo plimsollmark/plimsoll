@@ -194,7 +194,10 @@ var dcStartCmd = []string{"tail", "-f", "/dev/null"}
 //     write to the wrapper's own stderr, so no guest process can write after it, and
 //     the host strips it before reporting stderr. It decides whether `timeout` killed
 //     the command: the elapsed time around the remote call also counts the transport,
-//     which turned a quick exit 137 into a timeout (review, 2026-10-23).
+//     which turned a quick exit 137 into a timeout (review, 2026-10-23). up drops the
+//     leading zeros of an uptime under a second ("0.89" is 089), which sh arithmetic
+//     reads as octal: 089 is a syntax error that ended the wrapper with exit 2 and no
+//     trailer, seen under gVisor, whose clock starts at zero with each sandbox.
 //
 // It uses only POSIX sh, timeout, head, wc and cat, which busybox provides. busybox
 // `timeout` needs kill(2): where a syscall filter refuses it, the limit fails open,
@@ -204,7 +207,7 @@ const dcExecWrapper = `t=$1; c=$2; shift 2
 m=` + dcStreamBudget + `
 rc=/tmp/.plimsoll-rc.$$; fl=/tmp/.plimsoll-fl.$$
 rm -f "$rc" "$fl"
-up() { read -r u _ 2>/dev/null </proc/uptime && echo "${u%.*}${u#*.}"; }
+up() { read -r u _ 2>/dev/null </proc/uptime || return; u=${u%.*}${u#*.}; u=${u#"${u%%[!0]*}"}; echo "${u:-0}"; }
 keep() { head -c "$c"; n=$(head -c "$m" | wc -c); [ $n -lt "$m" ] 2>/dev/null || : >"$fl"; }
 b=$(up)
 { { timeout -s KILL "$t" "$@"; echo "$?" >"$rc"; } 2>&1 1>&3 3>&- | keep 1>&2; } 3>&1 | keep

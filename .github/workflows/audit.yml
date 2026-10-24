@@ -61,8 +61,9 @@ jobs:
       # go.mod's `go` directive is the floor (1.26.2), not the canonical build. The
       # `toolchain go1.26.10` line is, because govulncheck is clean there and earlier
       # 1.26.x carried stdlib advisories in the HTTP/2 and reverse-proxy paths this
-      # TCB calls. Whatever version setup-go lands, GOTOOLCHAIN=auto then honors that
-      # toolchain line, so the gate runs on the pinned compiler either way.
+      # TCB calls. setup-go installs the version that toolchain line names and sets
+      # GOTOOLCHAIN=local, so the gate runs on the pinned compiler and fetches no other
+      # (a nested module needing a newer Go is skipped by `make modules`, said so).
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
