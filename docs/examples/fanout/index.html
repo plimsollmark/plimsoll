@@ -28,6 +28,8 @@ p.lead { color: #4a5160; margin: 0 0 18px; }
 .tile .k { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; }
 .tile .v { font-size: 22px; font-weight: 700; margin-top: 2px; }
 .tile .s { font-size: 12.5px; color: #6b7280; }
+.overview { max-width: 720px; margin: 0 auto 20px; }
+.overview img { display: block; width: 100%; height: auto; }
 .figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 figure { min-width: 0; margin: 0; background: #fff; border: 1px solid #e2e6ee; border-radius: 10px; padding: 14px; }
 figure h2 { font-size: 15px; margin: 0 0 10px; }
@@ -66,6 +68,7 @@ dl dd { margin: 2px 0 0; color: #4a5160; max-width: 78ch; }
 <nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/providers/index.html">Same run, different sandboxes</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>One job, every sandbox</h1>
 <p class="lead">The Mandelbrot set is a mathematical picture whose intricate patterns reveal more detail as you zoom in. It is drawn by repeating a simple calculation at every pixel. We split the picture into 256 tiles and used fan-out to send the pieces across 9 kinds of sandboxes working at once. Each tile was computed twice, by two different kinds of sandboxes running the same JavaScript program. The two answers were compared byte for byte: 256 of 256 tiles agree. 57 of those pairs compared two different JavaScript engines, and 107 included a run in the cloud. Every run is signed into one bundle that anyone can check offline.</p>
+<figure class="overview"><img src="diagram.png" width="2400" height="2400" alt="Fan out, fan in: one job split across nine kinds of sandboxes through one plimsoll API. The 256 tiles go out to a WebAssembly engine, Docker locked down, Docker with gVisor, NVIDIA OpenShell, Kubernetes with runc, gVisor and Kata, a Docker Cloud microVM and an E2B microVM, and come back as one picture; every tile ran twice and both answers matched."></figure>
 
 <div class="tiles">
 <div class="tile"><div class="k">Signed runs</div><div class="v">512</div><div class="s">one fresh sandbox each</div></div>
