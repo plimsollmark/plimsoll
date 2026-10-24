@@ -81,22 +81,22 @@ dl dd { margin: 2px 0 0; color: #4a5160; max-width: 78ch; }
 
 <div class="figs">
 <figure>
-<h2>1. The finished picture</h2>
-<img src="picture.png" width="{{.Pixels}}" height="{{.Pixels}}" alt="The Mandelbrot set, assembled from the tiles the sandboxes computed">
-<figcaption>The picture, assembled from the tiles whose two answers agreed{{if lt .Agreed (len .Tiles)}}; a tile without agreement is painted flat red{{end}}. {{.Pixels}} by {{.Pixels}} pixels. Colours show how many repetitions each pixel's calculation took.</figcaption>
+<h2>1. Where the work ran</h2>
+<div id="map">{{.Map}}</div>
+<figcaption>Each square matches a tile in the middle picture. Its upper triangle shows the first run's sandbox and its lower triangle the second's, shaded by isolation tier. Hover a square for the sandboxes and times, or a row of the table below to light up that sandbox's tiles.</figcaption>
+<div class="legend">{{range $t := $.TierOrder}}<span><span class="sw" style="background:{{index $.TierColor $t}}"></span>{{$t}}</span>{{end}}</div>
 </figure>
 <figure>
 <h2>2. Split into {{len .Tiles}} tiles</h2>
 <div class="picture-grid" style="--grid:{{.Grid}}">
-<img src="picture.png" width="{{.Pixels}}" height="{{.Pixels}}" alt="The same Mandelbrot picture divided into a {{.Grid}} by {{.Grid}} grid of tiles">
+<img src="picture.png" width="{{.Pixels}}" height="{{.Pixels}}" alt="The Mandelbrot picture divided into a {{.Grid}} by {{.Grid}} grid of tiles">
 </div>
-<figcaption>The same picture with its {{.Grid}} by {{.Grid}} tile grid. Each square is one piece of work sent to two different kinds of sandboxes.</figcaption>
+<figcaption>The picture cut into its {{.Grid}} by {{.Grid}} tile grid. Each square is one piece of work sent to two different kinds of sandboxes.</figcaption>
 </figure>
 <figure>
-<h2>3. Where the work ran</h2>
-<div id="map">{{.Map}}</div>
-<figcaption>Each square matches a tile in the middle picture. Its upper triangle shows the first run's sandbox and its lower triangle the second's, shaded by isolation tier. Hover a square for the sandboxes and times, or a row of the table below to light up that sandbox's tiles.</figcaption>
-<div class="legend">{{range $t := $.TierOrder}}<span><span class="sw" style="background:{{index $.TierColor $t}}"></span>{{$t}}</span>{{end}}</div>
+<h2>3. The finished picture</h2>
+<img src="picture.png" width="{{.Pixels}}" height="{{.Pixels}}" alt="The Mandelbrot set, assembled from the tiles the sandboxes computed">
+<figcaption>The picture, assembled from the tiles whose two answers agreed{{if lt .Agreed (len .Tiles)}}; a tile without agreement is painted flat red{{end}}. {{.Pixels}} by {{.Pixels}} pixels. Colours show how many repetitions each pixel's calculation took.</figcaption>
 </figure>
 </div>
 
