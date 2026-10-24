@@ -87,7 +87,9 @@ func TestRemoteHostileTraceIDIsDroppedByTheServer(t *testing.T) {
 	if !strings.Contains(got, `"trace_id_rejected":true`) {
 		t.Errorf("server did not record that it dropped a non-conforming id\nlog: %s", got)
 	}
-	for _, leak := range []string{"customers", "ssn", "8821"} {
+	// Only fragments no audit field can hold by chance: a bare "8821" once matched a run's
+	// duration_ms of 8821 on a slow CI runner (2026-10-24).
+	for _, leak := range []string{"customers", "ssn", "/v1/", "123-45-6789"} {
 		if strings.Contains(got, leak) {
 			t.Errorf("hostile trace id leaked %q into the daemon audit stream\nlog: %s", leak, got)
 		}
