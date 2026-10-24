@@ -59,6 +59,9 @@ type seen struct {
 	info client.Info
 	at   time.Time // when the daemon was asked, not when it answered (store)
 	err  error
+	// failed is when err arrived: failedTTL counts from it, since a describe that hung
+	// for its whole budget would otherwise be forgotten as soon as it was stored.
+	failed time.Time
 }
 
 // store keeps s for name unless the pool holds an answer that was asked for later
@@ -174,7 +177,7 @@ func (p *Pool) Refresh(ctx context.Context) error {
 			defer wg.Done()
 			asked := time.Now()
 			info, err := b.Client.Describe(ctx)
-			results[i] = seen{info: info, at: asked, err: err}
+			results[i] = seen{info: info, at: asked, err: err, failed: time.Now()}
 		}()
 	}
 	wg.Wait()
@@ -190,8 +193,21 @@ func (p *Pool) Refresh(ctx context.Context) error {
 	return first
 }
 
+// An on-demand describe is bounded by describeBudget and a failed one is remembered for
+// failedTTL, so one hung or down backend costs a request at most describeBudget once,
+// not its whole deadline on every request: placement used to describe the candidates
+// one after another inside the request's deadline and to forget every failure (review
+// B2, 2026-10-23). Describe is a small metadata call, well under a second on any
+// working network, so 5 s fails only a daemon that is not answering; 5 s of memory
+// keeps a down backend off every request while letting a recovered one back within
+// seconds.
+const (
+	describeBudget = 5 * time.Second
+	failedTTL      = 5 * time.Second
+)
+
 // Describe returns what a backend last said, describing it when that is missing or
-// stale.
+// stale. A failure is returned again, without asking, for failedTTL.
 func (p *Pool) Describe(ctx context.Context, name string) (client.Info, error) {
 	for _, b := range p.backends {
 		if b.Name != name {
@@ -200,13 +216,18 @@ func (p *Pool) Describe(ctx context.Context, name string) (client.Info, error) {
 		p.mu.Lock()
 		s, ok := p.seen[name]
 		p.mu.Unlock()
-		if ok && s.err == nil && time.Since(s.at) < p.ttl {
+		switch {
+		case ok && s.err == nil && time.Since(s.at) < p.ttl:
 			return s.info, nil
+		case ok && s.err != nil && time.Since(s.failed) < failedTTL:
+			return client.Info{}, s.err
 		}
 		asked := time.Now()
-		info, err := b.Client.Describe(ctx)
+		dctx, cancel := context.WithTimeout(ctx, describeBudget)
+		info, err := b.Client.Describe(dctx)
+		cancel()
 		p.mu.Lock()
-		p.store(name, seen{info: info, at: asked, err: err})
+		p.store(name, seen{info: info, at: asked, err: err, failed: time.Now()})
 		p.mu.Unlock()
 		return info, err
 	}
@@ -225,14 +246,32 @@ const (
 
 // candidates are the backends that can take a request, in the order to try them.
 func (p *Pool) candidates(ctx context.Context, k kind, req Requirement) ([]Backend, error) {
-	var kept []Backend
-	var infos []client.Info
-	var why []string
-	for _, b := range p.backends {
+	// Every candidate is described at once, so the slowest backend bounds the wait, not
+	// the sum of them.
+	described := make([]struct {
+		info client.Info
+		err  error
+	}, len(p.backends))
+	var wg sync.WaitGroup
+	for i, b := range p.backends {
 		if req.Backend != "" && b.Name != req.Backend {
 			continue
 		}
-		info, err := p.Describe(ctx, b.Name)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			described[i].info, described[i].err = p.Describe(ctx, b.Name)
+		}()
+	}
+	wg.Wait()
+	var kept []Backend
+	var infos []client.Info
+	var why []string
+	for i, b := range p.backends {
+		if req.Backend != "" && b.Name != req.Backend {
+			continue
+		}
+		info, err := described[i].info, described[i].err
 		if err != nil {
 			why = append(why, b.Name+": "+err.Error())
 			continue

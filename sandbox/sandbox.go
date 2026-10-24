@@ -172,6 +172,18 @@ type File struct {
 	Content string
 }
 
+// ProjectStepOutputCap is the output a project step keeps per stream on every
+// provider: the bytes past it are dropped and the stream marked cut. It is the runner's
+// MAX_STEP_OUTPUT (docker/runner.mjs; a test holds the two equal), and the exec-based
+// providers keep the same (projecttest).
+const ProjectStepOutputCap = 1 << 20
+
+// ProjectStepTransferBudget is how much of a step's output a provider reads before it
+// treats the step as a flood: past ProjectStepOutputCap the output is read and dropped,
+// so the step runs on and its exit is its own; past this budget the step is ended and
+// reported with exit 153 and both streams cut, on every provider.
+const ProjectStepTransferBudget = 32 << 20
+
 // ProjectRequest runs a multi-file project: write Files, then run Steps in order
 // (stopping on the first failure). Timeout is the total wall-clock budget.
 // Artifacts lists relative file paths to capture and return after the run.
@@ -221,10 +233,10 @@ const (
 	// conclusion (stop on first failing step included). Inspect Steps for the
 	// user's build/lint/run results.
 	ProjectOutcomeCompleted
-	// ProjectOutcomeSetupFailed: the run failed around step execution for a
-	// request-attributable reason the runner itself reported — an illegal file
-	// path, an unwritable file, or a result exceeding the response budget.
-	// Retrying without changing the request will fail again.
+	// ProjectOutcomeSetupFailed: the run failed before any step began, for a
+	// request-attributable reason the provider or runner reported: an illegal file
+	// path, an unwritable file. None of the caller's code ran; the same request fails
+	// the same way.
 	ProjectOutcomeSetupFailed
 	// ProjectOutcomeTimedOut: the outer wall-clock budget expired before the
 	// runner reported. Steps may be partial or missing.
@@ -234,6 +246,11 @@ const (
 	// reported (e.g. it was OOM-killed inside the sandbox, or its output was cut).
 	// Retry only if the project is idempotent.
 	ProjectOutcomeProtocolError
+	// ProjectOutcomeRunnerFailed: the runner reported a failure after a step began:
+	// an artifact it could not read, a result over the response budget. The caller's
+	// code ran; Steps holds the steps the runner could still report. Retry only if
+	// the project is idempotent.
+	ProjectOutcomeRunnerFailed
 )
 
 // String is the stable wire/log name of the outcome.
@@ -243,6 +260,8 @@ func (o ProjectOutcome) String() string {
 		return "completed"
 	case ProjectOutcomeSetupFailed:
 		return "setup_failed"
+	case ProjectOutcomeRunnerFailed:
+		return "runner_failed"
 	case ProjectOutcomeTimedOut:
 		return "timed_out"
 	case ProjectOutcomeProtocolError:
@@ -264,10 +283,13 @@ type ProjectResult struct {
 	Isolation           IsolationClass // boundary tier this run executed behind
 	SoftwareIdentity    string         // selected image manifest, if the provider established it
 	EnvironmentIdentity string         // outer image artifact selected for this run
-	Outcome             ProjectOutcome
-	Detail              string // context for a non-completed Outcome; "" when completed
-	Artifacts           []Artifact
-	ArtifactsTruncated  bool
+	// Instance is the sandbox instance that ran it, as a typed reference ("k8s-pod-uid:" and
+	// the pod's UID), or "" when the provider names none (sandbox.ValidInstance).
+	Instance           string
+	Outcome            ProjectOutcome
+	Detail             string // context for a non-completed Outcome; "" when completed
+	Artifacts          []Artifact
+	ArtifactsTruncated bool
 	// CallTrace is bounded, metadata-only evidence of the host.* calls this project
 	// run's broker served (route templates, methods, sizes, timings), mirroring
 	// Result.CallTrace. Non-nil only when the run carried a host-API grant that made
@@ -329,6 +351,9 @@ type Result struct {
 	Isolation           IsolationClass // boundary tier this run executed behind
 	SoftwareIdentity    string         // selected image manifest or interpreter, if established
 	EnvironmentIdentity string         // outer image artifact selected for this run
+	// Instance is the sandbox instance that ran it, as a typed reference ("k8s-pod-uid:" and
+	// the pod's UID), or "" when the provider names none (sandbox.ValidInstance).
+	Instance string
 	// CallTrace is bounded, metadata-only evidence of the host.* calls this run's
 	// broker served (route templates, methods, sizes, timings). It is non-nil only
 	// when the run carried a host-API grant that made calls, and is purely advisory:
@@ -349,7 +374,7 @@ type Result struct {
 // length-prefixed encoding in docs/run-records.md. In a session the last three
 // fields chain the calls; for a single run they are empty or zero.
 type RunRecord struct {
-	Version          int    // encoding version, 2 for new records
+	Version          int    // encoding version, 4
 	RequestSHA256    string // protocol number, floor, timeout, software rule and payload; never the trace id
 	ResultSHA256     string // the result as sent, without durations or advice
 	Provider         string // the provider that ran it, as the daemon reported
@@ -363,10 +388,13 @@ type RunRecord struct {
 	Session          string // SHA-256 of the session ID; "" for a single run
 	Sequence         uint64 // the call's number in its session, from 1; 0 for a single run
 	PreviousSHA256   string // the previous call's SHA256; "" for a single run or a first call
-	// Unanswered, on a version 3 record, is the Connect code of the error a session
-	// call that may have run ended with; ResultSHA256 is then empty. "" when answered.
+	// Unanswered is the Connect code of the error a session call that may have run
+	// ended with; ResultSHA256 is then empty. "" when answered.
 	Unanswered string
-	SHA256     string // over every field above
+	// Instance is the sandbox instance that ran the call, as the response states it
+	// (sandbox.ValidInstance), or "".
+	Instance string
+	SHA256   string // over every field above
 }
 
 // Sandbox is an isolated code runner.
@@ -509,6 +537,10 @@ const (
 	meteredDeleteAttempts = 3
 	meteredDeleteBudget   = 10 * time.Second
 	meteredTeardown       = meteredDeleteAttempts*meteredDeleteBudget + (meteredDeleteAttempts-1)*meteredDeleteAttempts/2*time.Second
+	// meteredBillingTail is how long a metered run's microVM can outlive its deadline:
+	// its artifacts read within projectArtifactGrace, then its delete. Both providers'
+	// BillingTeardown, so the reservation covers both.
+	meteredBillingTail = projectArtifactGrace + meteredTeardown
 )
 
 // Drainer is an optional interface a provider implements when a run can leave

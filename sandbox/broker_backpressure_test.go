@@ -238,16 +238,16 @@ func TestBrokerQuotaTripSuppressesProbingForTheWholeWindow(t *testing.T) {
 	now := time.Now()
 	br.open(now, 30*time.Second, true) // 429
 	br.open(now, 30*time.Second, false)
-	if shedding, elected := br.gate(now.Add(time.Second), true); !shedding || elected {
+	if shedding, elected, _ := br.gate(now.Add(time.Second), true); !shedding || elected {
 		t.Fatalf("gate = (%v, %v), want shedding with no probe", shedding, elected)
 	}
 
 	// Once the window lapses, the next trip starts clean and is probeable again.
-	if shedding, _ := br.gate(now.Add(time.Minute), true); shedding {
+	if shedding, _, _ := br.gate(now.Add(time.Minute), true); shedding {
 		t.Fatal("breaker still shedding after its window lapsed")
 	}
 	br.open(now.Add(time.Minute), 30*time.Second, false) // 503
-	if shedding, elected := br.gate(now.Add(time.Minute+time.Second), true); !shedding || !elected {
+	if shedding, elected, _ := br.gate(now.Add(time.Minute+time.Second), true); !shedding || !elected {
 		t.Fatalf("gate = (%v, %v), want shedding with an elected prober", shedding, elected)
 	}
 }
@@ -286,5 +286,32 @@ func TestHugeRetryAfterIsTheCap(t *testing.T) {
 		if got := retryAfterCooldown(h); got != breakerMaxCooldown {
 			t.Errorf("Retry-After %s: cooldown %v, want %v", h, got, breakerMaxCooldown)
 		}
+	}
+}
+
+// A probe's 200 applies only to the window it was elected for: a 429 that opened a quota
+// window while the probe was out is a newer decision, and the old probe cannot clear it
+// (review, 2026-10-23).
+func TestAnOldProbeCannotClearANewerQuotaBackoff(t *testing.T) {
+	var br breaker
+	now := time.Now()
+	br.open(now, time.Minute, false) // an availability failure
+	shedding, elected, gen := br.gate(now, true)
+	if !shedding || !elected {
+		t.Fatalf("gate: shedding %v, elected %v; want a probe elected", shedding, elected)
+	}
+	br.open(now, time.Minute, true) // a 429 arrives while the probe is out
+	if br.resetIf(gen) {
+		t.Fatal("the probe elected before the 429 cleared its quota backoff")
+	}
+	if shedding, elected, _ := br.gate(now.Add(time.Second), true); !shedding || elected {
+		t.Fatalf("after the stale probe: shedding %v, elected %v; want shedding with no probe", shedding, elected)
+	}
+	// A probe whose window nothing reopened still closes the breaker.
+	var fresh breaker
+	fresh.open(now, time.Minute, false)
+	_, _, g := fresh.gate(now, true)
+	if !fresh.resetIf(g) {
+		t.Fatal("a probe of an unchanged window did not close the breaker")
 	}
 }

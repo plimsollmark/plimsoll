@@ -1,5 +1,5 @@
 {
-  "protocol": 3,
+  "protocol": 4,
   "minimumIsolation": "kernel",
   "traceId": "pr-receipt-0",
   "timeoutMs": 30000,

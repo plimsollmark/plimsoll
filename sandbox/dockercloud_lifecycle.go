@@ -356,14 +356,14 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 	// `timeout` fails open when kill(2) is refused (its watcher reads the error as
 	// "the process is gone"), so a hung command must really be killed at the limit,
 	// and a flood must really be capped.
-	hang, err := d.execLimited(ctx, vm, []string{"sleep", "30"}, "", 1)
+	hang, err := d.execLimited(ctx, vm, []string{"sleep", "30"}, "", 1, d.maxOutput())
 	if err != nil {
 		return fmt.Errorf("dockercloud smoke: time-limit probe: %w", err)
 	}
 	if !hang.timedOut {
 		return fmt.Errorf("dockercloud smoke: the in-guest time limit is not in force (sleep exited %d instead of being killed at 1s)", hang.exitCode)
 	}
-	flood, err := d.execLimited(ctx, vm, []string{"yes"}, "", 10)
+	flood, err := d.execLimited(ctx, vm, []string{"yes"}, "", 10, d.maxOutput())
 	if err != nil {
 		return fmt.Errorf("dockercloud smoke: output-cap probe: %w", err)
 	}

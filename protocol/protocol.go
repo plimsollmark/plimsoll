@@ -13,14 +13,15 @@
 // answers: an older daemon then refuses the request before it runs anything, instead
 // of running it and giving an answer the client must reject. An informational field
 // does not bump it. 3: clients accept only an answer that carries their request's
-// Plimsoll-Request-Id back (internal/rpc.BindAnswers).
+// Plimsoll-Request-Id back (internal/rpc.BindAnswers). 4: clients accept only record
+// version 4, which names the sandbox instance that ran the call.
 package protocol
 
 import "fmt"
 
 // Number is the protocol number this module speaks: the daemon in cmd/plimsolld
 // serves exactly it and the client in package client stamps it on every request.
-const Number uint32 = 3
+const Number uint32 = 4
 
 // Mismatch is the text a daemon puts on its refusal of a request that states
 // another number. A client recognises the refusal by its NotDispatched detail

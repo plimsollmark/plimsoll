@@ -17,8 +17,8 @@ import (
 
 // verdict is one plimsoll outcome in the capsule vocabulary: why the run ended
 // (verdict_class), what is known about its effect (effect.status), and whether
-// the capsule commits a reason. setup_failed and protocol_error share a class
-// and a status, and a dispatched effect carries no response digest, so without
+// the capsule commits a reason. setup_failed, runner_failed and protocol_error
+// share a class and a status, and a dispatched effect carries no response digest, so without
 // the reason nothing in the capsule would tell them apart.
 type verdict struct {
 	class  emit.VerdictClass
@@ -39,10 +39,11 @@ var verdicts = map[plimsollv1.ProjectOutcome]verdict{
 	plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT:      {emit.VerdictTimeout, emit.EffectDispatched, true},
 	plimsollv1.ProjectOutcome_PROJECT_OUTCOME_SETUP_FAILED:   {emit.VerdictErrored, emit.EffectDispatched, true},
 	plimsollv1.ProjectOutcome_PROJECT_OUTCOME_PROTOCOL_ERROR: {emit.VerdictErrored, emit.EffectDispatched, true},
+	plimsollv1.ProjectOutcome_PROJECT_OUTCOME_RUNNER_FAILED:  {emit.VerdictErrored, emit.EffectDispatched, true},
 }
 
 // unanswered is the verdict of a session call that may have run but got no
-// answer (a version 3 record): the daemon dispatched it and reports no result,
+// answer (a record with no result and an error code): the daemon dispatched it and reports no result,
 // which is the capsule's errored class (ran and threw, state unknown) with a
 // dispatched effect. The reason object carries the error's status code.
 var unanswered = verdict{emit.VerdictErrored, emit.EffectDispatched, true}

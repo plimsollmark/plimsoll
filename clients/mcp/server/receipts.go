@@ -575,6 +575,23 @@ func (r *Receipts) RecordClose(session string, calls uint64, last string) error 
 	return nil
 }
 
+// unseen ends a session's receipts as incomplete when its close counted calls this
+// server never saw answered: their records are in no file. A session none of whose calls
+// was stored has no file to fail, and would otherwise settle as closed.
+func (r *Receipts) unseen(fingerprint string) {
+	if r == nil || fingerprint == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	reason := fmt.Sprintf("session %s…'s close counts calls this server never saw answered, so their records are in no file", prefix(fingerprint))
+	if rf := r.sessions[fingerprint]; rf != nil {
+		rf.fail(reason)
+		return
+	}
+	r.sessions[fingerprint] = &receiptFile{state: "incomplete", reason: reason}
+}
+
 // settle lets a session go once this server has, and says how its receipts ended:
 // closed (its signed close is stored), or incomplete with the reason; a file still open
 // (its close never signed) is incomplete, whatever became of the sandbox. A session that

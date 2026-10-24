@@ -1,0 +1,74 @@
+{
+  "rooms": [
+    {
+      "id": "gvisor",
+      "label": "agent-sandbox under gVisor",
+      "tier": "kernel",
+      "bundle": "bundle.jsonl",
+      "runtime_class": "gvisor",
+      "handler": "runsc",
+      "runtime": "gVisor release-20260907.0",
+      "template": "the operator guide's example template, with the image pinned by its digest and plimsolld's network as the only source allowed in",
+      "daemon": "hardened mode: a callers file, the pinned image required, 256 MiB, 1 CPU and 160 MiB of disk per run, 60 runs a minute per caller"
+    },
+    {
+      "id": "kata",
+      "label": "agent-sandbox under Kata Containers",
+      "tier": "vm",
+      "bundle": "kata/bundle.jsonl",
+      "runtime_class": "kata-clh-runtime-rs",
+      "handler": "kata-clh-runtime-rs",
+      "runtime": "Kata Containers 4.2.0 (installed by its kata-deploy chart), Cloud Hypervisor on runtime-rs, Kata's Rust runtime; each pod is a virtual machine sized to the pod's 256 MiB, plus a fixed 130 MiB and 250 millicores the runtime class adds for the VM",
+      "template": "the gVisor room's, with one line changed: the runtime class",
+      "daemon": "hardened mode with the same settings except the disk budget, which the vm tier refuses because no volume keeps its size limit under Kata",
+      "pod_check": {
+        "bundle": "kata/kernel.jsonl",
+        "node_boot_id": "2c96a215-a66a-4657-9304-92279b9201e3",
+        "node_kernel": "6.6.87.2-microsoft-standard-WSL2",
+        "read": "2026-10-23T20:10:10Z"
+      },
+      "smoke": {
+        "kernel": "[    0.000000] Linux version 6.18.35 (@540110ce73d4) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP Tue Sep 15 07:34:33 UTC 2026",
+        "swept": 4901,
+        "writable": ["/dev/shm", "/tmp", "/work"],
+        "mounts": {
+          "/dev/shm": "tmpfs rw,relatime",
+          "/tmp": "tmpfs rw,relatime",
+          "/work": "tmpfs rw,relatime"
+        },
+        "egress": {
+          "tcp 1.1.1.1:443": "timeout",
+          "tcp 10.244.0.1:10250": "timeout",
+          "tcp 169.254.169.254:80": "timeout",
+          "tcp 172.24.0.2:6443": "timeout",
+          "tcp 8.8.8.8:53": "timeout"
+        }
+      },
+      "shows": [
+        "The same two requests, byte for byte, sent to a hardened plimsolld whose runtime class names a Kata handler, ran to completion at the vm tier, and their results are byte for byte the gVisor room's.",
+        "Each pod ran a Linux kernel of its own: the kernel log begins with Linux 6.18.35's boot line, the kernel Kata boots, where the node runs 6.6.87, and the guest's boot ID is not the one the node reports. Those are the two things plimsoll's per-pod check reads, and each run above passed that check, or it would have been refused before any of its code ran.",
+        "The startup smoke test held the pool to the vm tier's rules before the daemon served: the guest could write only to tmpfs mounts of its own kernel, so into the VM's memory, and every connection out timed out."
+      ],
+      "limits": [
+        "A tier is configuration and provider evidence plus the startup smoke test and the per-pod check, never runtime attestation. The boot line and the boot ID are what the guest reads, and a node's root could forge both: the check catches a node whose Kata handler starts something other than a VM, not a hostile node.",
+        "Kata on kind is nested virtualization on a laptop: the kind node is a container on the laptop's Linux virtual machine, and each Kata VM runs under KVM inside that one. It is not a cloud deployment, and it says nothing about the speed or memory a cloud node would give.",
+        "The values in the table come from a third pod of the same pool, read by a signed snippet after plimsoll's own check had passed in that pod. The two project runs' pods passed the same check (a pod that fails it is refused before any code is sent), but plimsoll keeps none of the values the check read.",
+        "No volume kept its size limit: Kata mounts each memory-backed volume as a tmpfs of the VM's kernel with no size of its own, so the daemon ran with no disk budget, and a run's writes are bounded by the VM's memory, not by the template's limits.",
+        "No seccomp filter inside the guest (Seccomp 0 in the snippet's output): Kata applies none unless its configuration asks for one, and plimsoll requires none at this tier, where the boundary is the VM.",
+        "This room has no refusal of its own on this page. With the node's Kata handler pointed at runc, every run and the startup smoke test were refused on both counts when that was measured on 2026-10-18; the operator guide records it, and it was not recorded here."
+      ]
+    },
+    {
+      "id": "docker",
+      "label": "docker under gVisor",
+      "tier": "kernel",
+      "provider": "docker"
+    },
+    {
+      "id": "dockercloud",
+      "label": "a Docker Cloud microVM",
+      "tier": "vm",
+      "provider": "dockercloud"
+    }
+  ]
+}

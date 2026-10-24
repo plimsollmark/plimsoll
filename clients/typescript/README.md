@@ -238,7 +238,7 @@ for the three properties together.
 
 The model sees only a run record's digest (`recordSha256`). The record itself, checked by
 the client, goes to `onRecord(record, key)`, once for every call that ran: an answered call's,
-and the version 3 record a session call that may have run carries on its error. That is where an
+and the record a session call that may have run carries on its error (no result, the error's code). That is where an
 application keeps receipts (a store, or a signer such as plimsoll's `attest` harness); a refusal
 calls nothing, since nothing ran. An `onRecord` that throws, or returns a promise that rejects, is
 logged and never changes the result the model gets.
@@ -253,7 +253,7 @@ object for a pair). Without `onCloseError`, a `console.warn` names the key only 
 another's, never by its IDs, because a key can hold a user's ID (an email address, in some
 apps). An `onCloseError` that throws, or returns a promise that rejects, is logged the same
 way: an app's reporting never stops a close, or the open that waited for one to make room. A call that may have run but ended in an error comes with its record
-(`PlimsollError.unanswered`, a version 3 record); the session checks it, hands it back as
+(`PlimsollError.unanswered`, a record with no result and the error's code); the session checks it, hands it back as
 `PlimsollError.record`, keeps it in its chain and goes on, and so does the conversation's
 sandbox. A call whose answer never arrived carries none, so the client sends nothing more
 on that session (`Session.stopped` says why), and the conversation's next call opens a new

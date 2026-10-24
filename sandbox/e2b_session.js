@@ -257,8 +257,22 @@ function artifacts([work, maxArg, ...paths]) {
     if (workReal === "" || dest === work || !dest.startsWith(work + "/")) continue;
     let fd = -1;
     try {
-      fd = fs.openSync(dest, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-      if (!fs.readlinkSync("/proc/self/fd/" + fd).startsWith(workReal + "/")) continue;
+      // A link is resolved first and followed only if it stays inside the work
+      // directory, as the runner does; the real path is then opened without following
+      // a final link, and the kernel's name for what was opened is checked again, since
+      // a process the session left could swap a parent directory in between. A path
+      // that does not resolve or open is skipped, as a missing file; a file opened and
+      // then unreadable is not, as in the runner: the error ends the reader, and the
+      // call is runner_failed (review, 2026-10-24).
+      let real;
+      try {
+        real = fs.realpathSync(dest);
+        if (!real.startsWith(workReal + "/")) continue;
+        fd = fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+        if (!fs.readlinkSync("/proc/self/fd/" + fd).startsWith(workReal + "/")) continue;
+      } catch {
+        continue;
+      }
       if (!fs.fstatSync(fd).isFile()) continue;
       const room = max - total;
       const buf = Buffer.alloc(room + 1);
@@ -270,8 +284,6 @@ function artifacts([work, maxArg, ...paths]) {
       }
       total += n;
       out.artifacts.push({ path: rel, b64: buf.subarray(0, n).toString("base64") });
-    } catch {
-      continue;
     } finally {
       if (fd >= 0) fs.closeSync(fd);
     }

@@ -153,19 +153,24 @@ class ToolCases:
         tc.assertEqual((r["ran"], r["timed_out"], r["exit_code"], r["outcome"]), (True, True, 124, "timed_out"))
 
     def test_a_run_without_a_step_report_is_unknown_not_a_result(self) -> None:
-        # setup_failed covers a file that could not be written (before the code) and a
-        # result past the response budget (after it), so neither ran: true nor ran: false
-        # is known; protocol_error is unknown by definition. No exit code is invented.
+        # protocol_error is unknown by definition, so neither ran: true nor ran: false is
+        # known. No exit code is invented.
         tc: unittest.TestCase = self  # type: ignore[assignment]
-        for marker, outcome, detail in (("ECHO:SETUP", "setup_failed", "a file could not be written"),
-                                        ("ECHO:PROTOCOL", "protocol_error", "the runner's report was cut")):
-            with tc.subTest(outcome=outcome):
-                r = self.result(self.make(echo()), code=marker)
-                tc.assertEqual((r["ran"], r["outcome"]), ("unknown", outcome))
-                tc.assertNotIn("exit_code", r)
-                tc.assertIn(detail, r["error"])
-                tc.assertIn("not retried", r["note"])
-                tc.assertRegex(r["record_sha256"], re.compile(r"^[0-9a-f]{64}$"))
+        r = self.result(self.make(echo()), code="ECHO:PROTOCOL")
+        tc.assertEqual((r["ran"], r["outcome"]), ("unknown", "protocol_error"))
+        tc.assertNotIn("exit_code", r)
+        tc.assertIn("the runner's report was cut", r["error"])
+        tc.assertIn("not retried", r["note"])
+        tc.assertRegex(r["record_sha256"], re.compile(r"^[0-9a-f]{64}$"))
+
+    def test_a_setup_failure_did_not_run(self) -> None:
+        # setup_failed means no step began, so the code did not run.
+        tc: unittest.TestCase = self  # type: ignore[assignment]
+        r = self.result(self.make(echo()), code="ECHO:SETUP")
+        tc.assertEqual((r["ran"], r["outcome"]), (False, "setup_failed"))
+        tc.assertNotIn("exit_code", r)
+        tc.assertIn("a file could not be written", r["error"])
+        tc.assertRegex(r["record_sha256"], re.compile(r"^[0-9a-f]{64}$"))
 
     def test_output_is_cut_and_marked(self) -> None:
         tc: unittest.TestCase = self  # type: ignore[assignment]

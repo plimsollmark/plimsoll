@@ -177,6 +177,7 @@ func execute(args []string, out io.Writer) error {
 	qualifiedRuns := f.String("qualified-runs", "10,4", "the lines of that bundle to write verdict BOMs for")
 	qualifiedPages := f.String("qualified-pages", "https://plimsollmark.github.io/plimsoll/examples/adapter/", "absolute base URL ending in / where that bundle and qualification file are published")
 	line := f.Int("line", 0, "write only the BOM of this line of -bundle, with its checks, and no page: for a caller that converts runs as they happen; needs -out and -pages")
+	bundlePages := f.String("bundle-pages", "", "for -line: absolute base URL ending in / where -bundle is published, when it is not -pages (whose index.html stays the documentation reference): a page that shows runs from more than one bundle")
 	f.StringVar(&o.Name, "name", o.Name, "program display name, unsigned")
 	f.StringVar(&o.ImageName, "image-name", o.ImageName, "image display name, unsigned")
 	f.StringVar(&o.Operator, "operator", o.Operator, "self-assessor display name, unsigned")
@@ -189,6 +190,9 @@ func execute(args []string, out io.Writer) error {
 	}
 	given := map[string]bool{}
 	f.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
+	if given["bundle-pages"] && (*line == 0 || *checkPath != "") {
+		return fmt.Errorf("-bundle-pages applies only to -line; a check reads where the bundle is from the BOM")
+	}
 	if *checkPath != "" {
 		raw, err := cdxutil.ReadInput(*checkPath)
 		if err != nil {
@@ -257,7 +261,14 @@ func execute(args []string, out io.Writer) error {
 		return err
 	}
 	if *line != 0 {
-		return writeOne(bundle, pem, *line, o, *outDir, *imagePath, filepath.Dir(*bundlePath), out)
+		published := o.Pages
+		if given["bundle-pages"] {
+			if err := cdxutil.ValidatePages("-bundle-pages", *bundlePages); err != nil {
+				return err
+			}
+			published = *bundlePages
+		}
+		return writeOne(bundle, pem, *line, o, published, *outDir, *imagePath, filepath.Dir(*bundlePath), out)
 	}
 	runs, err := sources(bundle, pem, o.Pages)
 	if err != nil {
@@ -483,8 +494,10 @@ func execute(args []string, out io.Writer) error {
 // can map: only line n becomes a BOM. The image's own BOM is found as the full run
 // finds it (explicit, or its digest-named sibling in dir). A caller that converts runs as they happen passes
 // the signed file up to that run's checkpoint as the bundle, so the digest the BOM
-// cites never moves when later runs are appended.
-func writeOne(bundle, pem []byte, n int, o options, outDir, imagePath, dir string, out io.Writer) error {
+// cites never moves when later runs are appended. published is the base URL where the
+// bundle is, which the BOM's attestation reference names; o.Pages stays the base of its
+// documentation reference.
+func writeOne(bundle, pem []byte, n int, o options, published, outDir, imagePath, dir string, out io.Writer) error {
 	pub, entries, err := verifiedBundle(bundle, pem)
 	if err != nil {
 		return err
@@ -498,7 +511,7 @@ func writeOne(bundle, pem []byte, n int, o options, outDir, imagePath, dir strin
 		return err
 	}
 	s.PEM = pem
-	s.Shared = shared{Pages: o.Pages, BundleSHA256: cdxutil.Digest(bundle), bundle: bundle}
+	s.Shared = shared{Pages: published, BundleSHA256: cdxutil.Digest(bundle), bundle: bundle}
 	o.Name = s.displayName(o.Name)
 	manifest, _, _ := cdxutil.ImageDigest(s.Record)
 	if o.ImageBOM, err = readImageBOM(imagePath, dir, "sha256:"+manifest); err != nil {

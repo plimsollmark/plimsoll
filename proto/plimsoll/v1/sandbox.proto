@@ -250,6 +250,12 @@ message RunResponse {
   // Exact outer image or interpreter artifact selected for this run, when
   // stated. The record repeats it so the client checks both statements.
   string environment = 6;
+  // The sandbox instance that ran this call, as a typed reference
+  // "<kind>:<id>" (for the Kubernetes provider, "k8s-pod-uid:" and the UID the
+  // API server gave the pod), or empty when the provider names none. It lets
+  // evidence kept outside plimsoll (a runtime's log of the pod) be tied to this
+  // run. The record repeats it so the client checks both statements.
+  string instance = 7;
   // Exactly one result, of the payload's kind.
   oneof result {
     JavaScriptResult javascript = 10;
@@ -269,10 +275,9 @@ message RunResponse {
 // any language can reproduce it without a protobuf or JSON canonicalization
 // library.
 message RunRecord {
-  // version is the encoding version: 2 for a call that was answered, 3 for a
-  // session call that may have run but ended in an error (unanswered is set and
-  // result_sha256 is empty). Version 1 remains verifiable. A verifier refuses an
-  // unknown version.
+  // version is the encoding version, 4: every field below, every time. A
+  // session call that may have run but ended in an error sets unanswered and
+  // leaves result_sha256 empty. A verifier refuses any other version.
   uint32 version = 1;
   // request_sha256 covers what the caller sent: protocol number, floor,
   // timeout, software rule and payload, never the trace id.
@@ -297,10 +302,11 @@ message RunRecord {
   string previous_sha256 = 12;
   string software_identity = 14; // RunResponse.software_identity
   string software_rule_id = 15; // exact identity or digest of approved set
-  // unanswered, on a version 3 record, is the Connect code of the error the call
+  // unanswered, on an unanswered call's record, is the Connect code of the error the call
   // ended with ("unknown", "deadline_exceeded", ...): the daemon's own word, never
   // error text. Empty on an answered call's record.
   string unanswered = 16;
+  string instance = 17; // RunResponse.instance
   // record_sha256 covers every field above.
   string record_sha256 = 13;
 }
@@ -353,9 +359,9 @@ enum ProjectOutcome {
   // The runner executed the plan to its normal conclusion (stop on first
   // failing step included); inspect steps for the user's results.
   PROJECT_OUTCOME_COMPLETED = 1;
-  // The run failed around step execution for a request-attributable reason the
-  // runner reported (illegal file path, unwritable file, over-budget result).
-  // Retrying the same request will fail again.
+  // The runner reported a failure before any step began (an illegal file path,
+  // an unwritable file): none of the caller's code ran. Safe to retry, though the
+  // same request fails the same way.
   PROJECT_OUTCOME_SETUP_FAILED = 2;
   // The outer wall-clock budget expired before the runner reported; steps may
   // be partial or missing.
@@ -363,6 +369,10 @@ enum ProjectOutcome {
   // The sandbox produced no parseable result: execution state unknown. Retry
   // only if the project is idempotent.
   PROJECT_OUTCOME_PROTOCOL_ERROR = 4;
+  // The runner reported a failure after a step began (an artifact it could not
+  // read, a result over the size budget): the caller's code ran, and steps holds
+  // the steps it could still report. Retry only if the project is idempotent.
+  PROJECT_OUTCOME_RUNNER_FAILED = 5;
 }
 
 message Artifact {

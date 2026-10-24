@@ -451,16 +451,19 @@ export class CodeSandboxes {
       // The Describe is shared with other calls, so an abort stops this call's wait for
       // it, not the Describe.
       const info = await untilAborted(this.#describe(), signal);
-      const proved = info.environments.project.languages;
-      // A daemon that states no languages predates the statement: let it try.
-      if (proved.length > 0 && !proved.includes(language)) {
-        throw new PlimsollError("unimplemented", `plimsoll: the sandbox image has no ${language} interpreter (it runs ${proved.join(", ")})`, {
-          notDispatched: "unsupported",
-        });
-      }
       // Without a key there is no conversation to scope a sandbox to, and sharing
       // one across conversations would hand one user's files to another.
       const persistent = key !== undefined && (await untilAborted(this.persistent(), signal));
+      // The languages proved where this call will run: the session's image for a kept
+      // sandbox, the project image otherwise (a daemon with neither runs JavaScript
+      // snippets, which #fresh checks). Every daemon states them (protocol 4), so one that
+      // states none proved none and is refused, never let try (review B9, 2026-10-23).
+      const env = persistent ? info.sessionEnvironment : info.supportsProject ? info.environments.project : undefined;
+      if (env && !env.languages.includes(language)) {
+        throw new PlimsollError("unimplemented", `plimsoll: the sandbox image has no ${language} interpreter (it runs ${env.languages.join(", ") || "none"})`, {
+          notDispatched: "unsupported",
+        });
+      }
       return { key, id, info, language, files, persistent };
     });
     const opts = { timeoutMs: this.#opts.timeoutMs, minimumIsolation: this.#floor, signal };

@@ -27,11 +27,8 @@ import (
 	"flag"
 	"fmt"
 	"html"
-	"io"
 	"math"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -101,7 +98,7 @@ func realMain(out, image string) error {
 	}
 	defer os.RemoveAll(dir)
 
-	binary, err := buildDaemon(ctx, dir)
+	binary, err := daemonproc.Build(ctx, dir)
 	if err != nil {
 		return err
 	}
@@ -109,20 +106,22 @@ func realMain(out, image string) error {
 	if err != nil {
 		return err
 	}
-	addr, err := daemonproc.FreeAddr()
+	env := []string{"SANDBOX_PROVIDER=docker", "SANDBOX_DOCKER_PROJECT_IMAGE=" + image, "PLIMSOLL_CLIENTS_FILE=" + clientsPath}
+	// The shipped syscall allowlist, when this runs from the checkout: the runner and
+	// its child process must work under the same profile a deployment uses.
+	if abs, err := filepath.Abs(filepath.Join("docker", "seccomp.json")); err == nil {
+		if _, err := os.Stat(abs); err == nil && os.Getenv("SANDBOX_DOCKER_SECCOMP") == "" {
+			env = append(env, "SANDBOX_DOCKER_SECCOMP="+abs)
+		}
+	}
+	// 90 s: the docker provider's startup smoke test launches containers. The daemon's
+	// log goes to stderr.
+	daemon, err := daemonproc.Start(ctx, binary, daemonproc.Options{Env: env, Ready: 90 * time.Second})
 	if err != nil {
 		return err
 	}
-	var audit bytes.Buffer
-	daemon, err := startDaemon(ctx, binary, addr, clientsPath, image, &audit)
-	if err != nil {
-		return err
-	}
-	defer stop(daemon)
-	baseURL := "http://" + addr
-	if err := waitForReady(ctx, baseURL); err != nil {
-		return fmt.Errorf("daemon never became ready: %w\n%s", err, audit.String())
-	}
+	defer func() { _ = daemon.Stop(5 * time.Second) }()
+	baseURL := daemon.BaseURL
 
 	remote, err := client.New(baseURL, client.WithToken(token))
 	if err != nil {
@@ -271,69 +270,4 @@ func render(accepted1, accepted2, draft run, divergeAt int, isolation string) ([
 		"Date":           time.Now().Format("2006-01-02"),
 	})
 	return buf.Bytes(), err
-}
-
-// --- the loopback daemon ----------------------------------------------------------
-
-func buildDaemon(ctx context.Context, dir string) (string, error) {
-	binary := filepath.Join(dir, "plimsolld")
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/plimsolld")
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("build plimsolld (run this from the repository root): %w", err)
-	}
-	return binary, nil
-}
-
-func startDaemon(ctx context.Context, binary, addr, clientsPath, image string, sink io.Writer) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, binary)
-	env := append(os.Environ(),
-		"SANDBOX_PROVIDER=docker",
-		"SANDBOX_DOCKER_PROJECT_IMAGE="+image,
-		"PLIMSOLL_ADDR="+addr,
-		// This run reads no metrics, and the default port would collide with any
-		// other daemon on this machine.
-		"PLIMSOLL_METRICS_ADDR=off",
-		"PLIMSOLL_CLIENTS_FILE="+clientsPath,
-	)
-	// The shipped syscall allowlist, when this runs from the checkout: the runner
-	// and its child process must work under the same profile a deployment uses.
-	if abs, err := filepath.Abs(filepath.Join("docker", "seccomp.json")); err == nil {
-		if _, err := os.Stat(abs); err == nil && os.Getenv("SANDBOX_DOCKER_SECCOMP") == "" {
-			env = append(env, "SANDBOX_DOCKER_SECCOMP="+abs)
-		}
-	}
-	cmd.Env = env
-	cmd.Stdout = io.MultiWriter(os.Stderr, sink)
-	cmd.Stderr = io.MultiWriter(os.Stderr, sink)
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start plimsolld: %w", err)
-	}
-	return cmd, nil
-}
-
-func stop(cmd *exec.Cmd) {
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}
-}
-
-func waitForReady(ctx context.Context, baseURL string) error {
-	deadline := time.Now().Add(90 * time.Second) // the docker provider's startup smoke test launches containers
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/readyz", nil)
-		if err != nil {
-			return err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return errors.New("timed out waiting for /readyz")
 }

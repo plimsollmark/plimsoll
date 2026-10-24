@@ -215,6 +215,29 @@ class ADKTests(unittest.TestCase):
                 self.assertEqual(model.requests, [])
         asyncio.run(run())
 
+    def test_guard_refuses_cfc_when_only_a_sub_agent_executes_through_plimsoll(self) -> None:
+        # ADK 2.11 replaces only the root's executor, but which agents it replaces is ADK's
+        # private rule: the guard refuses CFC wherever plimsoll executes in the tree.
+        async def run():
+            model = ScriptedModel(model="gemini-2.5-pro")
+            worker = Agent(name="offline_cfc_worker", model=model, code_executor=self.executor())
+            root = Agent(name="offline_cfc_root", model=model, sub_agents=[worker])
+            sessions = InMemorySessionService()
+            session = await sessions.create_session(app_name="adk-cfc-sub", user_id="user")
+            runner = Runner(agent=root, app_name="adk-cfc-sub", session_service=sessions,
+                            plugins=[PlimsollCodeExecutorGuard()])
+            with patch.object(ScriptedModel, "connect", side_effect=AssertionError("vendor transport reached")), \
+                    patch.object(CodeExecutor, "execute_code", side_effect=AssertionError("code dispatched")) as dispatch:
+                with self.assertRaisesRegex(RuntimeError, "support_cfc=True") as caught:
+                    async for _ in runner.run_async(user_id="user", session_id=session.id,
+                            run_config=RunConfig(support_cfc=True),
+                            new_message=types.Content(role="user", parts=[types.Part(text="Use Python.")])):
+                        pass
+                self.assertIsInstance(caught.exception.__cause__, UnsupportedError)
+                dispatch.assert_not_called()
+                self.assertEqual(model.requests, [])
+        asyncio.run(run())
+
     def test_guard_checks_the_live_flow_agent_hook(self) -> None:
         async def run():
             model = ScriptedModel(model="gemini-2.5-pro")

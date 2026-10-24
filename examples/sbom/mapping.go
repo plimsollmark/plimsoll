@@ -306,6 +306,9 @@ func buildBOM(s source, o options) ([]byte, error) {
 	if r.Policy != "" {
 		workflowProps = append(workflowProps, cdxutil.Props("policy", r.Policy)...)
 	}
+	if r.Instance != "" {
+		workflowProps = append(workflowProps, cdxutil.Props("instance", r.Instance)...)
+	}
 	var tasks, dependencies []object
 	var kinds []string
 	commands := s.Request.GetProject().GetSteps()

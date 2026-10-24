@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
 
@@ -129,8 +130,11 @@ type DockerSandbox struct {
 	// re-pointed after startup names content whose lockdown, runner guard and
 	// languages nobody proved (review F1).
 	provenImageIDs map[string]string
-	preflightNow   func() time.Time // test clock; nil uses time.Now
-	preflightWait  time.Duration    // bounded wait on preflight contention; 0 uses the default
+	// quarantine holds the containers whose removal could not be confirmed, each with
+	// the capacity of the call that made it, until ReconcileOrphans confirms it gone.
+	quarantine    providerkit.Quarantine
+	preflightNow  func() time.Time // test clock; nil uses time.Now
+	preflightWait time.Duration    // bounded wait on preflight contention; 0 uses the default
 
 	// projectLanguages are the interpreters the project image ran in SmokeTest.
 	projectLanguages []Language

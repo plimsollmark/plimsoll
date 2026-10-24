@@ -34,11 +34,8 @@ import (
 	"flag"
 	"fmt"
 	"html"
-	"io"
 	"math"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -48,7 +45,9 @@ import (
 	"github.com/plimsollmark/plimsoll/examples/internal/daemonproc"
 
 	"github.com/plimsollmark/plimsoll/client"
+	"github.com/plimsollmark/plimsoll/examples/internal/grade"
 	"github.com/plimsollmark/plimsoll/examples/internal/wasmshim"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -90,13 +89,20 @@ type fixture struct {
 	} `json:"scenarios"`
 }
 
-// judged is one scenario of one run: the trajectory's fingerprint, its exact bytes,
-// and the swing-up score.
+// judged is one scenario of one run: the trajectory's fingerprint and its exact bytes.
 type judged struct {
 	fingerprint string
 	trajectory  []byte
-	score       float64
-	failure     string
+}
+
+// verdict is the line the swing-up environment's grader prints: docker/sim/graders/
+// cartpole-swingup.mjs, shipped in the simulation image the project image is built on
+// and run by grade.Run in a run of its own. failure is null on a pass, and t_up, when
+// the final upright stretch began, is null when there was none.
+type verdict struct {
+	Score   float64  `json:"score"`
+	Failure *string  `json:"failure"`
+	TUp     *float64 `json:"t_up"`
 }
 
 // result is one project run: the compiled module's hash (when the run compiled
@@ -144,7 +150,7 @@ func realMain(out, image string) error {
 	}
 	defer os.RemoveAll(dir)
 
-	binary, err := buildDaemon(ctx, dir)
+	binary, err := daemonproc.Build(ctx, dir)
 	if err != nil {
 		return err
 	}
@@ -152,20 +158,23 @@ func realMain(out, image string) error {
 	if err != nil {
 		return err
 	}
-	addr, err := daemonproc.FreeAddr()
-	if err != nil {
-		return err
+	env := []string{"SANDBOX_PROVIDER=docker", "SANDBOX_DOCKER_PROJECT_IMAGE=" + image, "PLIMSOLL_CLIENTS_FILE=" + clientsPath}
+	// The shipped syscall allowlist, when this runs from the checkout: the compiler, the
+	// runner and the controller process must all work under the profile a deployment uses.
+	if abs, err := filepath.Abs(filepath.Join("docker", "seccomp.json")); err == nil {
+		if _, err := os.Stat(abs); err == nil && os.Getenv("SANDBOX_DOCKER_SECCOMP") == "" {
+			env = append(env, "SANDBOX_DOCKER_SECCOMP="+abs)
+		}
 	}
+	// 90 s: the docker provider's startup smoke test launches containers. The daemon's
+	// log is kept, and shown only if it never becomes ready.
 	var audit bytes.Buffer
-	daemon, err := startDaemon(ctx, binary, addr, clientsPath, image, &audit)
+	daemon, err := daemonproc.Start(ctx, binary, daemonproc.Options{Env: env, Ready: 90 * time.Second, Log: &audit})
 	if err != nil {
-		return err
+		return fmt.Errorf("%w\n%s", err, audit.String())
 	}
-	defer stop(daemon)
-	baseURL := "http://" + addr
-	if err := waitForReady(ctx, baseURL); err != nil {
-		return fmt.Errorf("daemon never became ready: %w\n%s", err, audit.String())
-	}
+	defer func() { _ = daemon.Stop(5 * time.Second) }()
+	baseURL := daemon.BaseURL
 
 	remote, err := client.New(baseURL, client.WithToken(token))
 	if err != nil {
@@ -198,6 +207,23 @@ func realMain(out, image string) error {
 		return fmt.Errorf("JavaScript run: %w", err)
 	}
 
+	// The scores are the environment's own grader's, in a run of its own after the
+	// runs that made the trajectories; its record binds each score to the trajectory
+	// it read.
+	var trajs []grade.Trajectory
+	for _, s := range fx.Scenarios {
+		trajs = append(trajs, grade.Trajectory{ID: s.ID, Bytes: runs[0].scenarios[s.ID].trajectory})
+	}
+	graded, err := grade.Run(ctx, remote, "cartpole-swingup", fx.TickS, trajs)
+	if err != nil {
+		return err
+	}
+	if graded.Result.Record == nil {
+		return errors.New("the grading run came back without a run record")
+	}
+	graderRecord := record.Digest(*graded.Result.Record)
+	fmt.Printf("grader    | /oracle/graders/cartpole-swingup.mjs, in a run of its own, run record %s\n", graderRecord)
+
 	var problems []string
 	if runs[0].wasmSHA256 != runs[1].wasmSHA256 {
 		problems = append(problems, "the two compiles produced different modules")
@@ -225,14 +251,25 @@ func realMain(out, image string) error {
 		if hc.fingerprint != s.MathCosFingerprint {
 			problems = append(problems, fmt.Sprintf("%s: Math.cos fingerprint %s, fingerprints.json records %s", s.ID, hc.fingerprint, s.MathCosFingerprint))
 		}
-		held := fmt.Sprintf("upright from %.2f s, score %.3f", (1-a.score)*fx.TEndS, a.score)
-		if a.failure != "" || a.score < fx.MinScore {
-			held = fmt.Sprintf("FAILED (%s, score %.3f, floor %.2f)", a.failure, a.score, fx.MinScore)
+		var v verdict
+		if err := json.Unmarshal(graded.Lines[s.ID], &v); err != nil {
+			return fmt.Errorf("%s: the grader printed %s: %w", s.ID, graded.Lines[s.ID], err)
+		}
+		var held string
+		if v.Failure != nil || v.TUp == nil || v.Score < fx.MinScore {
+			failure := "none"
+			if v.Failure != nil {
+				failure = *v.Failure
+			}
+			held = fmt.Sprintf("FAILED (%s, score %.3f, floor %.2f)", failure, v.Score, fx.MinScore)
 			problems = append(problems, s.ID+": "+held)
+			v.TUp = new(float64)
+		} else {
+			held = fmt.Sprintf("upright from %.2f s, score %.3f", *v.TUp, v.Score)
 		}
 		row := scenarioRow{
 			ID: s.ID, Theta0: s.Params[0], HalfLength: s.Params[1], CartMass: s.Params[2],
-			Score: round(a.score), UprightFrom: round((1 - a.score) * fx.TEndS),
+			Score: round(v.Score), UprightFrom: round(*v.TUp),
 			Fingerprint: a.fingerprint, SecondRun: b.fingerprint, MathCos: hc.fingerprint, JavaScript: j.fingerprint,
 		}
 		row.VsJS = compare(a.trajectory, j.trajectory)
@@ -250,7 +287,7 @@ func realMain(out, image string) error {
 	}
 	fmt.Println("verdict   | the compile is reproducible, every trajectory has one fingerprint, the pole is up and held in every scenario, and cos is the whole difference from the JavaScript law")
 
-	page, err := render(fx, runs, js, rows, info.Isolation.String())
+	page, err := render(fx, runs, js, rows, info.Isolation.String(), graderRecord)
 	if err != nil {
 		return err
 	}
@@ -334,8 +371,7 @@ func judge(ctx context.Context, remote *client.Remote, fx fixture, files []sandb
 		if fp != v.Fingerprint {
 			return result{}, fmt.Errorf("%s: the runner printed %s but the artifact hashes to %s", s.ID, v.Fingerprint, fp)
 		}
-		score, failure := score(traj)
-		r.scenarios[s.ID] = judged{fingerprint: fp, trajectory: traj, score: score, failure: failure}
+		r.scenarios[s.ID] = judged{fingerprint: fp, trajectory: traj}
 	}
 	return r, nil
 }
@@ -344,33 +380,6 @@ func judge(ctx context.Context, remote *client.Remote, fx fixture, files []sandb
 // force as little-endian float64.
 func at(traj []byte, k, col int) float64 {
 	return math.Float64frombits(binary.LittleEndian.Uint64(traj[(k*(width+1)+col)*8:]))
-}
-
-// score is the swing-up score: 1 minus the start of the final unbroken upright
-// stretch (cos theta > uprightCos) over the run's length; zero, with a reason, if the
-// cart ever leaves the track or the pole does not end upright.
-func score(traj []byte) (float64, string) {
-	n := len(traj) / 8 / (width + 1)
-	if n == 0 {
-		return 0, "empty_trajectory"
-	}
-	upFrom := -1
-	for k := 0; k < n; k++ {
-		if math.Abs(at(traj, k, 0)) > track {
-			return 0, "off_track"
-		}
-		if math.Cos(at(traj, k, 2)) > uprightCos {
-			if upFrom < 0 {
-				upFrom = k
-			}
-		} else {
-			upFrom = -1
-		}
-	}
-	if upFrom < 0 {
-		return 0, "never_upright"
-	}
-	return 1 - float64(upFrom)/float64(n), ""
 }
 
 // rowDiff is one tick at which two records are not byte-identical: which columns
@@ -490,7 +499,7 @@ func decode(c, js []byte) replay {
 	return r
 }
 
-func render(fx fixture, runs []result, js result, rows []scenarioRow, isolation string) ([]byte, error) {
+func render(fx fixture, runs []result, js result, rows []scenarioRow, isolation, graderRecord string) ([]byte, error) {
 	s1 := fx.Scenarios[0]
 	data, err := json.Marshal(map[string]any{
 		"h": fx.TickS, "t_end": fx.TEndS, "track": track, "min_score": fx.MinScore, "upright_cos": uprightCos,
@@ -536,72 +545,7 @@ func render(fx fixture, runs []result, js result, rows []scenarioRow, isolation 
 		"Date":         time.Now().Format("2006-01-02"),
 		"TickMs":       num(fx.TickS * 1000),
 		"TEnd":         num(fx.TEndS),
+		"GraderRecord": graderRecord,
 	})
 	return buf.Bytes(), err
-}
-
-// --- the loopback daemon ----------------------------------------------------------
-
-func buildDaemon(ctx context.Context, dir string) (string, error) {
-	binary := filepath.Join(dir, "plimsolld")
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/plimsolld")
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("build plimsolld (run this from the repository root): %w", err)
-	}
-	return binary, nil
-}
-
-func startDaemon(ctx context.Context, binary, addr, clientsPath, image string, sink io.Writer) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, binary)
-	env := append(os.Environ(),
-		"SANDBOX_PROVIDER=docker",
-		"SANDBOX_DOCKER_PROJECT_IMAGE="+image,
-		"PLIMSOLL_ADDR="+addr,
-		// This run reads no metrics, and the default port would collide with any
-		// other daemon on this machine.
-		"PLIMSOLL_METRICS_ADDR=off",
-		"PLIMSOLL_CLIENTS_FILE="+clientsPath,
-	)
-	// The shipped syscall allowlist, when this runs from the checkout: the compiler,
-	// the runner and the controller process must all work under the profile a
-	// deployment uses.
-	if abs, err := filepath.Abs(filepath.Join("docker", "seccomp.json")); err == nil {
-		if _, err := os.Stat(abs); err == nil && os.Getenv("SANDBOX_DOCKER_SECCOMP") == "" {
-			env = append(env, "SANDBOX_DOCKER_SECCOMP="+abs)
-		}
-	}
-	cmd.Env = env
-	cmd.Stdout = sink
-	cmd.Stderr = sink
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start plimsolld: %w", err)
-	}
-	return cmd, nil
-}
-
-func stop(cmd *exec.Cmd) {
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}
-}
-
-func waitForReady(ctx context.Context, baseURL string) error {
-	deadline := time.Now().Add(90 * time.Second) // the docker provider's startup smoke test launches containers
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/readyz", nil)
-		if err != nil {
-			return err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return errors.New("timed out waiting for /readyz")
 }

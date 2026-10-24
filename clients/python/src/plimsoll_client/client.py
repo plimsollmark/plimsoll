@@ -66,7 +66,7 @@ from .types import (
 
 __all__ = ["PROTOCOL", "Client", "Session"]
 
-PROTOCOL = 3
+PROTOCOL = 4
 """The wire protocol number this client speaks (Go: protocol.Number). It is stated
 on every request; a daemon serving another number refuses the request before
 reading its payload."""
@@ -107,6 +107,7 @@ def _evidence(resp: Msg) -> Dict[str, Any]:
         "isolation": resp.get_str("isolation"),
         "environment": resp.get_str("environment"),
         "software_identity": resp.get_str("softwareIdentity"),
+        "instance": resp.get_str("instance"),
         "duration_ms": resp.get_int("durationMs", INT64),
         "record": None,
     }
@@ -452,7 +453,7 @@ class Client:
         digest = request_digest(req)
         resp = self._transport.call("Run", req, "RunResponse", cancel)
         floor = req.get("minimumIsolation", "")
-        return _finish(kind, resp, lambda: check_single(digest, PROTOCOL, rule, resp), floor)
+        return _finish(kind, resp, lambda: check_single(digest, rule, resp), floor)
 
     def open_session(
         self,
@@ -751,7 +752,7 @@ class Session:
         # record.CheckSessionCall, then the chain this client tracks moves on. A tier
         # below the call's floor fails it before the chain moves, as in Go's
         # record.check, so the session sends nothing more.
-        r = check(digest, PROTOCOL, rule, run)
+        r = check(digest, rule, run)
         if floor and not meets(r.isolation, floor):
             raise IsolationEvidenceMismatchError(
                 f"plimsoll: result isolation {r.isolation or 'unknown'} is below the requested minimum {floor}; execution may have occurred"

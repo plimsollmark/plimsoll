@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	pathpkg "path"
+	"slices"
 	"strings"
 	"time"
 
@@ -180,64 +181,91 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (res P
 		return fail, fmt.Errorf("could not write project files: %w", err)
 	}
 
-	res = ProjectResult{Sandbox: d.Name(), Isolation: IsolationVM, Outcome: ProjectOutcomeCompleted}
-	for i, step := range req.Steps {
-		start := time.Now()
-		out, err := d.execGuarded(runCtx, vm, append(append([]string(nil), stepPrefix...), "sh", stepPaths[i]), dir)
+	res = ProjectResult{Sandbox: d.Name(), Isolation: IsolationVM}
+	// The steps and the artifacts follow the exec-based providers' one contract
+	// (exec_steps.go).
+	steps, outcome, detail, err := runExecSteps(runCtx, req.Steps, func(ctx context.Context, i int, _ string) (stepOutput, error) {
+		out, err := d.execGuardedCap(ctx, vm, append(append([]string(nil), stepPrefix...), stepArgv(stepPaths[i])...), dir, ProjectStepOutputCap)
 		if err != nil {
-			if deadline.Expired(runCtx) == context.DeadlineExceeded {
-				res.Steps = append(res.Steps, StepResult{Command: step, ExitCode: 124, TimedOut: true, Duration: time.Since(start)})
-				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
-				res.CallTrace = endDCGuard(guard)
-				return res, nil
-			}
-			return fail, err
+			return stepOutput{}, err
 		}
-		res.Steps = append(res.Steps, StepResult{
-			Command:         step,
-			Stdout:          out.stdout,
-			Stderr:          out.stderr,
-			StdoutTruncated: out.stdoutTruncated,
-			StderrTruncated: out.stderrTruncated,
-			ExitCode:        out.exitCode,
-			TimedOut:        out.timedOut,
-			Duration:        time.Since(start),
-		})
-		if out.timedOut {
-			res.Outcome, res.Detail = ProjectOutcomeTimedOut, "step exceeded the time budget"
-			res.CallTrace = endDCGuard(guard)
-			return res, nil
-		}
-		if out.exitCode != 0 {
-			break
-		}
+		return stepOutput{stdout: out.stdout, stderr: out.stderr, stdoutTruncated: out.stdoutTruncated,
+			stderrTruncated: out.stderrTruncated, exitCode: out.exitCode, timedOut: out.timedOut}, nil
+	})
+	if err != nil {
+		return fail, err
 	}
+	res.Steps, res.Outcome, res.Detail = steps, outcome, detail
 	// The steps are done: the grant ends before its trace is read.
 	res.CallTrace = endDCGuard(guard)
 
-	// Capture requested artifacts (those that exist), even after a failed step.
-	var wanted []string
-	for _, p := range req.Artifacts {
-		dest := pathpkg.Join(dir, p)
-		if dest != dir && strings.HasPrefix(dest, dir+"/") {
-			wanted = append(wanted, dest)
-		}
-	}
-	if len(wanted) > 0 {
-		arts, truncated, err := d.wire().download(runCtx, vm, wanted)
-		if err != nil {
-			if deadline.Expired(runCtx) == context.DeadlineExceeded {
-				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget while reading artifacts"
-				return res, nil
-			}
-			return fail, fmt.Errorf("read artifacts: %w", err)
-		}
-		for _, a := range arts {
-			res.Artifacts = append(res.Artifacts, Artifact{Path: strings.TrimPrefix(a.Path, dir+"/"), Content: a.Content})
-		}
-		res.ArtifactsTruncated = truncated
-	}
+	// The artifacts, after a failed or timed-out step too, within a short grace past
+	// the run's deadline (projectArtifactGrace).
+	runDeadline, _ := runCtx.Deadline()
+	actx, cancelArtifacts := context.WithDeadline(ctx, artifactDeadline(runDeadline))
+	defer cancelArtifacts()
+	arts, truncated, err := d.collectArtifacts(actx, vm, dir, req.Artifacts)
+	setArtifacts(&res, arts, truncated, err)
 	return res, nil
+}
+
+// collectArtifacts returns the requested artifacts artifactScript lists, read in one
+// download, which stops at maxArtifactBytesTotal and reports the rest cut.
+func (d *DockerCloud) collectArtifacts(ctx context.Context, vm dcVM, dir string, paths []string) ([]Artifact, bool, error) {
+	if len(paths) == 0 {
+		return nil, false, nil
+	}
+	secs := int(time.Until(deadlineOr(ctx, time.Now().Add(projectArtifactGrace))) / time.Second)
+	listed, err := d.execLimited(ctx, vm, append([]string{"sh", "-c", artifactScript, "plimsoll-artifacts", dir}, paths...), dir, max(secs, 1), 1<<20)
+	if err != nil {
+		return nil, false, err
+	}
+	files, err := selectorAnswer(listed.stdout, listed.exitCode, listed.stdoutTruncated || listed.timedOut, paths)
+	if err != nil {
+		return nil, false, err
+	}
+	// One download stream for every real path, each once; the files are then taken in
+	// the order requested, two paths naming one file each given its content.
+	var reals []string
+	for _, f := range files {
+		if !slices.Contains(reals, f.real) {
+			reals = append(reals, f.real)
+		}
+	}
+	if len(reals) == 0 {
+		return nil, false, nil
+	}
+	got, cut, err := d.wire().download(ctx, vm, reals)
+	if err != nil {
+		return nil, false, err
+	}
+	byReal := make(map[string][]byte, len(got))
+	last := -1 // the last real path the download returned, by its place in reals
+	for _, a := range got {
+		byReal[a.Path] = a.Content
+		last = max(last, slices.Index(reals, a.Path))
+	}
+	arts, truncated, err := collectArtifacts(ctx, files, func(_ context.Context, real string, _ int64) ([]byte, bool, error) {
+		data, ok := byReal[real]
+		if !ok && cut && slices.Index(reals, real) > last {
+			// The download stopped at the total before this file: it does not fit. One
+			// absent before the last file returned was gone, not cut.
+			return nil, false, errArtifactBudget
+		}
+		return data, ok, nil
+	})
+	if errors.Is(err, errArtifactBudget) {
+		return arts, true, nil
+	}
+	return arts, truncated, err
+}
+
+// deadlineOr is ctx's deadline, or fallback when it has none.
+func deadlineOr(ctx context.Context, fallback time.Time) time.Time {
+	if dl, ok := ctx.Deadline(); ok {
+		return dl
+	}
+	return fallback
 }
 
 // deadlineAware keeps the caller's own deadline recognizable: a create that ran out

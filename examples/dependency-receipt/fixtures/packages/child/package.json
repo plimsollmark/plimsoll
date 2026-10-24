@@ -1,0 +1,1 @@
+{"name":"plimsoll-fixture-child","version":"1.0.0","main":"index.js","scripts":{"postinstall":"node install.js"}}

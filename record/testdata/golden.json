@@ -3,19 +3,19 @@
     "The run-record golden vectors: fixed inputs, in the proto3 JSON form a client sends and",
     "receives, with the digest each must produce under docs/run-records.md. record/record_test.go,",
     "clients/python/tests/test_record.py and clients/typescript/test/record.test.ts all read this",
-    "one file, so the three implementations cannot drift apart. The cell vectors were computed",
-    "from docs/run-records.md alone by an independent Python implementation (2026-10-01), the",
-    "others were cross-checked the same way on 2026-09-28. Changing a digest here changes the",
+    "one file, so the three implementations cannot drift apart. Changing a digest here changes the",
     "encoding for every verifier: change docs/run-records.md first.",
-    "The \"unanswered record\" vector (version 3: a session call that may have run but ended in",
-    "an error) was computed the same way, from docs/run-records.md alone, on 2026-10-01."
+    "Record version 4 and protocol 4 (2026-10-23): every vector was computed from",
+    "docs/run-records.md alone by an independent Python implementation, which also reproduced",
+    "each vector that did not change (the four results, the session fingerprint and the four",
+    "protocol 2 requests) before the new ones were written."
   ],
   "requests": [
     {
-      "name": "version 1 javascript request",
+      "name": "javascript request",
       "kind": "run",
       "request": {
-        "protocol": 1,
+        "protocol": 4,
         "minimumIsolation": "container",
         "traceId": "t-1",
         "timeoutMs": 5000,
@@ -23,13 +23,13 @@
           "code": "console.log(1+1)"
         }
       },
-      "sha256": "585a1b46c55ebacc1dfdd4336e302328c32ed3e2e7e8a8b460d252d0454be8fc"
+      "sha256": "3ac521c00d014d11e7dfaff3ada8a8b564a0ac93eadc72555a992faac7b8112f"
     },
     {
-      "name": "version 1 project request",
+      "name": "project request",
       "kind": "run",
       "request": {
-        "protocol": 1,
+        "protocol": 4,
         "timeoutMs": 30000,
         "project": {
           "files": [
@@ -51,13 +51,13 @@
           ]
         }
       },
-      "sha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0"
+      "sha256": "4539acba5789dc54fdcdd06e1c49788067f933fcab9bd7b29e9141676ca4bb14"
     },
     {
-      "name": "version 1 module request",
+      "name": "module request",
       "kind": "run",
       "request": {
-        "protocol": 1,
+        "protocol": 4,
         "module": {
           "model": "VanDerPol",
           "rows": [
@@ -78,13 +78,13 @@
           "step": 0.1
         }
       },
-      "sha256": "3679bdba8fdaa503650e79c970728f869a4cf4882446fbc9742a402195d5b6c1"
+      "sha256": "8f915f4b63f37bd348404c8c0db88f91cf174399c7f49ccdc2b917911ce69b34"
     },
     {
-      "name": "version 2 javascript request",
+      "name": "javascript request with an approved rule",
       "kind": "run",
       "request": {
-        "protocol": 2,
+        "protocol": 4,
         "minimumIsolation": "container",
         "traceId": "t-1",
         "timeoutMs": 5000,
@@ -99,13 +99,13 @@
           "code": "console.log(1+1)"
         }
       },
-      "sha256": "0b662d4687a062429ab0be85c2445e6c0c9d402922ca223b74e3a1095da7d320"
+      "sha256": "d60ffa1a2c600acaa6cfcaed620d87d8a6e8657e2778027d4df6725878e111c3"
     },
     {
-      "name": "version 2 project request",
+      "name": "project request with an approved rule",
       "kind": "run",
       "request": {
-        "protocol": 2,
+        "protocol": 4,
         "timeoutMs": 30000,
         "softwareRule": {
           "mode": "approved",
@@ -134,13 +134,13 @@
           ]
         }
       },
-      "sha256": "abf8235a62b43c4384dc9e7a0f704f1f5f0936ac01a98d7344e50195455d97e1"
+      "sha256": "db7f9020738d2072d58b8691aed987fde11644bf130828fda52d79f225198b22"
     },
     {
-      "name": "version 2 module request",
+      "name": "module request with an approved rule",
       "kind": "run",
       "request": {
-        "protocol": 2,
+        "protocol": 4,
         "softwareRule": {
           "mode": "approved",
           "identities": [
@@ -168,13 +168,13 @@
           "step": 0.1
         }
       },
-      "sha256": "f17657df096a7f2fe66fc012a8262bfe03a876e114264d95ce1ac79181c119a5"
+      "sha256": "757ec60b561d9093ff2231431c8fe14213aa647d481df955656fe3fa0aa19b00"
     },
     {
       "name": "cell request",
       "kind": "session",
       "request": {
-        "protocol": 2,
+        "protocol": 4,
         "minimumIsolation": "container",
         "timeoutMs": 30000,
         "sessionId": "00112233445566778899aabbccddeeff",
@@ -189,7 +189,7 @@
           ]
         }
       },
-      "sha256": "a2690050ce63bba09b3646effa24c89d8df7dbbc9efd5c0368d00996c76ba89f"
+      "sha256": "91b78eeef54543c1a57dbbbb57d2c055c7c418a1f5353a1af76893a52f76c281"
     }
   ],
   "results": [
@@ -278,7 +278,7 @@
     {
       "name": "record",
       "record": {
-        "version": 2,
+        "version": 4,
         "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
         "resultSha256": "bfb9756e0d38ac39c7ffd523278e5c32b63c5db76ec5162b7d1ffbe363d0ad6f",
         "provider": "openshell",
@@ -289,14 +289,15 @@
         "endedUnixMs": "1790000004210",
         "session": "5947d7c33d783f94b3b4c1a96ebc8991ed28f1b069b71e03376cba8caa98a720",
         "sequence": "2",
-        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001"
+        "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+        "instance": "k8s-pod-uid:7f3e9c2a-5b1d-4e8f-9a0c-2d6b8e4f1a37"
       },
-      "sha256": "a5107eb6b1f726e1b2d7183419502309bfa34d932a65f1494150228ae8349156"
+      "sha256": "d015b1f851026094cd09c6627a31e8aef8bf63bd9fbb920c5c46350eb3ad41f0"
     },
     {
       "name": "unanswered record",
       "record": {
-        "version": 3,
+        "version": 4,
         "requestSha256": "894bec2baf1b52612c2f060ba2aa9080273294e737bae5f3a65ff661b50481d0",
         "resultSha256": "",
         "provider": "openshell",
@@ -310,7 +311,7 @@
         "previousSha256": "0000000000000000000000000000000000000000000000000000000000000001",
         "unanswered": "unavailable"
       },
-      "sha256": "2ca45c37f90ea7fdf87e6d33b1526714963cb7555bfb4fbb918c8ecf0834d49e"
+      "sha256": "b91ab8a2f9f951aeb1f80bcf03b803adfeda7a3a11d55dff3cdf0cbd0288ff23"
     }
   ],
   "sessionFingerprints": [

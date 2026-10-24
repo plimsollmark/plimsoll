@@ -83,9 +83,9 @@ Read the document for the subsystem you touch, not all of them.
   `wasm-cc.Dockerfile`, `agentsandbox.Dockerfile`), the in-sandbox project runner
   [runner.mjs](docker/runner.mjs), the runner guard [guard/runner.c](docker/guard/runner.c),
   the simulation worker [sim/](docker/sim/), the audited seccomp allowlist `seccomp.json`.
-- [examples/](examples/): runnable examples (`minimal`, `grant`, `daemon`, `advisor`, `oracle`,
+- [examples/](examples/): runnable examples (`minimal`, `grant`, `daemon`, `advisor`, `oracle`, `fanout`, `fanout-cartpole`,
   `wasm-controller`, `wasm-buck`, `providers`, `sessions`, `capsule`, `sbom`, `agentsandbox`,
-  `adapter`, `trigger-chat`); their pages are under `docs/examples/`.
+  `adapter`, `trigger-chat`, `agent-session`); their pages are under `docs/examples/`.
   [docs/example-programs.md](docs/example-programs.md) says what each proves.
 - [measurements/](measurements/): timing programs; the gate builds them and never runs them.
 - [proto/](proto/) and `gen/go`: the service definition and generated code (`make generate`,
@@ -111,7 +111,7 @@ Result semantics that every change must keep:
   mark means execution may have occurred**, so an unmarked error is never a safe retry.
 - A mark counts only on an answer bound to its request: every client sends a fresh
   `Plimsoll-Request-Id` and believes nothing on an answer whose echo is missing or differs.
-- `ProjectResult.Outcome` (`completed`, `setup_failed`, `timed_out`, `protocol_error`) is
+- `ProjectResult.Outcome` (`completed`, `setup_failed`, `timed_out`, `protocol_error`, `runner_failed`) is
   the stable classification; a timed-out step makes the run `timed_out` on every provider.
 - Truncation is machine-readable (`StdoutTruncated`, `StderrTruncated`,
   `ArtifactsTruncated`), never an in-band marker; stdout and stderr are `bytes` on the wire.
@@ -172,7 +172,7 @@ go vet ./...
 go test ./...     # paid live tests skip unless their make target's flag is 1; a key alone runs nothing paid
 ```
 
-`make audit` is the single local gate: build, vet, race tests (`-short`: no docker),
+`make audit` is the single local gate: build, vet, the nested modules' build and vet, race tests (`-short`: no docker),
 golangci-lint, `buf lint` plus a generated-code drift check, and `govulncheck`. The real
 infrastructure suites are opt-in: `make audit DOCKER=1` adds the docker, seccomp, broker and
 smoke tests (it needs the five images `make docker-images` provides, and refuses an image
@@ -270,8 +270,14 @@ spent tags: never reuse one). **Do not re-add a `GONOSUMDB` exemption for this m
   `[A-Za-z0-9._:-]{1,64}` and **drops a non-conforming id whole** (logging
   `trace_id_rejected`, never the value). Never widen that charset, never truncate
   instead of dropping: a truncated id looks joinable and joins to nothing.
-- **No backward compatibility.** This is pre-1.0 with no locked-in external
-  consumers: make clean breaking changes and **remove** compat shims (legacy
-  fallbacks, deprecated aliases, nil-means-old-behavior branches). Delete old
-  fields/functions rather than deprecating them; prefer the correct model over an
-  additive, compatible one.
+- **No backward compatibility, except in reading signed evidence.** This is pre-1.0
+  with no locked-in external consumers: make clean breaking changes and **remove**
+  compat shims (legacy fallbacks, deprecated aliases, nil-means-old-behavior branches).
+  Delete old fields/functions rather than deprecating them; prefer the correct model
+  over an additive, compatible one. The one exception: **a verifier of stored evidence
+  reads every published run record version** (`record.published`), each frozen and
+  pinned by what its own release produced (`record/testdata/published/`,
+  `attest/testdata/published/`), because a record's value is that it can be checked
+  later. Writers write the current version only, and a live answer must carry it. A
+  published version is retired only by a dated, announced decision. Bundles from before
+  links (v0.10.0 to v0.17.x) are not read whole: their records verify one line at a time.

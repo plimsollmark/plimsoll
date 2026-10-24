@@ -13,10 +13,10 @@ import urllib.request
 
 from plimsoll_client import (
     AnswerNotBoundError,
-    AtCapacityError,
     Client,
     DataLossError,
     InsufficientIsolationError,
+    InvalidRequestError,
     PlimsollError,
     UnsupportedError,
 )
@@ -64,7 +64,8 @@ class Binding(unittest.TestCase):
         self.assertTrue(cm.exception.answer_not_bound)
 
     def test_a_body_refused_before_the_handler_is_marked(self) -> None:
-        with self.assertRaises(AtCapacityError) as cm:
+        # Over-size is the caller's to fix, not "at capacity, retry later" (review B4).
+        with self.assertRaises(InvalidRequestError) as cm:
             Client(setting("PLIMSOLL_EARLY_REFUSAL_URL")).run_javascript("console.log('" + "x" * 1024 + "')")
         self.assertEqual((cm.exception.code, cm.exception.not_dispatched), ("resource_exhausted", "request"))
         self.assertFalse(cm.exception.answer_not_bound)

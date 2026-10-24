@@ -216,7 +216,7 @@ const (
 
 func recordText(r *sandbox.RunRecord) int {
 	return len(r.RequestSHA256) + len(r.ResultSHA256) + len(r.Provider) + len(r.Isolation) + len(r.Environment) +
-		len(r.SoftwareIdentity) + len(r.SoftwareRuleID) + len(r.Policy) + len(r.Session) + len(r.PreviousSHA256) + len(r.Unanswered) + len(r.SHA256)
+		len(r.SoftwareIdentity) + len(r.SoftwareRuleID) + len(r.Policy) + len(r.Session) + len(r.PreviousSHA256) + len(r.Unanswered) + len(r.Instance) + len(r.SHA256)
 }
 
 // keep stores a checked record for get_record, evicting the oldest past KeptRecords or
@@ -288,12 +288,11 @@ func (s *Server) forgetDescribeOn(err error) {
 	}
 }
 
-// offered is the server's languages that env runs; an env that states none predates
-// the statement, and is let try.
+// offered is the server's languages that env runs. Every daemon this server talks to
+// states them (protocol 4), so an env that states none proved none and is offered none;
+// it used to be let try, which sent calls a provider had proved it cannot run (review
+// B9, 2026-10-23).
 func (s *Server) offered(env sandbox.PayloadEnvironment) []sandbox.Language {
-	if len(env.Languages) == 0 {
-		return s.cfg.Languages
-	}
 	var out []sandbox.Language
 	for _, l := range s.cfg.Languages {
 		if slices.Contains(env.Languages, l) {

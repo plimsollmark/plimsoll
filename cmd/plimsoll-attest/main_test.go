@@ -19,6 +19,107 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
+func TestKeygenRefusesExistingOutputs(t *testing.T) {
+	for _, suffix := range []string{".key", ".pub"} {
+		for _, kind := range []string{"file", "symlink", "dangling symlink", "hardlink", "directory"} {
+			t.Run(suffix+"/"+kind, func(t *testing.T) {
+				dir := t.TempDir()
+				prefixPath := filepath.Join(dir, "pair")
+				path := prefixPath + suffix
+				victim := filepath.Join(dir, "victim")
+				original := []byte("existing file must stay unchanged\n")
+				if err := os.WriteFile(victim, original, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				var err error
+				switch kind {
+				case "file":
+					err = os.WriteFile(path, original, 0o600)
+				case "symlink":
+					err = os.Symlink(victim, path)
+				case "dangling symlink":
+					err = os.Symlink(filepath.Join(dir, "missing-target"), path)
+				case "hardlink":
+					err = os.Link(victim, path)
+				case "directory":
+					err = os.Mkdir(path, 0o700)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				before, err := os.Lstat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := keygen([]string{"-out", prefixPath}); !errors.Is(err, os.ErrExist) {
+					t.Fatalf("keygen with existing %s %s: %v, want file-exists error", suffix, kind, err)
+				}
+				after, err := os.Lstat(path)
+				if err != nil || !os.SameFile(before, after) {
+					t.Fatalf("existing output replaced or removed: %v", err)
+				}
+				if kind != "directory" && kind != "dangling symlink" {
+					got, err := os.ReadFile(path)
+					if err != nil || !bytes.Equal(got, original) {
+						t.Fatalf("existing output changed: %q, %v", got, err)
+					}
+				}
+				got, err := os.ReadFile(victim)
+				if err != nil || !bytes.Equal(got, original) {
+					t.Fatalf("victim changed: %q, %v", got, err)
+				}
+				if _, err := os.Lstat(filepath.Join(dir, "missing-target")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("dangling-link target created: %v", err)
+				}
+				other := prefixPath + ".key"
+				if suffix == ".key" {
+					other = prefixPath + ".pub"
+				}
+				if _, err := os.Lstat(other); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("failed pair left a new output %s: %v", other, err)
+				}
+			})
+		}
+	}
+}
+
+func TestKeygenCreatesMatchingPair(t *testing.T) {
+	for _, trailingSlash := range []bool{false, true} {
+		t.Run(fmt.Sprint("trailing slash=", trailingSlash), func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "nested")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			prefixPath := filepath.Join(dir, "pair")
+			if trailingSlash {
+				prefixPath = dir + string(os.PathSeparator)
+			}
+			if err := keygen([]string{"-out", prefixPath}); err != nil {
+				t.Fatal(err)
+			}
+			privPEM, err := os.ReadFile(prefixPath + ".key")
+			if err != nil {
+				t.Fatal(err)
+			}
+			priv, err := attest.ParsePrivateKey(privPEM)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pubPEM, err := os.ReadFile(prefixPath + ".pub")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pub, err := attest.ParsePublicKey(pubPEM)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !pub.Equal(priv.Public()) {
+				t.Fatal("generated public and private keys do not match")
+			}
+		})
+	}
+}
+
 // TestReplayVerifiesTheBundleFirst: replay must refuse a bundle that does not verify
 // (here a bad signature, and no harness link) before it contacts any daemon. Port 1 on loopback never listens, so a
 // replay that verified first never needs it (external review of v0.10.0, finding 5,
@@ -436,5 +537,101 @@ func TestVerifyEntryChecksOneLine(t *testing.T) {
 	}
 	if err := verifyEntry([]string{"-pub", pub, "-line", "3", whole}, &out); err == nil || !strings.Contains(err.Error(), "holds no call") {
 		t.Errorf("the checkpoint line: %v", err)
+	}
+}
+
+// TestSignAndOpenAStatement: sign-statement puts the harness key on a standard in-toto
+// statement and open-statement returns exactly what was signed, refusing another key, another
+// type, an edited payload, the reserved run record type, an input with unknown fields, and an
+// existing output file.
+func TestSignAndOpenAStatement(t *testing.T) {
+	dir := t.TempDir()
+	harness := filepath.Join(dir, "harness")
+	other := filepath.Join(dir, "other")
+	for _, p := range []string{harness, other} {
+		if err := keygen([]string{"-out", p}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const testResult = "https://in-toto.io/attestation/test-result/v0.1"
+	in := filepath.Join(dir, "statement.json")
+	statement := `{"subject":[{"name":"https://github.com/example/repo","digest":{"gitCommit":"627534fc71de105aeb7e71098970bb51d7096349"}}],` +
+		`"predicate":{"result":"PASSED","configuration":[{"name":"plimsoll run record","digest":{"sha256":"` + strings.Repeat("ab", 32) + `"}}],"passedTests":["sums"]}}`
+	if err := os.WriteFile(in, []byte(statement), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := filepath.Join(dir, "test-result.intoto.json")
+	var out bytes.Buffer
+	if err := signStatement([]string{"-key", harness + ".key", "-type", testResult, "-out", env, in}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := signStatement([]string{"-key", harness + ".key", "-type", testResult, "-out", env, in}, &out); err == nil {
+		t.Fatal("sign-statement wrote over an existing envelope")
+	}
+	out.Reset()
+	if err := openStatement([]string{"-pub", harness + ".pub", "-type", testResult, env}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var got signedStatement
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	var want signedStatement
+	if err := json.Unmarshal([]byte(statement), &want); err != nil {
+		t.Fatal(err)
+	}
+	pub, err := loadPublic(harness + ".pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.KeyID != attest.KeyID(pub) || fmt.Sprint(got.Subject) != fmt.Sprint(want.Subject) {
+		t.Fatalf("opened %+v", got)
+	}
+	var gotPred, wantPred any
+	if err := json.Unmarshal(got.Predicate, &gotPred); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(want.Predicate, &wantPred); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(gotPred) != fmt.Sprint(wantPred) {
+		t.Fatalf("predicate %s, signed %s", got.Predicate, want.Predicate)
+	}
+	if err := openStatement([]string{"-pub", other + ".pub", "-type", testResult, env}, io.Discard); err == nil {
+		t.Fatal("open-statement accepted another key")
+	}
+	if err := openStatement([]string{"-pub", harness + ".pub", "-type", "https://openvex.dev/ns/v0.2.0", env}, io.Discard); err == nil {
+		t.Fatal("open-statement accepted another predicate type")
+	}
+	raw, err := os.ReadFile(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e attest.Envelope
+	if err := json.Unmarshal(raw, &e); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := base64.StdEncoding.DecodeString(e.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Payload = base64.StdEncoding.EncodeToString(bytes.Replace(payload, []byte("PASSED"), []byte("FAILED"), 1))
+	edited, _ := json.Marshal(e)
+	editedPath := filepath.Join(dir, "edited.json")
+	if err := os.WriteFile(editedPath, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := openStatement([]string{"-pub", harness + ".pub", "-type", testResult, editedPath}, io.Discard); err == nil {
+		t.Fatal("open-statement accepted an edited payload")
+	}
+	if err := signStatement([]string{"-key", harness + ".key", "-type", attest.PredicateType, "-out", filepath.Join(dir, "rec.json"), in}, io.Discard); !errors.Is(err, attest.ErrReservedPredicate) {
+		t.Fatalf("signing the run record type: %v", err)
+	}
+	extra := filepath.Join(dir, "extra.json")
+	if err := os.WriteFile(extra, []byte(`{"subject":[],"predicate":{},"note":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := signStatement([]string{"-key", harness + ".key", "-type", testResult, "-out", filepath.Join(dir, "x.json"), extra}, io.Discard); err == nil {
+		t.Fatal("sign-statement accepted a field it does not know")
 	}
 }

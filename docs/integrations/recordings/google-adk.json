@@ -19,10 +19,10 @@
       "exit_code": 0,
       "outcome": "completed",
       "isolation": "kernel",
-      "record_sha256": "c13ba7b00814bb0ab8ee02c9342973d04a6ec4b8dd8d35179add332f5196711a",
+      "record_sha256": "7055549659a5efb633860d98da234ce4362e58923e9134c22a1c129f21fac364",
       "artifacts": []
     },
-    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-23T19:54:44.828820+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
   },
   "artifact": {
     "call": {
@@ -38,7 +38,7 @@
       "exit_code": 0,
       "outcome": "completed",
       "isolation": "kernel",
-      "record_sha256": "5c6c36d21fafc93d9f43e4af06783b995c9501ad53f40e63254d8467a3c0f747",
+      "record_sha256": "36f506d566fbc6924f59fa8ff0e7b670ac45e39b78fa91233b48401fd245b125",
       "artifacts": [
         {
           "path": "answer.bin",
@@ -46,7 +46,7 @@
         }
       ]
     },
-    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-23T19:54:44.828820+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
   },
   "guest_error": {
     "call": {
@@ -62,10 +62,10 @@
       "exit_code": 1,
       "outcome": "completed",
       "isolation": "kernel",
-      "record_sha256": "aadc7382750df412e13a3201389ed99f3ba4324c9aa7ff6d552c4f19e13281b5",
+      "record_sha256": "bcda2075e4b110e8401c44e1ce88227295ef5358b4da20004b80145e6f0c771e",
       "artifacts": []
     },
-    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-23T19:54:44.828820+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
   },
   "exit_no_stderr": {
     "call": {
@@ -81,13 +81,13 @@
       "exit_code": 3,
       "outcome": "completed",
       "isolation": "kernel",
-      "record_sha256": "636e73a443fe4728c087f13a35170c4351521fd67e79c692050a0c55a884b27c",
+      "record_sha256": "15ea78a9904354fdca6aac82614c6040603ec0a3a9443232272094636fd52f09",
       "artifacts": []
     },
-    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-23T19:54:44.828820+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
   },
   "fresh": {
-    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation.",
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-23T19:54:44.828820+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation.",
     "steps": [
       {
         "call": {
@@ -103,10 +103,10 @@
           "exit_code": 0,
           "outcome": "completed",
           "isolation": "kernel",
-          "record_sha256": "da8b9f3f424f286dff063497f5f36e02ac1cb866326c6cfc7d8af6d441d11d35",
+          "record_sha256": "44459d70a945258314a058b9fb38010309b8b7259583cf3f2cce695020dc4d9a",
           "artifacts": []
         },
-        "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+        "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-23T19:54:44.828820+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
       },
       {
         "call": {
@@ -122,10 +122,10 @@
           "exit_code": 1,
           "outcome": "completed",
           "isolation": "kernel",
-          "record_sha256": "91282c418b3d261a68cc93fd398e84a83a0d85b0c42c77031aac7d1be60f1d94",
+          "record_sha256": "a343fde36324b2bd4d007447740edf9990c5353ad4fb05ac4a90db3bfd1de3e5",
           "artifacts": []
         },
-        "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+        "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-23T19:54:44.828820+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
       }
     ]
   },
@@ -135,14 +135,17 @@
       "input_files": []
     },
     "answer": {
-      "exception": {
-        "name": "InsufficientIsolationError",
-        "code": "failed_precondition",
-        "not_dispatched": "isolation",
-        "message": "the daemon is below CodeExecutor's isolation floor"
-      }
+      "outcome": "OUTCOME_FAILED",
+      "output": "Nothing ran (isolation): the daemon is below CodeExecutor's isolation floor",
+      "id": null
     },
-    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+    "refusal": {
+      "name": "InsufficientIsolationError",
+      "code": "failed_precondition",
+      "not_dispatched": "isolation",
+      "message": "the daemon is below CodeExecutor's isolation floor"
+    },
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-23T19:54:44.828820+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
   },
   "bad_file": {
     "call": {
@@ -156,13 +159,16 @@
       ]
     },
     "answer": {
-      "exception": {
-        "name": "InvalidRequestError",
-        "code": "invalid_argument",
-        "not_dispatched": "request",
-        "message": "plimsoll: invalid request: unsafe file path '../secret.txt'"
-      }
+      "outcome": "OUTCOME_FAILED",
+      "output": "Nothing ran (request): plimsoll: invalid request: unsafe file path '../secret.txt'",
+      "id": null
     },
-    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-07T17:38:45.401313+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
+    "refusal": {
+      "name": "InvalidRequestError",
+      "code": "invalid_argument",
+      "not_dispatched": "request",
+      "message": "plimsoll: invalid request: unsafe file path '../secret.txt'"
+    },
+    "source": "Actual PlimsollCodeExecutor.execute_code and ADK 2.11.0 native result builder, local Docker with verified gVisor (kernel), 2026-10-23T19:54:44.828820+00:00. No model API. Exceptions are application-readable projections and abort an ADK invocation."
   }
 }

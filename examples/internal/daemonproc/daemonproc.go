@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -38,29 +39,40 @@ type Daemon struct {
 	exited  chan error
 }
 
-// Start runs binary with env added to this process's environment, on a free
-// loopback port with the metrics listener off (the default port would collide with
-// any other daemon on the machine), and waits up to ready for /readyz. The daemon's
-// structured log goes to this process's stderr.
-func Start(ctx context.Context, binary string, env []string, ready time.Duration) (*Daemon, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+// Options are what Start runs the daemon with besides its binary.
+type Options struct {
+	Env   []string      // added to this process's environment
+	Ready time.Duration // how long to wait for /readyz
+	// Log receives the daemon's structured log (its audit lines included); nil is this
+	// process's stderr. An example that reads the audit lines back passes its own.
+	Log io.Writer
+}
+
+// Start runs binary with o.Env added to this process's environment, on a free loopback
+// port with the metrics listener off (the default port would collide with any other
+// daemon on the machine), and waits up to o.Ready for /readyz. A daemon that exits
+// first is reported at once, with its exit status: four examples once copied a starter
+// of their own that never noticed, so a daemon that died at startup cost the whole wait
+// (review B9, 2026-10-23).
+func Start(ctx context.Context, binary string, o Options) (*Daemon, error) {
+	addr, err := FreeAddr()
 	if err != nil {
 		return nil, err
 	}
-	addr := l.Addr().String()
-	if err := l.Close(); err != nil {
-		return nil, err
+	log := o.Log
+	if log == nil {
+		log = os.Stderr
 	}
 	cmd := exec.CommandContext(ctx, binary)
-	cmd.Env = append(append(os.Environ(), env...), "PLIMSOLL_ADDR="+addr, "PLIMSOLL_METRICS_ADDR=off")
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Env = append(append(os.Environ(), o.Env...), "PLIMSOLL_ADDR="+addr, "PLIMSOLL_METRICS_ADDR=off")
+	cmd.Stdout = log
+	cmd.Stderr = log
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start plimsolld: %w", err)
 	}
 	d := &Daemon{BaseURL: "http://" + addr, cmd: cmd, exited: make(chan error, 1)}
 	go func() { d.exited <- cmd.Wait() }()
-	if err := d.waitReady(ctx, ready); err != nil {
+	if err := d.waitReady(ctx, o.Ready); err != nil {
 		d.Stop(5 * time.Second)
 		return nil, err
 	}

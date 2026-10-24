@@ -26,12 +26,12 @@
       "filesPersist": true,
       "freshSandbox": true,
       "isolation": "container",
-      "recordSha256": "0b1024cb0d2fe643f21e2c794ca32c0aa22897cc97c0ce7460a32aa1aca15559"
+      "recordSha256": "1994c9b54a6b4d8ac06bb4f913dfbbd4cea85214877864c13991f3c36f199bd3"
     },
-    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
   },
   "remember": {
-    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API.",
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API.",
     "steps": [
       {
         "call": {
@@ -54,9 +54,9 @@
           "filesPersist": true,
           "freshSandbox": true,
           "isolation": "container",
-          "recordSha256": "8da7fbe5bd624aa449ebf3a120831affb837790eb768cfe8e6b874a5b62e03c2"
+          "recordSha256": "06bc465812fc22379782853594c5510eb88dffb4cb6f38db046274e2e18344eb"
         },
-        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
       },
       {
         "call": {
@@ -77,9 +77,9 @@
           "stateKept": true,
           "filesPersist": true,
           "isolation": "container",
-          "recordSha256": "da2e2d3ab4730dd90266cf8d32518c47458896db1395f4441911da26701a183a"
+          "recordSha256": "dd7dd4fb41362bd170d8ab90819b0050aff04f270312dcad23339b8806cf4c51"
         },
-        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
       }
     ]
   },
@@ -104,9 +104,9 @@
       "filesPersist": true,
       "freshSandbox": true,
       "isolation": "container",
-      "recordSha256": "be56ac19f87d624164776c2cb0b9db5f1959ee7011ab03e3fe617f2d2972dabd"
+      "recordSha256": "03555281eb0cb856f3a894cc2583ce1d1923a133538bb022f8cbfeb87930026f"
     },
-    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
   },
   "disposed": {
     "call": {
@@ -129,12 +129,12 @@
       "filesPersist": true,
       "freshSandbox": true,
       "isolation": "container",
-      "recordSha256": "fb25f78fe45742f62bfe4ee1198ead0033450926ea19155c0239375d7413bb9d"
+      "recordSha256": "9d3e85511af22e6b4067bf0c437730e6a7f5bfa27ca89a221b1c3e282112d7c1"
     },
-    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. dispose(\"lesson\", \"alice\") was awaited before this call."
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. dispose(\"lesson\", \"alice\") was awaited before this call."
   },
   "no_thread": {
-    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Three calls: the first two with no agent context (no thread, no user), the third with a threadId and no resourceId.",
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Three calls: the first two with no agent context (no thread, no user), the third with a threadId and no resourceId.",
     "steps": [
       {
         "call": {
@@ -155,9 +155,9 @@
           "stateKept": false,
           "filesPersist": false,
           "isolation": "container",
-          "recordSha256": "768ea8589b6573f551410478900e679d662645946a1327f8bf336f80a9f50779"
+          "recordSha256": "ce6c9bd93d5f08d20a19728f097ff90054d6d0e522ef10b4c6c7c5228e713e6a"
         },
-        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Called with no agent context: no thread, no user."
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Called with no agent context: no thread, no user."
       },
       {
         "call": {
@@ -178,9 +178,9 @@
           "stateKept": false,
           "filesPersist": false,
           "isolation": "container",
-          "recordSha256": "2bba3df85ac72609eed2a25285fa4fa1f551128a9c8c9c355f3951896a246b3f"
+          "recordSha256": "4531421b9831242e38c814a9e3cf6bfd661a4d8cd0d49f7abeeddb4a808f13ad"
         },
-        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Called with no agent context: no thread, no user."
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Called with no agent context: no thread, no user."
       },
       {
         "call": {
@@ -201,9 +201,9 @@
           "stateKept": false,
           "filesPersist": false,
           "isolation": "container",
-          "recordSha256": "856b75ad9274361b27b7d2f351262214a08e89ef594a3ecbf0eb38db5ecfea47"
+          "recordSha256": "2f6d39662497c5d20d8f8800ecf45566a4c05c61f1235a8862cfed51b43a870c"
         },
-        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Called with a threadId and no resourceId."
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API. Called with a threadId and no resourceId."
       }
     ]
   },
@@ -228,9 +228,9 @@
       "filesPersist": true,
       "freshSandbox": true,
       "isolation": "container",
-      "recordSha256": "cd71f90162b8f1660e412b7984d9badc005f1ed0a53c20db86a48c8e73f7db6b"
+      "recordSha256": "31be81df7ef74d0ea888e4e2aab2f7de6a09f3ea9bacecc266860c4e54f431fc"
     },
-    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
   },
   "javascript": {
     "call": {
@@ -253,12 +253,12 @@
       "filesPersist": true,
       "freshSandbox": true,
       "isolation": "container",
-      "recordSha256": "f854454a36d2a52bc5e5ba91b30cd8c6bad3e9ed7b3da68f99ca7c97c83063d9"
+      "recordSha256": "43a3243bb2a162cf1b1e4cf76ed9761fa37d6ac0606160d8ba76839c81238f62"
     },
-    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
+    "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. No model API."
   },
   "agent_turns": {
-    "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"notebook\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. Two turns, one call each; each answer is the tool result agent.generate returned.",
+    "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"notebook\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. Two turns, one call each; each answer is the tool result agent.generate returned.",
     "steps": [
       {
         "call": {
@@ -281,11 +281,11 @@
           "filesPersist": true,
           "freshSandbox": true,
           "isolation": "container",
-          "recordSha256": "95285b14c731b2206468f56d3c95e302bb3152c9f2db3a3b92a5a16db7c315a8"
+          "recordSha256": "73d3c7611691aef4bc21b6f29e56e5bc4ba1e1e4b43f361fd5adb3b435491812"
         },
         "turn": 1,
         "user_message": "set x to 40",
-        "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"notebook\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. Turn 1; the answer is the tool result agent.generate returned."
+        "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"notebook\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. Turn 1; the answer is the tool result agent.generate returned."
       },
       {
         "call": {
@@ -306,16 +306,16 @@
           "stateKept": true,
           "filesPersist": true,
           "isolation": "container",
-          "recordSha256": "24f51fe388ea1c244c43aa9b2e1b17c0b68a8a6571c892e11926fdd6131e8b52"
+          "recordSha256": "49aff015768e0ab6c274134107f45ee2b2dd31b5236ea21360d9260ad8f90300"
         },
         "turn": 2,
         "user_message": "now add 2 to x",
-        "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"notebook\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. Turn 2; the answer is the tool result agent.generate returned."
+        "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"notebook\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. The tool was built with minimumIsolation \"container\" because this scenario is not about the floor. Turn 2; the answer is the tool result agent.generate returned."
       }
     ]
   },
   "floor": {
-    "source": "Two calls of a tool built with minimumIsolation \"vm\", against a local plimsolld on Docker under runc (container tier), 2026-10-07T21:26:27.489Z. First: the tool's execute called directly (@mastra/core 1.73.0); the panel shows the thrown error's name, code, notDispatched mark and message. Second: the same tool in a real Mastra Agent run by agent.generate with a scripted model (MockLanguageModelV3; no model API); the panel shows, verbatim, the tool-result output Mastra put in the model's next prompt.",
+    "source": "Two calls of a tool built with minimumIsolation \"vm\", against a local plimsolld on Docker under runc (container tier), 2026-10-23T19:55:16.599Z. First: the tool's execute called directly (@mastra/core 1.73.0); the panel shows the thrown error's name, code, notDispatched mark and message. Second: the same tool in a real Mastra Agent run by agent.generate with a scripted model (MockLanguageModelV3; no model API); the panel shows, verbatim, the tool-result output Mastra put in the model's next prompt.",
     "steps": [
       {
         "call": {
@@ -331,10 +331,10 @@
             "name": "PlimsollError",
             "code": "failed_precondition",
             "notDispatched": "isolation",
-            "message": "sandbox isolation requirement not met: provider isolation container is below requested minimum vm"
+            "message": "Nothing ran (isolation): sandbox isolation requirement not met: provider isolation container is below requested minimum vm"
           }
         },
-        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. This scenario's tool was built with minimumIsolation \"vm\", which this daemon cannot meet. No model API. The tool threw; this is the thrown error's name, code, notDispatched mark and message."
+        "source": "Actual plimsollExecuteCode tool (Mastra createTool, @mastra/core 1.73.0), its execute called with the agent context Mastra passes it, against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. This scenario's tool was built with minimumIsolation \"vm\", which this daemon cannot meet. No model API. The tool threw; this is the thrown error's name, code, notDispatched mark and message."
       },
       {
         "call": {
@@ -347,9 +347,9 @@
         },
         "answer": {
           "type": "error-text",
-          "value": "sandbox isolation requirement not met: provider isolation container is below requested minimum vm"
+          "value": "Nothing ran (isolation): sandbox isolation requirement not met: provider isolation container is below requested minimum vm"
         },
-        "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"walls\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-07T21:26:27.489Z. This scenario's tool was built with minimumIsolation \"vm\", which this daemon cannot meet. The tool threw as above; this is the tool-result output Mastra put in the model's next prompt, verbatim."
+        "source": "Actual plimsollExecuteCode tool in a real Mastra Agent (@mastra/core 1.73.0) run by agent.generate with memory { resource: \"alice\", thread: \"walls\" }, its model scripted (MockLanguageModelV3 from ai/test; no model API) to ask for each call; against a local plimsolld on Docker under runc (container tier) with sessions on, 2026-10-23T19:55:16.599Z. This scenario's tool was built with minimumIsolation \"vm\", which this daemon cannot meet. The tool threw as above; this is the tool-result output Mastra put in the model's next prompt, verbatim."
       }
     ]
   }

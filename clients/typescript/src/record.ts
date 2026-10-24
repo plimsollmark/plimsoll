@@ -5,14 +5,19 @@
 import { createHash, type Hash } from "node:crypto";
 
 import { PlimsollError } from "./errors.ts";
+import { OUTCOMES, TIERS } from "./tables.gen.ts";
 
 import type { WireRecord, WireRunResponse, WireSoftwareRule } from "./wire.ts";
 
-/** The record encoding version of an answered call, which this client computes and checks. */
-export const RECORD_VERSION = 2;
+/** The record encoding version this client computes and checks: every field, every time, for an answered call and an unanswered session call alike. */
+export const RECORD_VERSION = 4;
 
-/** The record encoding version of a session call that may have run but ended in an error. */
-export const UNANSWERED_RECORD_VERSION = 3;
+const INSTANCE_FORM = /^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._:-]{1,127}$/;
+
+/** A record's instance: "" (the provider names none) or a typed reference such as `k8s-pod-uid:` and a pod's UID. */
+export function validInstance(s: string): boolean {
+  return s === "" || INSTANCE_FORM.test(s);
+}
 
 const UNANSWERED_CODES = new Set([
   "canceled", "unknown", "invalid_argument", "deadline_exceeded", "not_found", "already_exists", "permission_denied",
@@ -89,11 +94,13 @@ export type DigestRequest = {
 
 /** The request digest of a Run request or a session call (the same fields). */
 export function requestDigest(r: DigestRequest): string {
-  const e = new Encoder(r.protocol >= 2 ? "plimsoll.run-request.v2" : "plimsoll.run-request.v1");
+  // A protocol 1 request (the records of version 1) has the first encoding: no software rule.
+  const first = r.protocol < 2;
+  const e = new Encoder(first ? "plimsoll.run-request.v1" : "plimsoll.run-request.v2");
   e.int("protocol", r.protocol);
   e.str("minimum_isolation", r.minimumIsolation);
   e.int("timeout_ms", r.timeoutMs);
-  if (r.protocol >= 2) {
+  if (!first) {
     const ids = r.softwareRule?.identities ?? [];
     e.str("software_mode", r.softwareRule?.mode ?? "");
     e.int("software_identities", ids.length);
@@ -127,19 +134,22 @@ export function requestDigest(r: DigestRequest): string {
   return e.sum();
 }
 
-const OUTCOME_NUMBERS: Record<string, number> = {
-  PROJECT_OUTCOME_UNSPECIFIED: 0,
-  PROJECT_OUTCOME_COMPLETED: 1,
-  PROJECT_OUTCOME_SETUP_FAILED: 2,
-  PROJECT_OUTCOME_TIMED_OUT: 3,
-  PROJECT_OUTCOME_PROTOCOL_ERROR: 4,
-};
+
+/**
+ * Why a live answer's record version is refused: a newer daemon (upgrade the client) or an
+ * older one. A live answer must carry the current version; it is never called forged.
+ */
+function versionProblem(version: number): string {
+  return version > RECORD_VERSION
+    ? `a newer daemon answered with run record version ${version}; this client reads version ${RECORD_VERSION}: upgrade the client`
+    : `the daemon answered with run record version ${version}; this client requires version ${RECORD_VERSION} of a live answer`;
+}
 
 /** The wire enum's number; an unknown name is undefined, which fails the check. */
 export function outcomeNumber(name: string | number | undefined): number | undefined {
   if (name === undefined) return 0;
   if (typeof name === "number") return name;
-  return OUTCOME_NUMBERS[name];
+  return OUTCOMES[name];
 }
 
 const b64 = (s: string | undefined): Buffer => Buffer.from(s ?? "", "base64");
@@ -214,8 +224,10 @@ export type RunRecord = {
   session: string;
   sequence: bigint;
   previousSha256: string;
-  /** On a version 3 record, the Connect code a session call that may have run ended with. */
+  /** On an unanswered call's record, the Connect code a session call that may have run ended with. */
   unanswered: string;
+  /** The sandbox instance that ran the call, as the response states it, or "". */
+  instance: string;
   sha256: string;
 };
 
@@ -245,30 +257,59 @@ export function recordFromWire(m: WireRecord): RunRecord {
     sequence: big(m.sequence, "sequence"),
     previousSha256: m.previousSha256 ?? "",
     unanswered: m.unanswered ?? "",
+    instance: m.instance ?? "",
     sha256: m.recordSha256 ?? "",
   };
 }
 
-/** A record's own digest, over every field but its digest. */
+/** A record's own digest, over the fields its version covers (every field but its digest for an unknown version). */
 export function recordDigest(r: RunRecord): string {
   const e = new Encoder(`plimsoll.run-record.v${r.version}`);
-  e.str("request_sha256", r.requestSha256);
-  e.str("result_sha256", r.resultSha256);
-  if (r.version >= 3) e.str("unanswered", r.unanswered);
-  e.str("provider", r.provider);
-  e.str("isolation", r.isolation);
-  e.str("environment", r.environment);
-  e.str("policy", r.policy);
-  if (r.version >= 2) {
-    e.str("software_identity", r.softwareIdentity);
-    e.str("software_rule_id", r.softwareRuleId);
+  for (const name of RECORD_FIELDS[r.version] ?? RECORD_FIELDS[RECORD_VERSION]!) {
+    const v = recordField(r, name);
+    if (typeof v === "string") e.str(name, v);
+    else e.int(name, v);
   }
-  e.int("started_unix_ms", r.startedUnixMs);
-  e.int("ended_unix_ms", r.endedUnixMs);
-  e.str("session", r.session);
-  e.int("sequence", r.sequence);
-  e.str("previous_sha256", r.previousSha256);
   return e.sum();
+}
+
+/**
+ * The fields of each published record version's digest, in order (record.published): a
+ * version leaves this table only by a dated, announced decision.
+ */
+const RECORD_FIELDS: Record<number, readonly string[]> = {
+  1: ["request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
+    "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"],
+  2: ["request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
+    "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
+    "previous_sha256"],
+  3: ["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy",
+    "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
+    "previous_sha256"],
+  4: ["request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy",
+    "software_identity", "software_rule_id", "instance", "started_unix_ms", "ended_unix_ms", "session",
+    "sequence", "previous_sha256"],
+};
+
+function recordField(r: RunRecord, name: string): string | bigint {
+  switch (name) {
+    case "request_sha256": return r.requestSha256;
+    case "result_sha256": return r.resultSha256;
+    case "unanswered": return r.unanswered;
+    case "provider": return r.provider;
+    case "isolation": return r.isolation;
+    case "environment": return r.environment;
+    case "policy": return r.policy;
+    case "software_identity": return r.softwareIdentity;
+    case "software_rule_id": return r.softwareRuleId;
+    case "instance": return r.instance;
+    case "started_unix_ms": return r.startedUnixMs;
+    case "ended_unix_ms": return r.endedUnixMs;
+    case "session": return r.session;
+    case "sequence": return r.sequence;
+    case "previous_sha256": return r.previousSha256;
+  }
+  throw new Error(`no record field ${name}`);
 }
 
 /** The SHA-256 of a session ID: what a session call's record carries instead of the ID. */
@@ -293,12 +334,12 @@ export function softwareRuleAllows(rule: WireSoftwareRule | undefined, identity:
   return identity !== "" && rule.identities.includes(identity);
 }
 
-// The tiers, weakest first, as client.ts's TIERS (which imports this module).
-const TIER_ORDER = ["none", "process", "container", "kernel", "vm"];
+// The tiers, weakest first (generated, internal/wiretables).
+const TIER_ORDER: readonly string[] = TIERS;
 
 /**
  * Checks the record the daemon sends with an unanswered session call's error
- * (record.CheckUnanswered): version 3, no result digest, a Connect code, the digest of
+ * (record.CheckUnanswered): the version, no result digest, a Connect code, the digest of
  * the request sent, its software rule and that its software is in it, its own digest,
  * its tier against the call's floor, and its place in the chain.
  * Returns the reason it does not check, or the record.
@@ -313,7 +354,8 @@ export function checkUnanswered(
   prev: string,
 ): { record: RunRecord } | { problem: string } {
   const r = recordFromWire(m);
-  if (r.version !== UNANSWERED_RECORD_VERSION) return { problem: `an unanswered call's record is version ${r.version}` };
+  if (r.version !== RECORD_VERSION) return { problem: versionProblem(r.version) };
+  if (!validInstance(r.instance)) return { problem: "the record's instance is not a typed reference" };
   if (r.resultSha256 !== "" || !UNANSWERED_CODES.has(r.unanswered)) return { problem: "an unanswered call's record states a result or no error code" };
   if (r.requestSha256 !== reqDigest) return { problem: `request digest ${r.requestSha256}, the request sent digests to ${reqDigest}` };
   if (r.softwareRuleId !== softwareRuleId(rule) || !softwareRuleAllows(rule, r.softwareIdentity)) {
@@ -336,23 +378,22 @@ export function checkUnanswered(
  */
 export function checkRecord(
   reqDigest: string,
-  protocol: number,
   rule: WireSoftwareRule | undefined,
   resp: WireRunResponse,
 ): { record: RunRecord } | { problem: string } {
   if (!resp.record) return { problem: "the response carries no run record" };
   const r = recordFromWire(resp.record);
   const result = resultDigest(resp);
-  if (r.version !== 1 && r.version !== RECORD_VERSION) return { problem: `unknown run record version ${r.version}` };
-  if (protocol >= 2 && r.version !== RECORD_VERSION) return { problem: `protocol ${protocol} requires record version ${RECORD_VERSION}` };
-  if (r.version === 1 && (r.softwareIdentity !== "" || r.softwareRuleId !== "")) return { problem: "a version 1 record cannot carry software fields" };
-  if (r.unanswered !== "") return { problem: `an answered call's record states an unanswered code, which version ${r.version} does not cover` };
+  if (r.version !== RECORD_VERSION) return { problem: versionProblem(r.version) };
+  if (r.unanswered !== "") return { problem: "an answered call's record states an unanswered code" };
   if (r.requestSha256 !== reqDigest) return { problem: `request digest ${r.requestSha256}, the request sent digests to ${reqDigest}` };
   if (r.resultSha256 !== result) return { problem: `result digest ${r.resultSha256}, the result received digests to ${result}` };
   if (r.provider !== (resp.sandbox ?? "") || r.isolation !== (resp.isolation ?? "")) return { problem: "the record's provider or tier differs from the response's" };
-  if (r.version >= 2 && r.environment !== (resp.environment ?? "")) return { problem: "the record's environment differs from the response's" };
+  if (r.environment !== (resp.environment ?? "")) return { problem: "the record's environment differs from the response's" };
+  if (r.instance !== (resp.instance ?? "") || !validInstance(r.instance)) {
+    return { problem: "the record's instance is not the response's, or not a typed reference" };
+  }
   if (
-    r.version >= 2 &&
     (r.softwareIdentity !== (resp.softwareIdentity ?? "") || r.softwareRuleId !== softwareRuleId(rule) || !softwareRuleAllows(rule, r.softwareIdentity))
   ) {
     return { problem: "the selected software or admission rule differs from the request and response" };

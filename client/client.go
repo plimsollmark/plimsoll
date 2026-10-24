@@ -21,6 +21,7 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
+	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -89,7 +90,10 @@ const maxResponseBytes = 32 << 20
 // never follows a redirect). An *http.Client is used as a copy that refuses
 // redirects whatever its CheckRedirect says, since a followed 307 or 308 re-sends the
 // code and the token to wherever it points; any other implementation must not follow
-// one either.
+// one either. Nor may it retry a request: a retried call can run twice, and a success
+// after a retry looks like one run. A failure is marked not dispatched only when
+// httptrace shows that no attempt wrote the request, so a client that makes its
+// attempts outside the request's context gets no such mark.
 func WithHTTPClient(c connect.HTTPClient) Option { return func(cfg *config) { cfg.httpClient = c } }
 
 // WithToken sends "Authorization: Bearer <token>" on every call. Omit it for a
@@ -429,6 +433,7 @@ func javascriptResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (san
 		Isolation:           sandbox.ParseIsolationClass(resp.GetIsolation()),
 		SoftwareIdentity:    resp.GetSoftwareIdentity(),
 		EnvironmentIdentity: resp.GetEnvironment(),
+		Instance:            resp.GetInstance(),
 		Advice:              adviceFromWire(m.Javascript.GetAdvice()),
 		Record:              rec,
 	}, true
@@ -454,6 +459,7 @@ func cellResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbox.C
 		Isolation:           sandbox.ParseIsolationClass(resp.GetIsolation()),
 		SoftwareIdentity:    resp.GetSoftwareIdentity(),
 		EnvironmentIdentity: resp.GetEnvironment(),
+		Instance:            resp.GetInstance(),
 		Record:              rec,
 	}, true
 }
@@ -470,7 +476,8 @@ func projectResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbo
 		Isolation:           sandbox.ParseIsolationClass(resp.GetIsolation()),
 		SoftwareIdentity:    resp.GetSoftwareIdentity(),
 		EnvironmentIdentity: resp.GetEnvironment(),
-		Outcome:             outcomeFromWire(m.GetOutcome()),
+		Instance:            resp.GetInstance(),
+		Outcome:             wireenum.OutcomeFromWire(m.GetOutcome()),
 		Detail:              m.GetOutcomeDetail(),
 		ArtifactsTruncated:  m.GetArtifactsTruncated(),
 		Advice:              adviceFromWire(m.GetAdvice()),
@@ -527,7 +534,8 @@ func (r *Remote) RunModule(ctx context.Context, in sandbox.ModuleRequest) (sandb
 		Isolation:           sandbox.ParseIsolationClass(resp.GetIsolation()),
 		SoftwareIdentity:    resp.GetSoftwareIdentity(),
 		EnvironmentIdentity: resp.GetEnvironment(),
-		Outcome:             outcomeFromWire(m.GetOutcome()),
+		Instance:            resp.GetInstance(),
+		Outcome:             wireenum.OutcomeFromWire(m.GetOutcome()),
 		Detail:              m.GetOutcomeDetail(),
 		Stdout:              string(m.GetStdout()),
 		Stderr:              string(m.GetStderr()),
@@ -609,24 +617,6 @@ func adviceFromWire(in []*plimsollv1.AdviceFinding) []sandbox.AdviceFinding {
 	return out
 }
 
-// outcomeFromWire maps the wire enum back to the sandbox package's typed project
-// outcome. An unrecognized (future) value maps to Unspecified rather than being
-// guessed at; strict consumers treat that like a protocol mismatch.
-func outcomeFromWire(o plimsollv1.ProjectOutcome) sandbox.ProjectOutcome {
-	switch o {
-	case plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED:
-		return sandbox.ProjectOutcomeCompleted
-	case plimsollv1.ProjectOutcome_PROJECT_OUTCOME_SETUP_FAILED:
-		return sandbox.ProjectOutcomeSetupFailed
-	case plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT:
-		return sandbox.ProjectOutcomeTimedOut
-	case plimsollv1.ProjectOutcome_PROJECT_OUTCOME_PROTOCOL_ERROR:
-		return sandbox.ProjectOutcomeProtocolError
-	default:
-		return sandbox.ProjectOutcomeUnspecified
-	}
-}
-
 // restoreSandboxError preserves Sandbox's local error contract across RPC while
 // retaining the underlying Connect error (and therefore its status code/details).
 // This keeps errors.Is behavior identical when a consumer swaps a local provider
@@ -665,7 +655,17 @@ func restoreSandboxError(err error) error {
 			sentinel = sandbox.ErrUnsupported
 		}
 	case connect.CodeResourceExhausted:
-		sentinel = sandbox.ErrAtCapacity
+		// Only the daemon's capacity refusal is "at capacity, retry later". The same code
+		// also refuses an over-size request (reason request: retrying the same request
+		// fails the same way) and is connect-go's own error for an answer over the
+		// client's read limit, which arrives after the code ran and carries no mark
+		// (review, 2026-10-23).
+		switch {
+		case marked && reason == sandbox.RefusalCapacity:
+			sentinel = sandbox.ErrAtCapacity
+		case marked && reason == sandbox.RefusalRequest:
+			sentinel = sandbox.ErrInvalidRequest
+		}
 	case connect.CodeInvalidArgument:
 		sentinel = sandbox.ErrInvalidRequest
 	}
@@ -691,7 +691,7 @@ func notDispatchedDetail(err error) (sandbox.Refusal, bool) {
 			continue
 		}
 		if nd, ok := v.(*plimsollv1.NotDispatched); ok {
-			return refusalFromWire(nd.GetReason()), true
+			return wireenum.RefusalFromWire(nd.GetReason()), true
 		}
 	}
 	return sandbox.RefusalUnknown, false
@@ -711,61 +711,17 @@ func sessionEndedDetail(err error) (*sandbox.SessionEndedError, bool) {
 			continue
 		}
 		if se, ok := v.(*plimsollv1.SessionEnded); ok {
-			return &sandbox.SessionEndedError{Reason: sessionEndFromWire(se.GetReason()), Detail: se.GetDetail()}, true
+			// The detail itself says the session ended, so an unspecified reason is an end
+			// this client cannot name, never "open", as the TypeScript client already read
+			// it (review B8, 2026-10-23).
+			reason := wireenum.SessionEndFromWire(se.GetReason())
+			if reason == sandbox.SessionOpen {
+				reason = sandbox.SessionUnknown
+			}
+			return &sandbox.SessionEndedError{Reason: reason, Detail: se.GetDetail()}, true
 		}
 	}
 	return nil, false
-}
-
-func sessionEndFromWire(e plimsollv1.SessionEnd) sandbox.SessionEnd {
-	switch e {
-	case plimsollv1.SessionEnd_SESSION_END_CLOSED:
-		return sandbox.SessionClosed
-	case plimsollv1.SessionEnd_SESSION_END_EXPIRED:
-		return sandbox.SessionExpired
-	case plimsollv1.SessionEnd_SESSION_END_DISK_EXCEEDED:
-		return sandbox.SessionDiskExceeded
-	case plimsollv1.SessionEnd_SESSION_END_MAIN_PROCESS_ENDED:
-		return sandbox.SessionMainProcessEnded
-	case plimsollv1.SessionEnd_SESSION_END_BOUNDARY_FAILED:
-		return sandbox.SessionBoundaryFailed
-	case plimsollv1.SessionEnd_SESSION_END_SANDBOX_CHANGED:
-		return sandbox.SessionSandboxChanged
-	case plimsollv1.SessionEnd_SESSION_END_SHUTDOWN:
-		return sandbox.SessionShutdown
-	case plimsollv1.SessionEnd_SESSION_END_REPLACED:
-		return sandbox.SessionReplaced
-	case plimsollv1.SessionEnd_SESSION_END_NOT_FOUND:
-		return sandbox.SessionNotFound
-	case plimsollv1.SessionEnd_SESSION_END_UNCLAIMED:
-		return sandbox.SessionUnclaimed
-	case plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED:
-		return sandbox.SessionOpen
-	default:
-		// A newer daemon's end: ended all the same, never read as still open.
-		return sandbox.SessionUnknown
-	}
-}
-
-func refusalFromWire(r plimsollv1.NotDispatchedReason) sandbox.Refusal {
-	switch r {
-	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST:
-		return sandbox.RefusalRequest
-	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PERMISSION:
-		return sandbox.RefusalPermission
-	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PROTOCOL:
-		return sandbox.RefusalProtocol
-	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_UNSUPPORTED:
-		return sandbox.RefusalUnsupported
-	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ISOLATION:
-		return sandbox.RefusalIsolation
-	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY:
-		return sandbox.RefusalCapacity
-	case plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ENVIRONMENT:
-		return sandbox.RefusalEnvironment
-	default:
-		return sandbox.RefusalUnknown
-	}
 }
 
 // compile-time check

@@ -69,12 +69,15 @@ type ModuleResult struct {
 	Isolation           IsolationClass
 	SoftwareIdentity    string // selected module image manifest, if established
 	EnvironmentIdentity string // outer image artifact selected for this run
-	Outcome             ProjectOutcome
-	Detail              string
-	Stdout              string
-	Stderr              string
-	Duration            time.Duration
-	Record              *RunRecord // mirrors ProjectResult.Record
+	// Instance is the sandbox instance that ran it, as a typed reference ("k8s-pod-uid:" and
+	// the pod's UID), or "" when the provider names none (sandbox.ValidInstance).
+	Instance string
+	Outcome  ProjectOutcome
+	Detail   string
+	Stdout   string
+	Stderr   string
+	Duration time.Duration
+	Record   *RunRecord // mirrors ProjectResult.Record
 }
 
 // MaxSteps is the worker's bound on steps per row for this envelope:

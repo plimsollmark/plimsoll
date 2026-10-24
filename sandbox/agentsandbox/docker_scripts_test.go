@@ -62,7 +62,7 @@ func TestDockerRunsTheAgentSandboxBoundaryScript(t *testing.T) {
 	if err := checkFill(r, map[string]int64{"/tmp": tmpSize}); err != nil {
 		t.Error(err)
 	}
-	if len(r.Egress) != 3 { // the three fixed targets; no API server, and no default route to add a kubelet
+	if len(r.Egress) != 5 { // the five fixed targets (three IPv4, two IPv6); no API server, and no default route to add a kubelet
 		t.Errorf("egress %v", r.Egress)
 	}
 	if err := checkEgress(r.Egress, "no route"); err != nil {

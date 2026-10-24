@@ -27,7 +27,7 @@
 <div class="card"><span class="number">1</span>recorded commands<small><br>Result and exit code preserved</small></div>
 <div class="card"><span class="number">3</span>claims per BOM<small><br>Code, image, stated isolation</small></div>
 </div>
-<div class="run-nav"><a class="button" href="#run-4fbda54a632a">INTERNAL · The run →</a></div>
+<div class="run-nav"><a class="button" href="#run-edfbd999f17d">INTERNAL · The run →</a></div>
 
 <section aria-labelledby="flow-title"><div class="section-label">The evidence path</div><h2 id="flow-title">From execution to a checkable file</h2>
 <svg class="diagram" viewBox="0 0 1030 195" role="img" aria-labelledby="diagram-title diagram-desc">
@@ -122,12 +122,12 @@
 
 
 
-<section id="run-4fbda54a632a"><div class="section-label">The signed source exchange</div><h2>The run</h2>
+<section id="run-edfbd999f17d"><div class="section-label">The signed source exchange</div><h2>The run</h2>
 <div class="tags"><span class="tag info">Outcome: completed</span><span class="tag info">Stated tier: kernel</span><span class="tag info">Floor asked: kernel</span><span class="tag">No grant: no network</span><span class="tag info">Bundle line 1</span></div>
 <p>The <code>completed</code> outcome means the runner returned a normal result; a step with a nonzero exit code still failed. The stated tier is the daemon's reported isolation tier, backed by provider configuration and startup checks, never runtime attestation.</p>
-<dl class="run-meta"><dt>Time (UTC)</dt><dd>2026-10-22T01:18:46.771Z to 2026-10-22T01:18:53.138Z</dd><dt>Request digest</dt><dd><code>b8fa492f4e3d9d266e3f8ea9610cee50e917c2bcb6d2b903d83bb095dd77d1f7</code></dd><dt>Record digest</dt><dd><code>4fbda54a632a4850addfa667d55e2f2a1d8dd5faba63003d4085063b8e5caa2a</code></dd><dt>Image identity</dt><dd><code>oci-manifest:linux/amd64@sha256:a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c</code></dd><dt>Bundle</dt><dd><a href="https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/bundle.jsonl">INTERNAL · bundle.jsonl, line 1 →</a></dd></dl>
+<dl class="run-meta"><dt>Time (UTC)</dt><dd>2026-10-23T19:49:43.533Z to 2026-10-23T19:49:49.990Z</dd><dt>Request digest</dt><dd><code>acd2df1409b8402404625804766beab91b0247bb543e7e043caa56b3158e1acf</code></dd><dt>Record digest</dt><dd><code>edfbd999f17de649ece67a0e86f64c45f3ee5968b62dd873d76a75774e7d2d8b</code></dd><dt>Image identity</dt><dd><code>oci-manifest:linux/amd64@sha256:a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c</code></dd><dt>Bundle</dt><dd><a href="https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/bundle.jsonl">INTERNAL · bundle.jsonl, line 1 →</a></dd></dl>
 <p class="small">Open Container Initiative (OCI) is the container image format. The manifest digest identifies the selected image for one platform, such as Linux on a standard PC processor (linux/amd64). A display name never supplies that identity.</p>
-<p><a class="button" href="https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/run-4fbda54a632a.cdx.json">INTERNAL · this run's CycloneDX JSON →</a></p>
+<p><a class="button" href="https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/run-edfbd999f17d.cdx.json">INTERNAL · this run's CycloneDX JSON →</a></p>
 
 <h3>The program's files</h3><details><summary>package.json</summary><p>SHA-256: <code>f96cc9381ec40c39fa9a0ceef721322f62b96e3d071decfc92e4b22cce03415f</code></p><pre>{&#34;private&#34;:true,&#34;scripts&#34;:{&#34;test&#34;:&#34;node test.mjs&#34;}}
 </pre></details><details><summary>sum.mjs</summary><p>SHA-256: <code>1ec58baffd4446cea444de15e65e223d7a5d82643147da132f84b4ca68944291</code></p><pre>export const sum = values =&gt; values.reduce((total, value) =&gt; total &#43; value, 0);
@@ -142,7 +142,7 @@ console.log(&#39;two sum checks passed&#39;);
   &#34;repository&#34;: &#34;example/pr-receipt-fixture&#34;
 }
 </pre></details>
-<h3>The commands and recorded results</h3><p>Standard output (stdout) is printed output; standard error (stderr) is the separate diagnostic channel. Exit code 0 means the command reported success. A nonzero code means it reported failure.</p><div class="step"><h4><code>npm test</code></h4><div class="tags"><span class="tag info">Exit 0</span><span class="tag info">5877 milliseconds</span><span class="tag info">Sandbox timeout: false</span></div><pre>stdout:
+<h3>The commands and recorded results</h3><p>Standard output (stdout) is printed output; standard error (stderr) is the separate diagnostic channel. Exit code 0 means the command reported success. A nonzero code means it reported failure.</p><div class="step"><h4><code>npm test</code></h4><div class="tags"><span class="tag info">Exit 0</span><span class="tag info">5963 milliseconds</span><span class="tag info">Sandbox timeout: false</span></div><pre>stdout:
 
 &gt; test
 &gt; node test.mjs
@@ -150,7 +150,7 @@ console.log(&#39;two sum checks passed&#39;);
 two sum checks passed
 stderr:
 </pre></div>
-<div class="receipt-box" data-receipt="run-4fbda54a632a">
+<div class="receipt-box" data-receipt="run-edfbd999f17d">
 <h3>Try the receipt here</h3><p>The seal is a tamper strip, like the one on a medicine bottle. Check it, then change a copy and watch the seal fail. Your browser uses only the bytes inside this page.</p>
 <p><button type="button" class="button check-receipt" disabled>Check this receipt</button> <button type="button" class="button change-receipt" disabled>Change one character</button></p>
 <p class="receipt-support small" role="status">Checking whether this browser can verify the seal.</p>
@@ -192,7 +192,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
         &#34;program&#34;
       ],
       &#34;text&#34;: &#34;The attached run record is signed; this BOM is unsigned. Agent authorship is supplied example context, not a record fact, and the execution layer cannot identify the model. Network isolation is provider configuration, not a separately signed runtime measurement; a granted run reaches only the routes its grant lists, and what reached the other side is not in this record. The run&#39;s times are the daemon&#39;s own unwitnessed clock. An attached key alone establishes consistency, not signer identity; use an independently trusted key. Display names and the assessor label are unsigned presentation. The attached bundle line proves itself; the whole bundle it belongs to is referenced by digest and checked when supplied. This is run evidence, not an inventory of the image&#39;s installed packages.&#34;,
-      &#34;timestamp&#34;: &#34;2026-10-22T01:18:53.138Z&#34;
+      &#34;timestamp&#34;: &#34;2026-10-23T19:49:49.990Z&#34;
     }
   ],
   &#34;bomFormat&#34;: &#34;CycloneDX&#34;,
@@ -290,7 +290,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
         &#34;evidence&#34;: [
           &#34;evidence-run-record&#34;
         ],
-        &#34;predicate&#34;: &#34;The program&#39;s 4 files, file-set digest cff68cf8a70a9863bd7cb2f75bdfbdcea6d9d8ee92b5766f646ba324e2e7c087, are the files in the stored request whose signed digest b8fa492f4e3d9d266e3f8ea9610cee50e917c2bcb6d2b903d83bb095dd77d1f7 covers them with the isolation floor and timeout.&#34;,
+        &#34;predicate&#34;: &#34;The program&#39;s 4 files, file-set digest cff68cf8a70a9863bd7cb2f75bdfbdcea6d9d8ee92b5766f646ba324e2e7c087, are the files in the stored request whose signed digest acd2df1409b8402404625804766beab91b0247bb543e7e043caa56b3158e1acf covers them with the isolation floor and timeout.&#34;,
         &#34;reasoning&#34;: &#34;Each claim restates the run record the daemon stated and the attest harness checked against the stored request and result and signed. The attached bundle line permits those checks to be repeated. This emitter did not observe execution. The tier is configuration and provider evidence plus startup smoke tests, never runtime attestation.&#34;,
         &#34;target&#34;: &#34;program&#34;
       },
@@ -308,7 +308,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
         &#34;evidence&#34;: [
           &#34;evidence-run-record&#34;
         ],
-        &#34;predicate&#34;: &#34;The daemon states provider docker and isolation tier kernel, at or above requested floor kernel, from 2026-10-22T01:18:46.771Z to 2026-10-22T01:18:53.138Z UTC; the stored request names no host-API grant and the result digest is 7b1bc06288601383babfab94d390c7e76a8b6f268a421f7c912b5bf88291e5d5. The provider&#39;s no-grant configuration supplies network isolation; this record is not a network measurement.&#34;,
+        &#34;predicate&#34;: &#34;The daemon states provider docker and isolation tier kernel, at or above requested floor kernel, from 2026-10-23T19:49:43.533Z to 2026-10-23T19:49:49.990Z UTC; the stored request names no host-API grant and the result digest is 7b1bc06288601383babfab94d390c7e76a8b6f268a421f7c912b5bf88291e5d5. The provider&#39;s no-grant configuration supplies network isolation; this record is not a network measurement.&#34;,
         &#34;reasoning&#34;: &#34;Each claim restates the run record the daemon stated and the attest harness checked against the stored request and result and signed. The attached bundle line permits those checks to be repeated. This emitter did not observe execution. The tier is configuration and provider evidence plus startup smoke tests, never runtime attestation.&#34;,
         &#34;target&#34;: &#34;program&#34;
       }
@@ -316,15 +316,15 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
     &#34;evidence&#34;: [
       {
         &#34;author&#34;: {
-          &#34;name&#34;: &#34;plimsoll-attest key 30a2588ff1f3c0b1d9105e24dbd93068114dbdbcf35771d7abed5b4a30b2da12&#34;
+          &#34;name&#34;: &#34;plimsoll-attest key 12f016aef25637445344a0eb63adcef340bc713782eedd6a8c83879ba577357a&#34;
         },
         &#34;bom-ref&#34;: &#34;evidence-run-record&#34;,
-        &#34;created&#34;: &#34;2026-10-22T01:18:53.138Z&#34;,
+        &#34;created&#34;: &#34;2026-10-23T19:49:49.990Z&#34;,
         &#34;data&#34;: [
           {
             &#34;contents&#34;: {
               &#34;attachment&#34;: {
-                &#34;content&#34;: &#34;eyJwYXlsb2FkVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5pbi10b3RvK2pzb24iLCJwYXlsb2FkIjoiZXlKZmRIbHdaU0k2SW1oMGRIQnpPaTh2YVc0dGRHOTBieTVwYnk5VGRHRjBaVzFsYm5RdmRqRWlMQ0p6ZFdKcVpXTjBJanBiZXlKdVlXMWxJam9pY25WdUxYSmxZMjl5WkNJc0ltUnBaMlZ6ZENJNmV5SnphR0V5TlRZaU9pSTBabUprWVRVMFlUWXpNbUUwT0RVd1lXUmtabUUyTmpka05UVmxNbVl5WVRGa09HUmtOV1poWW1FMk16QXdNMlEwTURnMU1EWXpZamhsTldOaFlUSmhJbjE5WFN3aWNISmxaR2xqWVhSbFZIbHdaU0k2SW1oMGRIQnpPaTh2Y0d4cGJYTnZiR3h0WVhKckxtZHBkR2gxWWk1cGJ5OXdiR2x0YzI5c2JDOXlkVzR0Y21WamIzSmtMM1l4SWl3aWNISmxaR2xqWVhSbElqcDdJblpsY25OcGIyNGlPaklzSW5KbGNYVmxjM1JmYzJoaE1qVTJJam9pWWpobVlUUTVNbVkwWlROa09XUXlOalpsTTJZNFpXRTVOakV3WTJWbE5UQmxPVEUzWXpKaVkySTJaREppT1RBelpEZ3pZbUl3T1RWa1pEYzNaREZtTnlJc0luSmxjM1ZzZEY5emFHRXlOVFlpT2lJM1lqRmlZekEyTWpnNE5qQXhNemd6WW1GaVptRmlPVFJrTXprd1l6ZGxOelpoT0dJMlpqSTJPR0UwTWpGbU4yTTVNVEppTldKbU9EZ3lPVEZsTldRMUlpd2ljSEp2ZG1sa1pYSWlPaUprYjJOclpYSWlMQ0pwYzI5c1lYUnBiMjRpT2lKclpYSnVaV3dpTENKbGJuWnBjbTl1YldWdWRDSTZJbVJ2WTJ0bGNpMXBiV0ZuWlRwemFHRXlOVFk2TXpKa1lUYzNZakZpWlRJMFpHVTBZekUxTWpZMk4yTXlPR0ZpTmpNMU16RTBNalZqWkRZNU1EQXdZV05tTXpCaE16STRPVGcxWTJJNE5UY3pOemRtTnlJc0luTnZablIzWVhKbFgybGtaVzUwYVhSNUlqb2liMk5wTFcxaGJtbG1aWE4wT214cGJuVjRMMkZ0WkRZMFFITm9ZVEkxTmpwaE5tVm1NbVZoTVdNNFpqRmtaVFZqT0RnMVpURmhNVGhpWVRkbFpUUmtPVFl5WlROaE9EVTVPRGMzWmpabU5EWmpNbVppTjJWaVlXTXhaalpqWXpWaklpd2ljRzlzYVdONUlqb2lJaXdpYzNSaGNuUmxaRjkxYm1sNFgyMXpJam94TnpreU5qTXhPVEkyTnpjeExDSmxibVJsWkY5MWJtbDRYMjF6SWpveE56a3lOak14T1RNek1UTTRMQ0p6WlhOemFXOXVJam9pSWl3aWMyVnhkV1Z1WTJVaU9qQXNJbkJ5WlhacGIzVnpYM05vWVRJMU5pSTZJaUlzSW5KbFkyOXlaRjl6YUdFeU5UWWlPaUkwWm1Ka1lUVTBZVFl6TW1FME9EVXdZV1JrWm1FMk5qZGtOVFZsTW1ZeVlURmtPR1JrTldaaFltRTJNekF3TTJRME1EZzFNRFl6WWpobE5XTmhZVEpoSW4xOSIsInNpZ25hdHVyZXMiOlt7ImtleWlkIjoiMzBhMjU4OGZmMWYzYzBiMWQ5MTA1ZTI0ZGJkOTMwNjgxMTRkYmRiY2YzNTc3MWQ3YWJlZDViNGEzMGIyZGExMiIsInNpZyI6IkxldGM1SlFnSzBZbE5QUHRiaHgvQzE5YytaK0xPWlROTUlTWEl0S2xZOHVySEVZWWtmYTZOc29LTXZuYUhCLzU4aStzWXo2eXJSdzNSdUZPUVJoN0JBPT0ifV19&#34;,
+                &#34;content&#34;: &#34;eyJwYXlsb2FkVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5pbi10b3RvK2pzb24iLCJwYXlsb2FkIjoiZXlKZmRIbHdaU0k2SW1oMGRIQnpPaTh2YVc0dGRHOTBieTVwYnk5VGRHRjBaVzFsYm5RdmRqRWlMQ0p6ZFdKcVpXTjBJanBiZXlKdVlXMWxJam9pY25WdUxYSmxZMjl5WkNJc0ltUnBaMlZ6ZENJNmV5SnphR0V5TlRZaU9pSmxaR1ppWkRrNU9XWXhOMlJsTmpRNVpXTmxOamRoTUdVNE5tWTJOR00wTldZelpXVTFPVFk0WWpZeVpHUTROek5rTnpaaE56VTNOelJsTjJReVpEaGlJbjE5WFN3aWNISmxaR2xqWVhSbFZIbHdaU0k2SW1oMGRIQnpPaTh2Y0d4cGJYTnZiR3h0WVhKckxtZHBkR2gxWWk1cGJ5OXdiR2x0YzI5c2JDOXlkVzR0Y21WamIzSmtMM1l4SWl3aWNISmxaR2xqWVhSbElqcDdJblpsY25OcGIyNGlPalFzSW5KbGNYVmxjM1JmYzJoaE1qVTJJam9pWVdOa01tUm1NVFF3T1dJNE5EQXlOREEwTmpJMU9EQTBOelkyWW1WaFlqa3hZakF5TkRkaVlqVTBNMlUzWlRBME0yTmhZVFUyWWpNeE5UaGxNV0ZqWmlJc0luSmxjM1ZzZEY5emFHRXlOVFlpT2lJM1lqRmlZekEyTWpnNE5qQXhNemd6WW1GaVptRmlPVFJrTXprd1l6ZGxOelpoT0dJMlpqSTJPR0UwTWpGbU4yTTVNVEppTldKbU9EZ3lPVEZsTldRMUlpd2ljSEp2ZG1sa1pYSWlPaUprYjJOclpYSWlMQ0pwYzI5c1lYUnBiMjRpT2lKclpYSnVaV3dpTENKbGJuWnBjbTl1YldWdWRDSTZJbVJ2WTJ0bGNpMXBiV0ZuWlRwemFHRXlOVFk2TXpKa1lUYzNZakZpWlRJMFpHVTBZekUxTWpZMk4yTXlPR0ZpTmpNMU16RTBNalZqWkRZNU1EQXdZV05tTXpCaE16STRPVGcxWTJJNE5UY3pOemRtTnlJc0luTnZablIzWVhKbFgybGtaVzUwYVhSNUlqb2liMk5wTFcxaGJtbG1aWE4wT214cGJuVjRMMkZ0WkRZMFFITm9ZVEkxTmpwaE5tVm1NbVZoTVdNNFpqRmtaVFZqT0RnMVpURmhNVGhpWVRkbFpUUmtPVFl5WlROaE9EVTVPRGMzWmpabU5EWmpNbVppTjJWaVlXTXhaalpqWXpWaklpd2ljRzlzYVdONUlqb2lJaXdpYzNSaGNuUmxaRjkxYm1sNFgyMXpJam94TnpreU56ZzBPVGd6TlRNekxDSmxibVJsWkY5MWJtbDRYMjF6SWpveE56a3lOemcwT1RnNU9Ua3dMQ0p6WlhOemFXOXVJam9pSWl3aWMyVnhkV1Z1WTJVaU9qQXNJbkJ5WlhacGIzVnpYM05vWVRJMU5pSTZJaUlzSW5KbFkyOXlaRjl6YUdFeU5UWWlPaUpsWkdaaVpEazVPV1l4TjJSbE5qUTVaV05sTmpkaE1HVTRObVkyTkdNME5XWXpaV1UxT1RZNFlqWXlaR1E0TnpOa056WmhOelUzTnpSbE4yUXlaRGhpSW4xOSIsInNpZ25hdHVyZXMiOlt7ImtleWlkIjoiMTJmMDE2YWVmMjU2Mzc0NDUzNDRhMGViNjNhZGNlZjM0MGJjNzEzNzgyZWVkZDZhOGM4Mzg3OWJhNTc3MzU3YSIsInNpZyI6IjExRW9WbVNjak1SSGptUFZoa1UxNVhtOEVocDNSNHFscTl4OXB3d2E3YkpSL1g3ZUdvS1VXRU52WE94VGlKU0p4Z2F3NDZPc0xXYWdJSTYwMWs2OURRPT0ifV19&#34;,
                 &#34;contentType&#34;: &#34;application/json&#34;,
                 &#34;encoding&#34;: &#34;base64&#34;
               }
@@ -334,7 +334,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
           {
             &#34;contents&#34;: {
               &#34;attachment&#34;: {
-                &#34;content&#34;: &#34;LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUNvd0JRWURLMlZ3QXlFQTgzRnVLbTZwVnJQV0YwekJvK2dDVEZLc1ptSm05dldPUWQ3OGgrMUdWazg9Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo=&#34;,
+                &#34;content&#34;: &#34;LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUNvd0JRWURLMlZ3QXlFQXVFNjNlWkJIeUV5Mkx6YmtWMzUvQlZnTnZKaHBWZlRNTTN4alphcHVTNGs9Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo=&#34;,
                 &#34;contentType&#34;: &#34;application/x-pem-file&#34;,
                 &#34;encoding&#34;: &#34;base64&#34;
               }
@@ -344,7 +344,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
           {
             &#34;contents&#34;: {
               &#34;attachment&#34;: {
-                &#34;content&#34;: &#34;eyJyZXF1ZXN0IjoiQ0FNU0JtdGxjbTVsYkJvTWNISXRjbVZqWldsd2RDMHdJTERxQVZxS0JBcEVDZ3h3WVdOcllXZGxMbXB6YjI0U05Ic2ljSEpwZG1GMFpTSTZkSEoxWlN3aWMyTnlhWEIwY3lJNmV5SjBaWE4wSWpvaWJtOWtaU0IwWlhOMExtMXFjeUo5ZlFvS1d3b0hjM1Z0TG0xcWN4SlFaWGh3YjNKMElHTnZibk4wSUhOMWJTQTlJSFpoYkhWbGN5QTlQaUIyWVd4MVpYTXVjbVZrZFdObEtDaDBiM1JoYkN3Z2RtRnNkV1VwSUQwK0lIUnZkR0ZzSUNzZ2RtRnNkV1VzSURBcE93b0t1Z0VLQ0hSbGMzUXViV3B6RXEwQmFXMXdiM0owSUdGemMyVnlkQ0JtY205dElDZHViMlJsT21GemMyVnlkQzl6ZEhKcFkzUW5Pd3BwYlhCdmNuUWdlM04xYlgwZ1puSnZiU0FuTGk5emRXMHViV3B6SnpzS1lYTnpaWEowTG1WeGRXRnNLSE4xYlNoYk1UQXNJREl3TENBdE5WMHBMQ0F5TlNrN0NtRnpjMlZ5ZEM1bGNYVmhiQ2h6ZFcwb1cxMHBMQ0F3S1RzS1kyOXVjMjlzWlM1c2IyY29KM1IzYnlCemRXMGdZMmhsWTJ0eklIQmhjM05sWkNjcE93b0tuUUVLR0M1d2NpMXlaV05sYVhCMEwzTjFZbXBsWTNRdWFuTnZiaEtBQVhzS0lDQWlZMjl0YldsMElqb2dJall5TnpVek5HWmpOekZrWlRFd05XRmxZamRsTnpFd09UZzVOekJpWWpVeFpEY3dPVFl6TkRraUxBb2dJQ0p3ZFd4c1gzSmxjWFZsYzNRaU9pQWlNQ0lzQ2lBZ0luSmxjRzl6YVhSdmNua2lPaUFpWlhoaGJYQnNaUzl3Y2kxeVpXTmxhWEIwTFdacGVIUjFjbVVpQ24wS0VnaHVjRzBnZEdWemRBPT0iLCJyZXNwb25zZSI6IkNnWmtiMk5yWlhJU0JtdGxjbTVsYkJqZU1TS2VBd2dDRWtCaU9HWmhORGt5WmpSbE0yUTVaREkyTm1VelpqaGxZVGsyTVRCalpXVTFNR1U1TVRkak1tSmpZalprTW1JNU1ETmtPRE5pWWpBNU5XUmtOemRrTVdZM0drQTNZakZpWXpBMk1qZzROakF4TXpnelltRmlabUZpT1RSa016a3dZemRsTnpaaE9HSTJaakkyT0dFME1qRm1OMk01TVRKaU5XSm1PRGd5T1RGbE5XUTFJZ1prYjJOclpYSXFCbXRsY201bGJESlVaRzlqYTJWeUxXbHRZV2RsT25Ob1lUSTFOam96TW1SaE56ZGlNV0psTWpSa1pUUmpNVFV5TmpZM1l6STRZV0kyTXpVek1UUXlOV05rTmprd01EQmhZMll6TUdFek1qZzVPRFZqWWpnMU56TTNOMlkzUVBQZndZbVdORWpTa2NLSmxqUnFRRFJtWW1SaE5UUmhOak15WVRRNE5UQmhaR1JtWVRZMk4yUTFOV1V5WmpKaE1XUTRaR1ExWm1GaVlUWXpNREF6WkRRd09EVXdOak5pT0dVMVkyRmhNbUZ5WUc5amFTMXRZVzVwWm1WemREcHNhVzUxZUM5aGJXUTJORUJ6YUdFeU5UWTZZVFpsWmpKbFlURmpPR1l4WkdVMVl6ZzROV1V4WVRFNFltRTNaV1UwWkRrMk1tVXpZVGcxT1RnM04yWTJaalEyWXpKbVlqZGxZbUZqTVdZMlkyTTFZeXBnYjJOcExXMWhibWxtWlhOME9teHBiblY0TDJGdFpEWTBRSE5vWVRJMU5qcGhObVZtTW1WaE1XTTRaakZrWlRWak9EZzFaVEZoTVRoaVlUZGxaVFJrT1RZeVpUTmhPRFU1T0RjM1pqWm1ORFpqTW1aaU4yVmlZV014Wmpaall6VmpNbFJrYjJOclpYSXRhVzFoWjJVNmMyaGhNalUyT2pNeVpHRTNOMkl4WW1VeU5HUmxOR014TlRJMk5qZGpNamhoWWpZek5UTXhOREkxWTJRMk9UQXdNR0ZqWmpNd1lUTXlPRGs0TldOaU9EVTNNemMzWmpkYVFnbytDZ2h1Y0cwZ2RHVnpkQkl2Q2o0Z2RHVnpkQW8rSUc1dlpHVWdkR1Z6ZEM1dGFuTUtDblIzYnlCemRXMGdZMmhsWTJ0eklIQmhjM05sWkFvdzlTMFlBUT09IiwiZW52ZWxvcGUiOnsicGF5bG9hZFR5cGUiOiJhcHBsaWNhdGlvbi92bmQuaW4tdG90bytqc29uIiwicGF5bG9hZCI6ImV5SmZkSGx3WlNJNkltaDBkSEJ6T2k4dmFXNHRkRzkwYnk1cGJ5OVRkR0YwWlcxbGJuUXZkakVpTENKemRXSnFaV04wSWpwYmV5SnVZVzFsSWpvaWNuVnVMWEpsWTI5eVpDSXNJbVJwWjJWemRDSTZleUp6YUdFeU5UWWlPaUkwWm1Ka1lUVTBZVFl6TW1FME9EVXdZV1JrWm1FMk5qZGtOVFZsTW1ZeVlURmtPR1JrTldaaFltRTJNekF3TTJRME1EZzFNRFl6WWpobE5XTmhZVEpoSW4xOVhTd2ljSEpsWkdsallYUmxWSGx3WlNJNkltaDBkSEJ6T2k4dmNHeHBiWE52Ykd4dFlYSnJMbWRwZEdoMVlpNXBieTl3YkdsdGMyOXNiQzl5ZFc0dGNtVmpiM0prTDNZeElpd2ljSEpsWkdsallYUmxJanA3SW5abGNuTnBiMjRpT2pJc0luSmxjWFZsYzNSZmMyaGhNalUySWpvaVlqaG1ZVFE1TW1ZMFpUTmtPV1F5TmpabE0yWTRaV0U1TmpFd1kyVmxOVEJsT1RFM1l6SmlZMkkyWkRKaU9UQXpaRGd6WW1Jd09UVmtaRGMzWkRGbU55SXNJbkpsYzNWc2RGOXphR0V5TlRZaU9pSTNZakZpWXpBMk1qZzROakF4TXpnelltRmlabUZpT1RSa016a3dZemRsTnpaaE9HSTJaakkyT0dFME1qRm1OMk01TVRKaU5XSm1PRGd5T1RGbE5XUTFJaXdpY0hKdmRtbGtaWElpT2lKa2IyTnJaWElpTENKcGMyOXNZWFJwYjI0aU9pSnJaWEp1Wld3aUxDSmxiblpwY205dWJXVnVkQ0k2SW1SdlkydGxjaTFwYldGblpUcHphR0V5TlRZNk16SmtZVGMzWWpGaVpUSTBaR1UwWXpFMU1qWTJOMk15T0dGaU5qTTFNekUwTWpWalpEWTVNREF3WVdObU16QmhNekk0T1RnMVkySTROVGN6TnpkbU55SXNJbk52Wm5SM1lYSmxYMmxrWlc1MGFYUjVJam9pYjJOcExXMWhibWxtWlhOME9teHBiblY0TDJGdFpEWTBRSE5vWVRJMU5qcGhObVZtTW1WaE1XTTRaakZrWlRWak9EZzFaVEZoTVRoaVlUZGxaVFJrT1RZeVpUTmhPRFU1T0RjM1pqWm1ORFpqTW1aaU4yVmlZV014Wmpaall6VmpJaXdpY0c5c2FXTjVJam9pSWl3aWMzUmhjblJsWkY5MWJtbDRYMjF6SWpveE56a3lOak14T1RJMk56Y3hMQ0psYm1SbFpGOTFibWw0WDIxeklqb3hOemt5TmpNeE9UTXpNVE00TENKelpYTnphVzl1SWpvaUlpd2ljMlZ4ZFdWdVkyVWlPakFzSW5CeVpYWnBiM1Z6WDNOb1lUSTFOaUk2SWlJc0luSmxZMjl5WkY5emFHRXlOVFlpT2lJMFptSmtZVFUwWVRZek1tRTBPRFV3WVdSa1ptRTJOamRrTlRWbE1tWXlZVEZrT0dSa05XWmhZbUUyTXpBd00yUTBNRGcxTURZellqaGxOV05oWVRKaEluMTkiLCJzaWduYXR1cmVzIjpbeyJrZXlpZCI6IjMwYTI1ODhmZjFmM2MwYjFkOTEwNWUyNGRiZDkzMDY4MTE0ZGJkYmNmMzU3NzFkN2FiZWQ1YjRhMzBiMmRhMTIiLCJzaWciOiJMZXRjNUpRZ0swWWxOUFB0Ymh4L0MxOWMrWitMT1pUTk1JU1hJdEtsWTh1ckhFWVlrZmE2TnNvS012bmFIQi81OGkrc1l6NnlyUnczUnVGT1FSaDdCQT09In1dfSwibGluayI6eyJwYXlsb2FkVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5pbi10b3RvK2pzb24iLCJwYXlsb2FkIjoiZXlKZmRIbHdaU0k2SW1oMGRIQnpPaTh2YVc0dGRHOTBieTVwYnk5VGRHRjBaVzFsYm5RdmRqRWlMQ0p6ZFdKcVpXTjBJanBiZXlKdVlXMWxJam9pWW5WdVpHeGxMV3hwYm1VaUxDSmthV2RsYzNRaU9uc2ljMmhoTWpVMklqb2lZV0k0Wm1WbVl6YzFPV0UwT1RKbU1qWmtObUUzTnpBNU1tWmpNMk00WW1ZM05UaGlNVGxsWTJaak56YzNOek5rWm1aall6QXpOR016TmpRM016Y3dOaUo5ZlYwc0luQnlaV1JwWTJGMFpWUjVjR1VpT2lKb2RIUndjem92TDNCc2FXMXpiMnhzYldGeWF5NW5hWFJvZFdJdWFXOHZjR3hwYlhOdmJHd3ZZblZ1Wkd4bExXeHBibXN2ZGpFaUxDSndjbVZrYVdOaGRHVWlPbnNpYVc1a1pYZ2lPakVzSW5CeVpYWnBiM1Z6WDNOb1lUSTFOaUk2SWlJc0ltVnVkSEo1WDNOb1lUSTFOaUk2SW1GaU9HWmxabU0zTlRsaE5Ea3laakkyWkRaaE56Y3dPVEptWXpOak9HSm1OelU0WWpFNVpXTm1ZemMzTnpjelpHWm1ZMk13TXpSak16WTBOek0zTURZaWZYMD0iLCJzaWduYXR1cmVzIjpbeyJrZXlpZCI6IjMwYTI1ODhmZjFmM2MwYjFkOTEwNWUyNGRiZDkzMDY4MTE0ZGJkYmNmMzU3NzFkN2FiZWQ1YjRhMzBiMmRhMTIiLCJzaWciOiJZcjI1S3gzWGgzT3VCQkp5d1VvYjdWYWdlY0l5VHJEdS9Dbkx4NGEwVmVwWTQ1SjZwTzZFTU9mUjJMVE8vMEFIK0J6TzNxVTArNFd4QUhBRUdvQ05BUT09In1dfX0=&#34;,
+                &#34;content&#34;: &#34;eyJyZXF1ZXN0IjoiQ0FRU0JtdGxjbTVsYkJvTWNISXRjbVZqWldsd2RDMHdJTERxQVZxS0JBcEVDZ3h3WVdOcllXZGxMbXB6YjI0U05Ic2ljSEpwZG1GMFpTSTZkSEoxWlN3aWMyTnlhWEIwY3lJNmV5SjBaWE4wSWpvaWJtOWtaU0IwWlhOMExtMXFjeUo5ZlFvS1d3b0hjM1Z0TG0xcWN4SlFaWGh3YjNKMElHTnZibk4wSUhOMWJTQTlJSFpoYkhWbGN5QTlQaUIyWVd4MVpYTXVjbVZrZFdObEtDaDBiM1JoYkN3Z2RtRnNkV1VwSUQwK0lIUnZkR0ZzSUNzZ2RtRnNkV1VzSURBcE93b0t1Z0VLQ0hSbGMzUXViV3B6RXEwQmFXMXdiM0owSUdGemMyVnlkQ0JtY205dElDZHViMlJsT21GemMyVnlkQzl6ZEhKcFkzUW5Pd3BwYlhCdmNuUWdlM04xYlgwZ1puSnZiU0FuTGk5emRXMHViV3B6SnpzS1lYTnpaWEowTG1WeGRXRnNLSE4xYlNoYk1UQXNJREl3TENBdE5WMHBMQ0F5TlNrN0NtRnpjMlZ5ZEM1bGNYVmhiQ2h6ZFcwb1cxMHBMQ0F3S1RzS1kyOXVjMjlzWlM1c2IyY29KM1IzYnlCemRXMGdZMmhsWTJ0eklIQmhjM05sWkNjcE93b0tuUUVLR0M1d2NpMXlaV05sYVhCMEwzTjFZbXBsWTNRdWFuTnZiaEtBQVhzS0lDQWlZMjl0YldsMElqb2dJall5TnpVek5HWmpOekZrWlRFd05XRmxZamRsTnpFd09UZzVOekJpWWpVeFpEY3dPVFl6TkRraUxBb2dJQ0p3ZFd4c1gzSmxjWFZsYzNRaU9pQWlNQ0lzQ2lBZ0luSmxjRzl6YVhSdmNua2lPaUFpWlhoaGJYQnNaUzl3Y2kxeVpXTmxhWEIwTFdacGVIUjFjbVVpQ24wS0VnaHVjRzBnZEdWemRBPT0iLCJyZXNwb25zZSI6IkNnWmtiMk5yWlhJU0JtdGxjbTVsYkJpNU1pS2VBd2dFRWtCaFkyUXlaR1l4TkRBNVlqZzBNREkwTURRMk1qVTRNRFEzTmpaaVpXRmlPVEZpTURJME4ySmlOVFF6WlRkbE1EUXpZMkZoTlRaaU16RTFPR1V4WVdObUdrQTNZakZpWXpBMk1qZzROakF4TXpnelltRmlabUZpT1RSa016a3dZemRsTnpaaE9HSTJaakkyT0dFME1qRm1OMk01TVRKaU5XSm1PRGd5T1RGbE5XUTFJZ1prYjJOclpYSXFCbXRsY201bGJESlVaRzlqYTJWeUxXbHRZV2RsT25Ob1lUSTFOam96TW1SaE56ZGlNV0psTWpSa1pUUmpNVFV5TmpZM1l6STRZV0kyTXpVek1UUXlOV05rTmprd01EQmhZMll6TUdFek1qZzVPRFZqWWpnMU56TTNOMlkzUU8zTHY5S1dORWltL3IvU2xqUnFRR1ZrWm1Ka09UazVaakUzWkdVMk5EbGxZMlUyTjJFd1pUZzJaalkwWXpRMVpqTmxaVFU1TmpoaU5qSmtaRGczTTJRM05tRTNOVGMzTkdVM1pESmtPR0p5WUc5amFTMXRZVzVwWm1WemREcHNhVzUxZUM5aGJXUTJORUJ6YUdFeU5UWTZZVFpsWmpKbFlURmpPR1l4WkdVMVl6ZzROV1V4WVRFNFltRTNaV1UwWkRrMk1tVXpZVGcxT1RnM04yWTJaalEyWXpKbVlqZGxZbUZqTVdZMlkyTTFZeXBnYjJOcExXMWhibWxtWlhOME9teHBiblY0TDJGdFpEWTBRSE5vWVRJMU5qcGhObVZtTW1WaE1XTTRaakZrWlRWak9EZzFaVEZoTVRoaVlUZGxaVFJrT1RZeVpUTmhPRFU1T0RjM1pqWm1ORFpqTW1aaU4yVmlZV014Wmpaall6VmpNbFJrYjJOclpYSXRhVzFoWjJVNmMyaGhNalUyT2pNeVpHRTNOMkl4WW1VeU5HUmxOR014TlRJMk5qZGpNamhoWWpZek5UTXhOREkxWTJRMk9UQXdNR0ZqWmpNd1lUTXlPRGs0TldOaU9EVTNNemMzWmpkYVFnbytDZ2h1Y0cwZ2RHVnpkQkl2Q2o0Z2RHVnpkQW8rSUc1dlpHVWdkR1Z6ZEM1dGFuTUtDblIzYnlCemRXMGdZMmhsWTJ0eklIQmhjM05sWkFvd3l5NFlBUT09IiwiZW52ZWxvcGUiOnsicGF5bG9hZFR5cGUiOiJhcHBsaWNhdGlvbi92bmQuaW4tdG90bytqc29uIiwicGF5bG9hZCI6ImV5SmZkSGx3WlNJNkltaDBkSEJ6T2k4dmFXNHRkRzkwYnk1cGJ5OVRkR0YwWlcxbGJuUXZkakVpTENKemRXSnFaV04wSWpwYmV5SnVZVzFsSWpvaWNuVnVMWEpsWTI5eVpDSXNJbVJwWjJWemRDSTZleUp6YUdFeU5UWWlPaUpsWkdaaVpEazVPV1l4TjJSbE5qUTVaV05sTmpkaE1HVTRObVkyTkdNME5XWXpaV1UxT1RZNFlqWXlaR1E0TnpOa056WmhOelUzTnpSbE4yUXlaRGhpSW4xOVhTd2ljSEpsWkdsallYUmxWSGx3WlNJNkltaDBkSEJ6T2k4dmNHeHBiWE52Ykd4dFlYSnJMbWRwZEdoMVlpNXBieTl3YkdsdGMyOXNiQzl5ZFc0dGNtVmpiM0prTDNZeElpd2ljSEpsWkdsallYUmxJanA3SW5abGNuTnBiMjRpT2pRc0luSmxjWFZsYzNSZmMyaGhNalUySWpvaVlXTmtNbVJtTVRRd09XSTROREF5TkRBME5qSTFPREEwTnpZMlltVmhZamt4WWpBeU5EZGlZalUwTTJVM1pUQTBNMk5oWVRVMllqTXhOVGhsTVdGalppSXNJbkpsYzNWc2RGOXphR0V5TlRZaU9pSTNZakZpWXpBMk1qZzROakF4TXpnelltRmlabUZpT1RSa016a3dZemRsTnpaaE9HSTJaakkyT0dFME1qRm1OMk01TVRKaU5XSm1PRGd5T1RGbE5XUTFJaXdpY0hKdmRtbGtaWElpT2lKa2IyTnJaWElpTENKcGMyOXNZWFJwYjI0aU9pSnJaWEp1Wld3aUxDSmxiblpwY205dWJXVnVkQ0k2SW1SdlkydGxjaTFwYldGblpUcHphR0V5TlRZNk16SmtZVGMzWWpGaVpUSTBaR1UwWXpFMU1qWTJOMk15T0dGaU5qTTFNekUwTWpWalpEWTVNREF3WVdObU16QmhNekk0T1RnMVkySTROVGN6TnpkbU55SXNJbk52Wm5SM1lYSmxYMmxrWlc1MGFYUjVJam9pYjJOcExXMWhibWxtWlhOME9teHBiblY0TDJGdFpEWTBRSE5vWVRJMU5qcGhObVZtTW1WaE1XTTRaakZrWlRWak9EZzFaVEZoTVRoaVlUZGxaVFJrT1RZeVpUTmhPRFU1T0RjM1pqWm1ORFpqTW1aaU4yVmlZV014Wmpaall6VmpJaXdpY0c5c2FXTjVJam9pSWl3aWMzUmhjblJsWkY5MWJtbDRYMjF6SWpveE56a3lOemcwT1Rnek5UTXpMQ0psYm1SbFpGOTFibWw0WDIxeklqb3hOemt5TnpnME9UZzVPVGt3TENKelpYTnphVzl1SWpvaUlpd2ljMlZ4ZFdWdVkyVWlPakFzSW5CeVpYWnBiM1Z6WDNOb1lUSTFOaUk2SWlJc0luSmxZMjl5WkY5emFHRXlOVFlpT2lKbFpHWmlaRGs1T1dZeE4yUmxOalE1WldObE5qZGhNR1U0Tm1ZMk5HTTBOV1l6WldVMU9UWTRZall5WkdRNE56TmtOelpoTnpVM056UmxOMlF5WkRoaUluMTkiLCJzaWduYXR1cmVzIjpbeyJrZXlpZCI6IjEyZjAxNmFlZjI1NjM3NDQ1MzQ0YTBlYjYzYWRjZWYzNDBiYzcxMzc4MmVlZGQ2YThjODM4NzliYTU3NzM1N2EiLCJzaWciOiIxMUVvVm1TY2pNUkhqbVBWaGtVMTVYbThFaHAzUjRxbHE5eDlwd3dhN2JKUi9YN2VHb0tVV0VOdlhPeFRpSlNKeGdhdzQ2T3NMV2FnSUk2MDFrNjlEUT09In1dfSwibGluayI6eyJwYXlsb2FkVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5pbi10b3RvK2pzb24iLCJwYXlsb2FkIjoiZXlKZmRIbHdaU0k2SW1oMGRIQnpPaTh2YVc0dGRHOTBieTVwYnk5VGRHRjBaVzFsYm5RdmRqRWlMQ0p6ZFdKcVpXTjBJanBiZXlKdVlXMWxJam9pWW5WdVpHeGxMV3hwYm1VaUxDSmthV2RsYzNRaU9uc2ljMmhoTWpVMklqb2lNekV5TXpreVltRTRNbUkwWW1Ka1lXSTBPVFUwWkRoaFpqZ3pOVE0xTVRoa1ptRmxOVFE1T1RKbU5tSTRPR013Wm1GaE9XRXhNV0kzT1dJeFpUZzBPU0o5ZlYwc0luQnlaV1JwWTJGMFpWUjVjR1VpT2lKb2RIUndjem92TDNCc2FXMXpiMnhzYldGeWF5NW5hWFJvZFdJdWFXOHZjR3hwYlhOdmJHd3ZZblZ1Wkd4bExXeHBibXN2ZGpFaUxDSndjbVZrYVdOaGRHVWlPbnNpYVc1a1pYZ2lPakVzSW5CeVpYWnBiM1Z6WDNOb1lUSTFOaUk2SWlJc0ltVnVkSEo1WDNOb1lUSTFOaUk2SWpNeE1qTTVNbUpoT0RKaU5HSmlaR0ZpTkRrMU5HUTRZV1k0TXpVek5URTRaR1poWlRVME9Ua3laalppT0Roak1HWmhZVGxoTVRGaU56bGlNV1U0TkRraWZYMD0iLCJzaWduYXR1cmVzIjpbeyJrZXlpZCI6IjEyZjAxNmFlZjI1NjM3NDQ1MzQ0YTBlYjYzYWRjZWYzNDBiYzcxMzc4MmVlZGQ2YThjODM4NzliYTU3NzM1N2EiLCJzaWciOiJVL2UrYTU5RTRmY1hMTFl1ejZ3RzFKcjVQRkVvSUdob3dDK0tKR0ZybEhxM0laTnBvVmRSWVBqRnRlTG5oaCtXeVUyTFFHcUFJbitHYmdwMDRwUWtDZz09In1dfX0=&#34;,
                 &#34;contentType&#34;: &#34;application/json&#34;,
                 &#34;encoding&#34;: &#34;base64&#34;
               }
@@ -354,7 +354,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
           {
             &#34;contents&#34;: {
               &#34;attachment&#34;: {
-                &#34;content&#34;: &#34;eyJyZXF1ZXN0Ijp7Im1pbmltdW1faXNvbGF0aW9uIjoia2VybmVsIiwicHJvamVjdCI6eyJhcnRpZmFjdHMiOltdLCJmaWxlcyI6W3siY29udGVudCI6IntcInByaXZhdGVcIjp0cnVlLFwic2NyaXB0c1wiOntcInRlc3RcIjpcIm5vZGUgdGVzdC5tanNcIn19XG4iLCJwYXRoIjoicGFja2FnZS5qc29uIn0seyJjb250ZW50IjoiZXhwb3J0IGNvbnN0IHN1bSA9IHZhbHVlcyA9XHUwMDNlIHZhbHVlcy5yZWR1Y2UoKHRvdGFsLCB2YWx1ZSkgPVx1MDAzZSB0b3RhbCArIHZhbHVlLCAwKTtcbiIsInBhdGgiOiJzdW0ubWpzIn0seyJjb250ZW50IjoiaW1wb3J0IGFzc2VydCBmcm9tICdub2RlOmFzc2VydC9zdHJpY3QnO1xuaW1wb3J0IHtzdW19IGZyb20gJy4vc3VtLm1qcyc7XG5hc3NlcnQuZXF1YWwoc3VtKFsxMCwgMjAsIC01XSksIDI1KTtcbmFzc2VydC5lcXVhbChzdW0oW10pLCAwKTtcbmNvbnNvbGUubG9nKCd0d28gc3VtIGNoZWNrcyBwYXNzZWQnKTtcbiIsInBhdGgiOiJ0ZXN0Lm1qcyJ9LHsiY29udGVudCI6IntcbiAgXCJjb21taXRcIjogXCI2Mjc1MzRmYzcxZGUxMDVhZWI3ZTcxMDk4OTcwYmI1MWQ3MDk2MzQ5XCIsXG4gIFwicHVsbF9yZXF1ZXN0XCI6IFwiMFwiLFxuICBcInJlcG9zaXRvcnlcIjogXCJleGFtcGxlL3ByLXJlY2VpcHQtZml4dHVyZVwiXG59XG4iLCJwYXRoIjoiLnByLXJlY2VpcHQvc3ViamVjdC5qc29uIn1dLCJncmFudF9wcm9maWxlIjoiIiwic3RlcHMiOlsibnBtIHRlc3QiXX0sInByb3RvY29sIjozLCJzb2Z0d2FyZV9ydWxlIjpudWxsLCJ0aW1lb3V0X21zIjozMDAwMCwidHJhY2VfaWQiOiJwci1yZWNlaXB0LTAifSwicmVzcG9uc2UiOnsiZHVyYXRpb25fbXMiOiI2MzY2IiwiZW52aXJvbm1lbnQiOiJkb2NrZXItaW1hZ2U6c2hhMjU2OjMyZGE3N2IxYmUyNGRlNGMxNTI2NjdjMjhhYjYzNTMxNDI1Y2Q2OTAwMGFjZjMwYTMyODk4NWNiODU3Mzc3ZjciLCJpc29sYXRpb24iOiJrZXJuZWwiLCJwcm9qZWN0Ijp7ImFkdmljZSI6W10sImFydGlmYWN0cyI6W10sImFydGlmYWN0c190cnVuY2F0ZWQiOmZhbHNlLCJvdXRjb21lIjoiUFJPSkVDVF9PVVRDT01FX0NPTVBMRVRFRCIsIm91dGNvbWVfZGV0YWlsIjoiIiwic3RlcHMiOlt7ImNvbW1hbmQiOiJucG0gdGVzdCIsImR1cmF0aW9uX21zIjoiNTg3NyIsImV4aXRfY29kZSI6MCwic3RkZXJyIjoiIiwic3RkZXJyX3RydW5jYXRlZCI6ZmFsc2UsInN0ZG91dCI6IkNqNGdkR1Z6ZEFvK0lHNXZaR1VnZEdWemRDNXRhbk1LQ25SM2J5QnpkVzBnWTJobFkydHpJSEJoYzNObFpBbz0iLCJzdGRvdXRfdHJ1bmNhdGVkIjpmYWxzZSwidGltZWRfb3V0IjpmYWxzZX1dfSwicmVjb3JkIjp7ImVuZGVkX3VuaXhfbXMiOiIxNzkyNjMxOTMzMTM4IiwiZW52aXJvbm1lbnQiOiJkb2NrZXItaW1hZ2U6c2hhMjU2OjMyZGE3N2IxYmUyNGRlNGMxNTI2NjdjMjhhYjYzNTMxNDI1Y2Q2OTAwMGFjZjMwYTMyODk4NWNiODU3Mzc3ZjciLCJpc29sYXRpb24iOiJrZXJuZWwiLCJwb2xpY3kiOiIiLCJwcmV2aW91c19zaGEyNTYiOiIiLCJwcm92aWRlciI6ImRvY2tlciIsInJlY29yZF9zaGEyNTYiOiI0ZmJkYTU0YTYzMmE0ODUwYWRkZmE2NjdkNTVlMmYyYTFkOGRkNWZhYmE2MzAwM2Q0MDg1MDYzYjhlNWNhYTJhIiwicmVxdWVzdF9zaGEyNTYiOiJiOGZhNDkyZjRlM2Q5ZDI2NmUzZjhlYTk2MTBjZWU1MGU5MTdjMmJjYjZkMmI5MDNkODNiYjA5NWRkNzdkMWY3IiwicmVzdWx0X3NoYTI1NiI6IjdiMWJjMDYyODg2MDEzODNiYWJmYWI5NGQzOTBjN2U3NmE4YjZmMjY4YTQyMWY3YzkxMmI1YmY4ODI5MWU1ZDUiLCJzZXF1ZW5jZSI6IjAiLCJzZXNzaW9uIjoiIiwic29mdHdhcmVfaWRlbnRpdHkiOiJvY2ktbWFuaWZlc3Q6bGludXgvYW1kNjRAc2hhMjU2OmE2ZWYyZWExYzhmMWRlNWM4ODVlMWExOGJhN2VlNGQ5NjJlM2E4NTk4NzdmNmY0NmMyZmI3ZWJhYzFmNmNjNWMiLCJzb2Z0d2FyZV9ydWxlX2lkIjoiIiwic3RhcnRlZF91bml4X21zIjoiMTc5MjYzMTkyNjc3MSIsInVuYW5zd2VyZWQiOiIiLCJ2ZXJzaW9uIjoyfSwic2FuZGJveCI6ImRvY2tlciIsInNvZnR3YXJlX2lkZW50aXR5Ijoib2NpLW1hbmlmZXN0OmxpbnV4L2FtZDY0QHNoYTI1NjphNmVmMmVhMWM4ZjFkZTVjODg1ZTFhMThiYTdlZTRkOTYyZTNhODU5ODc3ZjZmNDZjMmZiN2ViYWMxZjZjYzVjIn19&#34;,
+                &#34;content&#34;: &#34;eyJyZXF1ZXN0Ijp7Im1pbmltdW1faXNvbGF0aW9uIjoia2VybmVsIiwicHJvamVjdCI6eyJhcnRpZmFjdHMiOltdLCJmaWxlcyI6W3siY29udGVudCI6IntcInByaXZhdGVcIjp0cnVlLFwic2NyaXB0c1wiOntcInRlc3RcIjpcIm5vZGUgdGVzdC5tanNcIn19XG4iLCJwYXRoIjoicGFja2FnZS5qc29uIn0seyJjb250ZW50IjoiZXhwb3J0IGNvbnN0IHN1bSA9IHZhbHVlcyA9XHUwMDNlIHZhbHVlcy5yZWR1Y2UoKHRvdGFsLCB2YWx1ZSkgPVx1MDAzZSB0b3RhbCArIHZhbHVlLCAwKTtcbiIsInBhdGgiOiJzdW0ubWpzIn0seyJjb250ZW50IjoiaW1wb3J0IGFzc2VydCBmcm9tICdub2RlOmFzc2VydC9zdHJpY3QnO1xuaW1wb3J0IHtzdW19IGZyb20gJy4vc3VtLm1qcyc7XG5hc3NlcnQuZXF1YWwoc3VtKFsxMCwgMjAsIC01XSksIDI1KTtcbmFzc2VydC5lcXVhbChzdW0oW10pLCAwKTtcbmNvbnNvbGUubG9nKCd0d28gc3VtIGNoZWNrcyBwYXNzZWQnKTtcbiIsInBhdGgiOiJ0ZXN0Lm1qcyJ9LHsiY29udGVudCI6IntcbiAgXCJjb21taXRcIjogXCI2Mjc1MzRmYzcxZGUxMDVhZWI3ZTcxMDk4OTcwYmI1MWQ3MDk2MzQ5XCIsXG4gIFwicHVsbF9yZXF1ZXN0XCI6IFwiMFwiLFxuICBcInJlcG9zaXRvcnlcIjogXCJleGFtcGxlL3ByLXJlY2VpcHQtZml4dHVyZVwiXG59XG4iLCJwYXRoIjoiLnByLXJlY2VpcHQvc3ViamVjdC5qc29uIn1dLCJncmFudF9wcm9maWxlIjoiIiwic3RlcHMiOlsibnBtIHRlc3QiXX0sInByb3RvY29sIjo0LCJzb2Z0d2FyZV9ydWxlIjpudWxsLCJ0aW1lb3V0X21zIjozMDAwMCwidHJhY2VfaWQiOiJwci1yZWNlaXB0LTAifSwicmVzcG9uc2UiOnsiZHVyYXRpb25fbXMiOiI2NDU3IiwiZW52aXJvbm1lbnQiOiJkb2NrZXItaW1hZ2U6c2hhMjU2OjMyZGE3N2IxYmUyNGRlNGMxNTI2NjdjMjhhYjYzNTMxNDI1Y2Q2OTAwMGFjZjMwYTMyODk4NWNiODU3Mzc3ZjciLCJpbnN0YW5jZSI6IiIsImlzb2xhdGlvbiI6Imtlcm5lbCIsInByb2plY3QiOnsiYWR2aWNlIjpbXSwiYXJ0aWZhY3RzIjpbXSwiYXJ0aWZhY3RzX3RydW5jYXRlZCI6ZmFsc2UsIm91dGNvbWUiOiJQUk9KRUNUX09VVENPTUVfQ09NUExFVEVEIiwib3V0Y29tZV9kZXRhaWwiOiIiLCJzdGVwcyI6W3siY29tbWFuZCI6Im5wbSB0ZXN0IiwiZHVyYXRpb25fbXMiOiI1OTYzIiwiZXhpdF9jb2RlIjowLCJzdGRlcnIiOiIiLCJzdGRlcnJfdHJ1bmNhdGVkIjpmYWxzZSwic3Rkb3V0IjoiQ2o0Z2RHVnpkQW8rSUc1dlpHVWdkR1Z6ZEM1dGFuTUtDblIzYnlCemRXMGdZMmhsWTJ0eklIQmhjM05sWkFvPSIsInN0ZG91dF90cnVuY2F0ZWQiOmZhbHNlLCJ0aW1lZF9vdXQiOmZhbHNlfV19LCJyZWNvcmQiOnsiZW5kZWRfdW5peF9tcyI6IjE3OTI3ODQ5ODk5OTAiLCJlbnZpcm9ubWVudCI6ImRvY2tlci1pbWFnZTpzaGEyNTY6MzJkYTc3YjFiZTI0ZGU0YzE1MjY2N2MyOGFiNjM1MzE0MjVjZDY5MDAwYWNmMzBhMzI4OTg1Y2I4NTczNzdmNyIsImluc3RhbmNlIjoiIiwiaXNvbGF0aW9uIjoia2VybmVsIiwicG9saWN5IjoiIiwicHJldmlvdXNfc2hhMjU2IjoiIiwicHJvdmlkZXIiOiJkb2NrZXIiLCJyZWNvcmRfc2hhMjU2IjoiZWRmYmQ5OTlmMTdkZTY0OWVjZTY3YTBlODZmNjRjNDVmM2VlNTk2OGI2MmRkODczZDc2YTc1Nzc0ZTdkMmQ4YiIsInJlcXVlc3Rfc2hhMjU2IjoiYWNkMmRmMTQwOWI4NDAyNDA0NjI1ODA0NzY2YmVhYjkxYjAyNDdiYjU0M2U3ZTA0M2NhYTU2YjMxNThlMWFjZiIsInJlc3VsdF9zaGEyNTYiOiI3YjFiYzA2Mjg4NjAxMzgzYmFiZmFiOTRkMzkwYzdlNzZhOGI2ZjI2OGE0MjFmN2M5MTJiNWJmODgyOTFlNWQ1Iiwic2VxdWVuY2UiOiIwIiwic2Vzc2lvbiI6IiIsInNvZnR3YXJlX2lkZW50aXR5Ijoib2NpLW1hbmlmZXN0OmxpbnV4L2FtZDY0QHNoYTI1NjphNmVmMmVhMWM4ZjFkZTVjODg1ZTFhMThiYTdlZTRkOTYyZTNhODU5ODc3ZjZmNDZjMmZiN2ViYWMxZjZjYzVjIiwic29mdHdhcmVfcnVsZV9pZCI6IiIsInN0YXJ0ZWRfdW5peF9tcyI6IjE3OTI3ODQ5ODM1MzMiLCJ1bmFuc3dlcmVkIjoiIiwidmVyc2lvbiI6NH0sInNhbmRib3giOiJkb2NrZXIiLCJzb2Z0d2FyZV9pZGVudGl0eSI6Im9jaS1tYW5pZmVzdDpsaW51eC9hbWQ2NEBzaGEyNTY6YTZlZjJlYTFjOGYxZGU1Yzg4NWUxYTE4YmE3ZWU0ZDk2MmUzYTg1OTg3N2Y2ZjQ2YzJmYjdlYmFjMWY2Y2M1YyJ9fQ==&#34;,
                 &#34;contentType&#34;: &#34;application/json&#34;,
                 &#34;encoding&#34;: &#34;base64&#34;
               }
@@ -362,7 +362,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
             &#34;name&#34;: &#34;exchange.json&#34;
           }
         ],
-        &#34;description&#34;: &#34;Public example evidence: DSSE envelope, signed body type application/vnd.in-toto&#43;json, in-toto statement https://in-toto.io/Statement/v1, predicate https://plimsollmark.github.io/plimsoll/run-record/v1, key id 30a2588ff1f3c0b1d9105e24dbd93068114dbdbcf35771d7abed5b4a30b2da12. entry.json is line 1 of the referenced bundle as stored: the exact binary protobuf request and response, the record&#39;s envelope and the harness&#39;s signed link placing the line. exchange.json is a plain JSON copy checked against those bytes.&#34;,
+        &#34;description&#34;: &#34;Public example evidence: DSSE envelope, signed body type application/vnd.in-toto&#43;json, in-toto statement https://in-toto.io/Statement/v1, predicate https://plimsollmark.github.io/plimsoll/run-record/v1, key id 12f016aef25637445344a0eb63adcef340bc713782eedd6a8c83879ba577357a. entry.json is line 1 of the referenced bundle as stored: the exact binary protobuf request and response, the record&#39;s envelope and the harness&#39;s signed link placing the line. exchange.json is a plain JSON copy checked against those bytes.&#34;,
         &#34;propertyName&#34;: &#34;plimsoll:run_record&#34;
       }
     ]
@@ -479,7 +479,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
                         },
                         {
                           &#34;name&#34;: &#34;plimsoll:duration_ms&#34;,
-                          &#34;value&#34;: &#34;5877&#34;
+                          &#34;value&#34;: &#34;5963&#34;
                         },
                         {
                           &#34;name&#34;: &#34;plimsoll:timed_out&#34;,
@@ -504,9 +504,9 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
               &#34;uid&#34;: &#34;1&#34;
             }
           ],
-          &#34;timeEnd&#34;: &#34;2026-10-22T01:18:53.138Z&#34;,
-          &#34;timeStart&#34;: &#34;2026-10-22T01:18:46.771Z&#34;,
-          &#34;uid&#34;: &#34;4fbda54a632a4850addfa667d55e2f2a1d8dd5faba63003d4085063b8e5caa2a&#34;
+          &#34;timeEnd&#34;: &#34;2026-10-23T19:49:49.990Z&#34;,
+          &#34;timeStart&#34;: &#34;2026-10-23T19:49:43.533Z&#34;,
+          &#34;uid&#34;: &#34;edfbd999f17de649ece67a0e86f64c45f3ee5968b62dd873d76a75774e7d2d8b&#34;
         }
       ]
     }
@@ -586,7 +586,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
           &#34;hashes&#34;: [
             {
               &#34;alg&#34;: &#34;SHA-256&#34;,
-              &#34;content&#34;: &#34;39eef156f275775a44b4e9e73fdd849c1c62b423e99d4976209a8854f52f02d7&#34;
+              &#34;content&#34;: &#34;4247db7dae30879766f07c5bd89ea69bf08740c70357b62028f7c1f042206553&#34;
             }
           ],
           &#34;type&#34;: &#34;attestation&#34;,
@@ -619,7 +619,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
         },
         {
           &#34;name&#34;: &#34;plimsoll:request_sha256&#34;,
-          &#34;value&#34;: &#34;b8fa492f4e3d9d266e3f8ea9610cee50e917c2bcb6d2b903d83bb095dd77d1f7&#34;
+          &#34;value&#34;: &#34;acd2df1409b8402404625804766beab91b0247bb543e7e043caa56b3158e1acf&#34;
         },
         {
           &#34;name&#34;: &#34;plimsoll:result_sha256&#34;,
@@ -627,7 +627,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
         },
         {
           &#34;name&#34;: &#34;plimsoll:record_sha256&#34;,
-          &#34;value&#34;: &#34;4fbda54a632a4850addfa667d55e2f2a1d8dd5faba63003d4085063b8e5caa2a&#34;
+          &#34;value&#34;: &#34;edfbd999f17de649ece67a0e86f64c45f3ee5968b62dd873d76a75774e7d2d8b&#34;
         },
         {
           &#34;name&#34;: &#34;plimsoll:trace_id&#34;,
@@ -642,7 +642,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
         &#34;phase&#34;: &#34;operations&#34;
       }
     ],
-    &#34;timestamp&#34;: &#34;2026-10-22T01:18:53.138Z&#34;,
+    &#34;timestamp&#34;: &#34;2026-10-23T19:49:49.990Z&#34;,
     &#34;tools&#34;: {
       &#34;components&#34;: [
         {
@@ -662,7 +662,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
   &#34;properties&#34;: [
     {
       &#34;name&#34;: &#34;plimsoll:bundle_sha256&#34;,
-      &#34;value&#34;: &#34;39eef156f275775a44b4e9e73fdd849c1c62b423e99d4976209a8854f52f02d7&#34;
+      &#34;value&#34;: &#34;4247db7dae30879766f07c5bd89ea69bf08740c70357b62028f7c1f042206553&#34;
     },
     {
       &#34;name&#34;: &#34;plimsoll:bundle_line&#34;,
@@ -673,7 +673,7 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
       &#34;value&#34;: &#34;examples/sbom&#34;
     }
   ],
-  &#34;serialNumber&#34;: &#34;urn:uuid:e194040c-0973-4201-b137-68c52cebcca0&#34;,
+  &#34;serialNumber&#34;: &#34;urn:uuid:391b2bec-c71f-4a50-8370-297071b47e80&#34;,
   &#34;specVersion&#34;: &#34;1.6&#34;,
   &#34;version&#34;: 1
 }
@@ -681,13 +681,13 @@ PASS: altered claim digest refused: BOM differs from the verified exchange: file
 </section>
 
 
-<section><h2>The program’s own fingerprint</h2><p>Think of a file-set fingerprint as a fingerprint of the whole folder. The exact recipe follows. The file-set digest separates the program from its execution settings. Sort files by path. For each file, concatenate the 32 raw bytes of SHA-256(path) followed by the 32 raw bytes of SHA-256(content). SHA-256 of that entire concatenation is the file-set digest.</p><p>The request fingerprint uses <code>plimsoll.run-request.v2</code> for protocol 2 and later, and <code>plimsoll.run-request.v1</code> for protocol 1. The protocol is the request format revision. The result uses <code>plimsoll.run-result.v1</code> and these records use <code>plimsoll.run-record.v2</code>. Each value is its length as an unsigned 64-bit big-endian integer followed by its bytes. Fields are encoded as name then value, in the reference order. Integers are decimal text, booleans are <code>true</code> or <code>false</code>, strings are UTF-8, and printed output keeps its raw bytes. The request fingerprint also covers the protocol version (the request-format revision), minimum isolation tier, timeout and software rule, so it is a different identity. The file-set fingerprint remains bound to the signed request because the checker compares the file list with the request stored in the verified bundle.</p></section>
+<section><h2>The program’s own fingerprint</h2><p>Think of a file-set fingerprint as a fingerprint of the whole folder. The exact recipe follows. The file-set digest separates the program from its execution settings. Sort files by path. For each file, concatenate the 32 raw bytes of SHA-256(path) followed by the 32 raw bytes of SHA-256(content). SHA-256 of that entire concatenation is the file-set digest.</p><p>The request fingerprint uses <code>plimsoll.run-request.v2</code>. The protocol is the request format revision. The result uses <code>plimsoll.run-result.v1</code> and these records use <code>plimsoll.run-record.v4</code>, whose fields include the sandbox instance that ran the call. Each value is its length as an unsigned 64-bit big-endian integer followed by its bytes. Fields are encoded as name then value, in the reference order. Integers are decimal text, booleans are <code>true</code> or <code>false</code>, strings are UTF-8, and printed output keeps its raw bytes. The request fingerprint also covers the protocol version (the request-format revision), minimum isolation tier, timeout and software rule, so it is a different identity. The file-set fingerprint remains bound to the signed request because the checker compares the file list with the request stored in the verified bundle.</p></section>
 <section><h2>How thick are the walls?</h2><p>An isolation tier is the kind of boundary around the code. Think of <code>process</code> as a cubicle, <code>container</code> as a room with a lock, <code>kernel</code> as a room with its own plumbing, and <code>vm</code> as a separate building, a virtual machine. These are analogies, not safety ratings.</p><p>The reconcile runs asked for <code>kernel</code>. The daemon reported that tier after checking gVisor, a user-space kernel between the program and the host. The record preserves that report. It is configuration and provider evidence plus startup checks, never hardware attestation, an independent measurement from the machine itself.</p></section>
 <section id="review"><div class="section-label">The trust boundary</div><h2>What the checks establish</h2><p>They establish that the evidence verifies under its key, that the bundle is complete through its last checkpoint (a signed entry-count statement), and that each BOM field derived from the exchange agrees with it. <code>-trusted-pub</code> additionally requires the attached key to match a key obtained independently.</p>
 <h3>What remains outside that check</h3><p>The attached run record is signed; this BOM is unsigned. Agent authorship is supplied example context, not a record fact, and the execution layer cannot identify the model. Network isolation is provider configuration, not a separately signed runtime measurement; a granted run reaches only the routes its grant lists, and what reached the other side is not in this record. The run&#39;s times are the daemon&#39;s own unwitnessed clock. An attached key alone establishes consistency, not signer identity; use an independently trusted key. Display names and the assessor label are unsigned presentation. The attached bundle line proves itself; the whole bundle it belongs to is referenced by digest and checked when supplied. This is run evidence, not an inventory of the image&#39;s installed packages.</p><p>A score of 1 in conformance or confidence means a deterministic signature and mapping check passed. It does not mean perfect security, independent runtime assurance or a measured probability. Names, the page URL and assessor labels can be changed without re-signing evidence.</p><p>This run’s BOM is a receipt, not a package scan. A software bill of materials (SBOM) for the image is a separate ingredients label, linked when supplied. Neither label shows that vulnerability lookups have been done. Schema validity does not establish platform ingestion or rendering. A viewer supporting these fields can display components, hashes and references; support for declarations must be tested per platform. No platform round trip has been tested here.</p><p>Each label attaches its own line of the bundle (the stored request and response, the sealed record and the harness's signed link that places the line at its index) and refers to the whole bundle by URL and fingerprint. So a label stays small however many runs its bundle holds: the adapter bundle behind the verdicts is 1.8 MB, and each verdict label about 150 KB. The checker verifies the chain and the checks across runs when the bundle is at hand (a sibling file with the referenced fingerprint, or <code>-check-bundle</code>) and prints a LIMIT line saying so when it is not. Input is capped at 32 MiB.</p></section>
 <section><h2>Reproduce and review</h2><p>From a checkout of plimsoll, run these commands. Generation reuses the evidence and starts no sandbox. Tests use pinned schemas without network access after Go dependencies are available.</p><pre>cd examples/sbom
 go run .
-go run . -check ../../docs/examples/sbom/run-4fbda54a632a.cdx.json -trusted-pub ../../docs/examples/sbom/harness.pub
+go run . -check ../../docs/examples/sbom/run-edfbd999f17d.cdx.json -trusted-pub ../../docs/examples/sbom/harness.pub
 cd ../..
 make sbom-suite</pre><p>Successful checks print PASS. Changed evidence or a mapped field makes <code>-check</code> exit nonzero. Obtain the trusted key independently when reviewing another publisher's file; the copy next to this example is an illustrative pin.</p>
 <div class="refs"><a href="https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/bundle.jsonl">INTERNAL · signed bundle →</a><a href="https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/harness.pub">INTERNAL · example public key →</a><a href="https://www.cyclonedx.org/docs/1.6/json/">EXTERNAL · official CycloneDX 1.6 JSON reference ↗</a><a href="https://cyclonedx.org/use-cases/attestations/">EXTERNAL · official attestations docs ↗</a><a href="https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md">EXTERNAL · in-toto specification ↗</a></div>
@@ -735,13 +735,11 @@ make sbom-suite</pre><p>Successful checks print PASS. Changed evidence or a mapp
     sum() { return hash(concat(this.parts)); }
   }
   function requestDigest(q) {
-    const e = new Encoder(q.protocol >= 2 ? 'plimsoll.run-request.v2' : 'plimsoll.run-request.v1');
+    const e = new Encoder('plimsoll.run-request.v2');
     e.field('protocol', q.protocol).field('minimum_isolation', q.minimum_isolation).field('timeout_ms', q.timeout_ms);
-    if (q.protocol >= 2) {
-      const rule = q.software_rule || {mode: '', identities: []};
-      e.field('software_mode', rule.mode).field('software_identities', rule.identities.length);
-      for (const id of rule.identities) e.field('software_identity', id);
-    }
+    const rule = q.software_rule || {mode: '', identities: []};
+    e.field('software_mode', rule.mode).field('software_identities', rule.identities.length);
+    for (const id of rule.identities) e.field('software_identity', id);
     const p = q.project;
     if (!p) throw new Error('Only project receipts are supported');
     e.field('kind', 'project').field('grant_profile', p.grant_profile).field('files', p.files.length);
@@ -773,12 +771,13 @@ make sbom-suite</pre><p>Successful checks print PASS. Changed evidence or a mapp
     for (const a of p.artifacts) e.field('artifact_path', a.path).field('artifact_content', from64(a.content));
     return e.sum();
   }
-  const recordFields = ['request_sha256', 'result_sha256', 'provider', 'isolation', 'environment', 'policy',
-    'software_identity', 'software_rule_id', 'started_unix_ms', 'ended_unix_ms', 'session', 'sequence', 'previous_sha256'];
+  const recordFields = ['request_sha256', 'result_sha256', 'unanswered', 'provider', 'isolation', 'environment', 'policy',
+    'software_identity', 'software_rule_id', 'instance', 'started_unix_ms', 'ended_unix_ms', 'session', 'sequence', 'previous_sha256'];
+  const instanceForm = /^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._:-]{1,127}$/;
   function recordDigest(r) {
-    if (r.version !== 2) throw new Error('Only answered version 2 receipts are supported');
-    const e = new Encoder('plimsoll.run-record.v2');
-    for (const field of recordFields) e.field(field, r[field]);
+    if (r.version !== 4) throw new Error('Only version 4 receipts are supported');
+    const e = new Encoder('plimsoll.run-record.v4');
+    for (const field of recordFields) e.field(field, r[field] ?? '');
     return e.sum();
   }
   const timestamp = ms => new Date(Number(ms)).toISOString();
@@ -862,6 +861,7 @@ make sbom-suite</pre><p>Successful checks print PASS. Changed evidence or a mapp
       add('fields', 'Signed fields match the attached exchange', fields.every(k => String(p[k] ?? '') === String(r[k] ?? ''))
         && r.provider === x.response.sandbox && r.isolation === x.response.isolation && r.environment === x.response.environment
         && r.software_identity === x.response.software_identity && r.software_rule_id === ruleID
+        && (r.instance ?? '') === (x.response.instance ?? '') && (!r.instance || instanceForm.test(r.instance))
         && (!rule?.mode || rule.identities.includes(r.software_identity))
         && tiers.indexOf(r.isolation) >= Math.max(1, tiers.indexOf(x.request.minimum_isolation))
         && (!x.request.minimum_isolation || tiers.includes(x.request.minimum_isolation))

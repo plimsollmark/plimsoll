@@ -40,7 +40,7 @@ func TestDockerRunsTheOpenShellSmokeScript(t *testing.T) {
 	if r.Node == "" || r.Swept < minSwept || !slices.Contains(r.Writable, "/tmp") || r.DNS == "" || r.MemoryMax == "" || r.TmpMount == "" {
 		t.Errorf("report %+v", r)
 	}
-	if len(r.Egress) != 3 {
+	if len(r.Egress) != 5 { // IPv4 and IPv6 addresses, and one name
 		t.Errorf("egress %v", r.Egress)
 	}
 	if err := checkEgress(r.Egress); err != nil {

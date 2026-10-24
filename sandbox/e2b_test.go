@@ -205,11 +205,11 @@ func TestE2BReadFileDistinguishesMissingFromInfrastructureFailure(t *testing.T) 
 	}))
 	defer srv.Close()
 	e := &E2B{EnvdHost: func(string) string { return srv.URL }}
-	if _, found, err := e.readFile(context.Background(), e2bVM{id: "sb", accessToken: "tok"}, "/x"); err != nil || found {
+	if _, found, err := e.readFile(context.Background(), e2bVM{id: "sb", accessToken: "tok"}, "/x", 1<<20); err != nil || found {
 		t.Fatalf("404: found=%v err=%v, want missing without error", found, err)
 	}
 	status = http.StatusInternalServerError
-	if _, _, err := e.readFile(context.Background(), e2bVM{id: "sb", accessToken: "tok"}, "/x"); err == nil {
+	if _, _, err := e.readFile(context.Background(), e2bVM{id: "sb", accessToken: "tok"}, "/x", 1<<20); err == nil {
 		t.Fatal("500 was silently treated as a missing artifact")
 	}
 }
@@ -485,7 +485,7 @@ func e2bSmokeFake(t *testing.T, report string, exitCode int) (*httptest.Server, 
 			calls.starts++
 			out := report
 			if strings.Contains(strings.Join(start.Process.Args, " "), "python3") {
-				out = "42\n" // the language probe: this template runs Python
+				out = "javascript\npython\n" // the language probe (LanguageProbe): this template runs both
 			} else {
 				calls.procCmd, calls.procCwd, calls.procEnvs = start.Process.Cmd, start.Process.Cwd, start.Process.Envs
 			}
@@ -670,7 +670,7 @@ func TestE2BNeverFollowsARedirect(t *testing.T) {
 	defer envd.Close()
 	for name, client := range map[string]*http.Client{"default": nil, "embedder's": {Timeout: time.Minute}} {
 		e := &E2B{EnvdHost: func(string) string { return envd.URL }, HTTP: client}
-		data, _, err := e.readFile(context.Background(), e2bVM{id: "sb", accessToken: "tok"}, "/work/out.txt")
+		data, _, err := e.readFile(context.Background(), e2bVM{id: "sb", accessToken: "tok"}, "/work/out.txt", 1<<20)
 		if err == nil || len(data) != 0 {
 			t.Errorf("%s client: an artifact read answered with a redirect returned %q, err %v; want an error", name, data, err)
 		}

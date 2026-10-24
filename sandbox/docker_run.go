@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/deadline"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
 
@@ -134,12 +135,17 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 	// took milliseconds, or a guest that exited in time, came back as a timed-out run
 	// (R6 review, 2026-10-03).
 	ended := deadline.Expired(runCtx)
+	// The run is over once the CLI returns, so its grant ends here, before the cleanup:
+	// a container the CLI left behind keeps running until its removal, which can
+	// take more than half a minute, and its processes must not spend that time making
+	// granted calls. The trace is complete from here and goes on every result below.
+	trace := broker.finalTrace()
 	if err != nil || ended != nil {
 		// A CLI that did not exit 0 may have failed itself (a broken attach stream, a
 		// daemon restart under live-restore) and left the container running with
 		// nothing to stop it (review F2); one --rm already removed costs a docker rm
 		// that finds nothing.
-		d.forceRemove(execState.host, name)
+		d.removeOrHold(ctx, execState.host, name)
 	}
 
 	// The marker is in stderr exactly when the start script ran, which writes it before
@@ -157,13 +163,13 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 		EnvironmentIdentity: dockerImageIdentity(execState.imageID),
 		// Metadata-only evidence of the run's brokered host.* calls. Nil unless the
 		// run carried a grant that made calls; it never affects execution below.
-		CallTrace: broker.finalTrace(),
+		CallTrace: trace,
 	}
 
 	if ended != nil && !guestStarted {
 		// The run ended with no start marker: nothing shows the guest's code started, so
 		// it is not reported as the guest's timeout. Unmarked, as below.
-		return Result{Sandbox: d.Name(), Isolation: isolation}, fmt.Errorf("docker did not start the container's command before the run ended: %w", ended)
+		return Result{Sandbox: d.Name(), Isolation: isolation, CallTrace: trace}, fmt.Errorf("docker did not start the container's command before the run ended: %w", ended)
 	}
 	if ended == context.DeadlineExceeded {
 		res.TimedOut = true
@@ -171,7 +177,7 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 		return res, nil
 	}
 	if ended != nil {
-		return Result{Sandbox: d.Name(), Isolation: isolation}, ended
+		return Result{Sandbox: d.Name(), Isolation: isolation, CallTrace: trace}, ended
 	}
 
 	if !guestStarted {
@@ -179,14 +185,14 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 		// the container's command started (a bad image, a rejected flag, a daemon error),
 		// so it is an infrastructure error, not "your code exited non-zero". Unmarked: a
 		// broken attach stream could lose the marker of a run that ran.
-		return Result{Sandbox: d.Name()}, fmt.Errorf("docker did not run the container's command (%v): %s", err, truncateForError(strings.TrimSpace(stderr.String())))
+		return Result{Sandbox: d.Name(), CallTrace: trace}, fmt.Errorf("docker did not run the container's command (%v): %s", err, truncateForError(strings.TrimSpace(stderr.String())))
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || !exitErr.Exited() {
 			// The docker CLI itself failed or was killed by a signal: what the guest
 			// exited with never reached this process.
-			return Result{Sandbox: d.Name(), Isolation: isolation}, fmt.Errorf("the docker CLI failed during the run: %w", err)
+			return Result{Sandbox: d.Name(), Isolation: isolation, CallTrace: trace}, fmt.Errorf("the docker CLI failed during the run: %w", err)
 		}
 		// The guest's own exit, relayed by the CLI: a normal result, not an error.
 		res.ExitCode = exitErr.ExitCode()
@@ -223,7 +229,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	isolation := execState.isolation
 	timeout := d.projectTimeout(req.Timeout)
 
-	// The runner enforces a per-step timeout; the outer context is a hard backstop
+	// The runner gives the steps one deadline (the plan's budget); the outer context is a hard backstop
 	// with a small grace so the runner reports cleanly before docker is killed.
 	runCtx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
 	defer cancel()
@@ -246,7 +252,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	}
 	// The steps start with the image's environment and the grant's socket; the runner
 	// itself starts with neither (dockerRunnerArgv).
-	plan := runnerwire.Plan{Steps: req.Steps, StepTimeout: timeout, Artifacts: req.Artifacts, HostSDK: hostSDKModule(req.Grant),
+	plan := runnerwire.Plan{Steps: req.Steps, Budget: timeout, Artifacts: req.Artifacts, HostSDK: hostSDKModule(req.Grant),
 		Env: execState.guestEnv(imageID, grantEnv...), ReportKey: reportKey}
 	for _, f := range req.Files {
 		plan.Files = append(plan.Files, runnerwire.File(f))
@@ -287,23 +293,27 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	runErr := cmd.Run()
 	// Read before the cleanup, as in runSnippet: the cleanup can outlast the deadline.
 	ended := deadline.Expired(runCtx)
+	// As in RunJavaScript: the grant ends before the cleanup, and the complete trace goes
+	// on every result below, failures included (a hung agent calling an API until the
+	// deadline is the case the trace exists for).
+	trace := broker.finalTrace()
 	if runErr != nil || ended != nil {
 		// As in RunJavaScript: a CLI that did not exit 0 may have left its container
 		// running (review F2).
-		d.forceRemove(execState.host, name)
+		d.removeOrHold(ctx, execState.host, name)
 	}
 
 	if ended != nil {
 		if _, ran := afterMarker(stderr.String(), started); !ran {
 			// Nothing shows the runner, so any step, started: not reported as a timeout.
 			// Unmarked, as below.
-			return ProjectResult{Sandbox: d.Name(), Isolation: isolation},
+			return ProjectResult{Sandbox: d.Name(), Isolation: isolation, CallTrace: trace},
 				fmt.Errorf("docker did not start the project container's command before the run ended: %w", ended)
 		}
 		if ended == context.DeadlineExceeded {
-			return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeTimedOut, Detail: "run exceeded the time budget"}, nil
+			return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeTimedOut, Detail: "run exceeded the time budget", CallTrace: trace}, nil
 		}
-		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, ended
+		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, CallTrace: trace}, ended
 	}
 
 	res, reported := RunnerReport(d.Name(), isolation, stdout.String(), reportKey)
@@ -317,7 +327,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		//     execution state unknown → ProtocolError.
 		var exitErr *exec.ExitError
 		if _, ran := afterMarker(stderr.String(), started); !ran {
-			return ProjectResult{Sandbox: d.Name(), Isolation: isolation},
+			return ProjectResult{Sandbox: d.Name(), Isolation: isolation, CallTrace: trace},
 				fmt.Errorf("docker did not run the project container's command (%v): %s", runErr, truncateForError(strings.TrimSpace(stderr.String())))
 		}
 		// Detail is plimsoll's own words: it reaches the audit line, and the
@@ -327,11 +337,11 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		if errors.As(runErr, &exitErr) {
 			detail = fmt.Sprintf("the runner did not report (container exit %d)", exitErr.ExitCode())
 		}
-		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: detail}, nil
+		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, Outcome: ProjectOutcomeProtocolError, Detail: detail, CallTrace: trace}, nil
 	}
 	// Metadata-only evidence of the run's brokered host.* calls; nil unless the run
 	// carried a grant that made calls. Never affects the outcome.
-	res.CallTrace = broker.finalTrace()
+	res.CallTrace = trace
 	return res, nil
 }
 
@@ -449,40 +459,65 @@ func interpretModuleRun(res ModuleResult, pr ProjectResult, req ModuleRequest) (
 	return res, nil
 }
 
-// forceRemove's bounds: removeAttempts tries of removeAttemptBudget each, a pause of
-// one second after the first and two after the second. dockerRemoveBudget is the sum,
-// the longest forceRemove takes, which is how long a session's Done can trail its end.
+// Removal's bounds: removeAttempts tries of removeAttemptBudget each, a pause of one
+// second after the first and two after the second. dockerRemoveBudget is the sum and is
+// one deadline over all of it: each attempt's removal and its absence check share the
+// attempt's budget, which the whole deadline also bounds, so forceRemove never takes
+// longer. Before, each absence check had a fresh budget of its own, so a stalled daemon
+// could hold a removal for about 63 s against the 33 s stated (review, 2026-10-23).
 const (
 	removeAttempts      = 3
 	removeAttemptBudget = 10 * time.Second
 	dockerRemoveBudget  = removeAttempts*removeAttemptBudget + (removeAttempts-1)*removeAttempts/2*time.Second
 )
 
-// forceRemove is the hard teardown after the docker CLI is killed by a context.
-// Killing `docker run` does not guarantee the container stops, so retry and log
-// instead of silently leaving hostile code alive indefinitely.
-func (d *DockerSandbox) forceRemove(host, name string) {
-	var lastErr error
-	for attempt := 1; attempt <= removeAttempts; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), removeAttemptBudget)
-		args, argErr := dockerArgs(host, "rm", "-f", name)
-		if argErr != nil {
-			cancel()
-			slog.Error("docker: cannot force-remove container without a pinned daemon endpoint", "container", name, "error", argErr)
-			return
-		}
-		_, err := dockerOutput(ctx, args...)
+// removeContainer removes the container name and returns nil once it is confirmed gone:
+// `docker rm -f` up to removeAttempts times, each followed when it fails by an
+// exact-name listing (containerGone), all inside ctx. Killing `docker run` does not
+// guarantee its container stops, so a removal that cannot be confirmed is an error,
+// never a silent success.
+func removeContainer(ctx context.Context, host, name string) error {
+	args, err := dockerArgs(host, "rm", "-f", name)
+	if err != nil {
+		return fmt.Errorf("cannot remove a container without a pinned daemon endpoint: %w", err)
+	}
+	for attempt := 1; ; attempt++ {
+		actx, cancel := context.WithTimeout(ctx, removeAttemptBudget)
+		_, err := dockerOutput(actx, args...)
+		gone := err == nil || containerGone(actx, host, name)
 		cancel()
-		if err == nil || containerGone(host, name) {
-			return
+		if gone {
+			return nil
 		}
-		lastErr = err
-		if attempt < removeAttempts {
-			time.Sleep(time.Duration(attempt) * time.Second)
+		if err == nil {
+			err = errors.New("the container is still listed")
+		}
+		if attempt == removeAttempts || providerkit.Sleep(ctx, time.Duration(attempt)*time.Second) != nil {
+			return fmt.Errorf("container %s not confirmed gone after %d attempts: %w", name, attempt, err)
 		}
 	}
-	slog.Error("docker: failed to force-remove timed-out sandbox container",
-		"container", name, "attempts", removeAttempts, "error", lastErr)
+}
+
+// forceRemove is removeContainer under dockerRemoveBudget, on its own context so it
+// runs after the run's has ended. It logs and returns a removal it could not confirm.
+func (d *DockerSandbox) forceRemove(host, name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dockerRemoveBudget)
+	defer cancel()
+	err := removeContainer(ctx, host, name)
+	if err != nil {
+		slog.Error("docker: failed to remove a sandbox container", "container", name, "error", err)
+	}
+	return err
+}
+
+// removeOrHold is a run's teardown: forceRemove, and when the container cannot be
+// confirmed gone, it is quarantined (providerkit.Quarantine): the capacity admitted for
+// the call ctx belongs to stays held, and ReconcileOrphans retries the removal on every
+// pass until it is confirmed gone. Call it before the call returns.
+func (d *DockerSandbox) removeOrHold(ctx context.Context, host, name string) {
+	if err := d.quarantine.Destroy(name, HoldCapacity(ctx), func() error { return d.forceRemove(host, name) }); err != nil {
+		slog.Error("docker: container quarantined; its capacity stays held until ReconcileOrphans confirms it gone", "container", name)
+	}
 }
 
 // containerGone reports whether no container named name exists, by an exact-name
@@ -490,9 +525,7 @@ func (d *DockerSandbox) forceRemove(host, name string) {
 // docker version may change, nor by its exit code, which differs between versions
 // (docker 29's rm -f exits 0 for a missing container). An unreadable listing is
 // "not known to be gone".
-func containerGone(host, name string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), removeAttemptBudget)
-	defer cancel()
+func containerGone(ctx context.Context, host, name string) bool {
 	args, err := dockerArgs(host, "ps", "-a", "-q", "--no-trunc", "--filter", "name=^"+regexp.QuoteMeta(name)+"$")
 	if err != nil {
 		return false

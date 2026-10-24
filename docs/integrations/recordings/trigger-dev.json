@@ -1,6 +1,6 @@
 {
   "one_turn": {
-    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. Daemon procedures counted by a fetch counter after turn 1: OpenSession 1, SessionRun 2, CloseSession 0.",
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-23T19:56:15.492Z. Daemon procedures counted by a fetch counter after turn 1: OpenSession 1, SessionRun 2, CloseSession 0.",
     "daemon_calls": {
       "OpenSession": 1,
       "SessionRun": 2,
@@ -30,7 +30,7 @@
           "filesPersist": true,
           "freshSandbox": true,
           "isolation": "container",
-          "recordSha256": "856e6583048537d74d71f607319f86bc313a5beb58a91784f159dbab03afebb2"
+          "recordSha256": "6dd43f37f8ae54456bff4618adaa2520b77b5aa70d41cd919ec8a58620329c5d"
         },
         "turn": 1,
         "user_message": "load the orders and count them",
@@ -51,7 +51,7 @@
           "stateKept": true,
           "filesPersist": true,
           "isolation": "container",
-          "recordSha256": "23d1d6c7f585995aff761226707b7b7dd0c4a94d039a6c4b9a81a44e00235b10"
+          "recordSha256": "caed14d205410abd4bc2d8bc4997f01cde78d059634da6b7a69d66f2dce574ec"
         },
         "turn": 1,
         "user_message": "load the orders and count them",
@@ -60,7 +60,7 @@
     ]
   },
   "next_turn": {
-    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. Daemon procedures counted by a fetch counter after turn 2: OpenSession 1, SessionRun 3, CloseSession 0.",
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-23T19:56:15.492Z. Daemon procedures counted by a fetch counter after turn 2: OpenSession 1, SessionRun 3, CloseSession 0.",
     "daemon_calls": {
       "OpenSession": 1,
       "SessionRun": 3,
@@ -82,7 +82,7 @@
           "stateKept": true,
           "filesPersist": true,
           "isolation": "container",
-          "recordSha256": "cc4945ed37c7b9c5b9b55ac6a1e3d51bf4f87c1007e8c6cf2bbf25380b991e50"
+          "recordSha256": "e19eec8e259551f389f3666ab1d8a00ceaa5c8751a021eaa0e7ac7f08be94f8b"
         },
         "turn": 2,
         "user_message": "and the total?",
@@ -91,7 +91,7 @@
     ]
   },
   "suspend": {
-    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. After turn 2 nothing was sent for one idle window; onChatSuspend closed the sandbox: daemon procedures counted by a fetch counter once the run had suspended: OpenSession 1, SessionRun 3, CloseSession 1. Turn 3 was then sent to the suspended run, which resumed: daemon procedures counted by a fetch counter after turn 3: OpenSession 2, SessionRun 5, CloseSession 1.",
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-23T19:56:15.492Z. After turn 2 nothing was sent for one idle window; onChatSuspend closed the sandbox: daemon procedures counted by a fetch counter once the run had suspended: OpenSession 1, SessionRun 3, CloseSession 1. Turn 3 was then sent to the suspended run, which resumed: daemon procedures counted by a fetch counter after turn 3: OpenSession 2, SessionRun 5, CloseSession 1.",
     "daemon_calls": {
       "after_turn_2": {
         "OpenSession": 1,
@@ -127,7 +127,7 @@
           "filesPersist": true,
           "freshSandbox": true,
           "isolation": "container",
-          "recordSha256": "4c549890da985fdab83d5e1140d4f7ba14a9a0856d417668b1425d53a71fa80e"
+          "recordSha256": "f3678a56934ed1497fddbdd733cf963e23c6b7b88ef45be2f2c036dcb44c9a86"
         },
         "turn": 3,
         "user_message": "how many orders were there again?",
@@ -154,7 +154,7 @@
           "stateKept": true,
           "filesPersist": true,
           "isolation": "container",
-          "recordSha256": "775582945af2b3cd5763d1b3302a90221ee6c4f17badff06fb00a87439a40842"
+          "recordSha256": "328aaa016b50c215794c0cb0188c6d163c46349f350376cb8db6b0bb0947f17f"
         },
         "turn": 3,
         "user_message": "how many orders were there again?",
@@ -177,12 +177,12 @@
       "stateKept": true,
       "filesPersist": true,
       "isolation": "container",
-      "recordSha256": "7120ef72247661aa01303542f7c44c71a70f8c1f2a5a3f6a54a4c5e773276710"
+      "recordSha256": "b3d31b6aaa693a6ec77e5880837d98eb284846718ff781c8bcd6f678576851f1"
     },
     "turn": 4,
     "user_message": "split the total between zero people",
     "hook": "executeCode, inside the turn's streamText; the run's sandbox was warmed by onTurnStart",
-    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. Daemon procedures counted by a fetch counter after turn 5: OpenSession 2, SessionRun 7, CloseSession 1.",
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-23T19:56:15.492Z. Daemon procedures counted by a fetch counter after turn 5: OpenSession 2, SessionRun 7, CloseSession 1.",
     "daemon_calls": {
       "OpenSession": 2,
       "SessionRun": 7,
@@ -205,12 +205,12 @@
       "freshInterpreter": true,
       "filesPersist": true,
       "isolation": "container",
-      "recordSha256": "9c2032e5a059f35c3ab5bf7a9426f10a81d9c6ea977533b3e01d9821f230cc5a"
+      "recordSha256": "9282cee4742e40de5b3399a0afcc314abbceccf51b780460841bf8ae05b265a3"
     },
     "turn": 5,
     "user_message": "now in JavaScript",
     "hook": "executeCode, inside the turn's streamText; the run's sandbox was warmed by onTurnStart",
-    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-07T21:19:59.509Z. Daemon procedures counted by a fetch counter after turn 5: OpenSession 2, SessionRun 7, CloseSession 1. When the harness closed the chat the second sandbox was still open (CloseSession 1): the offline harness runs the agent's run function but not Trigger.dev's task lifecycle hooks. The recorder then called the agent's registered onComplete hook itself, with the run's id, as Trigger.dev's runtime does when a run ends, and it closed that sandbox: CloseSession 2.",
+    "source": "Actual Trigger.dev chat agent (examples/trigger-chat/src/trigger/chat.ts, @trigger.dev/sdk 4.7.1) run by Trigger.dev's offline harness mockChatAgent, with a scripted model (MockLanguageModelV3; no model API) asking for each executeCode call; the answers are the tool outputs read from the turn's chunks. Local plimsolld on Docker under runc (container tier) with sessions on; the agent sets minimumIsolation \"container\" because these scenarios are not about the floor. idleTimeoutInSeconds 3 instead of the default 30, so the run suspends after 3 s of real time. 2026-10-23T19:56:15.492Z. Daemon procedures counted by a fetch counter after turn 5: OpenSession 2, SessionRun 7, CloseSession 1. When the harness closed the chat the second sandbox was still open (CloseSession 1): the offline harness runs the agent's run function but not Trigger.dev's task lifecycle hooks. The recorder then called the agent's registered onComplete hook itself, with the run's id, as Trigger.dev's runtime does when a run ends, and it closed that sandbox: CloseSession 2.",
     "daemon_calls": {
       "after_turn_5": {
         "OpenSession": 2,

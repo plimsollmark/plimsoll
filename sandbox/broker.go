@@ -110,23 +110,29 @@ type breaker struct {
 	// gate and put the run's traffic straight back into the limiter it just tripped —
 	// defeating the backoff the 429 asked for. A quota window is therefore waited out.
 	quotaTrip bool
+	// gen counts the decisions that opened or extended the breaker. A probe's verdict
+	// applies only to the generation it was elected under: a 429 that opens a quota
+	// window while a probe is out is a newer decision the probe never examined, and an
+	// old probe's 200 used to clear it (review, 2026-10-23).
+	gen uint64
 }
 
 // gate reports the breaker's decision for a call arriving at now. shedding is true when
 // the breaker is open; electedToProbe is true for the single caller (per
-// breakerProbeInterval) that should probe the health route before shedding.
-func (br *breaker) gate(now time.Time, haveHealth bool) (shedding, electedToProbe bool) {
+// breakerProbeInterval) that should probe the health route before shedding, and gen is
+// the generation that probe examines (resetIf).
+func (br *breaker) gate(now time.Time, haveHealth bool) (shedding, electedToProbe bool, gen uint64) {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 	if br.openUntil.IsZero() || !now.Before(br.openUntil) {
 		br.clearLocked() // the window lapsed; the next trip starts from a clean state
-		return false, false
+		return false, false, br.gen
 	}
 	if haveHealth && !br.quotaTrip && (br.lastProbe.IsZero() || now.Sub(br.lastProbe) >= breakerProbeInterval) {
 		br.lastProbe = now
-		return true, true
+		return true, true, br.gen
 	}
-	return true, false
+	return true, false, br.gen
 }
 
 // open trips the breaker for cooldown from now, extending (never shortening) an existing
@@ -146,14 +152,20 @@ func (br *breaker) open(now time.Time, cooldown time.Duration, quota bool) {
 	if deadline := now.Add(cooldown); deadline.After(br.openUntil) {
 		br.openUntil = deadline
 	}
+	br.gen++
 }
 
-// reset clears the breaker after a health probe confirms recovery, so the next trip may
-// probe again immediately.
-func (br *breaker) reset() {
+// resetIf clears the breaker after a health probe elected under gen confirms recovery,
+// so the next trip may probe again immediately, and reports whether it did. A breaker
+// opened again since then holds a decision the probe did not examine, and stays open.
+func (br *breaker) resetIf(gen uint64) bool {
 	br.mu.Lock()
 	defer br.mu.Unlock()
+	if br.gen != gen {
+		return false
+	}
 	br.clearLocked()
+	return true
 }
 
 func (br *breaker) clearLocked() {
@@ -391,12 +403,11 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	// has come back — for an availability trip only, never a 429 (see breaker.quotaTrip).
 	// The route was already authorized above, so a shed is distinct from a policy denial
 	// (recorded as Shed, not Denied).
-	if shedding, elected := b.breaker.gate(time.Now(), b.health != nil); shedding {
+	if shedding, elected, gen := b.breaker.gate(time.Now(), b.health != nil); shedding {
 		recovered := false
 		if elected {
 			if healthy, cooldown := b.probeHealth(ctx); healthy {
-				b.breaker.reset()
-				recovered = true
+				recovered = b.breaker.resetIf(gen)
 			} else {
 				b.breaker.open(time.Now(), cooldown, false)
 			}

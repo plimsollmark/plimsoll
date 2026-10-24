@@ -65,11 +65,12 @@ gateway with the docker driver.
   sandbox whose effective settings let code inside it propose changes to its policy is
   refused: a gateway in automatic approval mode could apply one after plimsoll has checked
   the policy. The setting must be provably off: reported as `false`, or reported with no
-  value, which is the gateway's default of `false`. A gateway that does not report
-  `agent_policy_proposals_enabled` at all, or reports anything but a boolean `false`, is
-  refused. Measured on v0.1.2: a sandbox nobody configured reports the key with no value.
-  Treating no value as off rests on v0.1.2's default; a gateway release that changed that
-  default would need this check changed.
+  value by a gateway release whose default is known to be `false` (below). A gateway that
+  does not report `agent_policy_proposals_enabled` at all, or reports anything else, is
+  refused. Measured on v0.1.2: a sandbox nobody configured reports the key with no value,
+  and the release defaults it to `false`. So no value counts as off only on a release
+  measured that way (v0.1.2 so far); on any other release the key must be reported as
+  `false`, which an operator gets by setting it to `false` gateway-wide.
 - **`allow_driver_config = true`, only if `SANDBOX_DISK_MB` is set.** The disk cap mounts
   a run's `/tmp` through the sandbox's driver config (settings passed straight to the
   compute driver), which a gateway refuses by default ("administrator must enable

@@ -12,9 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/plimsollmark/plimsoll/attest"
 	"github.com/plimsollmark/plimsoll/clients/mcp/internal/fakedaemon"
 	"github.com/plimsollmark/plimsoll/clients/mcp/server"
+	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 )
 
 // withReceipts adds a fresh key and receipts directory to cfg, returning the public key.
@@ -789,4 +792,48 @@ func TestShutdownWaitsForAStuckCallThenDeletesItsSandbox(t *testing.T) {
 	release()
 	eventually(t, "the busy sandbox is deleted once its call ends", func() bool { return d.OpenSessions() == 0 })
 	eventually(t, "the store ends", func() bool { return server.ReceiptsEnded(c.s) })
+}
+
+// A run's trace (a coding session's ID, say) is signed into its receipt with the request;
+// one the daemon would drop is refused before anything runs, so a run meant to be tagged
+// never goes out untagged.
+func TestATraceIsSignedIntoTheReceipt(t *testing.T) {
+	d := fakedaemon.Serve(t, fakedaemon.Options{Sessions: 4})
+	cfg, _, dir := withReceipts(t, local(d.URL))
+	c := connect(t, cfg)
+	r := receiptOf(t, c.ok("run_code", map[string]any{"code": "print(1)", "trace": "session-1f2e.3d:4c"}))
+	e := readEntries(t, filepath.Join(dir, r["file"].(string)))[int(r["line"].(float64))-1]
+	var req plimsollv1.RunRequest
+	if err := proto.Unmarshal(e.Request, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.GetTraceId() != "session-1f2e.3d:4c" {
+		t.Errorf("the signed request carries trace %q", req.GetTraceId())
+	}
+	for _, bad := range []string{"has space", strings.Repeat("a", 65), "slash/path"} {
+		if f := c.fail("run_code", map[string]any{"code": "print(2)", "trace": bad}); f.Ran != "no" || !strings.Contains(f.Summary, "trace") {
+			t.Errorf("trace %q: %+v", bad, f)
+		}
+	}
+}
+
+// A close the daemon answered with a count this server did not see (a call ran whose
+// answer was lost: here every SessionRun answer loses the request ID's echo, so the
+// client believes none) still deleted the sandbox: it is reported deleted, not retried
+// as unconfirmed, and its receipts end incomplete (review B6, 2026-10-23).
+func TestACloseWithAChainThisServerDidNotSeeStillDeleted(t *testing.T) {
+	d := fakedaemon.Serve(t, fakedaemon.Options{Sessions: 4, StripRequestID: true})
+	cfg, _, _ := withReceipts(t, local(d.URL))
+	c := connect(t, cfg)
+	h := c.ok("open_sandbox", nil)["sandbox"]
+	c.fail("run_code", map[string]any{"code": "x = 1", "sandbox": h})
+	closed := c.ok("close_sandbox", map[string]any{"sandbox": h})
+	if closed["deleted"] != true || d.OpenSessions() != 0 {
+		t.Fatalf("close_sandbox: %v, %d open", closed, d.OpenSessions())
+	}
+	// The one call's answer was lost, so no receipt file exists; the receipts still end
+	// incomplete rather than complete.
+	if closed["receipts"] != "incomplete" || !strings.Contains(closed["receiptsReason"].(string), "never saw answered") {
+		t.Fatalf("close_sandbox reports receipts %q (%v), want incomplete", closed["receipts"], closed["receiptsReason"])
+	}
 }

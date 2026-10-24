@@ -624,3 +624,31 @@ func TestSessionsAreFilteredOnTheSessionEnvironment(t *testing.T) {
 		t.Fatalf("a software rule naming the project image excluded the backend: %v", err)
 	}
 }
+
+// A backend that never answers Describe costs the first request at most describeBudget,
+// while the others are described beside it, and later requests nothing until failedTTL
+// has passed: placement used to describe one backend after another inside the request's
+// deadline and forget every failure, so a hung daemon stalled every placed request
+// (review B2, 2026-10-23).
+func TestAHungBackendDoesNotStallPlacement(t *testing.T) {
+	release := make(chan struct{})
+	hung := &stub{name: "hung", describeHook: func() *plimsollv1.DescribeResponse {
+		<-release
+		return describeAs("docker", "vm")
+	}}
+	healthy := &stub{name: "healthy", describe: describeAs("docker", "vm"), answer: ok("2\n")}
+	p := pool(t, hung, healthy)
+	t.Cleanup(func() { close(release) })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for i, within := range []time.Duration{describeBudget + 3*time.Second, time.Second} {
+		start := time.Now()
+		res, choice, err := p.RunJavaScript(ctx, sandbox.Request{Code: "1"}, Requirement{})
+		if err != nil || choice.Backend != "healthy" || res.Stdout != "2\n" {
+			t.Fatalf("request %d: %+v, %+v, %v", i+1, res, choice, err)
+		}
+		if took := time.Since(start); took > within {
+			t.Fatalf("request %d took %v, want under %v", i+1, took, within)
+		}
+	}
+}

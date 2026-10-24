@@ -25,12 +25,23 @@ func loadSample(t *testing.T) []Record {
 	return recs
 }
 
-// TestParseSkipsNonCodeRun proves the parser keeps only "code run" lines and tolerates
-// a foreign/corrupt line and a "code run failed" error line without failing.
-func TestParseSkipsNonCodeRun(t *testing.T) {
+// TestParseKeepsEveryRunAndSkipsTheRest proves the parser keeps every run's line, the
+// project run included (once dropped: only "code run" lines were kept, review B3,
+// 2026-10-23), and tolerates a foreign/corrupt line and a "code run failed" error line
+// without failing.
+func TestParseKeepsEveryRunAndSkipsTheRest(t *testing.T) {
 	recs := loadSample(t)
-	if len(recs) != 5 {
-		t.Fatalf("expected 5 code-run records, got %d", len(recs))
+	if len(recs) != 6 {
+		t.Fatalf("expected 6 run records, got %d", len(recs))
+	}
+	var project *Record
+	for i := range recs {
+		if recs[i].Op == "project" {
+			project = &recs[i]
+		}
+	}
+	if project == nil || project.Exit != "0" || project.Profile != "hue" {
+		t.Errorf("the project run = %+v, want kept with its exit code", project)
 	}
 	if recs[0].Profile != "hue" || len(recs[0].Findings) != 2 {
 		t.Errorf("record 0 = %+v, want hue with 2 findings", recs[0])

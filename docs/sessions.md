@@ -333,7 +333,7 @@ whose step is `python3 main.py`.
   chain they have seen, so a call made by anyone else holding the ID shows as a gap at the
   next call and at the close (`DataLoss` wrapping `record.ErrChain` in Go). The chain counts
   every call that may have run: one that ended in an error not marked not dispatched gets a
-  version 3 record with the error, and the session goes on
+  record with no result and the error's code, and the session goes on
   ([run-records.md](run-records.md#a-session-call-that-may-have-run-but-got-no-result)). A call
   whose answer never arrived leaves the client unable to follow the chain, so it sends
   nothing more on that session.
@@ -442,8 +442,12 @@ A docker session is the container a project run gets, kept for the session:
   delay or block a later call's API requests. Only the session's own calls are affected:
   everything in the container is the same caller, and no socket can tell one of its
   processes from another.
-- **Cleanup.** The container is removed when the session ends. A container a crashed
-  daemon left behind carries its lifetime as a label, and a running daemon removes it once
+- **Cleanup.** The container is removed when the session ends. The session's end, and
+  with it the return of its concurrency slot and memory share, waits until the removal is
+  confirmed: a container whose removal fails stays counted, and the daemon retries the
+  removal on every orphan pass until the container is gone. The same holds for a one-shot
+  run's container on docker and for every `openshell` and `agentsandbox` sandbox. A container
+  a crashed daemon left behind carries its lifetime as a label, and a running daemon removes it once
   that lifetime plus 5 minutes has passed. The broker's socket directory on the host is
   removed with its session; one a crashed daemon left is removed by a running daemon once
   it is a minute old and its socket has no listener. At shutdown the daemon refuses new

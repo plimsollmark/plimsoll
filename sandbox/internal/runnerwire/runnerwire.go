@@ -72,20 +72,24 @@ type File struct {
 }
 
 // Plan is what the runner executes: write Files, run Steps in order (stopping on the
-// first failure), each under StepTimeout, then capture Artifacts. HostSDK, when set,
+// first failure), all of them inside Budget, then capture Artifacts. Budget is the
+// whole run's, not each step's: the runner fixes one deadline when it starts and gives
+// each step what is left, so a step that hangs late is killed while the runner still
+// has time to report every earlier step. A per-step budget let a hung last step run
+// past the provider's hard stop, which killed the runner and every step's report. HostSDK, when set,
 // is the host-API client module the runner preloads into every step. Env (NAME=value
 // entries) is added to every step's environment over the runner's own: a provider
 // that starts the runner without the image's environment hands that environment to
 // the steps here. ReportKey (from NewKey) authenticates the report; the same key must
 // be passed to Parse.
 type Plan struct {
-	Files       []File
-	Steps       []string
-	StepTimeout time.Duration
-	Artifacts   []string
-	HostSDK     string
-	Env         []string
-	ReportKey   []byte
+	Files     []File
+	Steps     []string
+	Budget    time.Duration
+	Artifacts []string
+	HostSDK   string
+	Env       []string
+	ReportKey []byte
 }
 
 // Encode returns the plan as the JSON document the runner reads from stdin. A plan
@@ -99,14 +103,14 @@ func (p Plan) Encode() ([]byte, error) {
 		Content string `json:"content"`
 	}
 	wire := struct {
-		Files         []file   `json:"files"`
-		Steps         []string `json:"steps"`
-		StepTimeoutMs int64    `json:"stepTimeoutMs"`
-		Artifacts     []string `json:"artifacts"`
-		HostSDK       string   `json:"hostSDK,omitempty"`
-		Env           []string `json:"env,omitempty"`
-		ReportKey     string   `json:"reportKey"`
-	}{Steps: p.Steps, StepTimeoutMs: p.StepTimeout.Milliseconds(), Artifacts: p.Artifacts, HostSDK: p.HostSDK,
+		Files     []file   `json:"files"`
+		Steps     []string `json:"steps"`
+		BudgetMs  int64    `json:"budgetMs"`
+		Artifacts []string `json:"artifacts"`
+		HostSDK   string   `json:"hostSDK,omitempty"`
+		Env       []string `json:"env,omitempty"`
+		ReportKey string   `json:"reportKey"`
+	}{Steps: p.Steps, BudgetMs: p.Budget.Milliseconds(), Artifacts: p.Artifacts, HostSDK: p.HostSDK,
 		Env: p.Env, ReportKey: hex.EncodeToString(p.ReportKey)}
 	for _, f := range p.Files {
 		wire.Files = append(wire.Files, file(f))
@@ -138,7 +142,10 @@ type Report struct {
 	Steps              []Step
 	Artifacts          []Artifact
 	ArtifactsTruncated bool
-	Err                string // runner-reported structured setup failure; "" = none
+	Err                string // runner-reported structured failure; "" = none
+	// StepsBegan: the failure in Err came after a step began, so the caller's code ran;
+	// Steps holds the steps the runner could still report.
+	StepsBegan bool
 }
 
 // Parse finds the runner's report frame in its captured stdout, verifies its MAC
@@ -229,6 +236,7 @@ func decode(body []byte) (Report, error) {
 		} `json:"artifacts"`
 		ArtifactsTruncated bool   `json:"artifactsTruncated"`
 		Error              string `json:"error"`
+		StepsBegan         bool   `json:"stepsBegan"`
 	}
 	// Unknown fields are refused: a runner from before the output became base64 sends
 	// "stdout" and "stderr" as text, and an image still carrying it must fail as a
@@ -238,7 +246,10 @@ func decode(body []byte) (Report, error) {
 	if err := dec.Decode(&parsed); err != nil {
 		return Report{}, fmt.Errorf("runner report (an image whose /runner.mjs predates this plimsoll fails here): %w", err)
 	}
-	rep := Report{ArtifactsTruncated: parsed.ArtifactsTruncated, Err: parsed.Error}
+	if parsed.StepsBegan && parsed.Error == "" {
+		return Report{}, errors.New("runner report: steps began is stated only with a failure")
+	}
+	rep := Report{ArtifactsTruncated: parsed.ArtifactsTruncated, Err: parsed.Error, StepsBegan: parsed.StepsBegan}
 	for _, a := range parsed.Artifacts {
 		rep.Artifacts = append(rep.Artifacts, Artifact{Path: a.Path, Content: a.Content})
 	}
@@ -265,25 +276,34 @@ type Outcome int
 const (
 	// Completed: the plan ran to its normal conclusion, stop on first failure included.
 	Completed Outcome = iota + 1
-	// SetupFailed: the runner reported a structured failure around step execution
-	// (an illegal file path, an unwritable file, an over-budget result).
+	// SetupFailed: the runner reported a failure before any step began (an illegal
+	// file path, an unwritable file): none of the caller's code ran.
 	SetupFailed
-	// TimedOut: a step was killed by its own time budget.
+	// TimedOut: a step was killed by the run's time budget.
 	TimedOut
+	// RunnerFailed: the runner reported a failure after a step began (an artifact it
+	// could not read, a result over the size budget): the caller's code ran.
+	RunnerFailed
 )
 
 // Outcome classifies a decoded report and returns the detail a caller sees. A
-// runner-reported failure wins. Otherwise a step killed by its own time budget makes
-// the run timed out, not completed: steps stop on the first failure, so a timed-out
-// step is where the plan stopped, and a caller keying on the outcome alone must not
-// read a hung step as a clean run.
+// runner-reported failure wins, and is a setup failure only when no step began: one
+// after a step began is the runner's, with the caller's code already run, and reading
+// it as a setup failure told a caller that a retry repeats nothing (review,
+// 2026-10-23). Otherwise a step killed by the time budget makes the run
+// timed out, not completed: steps stop on the first failure, so a timed-out step is
+// where the plan stopped, and a caller keying on the outcome alone must not read a hung
+// step as a clean run.
 func (r Report) Outcome() (Outcome, string) {
 	if r.Err != "" {
+		if r.StepsBegan {
+			return RunnerFailed, r.Err
+		}
 		return SetupFailed, r.Err
 	}
 	for i, st := range r.Steps {
 		if st.TimedOut {
-			return TimedOut, fmt.Sprintf("step %d exceeded its time budget", i+1)
+			return TimedOut, fmt.Sprintf("step %d exceeded the run's time budget", i+1)
 		}
 	}
 	return Completed, ""

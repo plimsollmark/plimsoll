@@ -33,13 +33,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/plimsollmark/plimsoll/examples/internal/daemonproc"
+	"github.com/plimsollmark/plimsoll/internal/auditline"
 
 	"github.com/plimsollmark/plimsoll/client"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -117,25 +117,26 @@ func run(ctx context.Context, reportPath string) error {
 	fmt.Printf("profile   | it declares GET /items the batch form of GET /items/* (batch_of): without that line the finding would name it to the operator only\n")
 	fmt.Printf("profile   | the API credential is read by the daemon from $%s and never enters the guest\n", tokenEnv)
 
-	binary, err := buildDaemon(ctx, workDir)
+	binary, err := daemonproc.Build(ctx, workDir)
 	if err != nil {
 		return err
 	}
-	addr, err := daemonproc.FreeAddr()
-	if err != nil {
-		return err
-	}
+	// The daemon's structured audit line goes to stderr: one record per run, with the
+	// advice counts and, at advice_retention=detailed, one metadata-only record per
+	// finding. It never carries the code, the token, or a request path. The example tees
+	// it so the operator's view can be printed beside the caller's.
 	sink := &lineSink{}
-	daemon, err := startDaemon(ctx, binary, addr, clientsPath, grantsPath, api.token, sink)
+	daemon, err := daemonproc.Start(ctx, binary, daemonproc.Options{Env: []string{
+		"SANDBOX_PROVIDER=wasm",
+		"PLIMSOLL_CLIENTS_FILE=" + clientsPath,
+		"PLIMSOLL_GRANTS_FILE=" + grantsPath,
+		tokenEnv + "=" + api.token,
+	}, Ready: 30 * time.Second, Log: io.MultiWriter(os.Stderr, sink)})
 	if err != nil {
 		return err
 	}
-	defer stop(daemon)
-
-	baseURL := "http://" + addr
-	if err := waitForReady(ctx, baseURL); err != nil {
-		return err
-	}
+	defer func() { _ = daemon.Stop(5 * time.Second) }()
+	baseURL := daemon.BaseURL
 	fmt.Printf("daemon    | ready at %s (wasm, process tier; the advisor is provider-independent)\n\n", baseURL)
 
 	remote, err := client.New(baseURL,
@@ -176,8 +177,8 @@ func run(ctx context.Context, reportPath string) error {
 	// One observation, one finding: the twelve per-item reads are reported once, as
 	// the fan-out, with eleven calls beyond one. A second finding over the same rows
 	// would double the audit line's totals.
-	if first.audit.AdviceFindings != 1 || first.audit.ExtraCalls != 11 {
-		return fmt.Errorf("run 1's audit line should carry exactly the fan-out finding with 11 extra calls, got %d finding(s) and %d extra calls", first.audit.AdviceFindings, first.audit.ExtraCalls)
+	if first.audit.FindingCount != 1 || first.audit.ExtraCalls != 11 {
+		return fmt.Errorf("run 1's audit line should carry exactly the fan-out finding with 11 extra calls, got %d finding(s) and %d extra calls", first.audit.FindingCount, first.audit.ExtraCalls)
 	}
 	// The twelve per-item reads fetched twelve distinct items, and several of those
 	// responses are the same size. The trace holds the route template and the size,
@@ -185,7 +186,7 @@ func run(ctx context.Context, reportPath string) error {
 	// detector therefore leaves wildcard routes alone, and a finding here would be a
 	// claim the evidence does not support.
 	sameSize, perItem := first.largestSameSizeGroup("/items/*")
-	if d, ok := first.audit.finding("repeated_read"); ok {
+	if d, ok := auditFinding(first.audit, "repeated_read"); ok {
 		return fmt.Errorf("the per-item loop was flagged as a repeated read of %s %s, but it fetched %d distinct items", d.Method, d.Route, perItem)
 	}
 
@@ -221,7 +222,7 @@ type outcome struct {
 	wall     time.Duration
 	requests []apiRequest
 	advice   []sandbox.AdviceFinding
-	audit    auditLine
+	audit    auditline.Run
 }
 
 func (o outcome) requestCount() int { return len(o.requests) }
@@ -291,8 +292,8 @@ func show(ctx context.Context, remote *client.Remote, api *inventory, sink *line
 	fmt.Printf("   api    | %d request(s) served, %d bytes; exit=%d isolation=%s wall=%s\n",
 		o.requestCount(), o.bytesServed(), o.exitCode, result.Isolation, o.wall.Round(time.Millisecond))
 	fmt.Printf("   audit  | host_calls=%d advice_findings=%d agent_fixable=%d (the daemon's own log line)\n",
-		audit.HostCalls, audit.AdviceFindings, audit.AgentFixable)
-	for _, d := range audit.Details {
+		audit.HostCalls, audit.FindingCount, audit.AgentFixable)
+	for _, d := range audit.Findings {
 		if !d.AgentFixable {
 			fmt.Printf("   audit  | operator-only: %s on %s %s (remedy %s)\n", d.Pattern, d.Method, d.Route, d.Remedy)
 		}
@@ -445,40 +446,19 @@ func (l *lineSink) Write(p []byte) (int, error) {
 	return l.buf.Write(p)
 }
 
-type auditLine struct {
-	HostCalls      int           `json:"host_calls"`
-	AdviceFindings int           `json:"advice_findings"`
-	AgentFixable   int           `json:"advice_agent_fixable"`
-	ExtraCalls     int           `json:"advice_extra_calls"`
-	Details        []auditDetail `json:"advice_finding_details"`
-}
-
-// finding returns the audit line's record for one detector, if it emitted one.
-func (a auditLine) finding(pattern string) (auditDetail, bool) {
-	for _, d := range a.Details {
+// auditFinding returns the audit line's record for one detector, if it emitted one.
+func auditFinding(a auditline.Run, pattern string) (auditline.Finding, bool) {
+	for _, d := range a.Findings {
 		if d.Pattern == pattern {
 			return d, true
 		}
 	}
-	return auditDetail{}, false
+	return auditline.Finding{}, false
 }
 
-type auditDetail struct {
-	Pattern        string `json:"pattern"`
-	Severity       string `json:"severity"`
-	Remedy         string `json:"remedy"`
-	Method         string `json:"method"`
-	Route          string `json:"route"`
-	Detail         string `json:"detail"`
-	AgentFixable   bool   `json:"agent_fixable"`
-	ExtraCalls     int    `json:"extra_calls"`
-	AddedLatencyMs int64  `json:"added_latency_ms"`
-	BytesMoved     int64  `json:"bytes_moved"`
-}
-
-// waitForAudit returns the n-th "code run" audit line, waiting briefly for the
-// daemon's stderr to catch up with the response the client already has.
-func (l *lineSink) waitForAudit(n int) (auditLine, error) {
+// waitForAudit returns the n-th snippet run's audit line (auditline), waiting briefly
+// for the daemon's stderr to catch up with the response the client already has.
+func (l *lineSink) waitForAudit(n int) (auditline.Run, error) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		l.mu.Lock()
@@ -486,20 +466,17 @@ func (l *lineSink) waitForAudit(n int) (auditLine, error) {
 		l.mu.Unlock()
 		seen := 0
 		for _, line := range lines {
-			if !strings.Contains(line, `"msg":"code run"`) {
+			run, ok := auditline.Decode([]byte(line))
+			if !ok || run.Msg != auditline.Code {
 				continue
 			}
 			seen++
 			if seen == n {
-				var a auditLine
-				if err := json.Unmarshal([]byte(line), &a); err != nil {
-					return auditLine{}, fmt.Errorf("audit line %d is not JSON: %w", n, err)
-				}
-				return a, nil
+				return run, nil
 			}
 		}
 		if time.Now().After(deadline) {
-			return auditLine{}, fmt.Errorf("audit line %d did not appear on the daemon's stderr", n)
+			return auditline.Run{}, fmt.Errorf("audit line %d did not appear on the daemon's stderr", n)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -526,70 +503,6 @@ func writeGrantsFile(dir, baseURL string) (string, error) {
 	return path, nil
 }
 
-// buildDaemon compiles plimsolld from the checkout so the example runs the code in
-// this tree rather than whatever happens to be installed.
-func buildDaemon(ctx context.Context, dir string) (string, error) {
-	binary := filepath.Join(dir, "plimsolld")
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/plimsolld")
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("build plimsolld (run this from the repository root): %w", err)
-	}
-	return binary, nil
-}
-
-func startDaemon(ctx context.Context, binary, addr, clientsPath, grantsPath, apiToken string, sink io.Writer) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, binary)
-	cmd.Env = append(os.Environ(),
-		"SANDBOX_PROVIDER=wasm",
-		"PLIMSOLL_ADDR="+addr,
-		// This run reads no metrics, and the default port would collide with any
-		// other daemon on this machine.
-		"PLIMSOLL_METRICS_ADDR=off",
-		"PLIMSOLL_CLIENTS_FILE="+clientsPath,
-		"PLIMSOLL_GRANTS_FILE="+grantsPath,
-		tokenEnv+"="+apiToken,
-	)
-	// The daemon's structured audit line goes to stderr: one record per run, with
-	// the advice counts and, at advice_retention=detailed, one metadata-only record
-	// per finding. It never carries the code, the token, or a request path. The
-	// example tees it so the operator's view can be printed beside the caller's.
-	out := io.MultiWriter(os.Stderr, sink)
-	cmd.Stdout = out
-	cmd.Stderr = out
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start plimsolld: %w", err)
-	}
-	return cmd, nil
-}
-
-func stop(cmd *exec.Cmd) {
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}
-}
-
-// waitForReady polls /readyz, which the daemon serves outside auth.
-func waitForReady(ctx context.Context, baseURL string) error {
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/readyz", nil)
-		if err != nil {
-			return err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return errors.New("plimsolld did not become ready within 30s")
-}
-
 // writeReport renders the run as one self-contained page: no scripts or styles are
 // fetched, and nothing in it identifies the machine (no ports, no token).
 func writeReport(path string, runs []outcome, rows []compareRow) error {
@@ -603,7 +516,7 @@ func writeReport(path string, runs []outcome, rows []compareRow) error {
 		BytesServed  int
 		WallMs       int64
 		Advice       []sandbox.AdviceFinding
-		Audit        auditLine
+		Audit        auditline.Run
 	}
 	var views []runView
 	for i, o := range runs {
@@ -733,9 +646,9 @@ about {{ms .AddedLatency}} ms beyond one call <span class="muted">(modelled, not
 <tr><th colspan="4">{{.RequestCount}} requests</th><th class="num" colspan="2">{{.BytesServed}} bytes</th></tr></tbody></table></div>
 
 <h3>The operator's view: the daemon's audit line</h3>
-<div class="card op">host_calls={{.Audit.HostCalls}} · advice_findings={{.Audit.AdviceFindings}} · advice_agent_fixable={{.Audit.AgentFixable}}
-{{range .Audit.Details}}<br>detected <b>{{.Pattern}}</b> on {{.Method}} {{.Route}} (severity {{.Severity}}, remedy {{.Remedy}}), and the finding was {{if .AgentFixable}}returned to the caller{{else}}kept operator only{{end}}{{end}}
-<br><span class="muted">A finding the agent could not act on (no declared, granted route to switch to) would stay here, operator only: a declared route to grant, a candidate route to check, or a prompt the API owner can paste into their own AI. {{if .Audit.Details}}This run produced none of those: the profile declares and grants the batch route, so its one finding went back to the caller.{{else}}This run produced no finding at all, so there is nothing here for either audience.{{end}}</span></div>
+<div class="card op">host_calls={{.Audit.HostCalls}} · advice_findings={{.Audit.FindingCount}} · advice_agent_fixable={{.Audit.AgentFixable}}
+{{range .Audit.Findings}}<br>detected <b>{{.Pattern}}</b> on {{.Method}} {{.Route}} (severity {{.Severity}}, remedy {{.Remedy}}), and the finding was {{if .AgentFixable}}returned to the caller{{else}}kept operator only{{end}}{{end}}
+<br><span class="muted">A finding the agent could not act on (no declared, granted route to switch to) would stay here, operator only: a declared route to grant, a candidate route to check, or a prompt the API owner can paste into their own AI. {{if .Audit.Findings}}This run produced none of those: the profile declares and grants the batch route, so its one finding went back to the caller.{{else}}This run produced no finding at all, so there is nothing here for either audience.{{end}}</span></div>
 </section>
 {{end}}
 

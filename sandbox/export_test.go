@@ -47,3 +47,10 @@ func E2BOwnSandboxes(ctx context.Context, e *E2B) (map[string]string, error) {
 	}
 	return out, nil
 }
+
+// E2BLive and DockerCloudLive are the live suites' providers, skipping unless their
+// make target opted in to spend (e2bClient, dockerCloudLive).
+var (
+	E2BLive         = e2bClient
+	DockerCloudLive = dockerCloudLive
+)

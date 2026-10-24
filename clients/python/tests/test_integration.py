@@ -499,7 +499,7 @@ class UnansweredCalls(unittest.TestCase):
             s.run_javascript("2")
         self.assertIsNone(cm.exception.not_dispatched)
         self.assertIsNotNone(cm.exception.unanswered)
-        self.assertEqual(cm.exception.unanswered["version"], 3)
+        self.assertEqual(cm.exception.unanswered["version"], RECORD_VERSION)
         # The checked record is handed back too, as Go's UnansweredCallError.Record.
         self.assertIsNotNone(cm.exception.record)
         self.assertEqual(cm.exception.record.sequence, 2)

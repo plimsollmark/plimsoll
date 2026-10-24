@@ -15,6 +15,45 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
+func TestKeygenPrivateKeyPermissions(t *testing.T) {
+	prefixPath := filepath.Join(t.TempDir(), "pair")
+	if err := keygen([]string{"-out", prefixPath}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(prefixPath + ".key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("private key accessible by group or others: %v", info.Mode().Perm())
+	}
+}
+
+func TestKeygenPreservesSymlinkParentTraversal(t *testing.T) {
+	dir := t.TempDir()
+	realDir := filepath.Join(dir, "parent", "child")
+	if err := os.MkdirAll(realDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "shortcut")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Fatal(err)
+	}
+	// Joining would clean away shortcut/.. before the OS can resolve the link.
+	prefixPath := link + "/../pair"
+	if err := keygen([]string{"-out", prefixPath}); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{".key", ".pub"} {
+		if _, err := os.Stat(filepath.Join(dir, "parent", "pair") + suffix); err != nil {
+			t.Fatalf("missing key in filesystem-resolved parent: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(dir, "pair") + suffix); !os.IsNotExist(err) {
+			t.Fatalf("output reached lexically cleaned parent: %v", err)
+		}
+	}
+}
+
 // A bundle and a side file of unsealed records hold every run's code and output, so
 // they are created owner-only whatever the umask (they were 0644 under the usual
 // 022 umask); a run refuses to add to an existing

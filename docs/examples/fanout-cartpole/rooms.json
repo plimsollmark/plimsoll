@@ -1,0 +1,16 @@
+{
+  "kp": [5, 10, 15, 20, 30, 40, 60, 90],
+  "kd": [0, 1, 2, 3.5, 5, 7.5, 10, 15],
+  "theta0": [0.05, 0.1, 0.2, 0.3],
+  "rooms": [
+    {"id": "wasm", "label": "WebAssembly engine", "where": "inside the daemon, on one laptop", "provider": "wasm", "tier": "process", "engine": "QuickJS"},
+    {"id": "docker", "label": "Docker, locked down", "where": "one laptop", "provider": "docker", "tier": "container", "engine": "node"},
+    {"id": "gvisor", "label": "Docker with gVisor", "where": "one laptop", "provider": "docker", "tier": "kernel", "engine": "node"},
+    {"id": "openshell", "label": "NVIDIA OpenShell", "where": "a local OpenShell gateway, one laptop", "provider": "openshell", "tier": "container", "engine": "node"},
+    {"id": "k8s-runc", "label": "Kubernetes agent-sandbox, runc", "where": "a kind cluster, one laptop", "provider": "agentsandbox", "tier": "container", "engine": "node"},
+    {"id": "k8s-gvisor", "label": "Kubernetes agent-sandbox, gVisor", "where": "a kind cluster, one laptop", "provider": "agentsandbox", "tier": "kernel", "engine": "node"},
+    {"id": "k8s-kata", "label": "Kubernetes agent-sandbox, Kata Containers", "where": "a kind cluster, one laptop", "provider": "agentsandbox", "tier": "vm", "engine": "node"},
+    {"id": "e2b", "label": "E2B microVM", "where": "E2B's cloud", "provider": "e2b", "tier": "vm", "usd_per_second": 4.6e-05, "engine": "node", "cloud": true},
+    {"id": "dockercloud", "label": "Docker Cloud Sandboxes microVM", "where": "Docker's cloud", "provider": "dockercloud", "tier": "vm", "usd_per_second": 1.94e-05, "engine": "node", "cloud": true}
+  ]
+}

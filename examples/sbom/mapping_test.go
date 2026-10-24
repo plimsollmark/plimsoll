@@ -71,7 +71,7 @@ func have(s source) sharedFiles {
 // the Docker Cloud runs booted a public node image that has no label here.
 func imageFor(t *testing.T, run source) *imageBOM {
 	t.Helper()
-	if d, _, _ := cdxutil.ImageDigest(run.Record); d == "1c6cbab4a47d34da471ab4ab970709cbba18e2a3445fde884b5d90ec2c4c5b25" {
+	if d, _, _ := cdxutil.ImageDigest(run.Record); d == "a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c" {
 		return fixtureImage(t)
 	}
 	return nil
@@ -408,7 +408,7 @@ func TestCLIReproducesOutputsAndReportsChecks(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if err := execute([]string{"-check", filepath.Join(dir, "run-c7e245a369dd.cdx.json"), "-trusted-pub", "../../docs/examples/sbom/harness.pub"}, &out); err != nil {
+	if err := execute([]string{"-check", filepath.Join(dir, "run-6551b9626206.cdx.json"), "-trusted-pub", "../../docs/examples/sbom/harness.pub"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "every mapped field") || !strings.Contains(out.String(), "LIMIT: the referenced bundle was not supplied") {
@@ -440,7 +440,7 @@ func TestCLIReproducesOutputsAndReportsChecks(t *testing.T) {
 	if err := os.WriteFile(empty, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	receipt := filepath.Join(dir, "run-c7e245a369dd.cdx.json")
+	receipt := filepath.Join(dir, "run-6551b9626206.cdx.json")
 	for _, key := range []string{empty, "", bad} {
 		if err := execute([]string{"-check", receipt, "-trusted-pub", key}, &out); err == nil || !strings.Contains(err.Error(), "-trusted-pub") {
 			t.Fatalf("-trusted-pub %q: %v", key, err)
@@ -574,6 +574,8 @@ func TestOneLineModeReproducesThePublishedBOMs(t *testing.T) {
 		{"no -pages", []string{"-bundle", base[1], "-pub", base[3], "-out", dir, "-line", "1"}},
 		{"no -out", []string{"-bundle", base[1], "-pub", base[3], "-pages", base[7], "-line", "1"}},
 		{"a qualification flag", append(base, "-line", "1", "-qualified-runs", "1")},
+		{"-bundle-pages without -line", append(base, "-bundle-pages", base[7])},
+		{"a relative -bundle-pages", append(base, "-line", "1", "-bundle-pages", "kata/")},
 	} {
 		if err := execute(c.args, &bytes.Buffer{}); err == nil {
 			t.Errorf("%s: -line accepted it", c.name)
@@ -582,42 +584,65 @@ func TestOneLineModeReproducesThePublishedBOMs(t *testing.T) {
 }
 
 // The agent-sandbox evidence page publishes one BOM per signed run, written by -line from
-// its bundle: each must be written exactly again, pass the schema and the checks, and name
-// the pod's pinned image as the identity. An environment that is not exactly
-// agentsandbox-image:sha256:<64 hex> states no identity this emitter maps.
+// its room's bundle (gVisor's beside the page, Kata's in kata/, whose BOMs name the page as
+// their documentation through -bundle-pages): each must be written exactly again, pass the
+// schema and the checks, check again from the published files, and name the pod's pinned
+// image as the identity. An environment that is not exactly agentsandbox-image:sha256:<64
+// hex> states no identity this emitter maps.
 func TestAgentSandboxBOMsReproduce(t *testing.T) {
 	const published = "../../docs/examples/agentsandbox"
-	dir := scratch(t)
-	base := []string{"-bundle", published + "/bundle.jsonl", "-pub", published + "/harness.pub", "-out", dir,
-		"-pages", "https://plimsollmark.github.io/plimsoll/examples/agentsandbox/", "-image-name", "plimsoll-sandbox-agentsandbox"}
-	names, err := filepath.Glob(published + "/run-*.cdx.json")
-	if err != nil || len(names) != 2 {
-		t.Fatalf("published BOMs: %v, %v", names, err)
-	}
-	for _, line := range []string{"1", "3"} {
-		var out bytes.Buffer
-		if err := execute(append(base, "-line", line), &out); err != nil {
-			t.Fatalf("line %s: %v", line, err)
-		}
-		if !strings.Contains(out.String(), "PASS: altered envelope refused") {
-			t.Errorf("line %s: the checks were not reported:\n%s", line, out.String())
-		}
-	}
-	for _, name := range names {
-		want, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := os.ReadFile(filepath.Join(dir, filepath.Base(name)))
-		if err != nil || !bytes.Equal(got, want) {
-			t.Fatalf("%s is not what -line writes from the published bundle: %v", filepath.Base(name), err)
-		}
-		if err := cdxutil.ValidateSchema(got); err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Contains(got, []byte("a Kubernetes agent-sandbox pod running the image pinned by sha256:")) {
-			t.Errorf("%s does not name the pod's pinned image", filepath.Base(name))
-		}
+	const pages = "https://plimsollmark.github.io/plimsoll/examples/agentsandbox/"
+	for label, room := range map[string]string{"gvisor": "", "kata": "kata"} {
+		t.Run(label, func(t *testing.T) {
+			at := filepath.Join(published, room)
+			dir := scratch(t)
+			base := []string{"-bundle", at + "/bundle.jsonl", "-pub", published + "/harness.pub", "-out", dir,
+				"-pages", pages, "-image-name", "plimsoll-sandbox-agentsandbox"}
+			bundleURL := pages + "bundle.jsonl"
+			if room != "" {
+				base = append(base, "-bundle-pages", pages+room+"/")
+				bundleURL = pages + room + "/bundle.jsonl"
+			}
+			names, err := filepath.Glob(at + "/run-*.cdx.json")
+			if err != nil || len(names) != 2 {
+				t.Fatalf("published BOMs: %v, %v", names, err)
+			}
+			for _, line := range []string{"1", "3"} {
+				var out bytes.Buffer
+				if err := execute(append(base, "-line", line), &out); err != nil {
+					t.Fatalf("line %s: %v", line, err)
+				}
+				if !strings.Contains(out.String(), "PASS: altered envelope refused") {
+					t.Errorf("line %s: the checks were not reported:\n%s", line, out.String())
+				}
+			}
+			for _, name := range names {
+				want, err := os.ReadFile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(filepath.Join(dir, filepath.Base(name)))
+				if err != nil || !bytes.Equal(got, want) {
+					t.Fatalf("%s is not what -line writes from the published bundle: %v", filepath.Base(name), err)
+				}
+				if err := cdxutil.ValidateSchema(got); err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Contains(got, []byte("a Kubernetes agent-sandbox pod running the image pinned by sha256:")) {
+					t.Errorf("%s does not name the pod's pinned image", filepath.Base(name))
+				}
+				if !bytes.Contains(got, []byte(`"`+bundleURL+`"`)) || !bytes.Contains(got, []byte(`"`+pages+`index.html"`)) {
+					t.Errorf("%s does not reference its bundle in its room and the page as its documentation", filepath.Base(name))
+				}
+				var out bytes.Buffer
+				if err := execute([]string{"-check", name, "-trusted-pub", published + "/harness.pub"}, &out); err != nil {
+					t.Fatalf("%s: %v", filepath.Base(name), err)
+				}
+				if !strings.Contains(out.String(), "PASS: the attached line is line") {
+					t.Errorf("%s: the check did not find its room's bundle:\n%s", filepath.Base(name), out.String())
+				}
+			}
+		})
 	}
 	for _, env := range []string{"agentsandbox-image:sha256:31d84a63", "agentsandbox-image:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430", "agentsandbox-image:sha256:31D84A633D71C261126EFC1F2B40EFDABC65E50857CE3F7CA6136E45C1B15430"} {
 		if _, _, ok := cdxutil.ImageDigest(sandbox.RunRecord{Environment: env}); ok {

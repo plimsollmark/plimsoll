@@ -7,6 +7,8 @@ three claims linked to signed evidence; where the platform signed a qualificatio
 statement for the run, a fourth claim carries its verdict with a conformance score. It
 does not scan the image's installed packages, discover dependencies, or provide
 vulnerability coverage.
+The `plimsoll:` property names it writes are defined in
+[INTERNAL · the property list →](../../docs/cyclonedx-properties.md).
 
 The checked-in example contains six real runs. Four are an invoice reconciliation
 program: two under gVisor (tier `kernel`), the second with one failed network attempt,
@@ -24,9 +26,9 @@ From this directory:
 
 ```sh
 go run .
-go run . -check ../../docs/examples/sbom/run-c7e245a369dd.cdx.json \
+go run . -check ../../docs/examples/sbom/run-6551b9626206.cdx.json \
   -trusted-pub ../../docs/examples/sbom/harness.pub
-go run . -check ../../docs/examples/sbom/run-40a5c260c313.cdx.json \
+go run . -check ../../docs/examples/sbom/run-4c69b5a38f29.cdx.json \
   -check-bundle ../../docs/examples/adapter/bundle.jsonl \
   -check-qualification ../../docs/examples/adapter/qualification.jsonl \
   -trusted-pub ../../docs/examples/adapter/harness.pub
@@ -51,7 +53,10 @@ the BOM of the bundle's line N and prints the checks it passed, the refusals of 
 included, with no page; the other lines need not be runs it can map. It is the path for a
 caller that converts runs as they happen: give it the signed file up to that run's checkpoint,
 so the bundle digest the BOM cites never moves as later runs are appended. On the published
-bundle it writes the published BOMs byte for byte (the reproduction test checks). `-outside`
+bundle it writes the published BOMs byte for byte (the reproduction test checks).
+`-bundle-pages` (with `-line` only) names where the bundle is published when that is not
+`-pages`, for a page that shows runs from more than one bundle: the agent-sandbox page keeps
+its Kata runs' bundle in `kata/`, and their BOMs cite that bundle and the page. `-outside`
 optionally names an unsigned comparison transcript; without it, a file named
 `outside-plimsoll.txt` beside the bundle is included if present. Missing explicit
 inputs fail. Session bundles, non-project runs and runs whose record states no image

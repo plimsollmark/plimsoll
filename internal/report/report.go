@@ -1,7 +1,7 @@
 // Package report renders plimsoll's exported audit stream into a single
 // self-contained, dependency-free HTML report (Prospector Phase 4). It is the
 // no-Grafana companion to the dashboard: a customer points it at a file of the
-// daemon's JSON "code run" audit lines and gets a static page — no build step, no
+// daemon's JSON run audit lines (internal/auditline) and gets a static page — no build step, no
 // external CSS or JS, no network — summarizing the run's brokered host-API calls and
 // the efficiency findings plimsoll derived.
 //
@@ -12,12 +12,11 @@
 package report
 
 import (
-	"bufio"
-	"encoding/json"
-	"fmt"
 	"io"
-	"strings"
+	"strconv"
 	"time"
+
+	"github.com/plimsollmark/plimsoll/internal/auditline"
 )
 
 // Finding is one efficiency observation as it appears in the report. It mirrors the
@@ -81,7 +80,8 @@ func (f Finding) Class() Class {
 	}
 }
 
-// Record is one "code run" audit line reduced to the fields the report renders.
+// Record is one run's audit line (snippet, cell, project or module) reduced to the
+// fields the report renders.
 type Record struct {
 	Time   time.Time
 	Caller string
@@ -90,11 +90,15 @@ type Record struct {
 	// request. Empty when the caller did not correlate. It is rendered as an
 	// identifier and never parsed — the report knows nothing about its meaning,
 	// which is the property that makes it safe to carry here.
-	TraceID         string
-	Profile         string
-	Sandbox         string
-	Isolation       string
-	ExitCode        int
+	TraceID   string
+	Profile   string
+	Sandbox   string
+	Isolation string
+	Op        string // javascript, project, module or cell
+	// Exit is what ended the run as the report shows it: the exit code of the snippet,
+	// the cell or the project's last reported step, else the outcome (a module run, or a
+	// project stopped before any step reported); never a 0 nothing reported.
+	Exit            string
 	TimedOut        bool
 	DurationMs      int64
 	HostCalls       int
@@ -108,79 +112,52 @@ type Record struct {
 	Findings        []Finding
 }
 
-// auditLine is the JSON shape of a daemon "code run" audit line. Only the fields the
-// report consumes are declared; unknown fields (and non-"code run" lines) are ignored.
-type auditLine struct {
-	Msg             string    `json:"msg"`
-	Time            time.Time `json:"time"`
-	Caller          string    `json:"caller"`
-	TraceID         string    `json:"trace_id"`
-	Profile         string    `json:"grant_profile"`
-	Sandbox         string    `json:"sandbox"`
-	Isolation       string    `json:"isolation"`
-	ExitCode        int       `json:"exit_code"`
-	TimedOut        bool      `json:"timed_out"`
-	DurationMs      int64     `json:"duration_ms"`
-	HostCalls       int       `json:"host_calls"`
-	HostCallsDenied int       `json:"host_calls_denied"`
-	Advice          string    `json:"advice"`
-	FindingCount    int       `json:"advice_findings"`
-	AgentFixable    int       `json:"advice_agent_fixable"`
-	ExtraCalls      int       `json:"advice_extra_calls"`
-	AddedLatencyMs  int64     `json:"advice_added_latency_ms"`
-	BytesMoved      int       `json:"advice_bytes_moved"`
-	Findings        []Finding `json:"advice_finding_details"`
-}
-
-// maxLineBytes bounds a single audit line the parser will accept. It sits above the
-// daemon's 8 MiB request ceiling so a legitimate line (bounded findings, no bodies)
-// always fits, while a pathological line cannot exhaust memory.
-const maxLineBytes = 16 << 20
-
-// Parse reads a newline-delimited JSON audit stream and returns the "code run"
-// records in stream order. Lines that are blank, not valid JSON, or not a "code run"
-// entry are skipped rather than failing the whole report, so a mixed operational log
-// (other RPCs, errors, warnings) can be piped in directly. It returns an error only
-// if the underlying reader fails.
+// Parse reads a newline-delimited JSON audit stream and returns every run's record in
+// stream order: snippets, cells, projects and modules (auditline.Parse). Lines that are
+// blank, not valid JSON, or not a run's are skipped rather than failing the whole
+// report, so a mixed operational log (other RPCs, errors, warnings) can be piped in
+// directly. It returns an error only if the underlying reader fails.
 func Parse(r io.Reader) ([]Record, error) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
-	var out []Record
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || line[0] != '{' {
-			continue
+	runs, err := auditline.Parse(r)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Record, 0, len(runs))
+	for _, run := range runs {
+		exit := run.Outcome
+		if run.ExitCode != nil {
+			exit = strconv.Itoa(*run.ExitCode)
 		}
-		var al auditLine
-		if err := json.Unmarshal([]byte(line), &al); err != nil {
-			continue // tolerate a corrupt or foreign line
-		}
-		if al.Msg != "code run" {
-			continue
+		findings := make([]Finding, 0, len(run.Findings))
+		for _, f := range run.Findings {
+			findings = append(findings, Finding{Pattern: f.Pattern, Severity: f.Severity, Remedy: f.Remedy,
+				Method: f.Method, Route: f.Route, Detail: f.Detail, AgentFixable: f.AgentFixable,
+				SuggestedMethod: f.SuggestedMethod, SuggestedRoute: f.SuggestedRoute,
+				GrantRouteMethod: f.GrantRouteMethod, GrantRoute: f.GrantRoute,
+				CandidateMethod: f.CandidateMethod, CandidateRoute: f.CandidateRoute,
+				ExtraCalls: f.ExtraCalls, AddedLatencyMs: f.AddedLatencyMs, BytesMoved: int(f.BytesMoved)})
 		}
 		out = append(out, Record{
-			Time:            al.Time,
-			Caller:          al.Caller,
-			TraceID:         al.TraceID,
-			Profile:         al.Profile,
-			Sandbox:         al.Sandbox,
-			Isolation:       al.Isolation,
-			ExitCode:        al.ExitCode,
-			TimedOut:        al.TimedOut,
-			DurationMs:      al.DurationMs,
-			HostCalls:       al.HostCalls,
-			HostCallsDenied: al.HostCallsDenied,
-			Advice:          al.Advice,
-			FindingCount:    al.FindingCount,
-			AgentFixable:    al.AgentFixable,
-			ExtraCalls:      al.ExtraCalls,
-			AddedLatencyMs:  al.AddedLatencyMs,
-			BytesMoved:      al.BytesMoved,
-			Findings:        al.Findings,
+			Time:            run.Time,
+			Caller:          run.Caller,
+			TraceID:         run.TraceID,
+			Profile:         run.Profile,
+			Sandbox:         run.Sandbox,
+			Isolation:       run.Isolation,
+			Op:              run.Op,
+			Exit:            exit,
+			TimedOut:        run.TimedOut,
+			DurationMs:      run.DurationMs,
+			HostCalls:       run.HostCalls,
+			HostCallsDenied: run.HostCallsDenied,
+			Advice:          run.Advice,
+			FindingCount:    run.FindingCount,
+			AgentFixable:    run.AgentFixable,
+			ExtraCalls:      run.ExtraCalls,
+			AddedLatencyMs:  run.AddedLatencyMs,
+			BytesMoved:      run.BytesMoved,
+			Findings:        findings,
 		})
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("read audit stream: %w", err)
 	}
 	return out, nil
 }

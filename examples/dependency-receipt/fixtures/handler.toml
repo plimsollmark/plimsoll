@@ -1,0 +1,9 @@
+# containerd's handler for the receipt runtime, imported from the node's config.toml
+# (imports = [..., "/etc/containerd/runsc-observe.d/handler.toml"]); the RuntimeClass
+# gvisor-receipt names it.
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-receipt]
+runtime_type = "io.containerd.runsc.v1"
+
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-receipt.options]
+TypeUrl = "io.containerd.runsc.v1.options"
+ConfigPath = "/etc/containerd/runsc-observe.d/runsc-receipt.toml"

@@ -67,6 +67,7 @@
   <div class="tile"><div class="big">{{.MinScore}} to {{.MaxScore}}</div><div class="what">regulation score (fraction of ticks from 2 ms on within 0.1 V of 5 V); the floor is {{.Floor}}</div></div>
   <div class="tile"><div class="big">{{.PeakV}} V, {{.PeakI}} A</div><div class="what">highest output voltage and inductor current in any scenario; the limits are 6 V and 10 A</div></div>
 </div>
+<p class="note">The scores are the environment's own grader's: <code>/oracle/graders/buck-converter.mjs</code>, shipped in the image, run on the first C run's records in a project run of its own after the runs that made them, in image <span class="fp">{{.GraderImage}}</span>.</p>
 
 <h2>Scenario {{.Replay.ID}}: {{.Replay.InputV}} V in, a {{.Replay.LoadOhm}} ohm load whose resistance halves, doubling its current, at {{.Replay.StepMs}} ms</h2>
 <p class="note">The C port's record, every tick. The JavaScript law's record of the same scenario is the same bytes, so drawing it too would cover this line exactly. Move the pointer across the chart to read the values at any tick.</p>

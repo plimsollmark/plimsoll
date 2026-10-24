@@ -35,6 +35,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/plimsollmark/plimsoll/examples/internal/grade"
 	"github.com/plimsollmark/plimsoll/examples/internal/wasmshim"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -139,6 +140,18 @@ func realMain(out, image string) error {
 		return fmt.Errorf("JavaScript run: %w", err)
 	}
 
+	// The scores are the environment's own grader's, in a run of its own after the
+	// runs that made the trajectories.
+	var trajs []grade.Trajectory
+	for _, s := range fx.Scenarios {
+		trajs = append(trajs, grade.Trajectory{ID: s.ID, Bytes: runs[0].scenarios[s.ID].trajectory})
+	}
+	graded, err := grade.Run(ctx, p.Sandbox, "buck-converter", fx.TickS, trajs)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("grader    | /oracle/graders/buck-converter.mjs, in a run of its own in %s\n", graded.Result.EnvironmentIdentity)
+
 	var problems []string
 	if runs[0].wasmSHA256 != runs[1].wasmSHA256 {
 		problems = append(problems, "the two compiles produced different modules")
@@ -154,9 +167,12 @@ func realMain(out, image string) error {
 				problems = append(problems, fmt.Sprintf("%s: %s fingerprint %s, fingerprints.json records %s", s.ID, c.name, c.got, s.Fingerprint))
 			}
 		}
-		sc := score(a.trajectory, fx.TickS)
-		if sc.Failure != "" || sc.Score < fx.MinScore {
-			problems = append(problems, fmt.Sprintf("%s: score %.3f, failure %q, floor %.2f", s.ID, sc.Score, sc.Failure, fx.MinScore))
+		var sc verdict
+		if err := json.Unmarshal(graded.Lines[s.ID], &sc); err != nil {
+			return fmt.Errorf("%s: the grader printed %s: %w", s.ID, graded.Lines[s.ID], err)
+		}
+		if sc.failure() != "" || sc.Score < fx.MinScore {
+			problems = append(problems, fmt.Sprintf("%s: score %.3f, failure %q, floor %.2f", s.ID, sc.Score, sc.failure(), fx.MinScore))
 		}
 		row := scenarioRow{
 			ID: s.ID, InputV: s.Params[0], LoadOhm: s.Params[1], StepMs: round(s.Params[2] * 1000),
@@ -173,7 +189,7 @@ func realMain(out, image string) error {
 	}
 	fmt.Println("verdict   | the compile is reproducible, the C port's trajectory is the JavaScript law's to the bit in every scenario, and it regulates within every limit")
 
-	page, err := render(fx, runs, rows, runs[0].scenarios[fx.Scenarios[0].ID].trajectory)
+	page, err := render(fx, runs, rows, runs[0].scenarios[fx.Scenarios[0].ID].trajectory, graded.Result.EnvironmentIdentity)
 	if err != nil {
 		return err
 	}
@@ -270,45 +286,21 @@ func at(traj []byte, k, col int) float64 {
 	return math.Float64frombits(binary.LittleEndian.Uint64(traj[(k*(width+1)+col)*8:]))
 }
 
+// verdict is the line the buck environment's grader prints: docker/sim/graders/
+// buck-converter.mjs, shipped in the simulation image the project image is built on
+// and run by grade.Run in a run of its own. failure is null on a pass.
 type verdict struct {
-	Score   float64
-	Failure string
-	MaxV    float64
-	MaxI    float64
+	Score   float64 `json:"score"`
+	Failure *string `json:"failure"`
+	MaxV    float64 `json:"max_v"`
+	MaxI    float64 `json:"max_abs_i"`
 }
 
-// score is the buck environment's grader, restated: the fraction of ticks from
-// 2 ms on with the output within 0.1 V of 5 V, and zero with a reason if the output
-// ever exceeds 6 V or the inductor current 10 A in magnitude.
-func score(traj []byte, tickS float64) verdict {
-	n := len(traj) / 8 / (width + 1)
-	from := int(math.Round(0.002 / tickS))
-	v := verdict{MaxV: math.Inf(-1)}
-	inBand, counted := 0, 0
-	for k := 0; k < n; k++ {
-		volts, amps := at(traj, k, 0), at(traj, k, 1)
-		v.MaxV = math.Max(v.MaxV, volts)
-		v.MaxI = math.Max(v.MaxI, math.Abs(amps))
-		if v.Failure == "" && math.Abs(amps) > 10 {
-			v.Failure = "overcurrent"
-		}
-		if v.Failure == "" && volts > 6 {
-			v.Failure = "overvoltage"
-		}
-		if k >= from {
-			counted++
-			if math.Abs(volts-5) <= 0.1 {
-				inBand++
-			}
-		}
+func (v verdict) failure() string {
+	if v.Failure == nil {
+		return ""
 	}
-	if v.Failure == "" && inBand == 0 {
-		v.Failure = "never_regulated"
-	}
-	if v.Failure == "" {
-		v.Score = float64(inBand) / float64(counted)
-	}
-	return v
+	return *v.Failure
 }
 
 // scenarioRow is one scenario as the page shows it and embeds it.
@@ -343,7 +335,7 @@ type sample struct {
 	Duty string
 }
 
-func render(fx fixture, runs []result, rows []scenarioRow, replay []byte) ([]byte, error) {
+func render(fx fixture, runs []result, rows []scenarioRow, replay []byte, graderImage string) ([]byte, error) {
 	n := len(replay) / 8 / (width + 1)
 	tr := trace{TickS: fx.TickS}
 	for k := 0; k < n; k++ {
@@ -412,6 +404,7 @@ func render(fx fixture, runs []result, rows []scenarioRow, replay []byte) ([]byt
 		"MinScore":    strconv.FormatFloat(minScore, 'f', 3, 64),
 		"MaxScore":    strconv.FormatFloat(maxScore, 'f', 3, 64),
 		"Floor":       num(fx.MinScore),
+		"GraderImage": graderImage,
 		"PeakV":       strconv.FormatFloat(peakV, 'f', 2, 64),
 		"PeakI":       strconv.FormatFloat(peakI, 'f', 2, 64),
 		"Rows":        rows,

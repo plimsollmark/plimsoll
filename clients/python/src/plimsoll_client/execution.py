@@ -109,7 +109,9 @@ class CodeExecutor:
         if not meets(info.isolation, self.minimum_isolation):
             raise InsufficientIsolationError("the daemon is below CodeExecutor's isolation floor", not_dispatched="isolation")
         languages = info.project_environment.languages
-        if languages and language not in languages:
+        # Every daemon states its languages (protocol 4): one that states none proved
+        # none, and is refused rather than let try (review B9, 2026-10-23).
+        if language not in languages:
             raise UnsupportedError(f"the project image does not state support for {language}", not_dispatched="unsupported")
         return self.client.run_project(
             project_files, [command], payload.get("artifacts", []),

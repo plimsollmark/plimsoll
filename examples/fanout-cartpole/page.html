@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grading a batch of controllers on every sandbox: plimsoll's fan-out</title>
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #fcfcfb; color: #1a1f29; font: 15px/1.55 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+main { max-width: 1060px; margin: 0 auto; padding: 32px 20px 72px; }
+h1 { font-size: 27px; margin: 0 0 6px; }
+h2 { font-size: 19px; margin: 36px 0 10px; }
+p, li { max-width: 78ch; }
+p.lead { color: #4a5160; margin: 0 0 18px; }
+.tiles { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0; }
+.tile { flex: 1 1 140px; background: #fff; border: 1px solid #e2e6ee; border-radius: 10px; padding: 12px 14px; }
+.tile .k { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; }
+.tile .v { font-size: 22px; font-weight: 700; margin-top: 2px; }
+.tile .s { font-size: 12.5px; color: #6b7280; }
+.figs { display: flex; flex-wrap: wrap; gap: 20px; }
+figure { flex: 1 1 360px; margin: 0; background: #fff; border: 1px solid #e2e6ee; border-radius: 10px; padding: 14px; }
+figure img { width: 100%; height: auto; image-rendering: pixelated; display: block; border-radius: 4px; }
+figcaption { font-size: 13px; color: #4a5160; margin-top: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: #4a5160; margin-top: 8px; }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+svg .t { transition: opacity .15s; }
+svg.focus .t { opacity: .15; }
+svg.focus .t.on { opacity: 1; }
+.scroll { overflow-x: auto; }
+table { width: 100%; min-width: 680px; border-collapse: collapse; background: #fff; border: 1px solid #e2e6ee; border-radius: 10px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #eef1f6; vertical-align: top; font-size: 14px; }
+th { background: #f0f2f7; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: #4a5160; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr[data-room] { cursor: default; }
+tr[data-room]:hover td { background: #f5f8fe; }
+tr.out td { color: #8a91a0; }
+tr:last-child td { border-bottom: none; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: #eef1f6; padding: 1px 5px; border-radius: 5px; }
+p code { overflow-wrap: anywhere; }
+td.tier { white-space: nowrap; }
+pre { background: #f0f2f7; border-radius: 8px; padding: 10px 14px; overflow-x: auto; font-size: 13px; }
+.note { color: #6b7280; font-size: 13px; }
+dl dt { font-weight: 600; margin-top: 8px; }
+dl dd { margin: 2px 0 0; color: #4a5160; max-width: 78ch; }
+.foot { color: #8a91a0; font-size: 12.5px; margin-top: 40px; }
+</style>
+</head>
+<body>
+<main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/fanout/index.html">One job, every sandbox</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
+<h1>Grading a batch of controllers on every sandbox</h1>
+<p class="lead">These are fixed, hand-authored cart-pole controllers, tried as one batch: {{.NCands}} candidate cart-pole controllers, each tried from {{len .Theta0}} starting angles, {{.Trials}} trials in all. Every trial was sent twice, as the same JavaScript program, to two different kinds of sandbox, {{.RoomsRun}} kinds in all, working at once. {{.Agreed}} of {{.Trials}} trials got the same answer from both sandboxes, byte for byte{{if .TwoEngines}}, {{.TwoEngines}} of them across two different JavaScript engines{{end}}{{if .WithCloud}}, and {{.WithCloud}} with a run in the cloud{{end}}. Every run is signed into one bundle that anyone can check offline.</p>
+<p>The trial program computes the score for these fixed formulas. A model that writes its own program needs a separate checker, so it cannot award itself a good score.</p>
+
+<div class="tiles">
+<div class="tile"><div class="k">Signed runs</div><div class="v">{{.Runs}}</div><div class="s">one fresh sandbox each</div></div>
+<div class="tile"><div class="k">Kinds of sandbox</div><div class="v">{{.RoomsRun}}</div><div class="s">each its own daemon, one pool</div></div>
+<div class="tile"><div class="k">Isolation tiers</div><div class="v">{{.Tiers}} of 4</div><div class="s">process, container, kernel, vm</div></div>
+<div class="tile"><div class="k">Trials that agree</div><div class="v">{{.Agreed}} of {{.Trials}}</div><div class="s">two sandboxes, same bytes</div></div>
+<div class="tile"><div class="k">Wall time</div><div class="v">{{minutes .Started .Ended}}</div><div class="s">start to last answer, operator's clock</div></div>
+<div class="tile"><div class="k">Cloud cost</div><div class="v">{{usd .Cost}}</div><div class="s">estimated: signed run time × list price</div></div>
+</div>
+
+<h2>The scoreboard</h2>
+<div class="figs">
+<figure>
+{{.Board}}
+<figcaption>Each square is one candidate controller: how many of its {{len .Theta0}} starting angles ({{range $i, $t := .Theta0}}{{if $i}}, {{end}}{{$t}}{{end}} radians from upright) it ended balanced from, after 500 steps of 10 ms. Hover a square for the steps the pole stayed up. A square outlined in red had a trial whose two answers did not match, and counts only the trials that did.</figcaption>
+<div class="legend">{{range $i, $c := .Ramp}}<span><span class="sw" style="background:{{$c}}"></span>{{$i}}</span>{{end}}<span>starting angles ended balanced</span></div>
+</figure>
+<figure>
+<p style="margin-top:0"><strong>{{.Perfect}} of {{.NCands}}</strong> candidates balanced the pole from every starting angle. The pattern is the textbook one: too little angle gain (kp) and the pole falls whatever the damping; no spin gain (kd) and it wobbles until it falls; and the strongest gains do worse again, mostly from the larger starting angles.</p>
+<p class="note">The candidates are a grid of gains made by hand, from too weak to fight gravity, through no damping (it wobbles until it falls), to very strong. No model wrote them. Each is a linear state-feedback law: the force on the cart is kp times the pole's lean plus kd times its spin plus the cart's position and speed (gains 1 and 1), capped at 20 newtons. Balanced means the pole stayed up all 500 steps and ended within 0.05 radians of upright with the cart within half a metre of the middle.</p>
+</figure>
+</div>
+
+<h2>The sandboxes</h2>
+<div class="scroll"><table>
+<thead><tr><th>Sandbox</th><th>Provider</th><th>Tier</th><th>Where</th><th class="n">Runs</th><th class="n">Median run</th><th class="n">Est. cost</th></tr></thead>
+<tbody>
+{{range .Rooms}}{{if .Runs}}<tr><td><strong>{{.Label}}</strong></td><td><code>{{.Provider}}</code></td><td class="tier"><span class="sw" style="background:{{.Color}}"></span>{{.Tier}}</td><td>{{.Where}}</td><td class="n">{{.Runs}}</td><td class="n">{{seconds .MedianMs}}</td><td class="n">{{if .USDPerSecond}}{{usd .Cost}}{{else}}free{{end}}</td></tr>
+{{else}}<tr class="out"><td><strong>{{.Label}}</strong></td><td><code>{{.Provider}}</code></td><td class="tier"><span class="sw" style="background:{{.Color}}"></span>{{.Tier}}</td><td>{{.Where}}</td><td colspan="3">not run: {{if .NotRun}}{{.NotRun}}{{else}}no signed run{{end}}</td></tr>
+{{end}}{{end}}</tbody></table>
+<p>These times describe this run. The rooms used different concurrency, locations and assigned work, so the median column is not a controlled provider-speed comparison.</p></div>
+<p class="note">A median run is the time from dispatch to answer that the run's signed record states, sandbox start included. Cost is that time multiplied by each cloud's list price per second; the provider's bill is the real figure. Where a sandbox is, is the operator's statement; the record states the provider and the tier.</p>
+
+{{if .Issues}}<h2>Trials without agreement</h2>
+<ul>{{range .Issues}}<li>candidate {{.C}}, starting angle {{.S}}: {{.Reason}}</li>{{end}}</ul>{{end}}
+{{if .Failures}}<h2>Calls that returned no record</h2>
+<ul>{{range .Failures}}<li>{{.Room}}, candidate {{index .Piece 0}}, starting angle {{index .Piece 1}}: {{.Error}}</li>{{end}}</ul>{{end}}
+
+<h2>Why the two answers should agree</h2>
+<p>The trial program uses only floating-point operations whose rounding the JavaScript standard specifies exactly (addition, subtraction, multiplication, division and comparison on 64-bit numbers), with sine and cosine as fixed polynomials instead of the engine's own, so every conforming engine should print the same bytes for a trial, a fingerprint of the whole trajectory included: node in most rooms, QuickJS in the WebAssembly engine. Agreement shows the answers match; it does not prove the simulator matches a real cart-pole or any sandbox secure.</p>
+
+<h2>What is signed, and what is stated</h2>
+<p><strong>Signed</strong> by the harness key made for this run, after the client checked each run's record: every request (with the room it was sent to) and every answer, including the provider and the isolation tier the daemon reported and the run's start and end. A changed, missing or moved line fails the check below. <strong>Stated</strong> by the operator, in unsigned files beside the bundle: the batch and what each room is and where (<code>rooms.json</code>, with the engine and the list price), and when the run started and ended, which rooms sat out and why (<code>run.json</code>). A tier is the daemon's report: plimsoll's configuration and the provider's evidence plus a startup smoke test, never runtime attestation, and nothing here independently proves which machine ran the code.</p>
+
+<h2>Check it yourself</h2>
+<p>From a checkout of the repository:</p>
+<pre>go run ./examples/fanout-cartpole -verify</pre>
+<p>It checks every signature in <code>bundle.jsonl</code> under <code>harness.pub</code> (key <code>{{.Harness}}</code>), the chain that catches a line added, removed or moved, each signed record against the request and answer stored beside it, that each run's record states the provider and tier of the room it was sent to, and that this page is what the bundle and the two stated files render. It starts no sandbox.</p>
+
+<h2>Words on this page</h2>
+<dl>
+<dt>Cart-pole</dt><dd>A cart on a rail with a pole hinged on top; the only thing a controller can do is push the cart left or right, and the job is to keep the pole up.</dd>
+<dt>Controller</dt><dd>Code that decides, every step, how hard to push. Here every candidate is the same formula with different gains.</dd>
+<dt>Gain</dt><dd>How strongly the controller reacts to something: kp to how far the pole leans, kd to how fast it is turning.</dd>
+<dt>Sandbox</dt><dd>A place to run code someone else wrote without letting it reach the machine around it. Here each run gets a fresh one.</dd>
+<dt>Isolation tier</dt><dd>How strong the wall is, weakest to strongest: <strong>process</strong> (a WebAssembly engine inside plimsoll's own process), <strong>container</strong> (Linux namespaces and a filter on system calls), <strong>kernel</strong> (gVisor, a separate kernel that answers the code's system calls), <strong>vm</strong> (a virtual machine with its own kernel).</dd>
+<dt>Fan-out, fan-in</dt><dd>Sending pieces of one job to many workers at once, then gathering the answers into one result.</dd>
+</dl>
+
+<p class="foot">Run {{date .Started}}. {{.NCands}} candidates, {{len .Theta0}} starting angles each. Rendered from the signed bundle by <code>go run ./examples/fanout-cartpole</code>.</p>
+</main>
+</body>
+</html>

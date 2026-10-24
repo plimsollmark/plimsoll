@@ -3,12 +3,12 @@
 
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { createServer as createTCPServer, type AddressInfo, type Socket } from "node:net";
+import { connect as connectTCP, createServer as createTCPServer, type AddressInfo, type Socket } from "node:net";
 import { before, test } from "node:test";
 
 import { meets, PlimsollClient, PlimsollError, PROTOCOL } from "../src/index.ts";
 import { errorFromWire, sessionEndFromWire } from "../src/errors.ts";
-import { recordDigest, recordFromWire } from "../src/record.ts";
+import { RECORD_VERSION, recordDigest, recordFromWire } from "../src/record.ts";
 
 // The rewritten answer keeps the daemon's echo of the request ID, as a proxy that edits
 // a body would; without it the client refuses the answer as another request's.
@@ -157,6 +157,24 @@ test("a refused connection is marked environment by its ECONNREFUSED cause", asy
   await assert.rejects(new PlimsollClient({ baseUrl: url }).describe(), unsentCode("ECONNREFUSED"));
 });
 
+// A fetch given in the options may retry: it can deliver the code on one attempt and
+// fail to connect on its last. Its error then carries the same ECONNREFUSED cause a call
+// never sent carries, so it proves nothing and earns no mark.
+test("a fetch given in the options never earns the not-dispatched mark", async () => {
+  const listener = createTCPServer();
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(listener.address() as AddressInfo).port}`;
+  await new Promise<void>((resolve) => listener.close(() => resolve()));
+  const client = new PlimsollClient({ baseUrl: url, fetch: (input, init) => fetch(input, init) });
+  await assert.rejects(client.describe(), (e: unknown) => {
+    assert.ok(e instanceof PlimsollError);
+    assert.equal(e.code, "unavailable");
+    assert.equal((e.cause as Error & { cause: { code?: string } }).cause.code, "ECONNREFUSED");
+    assert.equal(e.notDispatched, undefined);
+    return true;
+  });
+});
+
 test("TLS against a cleartext listener is marked by ERR_SSL_WRONG_VERSION_NUMBER", async () => {
   const sockets = new Set<Socket>();
   const listener = createTCPServer((socket) => {
@@ -209,24 +227,82 @@ test("unknown fetch causes, aborts and answer-read failures remain unmarked", as
   await assert.rejects(bodyFailed.describe(), (e: unknown) => e instanceof PlimsollError && e.notDispatched === undefined);
 });
 
+// listenOn listens on port, rejecting on a listen error instead of leaving it unhandled.
+function listenOn(server: ReturnType<typeof createTCPServer>, port: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+}
+
+// listenOutsideEphemeral listens on a free port below Linux's ephemeral range (32768 to
+// 60999), so the port stays free while a test stops listening for a call: an ephemeral
+// port can be taken meanwhile by any outbound connection, and the gate runs many tests
+// at once.
+async function listenOutsideEphemeral(server: ReturnType<typeof createTCPServer>): Promise<number> {
+  for (let i = 0; i < 50; i++) {
+    const port = 20000 + Math.floor(Math.random() * 10000);
+    try {
+      await listenOn(server, port);
+      return port;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE") throw e;
+    }
+  }
+  throw new Error("no free port between 20000 and 29999");
+}
+
 test("a refused connection keeps the session usable", { skip }, async () => {
-  const listener = createTCPServer();
-  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
-  const url = `http://127.0.0.1:${(listener.address() as AddressInfo).port}`;
-  await new Promise<void>((resolve) => listener.close(() => resolve()));
-  let refused = false;
-  const c = new PlimsollClient({ baseUrl: sessionsUrl!, fetch: (input, init) => fetch(refused ? url : input, init) });
-  const s = await c.openSession();
+  // The client's own fetch has to see the refusal: a fetch given in the options earns
+  // no mark. So the session talks through a proxy that is stopped for one call, every
+  // connection it carried cut, and started again on the same port.
+  const target = new URL(sessionsUrl!);
+  const inbounds = new Set<Socket>();
+  const proxy = createTCPServer((inbound) => {
+    const outbound = connectTCP(Number(target.port), target.hostname);
+    const cut = () => {
+      inbound.destroy();
+      outbound.destroy();
+      inbounds.delete(inbound);
+    };
+    inbounds.add(inbound);
+    for (const end of [inbound, outbound]) end.on("error", cut).on("close", cut);
+    inbound.pipe(outbound).pipe(inbound);
+  });
+  const port = await listenOutsideEphemeral(proxy);
+  // Each connection is ended and its close awaited, which comes once the client has
+  // closed its side too, so the client's pool keeps no connection the next call could be
+  // written on. Destroyed instead, a connection could still sit in the pool under load;
+  // a request written on it may have been delivered, so it is rightly unmarked, and the
+  // call below failed unmarked in two of four gate runs on 2026-10-23.
+  const stop = async () => {
+    await Promise.all([...inbounds].map((socket) => new Promise<void>((resolve) => {
+      const forced = setTimeout(() => socket.destroy(), 5_000);
+      socket.once("close", () => {
+        clearTimeout(forced);
+        resolve();
+      });
+      socket.end();
+    })));
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+  };
+  const s = await new PlimsollClient({ baseUrl: `http://127.0.0.1:${port}` }).openSession();
   try {
-    refused = true;
+    await stop();
     await assert.rejects(s.runJavaScript("1"), unsentCode("ECONNREFUSED"));
     assert.equal(s.stopped, undefined);
     assert.equal(s.ended, undefined);
-    refused = false;
+    await listenOn(proxy, port);
     assert.equal((await s.runJavaScript("1")).record.sequence, 1n);
   } finally {
-    refused = false;
+    // Listening again first, so a failure above is reported as itself and not as the
+    // close's refused connection, which once hid it.
+    if (!proxy.listening) await listenOn(proxy, port);
     await s.close();
+    await stop();
   }
 });
 
@@ -473,6 +549,13 @@ test("a session end this client has no name for is an end, never open", { skip }
   assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(0)] }, { bound: true }).sessionEnded?.reason, "unknown");
   assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(42)] }, { bound: true }).sessionEnded?.reason, "unknown");
   assert.equal(errorFromWire(412, { code: "failed_precondition", details: [detail(2)] }, { bound: true }).sessionEnded?.reason, "expired");
+  // A newer daemon's NotDispatched detail with a field this client does not know keeps
+  // its mark, as in Go and Python: a varint, a string and a fixed-width field after the
+  // reason (review B8, 2026-10-23).
+  for (const extra of [[24, 7], [34, 1, 120], [41, 1, 2, 3, 4, 5, 6, 7, 8], [45, 1, 2, 3, 4]]) {
+    const nd = { type: "plimsoll.v1.NotDispatched", value: Buffer.from([8, 6, ...extra]).toString("base64") };
+    assert.equal(errorFromWire(429, { code: "resource_exhausted", details: [nd] }, { bound: true }).notDispatched, "capacity", String(extra));
+  }
 
   const c = tampering(sessionsUrl!, (b) => {
     if (b.run) b.ended = "SESSION_END_HOST_LOST";
@@ -540,7 +623,7 @@ test("an unanswered session call is in the chain and the session goes on", { ski
   await assert.rejects(s.runJavaScript("2"), (e: unknown) => {
     assert.ok(e instanceof PlimsollError);
     assert.equal(e.notDispatched, undefined, "a call that may have run is never marked not dispatched");
-    assert.equal(e.unanswered?.version, 3);
+    assert.equal(e.unanswered?.version, RECORD_VERSION);
     return true;
   });
   const r = await s.runJavaScript("3");

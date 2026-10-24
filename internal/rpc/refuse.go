@@ -6,6 +6,7 @@ import (
 	"connectrpc.com/connect"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -18,32 +19,11 @@ func refuse(code connect.Code, reason sandbox.Refusal, err error) *connect.Error
 }
 
 func withNotDispatched(ce *connect.Error, reason sandbox.Refusal) *connect.Error {
-	detail, derr := connect.NewErrorDetail(&plimsollv1.NotDispatched{Reason: reasonWire(reason)})
+	detail, derr := connect.NewErrorDetail(&plimsollv1.NotDispatched{Reason: wireenum.RefusalToWire(reason)})
 	if derr == nil {
 		ce.AddDetail(detail)
 	}
 	return ce
-}
-
-func reasonWire(r sandbox.Refusal) plimsollv1.NotDispatchedReason {
-	switch r {
-	case sandbox.RefusalRequest:
-		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST
-	case sandbox.RefusalPermission:
-		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PERMISSION
-	case sandbox.RefusalProtocol:
-		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_PROTOCOL
-	case sandbox.RefusalUnsupported:
-		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_UNSUPPORTED
-	case sandbox.RefusalIsolation:
-		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ISOLATION
-	case sandbox.RefusalCapacity:
-		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY
-	case sandbox.RefusalEnvironment:
-		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_ENVIRONMENT
-	default:
-		return plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_UNSPECIFIED
-	}
 }
 
 // notDispatchedOf reads the not-dispatched mark off an error the handler returns, as

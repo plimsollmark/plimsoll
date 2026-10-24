@@ -1,12 +1,18 @@
 # Toolchain image for CodegenService project runs. The TypeScript toolchain is
 # baked in (no network at runtime — the sandbox runs with --network none), so
 # agents can typecheck, lint, and execute TS/JS without installing anything.
-FROM node:22-alpine AS runner-guard-build
+# The base is pinned by digest, so every build of this context starts from the same
+# bytes: local builds once used whatever their cache held while CI pulled the tag fresh,
+# both under one inputs label (review, 2026-10-23). The tag is for readers; the digest
+# decides. To move it: docker pull the tag, then copy its RepoDigests entry here. With
+# DOCKER_HUB_MIRROR set, make docker-images passes the same digest from the mirror.
+ARG BASE_NODE=node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
+FROM ${BASE_NODE} AS runner-guard-build
 RUN apk add --no-cache gcc musl-dev
 COPY guard/runner.c /runner-guard.c
 RUN cc -O2 -fPIC -shared -o /runner-guard.so /runner-guard.c
 
-FROM node:22-alpine
+FROM ${BASE_NODE}
 
 # Global, version-pinned dev toolchain. Versions are the single source of truth in
 # ../toolchain.versions and are kept in lockstep with the e2b template

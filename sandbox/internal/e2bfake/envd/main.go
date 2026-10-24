@@ -119,8 +119,27 @@ func main() {
 	if err := os.Chmod(*socket, 0o777); err != nil {
 		log.Fatal(err)
 	}
+	// The default user's home exists and is its own, as in an E2B template.
+	if uid, gid, home, err := account(*defaultUser); err != nil || ensureDirs(home, uid, gid) != nil {
+		log.Fatalf("the default user's home: %v", err)
+	}
 	s := &server{token: *token, defaultUser: *defaultUser, procs: map[int]*proc{}}
 	log.Fatal(http.Serve(ln, s))
+}
+
+// ensureDirs makes each missing directory of dir and gives it to uid and gid, as real
+// envd does for an upload's parents; a directory already there keeps its owner.
+func ensureDirs(dir string, uid, gid int) error {
+	if _, err := os.Lstat(dir); err == nil || dir == "/" || dir == "." {
+		return nil
+	}
+	if err := ensureDirs(filepath.Dir(dir), uid, gid); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil && !os.IsExist(err) {
+		return err
+	}
+	return os.Chown(dir, uid, gid)
 }
 
 type server struct {
@@ -398,8 +417,9 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// As root, then given to the user: what real envd does, links and all.
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		// As root, then given to the user: what real envd does, links and all, the
+		// directories it makes included.
+		if err := ensureDirs(filepath.Dir(dest), uid, gid); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

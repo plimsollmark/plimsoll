@@ -1,0 +1,207 @@
+{
+ "about": [
+  "Daemon answers every client reads the same way: refusals written by the daemon's own",
+  "error path (internal/rpc answers_test.go) and variants no daemon of this version writes.",
+  "echo: the request ID's echo matches, is missing, or names another request. The Go,",
+  "Python and TypeScript clients' tests run every case. Rewrite: go test ./internal/rpc -run",
+  "TestAnswersFileIsTheDaemonsErrorPath -update-answers"
+ ],
+ "answers": [
+  {
+   "name": "at capacity",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAY\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "at capacity, but the echo is missing",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAY\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\"}}]}",
+   "echo": "missing",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": true
+   }
+  },
+  {
+   "name": "at capacity, but the echo names another request",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"sandbox is at capacity, retry shortly\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAY\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_CAPACITY\"}}]}",
+   "echo": "other",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": true
+   }
+  },
+  {
+   "name": "an over-size request",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"message\":\"request body declares 9000000 bytes, over the 8388608-byte limit\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAE\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_REQUEST\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "request",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "below the isolation floor",
+   "status": 400,
+   "contentType": "application/json",
+   "body": "{\"code\":\"failed_precondition\",\"message\":\"sandbox isolation requirement not met\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAU\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_ISOLATION\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "failed_precondition",
+    "notDispatched": "isolation",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "another protocol",
+   "status": 501,
+   "contentType": "application/json",
+   "body": "{\"code\":\"unimplemented\",\"message\":\"protocol 3 is not 4\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAM\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_PROTOCOL\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "unimplemented",
+    "notDispatched": "protocol",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "no credential",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"code\":\"unauthenticated\",\"message\":\"unauthenticated\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAI\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_PERMISSION\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "unauthenticated",
+    "notDispatched": "permission",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a session that ended",
+   "status": 400,
+   "contentType": "application/json",
+   "body": "{\"code\":\"failed_precondition\",\"message\":\"sandbox: the session has ended (expired): the session's lifetime ran out\",\"details\":[{\"type\":\"plimsoll.v1.SessionEnded\",\"value\":\"CAISHnRoZSBzZXNzaW9uJ3MgbGlmZXRpbWUgcmFuIG91dA\",\"debug\":{\"reason\":\"SESSION_END_EXPIRED\",\"detail\":\"the session's lifetime ran out\"}},{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAE\",\"debug\":{\"reason\":\"NOT_DISPATCHED_REASON_REQUEST\"}}]}",
+   "echo": "match",
+   "expect": {
+    "code": "failed_precondition",
+    "notDispatched": "request",
+    "sessionEnded": "expired",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "an internal fault, which may have run",
+   "status": 500,
+   "contentType": "application/json",
+   "body": "{\"code\":\"internal\",\"message\":\"internal error 0000000000000000; the daemon's log holds its detail\"}",
+   "echo": "match",
+   "expect": {
+    "code": "internal",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a refusal reason this client cannot name",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CGM\"}],\"message\":\"refused\"}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "unknown",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a refusal with fields a newer daemon added",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CAYpAQIDBAUGBwgYBw\"}],\"message\":\"refused\"}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "capacity",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a session end with no reason",
+   "status": 400,
+   "contentType": "application/json",
+   "body": "{\"code\":\"failed_precondition\",\"details\":[{\"type\":\"plimsoll.v1.SessionEnded\",\"value\":\"\"}],\"message\":\"ended\"}",
+   "echo": "match",
+   "expect": {
+    "code": "failed_precondition",
+    "notDispatched": "",
+    "sessionEnded": "unknown",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "an undecodable refusal detail",
+   "status": 429,
+   "contentType": "application/json",
+   "body": "{\"code\":\"resource_exhausted\",\"details\":[{\"type\":\"plimsoll.v1.NotDispatched\",\"value\":\"CA\"}],\"message\":\"refused\"}",
+   "echo": "match",
+   "expect": {
+    "code": "resource_exhausted",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a refusal before the handler, marked by the header",
+   "status": 400,
+   "contentType": "application/json",
+   "body": "{\"code\":\"invalid_argument\",\"message\":\"malformed body\"}",
+   "echo": "match",
+   "mark": "request",
+   "expect": {
+    "code": "invalid_argument",
+    "notDispatched": "request",
+    "sessionEnded": "",
+    "answerNotBound": false
+   }
+  },
+  {
+   "name": "a proxy's page, no mark",
+   "status": 502,
+   "contentType": "text/html",
+   "body": "\u003chtml\u003e\u003cbody\u003e502 Bad Gateway\u003c/body\u003e\u003c/html\u003e",
+   "echo": "missing",
+   "expect": {
+    "code": "unavailable",
+    "notDispatched": "",
+    "sessionEnded": "",
+    "answerNotBound": true
+   }
+  }
+ ]
+}

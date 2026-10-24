@@ -24,6 +24,7 @@
     "docs/sessions.md",
     "docs/placement.md",
     "docs/run-records.md",
+    "docs/receipt-verification.md",
     "docs/openshell.md",
     "docs/guest-dependencies.md",
     "docs/trainers/dependencies.html",
@@ -469,7 +470,7 @@
       "term": "receipt",
       "anchor": "receipt",
       "variants": ["receipts"],
-      "definition": "A line the MCP server writes for each checked call when a signing key and a receipts directory are configured: the recorded request and answer with the signed run record, which plimsoll-attest verify-entry can check on its own later."
+      "definition": "A signed claim about an operation or file, whose signature and subject can be checked without independently repeating the work."
     },
     {
       "term": "RPC",

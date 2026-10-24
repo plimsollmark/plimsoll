@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One job, every sandbox: plimsoll's fan-out</title>
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #fcfcfb; color: #1a1f29; font: 15px/1.55 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+main { max-width: 1060px; margin: 0 auto; padding: 32px 20px 72px; }
+h1 { font-size: 27px; margin: 0 0 6px; }
+h2 { font-size: 19px; margin: 36px 0 10px; }
+p, li { max-width: 78ch; }
+p.lead { color: #4a5160; margin: 0 0 18px; }
+.tiles { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0; }
+.tile { flex: 1 1 140px; background: #fff; border: 1px solid #e2e6ee; border-radius: 10px; padding: 12px 14px; }
+.tile .k { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; }
+.tile .v { font-size: 22px; font-weight: 700; margin-top: 2px; }
+.tile .s { font-size: 12.5px; color: #6b7280; }
+.figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+figure { min-width: 0; margin: 0; background: #fff; border: 1px solid #e2e6ee; border-radius: 10px; padding: 14px; }
+figure h2 { font-size: 15px; margin: 0 0 10px; }
+figure img { width: 100%; height: auto; image-rendering: pixelated; display: block; border-radius: 4px; }
+#map svg { display: block; }
+.picture-grid { position: relative; }
+.picture-grid::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .9); border-radius: 4px; pointer-events: none; background-image: linear-gradient(to right, rgba(255, 255, 255, .9) 1px, rgba(26, 31, 41, .45) 1px, rgba(26, 31, 41, .45) 2px, transparent 2px), linear-gradient(to bottom, rgba(255, 255, 255, .9) 1px, rgba(26, 31, 41, .45) 1px, rgba(26, 31, 41, .45) 2px, transparent 2px); background-size: calc(100% / var(--grid)) calc(100% / var(--grid)); }
+@media (max-width: 800px) { .figs { grid-template-columns: 1fr; } }
+figcaption { font-size: 13px; color: #4a5160; margin-top: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: #4a5160; margin-top: 8px; }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+svg .t { transition: opacity .15s; }
+svg.focus .t { opacity: .15; }
+svg.focus .t.on { opacity: 1; }
+.scroll { overflow-x: auto; }
+table { width: 100%; min-width: 680px; border-collapse: collapse; background: #fff; border: 1px solid #e2e6ee; border-radius: 10px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #eef1f6; vertical-align: top; font-size: 14px; }
+th { background: #f0f2f7; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: #4a5160; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr[data-room] { cursor: default; }
+tr[data-room]:hover td { background: #f5f8fe; }
+tr.out td { color: #8a91a0; }
+tr:last-child td { border-bottom: none; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: #eef1f6; padding: 1px 5px; border-radius: 5px; }
+p code { overflow-wrap: anywhere; }
+td.tier { white-space: nowrap; }
+pre { background: #f0f2f7; border-radius: 8px; padding: 10px 14px; overflow-x: auto; font-size: 13px; }
+.note { color: #6b7280; font-size: 13px; }
+dl dt { font-weight: 600; margin-top: 8px; }
+dl dd { margin: 2px 0 0; color: #4a5160; max-width: 78ch; }
+.foot { color: #8a91a0; font-size: 12.5px; margin-top: 40px; }
+</style>
+</head>
+<body>
+<main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/providers/index.html">Same run, different sandboxes</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
+<h1>One job, every sandbox</h1>
+<p class="lead">The Mandelbrot set is a mathematical picture whose intricate patterns reveal more detail as you zoom in. It is drawn by repeating a simple calculation at every pixel. We split the picture into {{len .Tiles}} tiles and used fan-out to send the pieces across {{.RoomsRun}} kinds of sandboxes working at once. Each tile was computed twice, by two different kinds of sandboxes running the same JavaScript program. The two answers were compared byte for byte: {{.Agreed}} of {{len .Tiles}} tiles agree. {{.TwoEngines}} of those pairs compared two different JavaScript engines{{if .WithCloud}}, and {{.WithCloud}} included a run in the cloud{{end}}. Every run is signed into one bundle that anyone can check offline.</p>
+
+<div class="tiles">
+<div class="tile"><div class="k">Signed runs</div><div class="v">{{.Runs}}</div><div class="s">one fresh sandbox each</div></div>
+<div class="tile"><div class="k">Kinds of sandbox</div><div class="v">{{.RoomsRun}}</div><div class="s">each its own daemon, one pool</div></div>
+<div class="tile"><div class="k">Isolation tiers</div><div class="v">{{.Tiers}} of 4</div><div class="s">process, container, kernel, vm</div></div>
+<div class="tile"><div class="k">Tiles that agree</div><div class="v">{{.Agreed}} of {{len .Tiles}}</div><div class="s">two sandboxes, same bytes</div></div>
+<div class="tile"><div class="k">Wall time</div><div class="v">{{minutes .Started .Ended}}</div><div class="s">start to last answer, operator's clock</div></div>
+<div class="tile"><div class="k">Cloud cost</div><div class="v">{{usd .Cost}}</div><div class="s">estimated: signed run time × list price</div></div>
+</div>
+
+<div class="figs">
+<figure>
+<h2>1. The finished picture</h2>
+<img src="picture.png" width="{{.Pixels}}" height="{{.Pixels}}" alt="The Mandelbrot set, assembled from the tiles the sandboxes computed">
+<figcaption>The picture, assembled from the tiles whose two answers agreed{{if lt .Agreed (len .Tiles)}}; a tile without agreement is painted flat red{{end}}. {{.Pixels}} by {{.Pixels}} pixels. Colours show how many repetitions each pixel's calculation took.</figcaption>
+</figure>
+<figure>
+<h2>2. Split into {{len .Tiles}} tiles</h2>
+<div class="picture-grid" style="--grid:{{.Grid}}">
+<img src="picture.png" width="{{.Pixels}}" height="{{.Pixels}}" alt="The same Mandelbrot picture divided into a {{.Grid}} by {{.Grid}} grid of tiles">
+</div>
+<figcaption>The same picture with its {{.Grid}} by {{.Grid}} tile grid. Each square is one piece of work sent to two different kinds of sandboxes.</figcaption>
+</figure>
+<figure>
+<h2>3. Where the work ran</h2>
+<div id="map">{{.Map}}</div>
+<figcaption>Each square matches a tile in the middle picture. Its upper triangle shows the first run's sandbox and its lower triangle the second's, shaded by isolation tier. Hover a square for the sandboxes and times, or a row of the table below to light up that sandbox's tiles.</figcaption>
+<div class="legend">{{range $t := $.TierOrder}}<span><span class="sw" style="background:{{index $.TierColor $t}}"></span>{{$t}}</span>{{end}}</div>
+</figure>
+</div>
+
+<h2>The sandboxes</h2>
+<div class="scroll"><table>
+<thead><tr><th>Sandbox</th><th>Provider</th><th>Tier</th><th>Where</th><th class="n">Runs</th><th class="n">Median run</th><th class="n">Est. cost</th></tr></thead>
+<tbody>
+{{range .Rooms}}{{if .Runs}}<tr data-room="{{.ID}}"><td><strong>{{.Label}}</strong></td><td><code>{{.Provider}}</code></td><td class="tier"><span class="sw" style="background:{{.Color}}"></span>{{.Tier}}</td><td>{{.Where}}</td><td class="n">{{.Runs}}</td><td class="n">{{seconds .MedianMs}}</td><td class="n">{{if .USDPerSecond}}{{usd .Cost}}{{else}}free{{end}}</td></tr>
+{{else}}<tr class="out"><td><strong>{{.Label}}</strong></td><td><code>{{.Provider}}</code></td><td class="tier"><span class="sw" style="background:{{.Color}}"></span>{{.Tier}}</td><td>{{.Where}}</td><td colspan="3">not run: {{if .NotRun}}{{.NotRun}}{{else}}no signed run{{end}}</td></tr>
+{{end}}{{end}}</tbody></table>
+<p>These times describe this run. The rooms used different concurrency, locations and assigned work, so the median column is not a controlled provider-speed comparison.</p></div>
+<p class="note">A median run is the time from dispatch to answer that the run's signed record states, sandbox start included. Cost is that time multiplied by each cloud's list price per second; the provider's bill is the real figure. Where a sandbox is, is the operator's statement; the record states the provider and the tier.</p>
+
+{{if .Disagreeing}}<h2>Tiles without agreement</h2>
+<ul>{{range .Disagreeing}}<li>tile {{.X}},{{.Y}}: {{.Reason}}</li>{{end}}</ul>{{end}}
+{{if .Failures}}<h2>Calls that returned no record</h2>
+<ul>{{range .Failures}}<li>{{.Room}}, tile {{index .Piece 0}},{{index .Piece 1}}: {{.Error}}</li>{{end}}</ul>{{end}}
+
+<h2>Why the two answers should agree</h2>
+<p>The tile program uses only floating-point operations whose rounding the JavaScript standard specifies exactly (addition, subtraction, multiplication, division and comparison on 64-bit numbers), so every conforming engine should print the same bytes for a tile: node in most rooms, QuickJS in the WebAssembly engine. A tile whose two answers differ is painted red and needs investigating: a sandbox that ran something other than it was given, a defect in an engine, or damaged output. Agreement shows the answers match; it does not prove either one correct or any sandbox secure.</p>
+
+<h2>What is signed, and what is stated</h2>
+<p><strong>Signed</strong> by the harness key made for this run, after the client checked each run's record: every request (with the room it was sent to) and every answer, including the provider and the isolation tier the daemon reported and the run's start and end. A changed, missing or moved line fails the check below. <strong>Stated</strong> by the operator, in unsigned files beside the bundle: what each room is and where (<code>rooms.json</code>, with the engine and the list price), and when the run started and ended, which rooms sat out and why (<code>run.json</code>). A tier is the daemon's report: plimsoll's configuration and the provider's evidence plus a startup smoke test, never runtime attestation, and nothing here independently proves which machine ran the code.</p>
+
+<h2>Check it yourself</h2>
+<p>From a checkout of the repository:</p>
+<pre>go run ./examples/fanout -verify</pre>
+<p>It checks every signature in <code>bundle.jsonl</code> under <code>harness.pub</code> (key <code>{{.Harness}}</code>), the chain that catches a line added, removed or moved, each signed record against the request and answer stored beside it, that each run's record states the provider and tier of the room it was sent to, and that this page and the picture are what the bundle and the two stated files render. It then reports the result separately: a run with tiles that disagree still verifies, and says so. It starts no sandbox.</p>
+
+<h2>Words on this page</h2>
+<dl>
+<dt>Sandbox</dt><dd>A place to run code someone else wrote without letting it reach the machine around it. Here each run gets a fresh one.</dd>
+<dt>Isolation tier</dt><dd>How strong the wall is, weakest to strongest: <strong>process</strong> (a WebAssembly engine inside plimsoll's own process), <strong>container</strong> (Linux namespaces and a filter on system calls), <strong>kernel</strong> (gVisor, a separate kernel that answers the code's system calls), <strong>vm</strong> (a virtual machine with its own kernel). A tier is plimsoll's configuration and the provider's evidence plus a startup smoke test, never runtime attestation.</dd>
+<dt>Fan-out, fan-in</dt><dd>Sending pieces of one job to many workers at once, then gathering the answers into one result.</dd>
+<dt>Signed bundle</dt><dd>One file holding every run's request, answer and record, each signed by a key made for this run, linked in order so a missing or moved line is caught.</dd>
+<dt>Placement</dt><dd>plimsoll's library that holds several daemons as one pool and sends each request to one of them.</dd>
+</dl>
+
+<p class="foot">Run {{date .Started}}. Grid {{.Grid}} by {{.Grid}} tiles of {{.Size}} by {{.Size}} pixels. Rendered from the signed bundle by <code>go run ./examples/fanout</code>.</p>
+</main>
+<script>
+(function () {
+  var svg = document.querySelector('#map svg');
+  if (!svg) return;
+  var tiles = svg.querySelectorAll('.t');
+  document.querySelectorAll('tr[data-room]').forEach(function (tr) {
+    var id = tr.getAttribute('data-room');
+    tr.addEventListener('mouseenter', function () {
+      svg.classList.add('focus');
+      tiles.forEach(function (g) { g.classList.toggle('on', g.getAttribute('data-rooms').split(' ').indexOf(id) >= 0); });
+    });
+    tr.addEventListener('mouseleave', function () { svg.classList.remove('focus'); });
+  });
+})();
+</script>
+</body>
+</html>

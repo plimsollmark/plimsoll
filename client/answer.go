@@ -9,11 +9,13 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"sync"
 
 	"connectrpc.com/connect"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -36,6 +38,29 @@ type exchange struct {
 	unsent   bool
 	echo     []string
 	mark     string
+	// dialed and wrote are what httptrace showed of every attempt the HTTP client made
+	// with this call's context: a connection sought, and request headers written.
+	dialed bool
+	wrote  bool
+}
+
+// trace records, across every attempt the HTTP client makes, whether a connection was
+// sought and whether any attempt wrote its request headers. Only the pair proves a call
+// unsent: the final error alone describes the last attempt, and a retrying client (an
+// injected one) can deliver the code on an earlier attempt and then fail to dial.
+func (ex *exchange) trace() *httptrace.ClientTrace {
+	return &httptrace.ClientTrace{
+		GetConn: func(string) {
+			ex.mu.Lock()
+			ex.dialed = true
+			ex.mu.Unlock()
+		},
+		WroteHeaders: func() {
+			ex.mu.Lock()
+			ex.wrote = true
+			ex.mu.Unlock()
+		},
+	}
 }
 
 type exchangeKey struct{}
@@ -65,15 +90,21 @@ func bindAnswers() connect.UnaryInterceptorFunc {
 type bindingHTTPClient struct{ next connect.HTTPClient }
 
 func (b bindingHTTPClient) Do(r *http.Request) (*http.Response, error) {
+	ex, ok := r.Context().Value(exchangeKey{}).(*exchange)
+	if ok {
+		r = r.WithContext(httptrace.WithClientTrace(r.Context(), ex.trace()))
+	}
 	resp, err := b.next.Do(r)
-	if ex, ok := r.Context().Value(exchangeKey{}).(*exchange); ok {
+	if ok {
 		ex.mu.Lock()
 		if resp != nil {
 			ex.answered = true
 			ex.echo = resp.Header.Values(protocol.RequestIDHeader)
 			ex.mark = resp.Header.Get(protocol.NotDispatchedHeader)
 		} else {
-			ex.unsent = failedBeforeSending(err)
+			// A transport that reports no attempt through httptrace proves nothing, so
+			// its failure reads "may have run".
+			ex.unsent = failedBeforeSending(err) && ex.dialed && !ex.wrote
 		}
 		ex.mu.Unlock()
 	}
@@ -150,7 +181,7 @@ func (e *unboundError) Unwrap() error { return ErrAnswerNotBound }
 func refusalWireByName(name string) (plimsollv1.NotDispatchedReason, bool) {
 	for v := range plimsollv1.NotDispatchedReason_name {
 		r := plimsollv1.NotDispatchedReason(v)
-		if got := refusalFromWire(r); got != sandbox.RefusalUnknown && got.String() == name {
+		if got := wireenum.RefusalFromWire(r); got != sandbox.RefusalUnknown && got.String() == name {
 			return r, true
 		}
 	}

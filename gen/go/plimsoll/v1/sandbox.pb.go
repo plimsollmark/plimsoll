@@ -36,9 +36,9 @@ const (
 	// The runner executed the plan to its normal conclusion (stop on first
 	// failing step included); inspect steps for the user's results.
 	ProjectOutcome_PROJECT_OUTCOME_COMPLETED ProjectOutcome = 1
-	// The run failed around step execution for a request-attributable reason the
-	// runner reported (illegal file path, unwritable file, over-budget result).
-	// Retrying the same request will fail again.
+	// The runner reported a failure before any step began (an illegal file path,
+	// an unwritable file): none of the caller's code ran. Safe to retry, though the
+	// same request fails the same way.
 	ProjectOutcome_PROJECT_OUTCOME_SETUP_FAILED ProjectOutcome = 2
 	// The outer wall-clock budget expired before the runner reported; steps may
 	// be partial or missing.
@@ -46,6 +46,10 @@ const (
 	// The sandbox produced no parseable result: execution state unknown. Retry
 	// only if the project is idempotent.
 	ProjectOutcome_PROJECT_OUTCOME_PROTOCOL_ERROR ProjectOutcome = 4
+	// The runner reported a failure after a step began (an artifact it could not
+	// read, a result over the size budget): the caller's code ran, and steps holds
+	// the steps it could still report. Retry only if the project is idempotent.
+	ProjectOutcome_PROJECT_OUTCOME_RUNNER_FAILED ProjectOutcome = 5
 )
 
 // Enum value maps for ProjectOutcome.
@@ -56,6 +60,7 @@ var (
 		2: "PROJECT_OUTCOME_SETUP_FAILED",
 		3: "PROJECT_OUTCOME_TIMED_OUT",
 		4: "PROJECT_OUTCOME_PROTOCOL_ERROR",
+		5: "PROJECT_OUTCOME_RUNNER_FAILED",
 	}
 	ProjectOutcome_value = map[string]int32{
 		"PROJECT_OUTCOME_UNSPECIFIED":    0,
@@ -63,6 +68,7 @@ var (
 		"PROJECT_OUTCOME_SETUP_FAILED":   2,
 		"PROJECT_OUTCOME_TIMED_OUT":      3,
 		"PROJECT_OUTCOME_PROTOCOL_ERROR": 4,
+		"PROJECT_OUTCOME_RUNNER_FAILED":  5,
 	}
 )
 
@@ -1110,6 +1116,12 @@ type RunResponse struct {
 	// Exact outer image or interpreter artifact selected for this run, when
 	// stated. The record repeats it so the client checks both statements.
 	Environment string `protobuf:"bytes,6,opt,name=environment,proto3" json:"environment,omitempty"`
+	// The sandbox instance that ran this call, as a typed reference
+	// "<kind>:<id>" (for the Kubernetes provider, "k8s-pod-uid:" and the UID the
+	// API server gave the pod), or empty when the provider names none. It lets
+	// evidence kept outside plimsoll (a runtime's log of the pod) be tied to this
+	// run. The record repeats it so the client checks both statements.
+	Instance string `protobuf:"bytes,7,opt,name=instance,proto3" json:"instance,omitempty"`
 	// Exactly one result, of the payload's kind.
 	//
 	// Types that are valid to be assigned to Result:
@@ -1191,6 +1203,13 @@ func (x *RunResponse) GetSoftwareIdentity() string {
 func (x *RunResponse) GetEnvironment() string {
 	if x != nil {
 		return x.Environment
+	}
+	return ""
+}
+
+func (x *RunResponse) GetInstance() string {
+	if x != nil {
+		return x.Instance
 	}
 	return ""
 }
@@ -1277,10 +1296,9 @@ func (*RunResponse_Cell) isRunResponse_Result() {}
 // library.
 type RunRecord struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// version is the encoding version: 2 for a call that was answered, 3 for a
-	// session call that may have run but ended in an error (unanswered is set and
-	// result_sha256 is empty). Version 1 remains verifiable. A verifier refuses an
-	// unknown version.
+	// version is the encoding version, 4: every field below, every time. A
+	// session call that may have run but ended in an error sets unanswered and
+	// leaves result_sha256 empty. A verifier refuses any other version.
 	Version uint32 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	// request_sha256 covers what the caller sent: protocol number, floor,
 	// timeout, software rule and payload, never the trace id.
@@ -1305,10 +1323,11 @@ type RunRecord struct {
 	PreviousSha256   string `protobuf:"bytes,12,opt,name=previous_sha256,json=previousSha256,proto3" json:"previous_sha256,omitempty"`
 	SoftwareIdentity string `protobuf:"bytes,14,opt,name=software_identity,json=softwareIdentity,proto3" json:"software_identity,omitempty"` // RunResponse.software_identity
 	SoftwareRuleId   string `protobuf:"bytes,15,opt,name=software_rule_id,json=softwareRuleId,proto3" json:"software_rule_id,omitempty"`     // exact identity or digest of approved set
-	// unanswered, on a version 3 record, is the Connect code of the error the call
+	// unanswered, on an unanswered call's record, is the Connect code of the error the call
 	// ended with ("unknown", "deadline_exceeded", ...): the daemon's own word, never
 	// error text. Empty on an answered call's record.
 	Unanswered string `protobuf:"bytes,16,opt,name=unanswered,proto3" json:"unanswered,omitempty"`
+	Instance   string `protobuf:"bytes,17,opt,name=instance,proto3" json:"instance,omitempty"` // RunResponse.instance
 	// record_sha256 covers every field above.
 	RecordSha256  string `protobuf:"bytes,13,opt,name=record_sha256,json=recordSha256,proto3" json:"record_sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1446,6 +1465,13 @@ func (x *RunRecord) GetSoftwareRuleId() string {
 func (x *RunRecord) GetUnanswered() string {
 	if x != nil {
 		return x.Unanswered
+	}
+	return ""
+}
+
+func (x *RunRecord) GetInstance() string {
+	if x != nil {
+		return x.Instance
 	}
 	return ""
 }
@@ -3154,7 +3180,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\apayload\"H\n" +
 	"\rJavaScriptRun\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12#\n" +
-	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\xcc\x03\n" +
+	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\xe8\x03\n" +
 	"\vRunResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12\x1f\n" +
@@ -3162,7 +3188,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"durationMs\x12.\n" +
 	"\x06record\x18\x04 \x01(\v2\x16.plimsoll.v1.RunRecordR\x06record\x12+\n" +
 	"\x11software_identity\x18\x05 \x01(\tR\x10softwareIdentity\x12 \n" +
-	"\venvironment\x18\x06 \x01(\tR\venvironment\x12?\n" +
+	"\venvironment\x18\x06 \x01(\tR\venvironment\x12\x1a\n" +
+	"\binstance\x18\a \x01(\tR\binstance\x12?\n" +
 	"\n" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1d.plimsoll.v1.JavaScriptResultH\x00R\n" +
@@ -3170,7 +3197,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\aproject\x18\v \x01(\v2\x1a.plimsoll.v1.ProjectResultH\x00R\aproject\x123\n" +
 	"\x06module\x18\f \x01(\v2\x19.plimsoll.v1.ModuleResultH\x00R\x06module\x12-\n" +
 	"\x04cell\x18\r \x01(\v2\x17.plimsoll.v1.CellResultH\x00R\x04cellB\b\n" +
-	"\x06result\"\xac\x04\n" +
+	"\x06result\"\xc8\x04\n" +
 	"\tRunRecord\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12%\n" +
 	"\x0erequest_sha256\x18\x02 \x01(\tR\rrequestSha256\x12#\n" +
@@ -3189,7 +3216,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x10software_rule_id\x18\x0f \x01(\tR\x0esoftwareRuleId\x12\x1e\n" +
 	"\n" +
 	"unanswered\x18\x10 \x01(\tR\n" +
-	"unanswered\x12#\n" +
+	"unanswered\x12\x1a\n" +
+	"\binstance\x18\x11 \x01(\tR\binstance\x12#\n" +
 	"\rrecord_sha256\x18\r \x01(\tR\frecordSha256\"\x86\x02\n" +
 	"\x10JavaScriptResult\x12\x16\n" +
 	"\x06stdout\x18\x01 \x01(\fR\x06stdout\x12\x16\n" +
@@ -3316,13 +3344,14 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\rNotDispatched\x128\n" +
 	"\x06reason\x18\x01 \x01(\x0e2 .plimsoll.v1.NotDispatchedReasonR\x06reason\"@\n" +
 	"\x0eUnansweredCall\x12.\n" +
-	"\x06record\x18\x01 \x01(\v2\x16.plimsoll.v1.RunRecordR\x06record*\xb5\x01\n" +
+	"\x06record\x18\x01 \x01(\v2\x16.plimsoll.v1.RunRecordR\x06record*\xd8\x01\n" +
 	"\x0eProjectOutcome\x12\x1f\n" +
 	"\x1bPROJECT_OUTCOME_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19PROJECT_OUTCOME_COMPLETED\x10\x01\x12 \n" +
 	"\x1cPROJECT_OUTCOME_SETUP_FAILED\x10\x02\x12\x1d\n" +
 	"\x19PROJECT_OUTCOME_TIMED_OUT\x10\x03\x12\"\n" +
-	"\x1ePROJECT_OUTCOME_PROTOCOL_ERROR\x10\x04*\xc9\x02\n" +
+	"\x1ePROJECT_OUTCOME_PROTOCOL_ERROR\x10\x04\x12!\n" +
+	"\x1dPROJECT_OUTCOME_RUNNER_FAILED\x10\x05*\xc9\x02\n" +
 	"\n" +
 	"SessionEnd\x12\x1b\n" +
 	"\x17SESSION_END_UNSPECIFIED\x10\x00\x12\x16\n" +

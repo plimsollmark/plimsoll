@@ -48,7 +48,10 @@ s4  14 V in, 4 ohm, current doubles at 15 ms  e040e81c7729ede8  C = C = JavaScri
 
 The score is the fraction of ticks from 2 ms on with the output within 0.1 V of
 5 V, and zero if the output ever exceeds 6 V or the inductor current 10 A. The floor
-is 0.6, from the buck environment's acceptance rule. This controller ramps its
+is 0.6, from the buck environment's acceptance rule. The score is that environment's
+own grader's, `/oracle/graders/buck-converter.mjs` in the image
+([source](../../docker/sim/graders/buck-converter.mjs)), run on the first C run's
+records in a project run of its own after the others. This controller ramps its
 target over the first 3 ms, so in s1 the output first enters the band at 2.99 ms:
 99 of the 1,800 scored ticks, 5.5 of the 9.2 points s1 loses. The other 67 ticks
 are the dip when the load steps.

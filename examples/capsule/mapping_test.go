@@ -86,6 +86,7 @@ func TestEveryVerdictRowVerifies(t *testing.T) {
 		plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT:      "dispatched_unconfirmed",
 		plimsollv1.ProjectOutcome_PROJECT_OUTCOME_SETUP_FAILED:   "dispatched_unconfirmed",
 		plimsollv1.ProjectOutcome_PROJECT_OUTCOME_PROTOCOL_ERROR: "dispatched_unconfirmed",
+		plimsollv1.ProjectOutcome_PROJECT_OUTCOME_RUNNER_FAILED:  "dispatched_unconfirmed",
 	}
 	if len(want) != len(verdicts) {
 		t.Fatalf("the test covers %d outcomes, the table has %d", len(want), len(verdicts))
@@ -109,10 +110,10 @@ func TestEveryVerdictRowVerifies(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A session call that may have run but got no answer: a version 3 record, no
-	// response, the error's status code in the reason object.
+	// A session call that may have run but got no answer: a record with no result
+	// digest, no response, the error's status code in the reason object.
 	lost := rec
-	lost.SHA256, lost.Version, lost.Unanswered = strings.Repeat("b", 64), record.UnansweredVersion, "unavailable"
+	lost.SHA256, lost.ResultSHA256, lost.Unanswered = strings.Repeat("b", 64), "", "unavailable"
 	in, err := capsuleInput(lost, req, nil, "", src)
 	if err != nil {
 		t.Fatalf("unanswered: %v", err)

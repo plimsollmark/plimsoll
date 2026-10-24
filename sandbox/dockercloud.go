@@ -128,7 +128,7 @@ func (*DockerCloud) Name() string { return "dockercloud" }
 // BillingTeardown is how long a run's microVM can outlive its deadline, being
 // deleted: every run creates a microVM the operator pays for by the second
 // (sandbox.Metered).
-func (*DockerCloud) BillingTeardown() time.Duration { return meteredTeardown }
+func (*DockerCloud) BillingTeardown() time.Duration { return meteredBillingTail }
 
 // SupportsProjects is true: project runs use the configured toolchain image.
 func (*DockerCloud) SupportsProjects() bool { return true }
@@ -178,23 +178,49 @@ var dcStartCmd = []string{"tail", "-f", "/dev/null"}
 //
 //   - `timeout -s KILL` bounds the run inside the VM (the API has no timeout). KILL
 //     cannot be trapped; both busybox and coreutils then exit 137.
-//   - Each stream passes through `head -c` inside the VM, so the response carries
-//     at most $2 bytes per stream. The host sets $2 to its cap plus one, so a
+//   - Each stream passes through keep inside the VM: `head -c` passes at most $2 bytes,
+//     so the response carries no more. The host sets $2 to its cap plus one, so a
 //     retained length above the cap is the truncation signal: no marker is ever
-//     written into the output. A guest that keeps writing after head exits gets
-//     SIGPIPE, so a flood ends as a failed user run.
+//     written into the output. The rest is read and dropped inside the VM, so the
+//     command runs on and its exit is its own, as on every provider; only a stream
+//     past the transfer budget, m (ProjectStepTransferBudget), stops being read, and a
+//     command that keeps writing then gets SIGPIPE: the trailer reports the flood,
+//     and the host reports exit 153 with both streams cut (review, 2026-10-24). A
+//     missing wc fails closed: the stream reads as flooded.
 //   - The exit status travels through a file because POSIX sh has no pipefail.
+//   - The command's time inside the VM, in centiseconds from /proc/uptime, and 1 if a
+//     stream flooded (else 0), are the last line of stderr (dcTrailer), written after
+//     both keeps have ended: only the keeps
+//     write to the wrapper's own stderr, so no guest process can write after it, and
+//     the host strips it before reporting stderr. It decides whether `timeout` killed
+//     the command: the elapsed time around the remote call also counts the transport,
+//     which turned a quick exit 137 into a timeout (review, 2026-10-23).
 //
-// It uses only POSIX sh, timeout, head and cat, which busybox provides. busybox
+// It uses only POSIX sh, timeout, head, wc and cat, which busybox provides. busybox
 // `timeout` needs kill(2): where a syscall filter refuses it, the limit fails open,
 // which is why SmokeTest proves a hung command is really killed. The host deadline
 // (cancel the call, delete the sandbox) remains the backstop either way.
 const dcExecWrapper = `t=$1; c=$2; shift 2
-rc=/tmp/.plimsoll-rc.$$
-rm -f "$rc"
-{ { timeout -s KILL "$t" "$@"; echo "$?" >"$rc"; } 2>&1 1>&3 3>&- | head -c "$c" 1>&2; } 3>&1 | head -c "$c"
+m=` + dcStreamBudget + `
+rc=/tmp/.plimsoll-rc.$$; fl=/tmp/.plimsoll-fl.$$
+rm -f "$rc" "$fl"
+up() { read -r u _ 2>/dev/null </proc/uptime && echo "${u%.*}${u#*.}"; }
+keep() { head -c "$c"; n=$(head -c "$m" | wc -c); [ $n -lt "$m" ] 2>/dev/null || : >"$fl"; }
+b=$(up)
+{ { timeout -s KILL "$t" "$@"; echo "$?" >"$rc"; } 2>&1 1>&3 3>&- | keep 1>&2; } 3>&1 | keep
+e=$(up)
+f=0; if [ -e "$fl" ]; then f=1; rm -f "$fl"; fi
+if [ -n "$b" ] && [ -n "$e" ]; then printf '\n` + dcTrailer + ` %s %s\n' "$((e - b))" "$f" >&2; fi
 if [ -s "$rc" ]; then s=$(cat "$rc"); rm -f "$rc"; exit "$s"; fi
 exit 125`
+
+// dcStreamBudget is ProjectStepTransferBudget written out for the wrapper (a test ties
+// the two): the bytes of one stream it reads before treating the command as a flood.
+const dcStreamBudget = "33554432"
+
+// dcTrailer opens the wrapper's last stderr line, which states the command's time inside
+// the VM in centiseconds.
+const dcTrailer = "plimsoll-exec-centiseconds"
 
 // ---- configuration ----
 

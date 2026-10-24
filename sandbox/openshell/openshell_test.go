@@ -373,10 +373,10 @@ type wirePlan struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	} `json:"files"`
-	Steps         []string `json:"steps"`
-	StepTimeoutMs int64    `json:"stepTimeoutMs"`
-	Artifacts     []string `json:"artifacts"`
-	ReportKey     string   `json:"reportKey"`
+	Steps     []string `json:"steps"`
+	BudgetMs  int64    `json:"budgetMs"`
+	Artifacts []string `json:"artifacts"`
+	ReportKey string   `json:"reportKey"`
 }
 
 // frameWith frames a runner report under key the way runner.mjs does.
@@ -443,7 +443,7 @@ func TestRunProject(t *testing.T) {
 	if cmd := e.start.GetCommand(); strings.Join(cmd, "\x00") != strings.Join(runnerCommand, "\x00") || e.start.GetEnvironment()["PLIMSOLL_WORK"] != workDir {
 		t.Fatalf("runner exec %q env %v", cmd, e.start.GetEnvironment())
 	}
-	if len(seen.Files) != 2 || seen.Files[1].Content != "<x>" || len(seen.Steps) != 3 || seen.StepTimeoutMs != 7000 || seen.Artifacts[0] != "out.txt" {
+	if len(seen.Files) != 2 || seen.Files[1].Content != "<x>" || len(seen.Steps) != 3 || seen.BudgetMs != 7000 || seen.Artifacts[0] != "out.txt" {
 		t.Fatalf("plan %+v", seen)
 	}
 	want := sandbox.ProjectResult{
@@ -865,26 +865,48 @@ func TestDeleteWaitsUntilGone(t *testing.T) {
 
 // TestDeleteGivesUp: a delete that keeps failing is retried, logged and untracked, so
 // Drain returns and ReconcileOrphans owns the sandbox.
+// A sandbox whose delete gives up stays quarantined: its name tracked, so Drain reports
+// it undeleted, and the capacity of the call that made it held, until ReconcileOrphans
+// confirms it gone (review, 2026-10-23). Before, the name was
+// untracked and the capacity given back while the sandbox lived on.
 func TestDeleteGivesUp(t *testing.T) {
 	f, p := newFake(t)
 	f.run = echoScript
 	f.deleteErr = connect.NewError(connect.CodeUnavailable, errors.New("gateway busy"))
-	if _, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "x"}); err != nil {
+	released := make(chan struct{})
+	callCtx, returned := sandbox.WithCapacity(context.Background(), func() { close(released) })
+	if _, err := p.RunJavaScript(callCtx, sandbox.Request{Code: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := p.Drain(ctx); err != nil {
-		t.Fatal(err)
+	returned()
+	short, cancelShort := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShort()
+	if err := p.Drain(short); err == nil {
+		t.Fatal("Drain returned while a sandbox whose delete gave up was not confirmed gone")
 	}
 	if n := f.called("DeleteSandbox"); n != 3 {
 		t.Fatalf("DeleteSandbox called %d times, want 3 attempts", n)
 	}
+	select {
+	case <-released:
+		t.Fatal("the call's capacity came back while its sandbox was not confirmed gone")
+	default:
+	}
 	f.mu.Lock()
 	f.deleteErr = nil
 	f.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	if n, err := p.ReconcileOrphans(ctx); err != nil || n != 1 {
 		t.Fatalf("ReconcileOrphans = %d, %v; want the undeleted sandbox", n, err)
+	}
+	select {
+	case <-released:
+	case <-ctx.Done():
+		t.Fatal("the capacity did not come back once the sandbox was confirmed gone")
+	}
+	if err := p.Drain(ctx); err != nil {
+		t.Fatalf("Drain after the sandbox was confirmed gone: %v", err)
 	}
 }
 
@@ -1048,7 +1070,7 @@ func TestSmokeTestAgainstFake(t *testing.T) {
 				continue
 			}
 			ev := p.lastSmoke()
-			if ev.PolicyHash != p.policyHash || ev.PlanBytes < 5<<20 || ev.HungProcesses != 2 || ev.GatewayVersion != "0.1.2-fake" {
+			if ev.PolicyHash != p.policyHash || ev.PlanBytes < 5<<20 || ev.HungProcesses != 2 || ev.GatewayVersion != "0.1.2+fake" {
 				t.Errorf("%s: evidence %+v", tc.name, ev)
 			}
 			continue
@@ -1336,5 +1358,129 @@ func TestACallerCannotChangeTheTierByHangingUp(t *testing.T) {
 	}
 	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalEnvironment {
 		t.Errorf("a failed driver check: %v (reason %q, marked %v); want not dispatched, environment", err, reason, ok)
+	}
+}
+
+// A stream that stays open after the exit event is cut off after the grace, and the
+// output kept is reported cut on both streams, never as complete (review, 2026-10-23).
+// The gateway ends the stream right after the exit event, so a normal run is not
+// affected.
+func TestOutputCutOffAfterExitIsMarkedCut(t *testing.T) {
+	f, p := newFake(t)
+	f.run = func(e *fakeExec) error {
+		code := e.readAll()
+		if err := e.stdout(code); err != nil {
+			return err
+		}
+		if err := e.exit(0); err != nil {
+			return err
+		}
+		<-e.ctx.Done()
+		return nil
+	}
+	res, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "x"})
+	if err != nil || !res.StdoutTruncated || !res.StderrTruncated {
+		t.Fatalf("got %q, cut %v and %v, %v", res.Stdout, res.StdoutTruncated, res.StderrTruncated, err)
+	}
+	f.run = echoScript
+	if res, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "x"}); err != nil || res.StdoutTruncated || res.StderrTruncated {
+		t.Fatalf("a stream that ended after its exit event: cut %v and %v, %v", res.StdoutTruncated, res.StderrTruncated, err)
+	}
+}
+
+// "No value" proves agent policy proposals off only on a gateway release measured to
+// default them to false (v0.1.2); any other release must report an explicit false
+// (review, 2026-10-23).
+func TestProposalsWithNoValueAreOffOnlyOnAMeasuredRelease(t *testing.T) {
+	unset := map[string]*sandboxv1.EffectiveSetting{agentProposalsSetting: {}}
+	off := map[string]*sandboxv1.EffectiveSetting{agentProposalsSetting: {Value: &sandboxv1.SettingValue{Value: &sandboxv1.SettingValue_BoolValue{BoolValue: false}}}}
+	version := func(v string) func() (string, error) { return func() (string, error) { return v, nil } }
+	for _, v := range []string{"0.1.2", "v0.1.2", "0.1.2+fake", "0.1.2+build.7"} {
+		if err := proposalsOff(unset, version(v)); err != nil {
+			t.Errorf("no value on %q: %v", v, err)
+		}
+	}
+	// A prerelease of the measured release was never measured itself (review, 2026-10-24).
+	for _, v := range []string{"0.1.3", "0.2.0", "", "unknown", "0.1.2-rc.1", "0.1.2-dev+changed-default"} {
+		if err := proposalsOff(unset, version(v)); err == nil {
+			t.Errorf("no value on %q was taken as off", v)
+		}
+		if err := proposalsOff(off, version(v)); err != nil {
+			t.Errorf("an explicit false on %q: %v", v, err)
+		}
+	}
+	// An explicit false needs no version at all; no value needs one.
+	unknown := func() (string, error) { return "", &versionUnknownError{errors.New("down")} }
+	if err := proposalsOff(off, unknown); err != nil {
+		t.Errorf("an explicit false with the version unknown: %v", err)
+	}
+	if err := proposalsOff(unset, unknown); err == nil {
+		t.Error("no value with the version unknown was taken as off")
+	}
+}
+
+// A provider that holds no gateway version (it has run no driver check, or the last one
+// could not reach the gateway) asks the gateway again before the no-value rule, instead
+// of refusing a measured release as unknown (found live, 2026-10-24); if the gateway
+// still does not say, the create fails as unanswered.
+func TestPolicyReadBackLearnsAnUnknownGatewayVersion(t *testing.T) {
+	f, p := newFake(t)
+	ctx := context.Background()
+	p.mu.Lock()
+	p.version = ""
+	p.mu.Unlock()
+	before := f.called("GetGatewayInfo")
+	b, err := p.create(ctx)
+	if err != nil {
+		t.Fatalf("a create with the version unknown: %v", err)
+	}
+	p.deleteLater(ctx, b)
+	if f.called("GetGatewayInfo") != before+1 || p.gatewayVersion() != "0.1.2+fake" {
+		t.Fatalf("GetGatewayInfo called %d more times, version %q", f.called("GetGatewayInfo")-before, p.gatewayVersion())
+	}
+
+	p.mu.Lock()
+	p.version = ""
+	p.mu.Unlock()
+	f.mu.Lock()
+	f.info = func() (*openshellv1.GetGatewayInfoResponse, error) {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("down"))
+	}
+	f.mu.Unlock()
+	if _, err := p.create(ctx); err == nil || !strings.Contains(err.Error(), "version is not known") {
+		t.Fatalf("a create whose gateway would not say its version: %v", err)
+	}
+}
+
+// A gateway that reports no version is still usable when it sets proposals off
+// explicitly: only an omitted setting needs the version (review, 2026-10-24). With the
+// setting omitted, the create fails as unanswered, naming no nil error.
+func TestAnExplicitFalseNeedsNoGatewayVersion(t *testing.T) {
+	f, p := newFake(t)
+	ctx := context.Background()
+	f.mu.Lock()
+	f.info = func() (*openshellv1.GetGatewayInfoResponse, error) {
+		info, err := dockerInfo()
+		info.GatewayVersion = ""
+		return info, err
+	}
+	f.mutateConfig = func(c *sandboxv1.GetSandboxConfigResponse) {
+		c.Settings[agentProposalsSetting] = &sandboxv1.EffectiveSetting{Value: &sandboxv1.SettingValue{Value: &sandboxv1.SettingValue_BoolValue{BoolValue: false}}}
+	}
+	f.mu.Unlock()
+	p.mu.Lock()
+	p.version = ""
+	p.mu.Unlock()
+	b, err := p.create(ctx)
+	if err != nil {
+		t.Fatalf("an explicit false on a gateway with no version: %v", err)
+	}
+	p.deleteLater(ctx, b)
+	f.mu.Lock()
+	f.mutateConfig = nil
+	f.mu.Unlock()
+	_, err = p.create(ctx)
+	if err == nil || !strings.Contains(err.Error(), "reports none") || strings.Contains(err.Error(), "%!") {
+		t.Fatalf("an omitted setting on a gateway with no version: %v", err)
 	}
 }

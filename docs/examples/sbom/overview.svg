@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600" role="img" aria-labelledby="title desc">
+<title id="title">A checked run, a portable receipt</title>
+<desc id="desc">Check the execution record, sign it, and attach it to a parts list. The signature protects the statement; it does not repeat the run.</desc>
+<rect width="1200" height="600" rx="18" fill="#f6f9fc"/>
+<g font-family="system-ui, sans-serif" fill="#193449">
+<text x="52" y="58" font-size="18" letter-spacing="2" fill="#145ca0">PLIMSOLL · SAVED RUN</text>
+<text x="52" y="117" font-size="38" font-weight="700">A checked run, a portable receipt</text>
+<svg x="50" y="160" width="1100" height="290" viewBox="0 0 1030 195" preserveAspectRatio="xMidYMid meet">
+<title id="diagram-title">Files and commands become a checked signed bundle, then an unsigned BOM</title><desc id="diagram-desc">The request enters plimsolld. The daemon returns a record and result. The attest harness checks and signs their fingerprints and exact stored bytes. The emitter verifies the bundle before writing the CycloneDX file. Its checker rebuilds the mapping from the attached evidence.</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker></defs>
+<rect x="18" y="30" width="215" height="105" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text class="label" x="36" y="63">Files + commands</text><text class="sub" x="36" y="89">The request the client sent</text><text class="sub" x="36" y="112">Includes floor and timeout</text>
+<path d="M237 81H272" stroke="#5687a7" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="280" y="30" width="215" height="105" rx="10" fill="#eaf3fb" stroke="#bed4e5"/><text class="label" x="298" y="63">Daemon record</text><text class="sub" x="298" y="89">Digests + image + times</text><text class="sub" x="298" y="112">Isolation is a stated tier</text>
+<path d="M499 81H534" stroke="#5687a7" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="542" y="30" width="215" height="105" rx="10" fill="#e9f5ed" stroke="#a9ccb6"/><text class="label" x="560" y="63">Signed bundle</text><text class="sub" x="560" y="89">Harness checks the exchange</text><text class="sub" x="560" y="112">Records + exact stored bytes</text>
+<path d="M761 81H796" stroke="#5687a7" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="804" y="30" width="207" height="105" rx="10" fill="#fff5df" stroke="#dfc790"/><text class="label" x="822" y="63">CycloneDX BOM</text><text class="sub" x="822" y="89">Unsigned claims + evidence</text><text class="sub" x="822" y="112">Rebuilt by the checker</text>
+<path d="M906 141V163H650V142" fill="none" stroke="#5687a7" stroke-dasharray="5 4" stroke-width="2" marker-end="url(#arrow)"/><text class="sub" x="686" y="186">-check verifies evidence, then rebuilds the mapping</text>
+</svg>
+<text x="52" y="502" font-size="23" fill="#466174">Check the execution record, sign it, and attach it to a parts list.</text>
+<text x="52" y="534" font-size="23" fill="#466174">The signature protects the statement; it does not repeat the run.</text>
+</g>
+</svg>

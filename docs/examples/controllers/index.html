@@ -1,0 +1,34 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testing AI-written controllers in a sandbox</title>
+<meta name="description" content="Six recorded runs where code an AI wrote is judged by what it makes a simulation do: a cart-pole, a swing-up in C, a buck converter, the same run on every sandbox, eight simulators and an adapter trial.">
+<link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/controllers/index.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="Testing AI-written controllers in a sandbox">
+<meta property="og:description" content="Six recorded runs where code an AI wrote is judged by what it makes a simulation do.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/controllers/index.html">
+<meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/envs-example.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<style>:root{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--line:#e6e5e1}html{color-scheme:light}body{margin:0;background:var(--surface);color:var(--ink);font:16px/1.5 system-ui,sans-serif}main{max-width:900px;margin:0 auto;padding:24px}h1{font-size:24px;margin:0 0 8px}h2{font-size:19px;margin:28px 0 8px}p,li{max-width:72ch}ul.cards{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}ul.cards li{max-width:none}ul.cards li a{display:block;height:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:14px;text-decoration:none;color:inherit;background:#fff}ul.cards li a:hover{border-color:#2a78d6}ul.cards b{display:block;font-size:17px;color:#1f5fae;margin-bottom:4px}ul.cards span{display:block;font-size:14px;color:var(--ink2)}ul.cards small{display:block;margin-top:8px;font-size:13px;color:var(--ink2)}.note{color:var(--ink2);font-size:14px}</style></head><body><main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
+<h1>Testing AI-written controllers in a sandbox</h1>
+<p>A controller is code that decides, many times a second, how to push on something physical: a cart, a motor, a power supply. When an AI writes one, "it compiled and the tests passed" says little. The honest test is what the code makes the physics do. Each page below is a recorded run where plimsoll ran the code in a sandbox against a simulator and kept the record, so you can replay exactly what happened.</p>
+<ul class="cards">
+<li><a href="../oracle/index.html"><b>A cart-pole, judged by its trajectory</b><span>An agent's controller keeps a pole upright on a moving cart. Every 10 ms step is recorded and hashed into one fingerprint: run it twice, same fingerprint. The agent's first draft, with two terms of the wrong sign, drops the pole at 5.96 s.</span><small>The physics oracle example</small></a></li>
+<li><a href="../wasm-controller/index.html"><b>A swing-up controller in C</b><span>Compiled to WebAssembly inside the sandbox, it swings the pole up from hanging and balances it: four scenarios, upright within 2.5 s in each, compared with the same law in JavaScript.</span><small>The wasm-controller example</small></a></li>
+<li><a href="../wasm-buck/index.html"><b>A buck converter in C</b><span>A power supply that steps a voltage down holds 5 V out from 10 to 16 V in while its load halves at a moment it is not told. The C and JavaScript versions of the law give the same numbers, byte for byte.</span><small>The wasm-buck example</small></a></li>
+<li><a href="../providers/index.html"><b>The same run on every sandbox</b><span>The cart-pole run sent to every kind of sandbox the machine could reach. Every one produced the same fingerprint.</span><small>The providers example</small></a></li>
+<li><a href="../envs/index.html"><b>Eight simulators</b><span>From a ship holding its heading to a satellite clock: each simulator runs a failing and a passing hand-written controller, and the page replays both.</span><small>The simulation replay pages</small></a></li>
+<li><a href="../adapter/index.html"><b>Not a controller: an AI-written adapter</b><span>Code that connects a platform to a simulated robot fleet's API, checked under faults, lost answers and refusals. In the recorded trial Claude Opus passed 6 of 6 scenarios, Claude Haiku and Claude Sonnet 5 of 6.</span><small>The adapter example</small></a></li>
+</ul>
+<h2>What these do not show</h2>
+<ul>
+<li>That a simulator matches the real world. A matching fingerprint shows the same computation ran, not that the physics model is accurate.</li>
+<li>Real hardware. Nothing here moves anything physical.</li>
+<li>Large controllers. These are small laws, chosen so every run is easy to replay and check.</li>
+<li>A sandbox's strength beyond what plimsoll states: each run's isolation tier is the sandbox's configuration plus a startup check, not hardware attestation.</li>
+</ul>
+<p class="note">The source of every example is in the <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples">examples directory on GitHub ↗</a>.</p>
+</main></body></html>

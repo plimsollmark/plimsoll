@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600" role="img" aria-labelledby="title desc">
+<title id="title">Approved API routes, no guest credential</title>
+<desc id="desc">The adapter runs inside the sandbox; the broker makes the API call. A separate checker compares what happened with the vendor&#x27;s ledger.</desc>
+<rect width="1200" height="600" rx="18" fill="#f6f9fc"/>
+<g font-family="system-ui, sans-serif" fill="#193449">
+<text x="52" y="58" font-size="18" letter-spacing="2" fill="#145ca0">PLIMSOLL · SAVED RUN</text>
+<text x="52" y="117" font-size="38" font-weight="700">Approved API routes, no guest credential</text>
+<svg x="50" y="160" width="1100" height="290" viewBox="0 0 1100 260" preserveAspectRatio="xMidYMid meet">
+<title id="ad-t">Where an adapter sits</title>
+<desc id="ad-d">The platform's four functions on the left call the adapter, which sits inside plimsoll's sandbox and reaches the vendor's API only through the broker. The vendor drives three robots and keeps a ledger of what it actually did; the grader reads that ledger to reach the verdict.</desc>
+<defs><marker id="ar3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5687a7"/></marker></defs>
+<rect x="20" y="40" width="220" height="150" rx="12" fill="#eaf3fb" stroke="#bed4e5"/>
+<text x="36" y="66" font-size="14" font-weight="650" font-family="system-ui">The platform</text>
+<text x="36" y="94" font-size="12" font-family="ui-monospace, monospace">inventory()</text>
+<text x="36" y="118" font-size="12" font-family="ui-monospace, monospace">dispatch(robot, target, id)</text>
+<text x="36" y="142" font-size="12" font-family="ui-monospace, monospace">wait(mission)</text>
+<text x="36" y="166" font-size="12" font-family="ui-monospace, monospace">cancel(mission)</text>
+<path d="M240 115H318" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="296" y="26" width="270" height="174" rx="14" fill="none" stroke="#b9c3cf" stroke-width="2" stroke-dasharray="6 5"/>
+<text x="310" y="46" font-size="11.5" fill="#5a5a5a" font-family="system-ui">plimsoll's sandbox: no network, no credential</text>
+<rect x="326" y="70" width="200" height="92" rx="10" fill="#fff5df" stroke="#dfc790"/>
+<text x="342" y="98" font-size="14" font-weight="650" font-family="system-ui">The adapter</text>
+<text x="342" y="120" font-size="12" fill="#5a5a5a" font-family="system-ui">written by an AI</text>
+<text x="342" y="140" font-size="12" fill="#8a5a00" font-weight="650" font-family="system-ui">the thing under test</text>
+<rect x="556" y="100" width="20" height="30" rx="4" fill="#fff" stroke="#5687a7" stroke-width="2"/>
+<text x="540" y="148" font-size="10.5" font-weight="650" font-family="system-ui">broker</text>
+<path d="M526 115H552M576 115H598" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="604" y="40" width="252" height="150" rx="12" fill="#eaf3fb" stroke="#bed4e5"/>
+<text x="620" y="66" font-size="14" font-weight="650" font-family="system-ui">The vendor's API</text>
+<text x="620" y="94" font-size="11.5" font-family="ui-monospace, monospace">GET /robots</text>
+<text x="620" y="118" font-size="11.5" font-family="ui-monospace, monospace">POST /robots/{id}/missions</text>
+<text x="620" y="142" font-size="11.5" font-family="ui-monospace, monospace">GET /missions/{id}</text>
+<text x="620" y="166" font-size="11.5" font-family="ui-monospace, monospace">POST /missions/{id}/cancel</text>
+<path d="M856 115H902" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<g transform="translate(934 112)"><rect x="-14" y="-11" width="28" height="22" rx="6" fill="#fff" stroke="#2a78d6" stroke-width="2.5"/><circle cx="-5" cy="-2" r="2.6" fill="#2a78d6"/><circle cx="5" cy="-2" r="2.6" fill="#2a78d6"/><path d="M-5 5 Q0 9 5 5" fill="none" stroke="#2a78d6" stroke-width="1.8"/></g>
+<g transform="translate(990 112)"><rect x="-14" y="-11" width="28" height="22" rx="6" fill="#fff" stroke="#c2410c" stroke-width="2.5"/><circle cx="-5" cy="-2" r="2.6" fill="#c2410c"/><circle cx="5" cy="-2" r="2.6" fill="#c2410c"/><path d="M-5 5 Q0 9 5 5" fill="none" stroke="#c2410c" stroke-width="1.8"/></g>
+<g transform="translate(1046 112)"><rect x="-14" y="-11" width="28" height="22" rx="6" fill="#fff" stroke="#0f766e" stroke-width="2.5"/><circle cx="-5" cy="-2" r="2.6" fill="#0f766e"/><circle cx="5" cy="-2" r="2.6" fill="#0f766e"/><path d="M-5 5 Q0 9 5 5" fill="none" stroke="#0f766e" stroke-width="1.8"/></g>
+<text x="940" y="152" font-size="11.5" fill="#5a5a5a" font-family="system-ui">three robots, simulated</text>
+<path d="M730 190V206" stroke="#5687a7" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="640" y="212" width="180" height="34" rx="8" fill="#fff" stroke="#bed4e5"/>
+<text x="654" y="234" font-size="12" font-family="system-ui">the vendor's ledger</text>
+<path d="M640 229H558" stroke="#1e6b2f" stroke-width="2" marker-end="url(#ar3)"/>
+<rect x="296" y="212" width="258" height="34" rx="8" fill="#e9f5ed" stroke="#a9ccb6"/>
+<text x="310" y="234" font-size="12" font-family="system-ui">the grader: the verdict comes from here</text>
+</svg>
+<text x="52" y="502" font-size="23" fill="#466174">The adapter runs inside the sandbox; the broker makes the API call.</text>
+<text x="52" y="534" font-size="23" fill="#466174">A separate checker compares what happened with the vendor&#x27;s ledger.</text>
+</g>
+</svg>

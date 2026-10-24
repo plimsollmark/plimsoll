@@ -63,8 +63,12 @@ func (*Sessions) RunModule(context.Context, sandbox.ModuleRequest) (sandbox.Modu
 // SupportsSessions is true.
 func (*Sessions) SupportsSessions() bool { return true }
 
-// SessionEnvironments states nothing: the fake runs no image.
-func (*Sessions) SessionEnvironments() sandbox.Environments { return sandbox.Environments{} }
+// SessionEnvironments states the languages a fake session's cells answer in, as every
+// daemon states its sessions' languages; it names no image, since the fake runs none.
+func (*Sessions) SessionEnvironments() sandbox.Environments {
+	langs := []sandbox.Language{sandbox.LanguagePython, sandbox.LanguageJavaScript}
+	return sandbox.Environments{JavaScript: sandbox.PayloadEnvironment{Languages: langs}}
+}
 
 // OpenSession opens a fake session with opts.
 func (p *Sessions) OpenSession(_ context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {

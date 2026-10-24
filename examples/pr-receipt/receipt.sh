@@ -96,6 +96,16 @@ fi
 for bom in "$output_dir"/run-*.cdx.json; do
   "$work_dir/sbom" -check "$bom" -trusted-pub "$output_dir/harness.pub" > "$output_dir/check.log"
 done
+# The JUnit file, from the checked receipt only: the framework's own report as the run
+# returned it, or one built from the signed steps (junit.py says which).
+python3 -I "$script_dir/junit.py" "$output_dir"
+# The same receipt in standard formats (formats.py): an in-toto test-result statement,
+# signed with the same key, and Cobertura coverage when the run returned an lcov file.
+python3 -I "$script_dir/formats.py" "$output_dir"
+env -u PLIMSOLL_ATTEST_KEY "$work_dir/plimsoll-attest" sign-statement -key "$signing_key" \
+  -type https://in-toto.io/attestation/test-result/v0.1 -out "$output_dir/test-result.intoto.json" \
+  "$output_dir/test-result.statement.json" > "$output_dir/statement.log"
+rm -- "$output_dir/test-result.statement.json"
 # Everything in the output directory is published: refuse it if any file names a
 # directory of this machine's (the checkout, the project, the output, the home). A
 # workflow may upload the output even after a failure (a failed command still gets a

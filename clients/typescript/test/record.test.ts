@@ -4,7 +4,7 @@
 // this client sends no module runs.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { checkRecord, recordDigest, recordFromWire, requestDigest, resultDigest, sessionFingerprint, softwareRuleId, type DigestPayload } from "../src/record.ts";
@@ -63,6 +63,28 @@ test("result digests", () => {
   assert.ok(n >= 3, `only ${n} result vectors`);
 });
 
+test("every release's own vectors still hold", () => {
+  // record/testdata/published, never edited: the versions a release wrote keep their
+  // digests in this client too.
+  const dir = new URL("../../../record/testdata/published/", import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith("-golden.json"));
+  assert.ok(files.length >= 1, "no published vectors");
+  for (const f of files) {
+    const g: Golden = JSON.parse(readFileSync(new URL(f, dir), "utf8"));
+    for (const v of g.requests) {
+      const p = payload(v.request);
+      if (!p) continue;
+      const r = v.request;
+      assert.equal(requestDigest({ protocol: r.protocol, minimumIsolation: r.minimumIsolation ?? "", timeoutMs: r.timeoutMs ?? 0, softwareRule: r.softwareRule, payload: p }), v.sha256, `${f}: ${v.name}`);
+    }
+    for (const v of g.results) {
+      if (v.response.module !== undefined) continue;
+      assert.equal(resultDigest(v.response), v.sha256, `${f}: ${v.name}`);
+    }
+    for (const v of g.records) assert.equal(recordDigest(recordFromWire(v.record)), v.sha256, `${f}: ${v.name}`);
+  }
+});
+
 test("record digest and session fingerprint", () => {
   for (const v of golden.records) assert.equal(recordDigest(recordFromWire(v.record)), v.sha256, v.name);
   for (const v of golden.sessionFingerprints) assert.equal(sessionFingerprint(v.sessionId), v.sha256, v.name);
@@ -81,18 +103,25 @@ test("software rule ids", () => {
   assert.equal(softwareRuleId(approved), softwareRuleId({ mode: "approved", identities: [...approved.identities].reverse() }));
 });
 
-// An answered call's record (version 2) that also states an unanswered code, a field
-// outside its digest, is refused (v0.15.0 review, H1).
-test("an answered record stating an unanswered code is refused", () => {
-  const resp: WireRunResponse = { sandbox: "docker", isolation: "container", javascript: { stdout: "" } };
+// An answered call's record that also states an unanswered code is refused (v0.15.0
+// review, H1), and so is one of an earlier version or whose instance is not the response's.
+test("an answered record stating an unanswered code, an old version or another instance is refused", () => {
+  const resp: WireRunResponse = { sandbox: "docker", isolation: "container", instance: "k8s-pod-uid:7f3e9c2a", javascript: { stdout: "" } };
   const record: WireRecord = {
-    version: 2, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
-    startedUnixMs: 1, endedUnixMs: 2,
+    version: 4, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
+    instance: "k8s-pod-uid:7f3e9c2a", startedUnixMs: 1, endedUnixMs: 2,
   };
   record.recordSha256 = recordDigest(recordFromWire(record));
   resp.record = record;
-  assert.ok("record" in checkRecord("r", 2, undefined, resp));
-  resp.record = { ...record, unanswered: "unknown" };
-  const got = checkRecord("r", 2, undefined, resp);
-  assert.ok("problem" in got && got.problem.includes("unanswered"), JSON.stringify(got));
+  assert.ok("record" in checkRecord("r", undefined, resp));
+  const refused = (r: WireRecord, why: string) => {
+    resp.record = { ...r, recordSha256: recordDigest(recordFromWire(r)) };
+    const got = checkRecord("r", undefined, resp);
+    assert.ok("problem" in got && got.problem.includes(why), JSON.stringify(got));
+  };
+  refused({ ...record, unanswered: "unknown" }, "unanswered");
+  for (const version of [1, 2, 3]) refused({ ...record, version }, "version");
+  refused({ ...record, instance: "k8s-pod-uid:other" }, "instance");
+  refused({ ...record, instance: "/var/run/pod" }, "instance");
+  assert.equal(resultDigest({ ...resp, instance: "k8s-pod-uid:other" }), resultDigest(resp), "the instance moved the result digest");
 });

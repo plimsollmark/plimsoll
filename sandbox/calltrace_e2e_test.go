@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestDockerRunPopulatesCallTrace closes the Phase-0 e2e gap: the traceSnapshot()
@@ -246,4 +247,43 @@ func contains(ss []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestDockerProjectTimeoutKeepsCallTrace: a project the outer deadline stops still
+// returns the calls its grant made. The first step calls the host and then outlasts the
+// runner's grace, so the second step's own timer never fires before the backstop: the
+// run comes back timed out with no step reported, which is the path that once returned a
+// fresh result and dropped the trace (the hung agent calling an API until the deadline is
+// the case the trace exists for).
+func TestDockerProjectTimeoutKeepsCallTrace(t *testing.T) {
+	t.Parallel()
+	d := testDocker()
+	requireProjectImage(t, d)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+	grant := &HostAPIGrant{
+		BaseURL: upstream.URL,
+		Allow:   []HostRoute{{Method: "GET", Path: "/items/*"}},
+		Minter:  StaticToken("s3cr3t-timeout-bearer"),
+	}
+	caller := `await host.get("/items/1");
+await new Promise((r) => setTimeout(r, 5500));`
+	res, err := d.RunProject(context.Background(), ProjectRequest{
+		Files:   []File{{Path: "caller.mjs", Content: caller}},
+		Steps:   []string{"node caller.mjs", "sleep 600"},
+		Grant:   grant,
+		Timeout: 6 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("RunProject: %v", err)
+	}
+	if res.Outcome != ProjectOutcomeTimedOut {
+		t.Fatalf("outcome %q, want timed_out: %+v", res.Outcome, res)
+	}
+	if res.CallTrace == nil || len(res.CallTrace.Calls) != 1 || res.CallTrace.Calls[0].Route != "/items/*" {
+		t.Fatalf("the timed-out run lost its call trace: %+v", res.CallTrace)
+	}
 }

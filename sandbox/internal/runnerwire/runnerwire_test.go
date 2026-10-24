@@ -182,12 +182,12 @@ func TestPlanEncodeIsTheRunnerWireFormat(t *testing.T) {
 				Path    string `json:"path"`
 				Content string `json:"content"`
 			} `json:"files"`
-			Steps         []string `json:"steps"`
-			StepTimeoutMs int64    `json:"stepTimeoutMs"`
-			Artifacts     []string `json:"artifacts"`
-			HostSDK       string   `json:"hostSDK,omitempty"`
-			ReportKey     string   `json:"reportKey"`
-		}{Steps: p.Steps, StepTimeoutMs: p.StepTimeout.Milliseconds(), Artifacts: p.Artifacts, HostSDK: p.HostSDK,
+			Steps     []string `json:"steps"`
+			BudgetMs  int64    `json:"budgetMs"`
+			Artifacts []string `json:"artifacts"`
+			HostSDK   string   `json:"hostSDK,omitempty"`
+			ReportKey string   `json:"reportKey"`
+		}{Steps: p.Steps, BudgetMs: p.Budget.Milliseconds(), Artifacts: p.Artifacts, HostSDK: p.HostSDK,
 			ReportKey: hex.EncodeToString(p.ReportKey)}
 		for _, f := range p.Files {
 			plan.Files = append(plan.Files, struct {
@@ -202,14 +202,14 @@ func TestPlanEncodeIsTheRunnerWireFormat(t *testing.T) {
 		return b
 	}
 	cases := []Plan{
-		{Steps: []string{"node main.js"}, StepTimeout: 30 * time.Second, ReportKey: testKey},
+		{Steps: []string{"node main.js"}, Budget: 30 * time.Second, ReportKey: testKey},
 		{
-			Files:       []File{{Path: "main.js", Content: "console.log('<b>& ')"}, {Path: "data/x.txt", Content: "é\x01"}},
-			Steps:       []string{"tsc", "node main.js"},
-			StepTimeout: 1500 * time.Millisecond,
-			Artifacts:   []string{"out.txt"},
-			HostSDK:     "globalThis.host = {};",
-			ReportKey:   testKey,
+			Files:     []File{{Path: "main.js", Content: "console.log('<b>& ')"}, {Path: "data/x.txt", Content: "é\x01"}},
+			Steps:     []string{"tsc", "node main.js"},
+			Budget:    1500 * time.Millisecond,
+			Artifacts: []string{"out.txt"},
+			HostSDK:   "globalThis.host = {};",
+			ReportKey: testKey,
 		},
 	}
 	for i, p := range cases {
@@ -225,7 +225,7 @@ func TestPlanEncodeIsTheRunnerWireFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"files":null,"steps":["node main.js"],"stepTimeoutMs":30000,"artifacts":null,"reportKey":"` +
+	if want := `{"files":null,"steps":["node main.js"],"budgetMs":30000,"artifacts":null,"reportKey":"` +
 		strings.Repeat("07", KeySize) + `"}`; string(got) != want {
 		t.Fatalf("minimal plan = %s, want %s", got, want)
 	}
@@ -296,8 +296,9 @@ func TestReportOutcome(t *testing.T) {
 		detail string
 	}{
 		{"clean", Report{Steps: []Step{{ExitCode: 0}, {ExitCode: 1}}}, Completed, ""},
-		{"timed out step", Report{Steps: []Step{{ExitCode: 0}, {ExitCode: 124, TimedOut: true}}}, TimedOut, "step 2 exceeded its time budget"},
-		{"setup failure wins", Report{Err: "illegal file path: ../x", Steps: []Step{{TimedOut: true}}}, SetupFailed, "illegal file path: ../x"},
+		{"timed out step", Report{Steps: []Step{{ExitCode: 0}, {ExitCode: 124, TimedOut: true}}}, TimedOut, "step 2 exceeded the run's time budget"},
+		{"a failure before any step is a setup failure", Report{Err: "illegal file path: ../x"}, SetupFailed, "illegal file path: ../x"},
+		{"a failure after a step began is the runner's", Report{Err: "EIO", StepsBegan: true, Steps: []Step{{TimedOut: true}}}, RunnerFailed, "EIO"},
 	} {
 		got, detail := tc.rep.Outcome()
 		if got != tc.want || detail != tc.detail {
@@ -343,21 +344,61 @@ func TestDecodeKeepsOutputBytesAndRefusesTheOldForm(t *testing.T) {
 }
 
 // Node counts a step's two output streams against one buffer, so a step can overflow
-// it with neither stream at the cap: 600 KiB on each against a 1 MiB buffer. The child
-// is killed there, so from that point neither stream is complete and both are reported
-// cut. Flagging only a stream that reached the cap reported both as complete, and a
-// caller could not tell a whole answer from an interrupted one (the round-4 review,
-// 2026-10-08).
+// it with neither stream past the budget: 17 MiB on each against 32 MiB. The child is
+// killed there, so neither stream is complete: both are reported cut, and the step as
+// flooded (exit 153). Flagging only a stream that reached a limit reported both as
+// complete (the round-4 review, 2026-10-08). Below the budget nothing is killed: 600 KiB
+// on each stream comes back whole, with the step's own exit (review, 2026-10-24).
 func TestProjectRunnerMarksBothStreamsCutWhenTheirTotalOverflows(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	for _, c := range []struct {
+		kib       int
+		cut       bool
+		exit, out int
+	}{
+		{kib: 600, cut: false, exit: 3, out: 600 << 10},
+		{kib: 17 << 10, cut: true, exit: 153, out: 1 << 20},
+	} {
+		work := t.TempDir()
+		cmd := guardedRunnerCommand(t, node, work)
+		step := fmt.Sprintf(`node -e 'const b="x".repeat(%d*1024); process.stdout.write(b); process.stderr.write(b, () => process.exit(3))'`, c.kib)
+		plan, err := (Plan{Steps: []string{step}, Budget: 60 * time.Second, ReportKey: testKey}).Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd.Stdin = bytes.NewReader(plan)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("runner: %v", err)
+		}
+		report, found, err := Parse(string(out), testKey)
+		if !found || err != nil {
+			t.Fatalf("report: found=%v err=%v", found, err)
+		}
+		if len(report.Steps) != 1 {
+			t.Fatalf("%d steps, want 1", len(report.Steps))
+		}
+		s := report.Steps[0]
+		whole := c.cut || (len(s.Stdout) == c.out && len(s.Stderr) == c.out)
+		if s.StdoutTruncated != c.cut || s.StderrTruncated != c.cut || s.ExitCode != c.exit || len(s.Stdout) > c.out || !whole {
+			t.Fatalf("%d KiB on each stream: cut %v and %v, exit %d, %d and %d bytes kept; want cut %v, exit %d",
+				c.kib, s.StdoutTruncated, s.StderrTruncated, s.ExitCode, len(s.Stdout), len(s.Stderr), c.cut, c.exit)
+		}
+	}
+}
+
+func TestProjectRunnerGivesEachStepWhatIsLeftOfTheBudget(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
 	}
 	work := t.TempDir()
 	cmd := guardedRunnerCommand(t, node, work)
-	// Each stream stays under the 1 MiB cap; together they pass it.
-	step := `node -e 'const b="x".repeat(600*1024); process.stdout.write(b); process.stderr.write(b)'`
-	plan, err := (Plan{Steps: []string{step}, StepTimeout: 30 * time.Second, ReportKey: testKey}).Encode()
+	const budget = 3 * time.Second
+	plan, err := (Plan{Steps: []string{"sleep 2; echo first", "sleep 60"}, Budget: budget, ReportKey: testKey}).Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,12 +411,65 @@ func TestProjectRunnerMarksBothStreamsCutWhenTheirTotalOverflows(t *testing.T) {
 	if !found || err != nil {
 		t.Fatalf("report: found=%v err=%v", found, err)
 	}
-	if len(report.Steps) != 1 {
-		t.Fatalf("%d steps, want 1", len(report.Steps))
+	if len(report.Steps) != 2 {
+		t.Fatalf("%d steps, want 2", len(report.Steps))
 	}
-	s := report.Steps[0]
-	if !s.StdoutTruncated || !s.StderrTruncated {
-		t.Fatalf("stdout cut %v, stderr cut %v, with %d and %d bytes kept; want both marked cut",
-			s.StdoutTruncated, s.StderrTruncated, len(s.Stdout), len(s.Stderr))
+	first, second := report.Steps[0], report.Steps[1]
+	if first.ExitCode != 0 || first.Stdout != "first\n" || first.TimedOut {
+		t.Fatalf("first step: exit %d, stdout %q, timed out %v", first.ExitCode, first.Stdout, first.TimedOut)
+	}
+	if !second.TimedOut || second.ExitCode != 124 {
+		t.Fatalf("second step: exit %d, timed out %v; want stopped at the run's deadline", second.ExitCode, second.TimedOut)
+	}
+	// The second step had about 1 s left. Given a budget of its own, as before, it ran
+	// at least the whole 3 s; the margin absorbs a loaded machine's slow kill (1.5 s
+	// was seen under the gate).
+	if second.Duration >= budget {
+		t.Fatalf("second step ran %v: a budget of its own, not what was left of the run's %v", second.Duration, budget)
+	}
+}
+
+// A failure after a step began is reported with the steps so far and read as the
+// runner's, never as a setup failure, which tells a caller that none of its code ran
+// (review, 2026-10-23); a failure before any step stays a setup
+// failure. The plans are written by hand: an artifact entry that is not a path makes the
+// runner fail while capturing artifacts, after its steps, as an unreadable artifact
+// would, deterministically.
+func TestProjectRunnerTellsAFailureAfterStepsFromOneBefore(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	key := hex.EncodeToString(testKey)
+	for _, tc := range []struct {
+		name, plan string
+		want       Outcome
+		steps      int
+	}{
+		{"after", `{"steps":["echo ran"],"budgetMs":30000,"artifacts":[5],"reportKey":"` + key + `"}`, RunnerFailed, 1},
+		{"before", `{"files":[{"path":"../out","content":"x"}],"steps":["echo ran"],"budgetMs":30000,"reportKey":"` + key + `"}`, SetupFailed, 0},
+	} {
+		cmd := guardedRunnerCommand(t, node, t.TempDir())
+		cmd.Stdin = strings.NewReader(tc.plan)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: runner: %v", tc.name, err)
+		}
+		report, found, err := Parse(string(out), testKey)
+		if !found || err != nil {
+			t.Fatalf("%s: report: found=%v err=%v", tc.name, found, err)
+		}
+		if got, detail := report.Outcome(); got != tc.want || detail == "" {
+			t.Fatalf("%s: outcome %v (%q), want %v", tc.name, got, detail, tc.want)
+		}
+		if len(report.Steps) != tc.steps || (tc.steps == 1 && report.Steps[0].Stdout != "ran\n") {
+			t.Fatalf("%s: steps %+v", tc.name, report.Steps)
+		}
+	}
+}
+
+func TestDecodeRefusesStepsBeganWithoutAFailure(t *testing.T) {
+	if _, _, err := Parse(frame(testKey, `{"steps":[],"stepsBegan":true}`), testKey); err == nil {
+		t.Fatal("a report stating steps began with no failure decoded")
 	}
 }

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "subject": {
+    "name": "widget.txt",
+    "digest": {
+      "sha256": "51c97d12b410be2d568aaabe0f4e12be3ed61aea196b4d8a73ef9c252591dfb7"
+    }
+  },
+  "roles": [
+    {
+      "name": "builder",
+      "predicate_type": "https://example.org/receipt/builder/v1",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAkGuoIZX7iehMujIwAfDgHeIcVUOAHqa/c5XhUndID7o=\n-----END PUBLIC KEY-----\n",
+      "timestamp_roots_pem": "-----BEGIN CERTIFICATE-----\nMIIBYDCCAQegAwIBAgIBATAKBggqhkjOPQQDAjAXMRUwEwYDVQQDEwx0c2F0ZXN0\nIHJvb3QwIBcNMDAwMTAxMDAwMDAwWhgPMjEwMDAxMDEwMDAwMDBaMBcxFTATBgNV\nBAMTDHRzYXRlc3Qgcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABGiI1iOa\nvaimY+zKFJ/Mmd5I6L4asrTArEnyexdU6c7skdNzxCDB5VdQqgGRJ0swvQ6BuT/J\nyjaGTW8myh+DlxWjQjBAMA4GA1UdDwEB/wQEAwICBDAPBgNVHRMBAf8EBTADAQH/\nMB0GA1UdDgQWBBSVRwR24einJHh4tnvrJuWI6DnGATAKBggqhkjOPQQDAgNHADBE\nAiBnnH549nUJ8Lu7IXgajFus2eAYUY5KQ8kKVls3+mv52wIgQRCx6Yn7CDHA445Q\nEPyB97IOd0wgcVzTVhoXgCf2nLw=\n-----END CERTIFICATE-----\n"
+    },
+    {
+      "name": "reviewer",
+      "predicate_type": "https://example.org/receipt/reviewer/v1",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAeg2MGnAf+XNLaJ7xU4ZPNUA6G3nq9neEvJ/6jissBBI=\n-----END PUBLIC KEY-----\n",
+      "timestamp_roots_pem": "-----BEGIN CERTIFICATE-----\nMIIBYDCCAQegAwIBAgIBATAKBggqhkjOPQQDAjAXMRUwEwYDVQQDEwx0c2F0ZXN0\nIHJvb3QwIBcNMDAwMTAxMDAwMDAwWhgPMjEwMDAxMDEwMDAwMDBaMBcxFTATBgNV\nBAMTDHRzYXRlc3Qgcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABGiI1iOa\nvaimY+zKFJ/Mmd5I6L4asrTArEnyexdU6c7skdNzxCDB5VdQqgGRJ0swvQ6BuT/J\nyjaGTW8myh+DlxWjQjBAMA4GA1UdDwEB/wQEAwICBDAPBgNVHRMBAf8EBTADAQH/\nMB0GA1UdDgQWBBSVRwR24einJHh4tnvrJuWI6DnGATAKBggqhkjOPQQDAgNHADBE\nAiBnnH549nUJ8Lu7IXgajFus2eAYUY5KQ8kKVls3+mv52wIgQRCx6Yn7CDHA445Q\nEPyB97IOd0wgcVzTVhoXgCf2nLw=\n-----END CERTIFICATE-----\n"
+    }
+  ]
+}

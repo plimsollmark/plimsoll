@@ -9,7 +9,7 @@ import (
 // reason as openshell: its generated process-service code registers protobuf names
 // agent-sandbox's own Go SDK also registers (sandbox/agentsandbox's package comment).
 func init() {
-	daemonProviders[agentsandbox.Name] = daemonProvider{
+	providers[agentsandbox.Name] = providerDescriptor{
 		build: agentsandbox.FromEnv,
 		usage: agentsandboxUsage,
 		// The template sets memory, CPU and the volumes, which the read-back holds to

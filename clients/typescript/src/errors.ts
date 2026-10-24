@@ -4,29 +4,18 @@
 // execution and is never a safe automatic retry (docs/run-results.md).
 
 import type { RunRecord } from "./record.ts";
+import { REFUSAL_NAMES, SESSION_END_NAMES } from "./tables.gen.ts";
 import type { WireError, WireRecord } from "./wire.ts";
 
 /** Why a request was refused before any code ran (plimsoll.v1.NotDispatchedReason). */
-export type Refusal = "request" | "permission" | "protocol" | "unsupported" | "isolation" | "capacity" | "environment" | "unknown";
+export type Refusal = (typeof REFUSAL_NAMES)[number];
 
 /**
  * Why a session ended (plimsoll.v1.SessionEnd), "open" while it has not. "unknown" is
  * an end this client has no name for (a daemon newer than the client): the session
  * ended, for a reason it cannot name.
  */
-export type SessionEnd =
-  | "open"
-  | "closed"
-  | "expired"
-  | "disk_exceeded"
-  | "main_process_ended"
-  | "boundary_failed"
-  | "sandbox_changed"
-  | "shutdown"
-  | "replaced"
-  | "not_found"
-  | "unclaimed"
-  | "unknown";
+export type SessionEnd = (typeof SESSION_END_NAMES)[number] | "unknown";
 
 /**
  * Connect's status codes, plus the two this client raises itself:
@@ -69,7 +58,7 @@ export class PlimsollError extends Error {
   readonly result: unknown;
   /**
    * The record the daemon sends with a session call that may have run but ended in
-   * an error (a version 3 record, as it came off the wire). The Session checks it
+   * an error (an unanswered record, as it came off the wire). The Session checks it
    * and keeps it in its chain, so the session goes on; the call's outcome is unknown.
    */
   readonly unanswered: WireRecord | undefined;
@@ -122,21 +111,6 @@ export function unboundSuccess(method: string): PlimsollError {
   return new PlimsollError("data_loss", `plimsoll: ${method}: ${NOT_BOUND}; the call may have run`, { answerNotBound: true });
 }
 
-const REFUSALS: Refusal[] = ["unknown", "request", "permission", "protocol", "unsupported", "isolation", "capacity", "environment"];
-
-const SESSION_ENDS: SessionEnd[] = [
-  "open",
-  "closed",
-  "expired",
-  "disk_exceeded",
-  "main_process_ended",
-  "boundary_failed",
-  "sandbox_changed",
-  "shutdown",
-  "replaced",
-  "not_found",
-  "unclaimed",
-];
 
 // Only an absent or unspecified end means open. Any other value says the session
 // ended, so one this client has no name for is "unknown", never "open": read as open,
@@ -144,10 +118,10 @@ const SESSION_ENDS: SessionEnd[] = [
 // refusal decode below keeps its mark the same way.
 export function sessionEndFromWire(v: string | number | undefined): SessionEnd {
   if (v === undefined || v === 0) return "open";
-  if (typeof v === "number") return SESSION_ENDS[v] ?? "unknown";
+  if (typeof v === "number") return SESSION_END_NAMES[v] ?? "unknown";
   const name = v.replace(/^SESSION_END_/, "").toLowerCase();
   if (name === "unspecified") return "open";
-  return name !== "open" && name !== "unknown" && (SESSION_ENDS as string[]).includes(name) ? (name as SessionEnd) : "unknown";
+  return name !== "open" && name !== "unknown" && (SESSION_END_NAMES as readonly string[]).includes(name) ? (name as SessionEnd) : "unknown";
 }
 
 // Reads one varint at b[i]; returns [value, next index].
@@ -182,6 +156,12 @@ function decodeDetail(b: Uint8Array): { reason: number; detail: string } {
       if (k + n > b.length) throw new Error("bad length");
       if (field === 2) detail = Buffer.from(b.subarray(k, k + n)).toString("utf8");
       i = k + n;
+    } else if (wire === 1 || wire === 5) {
+      // A fixed-width field this client does not know is skipped, as Go and Python skip
+      // it, so a newer daemon's extra field does not cost a refusal its mark (review B8,
+      // 2026-10-23).
+      i += wire === 1 ? 8 : 4;
+      if (i > b.length) throw new Error("bad length");
     } else {
       throw new Error("unexpected wire type");
     }
@@ -203,7 +183,7 @@ function bigVarint(b: Uint8Array, i: number): [bigint, number] {
 
 const RECORD_STRINGS: Record<number, keyof WireRecord> = {
   2: "requestSha256", 3: "resultSha256", 4: "provider", 5: "isolation", 6: "environment", 7: "policy",
-  10: "session", 12: "previousSha256", 13: "recordSha256", 14: "softwareIdentity", 15: "softwareRuleId", 16: "unanswered",
+  10: "session", 12: "previousSha256", 13: "recordSha256", 14: "softwareIdentity", 15: "softwareRuleId", 16: "unanswered", 17: "instance",
 };
 
 // Decodes an UnansweredCall detail (field 1, a RunRecord) by hand, into the record's
@@ -273,7 +253,7 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
     try {
       const bytes = Buffer.from(d.value ?? "", "base64");
       if (d.type === "plimsoll.v1.NotDispatched") {
-        notDispatched = REFUSALS[decodeDetail(bytes).reason] ?? "unknown";
+        notDispatched = REFUSAL_NAMES[decodeDetail(bytes).reason] ?? "unknown";
       } else if (d.type === "plimsoll.v1.SessionEnded") {
         // The detail itself says the session ended, so an unspecified reason is not "open".
         const m = decodeDetail(bytes);
@@ -287,7 +267,7 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
     }
   }
   if (notDispatched === undefined && answer.mark) {
-    const named = REFUSALS.find((r) => r !== "unknown" && r === answer.mark);
+    const named = REFUSAL_NAMES.find((r) => r !== "unknown" && r === answer.mark);
     if (named) notDispatched = named;
   }
   return new PlimsollError(code, message, { notDispatched, sessionEnded, unanswered: notDispatched ? undefined : unanswered });

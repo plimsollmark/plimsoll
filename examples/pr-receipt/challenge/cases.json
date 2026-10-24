@@ -1,0 +1,15 @@
+{
+  "repository": "example/receipt-challenge",
+  "pull_request": "7",
+  "command": "node --test --test-reporter=junit --test-reporter-destination=reports.xml test.mjs",
+  "junit_path": "reports.xml",
+  "cases": [
+    {"name": "honest", "says": "the receipt for the commit under review, signed by the operator, tests passed", "receipt": "honest", "head": "tested", "accept": true},
+    {"name": "another signer", "says": "a genuine receipt for the same commit, signed by a key that is not the operator's", "receipt": "other-signer", "head": "tested", "refused_at": "signature"},
+    {"name": "edited result", "says": "the honest receipt with one exit code changed inside it", "receipt": "altered-result", "head": "tested", "refused_at": "signature"},
+    {"name": "failing tests", "says": "a genuine receipt, correctly signed, for a run whose tests failed", "receipt": "failing", "head": "broken", "refused_at": "result"},
+    {"name": "passing report beside a failing run", "says": "the failing run's genuine receipt with a passing JUnit file put next to it", "receipt": "altered-junit", "head": "broken", "refused_at": "junit"},
+    {"name": "wrong commit", "says": "the honest receipt presented for a later commit it never tested", "receipt": "honest", "head": "later", "refused_at": "head"},
+    {"name": "wrong repository", "says": "the honest receipt presented for another repository", "receipt": "honest", "head": "tested", "repository": "example/another-project", "refused_at": "head"}
+  ]
+}

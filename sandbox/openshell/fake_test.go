@@ -105,7 +105,7 @@ func (e *fakeExec) wasCancelled() bool {
 
 func dockerInfo() (*openshellv1.GetGatewayInfoResponse, error) {
 	return &openshellv1.GetGatewayInfoResponse{
-		GatewayVersion: "0.1.2-fake",
+		GatewayVersion: "0.1.2+fake",
 		ComputeDrivers: []*openshellv1.ComputeDriverInfo{{
 			Name: "docker",
 			Capabilities: &openshellv1.ComputeDriverCapabilities{

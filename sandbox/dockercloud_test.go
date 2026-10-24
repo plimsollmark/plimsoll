@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,6 +58,8 @@ type dcFake struct {
 	policyAllow    []string
 	caps           map[string]any
 	files          map[string][]byte  // what Download serves
+	vanished       []string           // paths the artifact selection lists that Download no longer finds
+	selectExit     int                // the artifact selection's exit code
 	listPages      [][]map[string]any // ListSandboxes pages
 	exec           func(argv []string) (exit int, stdout, stderr string)
 	execHandler    func(w http.ResponseWriter, r *http.Request) // overrides exec entirely
@@ -432,12 +435,7 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 			f.execHandler(w, r)
 			return
 		}
-		exit, stdout, stderr := 0, "ok\n", ""
-		if cmd[0] == "mkdir" {
-			stdout = ""
-		} else if f.exec != nil {
-			exit, stdout, stderr = f.exec(dcInnerArgv(f.t, cmd))
-		}
+		exit, stdout, stderr := f.answerExec(cmd)
 		writeJSON(w, map[string]any{"exitCode": exit, "stdout": []byte(stdout), "stderr": []byte(stderr)})
 	case "/ep" + dcProcUpload:
 		if ct := r.Header.Get("Content-Type"); ct != "application/connect+json" {
@@ -523,6 +521,29 @@ func dcInnerArgv(t *testing.T, cmd []string) []string {
 }
 
 // deletedRefs flattens the recorded DeleteSandbox targets for assertions.
+// answerExec is the fake's answer to an exec of cmd (both APIs): a mkdir succeeds
+// silently, the artifact selection names the requested paths the fake holds a file for,
+// and anything else goes to the test's exec hook.
+func (f *dcFake) answerExec(cmd []string) (int, string, string) {
+	if cmd[0] == "mkdir" {
+		return 0, "", ""
+	}
+	inner := dcInnerArgv(f.t, cmd)
+	if len(inner) > 4 && inner[2] == artifactScript {
+		var listed strings.Builder
+		for _, p := range inner[5:] {
+			if _, ok := f.files[inner[4]+"/"+p]; ok || slices.Contains(f.vanished, p) {
+				listed.WriteString(p + "\x00" + inner[4] + "/" + p + "\x00")
+			}
+		}
+		return f.selectExit, listed.String(), ""
+	}
+	if f.exec != nil {
+		return f.exec(inner)
+	}
+	return 0, "ok\n", ""
+}
+
 func (f *dcFake) deletedRefs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -731,7 +752,7 @@ func TestDockerCloudUploadFramingAndProjectFlow(t *testing.T) {
 			}
 		}
 		// Steps run through the wrapper in the project dir, in order.
-		if len(stepArgv) != 2 || strings.Join(stepArgv[0], " ") != "sh /tmp/plimsoll-step-0.sh" || strings.Join(stepArgv[1], " ") != "sh /tmp/plimsoll-step-1.sh" {
+		if len(stepArgv) != 2 || !slices.Equal(stepArgv[0], []string{"sh", "-c", `sh "$0"; exit $?`, "/tmp/plimsoll-step-0.sh"}) || !slices.Equal(stepArgv[1], []string{"sh", "-c", `sh "$0"; exit $?`, "/tmp/plimsoll-step-1.sh"}) {
 			t.Fatalf("step argv = %q", stepArgv)
 		}
 		if f.execCwds[1] != "/tmp/plimsoll-project" {
@@ -767,18 +788,22 @@ func TestDockerCloudArtifactBudgetTruncates(t *testing.T) {
 	eachDCAPI(t, func(t *testing.T, api string) {
 		f := newDCFakeAPI(t, api)
 		f.files = map[string][]byte{
+			"/tmp/plimsoll-project/s.txt": []byte("s"),
 			"/tmp/plimsoll-project/a.bin": bytes.Repeat([]byte("a"), 5<<20),
 			"/tmp/plimsoll-project/b.bin": bytes.Repeat([]byte("b"), 5<<20),
 		}
+		// gone.txt was selected and then went missing: it is absent, not cut, so the
+		// small file after it still comes back.
+		f.vanished = []string{"gone.txt"}
 		res, err := f.provider().RunProject(context.Background(), ProjectRequest{
 			Files:     []File{{Path: "x", Content: "x"}},
 			Steps:     []string{"true"},
-			Artifacts: []string{"a.bin", "b.bin"},
+			Artifacts: []string{"gone.txt", "s.txt", "a.bin", "b.bin"},
 		})
 		if err != nil {
 			t.Fatalf("RunProject: %v", err)
 		}
-		if !res.ArtifactsTruncated || len(res.Artifacts) != 1 || res.Artifacts[0].Path != "a.bin" || len(res.Artifacts[0].Content) != 5<<20 {
+		if !res.ArtifactsTruncated || len(res.Artifacts) != 2 || res.Artifacts[0].Path != "s.txt" || res.Artifacts[1].Path != "a.bin" || len(res.Artifacts[1].Content) != 5<<20 {
 			t.Fatalf("artifacts = %d truncated=%v", len(res.Artifacts), res.ArtifactsTruncated)
 		}
 	})
@@ -870,6 +895,46 @@ func TestDockerCloudInGuestTimeout(t *testing.T) {
 		})
 		if err != nil || pres.Outcome != ProjectOutcomeTimedOut || len(pres.Steps) != 1 || !pres.Steps[0].TimedOut || pres.Steps[0].ExitCode != 124 {
 			t.Fatalf("project = %+v err = %v", pres, err)
+		}
+	})
+}
+
+// TestDockerCloudTimeoutIsTheGuestsMeasure: with the wrapper's trailer, whether the
+// in-guest limit killed the command is the time it ran inside the VM, not the time the
+// answer took to arrive, so a quick exit 137 answered slowly stays an exit 137 (review,
+// 2026-10-23). The trailer is stripped from stderr; a line a guest wrote that looks like
+// it stays, since only the last line is the wrapper's.
+func TestDockerCloudTimeoutIsTheGuestsMeasure(t *testing.T) {
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		var sleep time.Duration
+		var stderr string
+		f.exec = func([]string) (int, string, string) {
+			time.Sleep(sleep)
+			return 137, "partial", stderr
+		}
+		trailer := func(cs int) string { return "\n" + dcTrailer + " " + strconv.Itoa(cs) + " 0\n" }
+
+		// Budget 3s leaves a 1s in-guest limit. The command ran 30 ms; the answer took 1.1 s.
+		sleep, stderr = 1100*time.Millisecond, "boom"+trailer(3)
+		res, err := d.RunJavaScript(context.Background(), Request{Code: "1", Timeout: 3 * time.Second})
+		if err != nil || res.TimedOut || res.ExitCode != 137 || res.Stderr != "boom" {
+			t.Fatalf("a quick exit 137 answered slowly: %+v %v", res, err)
+		}
+		// The command ran the whole limit inside the VM, answered at once.
+		sleep, stderr = 0, trailer(100)
+		res, err = d.RunJavaScript(context.Background(), Request{Code: "1", Timeout: 3 * time.Second})
+		if err != nil || !res.TimedOut || res.ExitCode != 124 || res.Stderr != "" {
+			t.Fatalf("killed at the limit inside the VM: %+v %v", res, err)
+		}
+		// A guest that prints a trailer of its own cannot follow the wrapper's.
+		forged := trailer(100)
+		sleep, stderr = 0, forged+trailer(2)
+		res, err = d.RunJavaScript(context.Background(), Request{Code: "1", Timeout: 3 * time.Second})
+		if err != nil || res.TimedOut || res.Stderr != forged {
+			t.Fatalf("a forged trailer before the wrapper's: %+v %v", res, err)
 		}
 	})
 }
@@ -1904,5 +1969,38 @@ func TestDockerCloudCreateDoesNotAdoptAForeignSandbox(t *testing.T) {
 	// found and removed it: nothing is left billing, and nothing is charged as given up.
 	if gaveUp() {
 		t.Fatal("charged as given up though the delete by name removed the sandbox")
+	}
+}
+
+// An artifact selection that did not finish is not an empty one: the run is
+// runner_failed with its steps kept, never completed with no artifacts (review,
+// 2026-10-24).
+func TestDockerCloudUnfinishedArtifactSelectionIsARunnerFailure(t *testing.T) {
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		f.files = map[string][]byte{"/tmp/plimsoll-project/out.txt": []byte("x")}
+		f.selectExit = 137
+		res, err := f.provider().RunProject(context.Background(), ProjectRequest{
+			Files: []File{{Path: "a", Content: "a"}}, Steps: []string{"true"}, Artifacts: []string{"out.txt"},
+		})
+		if err != nil || res.Outcome != ProjectOutcomeRunnerFailed || len(res.Steps) != 1 || len(res.Artifacts) != 0 {
+			t.Fatalf("a selection killed by a signal: %+v, err %v; want runner_failed with the step and no artifact", res, err)
+		}
+	})
+}
+
+func TestSelectorAnswerBelievesOnlyAFinishedSelection(t *testing.T) {
+	answer := "a.txt\x00/w/a.txt\x00"
+	if got, err := selectorAnswer(answer, 0, false, []string{"a.txt"}); err != nil || len(got) != 1 {
+		t.Fatalf("a finished selection: %v, %v", got, err)
+	}
+	for _, c := range []struct {
+		exit int
+		cut  bool
+	}{{1, false}, {137, false}, {0, true}} {
+		if _, err := selectorAnswer(answer, c.exit, c.cut, []string{"a.txt"}); err == nil {
+			t.Errorf("exit %d, cut %v: believed", c.exit, c.cut)
+		}
 	}
 }

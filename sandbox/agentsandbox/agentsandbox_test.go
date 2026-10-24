@@ -56,12 +56,19 @@ func TestRunsClaimRunAndDelete(t *testing.T) {
 	if res.Stdout != "out:console.log(1)" || res.ExitCode != 0 || res.Isolation != sandbox.IsolationKernel {
 		t.Fatalf("snippet %+v", res)
 	}
+	// Every result names the pod that ran it, from the provider's own read of the pod.
+	if !strings.HasPrefix(res.Instance, "k8s-pod-uid:pod-uid-") {
+		t.Fatalf("snippet instance %q", res.Instance)
+	}
 	pr, err := p.RunProject(ctx, sandbox.ProjectRequest{Files: []sandbox.File{{Path: "main.js", Content: "1"}}, Steps: []string{"node main.js"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pr.Outcome != sandbox.ProjectOutcomeCompleted || len(pr.Steps) != 1 || string(pr.Steps[0].Stdout) != "ran node main.js" {
 		t.Fatalf("project %+v", pr)
+	}
+	if !strings.HasPrefix(pr.Instance, "k8s-pod-uid:pod-uid-") || pr.Instance == res.Instance {
+		t.Fatalf("project instance %q (the snippet's was %q; each run claims its own pod)", pr.Instance, res.Instance)
 	}
 	drained(t, p)
 	sd.mu.Lock()
@@ -564,4 +571,23 @@ func TestOnlyTheProvenTemplateRuns(t *testing.T) {
 	if err := p.Preflight(ctx); err != nil {
 		t.Fatalf("the proven template again: %v", err)
 	}
+}
+
+// A stream that stays open after the exit event is cut off after the grace, and the
+// output kept is reported cut on both streams, never as complete (review, 2026-10-23).
+// sandboxd ends the stream right after the exit event, so a normal run is not affected.
+func TestOutputCutOffAfterExitIsMarkedCut(t *testing.T) {
+	p, _, sd := testProvider(t)
+	sd.run = func([]string, []byte) (string, string, int32) { return "1\n", "", 0 }
+	sd.holdAfterExit.Store(true)
+	res, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+	if err != nil || res.Stdout != "1\n" || !res.StdoutTruncated || !res.StderrTruncated {
+		t.Fatalf("got %q, cut %v and %v, %v", res.Stdout, res.StdoutTruncated, res.StderrTruncated, err)
+	}
+	drained(t, p)
+	sd.holdAfterExit.Store(false)
+	if res, err := p.RunJavaScript(context.Background(), sandbox.Request{Code: "1"}); err != nil || res.StdoutTruncated || res.StderrTruncated {
+		t.Fatalf("a stream that ended after its exit event: cut %v and %v, %v", res.StdoutTruncated, res.StderrTruncated, err)
+	}
+	drained(t, p)
 }

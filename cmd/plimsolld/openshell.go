@@ -6,7 +6,7 @@ import "github.com/plimsollmark/plimsoll/sandbox/openshell"
 // OpenShell protocol code registers the protobuf names NVIDIA's OpenShell Go SDK also
 // registers, so only this binary links it (sandbox/openshell's package comment).
 func init() {
-	daemonProviders[openshell.Name] = daemonProvider{
+	providers[openshell.Name] = providerDescriptor{
 		build: openshell.FromEnv,
 		usage: openshellUsage,
 		// The gateway sets the process limit for all its sandboxes, so the provider

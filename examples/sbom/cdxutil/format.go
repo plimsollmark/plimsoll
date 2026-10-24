@@ -34,10 +34,19 @@ var selectedImagePattern = regexp.MustCompile(`^oci-manifest:[a-z0-9._/-]+@sha25
 var dockerCloudImagePattern = regexp.MustCompile(`^dockercloud-image:sha256:[a-f0-9]{64}$`)
 var agentSandboxImagePattern = regexp.MustCompile(`^agentsandbox-image:sha256:[a-f0-9]{64}$`)
 
-func ValidateOptions(name, imageName, operator, pages string) error {
+// ValidatePages refuses a base URL that is not absolute HTTP(S) and ending in /, or that
+// carries credentials, a query or a fragment; flag names the option in the message.
+func ValidatePages(flag, pages string) error {
 	u, err := url.Parse(pages)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !strings.HasSuffix(pages, "/") {
-		return fmt.Errorf("-pages must be an absolute HTTP(S) URL ending in /, without credentials, query or fragment")
+		return fmt.Errorf("%s must be an absolute HTTP(S) URL ending in /, without credentials, query or fragment", flag)
+	}
+	return nil
+}
+
+func ValidateOptions(name, imageName, operator, pages string) error {
+	if err := ValidatePages("-pages", pages); err != nil {
+		return err
 	}
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(operator) == "" || !regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`).MatchString(imageName) {
 		return fmt.Errorf("name and operator must be nonempty; image-name must be a lowercase OCI package name without a path")

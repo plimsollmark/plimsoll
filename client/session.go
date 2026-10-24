@@ -14,6 +14,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
+	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -89,7 +90,7 @@ type Session struct {
 }
 
 // UnansweredCallError is a session call that may have run but ended in Err. Its
-// version 3 Record, checked against the call sent and the chain, is in the session's
+// unanswered Record, checked against the call sent and the chain, is in the session's
 // chain, so the session goes on and the call is not hidden from a verifier. The
 // call's outcome is unknown: it is never a retry signal.
 type UnansweredCallError struct {
@@ -411,7 +412,7 @@ func (s *Session) call(ctx context.Context, msg *plimsollv1.SessionRunRequest) (
 		return nil, nil, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
 	}
 	if e := resp.Msg.GetEnded(); e != plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED {
-		s.setEnd(&sandbox.SessionEndedError{Reason: sessionEndFromWire(e), Detail: resp.Msg.GetEndDetail()})
+		s.setEnd(&sandbox.SessionEndedError{Reason: wireenum.SessionEndFromWire(e), Detail: resp.Msg.GetEndDetail()})
 	}
 	rec, err := record.CheckSessionCall(msg, run, s.fingerprint, s.calls, s.last)
 	if err != nil {
@@ -453,7 +454,7 @@ func (s *Session) close(ctx context.Context, sign bool) (SessionSummary, error) 
 		return SessionSummary{Session: s.fingerprint}, restoreSandboxError(err)
 	}
 	m := resp.Msg
-	sum := SessionSummary{Session: m.GetSession(), Calls: m.GetCalls(), LastRecordSHA256: m.GetLastRecordSha256(), End: sessionEndFromWire(m.GetEnded())}
+	sum := SessionSummary{Session: m.GetSession(), Calls: m.GetCalls(), LastRecordSHA256: m.GetLastRecordSha256(), End: wireenum.SessionEndFromWire(m.GetEnded())}
 	if sum.Session != s.fingerprint || sum.Calls != s.calls || sum.LastRecordSHA256 != s.last {
 		return sum, connect.NewError(connect.CodeDataLoss, fmt.Errorf("%w: the daemon counts %d calls ending %q, this client saw %d ending %q",
 			record.ErrChain, sum.Calls, sum.LastRecordSHA256, s.calls, s.last))

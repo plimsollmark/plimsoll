@@ -62,7 +62,7 @@ func run(ctx context.Context) error {
 	}
 	// The daemon's structured audit line goes to stderr: one record per run, naming
 	// the calling principal and never the code or the token. Watch for it below.
-	daemon, err := daemonproc.Start(ctx, binary, []string{"SANDBOX_PROVIDER=wasm", "PLIMSOLL_CLIENTS_FILE=" + clientsPath}, 30*time.Second)
+	daemon, err := daemonproc.Start(ctx, binary, daemonproc.Options{Env: []string{"SANDBOX_PROVIDER=wasm", "PLIMSOLL_CLIENTS_FILE=" + clientsPath}, Ready: 30 * time.Second})
 	if err != nil {
 		return err
 	}

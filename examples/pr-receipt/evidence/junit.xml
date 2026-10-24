@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="plimsoll receipt" tests="1" failures="0" errors="0" skipped="0">
+  <testsuite name="plimsoll run edfbd999f17d" tests="1" failures="0" errors="0" skipped="0">
+    <properties>
+      <property name="plimsoll.record_sha256" value="edfbd999f17de649ece67a0e86f64c45f3ee5968b62dd873d76a75774e7d2d8b" />
+      <property name="plimsoll.request_sha256" value="acd2df1409b8402404625804766beab91b0247bb543e7e043caa56b3158e1acf" />
+      <property name="plimsoll.result_sha256" value="7b1bc06288601383babfab94d390c7e76a8b6f268a421f7c912b5bf88291e5d5" />
+      <property name="plimsoll.isolation" value="kernel" />
+      <property name="plimsoll.provider" value="docker" />
+      <property name="plimsoll.junit_source" value="steps" />
+    </properties>
+    <testcase classname="plimsoll.step" name="step 1: npm test" time="5.963" />
+  </testsuite>
+</testsuites>

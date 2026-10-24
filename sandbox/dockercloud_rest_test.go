@@ -521,12 +521,7 @@ func (f *dcFake) handleRESTEndpoint(w http.ResponseWriter, r *http.Request) {
 			f.execHandler(w, r)
 			return
 		}
-		exit, stdout, stderr := 0, "ok\n", ""
-		if cmd[0] == "mkdir" {
-			stdout = ""
-		} else if f.exec != nil {
-			exit, stdout, stderr = f.exec(dcInnerArgv(f.t, cmd))
-		}
+		exit, stdout, stderr := f.answerExec(cmd)
 		out := map[string]any{"stdout": []byte(stdout), "stderr": []byte(stderr)}
 		if exit != 0 { // protojson leaves a zero exit code out (probe)
 			out["exitCode"] = exit
@@ -640,11 +635,12 @@ func TestDockerCloudRESTCreateAndCredentials(t *testing.T) {
 	if p := body["platform"].(map[string]any); p["os"] != "linux" || p["architecture"] != "amd64" {
 		t.Fatalf("platform = %v", p)
 	}
-	// One credential serves the run's four endpoint calls (mkdir, the upload, the
-	// step, the download): the live service rate-limits a mint per call.
+	// One credential serves the run's five endpoint calls (mkdir, the upload, the
+	// step, the artifact selection, the download): the live service rate-limits a mint
+	// per call.
 	rs := f.restState()
-	if rs.minted != 1 || len(rs.used) != 4 || strings.Count(strings.Join(rs.used, ","), "ep-1") != 4 {
-		t.Fatalf("minted %d credentials; endpoint calls carried %v; want one credential for all four", rs.minted, rs.used)
+	if rs.minted != 1 || len(rs.used) != 5 || strings.Count(strings.Join(rs.used, ","), "ep-1") != 5 {
+		t.Fatalf("minted %d credentials; endpoint calls carried %v; want one credential for all five", rs.minted, rs.used)
 	}
 }
 
@@ -769,11 +765,13 @@ func TestDockerCloudRESTDownloadNeedsItsClosingDelimiter(t *testing.T) {
 	f := newDCFakeAPI(t, dcAPIREST)
 	f.restState().downloadCut = true
 	f.files = map[string][]byte{"/tmp/plimsoll-project/out.txt": []byte("x")}
-	_, err := f.provider().RunProject(context.Background(), ProjectRequest{
+	res, err := f.provider().RunProject(context.Background(), ProjectRequest{
 		Files: []File{{Path: "a", Content: "a"}}, Steps: []string{"true"}, Artifacts: []string{"out.txt"},
 	})
-	if err == nil {
-		t.Fatal("a download cut before its closing delimiter was taken as whole")
+	// The step ran, so the failed read is the runner's: runner_failed, the step kept,
+	// no artifact.
+	if err != nil || res.Outcome != ProjectOutcomeRunnerFailed || len(res.Steps) != 1 || len(res.Artifacts) != 0 {
+		t.Fatalf("a download cut before its closing delimiter: %+v, err %v; want runner_failed with the step and no artifact", res, err)
 	}
 }
 

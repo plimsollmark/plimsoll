@@ -9,6 +9,7 @@ import (
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/internal/quantise"
+	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -45,7 +46,7 @@ type kind interface {
 	trace() *sandbox.CallTrace
 	// ran is the result's evidence; took is the run's duration, given the time the
 	// handler dispatched it.
-	ran() (provider string, isolation sandbox.IsolationClass, software, environment string)
+	ran() evidence
 	took(started time.Time) time.Duration
 	// resultAttrs describe the result on the audit line.
 	resultAttrs() []slog.Attr
@@ -169,7 +170,15 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 		s.logger().LogAttrs(ctx, slog.LevelError, k.msg()+" failed", attrs...)
 		return nil, mapSandboxErr(err)
 	}
-	provider, isolation, software, environment := k.ran()
+	ev := k.ran()
+	provider, isolation, software, environment := ev.provider, ev.isolation, ev.software, ev.environment
+	instance := ev.instance
+	if !sandbox.ValidInstance(instance) {
+		// A provider's bug, never the caller's text: the record names no instance rather
+		// than one outside the typed form, and the operator sees that it happened.
+		attrs = append(attrs, slog.Bool("instance_rejected", true))
+		instance = ""
+	}
 	took := k.took(started)
 	attrs = append(attrs, slog.String("sandbox", provider), slog.String("isolation", isolation.String()))
 	attrs = append(attrs, k.resultAttrs()...)
@@ -202,9 +211,20 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 		DurationMs:       took.Milliseconds(),
 		SoftwareIdentity: t.ranSoftware(software, described.SoftwareIdentity),
 		Environment:      describedEnvironment(environment, described.Identity),
+		Instance:         instance,
 	}
 	k.answer(resp, adviceWire(caller))
 	return resp, nil
+}
+
+// evidence is what a result states it ran under: the provider, the tier, the selected
+// software, the outer environment and the sandbox instance.
+type evidence struct {
+	provider    string
+	isolation   sandbox.IsolationClass
+	software    string
+	environment string
+	instance    string
 }
 
 // trailer is a kind whose audit line carries more after the duration.
@@ -276,8 +296,8 @@ func (k *javascriptKind) dispatch(ctx context.Context, t target) (err error) {
 	return err
 }
 func (k *javascriptKind) trace() *sandbox.CallTrace { return k.res.CallTrace }
-func (k *javascriptKind) ran() (string, sandbox.IsolationClass, string, string) {
-	return k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity
+func (k *javascriptKind) ran() evidence {
+	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance}
 }
 func (k *javascriptKind) took(time.Time) time.Duration { return k.res.Duration }
 func (k *javascriptKind) resultAttrs() []slog.Attr {
@@ -336,30 +356,36 @@ func (k *projectKind) dispatch(ctx context.Context, t target) (err error) {
 	return err
 }
 func (k *projectKind) trace() *sandbox.CallTrace { return k.res.CallTrace }
-func (k *projectKind) ran() (string, sandbox.IsolationClass, string, string) {
-	return k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity
+func (k *projectKind) ran() evidence {
+	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance}
 }
 
 // took is the handler's clock: a project result states its steps' durations, not
 // its own.
 func (*projectKind) took(started time.Time) time.Duration { return time.Since(started) }
+
+// resultAttrs states the run's outcome, and from it whether the run timed out: a run
+// stopped by the outer deadline reports no step, and read off the last step alone it was
+// logged timed_out=false, exit_code=0 (review, 2026-10-23). The exit code is the last
+// reported step's, and absent when no step reported, which is not an exit code of 0
+// (auditline.Run.ExitCode).
 func (k *projectKind) resultAttrs() []slog.Attr {
-	exitCode, timedOut := 0, false
-	if len(k.res.Steps) > 0 {
-		last := k.res.Steps[len(k.res.Steps)-1]
-		exitCode, timedOut = last.ExitCode, last.TimedOut
-	}
-	return []slog.Attr{
+	timedOut := k.res.Outcome == sandbox.ProjectOutcomeTimedOut
+	attrs := []slog.Attr{
 		slog.String("outcome", k.res.Outcome.String()),
 		slog.String("outcome_detail", k.res.Detail),
 		slog.Int("steps_ran", len(k.res.Steps)),
-		slog.Int("exit_code", exitCode),
-		slog.Bool("timed_out", timedOut),
 	}
+	if len(k.res.Steps) > 0 {
+		last := k.res.Steps[len(k.res.Steps)-1]
+		timedOut = timedOut || last.TimedOut
+		attrs = append(attrs, slog.Int("exit_code", last.ExitCode))
+	}
+	return append(attrs, slog.Bool("timed_out", timedOut))
 }
 func (k *projectKind) answer(resp *plimsollv1.RunResponse, advice []*plimsollv1.AdviceFinding) {
 	result := &plimsollv1.ProjectResult{
-		Outcome:            outcomeWire(k.res.Outcome),
+		Outcome:            wireenum.OutcomeToWire(k.res.Outcome),
 		OutcomeDetail:      wireString(k.res.Detail),
 		ArtifactsTruncated: k.res.ArtifactsTruncated,
 		Advice:             advice,
@@ -424,8 +450,8 @@ func (k *moduleKind) dispatch(ctx context.Context, t target) (err error) {
 	return err
 }
 func (*moduleKind) trace() *sandbox.CallTrace { return nil }
-func (k *moduleKind) ran() (string, sandbox.IsolationClass, string, string) {
-	return k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity
+func (k *moduleKind) ran() evidence {
+	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance}
 }
 func (k *moduleKind) took(time.Time) time.Duration { return k.res.Duration }
 
@@ -435,6 +461,7 @@ func (k *moduleKind) resultAttrs() []slog.Attr {
 		slog.String("outcome_detail", k.res.Detail),
 		slog.Int("runs", len(k.res.Runs)),
 		slog.Int("width", k.res.Width),
+		slog.Bool("timed_out", k.res.Outcome == sandbox.ProjectOutcomeTimedOut),
 	}
 }
 
@@ -458,7 +485,7 @@ func (k *moduleKind) trailingAttrs() []slog.Attr {
 func (k *moduleKind) answer(resp *plimsollv1.RunResponse, _ []*plimsollv1.AdviceFinding) {
 	result := &plimsollv1.ModuleResult{
 		Width:         int32(k.res.Width),
-		Outcome:       outcomeWire(k.res.Outcome),
+		Outcome:       wireenum.OutcomeToWire(k.res.Outcome),
 		OutcomeDetail: wireString(k.res.Detail),
 		Stdout:        []byte(k.res.Stdout),
 		Stderr:        []byte(k.res.Stderr),
@@ -508,8 +535,8 @@ func (k *cellKind) dispatch(ctx context.Context, _ target) (err error) {
 	return err
 }
 func (*cellKind) trace() *sandbox.CallTrace { return nil }
-func (k *cellKind) ran() (string, sandbox.IsolationClass, string, string) {
-	return k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity
+func (k *cellKind) ran() evidence {
+	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance}
 }
 func (k *cellKind) took(time.Time) time.Duration { return k.res.Duration }
 func (k *cellKind) resultAttrs() []slog.Attr {

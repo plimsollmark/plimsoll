@@ -543,7 +543,7 @@ for(const [path,flags] of checks){
 // and returns the languages that answered. JavaScript must: the runner is node.
 func (d *DockerSandbox) probeLanguages(ctx context.Context, state dockerExecutionState, imageID string) ([]Language, error) {
 	res, err := d.runPlan(ctx, state, imageID, ProjectRequest{
-		Steps:   []string{`node -e 'console.log("javascript")' && { python3 -c 'print("python")' 2>/dev/null || true; }`},
+		Steps:   []string{LanguageProbe()},
 		Timeout: 20 * time.Second,
 	})
 	if err != nil {
@@ -552,12 +552,7 @@ func (d *DockerSandbox) probeLanguages(ctx context.Context, state dockerExecutio
 	if res.Outcome != ProjectOutcomeCompleted || len(res.Steps) != 1 || res.Steps[0].ExitCode != 0 {
 		return nil, fmt.Errorf("the probe failed: outcome %s (%s), steps %+v", res.Outcome, res.Detail, res.Steps)
 	}
-	var langs []Language
-	for _, line := range strings.Fields(res.Steps[0].Stdout) {
-		if l := Language(line); l.Known() && !slices.Contains(langs, l) {
-			langs = append(langs, l)
-		}
-	}
+	langs := ProbedLanguages(res.Steps[0].Stdout)
 	if !slices.Contains(langs, LanguageJavaScript) {
 		return nil, errors.New("node did not answer")
 	}

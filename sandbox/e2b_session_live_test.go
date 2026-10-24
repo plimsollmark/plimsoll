@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/projecttest"
 	"github.com/plimsollmark/plimsoll/sandbox/sessiontest"
 )
 
@@ -48,6 +49,9 @@ func TestLiveE2BSessions(t *testing.T) {
 			Lifetime: 10 * time.Minute, ShortLifetime: 45 * time.Second, Languages: langs,
 			ExecsWalledOff: true, Teardown: sandbox.E2BTeardown,
 		})
+	})
+	t.Run("ProjectConformance", func(t *testing.T) {
+		projecttest.Run(t, openE2B(t, e), 20*time.Second)
 	})
 	t.Run("GuestCannotBecomeRoot", func(t *testing.T) {
 		start := time.Now()

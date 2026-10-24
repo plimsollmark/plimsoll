@@ -46,6 +46,7 @@ export type WireRecord = {
   unanswered?: string;
   softwareIdentity?: string;
   softwareRuleId?: string;
+  instance?: string;
   recordSha256?: string;
 };
 
@@ -111,6 +112,7 @@ export type WireRunResponse = {
   record?: WireRecord;
   softwareIdentity?: string;
   environment?: string;
+  instance?: string;
   javascript?: WireJavaScriptResult;
   project?: WireProjectResult;
   module?: unknown;

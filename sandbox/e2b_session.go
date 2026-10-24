@@ -670,15 +670,20 @@ func (s *e2bSession) RunProject(ctx context.Context, req ProjectRequest) (Projec
 		return fail, err
 	}
 	defer release()
-	res, err := s.runProject(runCtx, req)
+	res, err := s.runProject(ctx, runCtx, req, release)
 	release() // before the trace is read, as for a snippet
 	res.CallTrace = core.traceSnapshot()
 	return res, err
 }
 
 // runProject stages the files and a script per step, then runs the steps and reads the
-// artifacts as the guest. A granted call's steps preload the guard's host SDK.
-func (s *e2bSession) runProject(runCtx context.Context, req ProjectRequest) (ProjectResult, error) {
+// artifacts as the guest, under the exec-based providers' one contract (exec_steps.go):
+// the artifacts are read within a short grace past runCtx's deadline, which ctx bounds.
+// A granted call's steps preload the guard's host SDK, and endGrant ends the grant once
+// the steps are done, before the artifact grace: a process a step left behind could
+// otherwise keep calling the API past the run's deadline, as the one-shot paths already
+// prevent (review, 2026-10-24).
+func (s *e2bSession) runProject(ctx, runCtx context.Context, req ProjectRequest, endGrant func()) (ProjectResult, error) {
 	fail := ProjectResult{Sandbox: s.e.Name(), Isolation: s.tier}
 	scripts := map[string]string{}
 	for i, step := range req.Steps {
@@ -709,46 +714,38 @@ func (s *e2bSession) runProject(runCtx context.Context, req ProjectRequest) (Pro
 		res.Outcome, res.Detail = ProjectOutcomeSetupFailed, fmt.Sprintf("%s could not be written into the work directory: %s", which, why)
 		return res, nil
 	}
-	for i, step := range req.Steps {
-		start := time.Now()
-		out, err := s.guest(runCtx, []string{"sh", fmt.Sprintf("%s/step-%d.sh", dir, i)}, env, s.e.maxOutput(), s.e.maxOutput())
+	// A session that ends cancels runCtx, which is not its deadline, so a step it cut
+	// short is the session's error, never a timed-out step.
+	steps, outcome, detail, err := runExecSteps(runCtx, req.Steps, func(ctx context.Context, i int, _ string) (stepOutput, error) {
+		out, err := s.guest(ctx, stepArgv(fmt.Sprintf("%s/step-%d.sh", dir, i)), env, ProjectStepOutputCap, ProjectStepOutputCap)
 		if err != nil {
-			if deadline.Expired(runCtx) == context.DeadlineExceeded && s.Err() == nil {
-				res.Steps = append(res.Steps, StepResult{Command: step, ExitCode: 124, TimedOut: true, Duration: time.Since(start)})
-				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
-				return res, nil
-			}
-			return fail, s.life.CallError(runCtx, err)
+			return stepOutput{}, err
 		}
-		res.Steps = append(res.Steps, StepResult{
-			Command:         step,
-			Stdout:          out.stdout,
-			Stderr:          out.stderr,
-			StdoutTruncated: out.stdoutTruncated,
-			StderrTruncated: out.stderrTruncated,
-			ExitCode:        exitStatus(out),
-			Duration:        time.Since(start),
-		})
-		if exitStatus(out) != 0 {
-			break
-		}
+		return stepOutput{stdout: out.stdout, stderr: out.stderr, stdoutTruncated: out.stdoutTruncated,
+			stderrTruncated: out.stderrTruncated, exitCode: exitStatus(out)}, nil
+	})
+	endGrant()
+	if err != nil {
+		return fail, s.life.CallError(runCtx, err)
 	}
+	res.Steps, res.Outcome, res.Detail = steps, outcome, detail
 	if len(req.Artifacts) == 0 {
 		return res, nil
 	}
 	// Artifacts are read as the guest, so a link the session's code left reads only
-	// what the guest could; the reader keeps only regular files opened inside the work
-	// directory, even after a failed step.
+	// what the guest could; the reader keeps only regular files whose real path lies
+	// inside the work directory, even after a failed or timed-out step.
 	argv, err := sessionkit.ControlArgv(nil, append([]string{"node", "-e", e2bSessionJS, "artifacts", e2bSessionWork, strconv.Itoa(maxArtifactBytesTotal)}, req.Artifacts...)...)
 	if err != nil {
 		return fail, err
 	}
-	out, err := s.guest(runCtx, argv, nil, maxArtifactBytesTotal/3*4+(64<<10), 4096)
-	if err != nil {
-		if deadline.Expired(runCtx) == context.DeadlineExceeded && s.Err() == nil {
-			res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget reading its artifacts"
-			return res, nil
-		}
+	// The grace runs from the later of the deadline and the grant's end (artifactDeadline);
+	// the session's own lifetime still bounds the call.
+	runDeadline, _ := runCtx.Deadline()
+	actx, cancelArtifacts := context.WithDeadline(ctx, artifactDeadline(runDeadline))
+	defer cancelArtifacts()
+	out, err := s.guest(actx, argv, nil, maxArtifactBytesTotal/3*4+(64<<10), 4096)
+	if err != nil && s.Err() != nil {
 		return fail, s.life.CallError(runCtx, err)
 	}
 	var got struct {
@@ -758,20 +755,18 @@ func (s *e2bSession) runProject(runCtx context.Context, req ProjectRequest) (Pro
 		} `json:"artifacts"`
 		Truncated bool `json:"truncated"`
 	}
-	if !out.exited || out.exitCode != 0 || json.Unmarshal([]byte(out.stdout), &got) != nil {
-		res.Outcome, res.Detail = ProjectOutcomeProtocolError, fmt.Sprintf("the artifact reader did not report (it exited %d)", exitStatus(out))
-		return res, nil
+	if err == nil && (!out.exited || out.exitCode != 0 || json.Unmarshal([]byte(out.stdout), &got) != nil) {
+		err = fmt.Errorf("the artifact reader did not report (it exited %d)", exitStatus(out))
 	}
+	var arts []Artifact
 	for _, a := range got.Artifacts {
-		data, err := base64.StdEncoding.DecodeString(a.B64)
-		if err != nil || !slices.Contains(req.Artifacts, a.Path) {
-			res.Outcome, res.Detail = ProjectOutcomeProtocolError, "the artifact reader reported an artifact it was not asked for"
-			res.Artifacts = nil
-			return res, nil
+		data, decodeErr := base64.StdEncoding.DecodeString(a.B64)
+		if err == nil && (decodeErr != nil || !slices.Contains(req.Artifacts, a.Path)) {
+			err = errors.New("the artifact reader reported an artifact it was not asked for")
 		}
-		res.Artifacts = append(res.Artifacts, Artifact{Path: a.Path, Content: data})
+		arts = append(arts, Artifact{Path: a.Path, Content: data})
 	}
-	res.ArtifactsTruncated = got.Truncated
+	setArtifacts(&res, arts, got.Truncated, err)
 	return res, nil
 }
 

@@ -276,8 +276,11 @@ type Provider struct {
 	tierLost bool                   // a check failed after one had passed, and none has passed since
 	version  string                 // the gateway version the last driver check reported
 	leases   lease.Set              // created and not yet deleted
-	smoke    *smokeEvidence         // the last passing SmokeTest's measurements
-	sessions sessionkit.Registry    // open sessions and the sandbox creations in flight, which Drain ends and waits for
+	// quarantine holds each sandbox being deleted, with the capacity of the call that
+	// made it, until the gateway confirms it gone (providerkit.Quarantine).
+	quarantine providerkit.Quarantine
+	smoke      *smokeEvidence      // the last passing SmokeTest's measurements
+	sessions   sessionkit.Registry // open sessions and the sandbox creations in flight, which Drain ends and waits for
 }
 
 var (
@@ -532,7 +535,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 	if err != nil {
 		return fail, err
 	}
-	plan := runnerwire.Plan{Steps: req.Steps, StepTimeout: timeout, Artifacts: req.Artifacts, HostSDK: sandbox.HostClientModule(req.Grant), ReportKey: key}
+	plan := runnerwire.Plan{Steps: req.Steps, Budget: timeout, Artifacts: req.Artifacts, HostSDK: sandbox.HostClientModule(req.Grant), ReportKey: key}
 	for _, f := range req.Files {
 		plan.Files = append(plan.Files, runnerwire.File(f))
 	}

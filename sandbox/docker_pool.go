@@ -89,7 +89,7 @@ type dockerPool struct {
 	lifetime time.Duration // the longest lifetime a member may be given
 	now      func() time.Time
 	// discard removes a member nobody will claim and calls gone once its container is
-	// removed (remove; a test's recorder). Only drop calls it.
+	// confirmed removed (remove; a test's recorder). Only drop calls it.
 	discard func(s *dockerSession, gone func())
 
 	wake     chan struct{} // a claim asks for a refill
@@ -105,6 +105,11 @@ type dockerPool struct {
 	// replacement waits for it (review F9). A member leaves ready and enters retiring
 	// under one hold of mu.
 	retiring int
+	// making counts members being made, and made members that failed to start whose
+	// container is not yet confirmed gone: each holds a place, so a run of failing
+	// starts whose removals give up cannot grow the pool past its size (review,
+	// 2026-10-24).
+	making   int
 	lastMove time.Time  // when rebalance last moved a member
 	stated   []Language // the languages the image runs, as next last saw them
 	// demand is the decaying weight of each language set (languageSetKey) opens asked
@@ -265,6 +270,13 @@ func (p *dockerPool) add(ctx context.Context) error {
 	}
 	langs := p.next(stated)
 	born := p.now()
+	p.mu.Lock()
+	p.making++
+	p.mu.Unlock()
+	// The place is given back once the member is in ready, or, for one that failed to
+	// start, once its container is confirmed gone (a removal under ctx holds it).
+	ctx, made := WithCapacity(ctx, p.made)
+	defer made()
 	s, err := p.d.newSessionContainer(ctx, state, born.Add(dockerPoolMaxIdle+p.lifetime))
 	if err != nil {
 		return err
@@ -272,7 +284,7 @@ func (p *dockerPool) add(ctx context.Context) error {
 	s.born = born
 	for _, l := range langs {
 		if err := s.life.Interps.Warm(ctx, s.execFunc, s.attach, string(l), dockerSessionWork); err != nil {
-			s.abandon()
+			s.abandon(ctx)
 			return fmt.Errorf("starting the %s interpreter: %w", l, err)
 		}
 		s.warm = append(s.warm, string(l))
@@ -484,24 +496,40 @@ func (p *dockerPool) retired() {
 	}
 }
 
-// remove removes a member's container off the caller's path, then reports it gone;
-// Drain waits for it. A removal that gives up (forceRemove logs it) is reported gone
-// too: the container's lifetime label then bounds it, and ReconcileOrphans reaps it.
+// remove removes a member's container off the caller's path and reports it gone once
+// it is confirmed gone; Drain waits for the attempt. The member's place in the pool is
+// held as a call's capacity is (WithCapacity): a removal that gives up leaves the
+// container quarantined, and the place is given back only when ReconcileOrphans
+// confirms it gone, so failing removals cannot let the filler make containers past the
+// pool's size (review, 2026-10-24).
 func (p *dockerPool) remove(s *dockerSession, gone func()) {
 	removed := p.d.sessions.Removal()
 	go func() {
 		defer removed()
-		s.abandon()
-		gone()
+		ctx, done := WithCapacity(context.Background(), gone)
+		s.abandon(ctx)
+		done()
 	}()
 }
 
-// short reports whether the pool may make a member: members ready and members still
-// being removed together hold fewer than size containers.
+// short reports whether the pool may make a member: members ready, being made, and
+// still being removed together hold fewer than size containers.
 func (p *dockerPool) short() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return len(p.ready)+p.retiring < p.size
+	return len(p.ready)+p.making+p.retiring < p.size
+}
+
+// made gives back the place a member being made held: it is in ready now, or it failed
+// to start and its container is confirmed gone.
+func (p *dockerPool) made() {
+	p.mu.Lock()
+	p.making--
+	p.mu.Unlock()
+	select {
+	case p.wake <- struct{}{}:
+	default:
+	}
 }
 
 // run is the filler: it keeps the pool at its size, one member at a time so a burst

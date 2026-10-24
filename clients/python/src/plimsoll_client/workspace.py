@@ -470,8 +470,10 @@ class Workspace:
         if self._max_timeout is not None and budget > self._max_timeout:
             budget = self._max_timeout
         result = self._session.run_project(files, list(steps), list(artifacts), timeout=budget)
-        if result.outcome in ("setup_failed", "protocol_error") or not result.steps:
+        if result.outcome == "setup_failed":
             raise RuntimeError(f"plimsoll: the call did not run: {result.outcome}: {result.detail}")
+        if result.outcome in ("protocol_error", "runner_failed") or not result.steps:
+            raise RuntimeError(f"plimsoll: the call may have run, and its result is incomplete: {result.outcome}: {result.detail}")
         if result.outcome == "timed_out" and not tolerate_timeout:
             raise TimeoutError(f"plimsoll: the call ran past its budget of {budget} s")
         return result

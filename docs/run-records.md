@@ -39,7 +39,7 @@ What a record proves, and what it does not:
   to start running ([INTERNAL · run results →](run-results.md)). An independent run that ends in an
   infrastructure error has no answered result to record. A call in a <dfn>*session*</dfn>
   (one sandbox kept for many calls) that may have
-  run but ended without an answer instead has a version 3 record with its outcome
+  run but ended without an answer instead has a record with no result and its outcome
   marked unknown ([INTERNAL · unanswered session calls →](#a-session-call-that-may-have-run-but-got-no-result)).
 
 The Go client checks every record it receives against the request it sent and the
@@ -52,15 +52,17 @@ from an in-process provider, which has no daemon to state one, and when the chec
 failed: the result then comes back with the `DataLoss` error, and no record, since
 the one the daemon sent did not check. Nothing a daemon
 executes depends on the record, so adding it did not change the <dfn>*protocol
-number*</dfn>: the version every request states, which goes up only when a new request
-field changes what a daemon may execute.
+number*</dfn>: the version every request states, which goes up when a new request field
+changes what a daemon may execute, or when clients start requiring something new of
+answers. Protocol 4 (2026-10-23) came with record version 4, which every client now
+requires.
 
 ## Fields
 
 | Field | Meaning |
 |---|---|
-| `version` | The encoding version: `2` for an answered call, `3` for a call that may have run but ended in an error (below). Signers sign, and verifiers accept, versions `2` and `3` only: a version `1` record, which states no software identity, is refused like an unknown version (`attest.ErrStatement`). A version `1` signature still verifies as raw Ed25519 over its bytes, but no current verifier accepts the record, and no version `1` bundle is published any more. |
-| `request_sha256` | Digest of what the caller sent: protocol number, isolation <dfn>*floor*</dfn> (the weakest tier the caller accepts), timeout, software rule and payload. Version 1 omits the software rule. |
+| `version` | The encoding version. A daemon writes `4`, for every record, a call answered or one that may have run but ended in an error (below), and signers sign `4` only; a live answer must carry it. A verifier of stored evidence (`attest`, `record.CheckExchange`) also reads every version an earlier release wrote, by that version's own layout (below): `1` (v0.10.0 to v0.11.1), `2` (answered calls, v0.12.0 to v0.22.0) and `3` (unanswered session calls, v0.15.0 to v0.22.0), so evidence signed under an older release checks without its release's binary. A version no release wrote is `record.ErrVersion`: upgrade the verifier, not "forged". |
+| `request_sha256` | Digest of what the caller sent: protocol number, isolation <dfn>*floor*</dfn> (the weakest tier the caller accepts), timeout, software rule and payload. |
 | `result_sha256` | Digest of the result as sent: exit codes or outcome, output, truncation flags, steps, artifacts, module rows. |
 | `provider` | The provider that ran it (the response's `sandbox`). |
 | `isolation` | The tier the response states, verbatim. |
@@ -68,9 +70,10 @@ field changes what a daemon may execute.
 | `software_identity` | The <dfn>*manifest*</dfn> (the file listing one image's configuration and layers) of the executable image selected, with its platform, for example `oci-manifest:linux/amd64@sha256:<digest>`. Empty when the provider cannot establish which image it selected. |
 | `software_rule_id` | The software rule the caller required, which the daemon checks before the run starts: `exact:<identity>` or `approved:sha256:<digest of approved identities>`. Empty when the caller set no rule. The request digest covers the complete approved list. |
 | `policy` | The sandbox policy the provider verified before the run, by digest. For <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, it is the policy that sets the sandbox's network and filesystem rules, and `openshell-policy:sha256:...` is the hash its gateway itself reports. Empty for providers without one. |
+| `instance` | The sandbox instance that ran the call, as the response states it: a typed reference, a kind of lowercase letters, digits and `-`, a colon, and an ID of letters, digits and `. _ : -`, at most 160 bytes in all, such as `k8s-pod-uid:` and the UID the Kubernetes API server gave the pod. Empty when the provider names none (so far every provider but the [agent-sandbox (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#agent-sandbox) one). It is an opaque join key, never a name or a path: it lets evidence kept outside plimsoll, such as a log of everything the pod's code asked its kernel to do, be tied to this run. |
 | `started_unix_ms`, `ended_unix_ms` | When the daemon received the request and when it finished the result. |
 | `session`, `sequence`, `previous_sha256` | A call's place in its session and its chain: the SHA-256 of the session ID (the ID works like a password for the session, so it is never recorded), the call's number counting from 1, and the previous call's `record_sha256`. Empty or zero for a single run. |
-| `unanswered` | Version 3 only: the status code of the error the call ended with (`unknown`, `deadline_exceeded`, `unavailable`, ...), the daemon's own word, never error text. `result_sha256` is then empty. |
+| `unanswered` | On the record of a call that may have run but got no answer: the status code of the error it ended with (`unknown`, `deadline_exceeded`, `unavailable`, ...), the daemon's own word, never error text. `result_sha256` is then empty. |
 | `record_sha256` | Digest of every field above. |
 
 Left out on purpose: the **trace id** (the caller's own ID for matching this run to
@@ -108,12 +111,11 @@ kinds listed under it and no other; the `cell` kind joined it on 2026-10-01, bef
 rule was written down. `TestResultDomainCoversItsKinds` in `record/` fails if a fifth kind
 appears beside them.
 
-### Request: domains `plimsoll.run-request.v1` and `.v2`
+### Request: domain `plimsoll.run-request.v2`
 
-Protocol 1 uses the `.v1` domain and the original fields. Protocol 2 uses the
-`.v2` domain and adds, after `timeout_ms`, `software_mode` (`""`, `exact` or
-`approved`), `software_identities` (count) and each `software_identity` in the
-order sent. Then both versions encode `kind`
+`protocol`, `minimum_isolation`, `timeout_ms`, `software_mode` (`""`, `exact` or
+`approved`), `software_identities` (count) and each `software_identity` in the order
+sent, then `kind`
 (`javascript`, `project`, `module` or `cell`), then by kind:
 
 - javascript: `code`, `grant_profile`
@@ -143,24 +145,39 @@ order sent. Then both versions encode `kind`
 A cell's result depends on what earlier cells of its session left in the interpreter,
 so a cell is replayed only as part of its session's chain, in order, never alone.
 
-### Record: domains `plimsoll.run-record.v1`, `.v2` and `.v3`
+### Record: domain `plimsoll.run-record.v4`
 
 The domain ends in the record's `version` (`plimsoll.run-record.v<version>`), so the
-digest covers the version without a field of its own: a record read under another
-version's encoding cannot keep its digest.
+digest covers the version without a field of its own: a record that names another version
+cannot keep its digest.
 
-Version 1 encodes `request_sha256`, `result_sha256`, `provider`, `isolation`,
-`environment`, `policy`, then `started_unix_ms`, `ended_unix_ms`, `session`,
-`sequence`, `previous_sha256`. Version 2 inserts `software_identity` and
-`software_rule_id` after `policy`; every other field stays in the same order.
-Version 3 is version 2 with `unanswered` inserted after `result_sha256`.
-The approved-set rule ID is SHA-256 over its unique identities sorted in byte
+Version 4 encodes every field, every time, empty strings and zeros included:
+`request_sha256`, `result_sha256`, `unanswered`, `provider`, `isolation`, `environment`,
+`policy`, `software_identity`, `software_rule_id`, `instance`, `started_unix_ms`,
+`ended_unix_ms`, `session`, `sequence`, `previous_sha256`. An answered call's record has
+an empty `unanswered`; an unanswered call's has an empty `result_sha256`.
+
+The earlier versions, which verifiers still read, encode fewer fields, in this order, and
+a record of one may state no field its version leaves out:
+
+- version 1: `request_sha256`, `result_sha256`, `provider`, `isolation`, `environment`,
+  `policy`, `started_unix_ms`, `ended_unix_ms`, `session`, `sequence`, `previous_sha256`.
+  Answered calls only; its `environment` was never checked against the response's.
+- version 2: version 1's fields with `software_identity` and `software_rule_id` after
+  `policy`. Answered calls only.
+- version 3: version 2's fields with `unanswered` after `result_sha256`. Unanswered
+  session calls only.
+
+A request sent under protocol 1 (the records of version 1) has domain
+`plimsoll.run-request.v1` and no software fields; every later protocol has the encoding
+above. The approved-set rule ID is SHA-256 over its unique identities sorted in byte
 order and joined with a zero byte. Identity syntax excludes zero bytes. The
 `RunResponse` repeats the outer environment and selected software identities,
 and the official client checks that both agree with the record. It also checks
 that the selected software is in the rule the request sent, that the record's tier
-meets the request's `minimum_isolation`, and that a version 1 or 2 record names no
-`unanswered` code (a field those versions' digests do not cover).
+meets the request's `minimum_isolation`, that an answered call's record names no
+`unanswered` code, and that the record's `instance` is the response's and has the typed
+form.
 
 ## Reference implementation
 
@@ -209,14 +226,14 @@ JavaScript passes that vector only by taking each float as its 64-bit pattern.
 A session call can end in an error that does not say nothing ran: an exec stream that
 broke after the code started, a cell whose relay was lost. Its code may have run, so it is
 part of the session, and its record says so. The daemon numbers it in the chain like any
-call, writes a version 3 record (no result digest, the error's status code in
+call, writes its record (no result digest, the error's status code in
 `unanswered`, and as evidence what the session stated when it opened, since there is no
 response to read it from), and sends that record with the error as the
 `plimsoll.v1.UnansweredCall` error detail. The next call chains after it, and
 `CloseSession` counts it. A call refused before it ran (an error marked not dispatched)
 gets no record and is not counted.
 
-The official clients check that record (version 3, no result, a status code, the digest
+The official clients check that record (version 4, no result, a status code, the digest
 of the request they sent, its software rule and that its software is in it, its tier
 against the call's floor, its own digest, its place in the chain, and that its provider,
 tier and software are what the session stated at open), keep it in their chain, and
@@ -224,7 +241,7 @@ return the error: the session goes on, and the call's outcome
 stays unknown. A call whose answer never arrived (a dropped connection) carries no
 record, so the client cannot follow the daemon's chain any more, and it refuses every
 later call of that session before sending it, marked not dispatched. The Go client's
-recorder signs a version 3 record like any other; a bundle stores it as the request
+recorder signs such a record like any other; a bundle stores it as the request
 alone, with no response. A Go client whose Recorder cannot keep a whole chain (one that
 is not also an `UnansweredRecorder` and a `SessionRecorder`) refuses to open a session,
 before anything is sent, rather than drop those records.
@@ -240,8 +257,8 @@ uses the standard library only (Ed25519, SHA-256, JSON).
 - **Sign.** The harness checks the record against its own copy of the request and the
   response (`record.Check`), then signs it. A record whose digest does not match its
   fields is never signed, and neither is one whose isolation is below the request's
-  `minimum_isolation`, or an answered call's record (version 2) that names an
-  unanswered code, a field its version's digest does not cover. The signed form is a <dfn>*DSSE*</dfn> envelope (Dead Simple
+  `minimum_isolation`, or an answered call's record that names an unanswered code, or
+  one whose instance is not the response's. The signed form is a <dfn>*DSSE*</dfn> envelope (Dead Simple
   Signing Envelope, a small standard format that wraps a payload together with its
   signatures:
   [DSSE envelope (EXTERNAL · official docs ↗)](https://github.com/secure-systems-lab/dsse/blob/master/envelope.md))
@@ -281,9 +298,9 @@ uses the standard library only (Ed25519, SHA-256, JSON).
   - requires the record the stored response carries to equal the signed one in every
     field;
   - checks each session's chain: calls numbered from 1 with no gap, each naming the
-    record before it, and a close whose count and last record match. Records are
-    version 2, or version 3 for a call that may have run but got no answer (version 2's
-    fields and more); a version 1 record, which states no software, is refused.
+    record before it, and a close whose count and last record match. Records may be
+    any published version, each read by its own layout; an unknown one is
+    `record.ErrVersion`.
 
   A chain without a close fails, because a chain whose last calls were cut off looks
   exactly like an ended session. A session closed before any call is its close alone,
@@ -357,8 +374,24 @@ open, whose chain has no close statement and so fails `verify`. It says what it 
 establish: that the line is in the bundle its holder names, that the bundle around it is
 whole, and, for a session call, that its session's chain is. `verify` is unchanged.
 
+```sh
+go run ./cmd/plimsoll-attest sign-statement -key harness.key \
+  -type https://in-toto.io/attestation/test-result/v0.1 -out test-result.intoto.json statement.json
+go run ./cmd/plimsoll-attest open-statement -pub harness.pub \
+  -type https://in-toto.io/attestation/test-result/v0.1 test-result.intoto.json
+```
+
+`sign-statement` signs an in-toto statement the harness makes about evidence it has checked
+(`attest.SignStatement`): `statement.json` holds `{"subject": [...], "predicate": {...}}`, and
+the envelope is the standard signed form, so anything that reads a standard predicate (in-toto's
+test-result, OpenVEX) takes it as it is. It refuses the run record, link and close types, which
+are signed only through their own checked paths. `open-statement` checks the signature and the
+type and prints `{"keyid", "subject", "predicate"}`. A signature says who made the statement,
+not that the predicate is true: the harness signs what it is given, so a reader rebuilds the
+predicate from the evidence it names and compares, as `examples/pr-receipt/verify.py` does.
+
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as
-`{"protocol": 3, "javascript": {"code": "console.log(1)"}}`. The token comes from the
+`{"protocol": 4, "javascript": {"code": "console.log(1)"}}`. The token comes from the
 environment and the key from a file or `PLIMSOLL_ATTEST_KEY`, so neither appears in a
 process listing. A bundle holds every run's request and response in full, the submitted
 code and its output included, so on Unix `run` creates it readable by its owner only
@@ -372,3 +405,11 @@ left as it was and the next run continues it; the record it could not append goe
 new owner-only side file (`runs.jsonl.unsealed-<UTC time>-<random>.jsonl`), never into
 an existing one. If the cut or its sync fails too, the error says so: the bundle may then
 hold part of a line after a crash, so verify it before the next run.
+
+## Timestamped assertions about an artifact
+
+For separately configured signer roles and outside timestamps over complete signed
+envelopes, see the <dfn>*receipt*</dfn> profile, which groups signed claims about a file,
+and its [INTERNAL · offline verification guide →](receipt-verification.md).
+That optional checker verifies artifact bytes and authenticated assertions without
+independently repeating an application's tests or proving organizational independence.

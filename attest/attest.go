@@ -83,7 +83,8 @@ type Predicate struct {
 	Session          string `json:"session"`
 	Sequence         uint64 `json:"sequence"`
 	PreviousSHA256   string `json:"previous_sha256"`
-	Unanswered       string `json:"unanswered,omitempty"` // version 3 only
+	Unanswered       string `json:"unanswered,omitempty"` // an unanswered session call's error code
+	Instance         string `json:"instance,omitempty"`   // the sandbox instance, as a typed reference
 	RecordSHA256     string `json:"record_sha256"`
 }
 
@@ -94,7 +95,7 @@ func predicateOf(r sandbox.RunRecord) Predicate {
 		SoftwareIdentity: r.SoftwareIdentity, SoftwareRuleID: r.SoftwareRuleID,
 		StartedUnixMs: r.Started.UnixMilli(), EndedUnixMs: r.Ended.UnixMilli(),
 		Session: r.Session, Sequence: r.Sequence, PreviousSHA256: r.PreviousSHA256,
-		Unanswered: r.Unanswered, RecordSHA256: r.SHA256,
+		Unanswered: r.Unanswered, Instance: r.Instance, RecordSHA256: r.SHA256,
 	}
 }
 
@@ -105,7 +106,7 @@ func (p Predicate) record() sandbox.RunRecord {
 		SoftwareIdentity: p.SoftwareIdentity, SoftwareRuleID: p.SoftwareRuleID,
 		Started: time.UnixMilli(p.StartedUnixMs).UTC(), Ended: time.UnixMilli(p.EndedUnixMs).UTC(),
 		Session: p.Session, Sequence: p.Sequence, PreviousSHA256: p.PreviousSHA256,
-		Unanswered: p.Unanswered, SHA256: p.RecordSHA256,
+		Unanswered: p.Unanswered, Instance: p.Instance, SHA256: p.RecordSHA256,
 	}
 }
 
@@ -155,16 +156,16 @@ func (s *Signer) KeyID() string { return s.keyID }
 // received; this refusal catches a record assembled any other way.
 var ErrUnchecked = errors.New("attest: the record's digest does not match its fields; sign only records record.Check returned")
 
-// ErrSigningVersion means Sign was given a record version this harness no longer
-// signs. Verification can still accept older signed records already in bundles.
+// ErrSigningVersion means Sign was given a record of another version than the current
+// one, or one that states both a result and an unanswered code, or neither.
 var ErrSigningVersion = errors.New("attest: the harness only signs the current run record version")
 
-// Sign wraps rec in an in-toto statement and signs it as a DSSE envelope: an
-// answered call's record at record.Version, or an unanswered session call's at
-// record.UnansweredVersion.
+// Sign wraps rec in an in-toto statement and signs it as a DSSE envelope: a record at
+// record.Version, an answered call's or an unanswered session call's (no result digest,
+// an error code).
 func (s *Signer) Sign(rec sandbox.RunRecord) (Envelope, error) {
-	if (rec.Version != record.Version || rec.Unanswered != "") && (rec.Version != record.UnansweredVersion || rec.Unanswered == "") {
-		return Envelope{}, fmt.Errorf("%w: got %d, current versions are %d and, for an unanswered call, %d", ErrSigningVersion, rec.Version, record.Version, record.UnansweredVersion)
+	if rec.Version != record.Version || (rec.Unanswered != "") == (rec.ResultSHA256 != "") {
+		return Envelope{}, fmt.Errorf("%w: got version %d with a result digest and an unanswered code that are not one of the two; the current version is %d", ErrSigningVersion, rec.Version, record.Version)
 	}
 	if rec.SHA256 != record.Digest(rec) {
 		return Envelope{}, ErrUnchecked
@@ -210,9 +211,7 @@ func (v *Verifier) Verify(env Envelope) (sandbox.RunRecord, error) {
 		return sandbox.RunRecord{}, err
 	}
 	var st Statement
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&st); err != nil {
+	if err := decodeStrict(payload, &st); err != nil {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: %v", ErrStatement, err)
 	}
 	if st.Type != StatementType || st.PredicateType != PredicateType || len(st.Subject) != 1 ||
@@ -220,14 +219,17 @@ func (v *Verifier) Verify(env Envelope) (sandbox.RunRecord, error) {
 		return sandbox.RunRecord{}, fmt.Errorf("%w: types or subjects", ErrStatement)
 	}
 	rec := st.Predicate.record()
-	switch {
-	case rec.Version != record.Version && rec.Version != record.UnansweredVersion:
-		return sandbox.RunRecord{}, fmt.Errorf("%w: record version %d", ErrStatement, rec.Version)
-	case (rec.Version == record.UnansweredVersion) != (rec.Unanswered != ""):
-		return sandbox.RunRecord{}, fmt.Errorf("%w: only a version %d record names an unanswered call, and it must", ErrStatement, record.UnansweredVersion)
+	// Any published record version verifies: evidence signed under an older release
+	// still checks (record.CheckStored). One no release wrote is record.ErrVersion, not
+	// ErrStatement, so a caller can tell "upgrade the verifier" from "forged".
+	if err := record.CheckStored(rec); err != nil {
+		if errors.Is(err, record.ErrVersion) {
+			return sandbox.RunRecord{}, err
+		}
+		return sandbox.RunRecord{}, fmt.Errorf("%w: %v", ErrStatement, err)
 	}
-	if st.Subject[0].Digest["sha256"] != rec.SHA256 || rec.SHA256 != record.Digest(rec) {
-		return sandbox.RunRecord{}, fmt.Errorf("%w: the record's digest does not match its fields or the subject", ErrStatement)
+	if st.Subject[0].Digest["sha256"] != rec.SHA256 {
+		return sandbox.RunRecord{}, fmt.Errorf("%w: the record's digest does not match the subject", ErrStatement)
 	}
 	return rec, nil
 }

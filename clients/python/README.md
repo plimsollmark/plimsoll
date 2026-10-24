@@ -407,8 +407,8 @@ on a real session is not yet checked on docker.
   SHA-256 of the session ID), the next call number and the previous record's digest. At
   close, the daemon's count of executed calls and its last record must match what the
   client saw. A gap means someone else holding the session ID made a call. A call that may
-  have run but ended in an error comes with its record (`PlimsollError.unanswered`, a
-  version 3 record); the session checks it (its tier against the call's floor, and its
+  have run but ended in an error comes with its record (`PlimsollError.unanswered`, with no
+  result and the error's code); the session checks it (its tier against the call's floor, and its
   provider, tier and software against what the session stated at open), hands it back as
   `PlimsollError.record`, keeps it in its chain and goes on. A call whose answer never
   arrived carries none, and neither does one cut short any other way (an answer this

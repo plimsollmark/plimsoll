@@ -48,8 +48,8 @@ func TestUsageNamesEveryVariable(t *testing.T) {
 	// daemon-built provider's environment reader (every sandbox/<provider>/env.go, so a
 	// new one is checked without being listed here).
 	readers, err := filepath.Glob("../../sandbox/*/env.go")
-	if err != nil || len(readers) < len(daemonProviders) {
-		t.Fatalf("found %d provider environment readers for %d daemon-built providers (%v)", len(readers), len(daemonProviders), err)
+	if err != nil || len(readers) < len(daemonProviderNames()) {
+		t.Fatalf("found %d provider environment readers for %d daemon-built providers (%v)", len(readers), len(daemonProviderNames()), err)
 	}
 	files = append(append(files, "../../sandbox/factory.go"), readers...)
 	name := regexp.MustCompile(`"((?:PLIMSOLL|SANDBOX|E2B|DOCKER_SBX)_[A-Z0-9_]+)"`)

@@ -9,6 +9,7 @@ response exactly as it was parsed.
 from __future__ import annotations
 
 import hashlib
+import re
 import struct
 from typing import Iterable, Optional
 
@@ -16,12 +17,29 @@ from ._wire import INT32, INT64, OUTCOMES, UINT32, UINT64, Msg
 from .errors import IsolationEvidenceMismatchError, NoRecordError, RecordMismatchError, RecordVersionError
 from .types import RunRecord, SoftwareRule, meets
 
-VERSION = 2
-"""The record encoding version this client computes and checks (record.Version)."""
+VERSION = 4
+"""The record encoding version this client computes and checks (record.Version): every
+field, every time, for an answered call and an unanswered session call alike."""
 
-UNANSWERED_VERSION = 3
-"""The record version of a session call that may have run but ended in an error
-(record.UnansweredVersion): version 2's fields, then ``unanswered``."""
+
+def _version_problem(version: int) -> str:
+    """Why a live answer's record version is refused: a newer daemon (upgrade the client)
+    or an older one. A live answer must carry the current version; it is never called
+    forged."""
+    if version > VERSION:
+        return (f"plimsoll: a newer daemon answered with run record version {version}; "
+                f"this client reads version {VERSION}: upgrade the client")
+    return (f"plimsoll: the daemon answered with run record version {version}; "
+            f"this client requires version {VERSION} of a live answer")
+
+
+_INSTANCE_FORM = re.compile(r"[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._:-]{1,127}")
+
+
+def valid_instance(s: str) -> bool:
+    """A record's instance: "" (the provider names none) or a typed reference such as
+    ``k8s-pod-uid:`` and a pod's UID (sandbox.ValidInstance)."""
+    return s == "" or _INSTANCE_FORM.fullmatch(s) is not None
 
 _UNANSWERED_CODES = frozenset((
     "canceled", "unknown", "invalid_argument", "deadline_exceeded", "not_found", "already_exists",
@@ -65,11 +83,13 @@ def request_digest(req: dict) -> str:
     record.SessionRunRequestDigest)."""
     m = Msg(req, "request")
     protocol = m.get_int("protocol", UINT32)
-    e = _Encoder("plimsoll.run-request.v2" if protocol >= 2 else "plimsoll.run-request.v1")
+    # A protocol 1 request (the records of version 1) has the first encoding: no software rule.
+    first = protocol < 2
+    e = _Encoder("plimsoll.run-request.v1" if first else "plimsoll.run-request.v2")
     e.int("protocol", protocol)
     e.str("minimum_isolation", m.get_str("minimumIsolation"))
     e.int("timeout_ms", m.get_int("timeoutMs", INT32))
-    if protocol >= 2:
+    if not first:
         rule = m.get_msg("softwareRule")
         ids = rule.get_strs("identities") if rule else []
         e.str("software_mode", rule.get_str("mode") if rule else "")
@@ -180,26 +200,34 @@ def result_digest(resp: Msg) -> str:
     return e.sum()
 
 
+# The fields of each published record version's digest, in order (record.published): a
+# version leaves this table only by a dated, announced decision.
+RECORD_FIELDS = {
+    1: ("request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
+        "started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"),
+    2: ("request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
+        "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
+        "previous_sha256"),
+    3: ("request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy",
+        "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
+        "previous_sha256"),
+    4: ("request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment", "policy",
+        "software_identity", "software_rule_id", "instance", "started_unix_ms", "ended_unix_ms", "session",
+        "sequence", "previous_sha256"),
+}
+_RECORD_INTS = frozenset({"started_unix_ms", "ended_unix_ms", "sequence"})
+
+
 def record_digest(r: RunRecord) -> str:
-    """A record's own digest over every field but ``sha256`` (record.Digest). The
-    version is the domain's suffix."""
+    """A record's own digest over the fields its version covers (RECORD_FIELDS; every
+    field but ``sha256`` for an unknown version), as record.Digest. The version is the
+    domain's suffix."""
     e = _Encoder("plimsoll.run-record.v%d" % r.version)
-    e.str("request_sha256", r.request_sha256)
-    e.str("result_sha256", r.result_sha256)
-    if r.version >= 3:
-        e.str("unanswered", r.unanswered)
-    e.str("provider", r.provider)
-    e.str("isolation", r.isolation)
-    e.str("environment", r.environment)
-    e.str("policy", r.policy)
-    if r.version >= 2:
-        e.str("software_identity", r.software_identity)
-        e.str("software_rule_id", r.software_rule_id)
-    e.int("started_unix_ms", r.started_unix_ms)
-    e.int("ended_unix_ms", r.ended_unix_ms)
-    e.str("session", r.session)
-    e.int("sequence", r.sequence)
-    e.str("previous_sha256", r.previous_sha256)
+    for name in RECORD_FIELDS.get(r.version, RECORD_FIELDS[VERSION]):
+        if name in _RECORD_INTS:
+            e.int(name, getattr(r, name))
+        else:
+            e.str(name, getattr(r, name))
     return e.sum()
 
 
@@ -227,10 +255,11 @@ def record_from_wire(m: Msg) -> RunRecord:
         previous_sha256=m.get_str("previousSha256"),
         sha256=m.get_str("recordSha256"),
         unanswered=m.get_str("unanswered"),
+        instance=m.get_str("instance"),
     )
 
 
-def check(req_digest: str, protocol: int, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:
+def check(req_digest: str, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:
     """Everything a record states that the caller can recompute (record.check):
     the version, both digests, the evidence the response repeats, the software
     rule and the record's own digest. The rule was validated before sending."""
@@ -239,14 +268,10 @@ def check(req_digest: str, protocol: int, rule: Optional[SoftwareRule], resp: Ms
         raise NoRecordError("plimsoll: the response carries no run record")
     r = record_from_wire(rec_msg)
     result = result_digest(resp)
-    if r.version not in (1, VERSION):
-        raise RecordVersionError(f"plimsoll: unknown run record version {r.version} (this client knows 1 and {VERSION})")
-    if protocol >= 2 and r.version != VERSION:
-        raise RecordVersionError(f"plimsoll: protocol {protocol} requires record version {VERSION}, the record is version {r.version}")
-    if r.version == 1 and (r.software_identity or r.software_rule_id):
-        raise RecordMismatchError("plimsoll: a version 1 record cannot carry software admission fields")
+    if r.version != VERSION:
+        raise RecordVersionError(_version_problem(r.version))
     if r.unanswered:
-        raise RecordMismatchError(f"plimsoll: an answered call's record states an unanswered code, which version {r.version} does not cover")
+        raise RecordMismatchError("plimsoll: an answered call's record states an unanswered code")
     if r.request_sha256 != req_digest:
         raise RecordMismatchError(f"plimsoll: request digest {r.request_sha256}, the request sent digests to {req_digest}")
     if r.result_sha256 != result:
@@ -255,13 +280,14 @@ def check(req_digest: str, protocol: int, rule: Optional[SoftwareRule], resp: Ms
         raise RecordMismatchError(
             f"plimsoll: the record names {r.provider} at {r.isolation!r}, the response {resp.get_str('sandbox')} at {resp.get_str('isolation')!r}"
         )
-    if r.version >= 2 and r.environment != resp.get_str("environment"):
+    if r.environment != resp.get_str("environment"):
         raise RecordMismatchError("plimsoll: the record's environment differs from the response's")
-    if r.version >= 2:
-        rule_id = rule.rule_id() if rule is not None else ""
-        allowed = rule.allows(r.software_identity) if rule is not None else True
-        if r.software_identity != resp.get_str("softwareIdentity") or r.software_rule_id != rule_id or not allowed:
-            raise RecordMismatchError("plimsoll: the selected software or admission rule differs from the request and response")
+    if r.instance != resp.get_str("instance") or not valid_instance(r.instance):
+        raise RecordMismatchError(f"plimsoll: the record's instance {r.instance!r} is not the response's, or not a typed reference")
+    rule_id = rule.rule_id() if rule is not None else ""
+    allowed = rule.allows(r.software_identity) if rule is not None else True
+    if r.software_identity != resp.get_str("softwareIdentity") or r.software_rule_id != rule_id or not allowed:
+        raise RecordMismatchError("plimsoll: the selected software or admission rule differs from the request and response")
     own = record_digest(r)
     if r.sha256 != own:
         raise RecordMismatchError(f"plimsoll: record digest {r.sha256}, its fields digest to {own}")
@@ -270,12 +296,14 @@ def check(req_digest: str, protocol: int, rule: Optional[SoftwareRule], resp: Ms
 
 def check_unanswered(req_digest: str, floor: str, rule: Optional[SoftwareRule], m: Msg) -> RunRecord:
     """The record an unanswered session call's error carries (record.CheckUnanswered,
-    without the chain, which the Session checks): version 3, no result digest, a
+    without the chain, which the Session checks): the version, no result digest, a
     Connect code, the digest of the request sent, its software rule and that its
     software is in it, the record's own digest, and its tier against the call's floor."""
     r = record_from_wire(m)
-    if r.version != UNANSWERED_VERSION:
-        raise RecordVersionError(f"plimsoll: an unanswered call's record is version {r.version}, not {UNANSWERED_VERSION}")
+    if r.version != VERSION:
+        raise RecordVersionError(_version_problem(r.version))
+    if not valid_instance(r.instance):
+        raise RecordMismatchError(f"plimsoll: the record's instance {r.instance!r} is not a typed reference")
     if r.result_sha256 or r.unanswered not in _UNANSWERED_CODES:
         raise RecordMismatchError("plimsoll: an unanswered call's record states a result or no error code")
     if r.request_sha256 != req_digest:
@@ -292,9 +320,9 @@ def check_unanswered(req_digest: str, floor: str, rule: Optional[SoftwareRule], 
     return r
 
 
-def check_single(req_digest: str, protocol: int, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:
+def check_single(req_digest: str, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:
     """check, for a single run: a single run's record carries no session fields (record.Check)."""
-    r = check(req_digest, protocol, rule, resp)
+    r = check(req_digest, rule, resp)
     if r.session or r.sequence or r.previous_sha256:
         raise RecordMismatchError("plimsoll: a single run's record carries session fields")
     return r

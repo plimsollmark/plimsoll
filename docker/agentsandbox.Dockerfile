@@ -8,7 +8,13 @@
 # with --auth-token-sha256 (docs/agentsandbox.md). Build with
 #   docker build -f docker/agentsandbox.Dockerfile -t plimsoll/sandbox-agentsandbox docker
 # The sandboxd build fetches the agent-sandbox source and its modules, so it needs network.
-FROM golang:1.26-alpine AS sandboxd
+# The base is pinned by digest, so every build of this context starts from the same
+# bytes: local builds once used whatever their cache held while CI pulled the tag fresh,
+# both under one inputs label (review, 2026-10-23). The tag is for readers; the digest
+# decides. To move it: docker pull the tag, then copy its RepoDigests entry here. With
+# DOCKER_HUB_MIRROR set, make docker-images passes the same digest from the mirror.
+ARG BASE_GO=golang:1.26-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba
+FROM ${BASE_GO} AS sandboxd
 ARG AGENT_SANDBOX_COMMIT=807cc37107bd7c012115afac9fa9c3b77b8365c2
 RUN apk add --no-cache git
 RUN git clone --filter=blob:none https://github.com/kubernetes-sigs/agent-sandbox /src \

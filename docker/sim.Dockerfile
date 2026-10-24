@@ -43,6 +43,8 @@
 # step runs it with the caller's controller file, it loads the plant through
 # Node's WASI support, runs the controller as a separate process, exchanges one
 # line per tick, and writes the trajectory whose SHA-256 is the fingerprint.
+# /oracle/graders/<environment>.mjs scores such a trajectory (sim/graders): a grading
+# run of its own sends the trajectory in and gets the score in its record.
 #
 # Four stages, every input pinned:
 #   fetch  the WasmEdge release tarball (SHA-256 checked) and the Reference FMUs
@@ -67,11 +69,19 @@ ARG WASMEDGE_VERSION=0.17.1
 # From the SHA256SUM asset of the 0.17.1 release, manylinux_2_28 x86_64 tarball.
 ARG WASMEDGE_SHA256=27a1abec072ddf45b40e2e81e33c1e5fe9b241f31fd1bbf0182f05097489a07a
 ARG REF_FMUS_TAG=v0.0.41
+# The bases are pinned by digest, so every build of this context starts from the same
+# bytes: local builds once used whatever their cache held while CI pulled the tag fresh,
+# both under one inputs label (review, 2026-10-23). The tag is for readers; the digest
+# decides. To move it: docker pull the tag, then copy each's RepoDigests entry here. With
+# DOCKER_HUB_MIRROR set, make docker-images passes the same digest from the mirror.
+ARG BASE_DEBIAN=debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+ARG BASE_NODE_SLIM=node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+
 # The commit the annotated tag v0.0.41 points to (Modelica Association, BSD-2).
 ARG REF_FMUS_COMMIT=1258711a41e28b1c25e058abd04f6214beefa3cb
 
 # ---- fetch: pinned inputs from the network, verified before use ----------------
-FROM debian:bookworm-slim AS fetch
+FROM ${BASE_DEBIAN} AS fetch
 ARG WASMEDGE_VERSION
 ARG WASMEDGE_SHA256
 ARG REF_FMUS_TAG
@@ -139,7 +149,7 @@ RUN /opt/wasi-sdk/bin/clang --target=wasm32-wasi -mexec-model=reactor -O2 \
       /build/models/Greedy/greedy.c -o greedy.wasm
 
 # ---- build: the worker binary and the AOT models --------------------------------
-FROM debian:bookworm-slim AS build
+FROM ${BASE_DEBIAN} AS build
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc libc6-dev libstdc++6 zlib1g libtinfo6 \
  && rm -rf /var/lib/apt/lists/*
@@ -157,7 +167,7 @@ COPY guard/runner.c /build/runner-guard.c
 RUN gcc -O2 -fPIC -shared -o /build/runner-guard.so /build/runner-guard.c
 
 # ---- runtime: the project image contract, plus the worker and the models --------
-FROM node:22-bookworm-slim
+FROM ${BASE_NODE_SLIM}
 # The real file only; ldconfig recreates the soname link libwasmedge.so.0 from it.
 COPY --from=build /opt/wasmedge/lib64/libwasmedge.so.0.1.1 /usr/local/lib/
 COPY --from=build /build/sim-worker /usr/local/bin/sim-worker
@@ -165,6 +175,7 @@ COPY --from=build /build/vanderpol.so /build/bouncingball.so /build/lorenz.so /b
 COPY --from=wasm /build/cartpole.wasm /models/cartpole.wasm
 COPY --from=wasm /build/shower.wasm /build/ship.wasm /build/buck.wasm /build/slits.wasm /build/blackhole.wasm /build/rocket.wasm /build/satclock.wasm /models/
 COPY sim/oracle/run.mjs sim/oracle/judge.mjs /oracle/
+COPY sim/graders/ /oracle/graders/
 COPY runner.mjs /runner.mjs
 COPY --from=build /build/runner-guard.so /usr/local/lib/plimsoll-runner-guard.so
 # Fail the build, not the first run, if the worker's shared libraries are missing.

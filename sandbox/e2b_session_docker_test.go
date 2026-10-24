@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/projecttest"
 	"github.com/plimsollmark/plimsoll/sandbox/sessiontest"
 )
 
@@ -400,6 +401,14 @@ func TestE2BSessionDockerConformance(t *testing.T) {
 		Languages:      []sandbox.Language{sandbox.LanguageJavaScript, sandbox.LanguagePython},
 		ExecsWalledOff: true, Teardown: sandbox.E2BTeardown,
 	})
+}
+
+// The one-shot project contract (projecttest) over the fake, in a run and in a
+// session's calls.
+func TestE2BDockerProjectConformance(t *testing.T) {
+	f := newE2BFake(t)
+	t.Run("run", func(t *testing.T) { projecttest.Run(t, f.provider(), 15*time.Second) })
+	t.Run("session", func(t *testing.T) { projecttest.Run(t, openE2B(t, f.provider()), 15*time.Second) })
 }
 
 // The provider's startup smoke test (a run, its egress probe, the languages) and then

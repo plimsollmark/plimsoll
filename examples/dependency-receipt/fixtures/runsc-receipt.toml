@@ -1,0 +1,11 @@
+# runsc's options for the containerd handler the receipt runs under (on kind: the node's
+# /etc/containerd/runsc-observe.d/runsc-receipt.toml, named by handler.toml beside this).
+# strace-syscalls is runsclog.Syscalls(), the calls the reader follows; a test checks it.
+# strace-log-size keeps 16 bytes of written data per call: the receipt needs none of it.
+[runsc_config]
+  debug = "true"
+  strace = "true"
+  strace-log-size = "16"
+  strace-syscalls = "bind,chdir,clone,clone3,close,close_range,connect,creat,dup,dup2,dup3,execve,execveat,exit_group,fchdir,fork,ftruncate,io_uring_setup,link,linkat,listen,memfd_create,mkdir,mkdirat,open,openat,openat2,pwrite64,pwritev,pwritev2,rename,renameat,renameat2,rmdir,sendmmsg,sendmsg,sendto,socket,symlink,symlinkat,truncate,unlink,unlinkat,vfork,write,writev"
+  debug-log-format = "json"
+  debug-log = "/var/log/runsc-observe/%ID%/"

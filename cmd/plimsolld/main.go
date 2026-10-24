@@ -697,26 +697,9 @@ func main() {
 			"rate_per_min", ratePerMin,
 			"rate_burst", burst,
 		}
-		switch sb.Name() {
-		case "e2b":
-			args = append(args,
-				"resources", "template-managed; configured values are post-create maxima",
-				"max_mem_mb", res.MemoryMB,
-				"max_cpus", res.CPUs,
-				"max_disk_mb", res.DiskMB,
-				"pids", "unsupported (non-zero fails startup)",
-			)
-		case "dockercloud":
-			if dc, ok := sb.(*sandbox.DockerCloud); ok {
-				args = append(args, "api", dc.APIName())
-			}
-			args = append(args,
-				"resources", "requested at create and verified after it; 0 = backend default",
-				"max_mem_mb", res.MemoryMB,
-				"max_cpus", res.CPUs,
-				"disk_and_pids", "unsupported (non-zero fails startup)",
-			)
-		default:
+		if log := providers[sb.Name()].resourceLog; log != nil {
+			args = append(args, log(sb, res)...)
+		} else {
 			args = append(args, "mem_mb", res.MemoryMB, "cpus", res.CPUs, "pids", res.PidsLimit, "disk_mb", res.DiskMB)
 		}
 		args = append(args, "tls", tlsConf != nil, "metrics_addr", boundMetrics, "guard_addr", boundGuard, "max_connections", rpcConns)

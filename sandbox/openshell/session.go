@@ -2,6 +2,7 @@ package openshell
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -153,7 +154,7 @@ func (s *session) hooks() sessionkit.Hooks {
 		Measure:  sessionkit.MeasureWalk,
 		Dirs:     sessionDirs,
 		Unproven: s.recover,
-		Teardown: func() { s.p.destroy(s.b) },
+		Teardown: func() { s.p.destroyAndWait(s.b) },
 	}
 }
 
@@ -288,7 +289,11 @@ func (s *session) readBack(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.p.checkConfig(cfg); err != nil {
+	if err := s.p.checkConfig(cfg, func() (string, error) { return s.p.releaseForPolicy(ctx) }); err != nil {
+		var unknown *versionUnknownError
+		if errors.As(err, &unknown) {
+			return err // the gateway did not say its version; nothing shows the sandbox changed
+		}
 		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: err.Error()}
 	}
 	return nil
@@ -400,7 +405,7 @@ func (s *session) RunProject(ctx context.Context, req sandbox.ProjectRequest) (s
 	if err != nil {
 		return fail, err
 	}
-	plan := runnerwire.Plan{Steps: req.Steps, StepTimeout: timeout, Artifacts: req.Artifacts, HostSDK: sandbox.HostClientModule(req.Grant), ReportKey: key}
+	plan := runnerwire.Plan{Steps: req.Steps, Budget: timeout, Artifacts: req.Artifacts, HostSDK: sandbox.HostClientModule(req.Grant), ReportKey: key}
 	for _, f := range req.Files {
 		plan.Files = append(plan.Files, runnerwire.File(f))
 	}

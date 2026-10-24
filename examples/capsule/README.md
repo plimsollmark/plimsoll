@@ -69,14 +69,15 @@ input to this offline example.
 | `timed_out` | `timeout` | `dispatched` | `dispatched_unconfirmed` | the outcome |
 | `setup_failed` | `errored` | `dispatched` | `dispatched_unconfirmed` | the outcome |
 | `protocol_error` | `errored` | `dispatched` | `dispatched_unconfirmed` | the outcome |
-| a session call that may have run but got no answer (a version 3 record) | `errored` | `dispatched` | `dispatched_unconfirmed` | the error's status code |
+| `runner_failed` | `errored` | `dispatched` | `dispatched_unconfirmed` | the outcome |
+| a session call that may have run but got no answer (a record with no result and an error code) | `errored` | `dispatched` | `dispatched_unconfirmed` | the error's status code |
 
 The table is `verdicts` in [mapping.go](mapping.go); a snippet and a cell read as
 `timed_out` or `completed`, and a call that got no answer, whose bundle entry stores a
 request and a signed record but no response, is `unanswered` there. A completed run is
 `confirmed` whatever its exit code: plimsoll observed the result, and the exit code is
-inside the digested response. `setup_failed` and `protocol_error` share a class and a
-status and may carry no response digest, so the reason digest, over
+inside the digested response. `setup_failed`, `runner_failed` and `protocol_error` share a
+class and a status and may carry no response digest, so the reason digest, over
 `{"plimsoll_outcome": ...}` (or `{"plimsoll_unanswered": ...}` for a lost answer), is
 what keeps them apart. Session calls chain with `relation: follows`.
 

@@ -19,6 +19,7 @@ import (
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
+	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -460,27 +461,18 @@ func describedEnvironment(actual, described string) string {
 	return described
 }
 
-// outcomeWire maps the sandbox package's typed project outcome to its wire enum.
-func outcomeWire(o sandbox.ProjectOutcome) plimsollv1.ProjectOutcome {
-	switch o {
-	case sandbox.ProjectOutcomeCompleted:
-		return plimsollv1.ProjectOutcome_PROJECT_OUTCOME_COMPLETED
-	case sandbox.ProjectOutcomeSetupFailed:
-		return plimsollv1.ProjectOutcome_PROJECT_OUTCOME_SETUP_FAILED
-	case sandbox.ProjectOutcomeTimedOut:
-		return plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT
-	case sandbox.ProjectOutcomeProtocolError:
-		return plimsollv1.ProjectOutcome_PROJECT_OUTCOME_PROTOCOL_ERROR
-	default:
-		return plimsollv1.ProjectOutcome_PROJECT_OUTCOME_UNSPECIFIED
-	}
-}
-
 // isInfraErr reports whether a sandbox error is a true infrastructure fault, as
 // opposed to a deterministic client/config condition (a disabled provider, an
 // unsupported operation, or ordinary load shedding). Only infra faults count
 // toward plimsoll_runs_failed_total.
 func isInfraErr(err error) bool {
+	// A session's end is an infrastructure failure only when the sandbox failed under it
+	// (its boundary could not be proved, or it changed); one closed, expired, replaced or
+	// over its disk budget is the session's ordinary end (review B9, 2026-10-23: every
+	// end used to count).
+	if end := sandbox.SessionEndReason(err); end != sandbox.SessionOpen {
+		return end == sandbox.SessionBoundaryFailed || end == sandbox.SessionSandboxChanged
+	}
 	return err != nil &&
 		!errors.Is(err, sandbox.ErrUnsupported) &&
 		!errors.Is(err, sandbox.ErrDisabled) &&
@@ -541,7 +533,7 @@ func mapSandboxErr(err error) error {
 	}
 	ce := connect.NewError(code, shown)
 	if se != nil {
-		if d, derr := connect.NewErrorDetail(&plimsollv1.SessionEnded{Reason: sessionEndWire(se.Reason), Detail: wireString(told)}); derr == nil {
+		if d, derr := connect.NewErrorDetail(&plimsollv1.SessionEnded{Reason: wireenum.SessionEndToWire(se.Reason), Detail: wireString(told)}); derr == nil {
 			ce.AddDetail(d)
 		}
 	}

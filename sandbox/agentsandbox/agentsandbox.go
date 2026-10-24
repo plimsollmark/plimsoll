@@ -232,10 +232,10 @@ type Provider struct {
 	volumes             map[string]int64 // its container's volume mount paths and their size limits, from the last check
 	smoke               *smokeEvidence   // what the last passing SmokeTest measured
 
-	leases        lease.Set     // claims made and not yet deleted
-	cleanup       claimCleanup  // deletion ownership and capacity held past a failed delete
-	deleteTimeout time.Duration // one delete's budget; set by New
-	skew          skewNote      // the API server's clock minus this process's, from the last create
+	leases        lease.Set              // claims made and not yet deleted
+	cleanup       providerkit.Quarantine // deletion ownership and capacity held past a failed delete
+	deleteTimeout time.Duration          // one delete's budget; set by New
+	skew          skewNote               // the API server's clock minus this process's, from the last create
 }
 
 var (
@@ -490,7 +490,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	res := sandbox.Result{
 		Stdout: string(out.stdout), Stderr: string(out.stderr),
 		StdoutTruncated: out.stdoutTruncated, StderrTruncated: out.stderrTruncated,
-		ExitCode: out.exitCode, Duration: time.Since(start), Sandbox: Name, Isolation: b.tier,
+		ExitCode: out.exitCode, Duration: time.Since(start), Sandbox: Name, Isolation: b.tier, Instance: b.instance,
 	}
 	if out.exited {
 		return res, nil
@@ -526,7 +526,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 	if err != nil {
 		return fail, err
 	}
-	plan := runnerwire.Plan{Steps: req.Steps, StepTimeout: timeout, Artifacts: req.Artifacts, ReportKey: key}
+	plan := runnerwire.Plan{Steps: req.Steps, Budget: timeout, Artifacts: req.Artifacts, ReportKey: key}
 	for _, f := range req.Files {
 		plan.Files = append(plan.Files, runnerwire.File(f))
 	}
@@ -554,7 +554,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 // runPlan runs the runner with planJSON on stdin and classifies what came back, as the
 // docker and openshell providers do.
 func (p *Provider) runPlan(ctx context.Context, b box, planJSON, key []byte) (sandbox.ProjectResult, error) {
-	res := sandbox.ProjectResult{Sandbox: Name, Isolation: b.tier}
+	res := sandbox.ProjectResult{Sandbox: Name, Isolation: b.tier, Instance: b.instance}
 	argv := guestArgv([]string{"PLIMSOLL_WORK=" + workDir + "/project"}, runnerCommand...)
 	out, err := p.exec(ctx, b.ip, argv, planJSON, runnerwire.StdoutCap, maxOutputBytes)
 	if !out.exited {
@@ -568,6 +568,7 @@ func (p *Provider) runPlan(ctx context.Context, b box, planJSON, key []byte) (sa
 		return res, err
 	}
 	parsed, reported := sandbox.RunnerReport(Name, b.tier, string(out.stdout), key)
+	parsed.Instance = b.instance
 	if !reported {
 		// The runner never reported: killed in the sandbox (an OOM kill), or the image
 		// cannot run it. The detail is plimsoll's own words, never the runner's stderr,

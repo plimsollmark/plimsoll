@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -1057,7 +1058,7 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	// session must say so in its own answer.
 	var se *sandbox.SessionEndedError
 	if errors.As(e.endErr(), &se) {
-		out.Ended, out.EndDetail = sessionEndWire(se.Reason), wireString(publicEndDetail(se))
+		out.Ended, out.EndDetail = wireenum.SessionEndToWire(se.Reason), wireString(publicEndDetail(se))
 	}
 	return connect.NewResponse(out), nil
 }
@@ -1178,7 +1179,7 @@ func (s *SandboxService) CloseSession(ctx context.Context, req *connect.Request[
 		Session:          e.fingerprint,
 		Calls:            calls,
 		LastRecordSha256: last,
-		Ended:            sessionEndWire(end),
+		Ended:            wireenum.SessionEndToWire(end),
 	}), nil
 }
 
@@ -1186,23 +1187,6 @@ func (s *SandboxService) CloseSession(ctx context.Context, req *connect.Request[
 // marked not dispatched, with the end as a SessionEnded detail.
 func refuseEnded(end error) error {
 	return mapSandboxErr(sandbox.RefuseEndedSession(end))
-}
-
-var sessionEnds = map[sandbox.SessionEnd]plimsollv1.SessionEnd{
-	sandbox.SessionClosed:           plimsollv1.SessionEnd_SESSION_END_CLOSED,
-	sandbox.SessionExpired:          plimsollv1.SessionEnd_SESSION_END_EXPIRED,
-	sandbox.SessionDiskExceeded:     plimsollv1.SessionEnd_SESSION_END_DISK_EXCEEDED,
-	sandbox.SessionMainProcessEnded: plimsollv1.SessionEnd_SESSION_END_MAIN_PROCESS_ENDED,
-	sandbox.SessionBoundaryFailed:   plimsollv1.SessionEnd_SESSION_END_BOUNDARY_FAILED,
-	sandbox.SessionSandboxChanged:   plimsollv1.SessionEnd_SESSION_END_SANDBOX_CHANGED,
-	sandbox.SessionShutdown:         plimsollv1.SessionEnd_SESSION_END_SHUTDOWN,
-	sandbox.SessionReplaced:         plimsollv1.SessionEnd_SESSION_END_REPLACED,
-	sandbox.SessionNotFound:         plimsollv1.SessionEnd_SESSION_END_NOT_FOUND,
-	sandbox.SessionUnclaimed:        plimsollv1.SessionEnd_SESSION_END_UNCLAIMED,
-}
-
-func sessionEndWire(e sandbox.SessionEnd) plimsollv1.SessionEnd {
-	return sessionEnds[e]
 }
 
 // unanswered chains the record of a session call that may have run but ended in err

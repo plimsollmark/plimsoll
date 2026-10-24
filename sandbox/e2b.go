@@ -96,7 +96,7 @@ func (*E2B) Name() string { return "e2b" }
 // BillingTeardown is how long a run's microVM can outlive its deadline, being
 // deleted: every run creates a microVM the operator pays for by the second
 // (sandbox.Metered).
-func (*E2B) BillingTeardown() time.Duration { return meteredTeardown }
+func (*E2B) BillingTeardown() time.Duration { return meteredBillingTail }
 
 // SupportsProjects is true: project runs work against a toolchain-baked template
 // (see e2b/README.md).
@@ -205,12 +205,23 @@ func (e *E2B) EgressGuardCall(ctx context.Context, token, method, rawTarget stri
 // runtime the template bakes (its absence would fail every snippet run), the
 // working directory envd applied (the project-step contract), and — the security
 // property unit tests cannot see — whether deny-all egress is actually in force
-// on the live network, probed against both a raw IP (no DNS needed) and a DNS
-// name. Each fetch gets a short abort timeout so dropped packets fail fast
+// on the live network, probed against raw IPv4 and IPv6 addresses (no DNS needed)
+// and a DNS name. Each fetch gets a short abort timeout so dropped packets fail fast
 // instead of hanging the smoke.
+//
+// Unlike the TCP-level test the other providers share (internal/egress), any failed
+// fetch counts as closed here, and only a fetch that gets a response is egress. E2B's
+// host proxy accepts every IPv4 TCP connection under deny-all, on any port, and then
+// closes or resets it without forwarding: measured 2026-10-24 from a live sandbox, a
+// connect to 1.1.1.1 on 22, 80 and 443, to 8.8.8.8:53 and to a GitHub address on 22
+// and 443 all opened, a TLS handshake was reset, an HTTP request and a DNS query got
+// no answer, and an SSH server, which speaks first, sent no banner. A TCP-level test
+// would therefore call every target open. IPv6 was unreachable and names did not
+// resolve. The one answer came from 169.254.169.254, Firecracker's own metadata
+// endpoint inside the VM's host process: HTTP 401, "No MMDS", nothing configured.
 const vmSmokeProbe = `(async () => {
   const egressOpen = [];
-  for (const target of ["https://1.1.1.1", "https://example.com"]) {
+  for (const target of ["https://1.1.1.1", "http://1.1.1.1", "https://[2606:4700:4700::1111]", "https://example.com"]) {
     try {
       await fetch(target, { signal: AbortSignal.timeout(4000) });
       egressOpen.push(target);
@@ -281,11 +292,14 @@ func (e *E2B) SmokeTest(ctx context.Context) error {
 		return fmt.Errorf("e2b template smoke: egress is OPEN to %s — deny-all network policy is not in force", strings.Join(report.EgressOpen, ", "))
 	}
 	// The languages a project step or a session's cell can use: JavaScript, proved
-	// above, and Python where the template runs python3.
+	// above, and each other language whose probe answers (LanguageSpecs).
 	langs := []Language{LanguageJavaScript}
-	py, err := e.runProcess(ctx, vm, "sh", []string{"-c", `command -v python3 >/dev/null 2>&1 && exec python3 -I -c "print(6*7)"`}, "")
-	if err == nil && py.exitCode == 0 && strings.TrimSpace(py.stdout) == "42" {
-		langs = append(langs, LanguagePython)
+	if probed, err := e.runProcess(ctx, vm, "sh", []string{"-c", LanguageProbe()}, ""); err == nil && probed.exitCode == 0 {
+		for _, l := range ProbedLanguages(probed.stdout) {
+			if !slices.Contains(langs, l) {
+				langs = append(langs, l)
+			}
+		}
 	}
 	e.mu.Lock()
 	e.langs = langs
@@ -550,6 +564,17 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (res ProjectRe
 	if err := e.writeFiles(runCtx, vm, staged); err != nil {
 		return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, fmt.Errorf("could not write project files: %w", err)
 	}
+	// A file's upload makes the work directory; a project of steps alone needs it made,
+	// or its first step cannot start there (found by projecttest, 2026-10-24).
+	if len(req.Files) == 0 {
+		out, err := e.runProcess(runCtx, vm, "mkdir", []string{"-p", "--", dir}, "/")
+		if err == nil && out.exitCode != 0 {
+			err = fmt.Errorf("mkdir exited %d: %s", out.exitCode, out.stderr)
+		}
+		if err != nil {
+			return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, fmt.Errorf("could not create the project directory: %w", err)
+		}
+	}
 
 	res = ProjectResult{Sandbox: "e2b", Isolation: IsolationVM, Outcome: ProjectOutcomeCompleted}
 	envs := map[string]string(nil)
@@ -561,64 +586,53 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (res ProjectRe
 			"NODE_EXTRA_CA_CERTS": e2bGuestCABundle,
 		}
 	}
-	for i, step := range req.Steps {
-		// As with snippets, avoid `sh -c <huge command>` and its per-argument OS
-		// limit. One VM-local script per step; the reported Command remains the
-		// caller's original string. Never reuse a path: envd refuses to reopen a
-		// script it wrote for an earlier step (HTTP 500 "permission denied", seen
-		// live 2026-09-24), which failed every project of more than one step.
+	// The steps and the artifacts follow the exec-based providers' one contract
+	// (exec_steps.go). As with snippets, each step is a VM-local script rather than
+	// `sh -c <huge command>` and its per-argument OS limit, and never a reused path:
+	// envd refuses to reopen a script it wrote for an earlier step (HTTP 500
+	// "permission denied", seen live 2026-09-24).
+	steps, outcome, detail, err := runExecSteps(runCtx, req.Steps, func(ctx context.Context, i int, step string) (stepOutput, error) {
 		stepPath := fmt.Sprintf("/tmp/plimsoll-step-%d.sh", i)
-		if err := e.writeFile(runCtx, vm, stepPath, step); err != nil {
-			return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, fmt.Errorf("could not stage step: %w", err)
+		if err := e.writeFile(ctx, vm, stepPath, step); err != nil {
+			return stepOutput{}, fmt.Errorf("could not stage step: %w", err)
 		}
-		start := time.Now()
-		out, err := e.runProcessWithEnv(runCtx, vm, "sh", []string{stepPath}, dir, envs)
+		argv := stepArgv(stepPath)
+		out, err := e.envdRun(ctx, vm, envdProcess{cmd: argv[0], args: argv[1:], cwd: dir, envs: envs}, ProjectStepOutputCap, ProjectStepOutputCap)
 		if err != nil {
-			if deadline.Expired(runCtx) == context.DeadlineExceeded {
-				res.Steps = append(res.Steps, StepResult{Command: step, ExitCode: 124, TimedOut: true, Duration: time.Since(start)})
-				res.Outcome, res.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
-				res.CallTrace = endGuard(guard)
-				return res, nil
-			}
-			return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, err
+			return stepOutput{}, err
 		}
-		res.Steps = append(res.Steps, StepResult{
-			Command:         step,
-			Stdout:          out.stdout,
-			Stderr:          out.stderr,
-			StdoutTruncated: out.stdoutTruncated,
-			StderrTruncated: out.stderrTruncated,
-			ExitCode:        out.exitCode,
-			Duration:        time.Since(start),
-		})
-		if out.exitCode != 0 {
-			break
-		}
+		return stepOutput{stdout: out.stdout, stderr: out.stderr, stdoutTruncated: out.stdoutTruncated,
+			stderrTruncated: out.stderrTruncated, exitCode: out.exitCode}, nil
+	})
+	if err != nil {
+		return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, err
 	}
+	res.Steps, res.Outcome, res.Detail = steps, outcome, detail
 	// The steps are done: the grant ends before its trace is read.
 	res.CallTrace = endGuard(guard)
 
-	// Capture requested artifacts (those that exist), even after a failed step.
-	var total int64
-	for _, p := range req.Artifacts {
-		dest := pathpkg.Join(dir, p)
-		if dest != dir && !strings.HasPrefix(dest, dir+"/") {
-			continue
+	// The artifacts, after a failed or timed-out step too, within a short grace past
+	// the run's deadline (projectArtifactGrace).
+	runDeadline, _ := runCtx.Deadline()
+	actx, cancelArtifacts := context.WithDeadline(ctx, artifactDeadline(runDeadline))
+	defer cancelArtifacts()
+	var arts []Artifact
+	var truncated bool
+	if len(req.Artifacts) > 0 {
+		var out procOutput
+		out, err = e.runProcess(actx, vm, "sh", append([]string{"-c", artifactScript, "plimsoll-artifacts", dir}, req.Artifacts...), dir)
+		var files []artifactFile
+		if err == nil {
+			files, err = selectorAnswer(out.stdout, out.exitCode, out.stdoutTruncated || !out.exited, req.Artifacts)
 		}
-		data, ok, err := e.readFile(runCtx, vm, dest)
-		if err != nil {
-			return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, fmt.Errorf("read artifact %q: %w", p, err)
+		if err == nil {
+			arts, truncated, err = collectArtifacts(actx, files,
+				func(ctx context.Context, real string, limit int64) ([]byte, bool, error) {
+					return e.readFile(ctx, vm, real, limit)
+				})
 		}
-		if !ok {
-			continue
-		}
-		if total+int64(len(data)) > maxArtifactBytesTotal {
-			res.ArtifactsTruncated = true
-			break
-		}
-		total += int64(len(data))
-		res.Artifacts = append(res.Artifacts, Artifact{Path: p, Content: data})
 	}
+	setArtifacts(&res, arts, truncated, err)
 	return res, nil
 }
 
@@ -656,9 +670,10 @@ func remainingBudget(ctx context.Context, fallback time.Duration) time.Duration 
 	return fallback
 }
 
-// readFile downloads a file from envd's HTTP /files endpoint. found=false is
+// readFile downloads a file from envd's HTTP /files endpoint, at most limit+1 bytes of
+// it, so a caller knows a file past its limit without reading all of it. found=false is
 // reserved for a 404; transport/auth/server failures remain infrastructure errors.
-func (e *E2B) readFile(ctx context.Context, vm e2bVM, path string) ([]byte, bool, error) {
+func (e *E2B) readFile(ctx context.Context, vm e2bVM, path string, limit int64) ([]byte, bool, error) {
 	q := url.Values{"path": {path}, "username": {"user"}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.envdHost(vm.id)+"/files?"+q, nil)
 	if err != nil {
@@ -677,12 +692,9 @@ func (e *E2B) readFile(ctx context.Context, vm e2bVM, path string) ([]byte, bool
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		return nil, false, fmt.Errorf("envd files: HTTP %d: %s", resp.StatusCode, truncateForError(strings.TrimSpace(string(raw))))
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxArtifactBytesTotal+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, false, err
-	}
-	if len(data) > maxArtifactBytesTotal {
-		return nil, false, fmt.Errorf("artifact exceeds %d bytes", maxArtifactBytesTotal)
 	}
 	return data, true, nil
 }
@@ -1344,6 +1356,7 @@ func (e *E2B) envdRun(ctx context.Context, vm e2bVM, p envdProcess, outCap, errC
 	stdout := &cappedStream{max: outCap}
 	stderr := &cappedStream{max: errCap}
 	sawEnd := false
+	raw := 0 // the output's own bytes, both streams: the shared budget counts these
 	err = readConnectStream(resp.Body, func(msg []byte) error {
 		var ev procEvent
 		if err := json.Unmarshal(msg, &ev); err != nil {
@@ -1353,6 +1366,9 @@ func (e *E2B) envdRun(ctx context.Context, vm e2bVM, p envdProcess, outCap, errC
 		case ev.Event.Data != nil:
 			stdout.append(ev.Event.Data.Stdout)
 			stderr.append(ev.Event.Data.Stderr)
+			if raw += len(ev.Event.Data.Stdout) + len(ev.Event.Data.Stderr); raw > ProjectStepTransferBudget {
+				return errStreamOverBudget
+			}
 		case ev.Event.End != nil:
 			out.exitCode = ev.Event.End.ExitCode
 			out.exited = ev.Event.End.Exited
@@ -1445,8 +1461,11 @@ const maxConnectFrameBytes = 8 << 20
 // would keep pulling and allocating frames until the deadline. Bounding cumulative
 // transfer makes a flood deterministic: once the run has produced far more than any
 // legitimate output, the stream is aborted rather than read indefinitely. Sized well
-// above maxConnectFrameBytes and any sane maxOutput so real runs never reach it.
-const maxStreamTransferBytes = 32 << 20
+// above maxConnectFrameBytes and any sane maxOutput so real runs never reach it. The
+// flood rule itself counts the output's own bytes (envdRun, ProjectStepTransferBudget,
+// as every provider does); this transport limit, the base64 size of that budget plus
+// framing room, is the backstop for frames that carry no output (review, 2026-10-24).
+const maxStreamTransferBytes = ProjectStepTransferBudget/3*4 + 4<<20 // its base64 size, and room for framing
 
 // errStreamOverBudget marks a stream aborted for exceeding maxStreamTransferBytes.
 // runProcess classifies it as a failed user run (exitOutputFlooded), not an

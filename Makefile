@@ -33,13 +33,13 @@ DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite agentsandbox-suite modproxy tools tools-check help
+.PHONY: audit build vet modules test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite agentsandbox-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
 ##   TestProjectRunnerAlwaysEmitsCompleteBoundedJSON and TestProjectRunnerReportsTruncationFlags
 ##   skip without node or as root (root defeats the runner guard they test)
-audit: tools-check build vet race lint buf vuln
+audit: tools-check build vet modules race lint buf vuln
 	@if [ "$(DOCKER)" = "1" ]; then $(MAKE) docker-suite; else echo "skip docker-suite (set DOCKER=1 with a local daemon + images from 'make docker-images')"; fi
 	@if [ "$(E2B)" = "1" ]; then $(MAKE) e2b-suite; else echo "skip e2b-suite (set E2B=1 with E2B_API_KEY)"; fi
 	@if [ "$(DOCKERCLOUD)" = "1" ]; then $(MAKE) dockercloud-suite; else echo "skip dockercloud-suite (set DOCKERCLOUD=1 with DOCKER_SBX_TOKEN, DOCKER_SBX_USERNAME, SANDBOX_DOCKERCLOUD_IMAGE or _STORE_IMAGE, and unless SANDBOX_DOCKERCLOUD_API=rest SANDBOX_DOCKERCLOUD_API_URL)"; fi
@@ -61,6 +61,15 @@ build:
 vet:
 	go vet ./...
 
+# The nested modules replace the root module with ../, so a breaking change to the root
+# (routine under the no-backward-compatibility rule) breaks them with no error from
+# build or vet above. Their own suites test them; this builds and vets them on every gate.
+NESTED_MODULES := clients/mcp examples/sbom examples/capsule
+
+## modules: build and vet each nested module (clients/mcp, examples/sbom, examples/capsule) against this tree
+modules:
+	@for m in $(NESTED_MODULES); do echo "build and vet $$m"; (cd $$m && go build ./... && go vet ./...) || exit 1; done
+
 # The live E2B and dockercloud tests skip only when their credentials are absent, and
 # `./...` selects them, so a key left in the shell (a secrets-manager wrapper, an
 # earlier E2B=1 or DOCKERCLOUD=1 session) would make the ordinary gate create billable
@@ -80,7 +89,7 @@ race:
 lint:
 	golangci-lint run ./...
 
-## generate: regenerate gen/ from proto/ and from every vendored third_party/*/buf.gen.yaml
+## generate: regenerate gen/ from proto/ and from every vendored third_party/*/buf.gen.yaml, then the Python and TypeScript client tables (internal/wiretables)
 # The root template runs first: its `clean: true` empties gen/go, and each vendored
 # template then writes its own subdirectory. Vendored protos are a separate buf
 # workspace, so the root `buf lint` never lints upstream files we do not own.
@@ -91,11 +100,16 @@ generate:
 		echo "buf generate $$(dirname "$$t")"; \
 		buf generate "$$(dirname "$$t")" --template "$$t" || exit 1; \
 	done
+	go run ./internal/wiretables
 
-## buf: proto lint + verify generated code is in sync (fails if `make generate` would change or add anything)
+## buf: proto lint + verify generated code is in sync, the client tables included (fails if `make generate` would change or add anything)
 buf: generate
 	buf lint
-	@git diff --exit-code --stat -- gen/ && [ -z "$$(git ls-files --others --exclude-standard -- gen/)" ] || { git ls-files --others --exclude-standard -- gen/ >&2; echo "generated code is stale or untracked: run 'make generate' and commit (or stage) gen/" >&2; exit 1; }
+	@git diff --exit-code --stat -- gen/ $(WIRE_TABLES) && [ -z "$$(git ls-files --others --exclude-standard -- gen/ $(WIRE_TABLES))" ] || { git ls-files --others --exclude-standard -- gen/ $(WIRE_TABLES) >&2; echo "generated code is stale or untracked: run 'make generate' and commit (or stage) gen/ and the client tables" >&2; exit 1; }
+
+# The Python and TypeScript clients' copies of the protocol's enums, the isolation tiers
+# and the cell languages, written by internal/wiretables in make generate.
+WIRE_TABLES := clients/python/src/plimsoll_client/_tables.py clients/typescript/src/tables.gen.ts
 
 ## vuln: govulncheck against the pinned toolchain
 vuln:
@@ -103,30 +117,27 @@ vuln:
 
 ## docker-images: pull the snippet image and build the project images the docker suite runs against
 docker-images:
-	@set -e; for img in $(if $(DOCKER_HUB_MIRROR),$(DOCKER_HUB_IMAGES),node:22-alpine); do \
-	  if [ -n "$(DOCKER_HUB_MIRROR)" ] && docker pull "$(DOCKER_HUB_MIRROR)/library/$$img"; then \
-	    docker tag "$(DOCKER_HUB_MIRROR)/library/$$img" "$$img"; \
-	  else \
-	    docker pull "$$img"; \
-	  fi; \
-	done
+	@set -e; img=node:22-alpine; \
+	if [ -n "$(DOCKER_HUB_MIRROR)" ] && docker pull "$(DOCKER_HUB_MIRROR)/library/$$img"; then \
+	  docker tag "$(DOCKER_HUB_MIRROR)/library/$$img" "$$img"; \
+	else \
+	  docker pull "$$img"; \
+	fi
 	@h="$$($(DOCKER_INPUTS_HASH))"; set -ex; \
-	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox:latest docker/; \
+	docker build $(DOCKER_BASE_ARGS) --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox:latest docker/; \
 	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-python:latest -f docker/python.Dockerfile docker/; \
-	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-sim:latest -f docker/sim.Dockerfile docker/; \
+	docker build $(DOCKER_BASE_ARGS) --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-sim:latest -f docker/sim.Dockerfile docker/; \
 	docker build --label $(DOCKER_INPUTS_LABEL)=$$h -t plimsoll/sandbox-wasm-cc:latest -f docker/wasm-cc.Dockerfile docker/
 
-# The Docker Hub images docker-images needs: the Dockerfiles' FROM images named with no
-# registry, no namespace and no digest (Docker Hub's official images, the snippet
-# image node:22-alpine among them), read from the Dockerfiles so a changed base cannot
-# be left out. DOCKER_HUB_MIRROR, unset by default, names a registry serving Docker
-# Hub's official images under library/ (CI sets mirror.gcr.io): each image is pulled from
-# it and tagged with its Docker Hub name, so the builds find it locally, and only an
-# image the mirror lacks is pulled from Docker Hub. Hosted runners share Docker Hub's
-# anonymous limit of 100 pulls per 6 hours per address, and a mirror set in the runner's
-# daemon.json does not help: the daemon sends the runner's Docker Hub login to the
-# mirror, which refuses any credentials, and falls back to Docker Hub.
-DOCKER_HUB_IMAGES = $(shell sed -n 's/^FROM \([^ ]*\).*/\1/p' docker/Dockerfile docker/*.Dockerfile | grep -v -e / -e @ | LC_ALL=C sort -u)
+# DOCKER_HUB_MIRROR, unset by default, names a registry serving Docker Hub's official
+# images under library/ (CI sets mirror.gcr.io). The snippet image node:22-alpine, which
+# runs as it is, is pulled from it and tagged with its Docker Hub name; the Dockerfiles'
+# bases, each an ARG BASE_* pinned by digest, are built from the same digest on the
+# mirror (DOCKER_BASE_ARGS), so the bytes do not change with the registry. Hosted runners
+# share Docker Hub's anonymous limit of 100 pulls per 6 hours per address, and a mirror
+# set in the runner's daemon.json does not help: the daemon sends the runner's Docker Hub
+# login to the mirror, which refuses any credentials, and falls back to Docker Hub.
+DOCKER_BASE_ARGS = $(if $(DOCKER_HUB_MIRROR),$(shell sed -n 's|^ARG \(BASE_[A-Z_]*\)=\([a-z0-9._-]*\):[^@]*@\(sha256:[0-9a-f]*\)$$|--build-arg \1=$(DOCKER_HUB_MIRROR)/library/\2@\3|p' docker/Dockerfile docker/*.Dockerfile | LC_ALL=C sort -u))
 
 # The images the suite builds from docker/, and the label each carries: a hash of the
 # build context (every file under docker/ by path and content, minus the literal paths
@@ -210,12 +221,15 @@ py-frameworks-lock:
 # Python, Python framework adapter, TypeScript client, add-on and Trigger.dev suites.
 # Keep the go test exit status despite tee, and fail on any Go test skip in case a
 # future test bypasses PLIMSOLL_REQUIRE_CLIENTS.
+# npm ci runs with --ignore-scripts: the trigger example's lockfile holds three packages
+# with install scripts (@depot/cli's downloads a binary at install), and its tests need
+# none of them (esbuild's binary comes as an optional dependency). Checked 2026-10-24.
 ## clients-suite: install both npm dependency sets and the Python framework environments, then run the Python, framework adapter, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS (TestPythonWorkspaceDocker needs the docker images and is docker-suite's, so it is excluded here rather than skipped)
 clients-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "clients-suite: tmp/ is not writable" >&2; exit 1; }
-	@{ (cd clients/typescript && $(NO_PAID_KEYS) npm ci --userconfig=/dev/null) && \
-	   (cd examples/trigger-chat && $(NO_PAID_KEYS) npm ci --userconfig=/dev/null) && \
+	@{ (cd clients/typescript && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null) && \
+	   (cd examples/trigger-chat && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null) && \
 	   $(MAKE) --no-print-directory py-frameworks && \
 	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) go test ./clients/python/ ./clients/typescript/ -skip TestPythonWorkspaceDocker -count=1 -v; \
 	   echo $$? > tmp/clients-suite.status; } 2>&1 | tee tmp/clients-suite.log

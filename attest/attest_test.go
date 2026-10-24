@@ -126,19 +126,23 @@ func TestSignAndVerify(t *testing.T) {
 	}
 }
 
-func TestVersionOneRecordIsNotSignedByNewHarness(t *testing.T) {
+// Only version 4 is signed: a record of an earlier layout is refused by Sign, and a
+// daemon's answer carrying one is refused before signing.
+func TestEarlierRecordVersionsAreNotSigned(t *testing.T) {
 	key := newKey(t)
-	req, resp := exchange("old", "ok", sandbox.RunRecord{})
-	r := record.FromWire(resp.GetRecord())
-	r.Version = 1
-	r.SHA256 = record.Digest(r)
-	resp.Record = record.ToWire(r)
 	signer := NewSigner(key)
-	if _, err := signer.Sign(r); !errors.Is(err, ErrSigningVersion) {
-		t.Fatalf("Sign accepted a new version 1 record: %v", err)
-	}
-	if _, err := signer.Call(req, resp); !errors.Is(err, ErrSigningVersion) {
-		t.Fatalf("Call signed a version 1 daemon response: %v", err)
+	for _, v := range []int{1, 2, 3} {
+		req, resp := exchange("old", "ok", sandbox.RunRecord{})
+		r := record.FromWire(resp.GetRecord())
+		r.Version = v
+		r.SHA256 = record.Digest(r)
+		resp.Record = record.ToWire(r)
+		if _, err := signer.Sign(r); !errors.Is(err, ErrSigningVersion) {
+			t.Errorf("Sign accepted a version %d record: %v", v, err)
+		}
+		if _, err := signer.Call(req, resp); !errors.Is(err, record.ErrVersion) && !errors.Is(err, ErrSigningVersion) {
+			t.Errorf("Call signed a version %d daemon response: %v", v, err)
+		}
 	}
 }
 
@@ -529,7 +533,7 @@ func TestBundleKeepsNaNBits(t *testing.T) {
 	}
 }
 
-// An unanswered session call's entry is its request and its signed version 3 record,
+// An unanswered session call's entry is its request and its signed unanswered record,
 // no response. It verifies in a chain beside answered calls, and is refused when it
 // stores a response, another request, or a record that does not hold.
 func TestUnansweredEntryVerifiesInItsChain(t *testing.T) {

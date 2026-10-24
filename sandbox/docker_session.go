@@ -193,7 +193,7 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 			observe()
 			if s := pool.claim(state, expires, want); s != nil {
 				if err := d.activate(s, expires, opts.DiskBytes); err != nil {
-					s.abandon()
+					s.abandon(ctx)
 					return nil, err
 				}
 				return s, nil
@@ -216,7 +216,7 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 		return nil, err
 	}
 	if err := d.activate(s, expires, opts.DiskBytes); err != nil {
-		s.abandon()
+		s.abandon(ctx)
 		return nil, err
 	}
 	return s, nil
@@ -265,25 +265,25 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 	args = append(args, launch(state.projectImageID, main)...)
 	out, err := s.controlOutput(ctx, args...)
 	if err != nil {
-		s.abandon()
+		s.abandon(ctx)
 		return nil, err
 	}
 	if s.id = strings.TrimSpace(string(out)); !dockerContainerID.MatchString(s.id) {
-		s.abandon()
+		s.abandon(ctx)
 		return nil, fmt.Errorf("docker run: unreadable container ID %q", truncateForError(s.id))
 	}
 	insp, err := s.inspect(ctx)
 	if err != nil {
-		s.abandon()
+		s.abandon(ctx)
 		return nil, err
 	}
 	if err := insp.verifyAtOpen(state.projectImageID); err != nil {
-		s.abandon()
+		s.abandon(ctx)
 		return nil, err
 	}
 	s.snapshot = insp.securitySnapshot()
 	if err := s.recordBaseline(ctx); err != nil {
-		s.abandon()
+		s.abandon(ctx)
 		return nil, err
 	}
 	return s, nil
@@ -310,11 +310,13 @@ func (d *DockerSandbox) activate(s *dockerSession, expires time.Time, disk int64
 }
 
 // abandon removes a session container no caller ever held (one that failed to open,
-// or a pool member), its relays and its broker.
-func (s *dockerSession) abandon() {
+// or a pool member), its relays and its broker. A container whose removal cannot be
+// confirmed keeps the capacity admitted for the call ctx belongs to (removeOrHold): a
+// failed open's, and nothing for a pool member, which no call admitted.
+func (s *dockerSession) abandon(ctx context.Context) {
 	s.life.Abandon()
 	s.broker.Close()
-	s.d.forceRemove(s.host, s.name)
+	s.d.removeOrHold(ctx, s.host, s.name)
 }
 
 // hooks are what the session's lifecycle does to its container.
@@ -371,9 +373,13 @@ func (s *dockerSession) hooks() sessionkit.Hooks {
 			}
 			return &SessionEndedError{Reason: SessionBoundaryFailed, Detail: sweep}
 		},
+		// The broker closes first, so a container that outlives its removal can no
+		// longer reach it. The teardown returns, and the session's Done closes and its
+		// capacity comes back, only once the container is confirmed gone: a removal that
+		// fails is quarantined, and ReconcileOrphans retries it until then.
 		Teardown: func() {
-			s.d.forceRemove(s.host, s.name)
 			s.broker.Close()
+			s.d.quarantine.DestroyAndWait(s.name, func() error { return s.d.forceRemove(s.host, s.name) })
 		},
 	}
 }
@@ -557,30 +563,102 @@ func (i dockerInspect) verifyAtOpen(imageID string) error {
 
 // securitySnapshot is the read-back compared before every call: the image, the
 // whole HostConfig (resources, runtime, mounts, capabilities, security options),
-// the mounts, the networks and the user. Run state is compared on its own. Docker
-// lists a container's mounts in no fixed order (a container with two bind mounts
-// had them listed in both orders across 40 inspects, 2026-10-14), so the mounts
-// and the networks are sorted; an unreadable mount list is kept whole.
+// the mounts, the networks and the user. Run state is compared on its own.
+//
+// It compares values, not docker's bytes: HostConfig and each mount are decoded and
+// written back with their keys sorted and every empty or zero value left out
+// (canonicalJSON), so a docker daemon upgraded under a live session that orders the
+// fields otherwise, or adds one at its zero value, does not end every session as
+// changed, while a value that appears, disappears or changes still does (review,
+// 2026-10-23: the raw bytes were compared). Docker lists a container's mounts in no
+// fixed order (a container with two bind mounts had them listed in both orders across
+// 40 inspects, 2026-10-14), so the mounts and the networks are sorted. Anything that
+// does not decode is kept as its bytes.
 func (i dockerInspect) securitySnapshot() string {
 	networks := make([]string, 0, len(i.NetworkSettings.Networks))
 	for name := range i.NetworkSettings.Networks {
 		networks = append(networks, name)
 	}
 	slices.Sort(networks)
-	mounts := i.Mounts
+	mounts := string(i.Mounts)
 	var list []json.RawMessage
 	if json.Unmarshal(i.Mounts, &list) == nil {
-		slices.SortFunc(list, func(a, b json.RawMessage) int { return bytes.Compare(a, b) })
-		mounts, _ = json.Marshal(list)
+		each := make([]string, len(list))
+		for n, m := range list {
+			each[n] = canonicalJSON(m)
+		}
+		slices.Sort(each)
+		mounts = strings.Join(each, "\n")
 	}
 	b, _ := json.Marshal(struct {
 		Image      string
 		User       string
-		HostConfig json.RawMessage
-		Mounts     json.RawMessage
+		HostConfig string
+		Mounts     string
 		Networks   []string
-	}{i.Image, i.Config.User, i.HostConfig, mounts, networks})
+	}{i.Image, i.Config.User, canonicalJSON(i.HostConfig), mounts, networks})
 	return string(b)
+}
+
+// canonicalJSON is raw's value with object keys sorted and every empty or zero member
+// left out (null, false, 0, "", an empty array, and an object empty once its own zero
+// members are gone), or raw itself when it does not decode. Array elements keep their
+// places.
+func canonicalJSON(raw json.RawMessage) string {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return string(raw)
+	}
+	b, err := json.Marshal(pruneZero(v))
+	if err != nil {
+		return string(raw)
+	}
+	return string(b)
+}
+
+// pruneZero drops the zero values canonicalJSON leaves out; nil means v is one.
+func pruneZero(v any) any {
+	switch t := v.(type) {
+	case nil, bool:
+		if t == nil || t == false {
+			return nil
+		}
+		return t
+	case string:
+		if t == "" {
+			return nil
+		}
+		return t
+	case json.Number:
+		if f, err := t.Float64(); err == nil && f == 0 {
+			return nil
+		}
+		return t
+	case []any:
+		// An element keeps its place, a zero one as null: only an empty array is left out.
+		if len(t) == 0 {
+			return nil
+		}
+		out := make([]any, len(t))
+		for n, e := range t {
+			out[n] = pruneZero(e)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			if p := pruneZero(e); p != nil {
+				out[k] = p
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return v
 }
 
 // recordBaseline lists the processes of a container no call has touched and keeps
@@ -891,7 +969,7 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	defer unlend()
 	// The steps start with the image's environment and the grant's socket; the runner
 	// itself starts with neither (dockerRunnerArgv).
-	plan := runnerwire.Plan{Steps: req.Steps, StepTimeout: timeout, Artifacts: req.Artifacts, HostSDK: hostSDKModule(req.Grant),
+	plan := runnerwire.Plan{Steps: req.Steps, Budget: timeout, Artifacts: req.Artifacts, HostSDK: hostSDKModule(req.Grant),
 		Env: append(slices.Clone(s.env), env...), ReportKey: key}
 	for _, f := range req.Files {
 		plan.Files = append(plan.Files, runnerwire.File(f))
@@ -1101,20 +1179,29 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 	if err != nil || state.host == "" {
 		return 0, nil // not preflighted yet: nothing is known to reap
 	}
+	// Quarantined containers first, whatever their age: each still holds the capacity
+	// of the call that made it, given back once its removal is confirmed.
+	confirmed, stillHeld := d.quarantine.Retry(func(name string) error { return removeContainer(ctx, state.host, name) })
+	if stillHeld != nil {
+		slog.Error("docker: quarantined containers still not confirmed gone; their capacity stays held", "error", stillHeld)
+	}
 	args, err := dockerArgs(state.host, "ps", "-a", "--filter", "label="+dockerExpiresLabel,
 		"--format", `{{.Names}}	{{.Label "`+dockerExpiresLabel+`"}}`)
 	if err != nil {
-		return 0, err
+		return confirmed, errors.Join(stillHeld, err)
 	}
 	out, err := dockerOutput(ctx, args...)
 	if err != nil {
-		return 0, fmt.Errorf("docker ps: %w", err)
+		return confirmed, errors.Join(stillHeld, fmt.Errorf("docker ps: %w", err))
 	}
 	held := map[string]bool{}
 	for _, l := range d.sessions.Open() {
 		held[l.Name] = true
 	}
 	for _, name := range d.pool.Load().members() {
+		held[name] = true
+	}
+	for _, name := range d.quarantine.Names() {
 		held[name] = true
 	}
 	reaped := 0
@@ -1127,10 +1214,12 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 		if err != nil || time.Since(time.Unix(unix, 0)) < dockerReapMargin {
 			continue
 		}
-		d.forceRemove(state.host, name)
-		reaped++
+		// Counted only once confirmed gone; one that is not is tried again next pass.
+		if removeContainer(ctx, state.host, name) == nil {
+			reaped++
+		}
 	}
-	return reaped, nil
+	return confirmed + reaped, stillHeld
 }
 
 // dockerSessionBroker is a session's broker socket: mounted at open, it serves the

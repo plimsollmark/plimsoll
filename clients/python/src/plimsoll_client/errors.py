@@ -57,7 +57,7 @@ class PlimsollError(Exception):
     (or when the client refused the request before sending it). ``http_status``
     is the HTTP status of the daemon's answer, ``None`` when there was none.
     ``unanswered`` is the record the daemon sends with a session call that may have
-    run but ended in an error (a version 3 record, in its proto3 JSON form): the
+    run but ended in an error (an unanswered record, in its proto3 JSON form): the
     Session checks it and keeps it in its chain, so the session goes on. ``record``
     is that record once the Session has checked it (Go: ``UnansweredCallError.Record``),
     else ``None``. ``answer_not_bound`` is true for an error built from an answer that

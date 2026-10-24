@@ -75,9 +75,10 @@ match with a regular expression:
 | Outcome | What happened | Retryable |
 |---|---|---|
 | `completed` | every step ran; read `Steps` for pass or fail | no, the answer is in the result |
-| `setup_failed` | preparing the project never got as far as your code | yes, nothing of yours ran |
+| `setup_failed` | preparing the project never got as far as your code: no step began | safe, nothing of yours ran; the same request fails the same way |
 | `timed_out` | the run exceeded its deadline | with care; side effects may exist |
 | `protocol_error` | the runner (the program inside the sandbox that runs the steps) and the host disagreed | no, this is a bug to report |
+| `runner_failed` | the runner (or, on the `e2b` and `dockercloud` providers, which run each step through the platform's own command API, the provider) failed after a step began, reading an artifact or fitting the result into its size budget; `Steps` holds the steps it could still report | with care; your code ran |
 
 For a grader (code that scores a run), treat `protocol_error` as a failed attempt.
 No authenticated step result is available, and the <dfn>*guest*</dfn> (the code in
@@ -85,10 +86,46 @@ the sandbox) may already have run. Do not accept the attempt, retry it automatic
 or turn it into a passing score.
 Report the protocol error to the operator separately.
 
+A grader should also not trust a check that runs as a later step of the same project.
+Every step shares one writable work directory, so an earlier step can rewrite the
+files a later one runs, the tests included, and on every provider. Run the check in a
+run of its own that the graded code never touched: the graded run's artifacts go in as
+that run's files.
+
 Read the isolation errors the same way. `ErrInsufficientIsolation` is marked
 `isolation`: **no code ran**. `ErrIsolationEvidenceMismatch` is raised by the client
 after a run returned weaker evidence than the floor required, so execution **may
 already have happened**; it is never marked and never a safe automatic retry.
+
+### A project behaves the same on every provider
+
+The `docker`, `openshell` and `agentsandbox` providers run a project's steps through a
+runner inside the sandbox; `e2b` and `dockercloud` run each step through the
+platform's own command API.
+Both paths keep one contract, and the suite in `sandbox/projecttest` holds every
+provider to it, sessions included:
+
+- Steps run in order in the work directory and stop at the first that fails.
+- A step the run's deadline ends is reported with exit 124 and makes the run
+  `timed_out`; the steps before it, and the artifacts the run wrote, still come back
+  (an exec-based provider reads them within five seconds past the deadline, the time
+  docker gives the runner).
+- Artifacts come back after a failed step too. Past the 8 MiB total, the first artifact
+  that does not fit and every one after it are dropped and `ArtifactsTruncated` is set.
+- A link among the artifacts is followed only if it stays inside the work directory.
+- Each step keeps the first 1 MiB of each output stream and flags the rest as cut; the
+  step runs on, and its exit code is its own. Only a step that writes past 32 MiB is
+  ended, reported as flooded: exit 153 (128 plus SIGXFSZ, the file-size signal) with
+  both streams flagged. Two differences remain on `dockercloud`, whose output limits
+  run inside the VM: the 32 MiB is counted for each stream separately rather than for
+  both together, and past it the step is stopped by its next write to that stream, so
+  a step that stops writing may still run to its end (it is reported as flooded all the
+  same). And on `docker`, `openshell` and `agentsandbox` the runner reports all of a
+  project's steps in one answer of bounded size, so across the whole project it keeps
+  about 2 MiB of step output in all; past that, later output is cut and flagged even
+  under a step's own 1 MiB.
+- A step that kills its own shell with a signal reports 128 plus the signal, as a
+  shell does.
 
 ### Output comes back exactly as the guest wrote it
 
@@ -103,11 +140,12 @@ kept has no note written into it. Nothing appends `...[truncated]` into a stream
 are about to parse, so a run that produces JSON still produces parseable JSON right up
 to the cut.
 
-Flooding is classified as what it is. A guest on <dfn>*E2B*</dfn> (a hosted service
-that runs each sandbox in its own small virtual machine) that pushes its output past
-the transfer budget, the cap on how much output comes back, is a **failed user run**
-(exit 153, both streams flagged truncated), not an infrastructure error, so it does
-not page anyone and it does not get retried as though the platform failed.
+Flooding is classified as what it is. A project step that pushes its output past the
+transfer budget, the 32 MiB a provider reads before it stops listening, is a **failed
+user run** (exit 153, both streams flagged truncated) on every provider, as is a snippet
+on `e2b` and `dockercloud`; it is not an infrastructure error, so it does not page
+anyone and it does not get retried as though the platform failed. A snippet on `docker`
+or `openshell` keeps its output to the cap and drops the rest without being ended.
 
 ## Why a snippet and a project are separate contracts
 

@@ -91,6 +91,7 @@ class Errors(unittest.TestCase):
             ("unimplemented", 4, UnsupportedError, "unsupported"),
             ("failed_precondition", 5, InsufficientIsolationError, "isolation"),
             ("resource_exhausted", 6, AtCapacityError, "capacity"),
+            ("resource_exhausted", 1, InvalidRequestError, "request"),
             ("failed_precondition", 7, SoftwareMismatchError, "environment"),
             ("failed_precondition", 4, DisabledError, "unsupported"),
             ("failed_precondition", 99, DisabledError, "unknown"),
@@ -127,6 +128,11 @@ class Errors(unittest.TestCase):
         self.assertIs(type(bound_error(499, answer("canceled", session_ended(2, "")))), PlimsollError)
         # An end a newer daemon has and this client does not is still an end.
         e = bound_error(400, answer("failed_precondition", not_dispatched(1), session_ended(99, "")))
+        assert isinstance(e, SessionEndedError)
+        self.assertEqual(e.reason, "unknown")
+        # So is an unspecified one (0): the detail itself says the session ended, never
+        # "open", as the Go and TypeScript clients read it (review B8, 2026-10-23).
+        e = bound_error(400, answer("failed_precondition", session_ended(0, "")))
         assert isinstance(e, SessionEndedError)
         self.assertEqual(e.reason, "unknown")
 

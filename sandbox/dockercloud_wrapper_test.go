@@ -17,7 +17,7 @@ import (
 // (dash or bash with coreutils, which the hosted CI runner also has) and busybox
 // (the alpine toolchain image, through the docker provider).
 
-func runWrapperOnHost(t *testing.T, limit, cap int, argv ...string) (stdout, stderr []byte, rc int, elapsed time.Duration) {
+func runWrapperOnHost(t *testing.T, limit, cap int, argv ...string) (stdout, stderr []byte, rc int, elapsed time.Duration, flooded bool) {
 	t.Helper()
 	args := append([]string{"-c", dcExecWrapper, "plimsoll-exec", strconv.Itoa(limit), strconv.Itoa(cap)}, argv...)
 	cmd := exec.Command("sh", args...)
@@ -34,7 +34,16 @@ func runWrapperOnHost(t *testing.T, limit, cap int, argv ...string) (stdout, std
 	default:
 		t.Fatalf("run wrapper: %v", err)
 	}
-	return out.Bytes(), errb.Bytes(), rc, elapsed
+	// The wrapper's last stderr line states the command's time inside the guest; it is
+	// stripped here as the host strips it, and must be there.
+	stderr, ran, measured, flooded := splitDCTrailer(errb.Bytes())
+	if !measured {
+		t.Fatalf("the wrapper wrote no trailer: stderr %q", errb.Bytes())
+	}
+	if ran < 0 || ran > elapsed+time.Second {
+		t.Fatalf("the trailer says the command ran %v; the wrapper took %v", ran, elapsed)
+	}
+	return out.Bytes(), stderr, rc, elapsed, flooded
 }
 
 func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {
@@ -46,25 +55,31 @@ func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {
 	}
 
 	t.Run("streams and exit status pass through unmarked", func(t *testing.T) {
-		out, errb, rc, _ := runWrapperOnHost(t, 5, 11, "sh", "-c", `printf 'out\000\377'; printf err >&2; exit 3`)
-		if string(out) != "out\x00\xff" || string(errb) != "err" || rc != 3 {
+		out, errb, rc, _, flooded := runWrapperOnHost(t, 5, 11, "sh", "-c", `printf 'out\000\377'; printf err >&2; exit 3`)
+		if string(out) != "out\x00\xff" || string(errb) != "err" || rc != 3 || flooded {
 			t.Fatalf("stdout=%q stderr=%q rc=%d", out, errb, rc)
 		}
 	})
-	t.Run("stdout flood is capped in the guest and fails the run", func(t *testing.T) {
-		out, errb, rc, _ := runWrapperOnHost(t, 5, 11, "yes")
-		if len(out) != 11 || len(errb) != 0 || rc == 0 {
-			t.Fatalf("len(stdout)=%d len(stderr)=%d rc=%d", len(out), len(errb), rc)
+	t.Run("output past the cap is dropped in the guest and the command runs on", func(t *testing.T) {
+		out, errb, rc, _, flooded := runWrapperOnHost(t, 5, 11, "sh", "-c", "yes x | head -c 2097152; printf done >&2; exit 7")
+		if len(out) != 11 || string(errb) != "done" || rc != 7 || flooded {
+			t.Fatalf("len(stdout)=%d stderr=%q rc=%d flooded=%v", len(out), errb, rc, flooded)
+		}
+	})
+	t.Run("stdout flood past the budget is capped in the guest and reported", func(t *testing.T) {
+		out, errb, rc, _, flooded := runWrapperOnHost(t, 5, 11, "yes")
+		if len(out) != 11 || len(errb) != 0 || rc == 0 || !flooded {
+			t.Fatalf("len(stdout)=%d len(stderr)=%d rc=%d flooded=%v", len(out), len(errb), rc, flooded)
 		}
 	})
 	t.Run("stderr flood is capped separately", func(t *testing.T) {
-		out, errb, rc, _ := runWrapperOnHost(t, 5, 11, "sh", "-c", "yes >&2")
-		if len(out) != 0 || len(errb) != 11 || rc == 0 {
-			t.Fatalf("len(stdout)=%d len(stderr)=%d rc=%d", len(out), len(errb), rc)
+		out, errb, rc, _, flooded := runWrapperOnHost(t, 5, 11, "sh", "-c", "yes >&2")
+		if len(out) != 0 || len(errb) != 11 || rc == 0 || !flooded {
+			t.Fatalf("len(stdout)=%d len(stderr)=%d rc=%d flooded=%v", len(out), len(errb), rc, flooded)
 		}
 	})
 	t.Run("time limit kills with 137", func(t *testing.T) {
-		_, _, rc, elapsed := runWrapperOnHost(t, 1, 11, "sleep", "30")
+		_, _, rc, elapsed, _ := runWrapperOnHost(t, 1, 11, "sleep", "30")
 		if rc != 137 || elapsed < time.Second || elapsed > 10*time.Second {
 			t.Fatalf("rc=%d elapsed=%v, want 137 after about 1s", rc, elapsed)
 		}
@@ -87,10 +102,16 @@ func TestDockerCloudExecWrapperUnderBusyboxDocker(t *testing.T) {
 	d := testDocker()
 	d.Seccomp = ""
 	requireProjectImage(t, d)
-	const script = `sh wrapper.sh 5 11 sh -c 'printf out; printf err >&2; exit 3' >o1 2>e1; echo "case1 rc=$? out=$(cat o1) err=$(cat e1)"
-sh wrapper.sh 5 11 yes >o2 2>e2; echo "case2 rc=$? outlen=$(wc -c <o2 | tr -d ' ')"
-sh wrapper.sh 5 11 sh -c 'yes >&2' >o3 2>e3; echo "case3 rc=$? errlen=$(wc -c <e3 | tr -d ' ')"
-sh wrapper.sh 1 11 sleep 30 >o4 2>e4; echo "case4 rc=$?"
+	// The wrapper's last stderr line is its trailer (dcTrailer), the time the command ran
+	// in centiseconds and the flood flag: case 1 reads the guest's line before it, case 3
+	// counts the guest's bytes without it (its line and the two newlines around it), case
+	// 4's time must reach the 1 s limit, case 2's endless output is a flood, and case 5's
+	// 2 MiB is dropped past the cap while the command runs on to its own exit.
+	const script = `sh wrapper.sh 5 11 sh -c 'printf out; printf err >&2; exit 3' >o1 2>e1; echo "case1 rc=$? out=$(cat o1) err=$(head -n1 e1)"
+sh wrapper.sh 5 11 yes >o2 2>e2; r=$?; t=$(tail -n1 e2); echo "case2 rc=$r outlen=$(wc -c <o2 | tr -d ' ') fl=${t##* }"
+sh wrapper.sh 5 11 sh -c 'yes >&2' >o3 2>e3; r=$?; t=$(tail -n1 e3); echo "case3 rc=$r errlen=$(( $(wc -c <e3) - ${#t} - 2 ))"
+sh wrapper.sh 1 11 sleep 30 >o4 2>e4; r=$?; set -- $(tail -n1 e4); echo "case4 rc=$r $1 cs=$2 fl=$3"
+sh wrapper.sh 5 11 sh -c 'yes x | head -c 2097152; echo done >&2; exit 7' >o5 2>e5; r=$?; t=$(tail -n1 e5); echo "case5 rc=$r outlen=$(wc -c <o5 | tr -d ' ') err=$(head -n1 e5) fl=${t##* }"
 `
 	res, err := d.RunProject(context.Background(), ProjectRequest{
 		Files:   []File{{Path: "wrapper.sh", Content: dcExecWrapper}, {Path: "cases.sh", Content: script}},
@@ -106,9 +127,10 @@ sh wrapper.sh 1 11 sleep 30 >o4 2>e4; echo "case4 rc=$?"
 	out := res.Steps[0].Stdout
 	for _, want := range []*regexp.Regexp{
 		regexp.MustCompile(`(?m)^case1 rc=3 out=out err=err$`),
-		regexp.MustCompile(`(?m)^case2 rc=[1-9][0-9]* outlen=11$`),
+		regexp.MustCompile(`(?m)^case2 rc=[1-9][0-9]* outlen=11 fl=1$`),
 		regexp.MustCompile(`(?m)^case3 rc=[1-9][0-9]* errlen=11$`),
-		regexp.MustCompile(`(?m)^case4 rc=137$`),
+		regexp.MustCompile(`(?m)^case4 rc=137 ` + dcTrailer + ` cs=(1[0-9][0-9]|[2-9][0-9][0-9]) fl=0$`),
+		regexp.MustCompile(`(?m)^case5 rc=7 outlen=11 err=done fl=0$`),
 	} {
 		if !want.MatchString(out) {
 			t.Errorf("busybox wrapper output does not match %s:\n%s\nstderr: %s", want, out, res.Steps[0].Stderr)
@@ -120,5 +142,12 @@ sh wrapper.sh 1 11 sleep 30 >o4 2>e4; echo "case4 rc=$?"
 	// 20 s is generous on a busy host and still rejects an unbounded sleep 30.
 	if res.Steps[0].Duration >= 20*time.Second {
 		t.Errorf("busybox wrapper step took %v, want under 20s", res.Steps[0].Duration)
+	}
+}
+
+// The wrapper's stream budget is the shared one, written out.
+func TestDockerCloudWrapperBudgetIsTheShared(t *testing.T) {
+	if n, err := strconv.Atoi(dcStreamBudget); err != nil || n != ProjectStepTransferBudget || exitOutputFlooded != 153 {
+		t.Fatalf("dcStreamBudget %q, exitOutputFlooded %d; want %d and 153", dcStreamBudget, exitOutputFlooded, ProjectStepTransferBudget)
 	}
 }

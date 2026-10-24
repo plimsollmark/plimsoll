@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -94,10 +95,21 @@ func errnoShaped(s string) bool {
 // interpRoot holds one directory per language: the control socket and the FIFOs.
 const interpRoot = "/tmp/.plimsoll-interp/"
 
-// command is how each language's interpreter starts.
+// command is how each language's interpreter starts. Package sandbox's LanguageSpecs
+// names the languages; a test there requires one entry here for each, and no other.
 var command = map[string][]string{
 	"javascript": {"node", "--expose-internals", "-e", kernelJS},
 	"python":     {"python3", "-I", "-c", kernelPy},
+}
+
+// LaunchLanguages are the languages a session can start an interpreter for, sorted.
+func LaunchLanguages() []string {
+	out := make([]string, 0, len(command))
+	for l := range command {
+		out = append(out, l)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // ExecResult is one command's outcome in the sandbox, as the provider's exec reports it.

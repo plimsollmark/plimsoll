@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"hash"
 	"math"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
@@ -27,20 +29,85 @@ import (
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
-// Version is the encoding version of an answered call's record, which this package
-// computes and checks.
-const Version = 2
+// Version is the encoding version of every record this package writes: every field,
+// every time. An unanswered session call's record is the same encoding with the result
+// digest empty and unanswered set. A live answer must carry it; stored evidence may carry
+// any published version.
+const Version = 4
 
-// UnansweredVersion is the encoding version of the record of a session call that may
-// have run but ended in an error: Version's fields, then unanswered after the empty
-// result digest. Answered records stay at Version, so a chain can hold both.
-const UnansweredVersion = 3
+// published holds every record version a release has written, frozen: the fields its
+// digest covers, in order, and what a record of it may state. Writers write Version only,
+// and every verifier of stored evidence reads them all, so a record signed under an older
+// release still checks without its release's binary (2026-10-23: the
+// no-backward-compatibility rule binds writers, not the verification of evidence already
+// signed). Version 4 removed this reading for a day, under that rule. A version leaves
+// this table only by a dated, announced decision. Each is pinned by what its own release
+// produced: record/testdata/published/ and attest/testdata/published/.
+var published = map[int]spec{
+	// v0.10.0 to v0.11.1: answered calls only, with no software admission and no check
+	// of the environment against the response.
+	1: {fields: []string{"request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
+		"started_unix_ms", "ended_unix_ms", "session", "sequence", "previous_sha256"}, answered: true},
+	// v0.12.0 to v0.22.0, answered calls.
+	2: {fields: []string{"request_sha256", "result_sha256", "provider", "isolation", "environment", "policy",
+		"software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
+		"previous_sha256"}, answered: true, evidence: true},
+	// v0.15.0 to v0.22.0, unanswered session calls only.
+	3: {fields: []string{"request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment",
+		"policy", "software_identity", "software_rule_id", "started_unix_ms", "ended_unix_ms", "session", "sequence",
+		"previous_sha256"}, unanswered: true, evidence: true},
+	// From v0.23.0: both kinds, and the instance.
+	4: {fields: []string{"request_sha256", "result_sha256", "unanswered", "provider", "isolation", "environment",
+		"policy", "software_identity", "software_rule_id", "instance", "started_unix_ms", "ended_unix_ms", "session",
+		"sequence", "previous_sha256"}, answered: true, unanswered: true, evidence: true},
+}
+
+// spec is one published record version.
+type spec struct {
+	fields     []string // the record digest's fields, in order
+	answered   bool     // may record an answered call
+	unanswered bool     // may record an unanswered session call
+	// evidence: the environment, the selected software and the admission rule are checked
+	// against the response and the request. Version 1 records named an environment but
+	// were never checked against the response's.
+	evidence bool
+}
+
+func (s spec) covers(field string) bool { return slices.Contains(s.fields, field) }
+
+// recordField is one field a record digest can cover: how it is encoded, and whether a
+// record states it (a field a version does not cover must be empty, or the record would
+// state evidence nothing signed).
+type recordField struct {
+	put func(*encoder, string, sandbox.RunRecord)
+	set func(sandbox.RunRecord) bool
+}
+
+var recordFields = map[string]recordField{
+	"request_sha256":    {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.RequestSHA256) }, func(r sandbox.RunRecord) bool { return r.RequestSHA256 != "" }},
+	"result_sha256":     {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.ResultSHA256) }, func(r sandbox.RunRecord) bool { return r.ResultSHA256 != "" }},
+	"unanswered":        {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Unanswered) }, func(r sandbox.RunRecord) bool { return r.Unanswered != "" }},
+	"provider":          {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Provider) }, func(r sandbox.RunRecord) bool { return r.Provider != "" }},
+	"isolation":         {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Isolation) }, func(r sandbox.RunRecord) bool { return r.Isolation != "" }},
+	"environment":       {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Environment) }, func(r sandbox.RunRecord) bool { return r.Environment != "" }},
+	"policy":            {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Policy) }, func(r sandbox.RunRecord) bool { return r.Policy != "" }},
+	"software_identity": {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.SoftwareIdentity) }, func(r sandbox.RunRecord) bool { return r.SoftwareIdentity != "" }},
+	"software_rule_id":  {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.SoftwareRuleID) }, func(r sandbox.RunRecord) bool { return r.SoftwareRuleID != "" }},
+	"instance":          {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Instance) }, func(r sandbox.RunRecord) bool { return r.Instance != "" }},
+	"started_unix_ms":   {func(e *encoder, n string, r sandbox.RunRecord) { e.int(n, r.Started.UnixMilli()) }, func(r sandbox.RunRecord) bool { return !r.Started.IsZero() }},
+	"ended_unix_ms":     {func(e *encoder, n string, r sandbox.RunRecord) { e.int(n, r.Ended.UnixMilli()) }, func(r sandbox.RunRecord) bool { return !r.Ended.IsZero() }},
+	"session":           {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.Session) }, func(r sandbox.RunRecord) bool { return r.Session != "" }},
+	"sequence":          {func(e *encoder, n string, r sandbox.RunRecord) { e.uint(n, r.Sequence) }, func(r sandbox.RunRecord) bool { return r.Sequence != 0 }},
+	"previous_sha256":   {func(e *encoder, n string, r sandbox.RunRecord) { e.str(n, r.PreviousSHA256) }, func(r sandbox.RunRecord) bool { return r.PreviousSHA256 != "" }},
+}
 
 // Each encoding opens with its domain string, so a digest of one kind can never
-// equal a digest of another, whatever the fields hold.
+// equal a digest of another, whatever the fields hold. A request sent under protocol 1
+// (v0.10.0 to v0.11.1, read for their records) has the first request encoding: no
+// software rule.
 const (
-	requestDomain   = "plimsoll.run-request.v1"
-	requestDomainV2 = "plimsoll.run-request.v2"
+	requestDomain   = "plimsoll.run-request.v2"
+	requestDomainV1 = "plimsoll.run-request.v1"
 	resultDomain    = "plimsoll.run-result.v1"
 )
 
@@ -127,15 +194,16 @@ func AsRunRequest(m *plimsollv1.SessionRunRequest) *plimsollv1.RunRequest {
 
 func requestDigest(protocol uint32, floor string, timeoutMs int32, rule *plimsollv1.SoftwareRule,
 	js *plimsollv1.JavaScriptRun, p *plimsollv1.ProjectRun, mod *plimsollv1.ModuleRun, cell *plimsollv1.CellRun) string {
+	first := protocol < 2
 	domain := requestDomain
-	if protocol >= 2 {
-		domain = requestDomainV2
+	if first {
+		domain = requestDomainV1
 	}
 	e := newEncoder(domain)
 	e.uint("protocol", uint64(protocol))
 	e.str("minimum_isolation", floor)
 	e.int("timeout_ms", int64(timeoutMs))
-	if protocol >= 2 {
+	if !first {
 		e.str("software_mode", rule.GetMode())
 		e.int("software_identities", int64(len(rule.GetIdentities())))
 		for _, id := range rule.GetIdentities() {
@@ -254,35 +322,90 @@ func ResultDigest(m *plimsollv1.RunResponse) string {
 	return e.sum()
 }
 
-// Digest is a record's own digest, over every field except SHA256 itself, in the
-// order of the wire message. The version is the domain's suffix (recordDomain), so a
-// record read under another version's encoding cannot keep its digest. The times
-// count whole milliseconds, as on the wire.
+// Digest is a record's own digest, over the fields its version covers (published),
+// every field but SHA256 for an unknown version. The version is the domain's suffix
+// (recordDomain), so a record that names another version cannot keep its digest. The
+// times count whole milliseconds, as on the wire.
 func Digest(r sandbox.RunRecord) string {
+	fields := published[Version].fields
+	if s, ok := published[r.Version]; ok {
+		fields = s.fields
+	}
 	e := newEncoder(recordDomain(r.Version))
-	e.str("request_sha256", r.RequestSHA256)
-	e.str("result_sha256", r.ResultSHA256)
-	if r.Version >= 3 {
-		e.str("unanswered", r.Unanswered)
+	for _, name := range fields {
+		recordFields[name].put(e, name, r)
 	}
-	e.str("provider", r.Provider)
-	e.str("isolation", r.Isolation)
-	e.str("environment", r.Environment)
-	e.str("policy", r.Policy)
-	if r.Version >= 2 {
-		e.str("software_identity", r.SoftwareIdentity)
-		e.str("software_rule_id", r.SoftwareRuleID)
-	}
-	e.int("started_unix_ms", r.Started.UnixMilli())
-	e.int("ended_unix_ms", r.Ended.UnixMilli())
-	e.str("session", r.Session)
-	e.uint("sequence", r.Sequence)
-	e.str("previous_sha256", r.PreviousSHA256)
 	return e.sum()
 }
 
-// recordDomain is the record digest's domain for an encoding version: version 1 is
-// "plimsoll.run-record.v1".
+// CheckStored verifies what a stored record states on its own: a version this package
+// reads (ErrVersion otherwise, which says to upgrade the verifier rather than calling the
+// record forged), a kind of call that version records, no field the version does not
+// cover, a typed instance reference, and its own digest. Checking it against the request
+// and response it came with is CheckExchange's.
+func CheckStored(r sandbox.RunRecord) error {
+	s, err := readable(r.Version, false)
+	if err != nil {
+		return err
+	}
+	return s.statesOnly(r)
+}
+
+// readable returns the spec of a record version a verifier accepts: every published
+// version for stored evidence, Version alone for a live answer.
+func readable(version int, live bool) (spec, error) {
+	s, ok := published[version]
+	switch {
+	case !ok:
+		return spec{}, fmt.Errorf("%w: version %d; this verifier reads versions %s, so a newer plimsoll wrote it: upgrade the verifier", ErrVersion, version, publishedList())
+	case live && version != Version:
+		return spec{}, fmt.Errorf("%w: the daemon answered with version %d; this client requires version %d of a live answer", ErrVersion, version, Version)
+	}
+	return s, nil
+}
+
+// statesOnly checks that r is a kind of call its version records, states no field the
+// version does not cover, names a typed instance, and matches its own digest.
+func (s spec) statesOnly(r sandbox.RunRecord) error {
+	switch unanswered := r.Unanswered != ""; {
+	case unanswered && !s.unanswered:
+		return fmt.Errorf("%w: a version %d record cannot record an unanswered call", ErrMismatch, r.Version)
+	case !unanswered && !s.answered:
+		return fmt.Errorf("%w: a version %d record records only an unanswered call", ErrMismatch, r.Version)
+	case unanswered == (r.ResultSHA256 != ""):
+		return fmt.Errorf("%w: a record states a result or, for an unanswered call, an error code, exactly one", ErrMismatch)
+	case unanswered && !unansweredCodes[r.Unanswered]:
+		return fmt.Errorf("%w: an unanswered call's record names %q, not a Connect code", ErrMismatch, r.Unanswered)
+	case !sandbox.ValidInstance(r.Instance):
+		return fmt.Errorf("%w: the record's instance %q is not a typed reference", ErrMismatch, r.Instance)
+	}
+	for name, f := range recordFields {
+		if !s.covers(name) && f.set(r) {
+			return fmt.Errorf("%w: a version %d record does not cover %s, so it cannot state one", ErrMismatch, r.Version, name)
+		}
+	}
+	if d := Digest(r); r.SHA256 != d {
+		return fmt.Errorf("%w: record digest %s, its fields digest to %s", ErrMismatch, r.SHA256, d)
+	}
+	return nil
+}
+
+// publishedList names the published versions, lowest first.
+func publishedList() string {
+	versions := make([]int, 0, len(published))
+	for v := range published {
+		versions = append(versions, v)
+	}
+	slices.Sort(versions)
+	parts := make([]string, len(versions))
+	for i, v := range versions {
+		parts[i] = strconv.Itoa(v)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// recordDomain is the record digest's domain for an encoding version: version 4 is
+// "plimsoll.run-record.v4".
 func recordDomain(version int) string {
 	return "plimsoll.run-record.v" + strconv.Itoa(version)
 }
@@ -312,6 +435,7 @@ func ToWire(r sandbox.RunRecord) *plimsollv1.RunRecord {
 		Sequence:         r.Sequence,
 		PreviousSha256:   r.PreviousSHA256,
 		Unanswered:       r.Unanswered,
+		Instance:         r.Instance,
 		RecordSha256:     r.SHA256,
 	}
 }
@@ -334,6 +458,7 @@ func FromWire(m *plimsollv1.RunRecord) sandbox.RunRecord {
 		Sequence:         m.GetSequence(),
 		PreviousSHA256:   m.GetPreviousSha256(),
 		Unanswered:       m.GetUnanswered(),
+		Instance:         m.GetInstance(),
 		SHA256:           m.GetRecordSha256(),
 	}
 }
@@ -345,7 +470,7 @@ var ErrMismatch = errors.New("record: the run record does not match the request 
 
 // Stamp completes r as the record of resp and returns it in wire form: the
 // version, the result's digest, the evidence resp carries (provider, tier, outer
-// environment and selected software identity) and the record's own digest. The
+// environment, selected software identity and instance) and the record's own digest. The
 // caller sets what only it knows: the request's digest (RunRequestDigest or
 // SessionRunRequestDigest), the software rule's ID, the policy, the start and end,
 // and a session call's place in its chain. Stamp reads resp and never changes it, so
@@ -358,24 +483,25 @@ func Stamp(r sandbox.RunRecord, resp *plimsollv1.RunResponse) *plimsollv1.RunRec
 	r.Isolation = resp.GetIsolation()
 	r.Environment = resp.GetEnvironment()
 	r.SoftwareIdentity = resp.GetSoftwareIdentity()
+	r.Instance = resp.GetInstance()
 	r.SHA256 = Digest(r)
 	return ToWire(r)
 }
 
 // StampUnanswered completes r as the record of a session call that may have run but
-// ended in the error whose Connect code is code: version 3, no result digest, and the
+// ended in the error whose Connect code is code: no result digest, the code, and the
 // record's own digest. The caller sets everything else, the evidence included, since
 // there is no response to read it from.
 func StampUnanswered(r sandbox.RunRecord, code string) *plimsollv1.RunRecord {
-	r.Version = UnansweredVersion
+	r.Version = Version
 	r.ResultSHA256 = ""
 	r.Unanswered = code
 	r.SHA256 = Digest(r)
 	return ToWire(r)
 }
 
-// unansweredCodes are the Connect codes a version 3 record may name: every code but
-// "ok", in Connect's spelling.
+// unansweredCodes are the Connect codes an unanswered call's record may name: every
+// code but "ok", in Connect's spelling.
 var unansweredCodes = map[string]bool{
 	"canceled": true, "unknown": true, "invalid_argument": true, "deadline_exceeded": true,
 	"not_found": true, "already_exists": true, "permission_denied": true, "resource_exhausted": true,
@@ -384,7 +510,7 @@ var unansweredCodes = map[string]bool{
 }
 
 // CheckUnanswered verifies the record an unanswered session call's error carries:
-// version 3, no result digest, a Connect code, the digest of the request the caller
+// the version, no result digest, a Connect code, the digest of the request the caller
 // sent, the record's own digest, and that it continues the chain the caller has seen
 // (as CheckSessionCall). The call may have run; the record says only that it is in
 // the chain.
@@ -393,7 +519,7 @@ func CheckUnanswered(req *plimsollv1.SessionRunRequest, m *plimsollv1.RunRecord,
 		return nil, ErrNoRecord
 	}
 	r := FromWire(m)
-	if err := checkUnanswered(SessionRunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r); err != nil {
+	if err := checkUnanswered(SessionRunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r, true); err != nil {
 		return nil, err
 	}
 	switch {
@@ -407,35 +533,43 @@ func CheckUnanswered(req *plimsollv1.SessionRunRequest, m *plimsollv1.RunRecord,
 
 // CheckUnansweredExchange verifies an unanswered call's record against the stored
 // request it came with (the call as a Run request, record.AsRunRequest), as
-// CheckExchange does for an answered call: everything but its place in the chain.
+// CheckExchange does for an answered call: everything but its place in the chain, under
+// any published version.
 func CheckUnansweredExchange(req *plimsollv1.RunRequest, r sandbox.RunRecord) error {
-	return checkUnanswered(RunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r)
+	return checkUnanswered(RunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), r, false)
 }
 
 // checkUnanswered is what an unanswered record states that a caller can recompute
 // from the request it sent, and that its evidence meets the request's floor and
-// software rule, as check requires of an answered record.
-func checkUnanswered(requestDigest, floor string, rule sandbox.SoftwareRule, r sandbox.RunRecord) error {
+// software rule, as check requires of an answered record. Live, the record must be the
+// current version; stored, any published version that records an unanswered call.
+func checkUnanswered(requestDigest, floor string, rule sandbox.SoftwareRule, r sandbox.RunRecord, live bool) error {
 	minimum, err := floorOf(floor)
 	if err != nil {
 		return err
 	}
-	switch {
-	case r.Version != UnansweredVersion:
-		return fmt.Errorf("%w: an unanswered call's record is version %d, not %d", ErrVersion, r.Version, UnansweredVersion)
-	case r.ResultSHA256 != "" || !unansweredCodes[r.Unanswered]:
+	s, err := readable(r.Version, live)
+	if err != nil {
+		return err
+	}
+	if r.Unanswered == "" {
 		return fmt.Errorf("%w: an unanswered call's record states a result or no error code", ErrMismatch)
+	}
+	if err := s.statesOnly(r); err != nil {
+		return err
+	}
+	switch {
 	case r.RequestSHA256 != requestDigest:
 		return fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
 	case r.SoftwareRuleID != rule.ID() || !rule.Allows(r.SoftwareIdentity):
 		return fmt.Errorf("%w: the record's software rule is not the request's, or its software is not in it", ErrMismatch)
-	case r.SHA256 != Digest(r):
-		return fmt.Errorf("%w: record digest %s, its fields digest to %s", ErrMismatch, r.SHA256, Digest(r))
 	}
 	return sandbox.CheckResultIsolation(sandbox.ParseIsolationClass(r.Isolation), minimum)
 }
 
-// ErrVersion means a record uses an encoding this package does not know.
+// ErrVersion means a record uses an encoding this package does not read: one a newer
+// plimsoll wrote, or, for a live answer, any but the current version. It is never a
+// statement that the record was forged.
 var ErrVersion = errors.New("record: unknown run record version")
 
 // ErrNoRecord means an answered run came back without its record. A daemon states
@@ -447,7 +581,7 @@ var ErrNoRecord = errors.New("record: the response carries no run record")
 // caller sent and the response it received, and returns it. A response with no
 // record is ErrNoRecord.
 func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	r, err := check(RunRequestDigest(req), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
+	r, err := check(RunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
 	if err != nil {
 		return nil, err
 	}
@@ -458,11 +592,11 @@ func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.R
 }
 
 // CheckExchange verifies a record against a stored exchange, single run or session
-// call alike: the digests, the evidence and the record's own digest. A session
-// call's place in its chain needs the chain around it, which CheckSessionCall
-// (live) and attest.VerifyBundle (stored) check.
+// call alike, under any published version: the digests, the evidence and the record's
+// own digest. A session call's place in its chain needs the chain around it, which
+// CheckSessionCall (live) and attest.VerifyBundle (stored) check.
 func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	return check(RunRequestDigest(req), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
+	return check(RunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, false)
 }
 
 // CheckSessionCall verifies a session call's record against the request sent and
@@ -472,7 +606,7 @@ func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*s
 // daemon executed a call this caller did not make: someone else holds the
 // session ID.
 func CheckSessionCall(req *plimsollv1.SessionRunRequest, resp *plimsollv1.RunResponse, fingerprint string, prevSeq uint64, prev string) (*sandbox.RunRecord, error) {
-	r, err := check(SessionRunRequestDigest(req), req.GetProtocol(), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp)
+	r, err := check(SessionRunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
 	if err != nil {
 		return nil, err
 	}
@@ -494,7 +628,9 @@ var ErrChain = errors.New("record: the session's chain of records is broken")
 // the request digest of what it sent, and that the evidence it states meets the
 // request's isolation floor and software rule. A record below the floor is refused
 // here, before anything signs or keeps it, as sandbox.ErrIsolationEvidenceMismatch.
-func check(requestDigest string, protocol uint32, floor string, rule sandbox.SoftwareRule, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
+// Live, the record must be the current version; stored, any published version that
+// records an answered call, checked by that version's rules.
+func check(requestDigest, floor string, rule sandbox.SoftwareRule, resp *plimsollv1.RunResponse, live bool) (*sandbox.RunRecord, error) {
 	if err := rule.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: invalid software rule: %v", ErrMismatch, err)
 	}
@@ -506,27 +642,29 @@ func check(requestDigest string, protocol uint32, floor string, rule sandbox.Sof
 		return nil, ErrNoRecord
 	}
 	r := FromWire(resp.GetRecord())
+	s, err := readable(r.Version, live)
+	if err != nil {
+		return nil, err
+	}
+	if r.Unanswered != "" {
+		return nil, fmt.Errorf("%w: an answered call's record states an unanswered code", ErrMismatch)
+	}
+	if err := s.statesOnly(r); err != nil {
+		return nil, err
+	}
 	switch {
-	case r.Version != 1 && r.Version != Version:
-		return nil, fmt.Errorf("%w: %d (this client knows 1 and %d)", ErrVersion, r.Version, Version)
-	case protocol >= 2 && r.Version != Version:
-		return nil, fmt.Errorf("%w: protocol %d requires record version %d", ErrVersion, protocol, Version)
-	case r.Version == 1 && (r.SoftwareIdentity != "" || r.SoftwareRuleID != ""):
-		return nil, fmt.Errorf("%w: version 1 cannot carry software admission fields", ErrMismatch)
-	case r.Unanswered != "":
-		return nil, fmt.Errorf("%w: an answered call's record states an unanswered code, which version %d does not cover", ErrMismatch, r.Version)
 	case r.RequestSHA256 != requestDigest:
 		return nil, fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
 	case r.ResultSHA256 != ResultDigest(resp):
 		return nil, fmt.Errorf("%w: result digest %s, the result received digests to %s", ErrMismatch, r.ResultSHA256, ResultDigest(resp))
 	case r.Provider != resp.GetSandbox() || r.Isolation != resp.GetIsolation():
 		return nil, fmt.Errorf("%w: the record names %s at %q, the response %s at %q", ErrMismatch, r.Provider, r.Isolation, resp.GetSandbox(), resp.GetIsolation())
-	case r.Version >= 2 && r.Environment != resp.GetEnvironment():
+	case s.evidence && r.Environment != resp.GetEnvironment():
 		return nil, fmt.Errorf("%w: record environment differs from response", ErrMismatch)
-	case r.Version >= 2 && (r.SoftwareIdentity != resp.GetSoftwareIdentity() || r.SoftwareRuleID != rule.ID() || !rule.Allows(r.SoftwareIdentity)):
+	case s.covers("instance") && r.Instance != resp.GetInstance():
+		return nil, fmt.Errorf("%w: the record's instance %q is not the response's", ErrMismatch, r.Instance)
+	case s.evidence && (r.SoftwareIdentity != resp.GetSoftwareIdentity() || r.SoftwareRuleID != rule.ID() || !rule.Allows(r.SoftwareIdentity)):
 		return nil, fmt.Errorf("%w: selected software or admission rule differs from the request and response", ErrMismatch)
-	case r.SHA256 != Digest(r):
-		return nil, fmt.Errorf("%w: record digest %s, its fields digest to %s", ErrMismatch, r.SHA256, Digest(r))
 	}
 	if err := sandbox.CheckResultIsolation(sandbox.ParseIsolationClass(r.Isolation), minimum); err != nil {
 		return nil, err

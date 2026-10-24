@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/client"
+	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -192,16 +193,27 @@ func (s *Server) closeSession(c *closing, sess *client.Session) closed {
 	return closed{err: err, receipts: state, reason: reason}
 }
 
-// deleteSession asks the daemon to delete sess, within retireBudget. A close whose
-// summary checked deleted the sandbox, even if its signed close could not be kept: that
-// leaves its receipts incomplete, not the sandbox alive.
+// deleteSession asks the daemon to delete sess, within retireBudget. A close the daemon
+// answered deleted the sandbox, even if its signed close could not be kept, or its count
+// of calls differs from the chain this server saw (normal after an answer was lost: the
+// call ran, the client never believed it): either leaves the receipts incomplete, not the
+// sandbox alive. Read as unconfirmed, the second leaked into a retried close and a
+// "deletion not confirmed" report for a sandbox already gone (review B6, 2026-10-23).
+// The receipts are failed here, since a session none of whose calls was stored has no
+// file whose missing close would say so.
 func (s *Server) deleteSession(sess *client.Session) error {
 	ctx, cancel := context.WithTimeout(context.Background(), retireBudget)
 	defer cancel()
-	if _, err := sess.Close(ctx); err != nil && !errors.Is(err, client.ErrNotRecorded) {
-		return err
+	_, err := sess.Close(ctx)
+	switch {
+	case err == nil, errors.Is(err, client.ErrNotRecorded):
+		return nil
+	case errors.Is(err, record.ErrChain):
+		s.cfg.Logger.Warn("a sandbox closed with calls this server did not see answered; its receipts end incomplete", "error", err)
+		s.receipts.unseen(sess.Fingerprint())
+		return nil
 	}
-	return nil
+	return err
 }
 
 // logClose reports a deletion the daemon did not confirm.

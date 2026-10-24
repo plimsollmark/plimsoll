@@ -21,7 +21,7 @@ func TestBrowserReceiptCheckerInNode(t *testing.T) {
 	// Go supplies additional vectors covering non-ASCII path order, arbitrary
 	// output bytes, flags, ordered software rules and both request domains.
 	var vectors []object
-	for _, protocol := range []uint32{1, 2, 3} {
+	for _, protocol := range []uint32{1, 2, 3, 4} {
 		q := &plimsollv1.RunRequest{Protocol: protocol, MinimumIsolation: "kernel", TimeoutMs: 30000,
 			Payload: &plimsollv1.RunRequest_Project{Project: &plimsollv1.ProjectRun{
 				Files: []*plimsollv1.ProjectFile{{Path: "😀.js", Content: "print('é')"}, {Path: "\ue000.js", Content: "zero\x00\n"}},
@@ -31,9 +31,15 @@ func TestBrowserReceiptCheckerInNode(t *testing.T) {
 		if protocol >= 2 {
 			q.SoftwareRule = &plimsollv1.SoftwareRule{Mode: "approved", Identities: []string{"b", "a"}}
 		}
+		// The current protocol's vector carries the newest outcome, so a checker whose
+		// outcome table lags the protocol fails here (review, 2026-10-24).
+		outcome := plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT
+		if protocol == 4 {
+			outcome = plimsollv1.ProjectOutcome_PROJECT_OUTCOME_RUNNER_FAILED
+		}
 		a := &plimsollv1.RunResponse{Sandbox: "docker", Isolation: "kernel", Environment: "index", SoftwareIdentity: "selected",
 			Result: &plimsollv1.RunResponse_Project{Project: &plimsollv1.ProjectResult{
-				Outcome: plimsollv1.ProjectOutcome_PROJECT_OUTCOME_TIMED_OUT, OutcomeDetail: "bounded", ArtifactsTruncated: true,
+				Outcome: outcome, OutcomeDetail: "bounded", ArtifactsTruncated: true,
 				Steps:     []*plimsollv1.StepResult{{Command: "first", ExitCode: -3, TimedOut: true, Stdout: []byte{0, 255, 254}, Stderr: []byte("é\n"), StdoutTruncated: true, StderrTruncated: true}},
 				Artifacts: []*plimsollv1.Artifact{{Path: "z", Content: []byte{128, 0}}},
 			}},

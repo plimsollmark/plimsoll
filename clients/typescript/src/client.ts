@@ -17,6 +17,7 @@ import {
   type DigestPayload,
   type RunRecord,
 } from "./record.ts";
+import { LANGUAGES, OUTCOME_NAMES, TIERS } from "./tables.gen.ts";
 import { errorFromWire, NOT_DISPATCHED_HEADER, PlimsollError, REQUEST_ID_HEADER, sessionEndFromWire, unboundSuccess, type SessionEnd } from "./errors.ts";
 import type {
   WireAdvice,
@@ -33,7 +34,7 @@ import type {
 } from "./wire.ts";
 
 /** The wire protocol number this client speaks (protocol.Number in Go). */
-export const PROTOCOL = 3;
+export const PROTOCOL = 4;
 
 const SERVICE = "plimsoll.v1.SandboxService";
 
@@ -42,13 +43,11 @@ const SERVICE = "plimsoll.v1.SandboxService";
 const MAX_RESPONSE_BYTES = 32 << 20;
 
 /** How strong the boundary is, weakest first. */
-export type Isolation = "none" | "process" | "container" | "kernel" | "vm";
-
-const TIERS: Isolation[] = ["none", "process", "container", "kernel", "vm"];
+export type Isolation = (typeof TIERS)[number];
 
 /** Whether a tier the daemon reported meets a floor. An unknown tier meets nothing. */
 export function meets(actual: string, floor: Isolation): boolean {
-  const a = TIERS.indexOf(actual as Isolation);
+  const a = (TIERS as readonly string[]).indexOf(actual);
   const f = TIERS.indexOf(floor);
   // A floor is process, container, kernel or vm; anything else is met by nothing.
   return a >= 0 && f >= 1 && a >= f;
@@ -68,7 +67,12 @@ export type ClientOptions = {
   javascriptGrantProfile?: string;
   /** Named server-side grant profile for projects. */
   projectGrantProfile?: string;
-  /** A fetch implementation; defaults to the global one. */
+  /**
+   * A fetch implementation; defaults to the global one. It must not retry a request: a
+   * retried call can run twice. A failure through a fetch given here is never marked
+   * not dispatched, since its error describes only the last attempt it made, and an
+   * earlier one may have delivered the code.
+   */
   fetch?: typeof fetch;
   /**
    * Bounds each HTTP exchange, sending and reading the answer, in milliseconds.
@@ -97,6 +101,8 @@ export type Evidence = {
   isolation: string;
   softwareIdentity: string;
   environment: string;
+  /** The sandbox instance that ran it, as a typed reference (`k8s-pod-uid:` and a pod's UID), or "" when the provider names none. */
+  instance: string;
   durationMs: number;
   /** The checked run record. */
   record: RunRecord;
@@ -138,7 +144,7 @@ export type ProjectRequest = {
   artifacts?: string[];
 };
 
-export type ProjectOutcome = "unspecified" | "completed" | "setup_failed" | "timed_out" | "protocol_error";
+export type ProjectOutcome = (typeof OUTCOME_NAMES)[number];
 
 export type StepResult = {
   command: string;
@@ -161,7 +167,7 @@ export type ProjectResult = Evidence & {
 };
 
 /** An interpreter language: a cell's, and one an environment states. */
-export type Language = "javascript" | "python";
+export type Language = (typeof LANGUAGES)[number];
 
 /**
  * Where one payload kind runs. languages are the interpreters the daemon's startup
@@ -338,6 +344,7 @@ function evidence(resp: WireRunResponse, record: RunRecord): Evidence {
     isolation: resp.isolation ?? "",
     softwareIdentity: resp.softwareIdentity ?? "",
     environment: resp.environment ?? "",
+    instance: resp.instance ?? "",
     durationMs: num(resp.durationMs),
     record,
   };
@@ -362,10 +369,9 @@ function javascriptResult(resp: WireRunResponse, record: RunRecord): JavaScriptR
 }
 
 function outcomeFromWire(v: string | number | undefined): ProjectOutcome {
-  const names: ProjectOutcome[] = ["unspecified", "completed", "setup_failed", "timed_out", "protocol_error"];
-  if (typeof v === "number") return names[v] ?? "unspecified";
+  if (typeof v === "number") return OUTCOME_NAMES[v] ?? "unspecified";
   const name = (v ?? "").replace(/^PROJECT_OUTCOME_/, "").toLowerCase();
-  return (names as string[]).includes(name) ? (name as ProjectOutcome) : "unspecified";
+  return (OUTCOME_NAMES as readonly string[]).includes(name) ? (name as ProjectOutcome) : "unspecified";
 }
 
 function projectResult(resp: WireRunResponse, record: RunRecord): ProjectResult {
@@ -464,6 +470,9 @@ export class PlimsollClient {
   private readonly base: string;
   private readonly token: string | undefined;
   private readonly fetchImpl: typeof fetch;
+  // Only Node's own fetch, which makes one attempt per POST, has errors that prove a
+  // request unsent.
+  private readonly ownFetch: boolean;
   private readonly requestTimeoutMs: number;
   /** @internal */ readonly jsGrant: string;
   /** @internal */ readonly projectGrant: string;
@@ -472,6 +481,7 @@ export class PlimsollClient {
     this.base = validateBaseUrl(opts.baseUrl, opts.insecureHttp ?? false);
     this.token = opts.token;
     this.fetchImpl = opts.fetch ?? fetch;
+    this.ownFetch = opts.fetch === undefined;
     const rt = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     if (typeof rt !== "number" || !(rt > 0) || rt > 2 ** 31 - 1) {
       throw new PlimsollError("invalid_argument", "plimsoll: requestTimeoutMs must be a positive number of milliseconds");
@@ -507,7 +517,7 @@ export class PlimsollClient {
       res = await this.fetchImpl(`${this.base}/${SERVICE}/${method}`, { method: "POST", headers, body: JSON.stringify(body), signal: both, redirect: "manual" });
     } catch (e) {
       throw cut(e) ?? new PlimsollError("unavailable", `plimsoll: ${(e as Error).message}`, {
-        cause: e, notDispatched: fetchDidNotSend(e) ? "environment" : undefined,
+        cause: e, notDispatched: this.ownFetch && fetchDidNotSend(e) ? "environment" : undefined,
       });
     }
     if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
@@ -660,7 +670,6 @@ export class PlimsollClient {
   private checked(env: WireEnvelope, payload: Payload, resp: WireRunResponse): { run: WireRunResponse; record: RunRecord } {
     const checked = checkRecord(
       requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: env.softwareRule, payload: digestPayload(payload) }),
-      env.protocol,
       env.softwareRule,
       resp,
     );
@@ -881,7 +890,7 @@ export class Session {
     if (!run) throw new PlimsollError("data_loss", "plimsoll: the session call's answer carries no run");
     const end = sessionEndFromWire(m.ended);
     if (end !== "open") this.#end = { reason: end, detail: m.endDetail ?? "" };
-    const checked = checkRecord(digest, env.protocol, rule, run);
+    const checked = checkRecord(digest, rule, run);
     if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: run });
     const r = checked.record;
     if (r.session !== this.fingerprint || r.sequence !== this.#calls + 1n || r.previousSha256 !== this.#last) {

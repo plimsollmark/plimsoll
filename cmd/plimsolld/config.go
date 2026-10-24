@@ -65,7 +65,7 @@ func loadLimiterConfig(getenv func(string) string, providerName string, perRunMe
 	if totalMB < 0 {
 		return limiterConfig{}, fmt.Errorf("SANDBOX_TOTAL_MEMORY_MB=%d must be non-negative", totalMB)
 	}
-	if totalMB > 0 && providerName != "e2b" && providerName != "dockercloud" {
+	if totalMB > 0 && !providers[providerName].remoteMemory {
 		perRun := perRunMemMB
 		if perRun <= 0 {
 			perRun = 256 // wasm and docker both default to 256 MiB per run
@@ -261,48 +261,12 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 		fail("hardened mode requires TLS on the non-loopback egress guard listener %q: set PLIMSOLL_TLS_CERT/PLIMSOLL_TLS_KEY or bind a loopback address behind a TLS-terminating proxy", f.GuardAddr)
 	}
 
-	// Immutable execution surface, per provider.
-	switch f.Provider {
-	case "docker":
-		pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
-		if err != nil {
-			violations = append(violations, err)
-		} else if !pinned {
-			fail("hardened mode requires SANDBOX_REQUIRE_PINNED_IMAGES=1 so every configured docker image is an immutable @sha256 digest (a mutable tag can be repushed under you)")
-		}
-		// The vm/kernel requirement above already forces runsc, whose user-space
-		// kernel does its own syscall interception (the host seccomp profile is
-		// deliberately not applied under runsc — see lockdownArgs). Only an operator
-		// explicitly signaling seccomp-off intent is rejected here.
-		if strings.TrimSpace(getenv("SANDBOX_DOCKER_SECCOMP")) == "unconfined" {
-			fail("hardened mode forbids SANDBOX_DOCKER_SECCOMP=unconfined")
-		}
-	case "dockercloud":
-		// The sandbox boots a raw OCI reference, so the same pinning rule as docker
-		// applies: a mutable tag could be repushed under a running deployment.
-		// A store image (SANDBOX_DOCKERCLOUD_STORE_IMAGE) always carries its digest,
-		// checked against every sandbox's booted digest, so it needs no flag.
-		pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
-		if err != nil {
-			violations = append(violations, err)
-		} else if !pinned && strings.TrimSpace(getenv("SANDBOX_DOCKERCLOUD_STORE_IMAGE")) == "" {
-			fail("hardened mode requires SANDBOX_REQUIRE_PINNED_IMAGES=1 so SANDBOX_DOCKERCLOUD_IMAGE is an immutable @sha256 digest")
-		}
-		// A pin is only evidence where the API reports the digest each sandbox
-		// booted; the REST API, the default, reports none.
-		if api := strings.TrimSpace(getenv("SANDBOX_DOCKERCLOUD_API")); api != "connect" {
-			fail("hardened mode requires SANDBOX_DOCKERCLOUD_API=connect, named rather than left to the default: the REST API does not report which image a sandbox booted, so the pinned image cannot be proven")
-		}
-	case "e2b":
-		// E2B offers no digest pinning; an explicit template (never the implicit
-		// "base" default) is the strongest surface selection available. The startup
-		// SmokeTest then proves that template behaves.
-		if strings.TrimSpace(getenv("E2B_TEMPLATE")) == "" {
-			fail("hardened mode requires an explicit E2B_TEMPLATE (the implicit \"base\" default is not a pinned execution surface)")
-		}
+	// Immutable execution surface, per provider (providerDescriptor).
+	desc := providers[f.Provider]
+	if desc.hardened != nil {
+		desc.hardened(getenv, fail, func(err error) { violations = append(violations, err) })
 	}
-	dp, daemonBuilt := daemonProviders[f.Provider]
-	if daemonBuilt && dp.pinnedImages {
+	if desc.pinnedImages {
 		pinned, err := sandbox.BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
 		if err != nil {
 			violations = append(violations, err)
@@ -314,15 +278,12 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	// Explicit budgets: provider defaults are development conveniences. A hardened
 	// deployment states its per-run envelope and (for on-host runners) the
 	// aggregate memory budget so capacity is a decision, not an accident.
-	required, ok := hardenedEnvelope[f.Provider]
-	switch {
-	case daemonBuilt:
-		required = dp.hardenedEnvelope
-		if dp.hardenedEnvelopeAt != nil && !f.IsolationPending {
-			required = append(slices.Clone(required), dp.hardenedEnvelopeAt(f.Isolation)...)
-		}
-	case !ok:
+	required := desc.hardenedEnvelope
+	if required == nil {
 		required = hardenedEnvelopeDefault
+	}
+	if desc.hardenedEnvelopeAt != nil && !f.IsolationPending {
+		required = append(slices.Clone(required), desc.hardenedEnvelopeAt(f.Isolation)...)
 	}
 	var missing, nonPositive []string
 	for _, key := range required {
@@ -381,7 +342,7 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 // sandbox.Build constructs: every dimension the provider enforces and none its
 // configuration rejects, since a policy demanding a variable Build refuses could
 // never be satisfied. A daemon-built provider brings its own (daemonProvider).
-var hardenedEnvelope = map[string][]string{
+var hardenedEnvelopeFor = map[string][]string{
 	// docker enforces the whole envelope, and its runners share this host, so the
 	// aggregate budget that clamps concurrency is required too.
 	"docker": {"SANDBOX_MEMORY_MB", "SANDBOX_CPUS", "SANDBOX_DISK_MB", "SANDBOX_PIDS", "SANDBOX_TOTAL_MEMORY_MB"},
@@ -505,8 +466,12 @@ func envIntWith(getenv func(string) string, key string, def int) (int, error) {
 // loadPaidConfig reads SANDBOX_PAID_SECONDS_PER_DAY and checks what needs no running
 // sandbox about a provider billed by the second (metered), so a misconfigured daemon
 // is refused before its smoke test creates a billed microVM: the allowance set for a
-// provider that does not bill (a setting that does nothing must not look applied),
-// and sessions on one that does, which nothing meters.
+// provider that does not bill (a setting that does nothing must not look applied), and
+// sessions on one that does with no idle timeout, which the service refuses at every
+// open since such a session would bill for its whole lifetime. Sessions on a metered
+// provider draw on the allowance (internal/rpc sessionMeter: the open, each call, the
+// idle time); this used to refuse them outright, from before they were metered
+// (review, 2026-10-23).
 func loadPaidConfig(getenv func(string) string, metered bool) (int64, error) {
 	paid, err := envIntWith(getenv, "SANDBOX_PAID_SECONDS_PER_DAY", 0)
 	if err != nil {
@@ -519,8 +484,10 @@ func loadPaidConfig(getenv func(string) string, metered bool) (int64, error) {
 		return 0, errors.New("SANDBOX_PAID_SECONDS_PER_DAY applies only to a provider billed by the second (e2b, dockercloud): leave it unset")
 	}
 	if metered {
-		if n, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS", 0); err == nil && n > 0 {
-			return 0, errors.New("SANDBOX_MAX_SESSIONS on a provider billed by the second: session calls draw on no allowance, so they are refused")
+		n, err := envIntWith(getenv, "SANDBOX_MAX_SESSIONS", 0)
+		idle, ierr := envDurationWith(getenv, "SANDBOX_SESSION_IDLE", 5*time.Minute)
+		if err == nil && ierr == nil && n > 0 && idle == 0 {
+			return 0, errors.New("SANDBOX_SESSION_IDLE=0 with sessions on a provider billed by the second: a session that never suspends bills for its whole lifetime, so every open would be refused; set an idle timeout")
 		}
 	}
 	return int64(paid), nil

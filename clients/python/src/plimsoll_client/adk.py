@@ -257,11 +257,13 @@ class PlimsollCodeExecutorGuard(BasePlugin):
 
     @staticmethod
     def _check(agent: Any, run_config: Any) -> None:
-        if (run_config is not None and run_config.support_cfc
-                and agent.parent_agent is None
-                and isinstance(getattr(agent, "code_executor", None), PlimsollCodeExecutor)):
+        # Refused wherever plimsoll executes in the tree, not only at the root: ADK 2.11
+        # replaces only the root agent's executor, but that is a private condition
+        # (_resolve_code_executor) a later 2.x may widen, and a widened one would run the
+        # model's code with no floor and no record while this guard still passed.
+        if run_config is not None and run_config.support_cfc and _uses_plimsoll(agent):
             raise UnsupportedError(
-                "PlimsollCodeExecutor refuses support_cfc=True: ADK replaces the root "
+                "PlimsollCodeExecutor refuses support_cfc=True: ADK replaces an agent's "
                 "executor with Gemini's built-in code execution, bypassing plimsoll's "
                 "isolation floor and checked run records. Set support_cfc=False.",
                 not_dispatched="unsupported",

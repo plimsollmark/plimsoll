@@ -986,14 +986,14 @@ func TestDockerContainerGoneByExactName(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.forceRemove(state.host, name) })
-	if containerGone(state.host, name) {
+	if containerGone(context.Background(), state.host, name) {
 		t.Fatal("a running container reads as gone")
 	}
-	if !containerGone(state.host, name[:len(name)-1]) {
+	if !containerGone(context.Background(), state.host, name[:len(name)-1]) {
 		t.Fatal("a name that is only a prefix of a live container's reads as present")
 	}
 	d.forceRemove(state.host, name)
-	if !containerGone(state.host, name) {
+	if !containerGone(context.Background(), state.host, name) {
 		t.Fatal("a removed container reads as present")
 	}
 }

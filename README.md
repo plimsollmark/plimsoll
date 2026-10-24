@@ -1,106 +1,199 @@
 # plimsoll
 
-**plimsoll runs untrusted code, such as code an AI agent wrote, inside a sandbox, and
-every result says how strong that sandbox was. A request can demand a minimum strength;
-if the sandbox is weaker, nothing runs.**
+**Run agent-written code across sandbox [providers](docs/trainers/glossary.html#provider), control which APIs it can call,
+and check a record of what ran.**
 
 [![audit](https://github.com/plimsollmark/plimsoll/actions/workflows/audit.yml/badge.svg)](https://github.com/plimsollmark/plimsoll/actions/workflows/audit.yml)
 [![gvisor](https://github.com/plimsollmark/plimsoll/actions/workflows/gvisor.yml/badge.svg)](https://github.com/plimsollmark/plimsoll/actions/workflows/gvisor.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/plimsollmark/plimsoll.svg)](https://pkg.go.dev/github.com/plimsollmark/plimsoll)
-[![Go version](https://img.shields.io/github/go-mod/go-version/plimsollmark/plimsoll)](go.mod)
 [![release](https://img.shields.io/github/v/release/plimsollmark/plimsoll)](https://github.com/plimsollmark/plimsoll/releases)
 [![license](https://img.shields.io/github/license/plimsollmark/plimsoll)](LICENSE)
 
-The name comes from the <dfn>*Plimsoll line*</dfn>, the load limit painted on the outside
-of a ship's hull where anyone can check it. plimsoll does the same for the
-<dfn>*isolation tier*</dfn>: how strong the wall around a run is, stated as one of four
-levels, weakest first: `process`, `container`, `kernel`, `vm`. The tier is a value on every
-result, not a sentence in a datasheet. A request can set a <dfn>*floor*</dfn>, the weakest
-tier it will accept, and the official Go client checks the tier again when the result
-comes back.
+[Run the quickstart](#run-something-locally) · [See what it does](#what-you-can-do) ·
+[Agent connections](#connect-an-agent) · [Choose a provider](#choose-a-provider)
 
-The same machinery lets plimsoll run an exam on code an agent wrote, not only contain
-it. A trial runner built into the simulation image runs the agent's program against
-scenarios that program cannot read: each one reaches the runner in a file deleted before
-the program starts. Every run returns SHA-256 hashes of the request as sent and the
-result as returned, which the official clients recompute ([how](docs/run-records.md)). A
-separate program outside the daemon, [`plimsoll-attest`](cmd/plimsoll-attest/), signs
-the checked results, refuses a chain of calls with one missing, and replays a run. The
-exam itself (the simulated system, the scenarios, the pass mark) stays yours: plimsoll
-supplies the boundary and the evidence.
+Use one interface for disposable runs and persistent workspaces. Require a minimum
+<dfn>*isolation tier*</dfn>, how strong the wall around a run must be, on each request.
+Keep upstream API credentials outside <dfn>*guest*</dfn> code, the code running inside
+the sandbox, and check the service's account of the input and result. Sign records separately
+when you need saved evidence. An API is a service's callable interface, such as
+an endpoint that places an order or queries a database.
 
-## See one real run
+<p align="center">
+  <a href="docs/example-programs.md"><img src="docs/examples/fanout/diagram.png" width="460" alt="One Mandelbrot picture split into tiles, calculated through nine sandbox configurations, then assembled again."></a>
+</p>
 
-An AI agent wrote a <dfn>*controller*</dfn>: a program that reads a system's state at
-every <dfn>*tick*</dfn> (here, one 10 ms step of the simulation) and decides how to push it. plimsoll
-ran it against a simulated <dfn>*cart-pole*</dfn>, a cart on a rail with a pole hinged on
-top, which the controller keeps upright by pushing the cart left and right. The simulator
-is compiled to <dfn>*WebAssembly*</dfn>, a portable bytecode that runs inside a host program,
-and built into the sandbox image. The controller was the only file the caller sent, through
-the ordinary project API, and it ran at the `container` tier.
+**One job, every sandbox.** A Mandelbrot picture is a fractal, an image made by
+repeatedly applying a small formula. The example splits it into
+tiles and sends pieces to sandboxes working at once. That is <dfn>*fan-out*</dfn>; assembling
+the results is *fan-in*. Each tile runs twice so the example can compare answers
+across the nine configurations shown.
+[INTERNAL · example guide and reproduction commands →](docs/example-programs.md).
 
-[![The physics oracle: a cart with a pole balanced on it by an agent-written controller, beside the SHA-256 fingerprint of each run's trajectory](docs/examples/oracle/hero.png)](https://plimsollmark.github.io/plimsoll/examples/oracle/index.html)
+## Run something locally
 
-The cart-pole is the standard teaching problem in control engineering. The runner, a
-program built into the image that runs the controller against the simulator, records
-the run's <dfn>*trajectory*</dfn>, every state at every tick, and hashes it into a
-<dfn>*fingerprint*</dfn>: a SHA-256 hash, so equal fingerprints mean identical numbers. Run
-the accepted controller twice and the two fingerprints match. The agent's first draft had
-two gains (multipliers in its formula) with the wrong sign: it drops the pole at 5.96
-seconds, and its fingerprint differs.
+With Go installed:
 
-[![Pole angle and cart position over twenty seconds, for the accepted controller and for the draft that fell](docs/examples/oracle/chart.png)](https://plimsollmark.github.io/plimsoll/examples/oracle/index.html)
-
-**[Open the live run report ↗](https://plimsollmark.github.io/plimsoll/examples/oracle/index.html)**
-to replay both runs in the browser, read the controller the agent wrote, and see what the
-page deliberately does not claim. One execution of the example makes three sandbox runs: the accepted
-controller twice and the draft once. Reproduce them with
-`make docker-images && go run ./examples/oracle`.
-
-## The two things it does
-
-**It reports the wall.** Every result states the isolation tier the run actually got.
-Every request can set a floor, and a request whose floor the daemon cannot meet is refused
-before any code runs: `ErrInsufficientIsolation` means nothing ran.
-
-```go
-res, err := provider.Sandbox.RunJavaScript(ctx, sandbox.Request{
-    Code:             "console.log(6 * 7)",
-    MinimumIsolation: sandbox.IsolationVM, // ErrInsufficientIsolation means nothing ran
-})
-// res.Isolation reports the boundary that actually ran.
+```sh
+git clone https://github.com/plimsollmark/plimsoll
+cd plimsoll
+SANDBOX_PROVIDER=wasm go run ./examples/minimal
 ```
 
-Every refusal that ran nothing is marked as one, with a reason (`request`, `permission`,
-`protocol`, `unsupported`, `isolation`, `environment`, `capacity`). `sandbox.NotDispatchedReason(err)`
-reads the mark, whether the <dfn>*provider*</dfn> (the backend that runs the code) is in
-your own process or behind the daemon. An error without the mark may have come after the
-code started, so it is never safe to retry automatically. A mark counts only on an answer
-that carries the client's request ID back, so a proxy that serves one request's answer
-for another cannot make a call that ran read "nothing ran"
-([what comes back, and what it means](docs/run-results.md#did-anything-run-the-error-says-so)).
+Cloning and fetching the <dfn>*pinned*</dfn> Go toolchain, fixed to one exact version, and
+dependencies use the network.
+The example's execution needs no daemon, Docker, credentials or outbound network.
+Among the output, look for:
 
-The tier is evidence the daemon collected: its configuration and its own startup checks.
-It is not <dfn>*attestation*</dfn>, cryptographic proof from the hardware of what software
-is running, and no provider here offers that.
-[docs/isolation-tiers.md](docs/isolation-tiers.md) lists what each tier rests on.
+```text
+provider   wasm
+isolation  process
+exit code  0
+stdout     {"Engineering":59000000,"Sales":20300000,"Operations":9800000}
+```
 
-**It lets agent-written code call your API without ever holding your credential, your
-API's address, or open network access.** A <dfn>*grant*</dfn> gives one run permission to
-call listed routes of one API. The code calls through a small client plimsoll puts in the
-sandbox, and the <dfn>*broker*</dfn>, the part of plimsoll outside the sandbox that makes
-the real call, checks the caller and the exact route, then attaches the credential itself.
-The credential is <dfn>*minted*</dfn> per run: plimsoll asks for it once per run, so it can
-be a fresh short-lived token, and it never enters the sandbox. Code that skips the client
-and calls out by hand gets no further, because the broker, not the client, enforces the
-rules. See [docs/capability-grants.md](docs/capability-grants.md).
+**This is a development example.** `wasm` runs <dfn>*QuickJS*</dfn>, a small JavaScript
+engine, in <dfn>*WebAssembly*</dfn>, a portable bytecode format, inside the calling process.
+Its `process` tier is not an operating-system boundary; an engine <dfn>*escape*</dfn>, a
+bug that lets code act outside its sandbox, reaches that process. For hostile
+production code, use a verified `kernel` provider with a separate user-space kernel,
+or a `vm` provider with its own virtual machine.
 
-## Use it from an agent framework
+The example explicitly selects a provider. The library and `plimsolld`, the
+Plimsoll server, default to **Disabled**, which runs nothing.
+[INTERNAL · getting started →](docs/getting-started.md) covers a running server,
+caller credentials, isolation requirements and switching to <dfn>*gVisor*</dfn>, a separate
+user-space kernel, without changing the client.
 
-These agent frameworks can hand their model's code to plimsoll through a <dfn>*tool*</dfn> (one named action an AI
-application offers its model) or code executor of their own (<dfn>*Trigger.dev*</dfn>, one of them, is a hosted TypeScript job
-runner). Each row names what to install, the guide, and a page that replays recorded calls
-from that framework's tool to a sandbox and back, refusals included.
+## What you can do
+
+A <dfn>*provider*</dfn> is the backend that executes code. A <dfn>*run record*</dfn> is the server's
+account of the submitted input, returned result and execution environment, bound
+with content hashes, <dfn>*fingerprints*</dfn> of those bytes. The official clients recompute
+the hashes before accepting an answer.
+
+| Job | What Plimsoll supplies | Go deeper |
+|---|---|---|
+| Run code | JavaScript snippets, projects containing files and ordered build/test/run steps, and compiled simulation modules on Docker. | [INTERNAL · payloads and examples →](docs/example-programs.md) |
+| Keep a workspace | <dfn>*Sessions*</dfn> keep one sandbox for many calls and retain its files between them. Supported Python and JavaScript interpreters retain variables too; warm pools keep sandboxes ready to claim. | [INTERNAL · sessions and pools →](docs/sessions.md) |
+| Limit API access | A per-run <dfn>*grant*</dfn> permits listed routes through a <dfn>*broker*</dfn>, a proxy outside the sandbox. The broker attaches the upstream credential; guest code never holds it. Generate routes, an injected client and the description of a <dfn>*tool*</dfn>, a named action an agent can call, from one OpenAPI document, a machine-readable API specification. | [INTERNAL · capability grants →](docs/capability-grants.md) |
+| Choose where code runs | Require an isolation tier on each request. A placement library selects among servers and retries elsewhere only on a request-bound refusal that says execution was not <dfn>*dispatched*</dfn>, never handed to the provider to run. | [INTERNAL · placement and retries →](docs/placement.md) |
+| Check, sign and replay | Checked run records, linked session records, signed bundles and separately signed statements. The signing tool runs outside the server; the server holds no <dfn>*signing key*</dfn>, the private key that makes signatures. | [INTERNAL · records and signing →](docs/run-records.md) |
+| Find wasted API calls | The efficiency advisor reports repeated or avoidable calls using route templates, counts and timings. It runs after execution, calls no model and never changes the result. | [INTERNAL · efficiency advisor →](docs/efficiency-advisor.md) |
+| Operate the service | Caller authentication, per-caller limits and budgets, audit logs and metrics. <dfn>*Hardened mode*</dfn>, a startup setting, refuses startup unless its required safeguards are configured. | [INTERNAL · hardened mode →](docs/hardened-mode.md) |
+
+Payload, session and grant support vary by provider. The server's `Describe` call
+reports what its configured backend supports.
+
+### More evidence workflows
+
+A signed <dfn>*receipt*</dfn> is like a stamped delivery slip: it identifies the contents and
+what the signer said about them. It does not independently repeat the inspection.
+
+- **Match a run to its sandbox.** Record version 4 includes sandbox instance
+  identity; Kubernetes supplies the pod's unique ID, so an outside observation log
+  can be joined to the run. New live calls use protocol 4. Upgrade server and
+  clients together; stored-record verifiers also read published versions 1 through 4.
+- **Check test results against the code revision they tested.** The pull-request
+  recipe produces signed <dfn>*in-toto*</dfn> statements, a standard layout for signed claims;
+  JUnit test reports; and Cobertura coverage reports showing which code the tests
+  exercised. Its challenge includes an
+  honest receipt and deliberately wrong evidence the checker must reject.
+  [INTERNAL · test receipt and challenge →](examples/pr-receipt/README.md).
+- **Check timestamps and signing roles offline.** Supply trusted keys, expected
+  artifact hashes and timestamp roots separately from the receipt. The generic
+  checker verifies the signed claims and outside timestamps without a network call.
+  [INTERNAL · offline receipt verification →](docs/receipt-verification.md).
+- **Collect a coding session's execution records.** Hooks label calls so records
+  can be grouped and checked. This covers labelled Plimsoll calls, not commands an
+  agent runs elsewhere or proof of who originated them.
+  [INTERNAL · coding-session recipe →](examples/agent-session/README.md).
+
+Also included is an **experimental dependency-log reader** for gVisor's host-side
+system-call logs. It has explicit observation gaps. The signed dependency-behaviour
+receipt remains a separate unfinished step.
+[INTERNAL · reader, fixtures and coverage limits →](examples/dependency-receipt/README.md).
+
+## Choose a provider
+
+Each `plimsolld` serves one provider. Clients can select among several servers
+through the placement library. Tiers describe the boundary around a run, weakest
+first: `process`, `container`, `kernel`, `vm`.
+
+| Provider setting | Boundary and reported tier | Where it fits |
+|---|---|---|
+| `wasm` | QuickJS inside the server: `process`. Snippets only. | Fast local development; no operating-system isolation. |
+| `docker` | Default Docker runtime: `container`. Verified gVisor runtime (`runsc`): `kernel`. | Runs and persistent workspaces on your infrastructure. [INTERNAL · gVisor setup →](docs/gvisor.md) |
+| `e2b` | <dfn>*E2B*</dfn>, a hosted service, runs each sandbox in a <dfn>*microVM*</dfn>, a small virtual machine, under <dfn>*Firecracker*</dfn>, the open-source monitor AWS built for them: `vm`. | Hosted runs and sessions, billed while active. [INTERNAL · E2B setup →](e2b/README.md) |
+| `dockercloud` | <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted service, one microVM per run: `vm`. | Hosted runs. The default <dfn>*Connect*</dfn> API, an RPC protocol over ordinary HTTP, supports grants and hardened mode; the REST API has narrower support. [INTERNAL · API differences and setup →](docs/dockercloud.md) |
+| `openshell` | <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, through its gateway: `container`. | Existing OpenShell deployments; runs and sessions. [INTERNAL · OpenShell setup →](docs/openshell.md) |
+| `agentsandbox` | Kubernetes pod from a warm pool: `vm` with supported <dfn>*Kata*</dfn> runtime classes (a small virtual machine per pod), `kernel` with gVisor, `container` with <dfn>*runc*</dfn>, Docker's default, which shares the host kernel. Other classes are refused. | Deployments of <dfn>*agent-sandbox*</dfn>, the Kubernetes component that lends ready sandbox pods; the tier is read from the pod's runtime class. [INTERNAL · Kubernetes setup →](docs/agentsandbox.md) |
+| Unset | Disabled: no code runs. | <dfn>*Fail-closed*</dfn> server and factory default: with nothing set, nothing runs. |
+
+**A tier is configuration and provider evidence plus startup checks, not hardware
+<dfn>*attestation*</dfn>**, cryptographic proof of the running system. Request a minimum tier;
+a weaker provider refuses before dispatch. A plain container is not a separate
+kernel, and WebAssembly here is not a VM boundary.
+[INTERNAL · isolation evidence and limits →](docs/isolation-tiers.md).
+
+## Real runs you can inspect
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/example-programs.md"><img src="docs/examples/fanout/picture.png" width="200" height="200" alt="The completed Mandelbrot image assembled from tiles calculated across sandboxes."></a><br>
+      <strong>One image, parallel jobs</strong><br>
+      Tiles go to nine sandbox configurations at once, and the matching answers are checked.<br>
+      <a href="docs/example-programs.md">INTERNAL · fan-out source and reproduction guide →</a>
+    </td>
+    <td width="50%" valign="top">
+      <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/index.html"><img src="docs/examples/sessions/overview.svg" width="400" alt="Five session calls linked by their run-record fingerprints."></a><br>
+      <strong>One workspace, several calls</strong><br>
+      A failing test, an in-place fix and a passing test, with files kept and records linked.<br>
+      <a href="https://plimsollmark.github.io/plimsoll/examples/sessions/index.html">INTERNAL · rendered session report →</a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html"><img src="docs/examples/adapter/overview.svg" width="400" alt="Agent-written adapter code calls the vendor API through a broker outside its sandbox."></a><br>
+      <strong>API access without the credential</strong><br>
+      An agent-written adapter reaches only approved routes. A separate checker catches duplicate orders.<br>
+      <a href="https://plimsollmark.github.io/plimsoll/examples/adapter/index.html">INTERNAL · rendered adapter report →</a>
+    </td>
+    <td width="50%" valign="top">
+      <a href="https://plimsollmark.github.io/plimsoll/examples/sbom/index.html"><img src="docs/examples/sbom/overview.svg" width="400" alt="An execution record is checked, signed and attached to a software bill of materials."></a><br>
+      <strong>A checked run, a portable receipt</strong><br>
+      Execution evidence travels in CycloneDX, a standard software parts-list format.<br>
+      <a href="https://plimsollmark.github.io/plimsoll/examples/sbom/index.html">INTERNAL · rendered receipt report →</a>
+    </td>
+  </tr>
+</table>
+
+The simulation examples remain available too: an agent-written program balancing a
+pole on a moving cart, <dfn>*controllers*</dfn> (programs that steer a simulated system) compiled to WebAssembly, and a fixed batch of
+hand-authored controllers compared across providers. The fixed batch is not model
+training. Recorded timings describe those runs, not controlled provider benchmarks.
+[INTERNAL · all examples and reproduction commands →](docs/example-programs.md).
+
+## Connect an agent
+
+Use the clients directly, add a framework tool, or connect through **<dfn>*MCP*</dfn> (Model
+Context Protocol)**, the standard interface through which an agent calls tools.
+SDK means software development kit; ADK means Google's Agent Development Kit.
+
+| Connection | Start here |
+|---|---|
+| Go package or remote client | [INTERNAL · embedding and server quickstart →](docs/getting-started.md) |
+| Python client | [INTERNAL · install and use →](clients/python/README.md) |
+| TypeScript client | [INTERNAL · install and use →](clients/typescript/README.md) |
+| MCP for coding agents | [INTERNAL · build and configure the MCP server →](clients/mcp/README.md#setup). Includes the Reflection Mirror connection recipe. |
+| Python shell-and-files workspace | [INTERNAL · workspace interface →](clients/python/README.md#agent-workspace) |
+| Claude Managed Agents | [INTERNAL · self-hosted worker adapter →](clients/python/README.md#claude-managed-agents-self-hosted-worker) |
+| OpenAI Agents SDK | [INTERNAL · sandbox provider adapter →](clients/python/README.md#openai-agents-sdk-sandbox-provider) |
+
+These framework adapters give an agent a code-execution tool or executor. The guides
+explain provider requirements and whether files and interpreter state persist.
+<dfn>*Trigger.dev*</dfn>, one of them, is a hosted job runner for TypeScript.
 
 <!-- integrations table: generated from the integration pages' data; edit that, not these rows -->
 | Framework | Package or extra | Guide | See a run |
@@ -113,227 +206,49 @@ from that framework's tool to a sandbox and back, refusals included.
 | Mastra | `@plimsollmark/client/mastra` | [TypeScript client guide, Mastra (INTERNAL · documentation →)](clients/typescript/README.md#mastra) | [Mastra page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/integrations/mastra/index.html) |
 <!-- end of the integrations table -->
 
-## Give a Trigger.dev agent a code tool
+For a complete Trigger.dev chat task, use the
+[EXTERNAL · deployable starter repo ↗](https://github.com/plimsollmark/plimsoll-trigger-starter).
+It includes a check that two <dfn>*cells*</dfn>, pieces of code run in one kept
+interpreter, share it through a real server, without making a model call.
 
-The [TypeScript add-on](clients/typescript/README.md#triggerdev) gives an
-`executeCode` tool to a chat agent on Trigger.dev. On a daemon with a <dfn>*session*</dfn>, one sandbox kept
-for several calls, each call is a <dfn>*cell*</dfn>, code run inside the
-interpreter kept for that conversation:
-variables and files can survive the next call. Each tool result says whether
-they can survive, whether this call started fresh, the isolation tier it ran
-behind, and the SHA-256 of the <dfn>*run record*</dfn>, a statement of what was
-sent and returned that the client checked before returning. The caller sets a
-minimum tier, so a weaker provider refuses before running code.
+## Limits and project status
 
-[See the feature and deployment guide](docs/trigger-dev.md) for the exact
-guarantees and production floor. The
-[deployable Trigger.dev starter](https://github.com/plimsollmark/plimsoll-trigger-starter)
-has a chat agent and a task that proves two cells share one interpreter through
-a real daemon, without making an AI model call.
+Plimsoll is **pre-1.0**. Keep the server and clients on matching protocol versions.
+The daemon checks provider configuration and runs a startup smoke test; that does
+not make the operator's machine independently trustworthy. Signatures identify a
+signing key and protect recorded statements from alteration. They do not prove
+correct code, complete tests or secure isolation.
 
-## Run something in one minute
+Treat an unmarked error as a call that may have executed. Automatic retry is safe
+only when a refusal bound to that request says nothing was dispatched.
+[INTERNAL · results and safe retries →](docs/run-results.md).
 
-The example needs no daemon, no docker, no credentials and no network: it uses the `wasm`
-provider, which runs JavaScript on <dfn>*QuickJS*</dfn>, a small JavaScript engine
-compiled to WebAssembly, inside your own process. Cloning and fetching Go modules do use
-the network.
+Audit logs and advisor traces keep route templates, counts and timings, rather than
+API bodies or credentials. A caller-supplied correlation ID can join a run to the
+caller's own logs without copying their payload into Plimsoll's telemetry.
+[INTERNAL · telemetry boundary →](docs/efficiency-advisor.md).
 
-```sh
-git clone https://github.com/plimsollmark/plimsoll && cd plimsoll
-go run ./examples/minimal
-```
+Local checks and automated public checks cover the core, clients, record formats
+and Docker under both its default runtime and gVisor. Public checks do not exercise the paid E2B or
+Docker Cloud services. No independent third-party security audit is claimed.
+[INTERNAL · contributing and verification →](CONTRIBUTING.md) ·
+[INTERNAL · security policy →](SECURITY.md) ·
+[INTERNAL · full limitations →](docs/limitations.md).
 
-```
-provider   wasm
-isolation  process
-exit code  0
-timed out  false
-truncated  stdout=false stderr=false
-duration   304ms
-stdout     {"Engineering":59000000,"Sales":20300000,"Operations":9800000}
-```
+## Find the right documentation
 
-The `isolation` line comes from the run's result, not from the example's own text.
-**`process` means there is no operating-system wall at all: do not use it for hostile
-code.** The same snippet runs at the `kernel` tier once <dfn>*gVisor*</dfn> is installed.
-gVisor is a layer between a container and your machine's kernel that handles the
-container's requests to the operating system itself, so the code never talks to your
-kernel directly. `sudo ./docker/install-gvisor.sh` installs a <dfn>*pinned*</dfn> gVisor
-release (one exact version, changed only by editing this repository) and registers its
-runtime, <dfn>*runsc*</dfn>, with docker. Nothing else about the program changes:
-
-```sh
-make docker-images   # builds the project image (plimsoll/sandbox) the docker provider checks for
-SANDBOX_PROVIDER=docker SANDBOX_DOCKER_RUNTIME=runsc go run ./examples/minimal
-```
-
-With `SANDBOX_PROVIDER` unset, plimsoll uses the Disabled provider, which runs nothing, so
-code execution is never on by accident.
-
-**Next:** [docs/getting-started.md](docs/getting-started.md) walks through the same pieces
-on one machine: start the daemon, create a caller credential, write your own client, watch
-a floor refuse a run, then move the daemon from `process` to `kernel` without changing the
-client. It also covers embedding the Go package instead of running the daemon.
-
-## Where the pieces sit
-
-```mermaid
-flowchart LR
-  A["Agent or MCP gateway (MCP: how an AI app offers tools to a model)"] -->|"Run: one payload, a protocol number, minimum_isolation"| AU
-
-  subgraph D["plimsolld"]
-    AU["authenticate the caller"] --> FL["compare the floor with current provider evidence"]
-    FL --> DI["dispatch"]
-    BR["broker: holds the minted credential, matches the exact route, counts every call"]
-  end
-
-  DI --> W["wasm: QuickJS on wazero (process tier)"]
-  DI --> K["docker with runsc (kernel tier)"]
-  DI --> V["e2b Firecracker (VM tier)"]
-
-  W -. "host.get / host.post" .-> BR
-  K -. "per-run Unix socket" .-> BR
-  V -. "authenticated guard" .-> BR
-  BR ==> |"your credential, attached host-side"| API["Your API"]
-```
-
-The code inside the sandbox, the <dfn>*guest*</dfn>, never holds the credential and never
-reaches the network directly. A run with no grant has no network at all.
-
-## Isolation tiers
-
-`plimsolld` is the plimsoll server. Each one runs exactly one provider, chosen by
-`SANDBOX_PROVIDER`:
-
-| Provider | Boundary | Tier reported | Use |
-|---|---|---|---|
-| `wasm` | QuickJS on <dfn>*wazero*</dfn> (a WebAssembly runtime written in Go), inside `plimsolld` itself | `process` | Fast local development. An <dfn>*escape*</dfn> (a bug that lets code out of its sandbox) in the engine lands inside your daemon. |
-| `docker` with <dfn>*runc*</dfn>, docker's default runtime | a container sharing your machine's kernel | `container` | Self-hosting when a kernel bug is not one of the attacks you plan for. With a project image it keeps a session: one container for many calls, with a JavaScript interpreter (and a Python one with `plimsoll/sandbox-python` as the project image) whose variables survive between calls. |
-| `docker` with `runsc` | gVisor, once the startup checks confirm docker has `runsc` registered | `kernel` | Hostile code on your own machines. Keeps sessions too. |
-| `e2b` | a <dfn>*microVM*</dfn> (a small virtual machine made for one run, then destroyed) from <dfn>*E2B*</dfn>, a hosted service that runs them on <dfn>*Firecracker*</dfn>, AWS's open-source VM monitor | `vm` | Hostile code, on E2B's machines rather than yours; billed per run. Keeps sessions too, billed while the microVM runs; a suspend pauses it, which keeps the files but not an interpreter's variables. |
-| `dockercloud` | a microVM from <dfn>*Docker Cloud Sandboxes*</dfn>, Docker's hosted sandbox service | `vm` | Hostile code, on Docker's machines; billed per run. It speaks two APIs, chosen by `SANDBOX_DOCKERCLOUD_API`, and both passed the live suite on 2026-10-04: the one Docker released before launch, no longer documented, which is the default because only it has grants and image evidence, and the REST API Docker documents, kept as a backup until it covers those (no grants, refused under `PLIMSOLL_HARDENED=1`, runs of at most 270 s). The account's network policy must be <dfn>*deny-all*</dfn> (no connection unless a rule allows it), and every run checks that. Grants work through the same <dfn>*guard*</dfn> as E2B (an address on the plimsoll server, the only place the microVM may connect to) when `SANDBOX_DOCKERCLOUD_GUARD_URL` is set. Unlike E2B, the guest holds its own run's short-lived credential for the guard, and the one network rule is set through a Docker call outside its published API. |
-| `openshell` | a sandbox from <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, created by its gateway server on docker | `container` | Agent platforms that already run an OpenShell gateway. Each run gets its own sandbox with no network; plimsoll reads its settings back, refuses to run on any difference, and deletes it afterwards. Tested against a v0.1.2 gateway on 2026-09-28. Grants reach the broker through a relay inside the sandbox that plimsoll connects to from outside, so the sandbox needs no network rules. Keeps sessions too. |
-| `agentsandbox` | a pod from Kubernetes <dfn>*agent-sandbox*</dfn>, claimed from a warm pool for one run, then deleted | `vm` under [Kata Containers](docs/trainers/glossary.html#kata-containers) (a VM per pod; Cloud [Hypervisor](docs/trainers/glossary.html#hypervisor)), `kernel` under gVisor, `container` under runc, read from the pod's runtime class | Teams already running agent sandboxes on Kubernetes. agent-sandbox lets a template name a runtime but never checks or reports it; plimsoll reads each pod back before any code runs, proves the boundary from inside at startup, and refuses what it cannot verify. Tested on kind with agent-sandbox v1.0.7 on 2026-10-18, Kata 4.2.0 included. Snippets and projects only. |
-| unset | nothing runs | n/a | The default. |
-
-Each tier rests on the daemon's configuration, what the provider reports, and a real test
-run at startup; none is attestation. [docs/isolation-tiers.md](docs/isolation-tiers.md)
-lists the evidence for each tier and shows how a request sets its floor. A session trades
-the fresh sandbox of every call for speed and kept state: code an earlier call ran can
-change what later calls see, and a call with API access needs a grant that allows sessions
-([docs/sessions.md](docs/sessions.md#what-a-session-gives-up)). A session is one trust
-domain, and plimsoll ties it to the authenticated caller, not to that caller's customers:
-a service that runs many customers' code through one credential must keep each customer
-in a session of their own
-([who may share a session](docs/sessions.md#who-may-share-a-session)). The docker
-provider can also apply the shipped <dfn>*seccomp*</dfn> profile, a list of the only
-<dfn>*system calls*</dfn> (requests to the kernel, such as opening a file) its containers
-may make ([docs/seccomp.md](docs/seccomp.md)).
-
-How this compares with the other self-hosted sandboxes for agent code (E2B's self-hosted
-version, microsandbox, NVIDIA OpenShell, Kubernetes agent-sandbox and eight more), each
-described from its own documentation, with plimsoll's weak points beside them:
-[the comparison (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/compare/index.html).
-
-## More real runs
-
-| Page | What it shows |
+| What you want to do | Start here |
 |---|---|
-| [Simulation replay pages, all eight simulators ↗](https://plimsollmark.github.io/plimsoll/examples/envs/index.html) | The eight simulators built into the simulation image for controller runs: shower, <dfn>*buck converter*</dfn> (a power supply that steps a voltage down by switching it on and off), ship heading, black hole orbit, relativistic rocket, satellite clock, double slit, and cart-pole swing-up (the image also carries the models the module-run tests use). Each page runs a failing and a passing hand-written controller through the sandbox and replays both trajectories with their fingerprints. |
-| [A controller in C, compiled in the sandbox ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-controller/index.html) | The same cart-pole simulator, with a swing-up controller (it swings the pole up from hanging, then balances it) written in C and compiled to WebAssembly by the run's own first step, so the simulator and the controller are both WebAssembly. The run report compares it with the JavaScript version tick by tick. The two languages' `cos` functions disagree in the last bit on about one input in a hundred, so in three of the four scenarios one or two force values differ, by a few representable doubles (at most 14). The fingerprint catches that difference, and the motion itself is identical to the bit. Source and caveats in [its README](examples/wasm-controller/README.md); reproduce with `make docker-images && go run ./examples/wasm-controller`. |
-| [A buck converter controller in C ↗](https://plimsollmark.github.io/plimsoll/examples/wasm-buck/index.html) | A power supply's <dfn>*control law*</dfn> (the formula its controller applies at each tick) written in C, the language converter firmware is written in. It is compiled to WebAssembly in the sandbox and run against a simulated converter, whose output it must hold at 5 V while the load changes suddenly. It calls no library function, so its trajectory equals the JavaScript version's byte for byte in all four scenarios; the page charts one of them tick by tick. Source and caveats in [its README](examples/wasm-buck/README.md); reproduce with `make docker-images && go run ./examples/wasm-buck`. |
-| [Same run, different sandboxes ↗](https://plimsollmark.github.io/plimsoll/examples/providers/index.html) | The cart-pole run from the top of this page, on local `runc` and gVisor, an OpenShell gateway, E2B and Docker Cloud Sandboxes: three isolation tiers, two Node versions, and one fingerprint, the same one the first report published. Reproduce the configured rows with `go run ./examples/providers`; the cloud rows are billed. |
-| [One sandbox, five calls ↗](https://plimsollmark.github.io/plimsoll/examples/sessions/index.html) | A session on an OpenShell sandbox: a failing test, a patch, the test passing without the files being sent again, and a leftover process that is gone by the next call. Each call's run record (the daemon's statement of what was sent, what came back and where it ran) is signed and linked to the previous one. The verifier accepts the signed set, and refuses it when one call is dropped or one byte is changed. Reproduce with `go run ./examples/sessions` and a gateway. |
-| [The efficiency advisor's report ↗](https://plimsollmark.github.io/plimsoll/examples/advisor/report.html) | The advisor reads the API calls a run made and points out wasteful patterns. One measured run: the same question asked of an API as 13 calls, then as 1, and the advisor's finding that names the route that answers it in one call. |
-| [An AI-written vendor adapter, judged by the vendor's ledger ↗](https://plimsollmark.github.io/plimsoll/examples/adapter/index.html) | One OpenAPI document becomes the grant, the injected client and the description an agent reads; an AI-written adapter runs in the sandbox against a simulated fleet vendor over eight scenarios (a refused order and a vendor that never answers among them), under a credential minted per run, beside a boundary probe and ten adapters broken on purpose, and three fresh AI agents write their own adapters for an exam with one practice question. The verdict is made on the host by eight rules applied to every value the adapter returned and to the vendor's own ledger, never the adapter's account of itself: when the vendor loses an answer, the first adapter re-sends the order and the ledger shows two orders for one command while its report is clean. The rewrite names every order with a command ID and passes. Every run's record and every verdict is signed, and the verifier rebuilds each verdict from its evidence. Reproduce with `make docker-images && go run ./examples/adapter`; check the published files with `go run ./examples/adapter -verify docs/examples/adapter`. |
-| [Thirteen interactive lessons ↗](https://plimsollmark.github.io/plimsoll/trainers/) | How a run is executed, the providers, the API broker, and connecting an AI agent. Static pages: no network calls, no analytics, no third-party scripts. |
+| Understand the idea before the API | [INTERNAL · plain-English browser lesson →](https://plimsollmark.github.io/plimsoll/trainers/plain-english.html) |
+| Run a server or embed the package | [INTERNAL · getting started →](docs/getting-started.md) |
+| Learn through working examples | [INTERNAL · example catalog →](docs/example-programs.md) |
+| Configure callers and credentials | [INTERNAL · caller administration →](docs/callers.md) |
+| Prepare for production | [INTERNAL · hardened mode →](docs/hardened-mode.md) and [INTERNAL · guest images and dependencies →](docs/guest-dependencies.md) |
+| Extend or contribute | [INTERNAL · embedding seams →](docs/seams.md) and [INTERNAL · architecture index →](AGENTS.md) |
+| Look up an unfamiliar word | [INTERNAL · glossary →](https://plimsollmark.github.io/plimsoll/trainers/glossary.html) |
 
-## Status, plainly
-
-- **Pre-1.0**, single author, no external users yet. Breaking changes land without a
-  deprecation path, on purpose.
-- **No third-party security audit has ever been performed**, and the author's own
-  self-review ledgers are not published either. [SECURITY.md](SECURITY.md) says what
-  exists, what it is worth, and what you can check yourself instead.
-- **CI runs the gate, in the open, and each check means what it ran.** The
-  [audit workflow](.github/workflows/audit.yml) has six jobs. `audit` runs plain
-  `make audit` on every push to `main` and every pull request: build, vet, race tests, lint,
-  `buf lint`, a generated-code drift check, and `govulncheck`. After `audit`, `clients`
-  runs `make clients-suite`: `npm ci` in `clients/typescript` and
-  `examples/trigger-chat`, then the Python and TypeScript Go test packages in
-  required mode. A missing runtime, dependency or skipped Go test fails that job.
-  `capsule` runs `make capsule-suite`: the capsule example, its own Go module outside
-  the root build, vetted and race-tested with the capsule project's Python reference
-  verifier installed from a lockfile that names each package's exact version and
-  content hash. `sbom` runs `make sbom-suite`: the separate
-  [INTERNAL · CycloneDX example guide →](examples/sbom/README.md), which writes signed run
-  evidence as a standard bill of materials (a parts list), is vetted and
-  race-tested offline. It reproduces all six published BOMs and their page and
-  checks signatures, schema validity, the qualification verdicts and refusal of
-  altered mapped fields.
-  It starts no sandbox; a skipped test fails the job. `mcp` runs `make mcp-suite`: the server
-  that lets AI assistants run code through plimsoll (`clients/mcp`, its own Go module) is vetted,
-  linted and race-tested, through the real RPC handler with stand-in backends and the built
-  program over its standard input and output, then scanned with `govulncheck`; a skipped test
-  fails the job. `audit-docker` also follows `audit` and
-  runs `make docker-suite` with the images prepared, in required mode: a missing
-  daemon, a missing image or a skipped test fails the job. A green `audit-docker`
-  therefore means the docker suite ran under runc with the shipped seccomp profile
-  and proved a read-only root, sized `noexec` writable mounts, and the broker's
-  refusals. The [gvisor workflow](.github/workflows/gvisor.yml) runs the same suite
-  under runsc, the kernel tier, from the pinned installer. The race detector runs in
-  the plain audit job and both docker-suite jobs; the client job runs without it.
-  No check exercises E2B or Docker Cloud Sandboxes: those suites drive live paid services and are
-  deliberately never wired to a runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Learn how it works
-
-The [interactive lessons](https://plimsollmark.github.io/plimsoll/trainers/) are the
-fastest way in if you would rather read than clone. Start with
-**[Plain English](https://plimsollmark.github.io/plimsoll/trainers/plain-english.html)**
-for the idea before the API, or
-**[Quick start](https://plimsollmark.github.io/plimsoll/trainers/quick-start.html)** to run
-something. Every term these docs use has a one-sentence definition in the
-**[glossary](https://plimsollmark.github.io/plimsoll/trainers/glossary.html)**. The lessons
-live in [docs/trainers/](docs/trainers/) and work offline: open any file from a clone in a
-browser. GitHub shows `.html` files as source instead of rendering them, which is why the
-links above point at the published copy.
-
-## Documentation
-
-Each of these answers one question, end to end.
-
-| Document | Answers |
-|---|---|
-| [docs/getting-started.md](docs/getting-started.md) | How do I build it, embed it, start it as a service with authentication, and watch a floor refuse a run? |
-| [docs/example-programs.md](docs/example-programs.md) | What do the runnable examples prove, and which should I read first? |
-| [docs/isolation-tiers.md](docs/isolation-tiers.md) | What does each tier rest on, and how do I demand one per request? |
-| [docs/capability-grants.md](docs/capability-grants.md) | How does agent code call my API without ever holding my credential? |
-| [docs/run-results.md](docs/run-results.md) | What comes back, and when is a failure an error rather than a result? |
-| [docs/run-records.md](docs/run-records.md) | What does each run's record state, how do I recompute it in another language, and how do I sign, verify and replay records outside the daemon? |
-| [docs/sessions.md](docs/sessions.md) | How do I keep one sandbox for many calls, and what holds between the calls, an interpreter's variables included? |
-| [clients/python](clients/python/README.md) | How do I call plimsolld from Python? |
-| [clients/typescript](clients/typescript/README.md) | How do I call it from TypeScript, and give a Trigger.dev or Mastra agent a code tool that keeps its state? |
-| [docs/trigger-dev.md](docs/trigger-dev.md) | How do calls that reuse one interpreter, an isolation floor and checked run records appear together in a Trigger.dev tool, and how do I deploy a task? |
-| [docs/ai-sdk.md](docs/ai-sdk.md) | How do I give a Vercel AI SDK agent an `executeCode` tool, fresh per call or kept for one user's conversation? |
-| [docs/google-adk.md](docs/google-adk.md) | How do I make plimsoll the code executor of a Google ADK agent, with input files, output artifacts and a refusal below the floor? |
-| [docs/placement.md](docs/placement.md) | I run several daemons: how do I pick one per request, and when is a refusal safe to retry elsewhere? |
-| [docs/inner-loop-workflow.md](docs/inner-loop-workflow.md) | How do I iterate fast locally without shipping a weak sandbox to production? |
-| [docs/efficiency-advisor.md](docs/efficiency-advisor.md) | What does the advisor see, why can what it records never include the data the code sent or received, and how do I choose what it emits? |
-| [docs/hardened-mode.md](docs/hardened-mode.md) | How do I make the daemon refuse to start unless every production safeguard is set? |
-| [docs/dependencies.md](docs/dependencies.md) | Which dependencies must be trusted for the sandbox to hold, and how are the tools that check them pinned? |
-| [docs/limitations.md](docs/limitations.md) | What does this deliberately not do? |
-| [docs/dockercloud.md](docs/dockercloud.md) | What does the Docker Cloud Sandboxes provider need from the operator, and what does each run check? |
-| [docs/openshell.md](docs/openshell.md) | What does the OpenShell provider need from the operator, and what does each run check? |
-| [docs/agentsandbox.md](docs/agentsandbox.md) | What does the Kubernetes agent-sandbox provider need from the operator, and what does each run check? |
-| [docs/releasing.md](docs/releasing.md) | Why is the module path public, why do releases start at v0.2.0, and why is there no checksum exemption? |
-| [docs/callers.md](docs/callers.md) | How do I create, rotate and revoke caller credentials? |
-| [docs/seccomp.md](docs/seccomp.md) and [docs/gvisor.md](docs/gvisor.md) | What do the seccomp filter and gVisor enforce? |
-| [docs/guest-dependencies.md](docs/guest-dependencies.md) | How do npm packages get into a sandbox that has no network? |
-| [docs/architecture/credential-minting.md](docs/architecture/credential-minting.md) | Where does a per-run credential come from, and where does it stay? |
-| [docs/seams.md](docs/seams.md) | Where are the deliberate extension points? |
-| [Glossary ↗](https://plimsollmark.github.io/plimsoll/trainers/glossary.html) | What does this word mean? One plain sentence per term. |
-| [AGENTS.md](AGENTS.md) | The architecture index: layout, providers, the rules no change may break, and where each subsystem's documentation lives; `plimsolld -h` lists every environment variable. |
+The name comes from the <dfn>*Plimsoll line*</dfn>, the load limit painted on a ship's hull:
+a limit stated where someone can check it. Here, every run states its isolation tier.
 
 ## License
 

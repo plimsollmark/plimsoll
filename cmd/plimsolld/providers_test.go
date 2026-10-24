@@ -8,10 +8,10 @@ import (
 )
 
 // registerTestProvider adds a daemon-built provider for one test.
-func registerTestProvider(t *testing.T, dp daemonProvider) {
+func registerTestProvider(t *testing.T, dp providerDescriptor) {
 	t.Helper()
-	daemonProviders["test-built"] = dp
-	t.Cleanup(func() { delete(daemonProviders, "test-built") })
+	providers["test-built"] = dp
+	t.Cleanup(func() { delete(providers, "test-built") })
 }
 
 // TestBuildProviderRoutes: a daemon-built provider goes through its own constructor,
@@ -19,7 +19,7 @@ func registerTestProvider(t *testing.T, dp daemonProvider) {
 // provider this build has, the daemon-built ones included.
 func TestBuildProviderRoutes(t *testing.T) {
 	built := false
-	registerTestProvider(t, daemonProvider{
+	registerTestProvider(t, providerDescriptor{
 		build: func(func(string) string) (sandbox.Provider, error) {
 			built = true
 			return sandbox.Provider{Sandbox: sandbox.Disabled{}}, nil
@@ -49,7 +49,7 @@ func TestBuildProviderRoutes(t *testing.T) {
 // pin rule replace the defaults, so hardened mode never demands a variable its
 // configuration rejects.
 func TestHardenedPolicyDaemonBuiltProvider(t *testing.T) {
-	registerTestProvider(t, daemonProvider{hardenedEnvelope: []string{"SANDBOX_MEMORY_MB"}, pinnedImages: true})
+	registerTestProvider(t, providerDescriptor{hardenedEnvelope: []string{"SANDBOX_MEMORY_MB"}, pinnedImages: true})
 	f := hardenedDockerFacts()
 	f.Provider, f.Isolation = "test-built", sandbox.IsolationVM
 	env := map[string]string{"SANDBOX_MEMORY_MB": "256", "SANDBOX_REQUIRE_PINNED_IMAGES": "1"}
@@ -71,7 +71,7 @@ func TestHardenedPolicyDaemonBuiltProvider(t *testing.T) {
 // the smoke test has proven a tier below vm; the pass before it, with the tier pending,
 // does not require it, since it cannot know which.
 func TestHardenedPolicyEnvelopeAtTheProvenTier(t *testing.T) {
-	dp := daemonProviders["agentsandbox"]
+	dp := providers["agentsandbox"]
 	f := hardenedDockerFacts()
 	f.Provider = "agentsandbox"
 	env := map[string]string{"SANDBOX_MEMORY_MB": "256", "SANDBOX_CPUS": "1", "SANDBOX_REQUIRE_PINNED_IMAGES": "1"}
@@ -92,5 +92,36 @@ func TestHardenedPolicyEnvelopeAtTheProvenTier(t *testing.T) {
 	}
 	if dp.hardenedEnvelopeAt == nil {
 		t.Fatal("agentsandbox names no tier-dependent envelope")
+	}
+}
+
+// Every provider this build has is described, and every one hardened mode could accept
+// carries rules for its execution surface: a provider added to sandbox.Build without a
+// descriptor cannot be selected, and one without surface rules fails here instead of
+// running hardened under the generic checks alone (review D3, 2026-10-23).
+func TestEveryProviderIsDescribedWithItsHardenedRules(t *testing.T) {
+	for _, name := range append(sandbox.ProviderNames(), daemonProviderNames()...) {
+		d, ok := providers[name]
+		if !ok {
+			t.Errorf("%s has no providerDescriptor", name)
+			continue
+		}
+		if name == "wasm" {
+			continue // process tier: hardened mode refuses it before any surface rule
+		}
+		if d.hardened == nil && !d.pinnedImages {
+			t.Errorf("%s states no hardened rule for its execution surface", name)
+		}
+		if d.hardenedEnvelope == nil {
+			t.Errorf("%s states no hardened resource envelope", name)
+		}
+	}
+	if _, err := buildProvider(func(k string) string {
+		if k == "SANDBOX_PROVIDER" {
+			return "undescribed"
+		}
+		return ""
+	}); err == nil {
+		t.Error("a provider with no descriptor was built")
 	}
 }

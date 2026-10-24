@@ -242,7 +242,9 @@ func (scripted) SupportsModules() bool                  { return true }
 
 func (scripted) Environments() sandbox.Environments {
 	kind := sandbox.PayloadEnvironment{Identity: "scripted-image:sha256:0001", SoftwareIdentity: scriptedSoftware, MaxTimeout: time.Minute}
-	return sandbox.Environments{JavaScript: kind, Project: kind, Module: kind, Policy: "scripted-policy:sha256:00"}
+	project := kind
+	project.Languages = []sandbox.Language{sandbox.LanguagePython, sandbox.LanguageJavaScript}
+	return sandbox.Environments{JavaScript: kind, Project: project, Module: kind, Policy: "scripted-policy:sha256:00"}
 }
 
 func (scripted) RunJavaScript(_ context.Context, req sandbox.Request) (sandbox.Result, error) {

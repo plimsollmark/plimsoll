@@ -126,9 +126,7 @@ func (v *Verifier) VerifyLink(env Envelope) (Link, error) {
 		return Link{}, err
 	}
 	var st linkStatement
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&st); err != nil {
+	if err := decodeStrict(payload, &st); err != nil {
 		return Link{}, fmt.Errorf("%w: %v", ErrStatement, err)
 	}
 	l := st.Predicate
@@ -196,6 +194,11 @@ func verifyLinks(entries []Entry, v *Verifier) ([]bool, error) {
 // For a session call, req is the call as a Run request (record.AsRunRequest),
 // whose digest is the call's; its place in the chain is VerifyBundle's to check.
 func (s *Signer) Call(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (Entry, error) {
+	// A harness writes: it signs the current version only, though CheckExchange reads
+	// every published one for stored evidence.
+	if m := resp.GetRecord(); m != nil && int(m.GetVersion()) != record.Version {
+		return Entry{}, fmt.Errorf("%w: the daemon answered with record version %d; a harness signs version %d only", ErrSigningVersion, m.GetVersion(), record.Version)
+	}
 	rec, err := record.CheckExchange(req, resp)
 	if err != nil {
 		return Entry{}, err
@@ -268,9 +271,7 @@ func (v *Verifier) VerifyClose(env Envelope) (SessionClose, error) {
 		return SessionClose{}, err
 	}
 	var st closeStatement
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&st); err != nil {
+	if err := decodeStrict(payload, &st); err != nil {
 		return SessionClose{}, fmt.Errorf("%w: %v", ErrStatement, err)
 	}
 	if st.Type != StatementType || st.PredicateType != ClosePredicateType || len(st.Subject) != 1 ||
@@ -347,7 +348,7 @@ func VerifyEntry(v *Verifier, e Entry) (sandbox.RunRecord, Link, error) {
 		return sandbox.RunRecord{}, Link{}, err
 	}
 	// What one line shows of the chain rules, it is held to, as VerifyBundle holds it.
-	if rec.Session == "" && (rec.Version == record.UnansweredVersion || rec.Sequence != 0 || rec.PreviousSHA256 != "") {
+	if rec.Session == "" && (rec.Unanswered != "" || rec.Sequence != 0 || rec.PreviousSHA256 != "") {
 		return sandbox.RunRecord{}, Link{}, fmt.Errorf("%w: a single run's record that is unanswered or carries chain fields", ErrChain)
 	}
 	return rec, l, nil
@@ -413,7 +414,7 @@ func verifyEntries(entries []Entry, v *Verifier) (Report, []sandbox.RunRecord, e
 			return fail(err)
 		}
 		recs[i] = rec
-		if rec.Version == record.UnansweredVersion && rec.Session == "" {
+		if rec.Unanswered != "" && rec.Session == "" {
 			return fail(fmt.Errorf("%w: an unanswered record outside a session", ErrChain))
 		}
 		if rec.Session == "" {
@@ -455,7 +456,7 @@ var ErrChain = errors.New("attest: broken session chain")
 var ErrStored = errors.New("attest: the stored request or response does not match the signed record")
 
 func matchStored(e Entry, rec sandbox.RunRecord) error {
-	if rec.Version == record.UnansweredVersion {
+	if rec.Unanswered != "" {
 		// An unanswered call stored its request and no response: the same check the
 		// signer and the live client ran.
 		if len(e.Response) != 0 {
@@ -579,7 +580,7 @@ type Replayed struct {
 	Replayed string // the new run's result digest; "" when it failed
 	Err      error  // the new run's error, if any
 	// Unanswered is the recorded call's error code when it ended without a result
-	// (a version 3 record): there is no recorded result, so it never matches.
+	// (an unanswered record): there is no recorded result, so it never matches.
 	Unanswered string
 }
 

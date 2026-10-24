@@ -28,6 +28,7 @@ from plimsoll_client._record import (
     check_single,
     record_digest,
     record_from_wire,
+    valid_instance,
     request_digest,
     result_digest,
     session_fingerprint,
@@ -54,15 +55,15 @@ def golden_input(name: str) -> dict:
 
 
 def js_request() -> dict:
-    return golden_input("version 1 javascript request")
+    return golden_input("javascript request")
 
 
 def project_request() -> dict:
-    return golden_input("version 1 project request")
+    return golden_input("project request")
 
 
 def module_request() -> dict:
-    return golden_input("version 1 module request")
+    return golden_input("module request")
 
 
 def cell_request() -> dict:
@@ -76,9 +77,8 @@ def cell_response() -> dict:
 APPROVED = ["oci-manifest:linux/amd64@sha256:" + "a" * 64, "oci-manifest:linux/amd64@sha256:" + "b" * 64]
 
 
-def version_two(base: dict) -> dict:
+def with_approved_rule(base: dict) -> dict:
     out = copy.deepcopy(base)
-    out["protocol"] = 2
     out["softwareRule"] = {"mode": "approved", "identities": list(APPROVED)}
     return out
 
@@ -115,6 +115,8 @@ def wire_record(r: RunRecord) -> dict:
         "session": r.session,
         "sequence": str(r.sequence),
         "previousSha256": r.previous_sha256,
+        "unanswered": r.unanswered,
+        "instance": r.instance,
         "recordSha256": r.sha256,
     }
 
@@ -124,7 +126,7 @@ def stamped(req: dict, resp: dict, rule: "SoftwareRule | None" = None) -> dict:
     out = copy.deepcopy(resp)
     m = Msg(out, "r")
     r = RunRecord(
-        version=2,
+        version=4,
         request_sha256=request_digest(req),
         result_sha256=result_digest(m),
         provider=m.get_str("sandbox"),
@@ -139,6 +141,7 @@ def stamped(req: dict, resp: dict, rule: "SoftwareRule | None" = None) -> dict:
         sequence=0,
         previous_sha256="",
         sha256="",
+        instance=m.get_str("instance"),
     )
     r = RunRecord(**{**r.__dict__, "sha256": record_digest(r)})
     out["record"] = wire_record(r)
@@ -167,10 +170,27 @@ class GoldenVectors(unittest.TestCase):
             n += 1
         self.assertGreaterEqual(n, 13, "a vector was dropped from the golden file")
 
+    def test_published_vectors_still_hold(self) -> None:
+        # Every release's own vectors (record/testdata/published), never edited: the
+        # versions a release wrote keep their digests in this client too.
+        files = sorted((pathlib.Path(__file__).resolve().parents[3] / "record" / "testdata" / "published").glob("*-golden.json"))
+        self.assertTrue(files, "no published vectors")
+        for path in files:
+            g = json.loads(path.read_text())
+            for v in g["requests"]:
+                with self.subTest(path.name, vector=v["name"]):
+                    self.assertEqual(request_digest(copy.deepcopy(v["request"])), v["sha256"])
+            for v in g["results"]:
+                with self.subTest(path.name, vector=v["name"]):
+                    self.assertEqual(result_digest(Msg(v["response"], "r")), v["sha256"])
+            for v in g["records"]:
+                with self.subTest(path.name, vector=v["name"]):
+                    self.assertEqual(record_digest(record_from_wire(Msg(v["record"], "record"))), v["sha256"])
+
     def test_snake_case_field_names_digest_the_same(self) -> None:
         # protobuf's JSON parser accepts the original field names too.
         snake = {
-            "protocol": 1,
+            "protocol": 4,
             "minimum_isolation": "container",
             "timeout_ms": 5000,
             "javascript": {"code": "console.log(1+1)"},
@@ -181,7 +201,7 @@ class GoldenVectors(unittest.TestCase):
 class DigestCoverage(unittest.TestCase):
     def test_request_digest_covers_what_was_sent(self) -> None:
         changes = [
-            ("protocol", js_request, lambda m: m.update(protocol=2)),
+            ("protocol", js_request, lambda m: m.update(protocol=5)),
             ("floor", js_request, lambda m: m.update(minimumIsolation="vm")),
             ("timeout", js_request, lambda m: m.update(timeoutMs=5001)),
             ("code", js_request, lambda m: m["javascript"].update(code="console.log(1+1) ")),
@@ -196,7 +216,7 @@ class DigestCoverage(unittest.TestCase):
             ("artifact", project_request, lambda m: m["project"].update(artifacts=[])),
             ("row value", module_request, lambda m: m["module"]["rows"][1].update(values=[0.5, -3.0000000000000004])),
             ("rows regrouped", module_request, lambda m: m["module"].update(rows=[{"values": [1]}, {"values": [2, 0.5, -3]}])),
-            ("software identity order", lambda: version_two(js_request()), lambda m: m["softwareRule"]["identities"].reverse()),
+            ("software identity order", lambda: with_approved_rule(js_request()), lambda m: m["softwareRule"]["identities"].reverse()),
         ]
         for name, base, apply in changes:
             with self.subTest(name):
@@ -243,14 +263,12 @@ class DigestCoverage(unittest.TestCase):
 class Check(unittest.TestCase):
     def test_a_matching_record_checks(self) -> None:
         req = js_request()
-        req["protocol"] = 2
-        r = check_single(request_digest(req), 2, None, Msg(stamped(req, js_response()), "r"))
+        r = check_single(request_digest(req), None, Msg(stamped(req, js_response()), "r"))
         self.assertEqual(r.provider, "docker")
         self.assertEqual(r.sha256, record_digest(r))
 
     def test_tampering_is_a_mismatch(self) -> None:
         req = js_request()
-        req["protocol"] = 2
         good = stamped(req, js_response())
 
         def code_changed(q, _):
@@ -275,18 +293,20 @@ class Check(unittest.TestCase):
             s["record"]["recordSha256"] = "00"
 
         def unanswered_stated(_, s):
-            s["record"]["unanswered"] = "unknown"  # outside version 2's digest
+            s["record"]["unanswered"] = "unknown"  # an answered call's record names no code
 
-        for tamper in (code_changed, output_changed, provider_changed, tier_changed, environment_changed, time_changed, digest_changed, unanswered_stated):
+        def instance_changed(_, s):
+            s["instance"] = "k8s-pod-uid:another"
+
+        for tamper in (code_changed, output_changed, provider_changed, tier_changed, environment_changed, time_changed, digest_changed, unanswered_stated, instance_changed):
             with self.subTest(tamper.__name__):
                 q, s = copy.deepcopy(req), copy.deepcopy(good)
                 tamper(q, s)
                 with self.assertRaises(RecordMismatchError):
-                    check_single(request_digest(q), 2, None, Msg(s, "r"))
+                    check_single(request_digest(q), None, Msg(s, "r"))
 
     def test_a_single_run_claiming_a_session_is_a_mismatch(self) -> None:
         req = js_request()
-        req["protocol"] = 2
         s = stamped(req, js_response())
         rec = Msg(s["record"], "r")
         from plimsoll_client._record import record_from_wire
@@ -295,50 +315,59 @@ class Check(unittest.TestCase):
         r = RunRecord(**{**r.__dict__, "sequence": 1})
         r = RunRecord(**{**r.__dict__, "sha256": record_digest(r)})
         s["record"] = wire_record(r)
-        check(request_digest(req), 2, None, Msg(s, "r"))  # a session call's check accepts it
+        check(request_digest(req), None, Msg(s, "r"))  # a session call's check accepts it
         with self.assertRaises(RecordMismatchError):
-            check_single(request_digest(req), 2, None, Msg(s, "r"))
+            check_single(request_digest(req), None, Msg(s, "r"))
 
     def test_no_record_and_versions(self) -> None:
         req = js_request()
-        req["protocol"] = 2
         with self.assertRaises(NoRecordError):
-            check_single(request_digest(req), 2, None, Msg(js_response(), "r"))
+            check_single(request_digest(req), None, Msg(js_response(), "r"))
         future = stamped(req, js_response())
-        future["record"]["version"] = 3
+        future["record"]["version"] = 5
         with self.assertRaises(RecordVersionError):
-            check_single(request_digest(req), 2, None, Msg(future, "r"))
+            check_single(request_digest(req), None, Msg(future, "r"))
 
-    def test_version_one_records_remain_verifiable_for_protocol_one(self) -> None:
+    def test_earlier_versions_are_refused(self) -> None:
+        req = js_request()
+        for v in (1, 2, 3):
+            with self.subTest(v):
+                resp = stamped(req, js_response())
+                r = record_from_wire(Msg(resp["record"], "r"))
+                r = RunRecord(**{**r.__dict__, "version": v})
+                resp["record"] = wire_record(RunRecord(**{**r.__dict__, "sha256": record_digest(r)}))
+                with self.assertRaises(RecordVersionError):
+                    check_single(request_digest(req), None, Msg(resp, "r"))
+
+    def test_instance_is_bound_to_the_response_and_typed(self) -> None:
         req = js_request()
         resp = js_response()
-        m = Msg(resp, "r")
-        r = RunRecord(
-            version=1, request_sha256=request_digest(req), result_sha256=result_digest(m),
-            provider="docker", isolation="container", environment="", policy="", software_identity="",
-            software_rule_id="", started_unix_ms=1, ended_unix_ms=2, session="", sequence=0,
-            previous_sha256="", sha256="",
-        )
-        r = RunRecord(**{**r.__dict__, "sha256": record_digest(r)})
-        resp["record"] = wire_record(r)
-        check_single(request_digest(req), 1, None, Msg(resp, "r"))
-        with self.assertRaises(RecordVersionError):
-            check_single(request_digest(req), 2, None, Msg(resp, "r"))
+        resp["instance"] = "k8s-pod-uid:7f3e9c2a-5b1d-4e8f-9a0c-2d6b8e4f1a37"
+        self.assertEqual(result_digest(Msg(resp, "r")), result_digest(Msg(js_response(), "r")))
+        good = stamped(req, resp)
+        self.assertEqual(check_single(request_digest(req), None, Msg(good, "r")).instance, resp["instance"])
+        bad = stamped(req, {**resp, "instance": "/var/run/pod"})
+        with self.assertRaises(RecordMismatchError):
+            check_single(request_digest(req), None, Msg(bad, "r"))
+        for s in ("", "k8s-pod-uid:a-b", "x:y"):
+            self.assertTrue(valid_instance(s), s)
+        for s in ("k8s-pod-uid:", "K8S:x", "a/b:c", "no-colon", "k8s-pod-uid:a/b"):
+            self.assertFalse(valid_instance(s), s)
 
     def test_software_rule_binds_record_request_and_response(self) -> None:
         ident = APPROVED[0]
         rule = SoftwareRule.exact(ident)
-        req = {"protocol": 2, "softwareRule": {"mode": "exact", "identities": [ident]}, "javascript": {"code": "1"}}
+        req = {"protocol": 4, "softwareRule": {"mode": "exact", "identities": [ident]}, "javascript": {"code": "1"}}
         resp = {"sandbox": "docker", "isolation": "kernel", "environment": "docker-image:sha256:outer",
                 "softwareIdentity": ident, "javascript": {}}
         good = stamped(req, resp, rule)
-        check_single(request_digest(req), 2, rule, Msg(good, "r"))
+        check_single(request_digest(req), rule, Msg(good, "r"))
         tampered = copy.deepcopy(good)
         tampered["softwareIdentity"] = ""
         with self.assertRaises(RecordMismatchError):
-            check_single(request_digest(req), 2, rule, Msg(tampered, "r"))
+            check_single(request_digest(req), rule, Msg(tampered, "r"))
         with self.assertRaises(RecordMismatchError):  # the rule the caller holds differs from the record's
-            check_single(request_digest(req), 2, SoftwareRule.exact(APPROVED[1]), Msg(good, "r"))
+            check_single(request_digest(req), SoftwareRule.exact(APPROVED[1]), Msg(good, "r"))
 
 
 if __name__ == "__main__":

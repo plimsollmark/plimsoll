@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/egress"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/providerkit"
 	"github.com/plimsollmark/plimsoll/sandbox/internal/runnerwire"
 )
@@ -127,10 +128,10 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	return nil
 }
 
-// smokeLanguages runs each interpreter once; node must answer, since the runner is
-// node, and python3 may.
+// smokeLanguages runs each interpreter once (sandbox.LanguageProbe); node must answer,
+// since the runner is node, and the others may.
 func (p *Provider) smokeLanguages(ctx context.Context, b box, ev *smokeEvidence) error {
-	argv := []string{"sh", "-c", `node -e 'console.log("javascript")' && { python3 -c 'print("python")' 2>/dev/null || true; }`}
+	argv := []string{"sh", "-c", sandbox.LanguageProbe()}
 	out, err := p.exec(ctx, b, argv, nil, nil, 4096, 4096)
 	if err != nil {
 		return fmt.Errorf("language probe: %w", err)
@@ -138,11 +139,7 @@ func (p *Provider) smokeLanguages(ctx context.Context, b box, ev *smokeEvidence)
 	if out.exitCode != 0 {
 		return fmt.Errorf("language probe exited %d", out.exitCode)
 	}
-	for _, f := range strings.Fields(string(out.stdout)) {
-		if l := sandbox.Language(f); l.Known() && !slices.Contains(ev.Languages, l) {
-			ev.Languages = append(ev.Languages, l)
-		}
-	}
+	ev.Languages = sandbox.ProbedLanguages(string(out.stdout))
 	if !slices.Contains(ev.Languages, sandbox.LanguageJavaScript) {
 		return errors.New("language probe: node did not answer")
 	}
@@ -198,8 +195,10 @@ const read = f => { try { return fs.readFileSync(f, "utf8").trim(); } catch (e) 
   const egress = {};
   egress["tcp 1.1.1.1:443"] = await tcp("1.1.1.1", 443);
   egress["tcp 8.8.8.8:53"] = await tcp("8.8.8.8", 53);
+  egress["tcp [2606:4700:4700::1111]:443"] = await tcp("2606:4700:4700::1111", 443);
+  egress["tcp [2001:4860:4860::8888]:53"] = await tcp("2001:4860:4860::8888", 53);
   try { await fetch("https://example.com", { signal: AbortSignal.timeout(4000) }); egress["https://example.com"] = "open"; }
-  catch (e) { egress["https://example.com"] = (e.cause && e.cause.code) || e.name || String(e); }
+  catch (e) { egress["https://example.com"] = (e.cause && e.cause.code) || (e.name === "TimeoutError" ? "timeout" : e.name) || String(e); }
   report.egress = egress;
   report.dns = await new Promise(done => dns.lookup("example.com", { all: true }, (e, a) => done(e ? e.code : a.map(x => x.address).join(","))));
   report.memoryMax = read("/sys/fs/cgroup/memory.max");
@@ -312,14 +311,15 @@ func checkWritable(swept int, dirs, files []string) error {
 	return nil
 }
 
-func checkEgress(egress map[string]string) error {
-	if len(egress) == 0 {
+// checkEgress requires every attempt to have gone unanswered or been refused inside the
+// sandbox (egress.Closed): a refusal or a TLS failure is an answer from outside, which
+// this check once passed as closed.
+func checkEgress(outcomes map[string]string) error {
+	if len(outcomes) == 0 {
 		return errors.New("the probe reported no egress attempts")
 	}
-	for target, outcome := range egress {
-		if outcome == "open" {
-			return fmt.Errorf("egress is OPEN to %s; the deny-all network policy is not in force", target)
-		}
+	if left := egress.Left(outcomes); len(left) > 0 {
+		return fmt.Errorf("egress is OPEN: %v; the deny-all network policy is not in force", left)
 	}
 	return nil
 }
@@ -380,12 +380,12 @@ func (p *Provider) smokeRunner(ctx context.Context, b box, tier sandbox.Isolatio
 	if err := sandbox.ValidateProjectRequest(req); err != nil {
 		return err
 	}
-	const stepTimeout = 60 * time.Second
+	const budget = 60 * time.Second
 	key, err := runnerwire.NewKey()
 	if err != nil {
 		return err
 	}
-	plan := runnerwire.Plan{Steps: req.Steps, StepTimeout: stepTimeout, Artifacts: req.Artifacts, ReportKey: key}
+	plan := runnerwire.Plan{Steps: req.Steps, Budget: budget, Artifacts: req.Artifacts, ReportKey: key}
 	for _, f := range req.Files {
 		plan.Files = append(plan.Files, runnerwire.File(f))
 	}
@@ -393,7 +393,7 @@ func (p *Provider) smokeRunner(ctx context.Context, b box, tier sandbox.Isolatio
 	if err != nil {
 		return err
 	}
-	rctx, cancel := context.WithTimeout(ctx, stepTimeout+runnerGrace)
+	rctx, cancel := context.WithTimeout(ctx, budget+runnerGrace)
 	defer cancel()
 	start := time.Now()
 	res, err := p.runPlan(rctx, b, tier, planJSON, key, nil)

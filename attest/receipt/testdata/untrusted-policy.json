@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "subject": {
+    "name": "widget.txt",
+    "digest": {
+      "sha256": "51c97d12b410be2d568aaabe0f4e12be3ed61aea196b4d8a73ef9c252591dfb7"
+    }
+  },
+  "roles": [
+    {
+      "name": "builder",
+      "predicate_type": "https://example.org/receipt/builder/v1",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAnauq/TUcsh1KQd4AZHy6AWnxDDsnv2ex5wVSukqOBos=\n-----END PUBLIC KEY-----\n",
+      "timestamp_roots_pem": "-----BEGIN CERTIFICATE-----\nMIIBYTCCAQegAwIBAgIBATAKBggqhkjOPQQDAjAXMRUwEwYDVQQDEwx0c2F0ZXN0\nIHJvb3QwIBcNMDAwMTAxMDAwMDAwWhgPMjEwMDAxMDEwMDAwMDBaMBcxFTATBgNV\nBAMTDHRzYXRlc3Qgcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLLCUb6n\n//joSHbH0qYY/X6J9MOWxkh+B19GgcekAHehOGeGLGhzdfL9GBao+t0iv9fPs56v\nqUDrOb8mCaXO1IqjQjBAMA4GA1UdDwEB/wQEAwICBDAPBgNVHRMBAf8EBTADAQH/\nMB0GA1UdDgQWBBSM6vloZmBq6nOR9Uxc12iXXoqXFDAKBggqhkjOPQQDAgNIADBF\nAiA99lm32IGxkhXnisbbnjRUouN12EDBHH8KpNWavejXPAIhAPdP9CWWBNu5l/3r\nyMPJvkJmsGqfz09JSkxDXJGQFrCn\n-----END CERTIFICATE-----\n"
+    },
+    {
+      "name": "reviewer",
+      "predicate_type": "https://example.org/receipt/reviewer/v1",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA1mzLQNGdWqqVmN7+fqQml8Dnk0fNDyDwvuE69cfdipU=\n-----END PUBLIC KEY-----\n",
+      "timestamp_roots_pem": "-----BEGIN CERTIFICATE-----\nMIIBYTCCAQegAwIBAgIBATAKBggqhkjOPQQDAjAXMRUwEwYDVQQDEwx0c2F0ZXN0\nIHJvb3QwIBcNMDAwMTAxMDAwMDAwWhgPMjEwMDAxMDEwMDAwMDBaMBcxFTATBgNV\nBAMTDHRzYXRlc3Qgcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLLCUb6n\n//joSHbH0qYY/X6J9MOWxkh+B19GgcekAHehOGeGLGhzdfL9GBao+t0iv9fPs56v\nqUDrOb8mCaXO1IqjQjBAMA4GA1UdDwEB/wQEAwICBDAPBgNVHRMBAf8EBTADAQH/\nMB0GA1UdDgQWBBSM6vloZmBq6nOR9Uxc12iXXoqXFDAKBggqhkjOPQQDAgNIADBF\nAiA99lm32IGxkhXnisbbnjRUouN12EDBHH8KpNWavejXPAIhAPdP9CWWBNu5l/3r\nyMPJvkJmsGqfz09JSkxDXJGQFrCn\n-----END CERTIFICATE-----\n"
+    }
+  ]
+}

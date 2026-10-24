@@ -1,0 +1,1 @@
+{"name":"plimsoll-fixture-canary","version":"1.0.0","main":"index.js","scripts":{"postinstall":"node install.js"}}

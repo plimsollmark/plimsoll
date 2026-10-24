@@ -25,6 +25,13 @@ the `vm` tier, and any other handler is refused. The startup smoke test then hol
 for every provider, a reported tier is configuration and provider evidence plus that
 behavioural test, never attestation.
 
+Every run's record also names the pod that ran it, as `k8s-pod-uid:` and the UID the API
+server gave the pod when it was made, which Kubernetes never gives another object in the
+cluster's history. The provider reads the pod back on every run before it sends any code, so
+the UID is the pod's own, not the template's. It lets evidence kept outside plimsoll about that
+pod, such as a container runtime's log of it, be tied to the run's signed record
+([run-records.md](run-records.md)).
+
 ## How it was built and verified
 
 plimsoll talks to the Kubernetes API over plain HTTPS with a bearer token, with no Kubernetes
@@ -49,10 +56,12 @@ the daemon was ready, smoke test included, in about 3 seconds (about 4 under Kat
 into a pod, in docker's locked-down container, so a broken script fails the ordinary gate.
 
 [The evidence page (INTERNAL · example page →)](examples/agentsandbox/index.html) shows two
-runs on that cluster through a hardened daemon under gVisor, signed and converted to CycloneDX
-bills of materials, whose results are byte for byte those of the same requests on docker under
-gVisor and on a Docker Cloud microVM, and five refusals, among them a node whose runsc handler
-was remapped to runc under a running daemon.
+requests on that cluster through a hardened daemon, under gVisor and again under Kata
+(`kata-clh-runtime-rs`, the `vm` tier), each run signed and converted to a CycloneDX bill of
+materials, whose results are byte for byte those of the same requests on docker under gVisor
+and on a Docker Cloud microVM; what a Kata pod's kernel said (its Linux boot line and a boot ID
+other than the node's, the two things the per-pod check reads); and five refusals, among them
+a node whose runsc handler was remapped to runc under a running daemon.
 
 ## What the operator sets up
 

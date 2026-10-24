@@ -18,7 +18,7 @@ import (
 //     gone when the next call runs (the sweep killed it), and a file the call wrote
 //     is there;
 //   - in every cell language the provider states, a cell's interpreter keeps what the
-//     cell before it defined (cellChecks has one check per language, and a stated
+//     cell before it defined (LanguageSpecs has one check per language, and a stated
 //     language without one fails the test, so no language is stated that startup did
 //     not run);
 //   - once the relays beside the interpreters are running, a call of the session cannot
@@ -98,14 +98,14 @@ console.log(state + " " + fs.readFileSync("plimsoll-session-smoke.txt", "utf8"))
 		langs = []Language{LanguageJavaScript}
 	}
 	for _, lang := range langs {
-		check, ok := cellChecks[lang]
+		define, read, ok := cellCheck(lang)
 		if !ok {
 			return fmt.Errorf("session smoke: the provider states cell language %q, which has no startup check", lang)
 		}
-		if _, err := cell("a "+string(lang)+" cell that defines", lang, check.define); err != nil {
+		if _, err := cell("a "+string(lang)+" cell that defines", lang, define); err != nil {
 			return err
 		}
-		res, err := cell("the next "+string(lang)+" cell", lang, check.read)
+		res, err := cell("the next "+string(lang)+" cell", lang, read)
 		if err != nil {
 			return err
 		}
@@ -178,9 +178,12 @@ for (const d of fs.readdirSync("/proc")) {
 }
 console.log(found + " " + opened.join(","));`
 
-// cellChecks are the two cells SessionSmokeTest runs in each cell language: one that
-// defines a value and one that reads it back, printing 42, from the same interpreter.
-var cellChecks = map[Language]struct{ define, read string }{
-	LanguageJavaScript: {"globalThis.plimsollSmoke = 41", "plimsollSmoke + 1"},
-	LanguagePython:     {"plimsoll_smoke = 41", "plimsoll_smoke + 1"},
+// cellCheck is the two cells SessionSmokeTest runs in l (LanguageSpec's Define and Read).
+func cellCheck(l Language) (define, read string, ok bool) {
+	for _, spec := range LanguageSpecs {
+		if spec.Language == l {
+			return spec.Define, spec.Read, true
+		}
+	}
+	return "", "", false
 }

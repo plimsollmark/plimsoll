@@ -682,7 +682,7 @@ test("after an unanswered call the Session checked, the conversation keeps its s
   const third = await s.run("k", { code: "3", language: "javascript" });
   assert.equal(third.freshSandbox, undefined, "the sandbox is the same one");
   assert.deepEqual(records.map((r) => r.sequence), [1n, 2n, 3n], "the unanswered call's checked record is a receipt too");
-  assert.ok(records[1]!.unanswered !== "" && records[0]!.unanswered === "", "only the second is a version 3 record");
+  assert.ok(records[1]!.unanswered !== "" && records[0]!.unanswered === "", "only the second states an unanswered call");
   assert.ok(records.every((r) => r.key === "k"));
   await s.disposeAll();
 });

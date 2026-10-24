@@ -184,7 +184,7 @@ footer { color: var(--faint); font-size: 0.76rem; margin-top: 40px; border-top: 
       <td>{{if .TraceID}}<code>{{.TraceID}}</code>{{else}}<span class="note">—</span>{{end}}</td>
       <td>{{if .Profile}}<code>{{.Profile}}</code>{{else}}<span class="note">(none)</span>{{end}}</td>
       <td>{{.Sandbox}}{{if .Isolation}} <span class="note">/ {{.Isolation}}</span>{{end}}</td>
-      <td class="num">{{.ExitCode}}{{if .TimedOut}} ⏱{{end}}</td>
+      <td class="num">{{.Exit}}{{if .TimedOut}} ⏱{{end}}</td>
       <td class="num">{{ms .DurationMs}}</td>
       <td class="num">{{.HostCalls}}{{if .HostCallsDenied}} <span class="note">({{.HostCallsDenied}} denied)</span>{{end}}</td>
       <td class="num">{{.FindingCount}}{{if .Findings}}<span class="caret">▸</span>{{end}}</td>

@@ -66,8 +66,15 @@ Part of the [plimsoll README](../README.md).
   <dfn>*pinned*</dfn>, fixed to one exact version, by its SHA-256, and gVisor by a SHA-512 of its release recorded for
   each architecture the installer supports (x86_64 and aarch64); the installer refuses
   any other architecture. Code generators are pinned by `go.mod` `tool` directives and
-  the gate's programs by `gate-tools.versions`. The sandbox image recipes use mutable base
-  tags and apk version ranges; only the wasi-sdk stage is pinned by its
-  <dfn>*digest*</dfn> (a hash of its content). Rebuilding an image can therefore change
-  its installed software. Launch-time image digest pinning is opt-in through
-  `SANDBOX_REQUIRE_PINNED_IMAGES=1`.
+  the gate's programs by `gate-tools.versions`. Every base image the recipes build on is
+  pinned by its <dfn>*digest*</dfn> (a hash of its content), but the packages they install
+  are not: apk takes version ranges (`python3~3.14`) and apt the distribution's current
+  release, so rebuilding an image can change its installed software. Launch-time image
+  digest pinning is opt-in through `SANDBOX_REQUIRE_PINNED_IMAGES=1`.
+- **A restarted daemon forgets the sandboxes it was still removing.** When a sandbox's
+  removal is not confirmed, the daemon keeps counting it against its capacity until it
+  is gone. That count lives in the daemon's memory: after a restart, such a leftover is
+  removed once the lifetime label it was started with has passed, but until then it does
+  not count against the new process's limits. Several daemons may share one docker host,
+  and a leftover names no daemon, so a restarted daemon cannot tell its own leftovers from
+  another daemon's live sandboxes.

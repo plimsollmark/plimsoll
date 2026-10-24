@@ -85,22 +85,21 @@ func fixture[M proto.Message](name string, m M) M {
 }
 
 func jsRequest() *plimsollv1.RunRequest {
-	return fixture("version 1 javascript request", &plimsollv1.RunRequest{})
+	return fixture("javascript request", &plimsollv1.RunRequest{})
 }
 
 func projectRequest() *plimsollv1.RunRequest {
-	return fixture("version 1 project request", &plimsollv1.RunRequest{})
+	return fixture("project request", &plimsollv1.RunRequest{})
 }
 
 func moduleRequest() *plimsollv1.RunRequest {
-	return fixture("version 1 module request", &plimsollv1.RunRequest{})
+	return fixture("module request", &plimsollv1.RunRequest{})
 }
 
-// versionTwoRequest is base under protocol 2 with an approved rule of two identities,
-// as the golden file's version 2 requests are.
-func versionTwoRequest(base *plimsollv1.RunRequest) *plimsollv1.RunRequest {
+// withApprovedRule is base with an approved rule of two identities, as the golden file's
+// "with an approved rule" requests are.
+func withApprovedRule(base *plimsollv1.RunRequest) *plimsollv1.RunRequest {
 	out := proto.Clone(base).(*plimsollv1.RunRequest)
-	out.Protocol = 2
 	out.SoftwareRule = &plimsollv1.SoftwareRule{Mode: "approved", Identities: []string{
 		"oci-manifest:linux/amd64@sha256:" + strings.Repeat("a", 64),
 		"oci-manifest:linux/amd64@sha256:" + strings.Repeat("b", 64),
@@ -177,23 +176,20 @@ func TestGoldenVectors(t *testing.T) {
 	if n < 13 {
 		t.Fatalf("the golden file holds %d vectors, fewer than the 13 it had", n)
 	}
-	// The version 2 requests are the version 1 ones under versionTwoRequest, which
-	// other tests use, so the two cannot drift apart.
-	for _, pair := range [][2]string{
-		{"version 1 javascript request", "version 2 javascript request"},
-		{"version 1 project request", "version 2 project request"},
-		{"version 1 module request", "version 2 module request"},
-	} {
-		v1, v2 := fixture(pair[0], &plimsollv1.RunRequest{}), fixture(pair[1], &plimsollv1.RunRequest{})
-		if !proto.Equal(versionTwoRequest(v1), v2) {
-			t.Errorf("%s is not %s under versionTwoRequest", pair[1], pair[0])
+	// The requests with an approved rule are the plain ones under withApprovedRule, which
+	// other tests use, so the two cannot drift apart; every request states this protocol.
+	for _, kind := range []string{"javascript", "project", "module"} {
+		plain := fixture(kind+" request", &plimsollv1.RunRequest{})
+		ruled := fixture(kind+" request with an approved rule", &plimsollv1.RunRequest{})
+		if !proto.Equal(withApprovedRule(plain), ruled) || plain.GetProtocol() != 4 {
+			t.Errorf("%s request with an approved rule is not the plain one under withApprovedRule, at protocol 4", kind)
 		}
 	}
 }
 
 func TestSoftwareAdmissionRecordIsBoundToRequestAndResponse(t *testing.T) {
 	id := "oci-manifest:linux/amd64@sha256:" + strings.Repeat("a", 64)
-	req := &plimsollv1.RunRequest{Protocol: 2, SoftwareRule: &plimsollv1.SoftwareRule{Mode: "exact", Identities: []string{id}},
+	req := &plimsollv1.RunRequest{Protocol: 4, SoftwareRule: &plimsollv1.SoftwareRule{Mode: "exact", Identities: []string{id}},
 		Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "1"}}}
 	resp := &plimsollv1.RunResponse{Sandbox: "docker", Isolation: "kernel", Environment: "docker-image:sha256:outer", SoftwareIdentity: id,
 		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{}}}
@@ -220,25 +216,67 @@ func TestSoftwareAdmissionRecordIsBoundToRequestAndResponse(t *testing.T) {
 	}
 }
 
-func TestVersionOneRecordsRemainVerifiable(t *testing.T) {
+// Only version 4 is read: a record of an earlier layout is refused, its digest
+// recomputed under its own domain or not.
+func TestEarlierVersionsAreRefused(t *testing.T) {
 	req := jsRequest()
 	resp := jsResponse()
-	r := sandbox.RunRecord{Version: 1, RequestSHA256: RunRequestDigest(req), ResultSHA256: ResultDigest(resp),
-		Provider: resp.GetSandbox(), Isolation: resp.GetIsolation(), Started: time.UnixMilli(1), Ended: time.UnixMilli(2)}
-	r.SHA256 = Digest(r)
-	resp.Record = ToWire(r)
-	if _, err := Check(req, resp); err != nil {
-		t.Fatalf("old record: %v", err)
-	}
-	newRequest := proto.Clone(req).(*plimsollv1.RunRequest)
-	newRequest.Protocol = 2
-	if _, err := Check(newRequest, resp); !errors.Is(err, ErrVersion) {
-		t.Fatalf("version 1 record returned for protocol 2 request: %v", err)
+	for _, v := range []int{1, 2, 3, 5} {
+		r := sandbox.RunRecord{Version: v, RequestSHA256: RunRequestDigest(req), ResultSHA256: ResultDigest(resp),
+			Provider: resp.GetSandbox(), Isolation: resp.GetIsolation(), Started: time.UnixMilli(1), Ended: time.UnixMilli(2)}
+		r.SHA256 = Digest(r)
+		resp.Record = ToWire(r)
+		if _, err := Check(req, resp); !errors.Is(err, ErrVersion) {
+			t.Errorf("a version %d record: %v, want ErrVersion", v, err)
+		}
 	}
 }
 
-func TestVersionTwoRecordRejectsEnvironmentDisagreement(t *testing.T) {
-	req := versionTwoRequest(jsRequest())
+// The instance is evidence like the environment: the record must state the response's,
+// in the typed form, and the result digest does not cover it.
+func TestInstanceIsBoundToTheResponse(t *testing.T) {
+	req := jsRequest()
+	resp := jsResponse()
+	resp.Instance = sandbox.PodInstance("7f3e9c2a-5b1d-4e8f-9a0c-2d6b8e4f1a37")
+	if resp.Instance != "k8s-pod-uid:7f3e9c2a-5b1d-4e8f-9a0c-2d6b8e4f1a37" || ResultDigest(resp) != ResultDigest(jsResponse()) {
+		t.Fatalf("instance %q, or it moved the result digest", resp.Instance)
+	}
+	resp.Record = Stamp(sandbox.RunRecord{RequestSHA256: RunRequestDigest(req)}, resp)
+	if r, err := Check(req, resp); err != nil || r.Instance != resp.Instance {
+		t.Fatalf("matching record: %v", err)
+	}
+	for name, edit := range map[string]func(*plimsollv1.RunResponse){
+		"another instance in the response": func(m *plimsollv1.RunResponse) {
+			m.Instance = sandbox.PodInstance("00000000-0000-0000-0000-000000000000")
+		},
+		"another instance in the record": func(m *plimsollv1.RunResponse) {
+			m.Record.Instance = "k8s-pod-uid:other"
+			m.Record.RecordSha256 = Digest(FromWire(m.Record))
+		},
+		"an instance that is not a typed reference": func(m *plimsollv1.RunResponse) {
+			m.Instance = "/var/run/pod"
+			m.Record.Instance = m.Instance
+			m.Record.RecordSha256 = Digest(FromWire(m.Record))
+		},
+	} {
+		changed := proto.Clone(resp).(*plimsollv1.RunResponse)
+		edit(changed)
+		if _, err := Check(req, changed); !errors.Is(err, ErrMismatch) {
+			t.Errorf("%s: %v, want ErrMismatch", name, err)
+		}
+	}
+	for _, bad := range []string{"k8s-pod-uid:", "K8S:x", "k8s-pod-uid:a/b", "no-colon", ":x", "k8s-pod-uid:" + strings.Repeat("a", 128)} {
+		if sandbox.ValidInstance(bad) {
+			t.Errorf("%q passes for an instance", bad)
+		}
+	}
+	if sandbox.PodInstance("a/b") != "" || !sandbox.ValidInstance("") {
+		t.Error("PodInstance kept a UID outside the form, or an empty instance is refused")
+	}
+}
+
+func TestRecordRejectsEnvironmentDisagreement(t *testing.T) {
+	req := withApprovedRule(jsRequest())
 	resp := jsResponse()
 	resp.Environment = "docker-image:sha256:outer"
 	resp.SoftwareIdentity = req.SoftwareRule.Identities[0]
@@ -268,7 +306,7 @@ func TestRequestDigestCoversWhatWasSent(t *testing.T) {
 		apply func(*plimsollv1.RunRequest)
 	}
 	changes := []mutation{
-		{"protocol", jsRequest, func(m *plimsollv1.RunRequest) { m.Protocol = 2 }},
+		{"protocol", jsRequest, func(m *plimsollv1.RunRequest) { m.Protocol = 5 }},
 		{"floor", jsRequest, func(m *plimsollv1.RunRequest) { m.MinimumIsolation = "vm" }},
 		{"timeout", jsRequest, func(m *plimsollv1.RunRequest) { m.TimeoutMs = 5001 }},
 		{"code", jsRequest, func(m *plimsollv1.RunRequest) { m.GetJavascript().Code += " " }},
@@ -305,7 +343,7 @@ func TestRequestDigestCoversWhatWasSent(t *testing.T) {
 			t.Errorf("%s: the request digest did not change", c.name)
 		}
 	}
-	versionTwo := versionTwoRequest(jsRequest())
+	ruled := withApprovedRule(jsRequest())
 	for name, apply := range map[string]func(*plimsollv1.RunRequest){
 		"software mode":     func(m *plimsollv1.RunRequest) { m.SoftwareRule.Mode = "exact" },
 		"software identity": func(m *plimsollv1.RunRequest) { m.SoftwareRule.Identities[0] += "x" },
@@ -313,10 +351,10 @@ func TestRequestDigestCoversWhatWasSent(t *testing.T) {
 			m.SoftwareRule.Identities[0], m.SoftwareRule.Identities[1] = m.SoftwareRule.Identities[1], m.SoftwareRule.Identities[0]
 		},
 	} {
-		changed := proto.Clone(versionTwo).(*plimsollv1.RunRequest)
+		changed := proto.Clone(ruled).(*plimsollv1.RunRequest)
 		apply(changed)
-		if RunRequestDigest(changed) == RunRequestDigest(versionTwo) {
-			t.Errorf("%s did not move the version 2 request digest", name)
+		if RunRequestDigest(changed) == RunRequestDigest(ruled) {
+			t.Errorf("%s did not move the request digest", name)
 		}
 	}
 	same := jsRequest()
@@ -328,10 +366,10 @@ func TestRequestDigestCoversWhatWasSent(t *testing.T) {
 	// empty module differ, and none equals a request with no payload.
 	seen := map[string]string{}
 	for name, m := range map[string]*plimsollv1.RunRequest{
-		"javascript": {Protocol: 1, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{}}},
-		"project":    {Protocol: 1, Payload: &plimsollv1.RunRequest_Project{Project: &plimsollv1.ProjectRun{}}},
-		"module":     {Protocol: 1, Payload: &plimsollv1.RunRequest_Module{Module: &plimsollv1.ModuleRun{}}},
-		"none":       {Protocol: 1},
+		"javascript": {Protocol: 4, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{}}},
+		"project":    {Protocol: 4, Payload: &plimsollv1.RunRequest_Project{Project: &plimsollv1.ProjectRun{}}},
+		"module":     {Protocol: 4, Payload: &plimsollv1.RunRequest_Module{Module: &plimsollv1.ModuleRun{}}},
+		"none":       {Protocol: 4},
 	} {
 		d := RunRequestDigest(m)
 		if other, dup := seen[d]; dup {
@@ -397,7 +435,7 @@ func TestRecordDigestCoversEveryField(t *testing.T) {
 	// RunRecord fails here until the digest covers it. The version was once left out
 	// (external review of v0.10.0, finding 9, 2026-09-28).
 	moves := map[string]func(*sandbox.RunRecord){
-		"Version":          func(r *sandbox.RunRecord) { r.Version = 3 },
+		"Version":          func(r *sandbox.RunRecord) { r.Version = 5 },
 		"RequestSHA256":    func(r *sandbox.RunRecord) { r.RequestSHA256 = RunRequestDigest(jsRequest()) },
 		"ResultSHA256":     func(r *sandbox.RunRecord) { r.ResultSHA256 = ResultDigest(jsResponse()) },
 		"Provider":         func(r *sandbox.RunRecord) { r.Provider = "docker" },
@@ -411,8 +449,8 @@ func TestRecordDigestCoversEveryField(t *testing.T) {
 		"Session":          func(r *sandbox.RunRecord) { r.Session = "" },
 		"Sequence":         func(r *sandbox.RunRecord) { r.Sequence = 3 },
 		"PreviousSHA256":   func(r *sandbox.RunRecord) { r.PreviousSHA256 = "" },
-		// Encoded from version 3 on; the check below moves it within version 3.
-		"Unanswered": func(r *sandbox.RunRecord) { r.Version, r.Unanswered = 3, "unknown" },
+		"Unanswered":       func(r *sandbox.RunRecord) { r.Unanswered = "unknown" },
+		"Instance":         func(r *sandbox.RunRecord) { r.Instance = "" },
 	}
 	fields := reflect.TypeOf(sandbox.RunRecord{})
 	for i := range fields.NumField() {
@@ -526,10 +564,10 @@ func TestStampStatesTheResponsesEvidence(t *testing.T) {
 	}
 }
 
-// Within version 3, the error code an unanswered record names moves its digest.
+// The error code an unanswered record names moves its digest.
 func TestUnansweredCodeIsInTheDigest(t *testing.T) {
 	r := goldenRecord()
-	r.Version, r.ResultSHA256, r.Unanswered = UnansweredVersion, "", "unknown"
+	r.ResultSHA256, r.Unanswered = "", "unknown"
 	other := r
 	other.Unanswered = "internal"
 	if Digest(r) == Digest(other) {
@@ -550,7 +588,7 @@ func TestCheckUnanswered(t *testing.T) {
 		}
 		return StampUnanswered(r, code)
 	}
-	if r, err := CheckUnanswered(req, stamp(nil, "unavailable"), fp, 1, "prev"); err != nil || r.Unanswered != "unavailable" || r.Version != 3 {
+	if r, err := CheckUnanswered(req, stamp(nil, "unavailable"), fp, 1, "prev"); err != nil || r.Unanswered != "unavailable" || r.Version != Version {
 		t.Fatalf("a good unanswered record: %+v, %v", r, err)
 	}
 	for name, c := range map[string]struct {
@@ -563,7 +601,7 @@ func TestCheckUnanswered(t *testing.T) {
 		"another session":  {stamp(func(r *sandbox.RunRecord) { r.Session = "other" }, "unknown"), ErrChain},
 		"a gap":            {stamp(func(r *sandbox.RunRecord) { r.Sequence = 3 }, "unknown"), ErrChain},
 		"another previous": {stamp(func(r *sandbox.RunRecord) { r.PreviousSHA256 = "other" }, "unknown"), ErrChain},
-		"a version 2":      {func() *plimsollv1.RunRecord { m := stamp(nil, "unknown"); m.Version = 2; return m }(), ErrVersion},
+		"a version 3":      {func() *plimsollv1.RunRecord { m := stamp(nil, "unknown"); m.Version = 3; return m }(), ErrVersion},
 		"a result digest":  {func() *plimsollv1.RunRecord { m := stamp(nil, "unknown"); m.ResultSha256 = "x"; return m }(), ErrMismatch},
 		"a changed field":  {func() *plimsollv1.RunRecord { m := stamp(nil, "unknown"); m.Provider = "e2b"; return m }(), ErrMismatch},
 		"no record at all": {nil, ErrNoRecord},
@@ -574,7 +612,7 @@ func TestCheckUnanswered(t *testing.T) {
 	}
 }
 
-// An answered record (version 1 or 2) stating an unanswered code, a field outside
+// An answered record stating an unanswered code, a field outside
 // its digest, is refused, and so is evidence below the request's floor or a floor no
 // daemon accepts (v0.15.0 review, H1 and M5.1).
 func TestCheckRefusesUncoveredFieldsAndFloorViolations(t *testing.T) {
@@ -582,14 +620,14 @@ func TestCheckRefusesUncoveredFieldsAndFloorViolations(t *testing.T) {
 		floor, isolation, unanswered string
 		want                         error
 	}{
-		"v2 unanswered":    {"", "vm", "unknown", ErrMismatch},
-		"below the floor":  {"vm", "container", "", sandbox.ErrIsolationEvidenceMismatch},
-		"unknown evidence": {"process", "", "", sandbox.ErrIsolationEvidenceMismatch},
-		"bad floor":        {"none", "vm", "", ErrMismatch},
-		"meets the floor":  {"kernel", "vm", "", nil},
+		"answered, unanswered set": {"", "vm", "unknown", ErrMismatch},
+		"below the floor":          {"vm", "container", "", sandbox.ErrIsolationEvidenceMismatch},
+		"unknown evidence":         {"process", "", "", sandbox.ErrIsolationEvidenceMismatch},
+		"bad floor":                {"none", "vm", "", ErrMismatch},
+		"meets the floor":          {"kernel", "vm", "", nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			req := &plimsollv1.RunRequest{Protocol: 2, MinimumIsolation: tc.floor, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "x"}}}
+			req := &plimsollv1.RunRequest{Protocol: 4, MinimumIsolation: tc.floor, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: "x"}}}
 			resp := &plimsollv1.RunResponse{Sandbox: "fake", Isolation: tc.isolation,
 				Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{}}}
 			resp.Record = Stamp(sandbox.RunRecord{RequestSHA256: RunRequestDigest(req)}, resp)

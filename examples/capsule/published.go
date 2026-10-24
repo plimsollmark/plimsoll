@@ -12,21 +12,21 @@ import (
 // defaults below belong to that bundle and no other: a different bundle is
 // someone else's records, and stating the published operator, or an import time
 // days in the past, on it would be false.
-const publishedBundleSHA256 = "89af007222df5048b40625238c04230b92bbfc23476a66bb0e88af1e8fc73ed6"
+const publishedBundleSHA256 = "01e636707978a70f2c0cce87e30d886794ed02f30b1529f7f6b706379f571a94"
 
 // publishedImportedAt is the import time docs/examples/capsule states. It is the
 // default for -imported-at on the published bundle, so running this program with
 // no flags reproduces every published capsule ID; only the signatures differ,
 // since each run makes its own key.
-const publishedImportedAt = "2026-10-13T00:17:00Z"
+const publishedImportedAt = "2026-10-23T19:36:00Z"
 
 // publishedIDs are the capsule IDs on that page, one per call, in order.
 var publishedIDs = []string{
-	"ae90012e0af88bc1b6caea920eebabc83513c51b901cc3d0a8046c21e7cd895a",
-	"a653ffc2c9771419a0814c854c062318fac6d532b482ef90ff21e90af41bbead",
-	"e4cca5c95e7714b56e655d126fba2d98f33f2eed7306bb1ebce1f919fe96102e",
-	"017fd7640249f686dfb534f28558c2877c7c142cfa375ac6316d1cf345905216",
-	"42074f54273cf341d130a17a622a171765eeb222562af963991659262aa5abaa",
+	"6cdc9bc448a9c151e2ac66c26b242d1ab4b6ac0f7744d43a52a809fe8ee4b1e9",
+	"dcd26519d4def30d94c06338fa7988e89d6d529d683ffd17f9677772d3170df5",
+	"b9752b577c12a0ce210350120d26cce0fa24d2aac02115d0a58b62dad1530bb8",
+	"c2a12785dd9b8938180db2653f88cf57603ab4e15132f7b789da58e3dcaca6e8",
+	"f2384a70785ad3f90a07d589fb959cc6f8446e209b4ab739ac2b4f118cdb63a8",
 }
 
 const (

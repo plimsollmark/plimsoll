@@ -1,0 +1,506 @@
+{
+  "annotations": [
+    {
+      "annotator": {
+        "component": {
+          "externalReferences": [
+            {
+              "type": "vcs",
+              "url": "https://github.com/plimsollmark/plimsoll"
+            }
+          ],
+          "name": "plimsoll-sbom",
+          "type": "application",
+          "version": "0.2.0"
+        }
+      },
+      "bom-ref": "limits",
+      "subjects": [
+        "program"
+      ],
+      "text": "The attached run record is signed; this BOM is unsigned. Agent authorship is supplied example context, not a record fact, and the execution layer cannot identify the model. Network isolation is provider configuration, not a separately signed runtime measurement; a granted run reaches only the routes its grant lists, and what reached the other side is not in this record. The run's times are the daemon's own unwitnessed clock. An attached key alone establishes consistency, not signer identity; use an independently trusted key. Display names and the assessor label are unsigned presentation. The attached bundle line proves itself; the whole bundle it belongs to is referenced by digest and checked when supplied. This is run evidence, not an inventory of the image's installed packages.",
+      "timestamp": "2026-10-23T19:49:49.990Z"
+    }
+  ],
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "image",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c"
+        }
+      ],
+      "name": "sandbox",
+      "properties": [
+        {
+          "name": "plimsoll:environment",
+          "value": "docker-image:sha256:32da77b1be24de4c152667c28ab63531425cd69000acf30a328985cb857377f7"
+        },
+        {
+          "name": "plimsoll:software_identity",
+          "value": "oci-manifest:linux/amd64@sha256:a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c"
+        }
+      ],
+      "purl": "pkg:oci/sandbox@sha256:a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c",
+      "type": "container",
+      "version": "sha256:a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c"
+    }
+  ],
+  "declarations": {
+    "affirmation": {
+      "statement": "The attached run record was stated by plimsolld, checked and signed by plimsoll-attest, and restated here; plimsoll-attest verify and this program's -check recompute it. This affirmation and BOM are unsigned."
+    },
+    "assessors": [
+      {
+        "bom-ref": "assessor",
+        "organization": {
+          "name": "plimsoll examples (self-assessed)"
+        },
+        "thirdParty": false
+      }
+    ],
+    "attestations": [
+      {
+        "assessor": "assessor",
+        "map": [
+          {
+            "claims": [
+              "claim-code"
+            ],
+            "confidence": {
+              "rationale": "a signature check and a digest recomputation, not a judgement or a probability that the runtime assertion is true",
+              "score": 1
+            },
+            "conformance": {
+              "rationale": "The claim matches the signed exchange under a deterministic comparison; this is self-assessed consistency, not independent runtime assurance.",
+              "score": 1
+            },
+            "requirement": "req-code"
+          },
+          {
+            "claims": [
+              "claim-image"
+            ],
+            "confidence": {
+              "rationale": "a signature check and a digest recomputation, not a judgement or a probability that the runtime assertion is true",
+              "score": 1
+            },
+            "conformance": {
+              "rationale": "The claim matches the signed exchange under a deterministic comparison; this is self-assessed consistency, not independent runtime assurance.",
+              "score": 1
+            },
+            "requirement": "req-image"
+          },
+          {
+            "claims": [
+              "claim-tier"
+            ],
+            "confidence": {
+              "rationale": "a signature check and a digest recomputation, not a judgement or a probability that the runtime assertion is true",
+              "score": 1
+            },
+            "conformance": {
+              "rationale": "The claim matches the signed exchange under a deterministic comparison; this is self-assessed consistency, not independent runtime assurance.",
+              "score": 1
+            },
+            "requirement": "req-tier"
+          }
+        ],
+        "summary": "A self-assessed restatement of a signed run record with reproducible consistency checks."
+      }
+    ],
+    "claims": [
+      {
+        "bom-ref": "claim-code",
+        "evidence": [
+          "evidence-run-record"
+        ],
+        "predicate": "The program's 4 files, file-set digest cff68cf8a70a9863bd7cb2f75bdfbdcea6d9d8ee92b5766f646ba324e2e7c087, are the files in the stored request whose signed digest acd2df1409b8402404625804766beab91b0247bb543e7e043caa56b3158e1acf covers them with the isolation floor and timeout.",
+        "reasoning": "Each claim restates the run record the daemon stated and the attest harness checked against the stored request and result and signed. The attached bundle line permits those checks to be repeated. This emitter did not observe execution. The tier is configuration and provider evidence plus startup smoke tests, never runtime attestation.",
+        "target": "program"
+      },
+      {
+        "bom-ref": "claim-image",
+        "evidence": [
+          "evidence-run-record"
+        ],
+        "predicate": "The daemon states that the run executed in the image whose OCI manifest digest is sha256:a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c (environment docker-image:sha256:32da77b1be24de4c152667c28ab63531425cd69000acf30a328985cb857377f7), verified before launch.",
+        "reasoning": "Each claim restates the run record the daemon stated and the attest harness checked against the stored request and result and signed. The attached bundle line permits those checks to be repeated. This emitter did not observe execution. The tier is configuration and provider evidence plus startup smoke tests, never runtime attestation.",
+        "target": "program"
+      },
+      {
+        "bom-ref": "claim-tier",
+        "evidence": [
+          "evidence-run-record"
+        ],
+        "predicate": "The daemon states provider docker and isolation tier kernel, at or above requested floor kernel, from 2026-10-23T19:49:43.533Z to 2026-10-23T19:49:49.990Z UTC; the stored request names no host-API grant and the result digest is 7b1bc06288601383babfab94d390c7e76a8b6f268a421f7c912b5bf88291e5d5. The provider's no-grant configuration supplies network isolation; this record is not a network measurement.",
+        "reasoning": "Each claim restates the run record the daemon stated and the attest harness checked against the stored request and result and signed. The attached bundle line permits those checks to be repeated. This emitter did not observe execution. The tier is configuration and provider evidence plus startup smoke tests, never runtime attestation.",
+        "target": "program"
+      }
+    ],
+    "evidence": [
+      {
+        "author": {
+          "name": "plimsoll-attest key 12f016aef25637445344a0eb63adcef340bc713782eedd6a8c83879ba577357a"
+        },
+        "bom-ref": "evidence-run-record",
+        "created": "2026-10-23T19:49:49.990Z",
+        "data": [
+          {
+            "contents": {
+              "attachment": {
+                "content": "eyJwYXlsb2FkVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5pbi10b3RvK2pzb24iLCJwYXlsb2FkIjoiZXlKZmRIbHdaU0k2SW1oMGRIQnpPaTh2YVc0dGRHOTBieTVwYnk5VGRHRjBaVzFsYm5RdmRqRWlMQ0p6ZFdKcVpXTjBJanBiZXlKdVlXMWxJam9pY25WdUxYSmxZMjl5WkNJc0ltUnBaMlZ6ZENJNmV5SnphR0V5TlRZaU9pSmxaR1ppWkRrNU9XWXhOMlJsTmpRNVpXTmxOamRoTUdVNE5tWTJOR00wTldZelpXVTFPVFk0WWpZeVpHUTROek5rTnpaaE56VTNOelJsTjJReVpEaGlJbjE5WFN3aWNISmxaR2xqWVhSbFZIbHdaU0k2SW1oMGRIQnpPaTh2Y0d4cGJYTnZiR3h0WVhKckxtZHBkR2gxWWk1cGJ5OXdiR2x0YzI5c2JDOXlkVzR0Y21WamIzSmtMM1l4SWl3aWNISmxaR2xqWVhSbElqcDdJblpsY25OcGIyNGlPalFzSW5KbGNYVmxjM1JmYzJoaE1qVTJJam9pWVdOa01tUm1NVFF3T1dJNE5EQXlOREEwTmpJMU9EQTBOelkyWW1WaFlqa3hZakF5TkRkaVlqVTBNMlUzWlRBME0yTmhZVFUyWWpNeE5UaGxNV0ZqWmlJc0luSmxjM1ZzZEY5emFHRXlOVFlpT2lJM1lqRmlZekEyTWpnNE5qQXhNemd6WW1GaVptRmlPVFJrTXprd1l6ZGxOelpoT0dJMlpqSTJPR0UwTWpGbU4yTTVNVEppTldKbU9EZ3lPVEZsTldRMUlpd2ljSEp2ZG1sa1pYSWlPaUprYjJOclpYSWlMQ0pwYzI5c1lYUnBiMjRpT2lKclpYSnVaV3dpTENKbGJuWnBjbTl1YldWdWRDSTZJbVJ2WTJ0bGNpMXBiV0ZuWlRwemFHRXlOVFk2TXpKa1lUYzNZakZpWlRJMFpHVTBZekUxTWpZMk4yTXlPR0ZpTmpNMU16RTBNalZqWkRZNU1EQXdZV05tTXpCaE16STRPVGcxWTJJNE5UY3pOemRtTnlJc0luTnZablIzWVhKbFgybGtaVzUwYVhSNUlqb2liMk5wTFcxaGJtbG1aWE4wT214cGJuVjRMMkZ0WkRZMFFITm9ZVEkxTmpwaE5tVm1NbVZoTVdNNFpqRmtaVFZqT0RnMVpURmhNVGhpWVRkbFpUUmtPVFl5WlROaE9EVTVPRGMzWmpabU5EWmpNbVppTjJWaVlXTXhaalpqWXpWaklpd2ljRzlzYVdONUlqb2lJaXdpYzNSaGNuUmxaRjkxYm1sNFgyMXpJam94TnpreU56ZzBPVGd6TlRNekxDSmxibVJsWkY5MWJtbDRYMjF6SWpveE56a3lOemcwT1RnNU9Ua3dMQ0p6WlhOemFXOXVJam9pSWl3aWMyVnhkV1Z1WTJVaU9qQXNJbkJ5WlhacGIzVnpYM05vWVRJMU5pSTZJaUlzSW5KbFkyOXlaRjl6YUdFeU5UWWlPaUpsWkdaaVpEazVPV1l4TjJSbE5qUTVaV05sTmpkaE1HVTRObVkyTkdNME5XWXpaV1UxT1RZNFlqWXlaR1E0TnpOa056WmhOelUzTnpSbE4yUXlaRGhpSW4xOSIsInNpZ25hdHVyZXMiOlt7ImtleWlkIjoiMTJmMDE2YWVmMjU2Mzc0NDUzNDRhMGViNjNhZGNlZjM0MGJjNzEzNzgyZWVkZDZhOGM4Mzg3OWJhNTc3MzU3YSIsInNpZyI6IjExRW9WbVNjak1SSGptUFZoa1UxNVhtOEVocDNSNHFscTl4OXB3d2E3YkpSL1g3ZUdvS1VXRU52WE94VGlKU0p4Z2F3NDZPc0xXYWdJSTYwMWs2OURRPT0ifV19",
+                "contentType": "application/json",
+                "encoding": "base64"
+              }
+            },
+            "name": "envelope.json"
+          },
+          {
+            "contents": {
+              "attachment": {
+                "content": "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUNvd0JRWURLMlZ3QXlFQXVFNjNlWkJIeUV5Mkx6YmtWMzUvQlZnTnZKaHBWZlRNTTN4alphcHVTNGs9Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo=",
+                "contentType": "application/x-pem-file",
+                "encoding": "base64"
+              }
+            },
+            "name": "harness.pub"
+          },
+          {
+            "contents": {
+              "attachment": {
+                "content": "eyJyZXF1ZXN0IjoiQ0FRU0JtdGxjbTVsYkJvTWNISXRjbVZqWldsd2RDMHdJTERxQVZxS0JBcEVDZ3h3WVdOcllXZGxMbXB6YjI0U05Ic2ljSEpwZG1GMFpTSTZkSEoxWlN3aWMyTnlhWEIwY3lJNmV5SjBaWE4wSWpvaWJtOWtaU0IwWlhOMExtMXFjeUo5ZlFvS1d3b0hjM1Z0TG0xcWN4SlFaWGh3YjNKMElHTnZibk4wSUhOMWJTQTlJSFpoYkhWbGN5QTlQaUIyWVd4MVpYTXVjbVZrZFdObEtDaDBiM1JoYkN3Z2RtRnNkV1VwSUQwK0lIUnZkR0ZzSUNzZ2RtRnNkV1VzSURBcE93b0t1Z0VLQ0hSbGMzUXViV3B6RXEwQmFXMXdiM0owSUdGemMyVnlkQ0JtY205dElDZHViMlJsT21GemMyVnlkQzl6ZEhKcFkzUW5Pd3BwYlhCdmNuUWdlM04xYlgwZ1puSnZiU0FuTGk5emRXMHViV3B6SnpzS1lYTnpaWEowTG1WeGRXRnNLSE4xYlNoYk1UQXNJREl3TENBdE5WMHBMQ0F5TlNrN0NtRnpjMlZ5ZEM1bGNYVmhiQ2h6ZFcwb1cxMHBMQ0F3S1RzS1kyOXVjMjlzWlM1c2IyY29KM1IzYnlCemRXMGdZMmhsWTJ0eklIQmhjM05sWkNjcE93b0tuUUVLR0M1d2NpMXlaV05sYVhCMEwzTjFZbXBsWTNRdWFuTnZiaEtBQVhzS0lDQWlZMjl0YldsMElqb2dJall5TnpVek5HWmpOekZrWlRFd05XRmxZamRsTnpFd09UZzVOekJpWWpVeFpEY3dPVFl6TkRraUxBb2dJQ0p3ZFd4c1gzSmxjWFZsYzNRaU9pQWlNQ0lzQ2lBZ0luSmxjRzl6YVhSdmNua2lPaUFpWlhoaGJYQnNaUzl3Y2kxeVpXTmxhWEIwTFdacGVIUjFjbVVpQ24wS0VnaHVjRzBnZEdWemRBPT0iLCJyZXNwb25zZSI6IkNnWmtiMk5yWlhJU0JtdGxjbTVsYkJpNU1pS2VBd2dFRWtCaFkyUXlaR1l4TkRBNVlqZzBNREkwTURRMk1qVTRNRFEzTmpaaVpXRmlPVEZpTURJME4ySmlOVFF6WlRkbE1EUXpZMkZoTlRaaU16RTFPR1V4WVdObUdrQTNZakZpWXpBMk1qZzROakF4TXpnelltRmlabUZpT1RSa016a3dZemRsTnpaaE9HSTJaakkyT0dFME1qRm1OMk01TVRKaU5XSm1PRGd5T1RGbE5XUTFJZ1prYjJOclpYSXFCbXRsY201bGJESlVaRzlqYTJWeUxXbHRZV2RsT25Ob1lUSTFOam96TW1SaE56ZGlNV0psTWpSa1pUUmpNVFV5TmpZM1l6STRZV0kyTXpVek1UUXlOV05rTmprd01EQmhZMll6TUdFek1qZzVPRFZqWWpnMU56TTNOMlkzUU8zTHY5S1dORWltL3IvU2xqUnFRR1ZrWm1Ka09UazVaakUzWkdVMk5EbGxZMlUyTjJFd1pUZzJaalkwWXpRMVpqTmxaVFU1TmpoaU5qSmtaRGczTTJRM05tRTNOVGMzTkdVM1pESmtPR0p5WUc5amFTMXRZVzVwWm1WemREcHNhVzUxZUM5aGJXUTJORUJ6YUdFeU5UWTZZVFpsWmpKbFlURmpPR1l4WkdVMVl6ZzROV1V4WVRFNFltRTNaV1UwWkRrMk1tVXpZVGcxT1RnM04yWTJaalEyWXpKbVlqZGxZbUZqTVdZMlkyTTFZeXBnYjJOcExXMWhibWxtWlhOME9teHBiblY0TDJGdFpEWTBRSE5vWVRJMU5qcGhObVZtTW1WaE1XTTRaakZrWlRWak9EZzFaVEZoTVRoaVlUZGxaVFJrT1RZeVpUTmhPRFU1T0RjM1pqWm1ORFpqTW1aaU4yVmlZV014Wmpaall6VmpNbFJrYjJOclpYSXRhVzFoWjJVNmMyaGhNalUyT2pNeVpHRTNOMkl4WW1VeU5HUmxOR014TlRJMk5qZGpNamhoWWpZek5UTXhOREkxWTJRMk9UQXdNR0ZqWmpNd1lUTXlPRGs0TldOaU9EVTNNemMzWmpkYVFnbytDZ2h1Y0cwZ2RHVnpkQkl2Q2o0Z2RHVnpkQW8rSUc1dlpHVWdkR1Z6ZEM1dGFuTUtDblIzYnlCemRXMGdZMmhsWTJ0eklIQmhjM05sWkFvd3l5NFlBUT09IiwiZW52ZWxvcGUiOnsicGF5bG9hZFR5cGUiOiJhcHBsaWNhdGlvbi92bmQuaW4tdG90bytqc29uIiwicGF5bG9hZCI6ImV5SmZkSGx3WlNJNkltaDBkSEJ6T2k4dmFXNHRkRzkwYnk1cGJ5OVRkR0YwWlcxbGJuUXZkakVpTENKemRXSnFaV04wSWpwYmV5SnVZVzFsSWpvaWNuVnVMWEpsWTI5eVpDSXNJbVJwWjJWemRDSTZleUp6YUdFeU5UWWlPaUpsWkdaaVpEazVPV1l4TjJSbE5qUTVaV05sTmpkaE1HVTRObVkyTkdNME5XWXpaV1UxT1RZNFlqWXlaR1E0TnpOa056WmhOelUzTnpSbE4yUXlaRGhpSW4xOVhTd2ljSEpsWkdsallYUmxWSGx3WlNJNkltaDBkSEJ6T2k4dmNHeHBiWE52Ykd4dFlYSnJMbWRwZEdoMVlpNXBieTl3YkdsdGMyOXNiQzl5ZFc0dGNtVmpiM0prTDNZeElpd2ljSEpsWkdsallYUmxJanA3SW5abGNuTnBiMjRpT2pRc0luSmxjWFZsYzNSZmMyaGhNalUySWpvaVlXTmtNbVJtTVRRd09XSTROREF5TkRBME5qSTFPREEwTnpZMlltVmhZamt4WWpBeU5EZGlZalUwTTJVM1pUQTBNMk5oWVRVMllqTXhOVGhsTVdGalppSXNJbkpsYzNWc2RGOXphR0V5TlRZaU9pSTNZakZpWXpBMk1qZzROakF4TXpnelltRmlabUZpT1RSa016a3dZemRsTnpaaE9HSTJaakkyT0dFME1qRm1OMk01TVRKaU5XSm1PRGd5T1RGbE5XUTFJaXdpY0hKdmRtbGtaWElpT2lKa2IyTnJaWElpTENKcGMyOXNZWFJwYjI0aU9pSnJaWEp1Wld3aUxDSmxiblpwY205dWJXVnVkQ0k2SW1SdlkydGxjaTFwYldGblpUcHphR0V5TlRZNk16SmtZVGMzWWpGaVpUSTBaR1UwWXpFMU1qWTJOMk15T0dGaU5qTTFNekUwTWpWalpEWTVNREF3WVdObU16QmhNekk0T1RnMVkySTROVGN6TnpkbU55SXNJbk52Wm5SM1lYSmxYMmxrWlc1MGFYUjVJam9pYjJOcExXMWhibWxtWlhOME9teHBiblY0TDJGdFpEWTBRSE5vWVRJMU5qcGhObVZtTW1WaE1XTTRaakZrWlRWak9EZzFaVEZoTVRoaVlUZGxaVFJrT1RZeVpUTmhPRFU1T0RjM1pqWm1ORFpqTW1aaU4yVmlZV014Wmpaall6VmpJaXdpY0c5c2FXTjVJam9pSWl3aWMzUmhjblJsWkY5MWJtbDRYMjF6SWpveE56a3lOemcwT1Rnek5UTXpMQ0psYm1SbFpGOTFibWw0WDIxeklqb3hOemt5TnpnME9UZzVPVGt3TENKelpYTnphVzl1SWpvaUlpd2ljMlZ4ZFdWdVkyVWlPakFzSW5CeVpYWnBiM1Z6WDNOb1lUSTFOaUk2SWlJc0luSmxZMjl5WkY5emFHRXlOVFlpT2lKbFpHWmlaRGs1T1dZeE4yUmxOalE1WldObE5qZGhNR1U0Tm1ZMk5HTTBOV1l6WldVMU9UWTRZall5WkdRNE56TmtOelpoTnpVM056UmxOMlF5WkRoaUluMTkiLCJzaWduYXR1cmVzIjpbeyJrZXlpZCI6IjEyZjAxNmFlZjI1NjM3NDQ1MzQ0YTBlYjYzYWRjZWYzNDBiYzcxMzc4MmVlZGQ2YThjODM4NzliYTU3NzM1N2EiLCJzaWciOiIxMUVvVm1TY2pNUkhqbVBWaGtVMTVYbThFaHAzUjRxbHE5eDlwd3dhN2JKUi9YN2VHb0tVV0VOdlhPeFRpSlNKeGdhdzQ2T3NMV2FnSUk2MDFrNjlEUT09In1dfSwibGluayI6eyJwYXlsb2FkVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5pbi10b3RvK2pzb24iLCJwYXlsb2FkIjoiZXlKZmRIbHdaU0k2SW1oMGRIQnpPaTh2YVc0dGRHOTBieTVwYnk5VGRHRjBaVzFsYm5RdmRqRWlMQ0p6ZFdKcVpXTjBJanBiZXlKdVlXMWxJam9pWW5WdVpHeGxMV3hwYm1VaUxDSmthV2RsYzNRaU9uc2ljMmhoTWpVMklqb2lNekV5TXpreVltRTRNbUkwWW1Ka1lXSTBPVFUwWkRoaFpqZ3pOVE0xTVRoa1ptRmxOVFE1T1RKbU5tSTRPR013Wm1GaE9XRXhNV0kzT1dJeFpUZzBPU0o5ZlYwc0luQnlaV1JwWTJGMFpWUjVjR1VpT2lKb2RIUndjem92TDNCc2FXMXpiMnhzYldGeWF5NW5hWFJvZFdJdWFXOHZjR3hwYlhOdmJHd3ZZblZ1Wkd4bExXeHBibXN2ZGpFaUxDSndjbVZrYVdOaGRHVWlPbnNpYVc1a1pYZ2lPakVzSW5CeVpYWnBiM1Z6WDNOb1lUSTFOaUk2SWlJc0ltVnVkSEo1WDNOb1lUSTFOaUk2SWpNeE1qTTVNbUpoT0RKaU5HSmlaR0ZpTkRrMU5HUTRZV1k0TXpVek5URTRaR1poWlRVME9Ua3laalppT0Roak1HWmhZVGxoTVRGaU56bGlNV1U0TkRraWZYMD0iLCJzaWduYXR1cmVzIjpbeyJrZXlpZCI6IjEyZjAxNmFlZjI1NjM3NDQ1MzQ0YTBlYjYzYWRjZWYzNDBiYzcxMzc4MmVlZGQ2YThjODM4NzliYTU3NzM1N2EiLCJzaWciOiJVL2UrYTU5RTRmY1hMTFl1ejZ3RzFKcjVQRkVvSUdob3dDK0tKR0ZybEhxM0laTnBvVmRSWVBqRnRlTG5oaCtXeVUyTFFHcUFJbitHYmdwMDRwUWtDZz09In1dfX0=",
+                "contentType": "application/json",
+                "encoding": "base64"
+              }
+            },
+            "name": "entry.json"
+          },
+          {
+            "contents": {
+              "attachment": {
+                "content": "eyJyZXF1ZXN0Ijp7Im1pbmltdW1faXNvbGF0aW9uIjoia2VybmVsIiwicHJvamVjdCI6eyJhcnRpZmFjdHMiOltdLCJmaWxlcyI6W3siY29udGVudCI6IntcInByaXZhdGVcIjp0cnVlLFwic2NyaXB0c1wiOntcInRlc3RcIjpcIm5vZGUgdGVzdC5tanNcIn19XG4iLCJwYXRoIjoicGFja2FnZS5qc29uIn0seyJjb250ZW50IjoiZXhwb3J0IGNvbnN0IHN1bSA9IHZhbHVlcyA9XHUwMDNlIHZhbHVlcy5yZWR1Y2UoKHRvdGFsLCB2YWx1ZSkgPVx1MDAzZSB0b3RhbCArIHZhbHVlLCAwKTtcbiIsInBhdGgiOiJzdW0ubWpzIn0seyJjb250ZW50IjoiaW1wb3J0IGFzc2VydCBmcm9tICdub2RlOmFzc2VydC9zdHJpY3QnO1xuaW1wb3J0IHtzdW19IGZyb20gJy4vc3VtLm1qcyc7XG5hc3NlcnQuZXF1YWwoc3VtKFsxMCwgMjAsIC01XSksIDI1KTtcbmFzc2VydC5lcXVhbChzdW0oW10pLCAwKTtcbmNvbnNvbGUubG9nKCd0d28gc3VtIGNoZWNrcyBwYXNzZWQnKTtcbiIsInBhdGgiOiJ0ZXN0Lm1qcyJ9LHsiY29udGVudCI6IntcbiAgXCJjb21taXRcIjogXCI2Mjc1MzRmYzcxZGUxMDVhZWI3ZTcxMDk4OTcwYmI1MWQ3MDk2MzQ5XCIsXG4gIFwicHVsbF9yZXF1ZXN0XCI6IFwiMFwiLFxuICBcInJlcG9zaXRvcnlcIjogXCJleGFtcGxlL3ByLXJlY2VpcHQtZml4dHVyZVwiXG59XG4iLCJwYXRoIjoiLnByLXJlY2VpcHQvc3ViamVjdC5qc29uIn1dLCJncmFudF9wcm9maWxlIjoiIiwic3RlcHMiOlsibnBtIHRlc3QiXX0sInByb3RvY29sIjo0LCJzb2Z0d2FyZV9ydWxlIjpudWxsLCJ0aW1lb3V0X21zIjozMDAwMCwidHJhY2VfaWQiOiJwci1yZWNlaXB0LTAifSwicmVzcG9uc2UiOnsiZHVyYXRpb25fbXMiOiI2NDU3IiwiZW52aXJvbm1lbnQiOiJkb2NrZXItaW1hZ2U6c2hhMjU2OjMyZGE3N2IxYmUyNGRlNGMxNTI2NjdjMjhhYjYzNTMxNDI1Y2Q2OTAwMGFjZjMwYTMyODk4NWNiODU3Mzc3ZjciLCJpbnN0YW5jZSI6IiIsImlzb2xhdGlvbiI6Imtlcm5lbCIsInByb2plY3QiOnsiYWR2aWNlIjpbXSwiYXJ0aWZhY3RzIjpbXSwiYXJ0aWZhY3RzX3RydW5jYXRlZCI6ZmFsc2UsIm91dGNvbWUiOiJQUk9KRUNUX09VVENPTUVfQ09NUExFVEVEIiwib3V0Y29tZV9kZXRhaWwiOiIiLCJzdGVwcyI6W3siY29tbWFuZCI6Im5wbSB0ZXN0IiwiZHVyYXRpb25fbXMiOiI1OTYzIiwiZXhpdF9jb2RlIjowLCJzdGRlcnIiOiIiLCJzdGRlcnJfdHJ1bmNhdGVkIjpmYWxzZSwic3Rkb3V0IjoiQ2o0Z2RHVnpkQW8rSUc1dlpHVWdkR1Z6ZEM1dGFuTUtDblIzYnlCemRXMGdZMmhsWTJ0eklIQmhjM05sWkFvPSIsInN0ZG91dF90cnVuY2F0ZWQiOmZhbHNlLCJ0aW1lZF9vdXQiOmZhbHNlfV19LCJyZWNvcmQiOnsiZW5kZWRfdW5peF9tcyI6IjE3OTI3ODQ5ODk5OTAiLCJlbnZpcm9ubWVudCI6ImRvY2tlci1pbWFnZTpzaGEyNTY6MzJkYTc3YjFiZTI0ZGU0YzE1MjY2N2MyOGFiNjM1MzE0MjVjZDY5MDAwYWNmMzBhMzI4OTg1Y2I4NTczNzdmNyIsImluc3RhbmNlIjoiIiwiaXNvbGF0aW9uIjoia2VybmVsIiwicG9saWN5IjoiIiwicHJldmlvdXNfc2hhMjU2IjoiIiwicHJvdmlkZXIiOiJkb2NrZXIiLCJyZWNvcmRfc2hhMjU2IjoiZWRmYmQ5OTlmMTdkZTY0OWVjZTY3YTBlODZmNjRjNDVmM2VlNTk2OGI2MmRkODczZDc2YTc1Nzc0ZTdkMmQ4YiIsInJlcXVlc3Rfc2hhMjU2IjoiYWNkMmRmMTQwOWI4NDAyNDA0NjI1ODA0NzY2YmVhYjkxYjAyNDdiYjU0M2U3ZTA0M2NhYTU2YjMxNThlMWFjZiIsInJlc3VsdF9zaGEyNTYiOiI3YjFiYzA2Mjg4NjAxMzgzYmFiZmFiOTRkMzkwYzdlNzZhOGI2ZjI2OGE0MjFmN2M5MTJiNWJmODgyOTFlNWQ1Iiwic2VxdWVuY2UiOiIwIiwic2Vzc2lvbiI6IiIsInNvZnR3YXJlX2lkZW50aXR5Ijoib2NpLW1hbmlmZXN0OmxpbnV4L2FtZDY0QHNoYTI1NjphNmVmMmVhMWM4ZjFkZTVjODg1ZTFhMThiYTdlZTRkOTYyZTNhODU5ODc3ZjZmNDZjMmZiN2ViYWMxZjZjYzVjIiwic29mdHdhcmVfcnVsZV9pZCI6IiIsInN0YXJ0ZWRfdW5peF9tcyI6IjE3OTI3ODQ5ODM1MzMiLCJ1bmFuc3dlcmVkIjoiIiwidmVyc2lvbiI6NH0sInNhbmRib3giOiJkb2NrZXIiLCJzb2Z0d2FyZV9pZGVudGl0eSI6Im9jaS1tYW5pZmVzdDpsaW51eC9hbWQ2NEBzaGEyNTY6YTZlZjJlYTFjOGYxZGU1Yzg4NWUxYTE4YmE3ZWU0ZDk2MmUzYTg1OTg3N2Y2ZjQ2YzJmYjdlYmFjMWY2Y2M1YyJ9fQ==",
+                "contentType": "application/json",
+                "encoding": "base64"
+              }
+            },
+            "name": "exchange.json"
+          }
+        ],
+        "description": "Public example evidence: DSSE envelope, signed body type application/vnd.in-toto+json, in-toto statement https://in-toto.io/Statement/v1, predicate https://plimsollmark.github.io/plimsoll/run-record/v1, key id 12f016aef25637445344a0eb63adcef340bc713782eedd6a8c83879ba577357a. entry.json is line 1 of the referenced bundle as stored: the exact binary protobuf request and response, the record's envelope and the harness's signed link placing the line. exchange.json is a plain JSON copy checked against those bytes.",
+        "propertyName": "plimsoll:run_record"
+      }
+    ]
+  },
+  "definitions": {
+    "standards": [
+      {
+        "bom-ref": "std-plimsoll-run-evidence",
+        "name": "plimsoll run evidence",
+        "requirements": [
+          {
+            "bom-ref": "req-code",
+            "identifier": "R1",
+            "title": "the code that ran is identified by digest"
+          },
+          {
+            "bom-ref": "req-image",
+            "identifier": "R2",
+            "title": "the image is identified by its manifest digest"
+          },
+          {
+            "bom-ref": "req-tier",
+            "identifier": "R3",
+            "title": "the isolation tier the daemon states is signed"
+          }
+        ],
+        "version": "1"
+      }
+    ]
+  },
+  "formulation": [
+    {
+      "bom-ref": "formula",
+      "workflows": [
+        {
+          "bom-ref": "run",
+          "inputs": [
+            {
+              "resource": {
+                "ref": "program"
+              }
+            }
+          ],
+          "name": "plimsoll run",
+          "outputs": [
+            {
+              "properties": [
+                {
+                  "name": "plimsoll:result_sha256",
+                  "value": "7b1bc06288601383babfab94d390c7e76a8b6f268a421f7c912b5bf88291e5d5"
+                }
+              ],
+              "resource": {
+                "ref": "evidence-run-record"
+              },
+              "type": "other"
+            }
+          ],
+          "properties": [
+            {
+              "name": "plimsoll:provider",
+              "value": "docker"
+            },
+            {
+              "name": "plimsoll:isolation",
+              "value": "kernel"
+            },
+            {
+              "name": "plimsoll:minimum_isolation",
+              "value": "kernel"
+            },
+            {
+              "name": "plimsoll:timeout_ms",
+              "value": "30000"
+            },
+            {
+              "name": "plimsoll:grant",
+              "value": "none"
+            },
+            {
+              "name": "plimsoll:outcome",
+              "value": "completed"
+            }
+          ],
+          "runtimeTopology": [
+            {
+              "dependsOn": [
+                "image"
+              ],
+              "ref": "program"
+            }
+          ],
+          "taskDependencies": [
+            {
+              "ref": "step-1"
+            }
+          ],
+          "taskTypes": [
+            "other"
+          ],
+          "tasks": [
+            {
+              "bom-ref": "step-1",
+              "name": "npm test",
+              "steps": [
+                {
+                  "commands": [
+                    {
+                      "executed": "npm test",
+                      "properties": [
+                        {
+                          "name": "plimsoll:exit_code",
+                          "value": "0"
+                        },
+                        {
+                          "name": "plimsoll:duration_ms",
+                          "value": "5963"
+                        },
+                        {
+                          "name": "plimsoll:timed_out",
+                          "value": "false"
+                        },
+                        {
+                          "name": "plimsoll:stdout_truncated",
+                          "value": "false"
+                        },
+                        {
+                          "name": "plimsoll:stderr_truncated",
+                          "value": "false"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "taskTypes": [
+                "other"
+              ],
+              "uid": "1"
+            }
+          ],
+          "timeEnd": "2026-10-23T19:49:49.990Z",
+          "timeStart": "2026-10-23T19:49:43.533Z",
+          "uid": "edfbd999f17de649ece67a0e86f64c45f3ee5968b62dd873d76a75774e7d2d8b"
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "program",
+      "components": [
+        {
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "a7c2bca09070ee514141fd926e648351a7d7fd0e8bd34aa3c1694c3cf6179e92"
+            }
+          ],
+          "name": ".pr-receipt/subject.json",
+          "properties": [
+            {
+              "name": "plimsoll:bytes",
+              "value": "128"
+            }
+          ],
+          "type": "file"
+        },
+        {
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "f96cc9381ec40c39fa9a0ceef721322f62b96e3d071decfc92e4b22cce03415f"
+            }
+          ],
+          "name": "package.json",
+          "properties": [
+            {
+              "name": "plimsoll:bytes",
+              "value": "52"
+            }
+          ],
+          "type": "file"
+        },
+        {
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "1ec58baffd4446cea444de15e65e223d7a5d82643147da132f84b4ca68944291"
+            }
+          ],
+          "name": "sum.mjs",
+          "properties": [
+            {
+              "name": "plimsoll:bytes",
+              "value": "80"
+            }
+          ],
+          "type": "file"
+        },
+        {
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "65bb06a8c9143d1be066b7dbede4ba42818491f9e94a70ee212b83192a027c3a"
+            }
+          ],
+          "name": "test.mjs",
+          "properties": [
+            {
+              "name": "plimsoll:bytes",
+              "value": "173"
+            }
+          ],
+          "type": "file"
+        }
+      ],
+      "description": "An agent-style example program run once through plimsoll; authorship is supplied context, not verified evidence.",
+      "externalReferences": [
+        {
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "4247db7dae30879766f07c5bd89ea69bf08740c70357b62028f7c1f042206553"
+            }
+          ],
+          "type": "attestation",
+          "url": "https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/bundle.jsonl"
+        },
+        {
+          "type": "documentation",
+          "url": "https://raw.githubusercontent.com/plimsollmark/plimsoll/main/examples/pr-receipt/evidence/index.html"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/plimsollmark/plimsoll"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cff68cf8a70a9863bd7cb2f75bdfbdcea6d9d8ee92b5766f646ba324e2e7c087"
+        }
+      ],
+      "name": "pull-request-0",
+      "properties": [
+        {
+          "name": "plimsoll:author_kind",
+          "value": "agent"
+        },
+        {
+          "name": "plimsoll:author_kind_basis",
+          "value": "supplied example context, unverified"
+        },
+        {
+          "name": "plimsoll:request_sha256",
+          "value": "acd2df1409b8402404625804766beab91b0247bb543e7e043caa56b3158e1acf"
+        },
+        {
+          "name": "plimsoll:result_sha256",
+          "value": "7b1bc06288601383babfab94d390c7e76a8b6f268a421f7c912b5bf88291e5d5"
+        },
+        {
+          "name": "plimsoll:record_sha256",
+          "value": "edfbd999f17de649ece67a0e86f64c45f3ee5968b62dd873d76a75774e7d2d8b"
+        },
+        {
+          "name": "plimsoll:trace_id",
+          "value": "pr-receipt-0"
+        }
+      ],
+      "type": "application",
+      "version": "cff68cf8a70a"
+    },
+    "lifecycles": [
+      {
+        "phase": "operations"
+      }
+    ],
+    "timestamp": "2026-10-23T19:49:49.990Z",
+    "tools": {
+      "components": [
+        {
+          "externalReferences": [
+            {
+              "type": "vcs",
+              "url": "https://github.com/plimsollmark/plimsoll"
+            }
+          ],
+          "name": "plimsoll-sbom",
+          "type": "application",
+          "version": "0.2.0"
+        }
+      ]
+    }
+  },
+  "properties": [
+    {
+      "name": "plimsoll:bundle_sha256",
+      "value": "4247db7dae30879766f07c5bd89ea69bf08740c70357b62028f7c1f042206553"
+    },
+    {
+      "name": "plimsoll:bundle_line",
+      "value": "1"
+    },
+    {
+      "name": "plimsoll:emitter",
+      "value": "examples/sbom"
+    }
+  ],
+  "serialNumber": "urn:uuid:391b2bec-c71f-4a50-8370-297071b47e80",
+  "specVersion": "1.6",
+  "version": 1
+}

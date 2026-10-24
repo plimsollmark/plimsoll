@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/plimsollmark/plimsoll/protocol"
 )
 
 func receiptScratch(t *testing.T) string {
@@ -36,7 +39,7 @@ func receiptCommand(t *testing.T, env []string, program string, args ...string) 
 	// A gate may use a temporary index to inspect new files. Fixture git calls
 	// must still use their own repository, not inherit that gate's index/objects.
 	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "GIT_") && !strings.HasPrefix(e, "TEST_COMMAND=") && !strings.HasPrefix(e, "PR_BASE_SHA=") && !strings.HasPrefix(e, "PR_NUMBER=") && !strings.HasPrefix(e, "PR_REPOSITORY=") && !strings.HasPrefix(e, "PLIMSOLL_HARNESS_KEY=") {
+		if !strings.HasPrefix(e, "GIT_") && !strings.HasPrefix(e, "TEST_COMMAND=") && !strings.HasPrefix(e, "PR_BASE_SHA=") && !strings.HasPrefix(e, "PR_NUMBER=") && !strings.HasPrefix(e, "PR_REPOSITORY=") && !strings.HasPrefix(e, "PLIMSOLL_HARNESS_KEY=") && !strings.HasPrefix(e, "JUNIT_PATH=") && !strings.HasPrefix(e, "COVERAGE_PATH=") && !strings.HasPrefix(e, "SESSION_TRAILER=") {
 			cmd.Env = append(cmd.Env, e)
 		}
 	}
@@ -97,7 +100,7 @@ func TestReceiptPreparationTreatsCommandAsDataAndIncludesChangedFiles(t *testing
 	if err := json.Unmarshal(request, &q); err != nil {
 		t.Fatal(err)
 	}
-	if q.Protocol != 3 || q.MinimumIsolation != "kernel" || len(q.Project.Files) != 2 || q.Project.Files[0].Path != "test.mjs" || len(q.Project.Steps) != 1 || q.Project.Steps[0] != command {
+	if q.Protocol != int(protocol.Number) || q.MinimumIsolation != "kernel" || len(q.Project.Files) != 2 || q.Project.Files[0].Path != "test.mjs" || len(q.Project.Steps) != 1 || q.Project.Steps[0] != command {
 		t.Fatalf("wrong request: %s", request)
 	}
 	// The subject names what was tested inside the signed request.
@@ -119,6 +122,23 @@ func TestReceiptPreparationTreatsCommandAsDataAndIncludesChangedFiles(t *testing
 			t.Fatal(err)
 		}
 	}
+	// The files are the commit's own: an edit to a tracked file and a file staged but not
+	// committed are not what runs, and the subject still names the commit.
+	write("test.mjs", "console.log('changed');\n")
+	write("staged.mjs", "console.log('staged');\n")
+	git("add", "staged.mjs")
+	dirty := filepath.Join(dir, "dirty")
+	if out, err := receiptCommand(t, env, "python3", "prepare.py", project, dirty); err != nil {
+		t.Fatalf("a working tree with uncommitted changes: %s: %v", out, err)
+	}
+	if again, err := os.ReadFile(filepath.Join(dirty, "request.json")); err != nil || string(again) != string(request) {
+		t.Fatalf("uncommitted changes reached the request (%v):\n%s", err, again)
+	}
+	git("rm", "-q", "--cached", "staged.mjs")
+	git("checkout", "--", "test.mjs")
+	if err := os.Remove(filepath.Join(project, "staged.mjs")); err != nil {
+		t.Fatal(err)
+	}
 	// In order: each setup leaves the project as the next one expects.
 	for _, c := range []struct {
 		name, want string
@@ -126,9 +146,7 @@ func TestReceiptPreparationTreatsCommandAsDataAndIncludesChangedFiles(t *testing
 	}{
 		{"no repository", "PR_REPOSITORY", func() []string { return env[:2] }},
 		{"a repository with a space", "PR_REPOSITORY", func() []string { return append(env[:2:2], "PR_REPOSITORY=example project") }},
-		{"a change not committed", "differ from the commit", func() []string { write("test.mjs", "console.log('changed');\n"); return env }},
 		{"a tracked file under .pr-receipt/", "collide", func() []string {
-			git("checkout", "--", "test.mjs")
 			write(".pr-receipt/subject.json", "{}\n")
 			git("add", ".pr-receipt")
 			receiptCommit(t, project)
@@ -143,6 +161,14 @@ func TestReceiptPreparationTreatsCommandAsDataAndIncludesChangedFiles(t *testing
 				t.Fatal(err)
 			}
 			git("add", "test.mjs")
+			receiptCommit(t, project)
+			return env
+		}},
+		{"a submodule", "submodule", func() []string {
+			git("rm", "-q", "test.mjs")
+			write("test.mjs", "console.log('ok');\n")
+			git("add", "test.mjs")
+			git("update-index", "--add", "--cacheinfo", "160000,"+commit+",vendor/lib")
 			receiptCommit(t, project)
 			return env
 		}},
@@ -280,8 +306,32 @@ func TestReceiptScriptEndToEnd(t *testing.T) {
 		}
 	}
 
+	// The verifier accepts the receipt for the commit it tested, with its junit.xml and its
+	// signed in-toto test-result statement.
+	sbom := filepath.Join(dir, "sbom")
+	if log, err := exec.Command("go", "-C", "../sbom", "build", "-o", sbom, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build the checker: %v\n%s", err, log)
+	}
+	attestBin := filepath.Join(dir, "plimsoll-attest")
+	if log, err := exec.Command("go", "build", "-o", attestBin, "../../cmd/plimsoll-attest").CombinedOutput(); err != nil {
+		t.Fatalf("build plimsoll-attest: %v\n%s", err, log)
+	}
+	verify := func(out string, extra ...string) {
+		t.Helper()
+		args := append([]string{"-I", "verify.py", "--sbom", sbom, "--receipt", glob1(t, filepath.Join(out, "run-*.cdx.json")),
+			"--trusted-pub", filepath.Join(out, "harness.pub"), "--repo", project, "--repository", "example/pr-receipt-fixture",
+			"--head", commit, "--pr", "0", "--junit", filepath.Join(out, "junit.xml"),
+			"--attest", attestBin, "--test-result", filepath.Join(out, "test-result.intoto.json")}, extra...)
+		if log, err := receiptCommand(t, nil, "python3", args...); err != nil || !strings.Contains(string(log), `"verified": true`) {
+			t.Errorf("verify.py %v: %v\n%s", extra, err, log)
+		}
+	}
+	verify(out, "--command", "npm test")
+
 	// Signed with an operator key instead: the run's public key is the operator's, and the
-	// private key is still where the operator keeps it.
+	// private key is still where the operator keeps it. This run asks node's test runner for
+	// its JUnit report and its lcov coverage, which come back inside the signed result byte
+	// for byte; the coverage is converted to Cobertura.
 	keys := filepath.Join(dir, "keys")
 	if err := os.Mkdir(keys, 0o700); err != nil {
 		t.Fatal(err)
@@ -290,7 +340,9 @@ func TestReceiptScriptEndToEnd(t *testing.T) {
 		t.Fatalf("keygen: %v\n%s", err, log)
 	}
 	signed := filepath.Join(dir, "signed")
-	if log, err := receiptCommand(t, []string{"TEST_COMMAND=npm test", "PR_NUMBER=0", "PR_REPOSITORY=example/pr-receipt-fixture", "PLIMSOLL_HARNESS_KEY=" + filepath.Join(keys, "operator.key")}, "bash", "receipt.sh", project, signed); err != nil {
+	junitCommand := "node --test --experimental-test-coverage --test-reporter=junit --test-reporter-destination=reports.xml" +
+		" --test-reporter=lcov --test-reporter-destination=lcov.info test.mjs"
+	if log, err := receiptCommand(t, []string{"TEST_COMMAND=" + junitCommand, "JUNIT_PATH=reports.xml", "COVERAGE_PATH=lcov.info", "PR_NUMBER=0", "PR_REPOSITORY=example/pr-receipt-fixture", "PLIMSOLL_HARNESS_KEY=" + filepath.Join(keys, "operator.key")}, "bash", "receipt.sh", project, signed); err != nil {
 		t.Fatalf("receipt.sh with an operator key: %v\n%s", err, log)
 	}
 	want, err := os.ReadFile(filepath.Join(keys, "operator.pub"))
@@ -302,5 +354,40 @@ func TestReceiptScriptEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(keys, "operator.key")); err != nil {
 		t.Errorf("the operator key was not left in place: %v", err)
+	}
+	if report, err := os.ReadFile(filepath.Join(signed, "junit.xml")); err != nil || !strings.Contains(string(report), "<testsuites") || strings.Contains(string(report), "plimsoll.junit_source") {
+		t.Errorf("junit.xml is not node's own report (%v):\n%s", err, report)
+	}
+	if report, err := os.ReadFile(filepath.Join(signed, "coverage.cobertura.xml")); err != nil || !strings.Contains(string(report), `filename="sum.mjs"`) {
+		t.Errorf("coverage.cobertura.xml does not cover sum.mjs (%v):\n%s", err, report)
+	}
+	opened, err := exec.Command(attestBin, "open-statement", "-pub", filepath.Join(signed, "harness.pub"),
+		"-type", "https://in-toto.io/attestation/test-result/v0.1", filepath.Join(signed, "test-result.intoto.json")).CombinedOutput()
+	if err != nil || !strings.Contains(string(opened), `"result":"PASSED"`) || !strings.Contains(string(opened), `"isolation":"kernel"`) ||
+		!strings.Contains(string(opened), `"gitCommit":"`+commit+`"`) {
+		t.Errorf("the test-result statement does not open as PASSED at the kernel tier for commit %s (%v):\n%s", commit, err, opened)
+	}
+	verify(signed, "--command", junitCommand, "--junit-path", "reports.xml", "--coverage-path", "lcov.info",
+		"--coverage", filepath.Join(signed, "coverage.cobertura.xml"))
+}
+
+func glob1(t *testing.T, pattern string) string {
+	t.Helper()
+	m, err := filepath.Glob(pattern)
+	if err != nil || len(m) != 1 {
+		t.Fatalf("%s: want one match, got %v (%v)", pattern, m, err)
+	}
+	return m[0]
+}
+
+// prepare.py states the protocol number in the request it writes; it must be the one this
+// module's daemon serves, or every receipt is refused before anything runs.
+func TestPrepareStatesTheCurrentProtocol(t *testing.T) {
+	b, err := os.ReadFile("prepare.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("'protocol': %d,", protocol.Number); !strings.Contains(string(b), want) {
+		t.Errorf("prepare.py does not state %s", want)
 	}
 }

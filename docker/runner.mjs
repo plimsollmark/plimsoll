@@ -16,6 +16,7 @@
 import { spawnSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, readlinkSync, realpathSync, openSync, fstatSync, closeSync, constants } from "node:fs";
+import { constants as osConstants } from "node:os";
 import { resolve, dirname } from "node:path";
 
 const WORK = resolve(process.env.PLIMSOLL_WORK || "/work");
@@ -24,6 +25,11 @@ let reportKey = null; // set from the plan; a frame without it cannot verify
 // Node's spawnSync counts both streams against one buffer, so this is the cap on a
 // step's output in all, not per stream (round-4 review, 2026-10-08).
 const MAX_STEP_OUTPUT = 1 << 20;
+// A step's output past MAX_STEP_OUTPUT is read and dropped, so the step runs on and its
+// result is its own, as on the exec-based providers; only a flood past this budget (the
+// E2B transport's, 32 MiB) ends it, reported as exit 153 with both streams cut.
+const MAX_STEP_TRANSFER = 32 << 20;
+const EXIT_OUTPUT_FLOODED = 153; // 128 + SIGXFSZ, as the exec-based providers report it
 const MAX_ARTIFACT_BYTES = 8 << 20; // 8 MiB total across all captured artifacts
 const MAX_STEPS_JSON = 3 << 20; // encoded step metadata/output across the run
 const MAX_RESULT_JSON = 15 << 20; // host cap is 16 MiB; reserve framing headroom
@@ -66,7 +72,10 @@ function emit(payload) {
     encoded = JSON.stringify(payload);
   }
   if (Buffer.byteLength(encoded) > MAX_RESULT_JSON) {
-    encoded = JSON.stringify({ error: "sandbox result exceeds the encoded response budget" });
+    // The steps no longer fit, but whether any began still goes: they ran.
+    const ran = payload.stepsBegan === true || (payload.steps?.length ?? 0) > 0;
+    encoded = JSON.stringify(ran ? { error: "sandbox result exceeds the encoded response budget", stepsBegan: true }
+      : { error: "sandbox result exceeds the encoded response budget" });
   }
   const body = Buffer.from(encoded, "utf8");
   // Without a key the frame is still written, so the host sees a report arrive, but
@@ -149,6 +158,12 @@ function writeOwnedFile(path, content, label) {
   }
 }
 
+// Whether any step began, and the steps so far: a failure after a step began (reading an
+// artifact, a result over the size budget) is reported with both, so the host never reads
+// it as a failure before any of the caller's code ran.
+let began = false;
+const steps = [];
+
 try {
   verifyRunnerIsolation();
   const plan = JSON.parse(readFileSync(0, "utf8"));
@@ -192,37 +207,49 @@ try {
     stepEnv.NODE_OPTIONS = stepEnv.NODE_OPTIONS ? stepEnv.NODE_OPTIONS + " " + preload : preload;
   }
 
-  const steps = [];
+  // One deadline for every step, fixed before the first: each step gets what is left
+  // of the run's budget, not a budget of its own. With a per-step budget, steps that
+  // each stayed under it could together run past the provider's hard stop (budget plus
+  // a short grace), which killed this runner before it reported, and every earlier
+  // step's output went with it. A step reached with nothing left still starts, with a
+  // millisecond, and is reported timed out, so the run reads as timed out.
+  const budgetMs = Number.isFinite(plan.budgetMs) && plan.budgetMs > 0 ? plan.budgetMs : 0;
+  const deadline = budgetMs > 0 ? Date.now() + budgetMs : Infinity;
   for (const command of plan.steps ?? []) {
+    began = true;
     const start = Date.now();
     // No encoding: output is captured as raw bytes and reported as base64, so a step
     // that writes bytes that are not UTF-8 is reported with exactly those bytes.
     const r = spawnSync("sh", ["-c", command], {
       cwd: WORK,
       env: stepEnv,
-      timeout: plan.stepTimeoutMs || undefined,
+      timeout: deadline === Infinity ? undefined : Math.max(1, deadline - start),
       // SIGKILL, not Node's default SIGTERM: a step that ignores SIGTERM would run on
       // past its budget until the outer backstop killed the container and every
       // step's report with it.
       killSignal: "SIGKILL",
-      maxBuffer: MAX_STEP_OUTPUT,
+      maxBuffer: MAX_STEP_TRANSFER,
     });
     const timedOut = r.error?.code === "ETIMEDOUT";
-    // Exceeding maxBuffer (ENOBUFS) kills the child, so from that moment neither
-    // stream is complete: both are marked cut. The buffer is shared between them, so
-    // a step that writes 600 KiB to each overflows with neither stream at the cap, and
-    // flagging only a stream that reached the cap would report both as complete
-    // (round-4 review, 2026-10-08).
+    // Exceeding maxBuffer (ENOBUFS) kills the child, so from that moment neither stream
+    // is complete: both are marked cut and the step reports a flood. The buffer is
+    // shared between the streams (round-4 review, 2026-10-08). Below it, each stream
+    // keeps its first MAX_STEP_OUTPUT bytes and is flagged only if it had more; the
+    // step was not stopped, so its exit is its own (review, 2026-10-24).
     const overflowed = r.error?.code === "ENOBUFS";
-    const stdout = r.stdout ?? Buffer.alloc(0);
-    const stderr = r.stderr ?? Buffer.from(r.error ? String(r.error.message) : "", "utf8");
+    const rawOut = r.stdout ?? Buffer.alloc(0);
+    const rawErr = r.stderr ?? Buffer.from(r.error && !overflowed ? String(r.error.message) : "", "utf8");
+    const stdout = rawOut.subarray(0, MAX_STEP_OUTPUT);
+    const stderr = rawErr.subarray(0, MAX_STEP_OUTPUT);
     const step = {
       command: String(command).slice(0, 16 << 10),
       stdoutBase64: stdout.toString("base64"),
       stderrBase64: stderr.toString("base64"),
-      stdoutTruncated: overflowed,
-      stderrTruncated: overflowed,
-      exitCode: timedOut ? 124 : (r.status ?? -1),
+      stdoutTruncated: overflowed || rawOut.length > MAX_STEP_OUTPUT,
+      stderrTruncated: overflowed || rawErr.length > MAX_STEP_OUTPUT,
+      // A step whose shell was killed has no status: it reports 128 plus the signal, as a
+      // shell reports a child killed by one, and as the exec-based providers do.
+      exitCode: timedOut ? 124 : overflowed ? EXIT_OUTPUT_FLOODED : (r.status ?? (r.signal ? 128 + (osConstants.signals[r.signal] ?? 0) : -1)),
       timedOut,
       durationMs: Date.now() - start,
     };
@@ -235,5 +262,5 @@ try {
   const captured = captureArtifacts(plan.artifacts);
   emit({ steps, artifacts: captured.artifacts, artifactsTruncated: captured.truncated });
 } catch (err) {
-  emit({ error: String(err?.message ?? err) });
+  emit(began ? { error: String(err?.message ?? err), stepsBegan: true, steps } : { error: String(err?.message ?? err) });
 }

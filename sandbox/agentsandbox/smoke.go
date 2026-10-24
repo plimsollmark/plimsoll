@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox"
+	"github.com/plimsollmark/plimsoll/sandbox/internal/egress"
 )
 
 const (
@@ -112,7 +113,7 @@ const tcp = (host, port) => new Promise(done => {
   s.on("connect", () => { clearTimeout(t); s.destroy(); done("open"); });
   s.on("error", e => { clearTimeout(t); done(e.code || String(e)); });
 });
-const targets = ["1.1.1.1:443", "8.8.8.8:53", "169.254.169.254:80", ...extra];
+const targets = ["1.1.1.1:443", "8.8.8.8:53", "169.254.169.254:80", "[2606:4700:4700::1111]:443", "[2001:4860:4860::8888]:53", ...extra];
 if (report.gateway) targets.push(report.gateway + ":` + kubeletPort + `");
 (async () => {
   const outcomes = await Promise.all(targets.map(t => { const i = t.lastIndexOf(":"); return tcp(t.slice(0, i).replace(/^\[|\]$/g, ""), t.slice(i + 1)); }));
@@ -502,25 +503,16 @@ func checkWritable(swept int, dirs, files, roots []string) error {
 }
 
 // checkEgress requires every connection attempt to have gone unanswered or to have been
-// refused inside the pod (EACCES, EPERM). A connection refused by its destination is an
+// refused inside the pod (egress.Closed). A connection refused by its destination is an
 // answer: the packet left the pod, so it fails as an open connection does.
-func checkEgress(egress map[string]string, gateway string) error {
-	if len(egress) == 0 {
+func checkEgress(outcomes map[string]string, gateway string) error {
+	if len(outcomes) == 0 {
 		return errors.New("the boundary test reported no connection attempts")
 	}
 	if gateway == "" {
 		return errors.New("the boundary test found no default route, so the node's kubelet was not tried")
 	}
-	var reached []string
-	for target, outcome := range egress {
-		switch outcome {
-		case "timeout", "EHOSTUNREACH", "ENETUNREACH", "EACCES", "EPERM": // unanswered, or refused before it left
-		default:
-			reached = append(reached, target+" "+outcome)
-		}
-	}
-	if len(reached) > 0 {
-		slices.Sort(reached)
+	if reached := egress.Left(outcomes); len(reached) > 0 {
 		return fmt.Errorf("connections left the pod: %v; no network policy in force denies the pod's egress", reached)
 	}
 	return nil

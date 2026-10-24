@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>plimsoll on Kubernetes agent-sandbox: signed runs, their bills of materials, and five refusals</title>
-<meta name="description" content="Two real project runs on Kubernetes agent-sandbox under gVisor, through a hardened plimsoll daemon, each signed and converted to a CycloneDX bill of materials; the same requests' results compared with docker and Docker Cloud; and five refusals, among them a node whose gVisor handler was quietly swapped for an ordinary container.">
+<meta name="description" content="Two real project requests run on Kubernetes agent-sandbox under gVisor and again under Kata Containers, through a hardened plimsoll daemon, each run signed and converted to a CycloneDX bill of materials; the same requests' results compared with docker and Docker Cloud; what each Kata pod's kernel said; and five refusals, among them a node whose gVisor handler was quietly swapped for an ordinary container.">
 <link rel="canonical" href="https://plimsollmark.github.io/plimsoll/examples/agentsandbox/index.html">
 <style>
   :root { color-scheme: light; --ink: #1a1a1a; --ink2: #5a5a5a; --blue: #2a78d6; --aqua: #1baf7a; --red: #b3261e; --surface: #ffffff; --panel: #fcfcfb; --line: #e2e2df; }
@@ -35,6 +35,8 @@
   .label { color: var(--ink2); font-size: 12.5px; font-weight: 600; margin-top: 8px; }
   .note { color: var(--ink2); font-size: 13px; }
   .wide { overflow-x: auto; }
+  .wide > table { min-width: 720px; }
+  .room h3 { margin-top: 20px; }
   dfn { font-style: normal; font-weight: 600; }
   ol li, ul li { margin: 4px 0; }
   a { color: var(--blue); }
@@ -45,28 +47,30 @@
 <main>
 <nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/envs/index.html">Simulation replays</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>plimsoll on Kubernetes agent-sandbox: signed runs, their bills of materials, and five refusals</h1>
-<p class="sub">plimsoll is a service that runs code an AI agent wrote and says, on every run, behind which boundary it ran. <dfn>Kubernetes agent-sandbox</dfn> is a Kubernetes project that keeps sandboxes as <dfn>pods</dfn> (Kubernetes' unit of one or more containers) in a <dfn>warm pool</dfn>, started ahead of time so a run does not wait for one. This page is two real runs through plimsoll on agent-sandbox, recorded on 2026-10-18 04:23:27 UTC, each signed and converted into a bill of materials, and five things plimsoll refused to do on the same cluster. Every claim below is either signed, and checkable with the commands at the end, or marked as a transcript.</p>
+<p class="sub">plimsoll is a service that runs code an AI agent wrote and says, on every run, behind which boundary it ran. <dfn>Kubernetes agent-sandbox</dfn> is a Kubernetes project that keeps sandboxes as <dfn>pods</dfn> (Kubernetes' unit of one or more containers) in a <dfn>warm pool</dfn>, started ahead of time so a run does not wait for one. This page is the same two real requests run through plimsoll as agent-sandbox under gVisor (recorded 2026-10-23 20:09 UTC) and agent-sandbox under Kata Containers (recorded 2026-10-23 20:10 UTC), each run signed and converted into a bill of materials, what a pod's kernel said in the vm room, and five things plimsoll refused to do on the same cluster. Every claim below is either signed, and checkable with the commands at the end, or marked as a transcript.</p>
 
 <div class="tiles">
-  <div class="tile"><div class="k">Boundary</div><div class="v">gVisor · kernel</div><div class="n">the tier plimsoll read and checked, in hardened mode</div></div>
-  <div class="tile"><div class="k">Signed runs</div><div class="v">2</div><div class="n">each with a CycloneDX bill of materials</div></div>
-  <div class="tile"><div class="k">Same request, 3 rooms</div><div class="v">same results</div><div class="n">docker under gVisor and a Docker Cloud microVM ran the same request bytes</div></div>
+  <div class="tile"><div class="k">Boundaries</div><div class="v">kernel · vm</div><div class="n">agent-sandbox under gVisor and agent-sandbox under Kata Containers: the tier plimsoll read and checked in each pod, in hardened mode</div></div>
+  <div class="tile"><div class="k">Signed runs</div><div class="v">4</div><div class="n">each with a CycloneDX bill of materials</div></div>
+  <div class="tile"><div class="k">Same request, 4 rooms</div><div class="v">same results</div><div class="n">agent-sandbox under gVisor, agent-sandbox under Kata Containers, docker under gVisor and a Docker Cloud microVM ran the same request bytes</div></div>
   <div class="tile"><div class="k">Refusals</div><div class="v">5</div><div class="n">each before any code ran, or before the daemon served</div></div>
 </div>
 
 <h2>Words this page uses</h2>
 <ul>
-  <li><dfn>Tier</dfn>: how strong the wall between the code and the machine is. <code>container</code> is an ordinary container (runc): the code talks to the machine's own kernel through a filter. <code>kernel</code> is <dfn>gVisor</dfn>: a stand-in kernel that runs as an ordinary program, so the code never talks to the machine's kernel directly. <code>vm</code> is a separate virtual machine.</li>
-  <li><dfn>Runtime class</dfn>: the Kubernetes object a pod names to pick how its containers start. Its <dfn>handler</dfn> is a name, <code>runsc</code> for gVisor or <code>runc</code>, which each node maps to a program in its own configuration. The Kubernetes API shows the name, never the mapping.</li>
+  <li><dfn>Tier</dfn>: how strong the wall between the code and the machine is. <code>container</code> is an ordinary container (runc): the code talks to the machine's own kernel through a filter. <code>kernel</code> is <dfn>gVisor</dfn>: a stand-in kernel that runs as an ordinary program, so the code never talks to the machine's kernel directly. <code>vm</code> is a separate virtual machine with a kernel of its own: here <dfn>Kata Containers</dfn>, which starts each pod inside a small virtual machine, and a Docker Cloud microVM.</li>
+  <li><dfn>Runtime class</dfn>: the Kubernetes object a pod names to pick how its containers start. Its <dfn>handler</dfn> is a name, <code>runsc</code> for gVisor, <code>kata-clh-runtime-rs</code> for Kata on the Cloud Hypervisor, or <code>runc</code>, which each node maps to a program in its own configuration. The Kubernetes API shows the name, never the mapping.</li>
+  <li><dfn>Boot ID</dfn>: a random identifier a Linux kernel picks each time it starts, which any process can read. Two processes that read the same boot ID run on the same kernel.</li>
+  <li><dfn>Room</dfn>: one place the same request ran, named by its provider, the tier the provider stated and, on agent-sandbox, the runtime class.</li>
   <li><dfn>Floor</dfn>: the weakest tier a request accepts. A provider that cannot meet it refuses before anything runs.</li>
   <li><dfn>Run record</dfn>: what the daemon states about one run: SHA-256 <dfn>digests</dfn> (fingerprints that change if one byte changes) of the request and the result, the provider, the tier, the image, the times. A <dfn>harness</dfn> outside the daemon checks each record against the request and result it saw and signs it with its own key, into a <dfn>bundle</dfn> file.</li>
   <li><dfn>Bill of materials</dfn> (BOM): a parts list. CycloneDX is a standard format for it that supply-chain tools read; here each run's BOM lists the program's files, the image, the steps, and the record's claims, with the signed evidence attached.</li>
-  <li><dfn>Hardened mode</dfn>: plimsoll's strict start. It refuses to serve unless every production rule holds: a VM or verified gVisor, a pinned image, per-caller authentication and limits, a stated memory, CPU and disk budget.</li>
+  <li><dfn>Hardened mode</dfn>: plimsoll's strict start. It refuses to serve unless every production rule holds: a VM or verified gVisor, a pinned image, per-caller authentication and limits, a stated memory and CPU budget, and below the vm tier a disk budget.</li>
 </ul>
 
 <h2>What happens on each run</h2>
 <div class="wide">
-<svg viewBox="0 0 1060 300" width="100%" style="min-width:760px" role="img" aria-label="A run: the caller sends a request to plimsolld, which reads the template, claims a pod from the warm pool, reads the pod back, runs its own probe in the pod, then the code; the harness signs the record into a bundle, and the SBOM example turns each line into a CycloneDX file.">
+<svg viewBox="0 0 1060 300" width="100%" style="min-width:760px" role="img" aria-label="A run: the caller sends a request to plimsolld, which reads the template, claims a pod from the warm pool, reads the pod back, runs its own probe in the pod (kernel log, boot ID, seccomp), then the code; the pod runs under gVisor's kernel or in a Kata virtual machine with its own kernel; the harness signs the record into a bundle, and the SBOM example turns each line into a CycloneDX file.">
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5a5a5a"/></marker></defs>
   <rect x="10" y="40" width="130" height="70" rx="8" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/>
   <text x="24" y="66" font-size="14" font-weight="600" fill="#1a1a1a">The caller</text>
@@ -78,18 +82,20 @@
   <text x="206" y="58" font-size="12.5" fill="#1a1a1a">1. reads the template, runtime class and policies</text>
   <text x="206" y="80" font-size="12.5" fill="#1a1a1a">2. claims one pod from the warm pool</text>
   <text x="206" y="102" font-size="12.5" fill="#1a1a1a">3. reads that pod back: image digest, spec, policies</text>
-  <text x="206" y="124" font-size="12.5" fill="#b3261e" font-weight="600">4. its first command in the pod: kernel log, seccomp</text>
+  <text x="206" y="124" font-size="12.5" fill="#b3261e" font-weight="600">4. its own probe first: kernel log, boot ID, seccomp</text>
   <text x="206" y="146" font-size="12.5" fill="#1a1a1a">5. sends the run's code; returns the result and the record</text>
   <text x="206" y="168" font-size="12.5" fill="#1a1a1a">6. deletes the claim, so the pod is gone</text>
   <text x="206" y="188" font-size="11.5" fill="#5a5a5a">any check that fails: refused, nothing ran</text>
   <line x1="590" y1="105" x2="636" y2="105" stroke="#5a5a5a" stroke-width="1.4" marker-end="url(#arrow)"/>
-  <rect x="640" y="40" width="190" height="130" rx="8" fill="#e6f4ea" stroke="#1baf7a" stroke-width="1.5"/>
-  <text x="654" y="64" font-size="14" font-weight="600" fill="#1e6b2f">One fresh pod</text>
-  <text x="654" y="86" font-size="12.5" fill="#1e6b2f">gVisor's kernel (runsc)</text>
-  <text x="654" y="108" font-size="12.5" fill="#1e6b2f">sandboxd, agent-sandbox's</text>
-  <text x="654" y="124" font-size="12.5" fill="#1e6b2f">daemon in the pod</text>
-  <text x="654" y="146" font-size="12.5" fill="#1e6b2f">the code, as uid 61000,</text>
-  <text x="654" y="162" font-size="12.5" fill="#1e6b2f">no network out</text>
+  <rect x="640" y="24" width="220" height="168" rx="8" fill="#e6f4ea" stroke="#1baf7a" stroke-width="1.5"/>
+  <text x="654" y="48" font-size="14" font-weight="600" fill="#1e6b2f">One fresh pod</text>
+  <text x="654" y="70" font-size="12.5" fill="#1e6b2f">gVisor's kernel (runsc), or a</text>
+  <text x="654" y="86" font-size="12.5" fill="#1e6b2f">Kata virtual machine with a</text>
+  <text x="654" y="102" font-size="12.5" fill="#1e6b2f">Linux kernel of its own</text>
+  <text x="654" y="124" font-size="12.5" fill="#1e6b2f">sandboxd, agent-sandbox's</text>
+  <text x="654" y="140" font-size="12.5" fill="#1e6b2f">daemon in the pod</text>
+  <text x="654" y="162" font-size="12.5" fill="#1e6b2f">the code, as uid 61000,</text>
+  <text x="654" y="178" font-size="12.5" fill="#1e6b2f">no network out</text>
   <line x1="390" y1="200" x2="390" y2="232" stroke="#5a5a5a" stroke-width="1.4" marker-end="url(#arrow)"/>
   <rect x="190" y="236" width="400" height="56" rx="8" fill="#fff" stroke="#5a5a5a" stroke-width="1.2"/>
   <text x="206" y="258" font-size="13" font-weight="600" fill="#1a1a1a">attest harness, outside the daemon</text>
@@ -100,79 +106,143 @@
   <text x="654" y="278" font-size="12" fill="#5a5a5a">one CycloneDX file per signed line</text>
 </svg>
 </div>
-<p>Step 4 is new. A handler's name is configuration on each node, which the Kubernetes API does not show, so before any of the run's code plimsoll runs one command of its own in the claimed pod, as the guest: the first line of the kernel log, which under gVisor is gVisor's own boot line, and the seccomp mode, which under runc must show a filter. The pod is fresh, so nothing of a guest's has run in it yet. On this cluster the check cost nothing measurable: the median snippet took 75 ms from claim to result with it and without it, over ten runs each. Refusal 4 below is why it exists.</p>
+<p>Step 4 is new. A handler's name is configuration on each node, which the Kubernetes API does not show, so before any of the run's code plimsoll runs one command of its own in the claimed pod, as the guest. Under gVisor the first line of the kernel log must be gVisor's own boot line. Under Kata it must be a Linux kernel's boot line, and the kernel's boot ID must differ from the one the pod's node reports through the API, since a pod started on the node's own kernel shares the node's boot ID. Under runc the seccomp mode must show a filter. The pod is fresh, so nothing of a guest's has run in it yet. On this cluster the check cost nothing measurable under gVisor: the median snippet took 75 ms from claim to result with it and without it, over ten runs each. Refusal 4 below is why it exists, and <a href="#kata">the vm room's section</a> shows what it reads in a pod of that room.</p>
 
-<h2>The two signed runs</h2>
-<p>The program is a three-file invoice reconciliation an agent might write, the same one the <a href="../sbom/index.html">INTERNAL · CycloneDX example page →</a> uses; the second request adds one step that tries to fetch a web page.</p>
+<h2>The signed runs</h2>
+<p>The program is a three-file invoice reconciliation an agent might write, the same one the <a href="../sbom/index.html">INTERNAL · CycloneDX example page →</a> uses; the second request adds one step that tries to fetch a web page. This page sent each request once as agent-sandbox under gVisor and agent-sandbox under Kata Containers, each time through a hardened daemon for that runtime class, and the harness signed every answer with the key in <a href="harness.pub">INTERNAL · harness.pub →</a>.</p>
 
 <div class="panel">
 <h3>node reconcile.test.js, then node main.js</h3>
 <table>
-  <tr><th>Outcome</th><td><span class="badge ok">completed</span> in 509 ms, started 2026-10-18T04:23:31Z</td></tr>
-  <tr><th>Tier</th><td><code>kernel</code>, at or above the requested floor <code>kernel</code></td></tr>
-  <tr><th>Image</th><td class="mono">sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430</td></tr>
-  <tr><th>Request digest</th><td class="mono">74cd327b55e1c01a7773b617f55fb0cdecd4b13bd7e47834a131ac4f528ed285</td></tr>
-  <tr><th>Result digest</th><td class="mono">7a38c50fe500b5827774fc68352cc66a153f44e89e7a7f6d6965f5823ad404d9</td></tr>
-  <tr><th>Record digest</th><td class="mono">e25b11e37738f749bfcbab19b542b55e5c6d2a6f6e3cdfa4fffbbe7ffd724907</td></tr>
-  <tr><th>Signed</th><td>line 1 of <a href="bundle.jsonl">INTERNAL · bundle.jsonl →</a>, by the harness key in <a href="harness.pub">INTERNAL · harness.pub →</a></td></tr>
-  <tr><th>Bill of materials</th><td><a href="run-e25b11e37738.cdx.json">INTERNAL · run-e25b11e37738.cdx.json →</a></td></tr>
+  <tr><th>Request digest</th><td class="mono">00c95be443d358949d123d77464e9c40b03dafd3f3094b709d8719b004c0a7a4</td></tr>
+  <tr><th>Floor</th><td><code>kernel</code>, the weakest tier the request accepts</td></tr>
+  <tr><th>Image</th><td class="mono">sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430, in every room on this page</td></tr>
 </table>
-<table style="margin-top:8px">
-  <tr><th>Step</th><th>Exit</th><th>Time</th><th>Output</th></tr>
-  <tr><td><code>node reconcile.test.js</code></td><td>0</td><td>95 ms</td><td><pre>reconcile: 3 assertions passed</pre></td></tr>
-  <tr><td><code>node main.js</code></td><td>0</td><td>105 ms</td><td><pre>{&#34;invoices&#34;:4,&#34;payments&#34;:4,&#34;matched&#34;:[&#34;INV-2001&#34;,&#34;INV-2002&#34;],&#34;unpaid&#34;:[{&#34;id&#34;:&#34;INV-2003&#34;,&#34;owed&#34;:7250}],&#34;overpaid&#34;:[{&#34;id&#34;:&#34;INV-2004&#34;,&#34;excess&#34;:1000}]}</pre></td></tr>
+<div class="wide"><table style="margin-top:8px">
+  <tr><th>Room</th><th>Outcome</th><th>Tier</th><th>Result and record digests</th><th>Signed, and its bill of materials</th></tr>
+  <tr><td>agent-sandbox under gVisor<div class="note">runtime class <code>gvisor</code>, started 2026-10-23T20:09:44Z</div></td><td><span class="badge ok">completed</span> in 527 ms</td><td><code>kernel</code></td><td class="mono">result 7a38c50fe500b5827774fc68352cc66a153f44e89e7a7f6d6965f5823ad404d9<br>record bf8725dad834b3ad5c4c24b66427b7d209c372016d7e8814168e8387cba809dc</td><td>line 1 of <a href="bundle.jsonl">INTERNAL · bundle.jsonl →</a><br><a href="run-bf8725dad834.cdx.json">INTERNAL · run-bf8725dad834.cdx.json →</a></td></tr>
+  <tr><td>agent-sandbox under Kata Containers<div class="note">runtime class <code>kata-clh-runtime-rs</code>, started 2026-10-23T20:10:02Z</div></td><td><span class="badge ok">completed</span> in 770 ms</td><td><code>vm</code></td><td class="mono">result 7a38c50fe500b5827774fc68352cc66a153f44e89e7a7f6d6965f5823ad404d9<br>record 6f6ccbd10029e02c7afbf5328a4f3641fec293af481e22e6eae2eed097056ee5</td><td>line 1 of <a href="kata/bundle.jsonl">INTERNAL · kata/bundle.jsonl →</a><br><a href="kata/run-6f6ccbd10029.cdx.json">INTERNAL · kata/run-6f6ccbd10029.cdx.json →</a></td></tr>
   
-</table>
+</table></div>
+<div class="label">What each step printed, in every room above: one result digest</div>
+<div class="wide"><table>
+  <tr><th>Step</th><th>Exit</th><th>Time</th><th>Output</th></tr>
+  <tr><td><code>node reconcile.test.js</code></td><td>0</td><td>98 ms</td><td><pre>reconcile: 3 assertions passed</pre></td></tr>
+  <tr><td><code>node main.js</code></td><td>0</td><td>104 ms</td><td><pre>{&#34;invoices&#34;:4,&#34;payments&#34;:4,&#34;matched&#34;:[&#34;INV-2001&#34;,&#34;INV-2002&#34;],&#34;unpaid&#34;:[{&#34;id&#34;:&#34;INV-2003&#34;,&#34;owed&#34;:7250}],&#34;overpaid&#34;:[{&#34;id&#34;:&#34;INV-2004&#34;,&#34;excess&#34;:1000}]}</pre></td></tr>
+  
+</table></div>
+
 </div>
 
 <div class="panel">
 <h3>node reconcile.test.js, then node main.js, then node egress.js</h3>
 <table>
-  <tr><th>Outcome</th><td><span class="badge ok">completed</span> in 5757 ms, started 2026-10-18T04:23:32Z</td></tr>
-  <tr><th>Tier</th><td><code>kernel</code>, at or above the requested floor <code>kernel</code></td></tr>
-  <tr><th>Image</th><td class="mono">sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430</td></tr>
-  <tr><th>Request digest</th><td class="mono">4987c8550c2e220c1ac1b0ec2f56d3bd7825893912d90777f66a7f688fe9c302</td></tr>
-  <tr><th>Result digest</th><td class="mono">960733790831a2bc56def99ba8f069c2921817a8aae9303c62a4f2c87ccc977d</td></tr>
-  <tr><th>Record digest</th><td class="mono">4077fd7745e85a3e054379ea62f9bfdb8195b1eaee5118e323871b2bd0bcf662</td></tr>
-  <tr><th>Signed</th><td>line 3 of <a href="bundle.jsonl">INTERNAL · bundle.jsonl →</a>, by the harness key in <a href="harness.pub">INTERNAL · harness.pub →</a></td></tr>
-  <tr><th>Bill of materials</th><td><a href="run-4077fd7745e8.cdx.json">INTERNAL · run-4077fd7745e8.cdx.json →</a></td></tr>
+  <tr><th>Request digest</th><td class="mono">b5386b8a32215a20f843fddccc796543ab45ff0bf7fa63d38ca87855d201a7e1</td></tr>
+  <tr><th>Floor</th><td><code>kernel</code>, the weakest tier the request accepts</td></tr>
+  <tr><th>Image</th><td class="mono">sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430, in every room on this page</td></tr>
 </table>
-<table style="margin-top:8px">
-  <tr><th>Step</th><th>Exit</th><th>Time</th><th>Output</th></tr>
-  <tr><td><code>node reconcile.test.js</code></td><td>0</td><td>106 ms</td><td><pre>reconcile: 3 assertions passed</pre></td></tr>
-  <tr><td><code>node main.js</code></td><td>0</td><td>102 ms</td><td><pre>{&#34;invoices&#34;:4,&#34;payments&#34;:4,&#34;matched&#34;:[&#34;INV-2001&#34;,&#34;INV-2002&#34;],&#34;unpaid&#34;:[{&#34;id&#34;:&#34;INV-2003&#34;,&#34;owed&#34;:7250}],&#34;overpaid&#34;:[{&#34;id&#34;:&#34;INV-2004&#34;,&#34;excess&#34;:1000}]}</pre></td></tr>
-  <tr><td><code>node egress.js</code></td><td>3</td><td>5230 ms</td><td><pre>egress: refused: TimeoutError</pre></td></tr>
+<div class="wide"><table style="margin-top:8px">
+  <tr><th>Room</th><th>Outcome</th><th>Tier</th><th>Result and record digests</th><th>Signed, and its bill of materials</th></tr>
+  <tr><td>agent-sandbox under gVisor<div class="note">runtime class <code>gvisor</code>, started 2026-10-23T20:09:44Z</div></td><td><span class="badge ok">completed</span> in 5755 ms</td><td><code>kernel</code></td><td class="mono">result 960733790831a2bc56def99ba8f069c2921817a8aae9303c62a4f2c87ccc977d<br>record 27382a699379b867600ce8a7c9d7e6b0c5048d94c56d1d023393cf76a7384eae</td><td>line 3 of <a href="bundle.jsonl">INTERNAL · bundle.jsonl →</a><br><a href="run-27382a699379.cdx.json">INTERNAL · run-27382a699379.cdx.json →</a></td></tr>
+  <tr><td>agent-sandbox under Kata Containers<div class="note">runtime class <code>kata-clh-runtime-rs</code>, started 2026-10-23T20:10:03Z</div></td><td><span class="badge ok">completed</span> in 6209 ms</td><td><code>vm</code></td><td class="mono">result 960733790831a2bc56def99ba8f069c2921817a8aae9303c62a4f2c87ccc977d<br>record 38070ad2aa8d3724f9b3e3752958efbc2a62a10397856838e98f11593eacc37f</td><td>line 3 of <a href="kata/bundle.jsonl">INTERNAL · kata/bundle.jsonl →</a><br><a href="kata/run-38070ad2aa8d.cdx.json">INTERNAL · kata/run-38070ad2aa8d.cdx.json →</a></td></tr>
   
-</table>
+</table></div>
+<div class="label">What each step printed, in every room above: one result digest</div>
+<div class="wide"><table>
+  <tr><th>Step</th><th>Exit</th><th>Time</th><th>Output</th></tr>
+  <tr><td><code>node reconcile.test.js</code></td><td>0</td><td>107 ms</td><td><pre>reconcile: 3 assertions passed</pre></td></tr>
+  <tr><td><code>node main.js</code></td><td>0</td><td>104 ms</td><td><pre>{&#34;invoices&#34;:4,&#34;payments&#34;:4,&#34;matched&#34;:[&#34;INV-2001&#34;,&#34;INV-2002&#34;],&#34;unpaid&#34;:[{&#34;id&#34;:&#34;INV-2003&#34;,&#34;owed&#34;:7250}],&#34;overpaid&#34;:[{&#34;id&#34;:&#34;INV-2004&#34;,&#34;excess&#34;:1000}]}</pre></td></tr>
+  <tr><td><code>node egress.js</code></td><td>3</td><td>5238 ms</td><td><pre>egress: refused: TimeoutError</pre></td></tr>
+  
+</table></div>
+
 </div>
 
-<p class="note">The network step's exit 3 is the program's own report that its fetch failed: the pod has no route out, so the attempt times out. That is a result, not an error, and the run completed.</p>
+<p class="note">The network step's exit 3 is the program's own report that its fetch failed: the pod has no route out, so the attempt times out. That is a result, not an error, and the run completed. A step's time is the first room's.</p>
 
-<h2>The same request in three rooms</h2>
-<p>The CycloneDX example sent these exact request bytes to docker under gVisor and to a Docker Cloud microVM. The request digest covers the files, steps, floor and timeout, so equal digests mean equal requests. The result digest covers what each step printed and its exit code, not how long it took.</p>
+<h2>The same request in 4 rooms</h2>
+<p>The <a href="../sbom/index.html">INTERNAL · CycloneDX example →</a> sent these exact request bytes to docker under gVisor and a Docker Cloud microVM. The request digest covers the files, steps, floor and timeout, so equal digests mean equal requests. The result digest covers what each step printed and its exit code, not how long it took.</p>
 
 <div class="wide"><table style="margin-top:10px">
-  <tr><th colspan="5">node reconcile.test.js, then node main.js · request <span class="mono">74cd327b55e1…</span></th></tr>
-  <tr><th>Provider</th><th>Tier</th><th>Image identity the record states</th><th>Result digest</th><th>Time</th></tr>
-  <tr><td>agentsandbox (this page)</td><td><code>kernel</code></td><td class="mono">agentsandbox-image:sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430</td><td class="mono">7a38c50fe500… <span class="badge ok">same</span></td><td>509 ms</td></tr>
-  <tr><td>docker</td><td><code>kernel</code></td><td class="mono">docker-image:sha256:92c07f345ffdb80b7c91008ebeda9f2ff394e7b89d9d0ffb8a896cfe946fb127</td><td class="mono">7a38c50fe500… <span class="badge ok">same</span></td><td>886 ms · <a href="../sbom/run-c7e245a369dd.cdx.json">INTERNAL · its BOM →</a></td></tr>
-  <tr><td>dockercloud</td><td><code>vm</code></td><td class="mono">dockercloud-image:sha256:2c752226d477b4a886378baa95b9af252be59301b725fdb0b7e15208131505a8</td><td class="mono">7a38c50fe500… <span class="badge ok">same</span></td><td>2737 ms · <a href="../sbom/run-178adcfb5176.cdx.json">INTERNAL · its BOM →</a></td></tr>
+  <tr><th colspan="5">node reconcile.test.js, then node main.js · request <span class="mono">00c95be443d3…</span></th></tr>
+  <tr><th>Room</th><th>Tier</th><th>Image identity the record states</th><th>Result digest</th><th>Time</th></tr>
+  <tr><td>agent-sandbox under gVisor (this page)<div class="note">provider agentsandbox</div></td><td><code>kernel</code></td><td class="mono">agentsandbox-image:sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430</td><td class="mono">7a38c50fe500… <span class="badge ok">same</span></td><td>527 ms · <a href="run-bf8725dad834.cdx.json">INTERNAL · its BOM →</a></td></tr>
+  <tr><td>agent-sandbox under Kata Containers (this page)<div class="note">provider agentsandbox</div></td><td><code>vm</code></td><td class="mono">agentsandbox-image:sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430</td><td class="mono">7a38c50fe500… <span class="badge ok">same</span></td><td>770 ms · <a href="kata/run-6f6ccbd10029.cdx.json">INTERNAL · its BOM →</a></td></tr>
+  <tr><td>docker under gVisor<div class="note">provider docker</div></td><td><code>kernel</code></td><td class="mono">docker-image:sha256:32da77b1be24de4c152667c28ab63531425cd69000acf30a328985cb857377f7</td><td class="mono">7a38c50fe500… <span class="badge ok">same</span></td><td>923 ms · <a href="../sbom/run-6551b9626206.cdx.json">INTERNAL · its BOM →</a></td></tr>
+  <tr><td>a Docker Cloud microVM<div class="note">provider dockercloud</div></td><td><code>vm</code></td><td class="mono">dockercloud-image:sha256:2c752226d477b4a886378baa95b9af252be59301b725fdb0b7e15208131505a8</td><td class="mono">7a38c50fe500… <span class="badge ok">same</span></td><td>4330 ms · <a href="../sbom/run-bb65a092a89e.cdx.json">INTERNAL · its BOM →</a></td></tr>
   
 </table></div>
 
 <div class="wide"><table style="margin-top:10px">
-  <tr><th colspan="5">node reconcile.test.js, then node main.js, then node egress.js · request <span class="mono">4987c8550c2e…</span></th></tr>
-  <tr><th>Provider</th><th>Tier</th><th>Image identity the record states</th><th>Result digest</th><th>Time</th></tr>
-  <tr><td>agentsandbox (this page)</td><td><code>kernel</code></td><td class="mono">agentsandbox-image:sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430</td><td class="mono">960733790831… <span class="badge ok">same</span></td><td>5757 ms</td></tr>
-  <tr><td>docker</td><td><code>kernel</code></td><td class="mono">docker-image:sha256:92c07f345ffdb80b7c91008ebeda9f2ff394e7b89d9d0ffb8a896cfe946fb127</td><td class="mono">960733790831… <span class="badge ok">same</span></td><td>5767 ms · <a href="../sbom/run-af0fa2597b81.cdx.json">INTERNAL · its BOM →</a></td></tr>
-  <tr><td>dockercloud</td><td><code>vm</code></td><td class="mono">dockercloud-image:sha256:2c752226d477b4a886378baa95b9af252be59301b725fdb0b7e15208131505a8</td><td class="mono">960733790831… <span class="badge ok">same</span></td><td>8241 ms · <a href="../sbom/run-d16d584b05c4.cdx.json">INTERNAL · its BOM →</a></td></tr>
+  <tr><th colspan="5">node reconcile.test.js, then node main.js, then node egress.js · request <span class="mono">b5386b8a3221…</span></th></tr>
+  <tr><th>Room</th><th>Tier</th><th>Image identity the record states</th><th>Result digest</th><th>Time</th></tr>
+  <tr><td>agent-sandbox under gVisor (this page)<div class="note">provider agentsandbox</div></td><td><code>kernel</code></td><td class="mono">agentsandbox-image:sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430</td><td class="mono">960733790831… <span class="badge ok">same</span></td><td>5755 ms · <a href="run-27382a699379.cdx.json">INTERNAL · its BOM →</a></td></tr>
+  <tr><td>agent-sandbox under Kata Containers (this page)<div class="note">provider agentsandbox</div></td><td><code>vm</code></td><td class="mono">agentsandbox-image:sha256:31d84a633d71c261126efc1f2b40efdabc65e50857ce3f7ca6136e45c1b15430</td><td class="mono">960733790831… <span class="badge ok">same</span></td><td>6209 ms · <a href="kata/run-38070ad2aa8d.cdx.json">INTERNAL · its BOM →</a></td></tr>
+  <tr><td>docker under gVisor<div class="note">provider docker</div></td><td><code>kernel</code></td><td class="mono">docker-image:sha256:32da77b1be24de4c152667c28ab63531425cd69000acf30a328985cb857377f7</td><td class="mono">960733790831… <span class="badge ok">same</span></td><td>6163 ms · <a href="../sbom/run-29c2e7b07429.cdx.json">INTERNAL · its BOM →</a></td></tr>
+  <tr><td>a Docker Cloud microVM<div class="note">provider dockercloud</div></td><td><code>vm</code></td><td class="mono">dockercloud-image:sha256:2c752226d477b4a886378baa95b9af252be59301b725fdb0b7e15208131505a8</td><td class="mono">960733790831… <span class="badge ok">same</span></td><td>8550 ms · <a href="../sbom/run-3a6acc5608d9.cdx.json">INTERNAL · its BOM →</a></td></tr>
   
 </table></div>
 
-<p>Both requests gave byte-identical results in all three rooms, the network step's failed fetch included: in each, the program's attempt timed out with nowhere to go.</p>
+<p>Both requests gave byte-identical results in all 4 rooms, the network step's failed fetch included: in each, the program's attempt timed out with nowhere to go.</p>
+
+<section class="room" id="kata">
+<h2>The vm room: agent-sandbox under Kata Containers</h2>
+<p>Runtime class <code>kata-clh-runtime-rs</code>, handler <code>kata-clh-runtime-rs</code>, which plimsoll reads as the <code>vm</code> tier: Kata Containers 4.2.0 (installed by its kata-deploy chart), Cloud Hypervisor on runtime-rs, Kata&#39;s Rust runtime; each pod is a virtual machine sized to the pod&#39;s 256 MiB, plus a fixed 130 MiB and 250 millicores the runtime class adds for the VM. Its runs were signed on 2026-10-23 20:10 UTC; the pool's template and the daemon's settings are under <a href="#recorded">how this was recorded</a>.</p>
+
+<h3>What a pod's kernel said</h3>
+<p>In each claimed pod, before any of a run's code, plimsoll reads as the guest the kernel log's first line, which must be a Linux kernel's boot line, and the kernel's boot ID, which must differ from the boot ID the pod's node reports. It keeps neither value, so one more request was signed in a third pod of the same pool: a snippet that reads them again after plimsoll's own check had passed in that pod. The node's side was read from the Kubernetes API just after, at the time the table gives.</p>
+<div class="wide"><table>
+  <tr><th></th><th>The guest, in the pod</th><th>The node, from the Kubernetes API</th></tr>
+  <tr><th>Kernel</th><td><code>[    0.000000] Linux version 6.18.35 (@540110ce73d4) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP Tue Sep 15 07:34:33 UTC 2026</code></td><td><code>6.6.87.2-microsoft-standard-WSL2</code></td></tr>
+  <tr><th>Boot ID</th><td class="mono">d8776183-1e63-42c1-b396-fed1f8f370db</td><td class="mono">2c96a215-a66a-4657-9304-92279b9201e3</td></tr>
+  <tr><th>Source</th><td>signed: line 1 of <a href="kata/kernel.jsonl">INTERNAL · kata/kernel.jsonl →</a>, record <span class="mono">cf45974ad915…</span>, a snippet whose floor was <code>vm</code></td><td>transcript: the node object's <code>status.nodeInfo</code>, read 2026-10-23T20:10:10Z</td></tr>
+</table></div>
+<p><span class="badge ok">two kernels</span> The boot IDs differ, so the pod's processes did not run on the node's kernel: a pod that a node's Kata handler started under runc shares the node's kernel, and with it the node's boot ID.</p>
+<div class="label">Everything the snippet printed</div>
+<pre>kernel log, first line: [    0.000000] Linux version 6.18.35 (@540110ce73d4) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP Tue Sep 15 07:34:33 UTC 2026
+boot id: d8776183-1e63-42c1-b396-fed1f8f370db
+/proc/version: Linux version 6.18.35 (@540110ce73d4) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP Tue Sep 15 07:34:33 UTC 2026
+MemTotal: 263160 kB
+Seccomp: 0
+mount /: virtiofs ro
+mount /work: tmpfs rw
+mount /tmp: tmpfs rw
+mount /dev/shm: tmpfs rw</pre>
+
+
+<h3>What the startup smoke test proved</h3>
+<p>Before serving, the daemon claimed two pods of the pool, as runs do, and checked from inside what reading the configuration cannot show: the kernel log begins <code>[    0.000000] Linux version 6.18.35 (@540110ce73d4) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP Tue Sep 15 07:34:33 UTC 2026</code>; of 4901 paths the guest could reach, writes succeeded only in <code>/dev/shm</code>, <code>/tmp</code>, <code>/work</code>, each a tmpfs of the guest's own kernel, so in the virtual machine's memory. No volume was filled to its limit, since under Kata none keeps it:</p>
+<pre>/dev/shm is tmpfs rw,relatime
+/tmp is tmpfs rw,relatime
+/work is tmpfs rw,relatime
+</pre>
+<p>Every connection out failed:</p>
+<pre>tcp 1.1.1.1:443: timeout
+tcp 10.244.0.1:10250: timeout
+tcp 169.254.169.254:80: timeout
+tcp 172.24.0.2:6443: timeout
+tcp 8.8.8.8:53: timeout
+</pre>
+
+<h3>What this room shows</h3>
+<ul>
+  <li>The same two requests, byte for byte, sent to a hardened plimsolld whose runtime class names a Kata handler, ran to completion at the vm tier, and their results are byte for byte the gVisor room&#39;s.</li>
+  <li>Each pod ran a Linux kernel of its own: the kernel log begins with Linux 6.18.35&#39;s boot line, the kernel Kata boots, where the node runs 6.6.87, and the guest&#39;s boot ID is not the one the node reports. Those are the two things plimsoll&#39;s per-pod check reads, and each run above passed that check, or it would have been refused before any of its code ran.</li>
+  <li>The startup smoke test held the pool to the vm tier&#39;s rules before the daemon served: the guest could write only to tmpfs mounts of its own kernel, so into the VM&#39;s memory, and every connection out timed out.</li>
+</ul>
+<h3>What it does not show</h3>
+<ul>
+  <li>A tier is configuration and provider evidence plus the startup smoke test and the per-pod check, never runtime attestation. The boot line and the boot ID are what the guest reads, and a node&#39;s root could forge both: the check catches a node whose Kata handler starts something other than a VM, not a hostile node.</li>
+  <li>Kata on kind is nested virtualization on a laptop: the kind node is a container on the laptop&#39;s Linux virtual machine, and each Kata VM runs under KVM inside that one. It is not a cloud deployment, and it says nothing about the speed or memory a cloud node would give.</li>
+  <li>The values in the table come from a third pod of the same pool, read by a signed snippet after plimsoll&#39;s own check had passed in that pod. The two project runs&#39; pods passed the same check (a pod that fails it is refused before any code is sent), but plimsoll keeps none of the values the check read.</li>
+  <li>No volume kept its size limit: Kata mounts each memory-backed volume as a tmpfs of the VM&#39;s kernel with no size of its own, so the daemon ran with no disk budget, and a run&#39;s writes are bounded by the VM&#39;s memory, not by the template&#39;s limits.</li>
+  <li>No seccomp filter inside the guest (Seccomp 0 in the snippet&#39;s output): Kata applies none unless its configuration asks for one, and plimsoll requires none at this tier, where the boundary is the VM.</li>
+  <li>This room has no refusal of its own on this page. With the node&#39;s Kata handler pointed at runc, every run and the startup smoke test were refused on both counts when that was measured on 2026-10-18; the operator guide records it, and it was not recorded here.</li>
+</ul>
+</section>
 
 <h2>Five refusals</h2>
-<p>Each of these is a transcript, unsigned: a refusal made before any code ran leaves no run record, since there is no result to state. The caller's lines are what <code>plimsoll-attest run</code> printed; the daemon's line is from its log, where an environment refusal's detail is kept, since it can carry the cluster's own error text.</p>
+<p>Each of these is a transcript, unsigned, recorded on this cluster on 2026-10-18 04:23:27 UTC, with the first room's earlier runs; the rooms' signed runs above were made again on the dates they state, for record version 4: a refusal made before any code ran leaves no run record, since there is no result to state. The caller's lines are what <code>plimsoll-attest run</code> printed; the daemon's line is from its log, where an environment refusal's detail is kept, since it can carry the cluster's own error text.</p>
 
 <div class="panel refusal" id="edited">
 <h3>1. The template edited under a running daemon</h3>
@@ -214,7 +284,7 @@ failed_precondition: sandbox isolation requirement not met: provider isolation c
 </pre>
 <div class="label">What the daemon logged</div><pre>agentsandbox: claim plimsoll-757ad683977cf1c7: the runtime class&#39;s handler is runsc but the guest&#39;s kernel log begins &#34;[178435.536685]  dump_header&#43;0x51/0x260&#34;, not gVisor&#39;s</pre>
 <div class="label">Then</div><p>Before the fix this recording led to, the same setup let a daemon run this snippet and sign it at the kernel tier.</p>
-<p>That run's record is published, signed by the same harness key: <a href="before-the-fix.jsonl">INTERNAL · before-the-fix.jsonl →</a>, record <span class="mono">106b10d3df55…</span>, provider agentsandbox, tier <code>kernel</code>, exit 0. What the snippet printed:</p>
+<p>That run's record is published as it was signed, by the same harness key, under record version 2: <a href="before-the-fix.jsonl">INTERNAL · before-the-fix.jsonl →</a>, record <span class="mono">106b10d3df55…</span>, provider agentsandbox, tier <code>kernel</code>, exit 0. This page states it as a transcript: today's verifier reads only record version 4, and the run cannot be made again, because the per-pod check it led to refuses it. Release v0.22.0, which published these bytes, verifies it: <code>git checkout v0.22.0 &amp;&amp; go run ./cmd/plimsoll-attest verify -pub docs/examples/agentsandbox/harness.pub docs/examples/agentsandbox/before-the-fix.jsonl</code>. What the snippet printed:</p>
 <pre>Linux version 6.6.87.2-microsoft-standard-WSL2 (root@439a258ad544) (gcc (GCC) 11.2.0, GNU ld (GNU Binutils) 2.37) #1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025
 Seccomp:	0</pre>
 <p>The signature is genuine and the claim was wrong: a signature proves who stated a record and that it was not changed, not that the statement was true. That is why the tier has to be checked where the code runs.</p>
@@ -232,8 +302,8 @@ Seccomp:	0</pre>
 </div>
 
 
-<h2>What the startup smoke test proved</h2>
-<p>Before serving, the daemon claimed two pods as runs do and checked from inside what reading the configuration cannot show. Under gVisor: the kernel log begins <code>[   0.000000] Starting gVisor...</code>; of 4902 paths the guest could reach, writes succeeded only in <code>/dev/shm</code>, <code>/tmp</code>, <code>/work</code>; each volume refused writes once full (/tmp 32 MiB then ENOSPC; /work 128 MiB then ENOSPC); and every connection out failed:</p>
+<h2>What the startup smoke test proved under gVisor and runc</h2>
+<p>Before serving, the daemon claimed two pods as runs do and checked from inside what reading the configuration cannot show (the vm room's smoke test is in <a href="#kata">its own section</a>). Under gVisor: the kernel log begins <code>[   0.000000] Starting gVisor...</code>; of 4902 paths the guest could reach, writes succeeded only in <code>/dev/shm</code>, <code>/tmp</code>, <code>/work</code>; each volume refused writes once full (/tmp 32 MiB then ENOSPC; /work 128 MiB then ENOSPC); and every connection out failed:</p>
 <pre>tcp 1.1.1.1:443: timeout
 tcp 10.244.0.1:10250: timeout
 tcp 169.254.169.254:80: timeout
@@ -243,21 +313,27 @@ tcp 8.8.8.8:53: timeout
 <p>Under runc (refusal 3's daemon), the guest's seccomp mode was 2, a filter in force, and the guest could create POSIX message queues (created in /dev/mqueue, at most 819200 bytes for the guest&#39;s uid), which the smoke test accepts only under a small per-user limit.</p>
 
 <h2>Check it yourself</h2>
-<p>From a checkout of the repository. The first command checks every signature, digest and link in the bundle; the second rebuilds a bill of materials from the signed line it attaches and compares it, pinning the harness key you trust.</p>
+<p>From a checkout of the repository. Each <code>verify</code> checks every signature, digest and link in one bundle; each <code>-check</code> rebuilds a bill of materials from the signed line it attaches and compares it, pinning the harness key you trust.</p>
 <pre>go run ./cmd/plimsoll-attest verify -pub docs/examples/agentsandbox/harness.pub docs/examples/agentsandbox/bundle.jsonl
+go run ./cmd/plimsoll-attest verify -pub docs/examples/agentsandbox/harness.pub docs/examples/agentsandbox/kata/bundle.jsonl
+go run ./cmd/plimsoll-attest verify -pub docs/examples/agentsandbox/harness.pub docs/examples/agentsandbox/kata/kernel.jsonl
 cd examples/sbom
-go run . -check ../../docs/examples/agentsandbox/run-e25b11e37738.cdx.json \
+go run . -check ../../docs/examples/agentsandbox/run-bf8725dad834.cdx.json \
   -trusted-pub ../../docs/examples/agentsandbox/harness.pub \
   -check-bundle ../../docs/examples/agentsandbox/bundle.jsonl
+go run . -check ../../docs/examples/agentsandbox/kata/run-6f6ccbd10029.cdx.json \
+  -trusted-pub ../../docs/examples/agentsandbox/harness.pub \
+  -check-bundle ../../docs/examples/agentsandbox/kata/bundle.jsonl
 cd ../..
 go run ./examples/agentsandbox   # writes this page again from the files beside it</pre>
 <p>The harness key is the CycloneDX example's (key ID <span class="mono">88d311fb942e0fd87cdb1214b385db5fc354c166e84763f6d37885dbc96df379</span>): one operator's harness signed both pages' runs.</p>
 
-<h2>How this was recorded</h2>
+<h2 id="recorded">How this was recorded</h2>
 <ul>
-  <li>A kind cluster (Kubernetes in docker, one node) on one developer machine: Kubernetes 1.37.0, containerd 2.3.4, agent-sandbox v1.0.7, gVisor release-20260907.0.</li>
-  <li>The pool's template is the one in <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/agentsandbox-example.yaml">EXTERNAL · source repo ↗</a>, with the image pinned by the digest above and plimsolld's network as the only source allowed in.</li>
-  <li>plimsolld ran in a container on the cluster's network, since it reaches each pod's sandboxd at the pod's address, in hardened mode: a callers file, the pinned image required, 256 MiB, 1 CPU and 160 MiB of disk per run, 60 runs a minute per caller.</li>
+  <li>A kind cluster (Kubernetes in docker, one node) on one developer machine, a laptop: Kubernetes 1.37.0, containerd 2.3.4, agent-sandbox v1.0.7. The example template the pools start from is in <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/agentsandbox-example.yaml">EXTERNAL · source repo ↗</a>.</li>
+  <li>agent-sandbox under gVisor, recorded 2026-10-23 20:09 UTC: runtime class <code>gvisor</code>, handler <code>runsc</code>, gVisor release-20260907.0. The pool's template is the operator guide&#39;s example template, with the image pinned by its digest and plimsolld&#39;s network as the only source allowed in. plimsolld ran in hardened mode: a callers file, the pinned image required, 256 MiB, 1 CPU and 160 MiB of disk per run, 60 runs a minute per caller.</li>
+  <li>agent-sandbox under Kata Containers, recorded 2026-10-23 20:10 UTC: runtime class <code>kata-clh-runtime-rs</code>, handler <code>kata-clh-runtime-rs</code>, Kata Containers 4.2.0 (installed by its kata-deploy chart), Cloud Hypervisor on runtime-rs, Kata&#39;s Rust runtime; each pod is a virtual machine sized to the pod&#39;s 256 MiB, plus a fixed 130 MiB and 250 millicores the runtime class adds for the VM. The pool's template is the gVisor room&#39;s, with one line changed: the runtime class. plimsolld ran in hardened mode with the same settings except the disk budget, which the vm tier refuses because no volume keeps its size limit under Kata.</li>
+  <li>Each daemon ran in a container on the cluster's network, since it reaches each pod's sandboxd at the pod's address.</li>
   <li>Refusals 4 and 5 needed root on the node: its containerd configuration was edited, which no caller and no pod can do. They stand for a node that joins a pool misconfigured, not for an attack.</li>
   <li>The operator guide is <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/agentsandbox.md">EXTERNAL · source repo ↗</a>.</li>
 </ul>
@@ -267,7 +343,8 @@ go run ./examples/agentsandbox   # writes this page again from the files beside 
   <li>A tier is configuration and provider evidence plus these checks, never attestation. gVisor's boot line is text a node's root could forge; the check catches a misconfigured node, not a hostile one.</li>
   <li>One node on one machine. On a cluster of many nodes, each run's own check covers the node it lands on, and the startup smoke test covers only the nodes its two pods landed on.</li>
   <li>Memory: on a node with swap, a gVisor pod can hold more than its limit (measured on this cluster: a 128 MiB pod held 1024 MiB, 932 of it in swap, where runc killed the same pod at 112 MiB). That is gVisor's open issue 15756, not something plimsoll can see from the API; the operator guide gives the node setting that stops it.</li>
-  <li>The refusals are transcripts. Only the two runs are signed.</li>
+  <li>What agent-sandbox under Kata Containers does not show is listed in <a href="#kata">its own section</a>.</li>
+  <li>The refusals, the smoke tests and the node's side of the pod check are transcripts. Only the runs are signed.</li>
 </ul>
 </main>
 </body>

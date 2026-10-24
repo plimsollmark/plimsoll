@@ -94,7 +94,11 @@ func signV1(t *testing.T, key ed25519.PrivateKey, rec sandbox.RunRecord) Envelop
 
 // A version-1 record states no software, and no bundle that verifies now (bundles
 // carry links since F7) can hold one, so none is accepted.
-func TestVerifyRefusesVersionOneRecords(t *testing.T) {
+// A record signed under an older release still verifies (since 2026-10-23): a
+// version 1 record, as v0.10.0 to v0.11.1 wrote them, is read by its own version's rules,
+// so it may not state the software fields version 1 never covered. A version no release
+// wrote is record.ErrVersion, "upgrade the verifier", never ErrStatement, "forged".
+func TestVerifyReadsVersionOneRecordsByTheirOwnRules(t *testing.T) {
 	key := newKey(t)
 	verifier := NewVerifier(key.Public().(ed25519.PublicKey))
 	req := &plimsollv1.RunRequest{Protocol: 1,
@@ -106,7 +110,19 @@ func TestVerifyRefusesVersionOneRecords(t *testing.T) {
 		Provider: "docker", Isolation: "kernel",
 		Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000100)}
 	rec.SHA256 = record.Digest(rec)
-	if _, err := verifier.Verify(signV1(t, key, rec)); !errors.Is(err, ErrStatement) {
-		t.Fatalf("a version 1 record: %v; want refused: a bundle signs version 2 and 3 only", err)
+	if got, err := verifier.Verify(signV1(t, key, rec)); err != nil || got.SHA256 != rec.SHA256 {
+		t.Fatalf("a version 1 record: %v", err)
+	}
+	stating := rec
+	stating.SoftwareIdentity = "oci-manifest:linux/amd64@sha256:aa"
+	stating.SHA256 = record.Digest(stating)
+	if _, err := verifier.Verify(signV1(t, key, stating)); !errors.Is(err, ErrStatement) {
+		t.Fatalf("a version 1 record stating software: %v; want refused", err)
+	}
+	future := rec
+	future.Version = record.Version + 1
+	future.SHA256 = record.Digest(future)
+	if _, err := verifier.Verify(signV1(t, key, future)); !errors.Is(err, record.ErrVersion) || errors.Is(err, ErrStatement) {
+		t.Fatalf("a future version: %v; want record.ErrVersion alone", err)
 	}
 }

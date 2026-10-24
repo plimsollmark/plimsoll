@@ -6,7 +6,7 @@ if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node 22 o
 globalThis.crypto ??= webcrypto;
 vm.runInThisContext(readFileSync(new URL('./check.js', import.meta.url), 'utf8'));
 const dir = new URL('../../docs/examples/sbom/', import.meta.url);
-const imageName = 'image-1c6cbab4a47d.cdx.json';
+const imageName = 'image-a6ef2ea1c8f1.cdx.json';
 const imageFiles = {[imageName]: readFileSync(new URL(imageName, dir)).toString('base64')};
 const {changeOneCharacter} = globalThis.PlimsollReceipt;
 const check = bom => globalThis.PlimsollReceipt.check(bom, imageFiles);
@@ -89,5 +89,5 @@ if (process.argv[2]) {
     assert.equal(await PlimsollReceipt.recordDigest(v.exchange.response.record), v.record, 'Go record vector');
     assert.equal(await PlimsollReceipt.fileSetDigest(v.files), v.fileSet, 'Go UTF-8 path-order vector');
   }
-  console.log('PASS: Go vectors for protocols 1/2/3, Unicode paths, raw outputs, truncation and software rules');
+  console.log('PASS: Go vectors for protocols 1/2/3/4, Unicode paths, raw outputs, truncation and software rules');
 }

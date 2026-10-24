@@ -156,11 +156,19 @@ def _refusal(reason: str, message: str) -> Dict[str, Any]:
 
 
 def _result(language: str, r: ProjectResult, max_chars: int) -> Dict[str, Any]:
-    # Only a step's own report says the code ran. Without one the outcome cannot say
-    # whether it started: setup_failed covers an unwritable file (before the code) and a
-    # result past the response budget (after it), and timed_out and protocol_error are
-    # unknown by definition. Reading the detail text to tell them apart would be guessing.
+    # Only a step's own report says the code ran, and only setup_failed says it did not:
+    # it means no step began. Without a step's report, timed_out, protocol_error and
+    # runner_failed leave it unknown. Reading the detail text to tell them apart would be
+    # guessing.
     record = r.record.sha256 if r.record is not None else ""
+    if not r.steps and r.outcome == "setup_failed":
+        return {
+            "ran": False,
+            "outcome": r.outcome,
+            "error": "plimsoll: the run ended setup_failed before any step began" + (f": {r.detail}" if r.detail else ""),
+            "isolation": r.isolation,
+            "record_sha256": record,
+        }
     if not r.steps:
         return {
             "ran": "unknown",

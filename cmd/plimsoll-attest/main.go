@@ -13,7 +13,7 @@
 // order, into a fresh session.
 //
 // The request file is a plimsoll.v1.RunRequest in protobuf JSON, for example
-// {"protocol": 2, "javascript": {"code": "console.log(1)"}}. The daemon's
+// {"protocol": 4, "javascript": {"code": "console.log(1)"}}. The daemon's
 // bearer token is read from PLIMSOLL_CALLER_TOKEN, and the signing key from
 // -key or, when that is absent, from PLIMSOLL_ATTEST_KEY (the PEM itself), so
 // neither appears in a process listing. The key never goes to the daemon.
@@ -25,11 +25,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -64,6 +66,19 @@ const usage = `usage:
                                                 verify the bundle as verify does, then run each
                                                 single run again and each session in a fresh
                                                 session, compare results
+  plimsoll-attest sign-statement -key FILE -type URI -out FILE STATEMENT.json
+                                                sign an in-toto statement the harness makes
+                                                about evidence it checked; STATEMENT.json holds
+                                                {"subject": [...], "predicate": {...}}; the run
+                                                record, link and close types are refused
+  plimsoll-attest open-statement -pub FILE -type URI ENVELOPE.json
+                                                check the envelope's signature and type, print
+                                                {"keyid", "subject", "predicate"} as JSON; what
+                                                the predicate claims is the reader's to check
+  plimsoll-attest verify-receipt -policy TRUSTED_POLICY.json -artifact FILE RECEIPT.json
+                                                check role keys, expected artifact and outside
+                                                timestamps offline; print signed assertions,
+                                                without independently reproducing their claims
 
 environment:
   PLIMSOLL_CALLER_TOKEN   bearer token for the daemon (omit for an open dev daemon)
@@ -87,6 +102,12 @@ func main() {
 		err = verifyEntry(os.Args[2:], os.Stdout)
 	case "replay":
 		err = replay(os.Args[2:], os.Stdout)
+	case "sign-statement":
+		err = signStatement(os.Args[2:], os.Stdout)
+	case "open-statement":
+		err = openStatement(os.Args[2:], os.Stdout)
+	case "verify-receipt":
+		err = verifyReceipt(os.Args[2:], os.Stdout)
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
@@ -110,19 +131,51 @@ func keygen(args []string) error {
 	if err != nil {
 		return err
 	}
-	// O_EXCL: an existing key is never overwritten.
-	f, err := os.OpenFile(*out+".key", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	return writeKeyPair(*out, priv, pub)
+}
+
+// Both outputs must be new directory entries, including when an existing entry
+// is a link. Keep cleanup in the opened directory if its path is later replaced.
+func writeKeyPair(prefix string, priv, pub []byte) (err error) {
+	// Split without cleaning: link/../pair follows the filesystem's directory
+	// semantics, which can differ from lexically removing link/.. first.
+	directory, _ := filepath.Split(prefix + ".key")
+	if directory == "" {
+		directory = "."
+	}
+	dir, err := os.OpenRoot(directory)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(priv); err != nil {
-		f.Close()
-		return err
+	defer dir.Close()
+	created := make([]string, 0, 2)
+	defer func() {
+		if err != nil {
+			for _, name := range created {
+				err = errors.Join(err, dir.Remove(name))
+			}
+		}
+	}()
+	for _, output := range []struct {
+		path string
+		data []byte
+		mode os.FileMode
+	}{
+		{prefix + ".key", priv, 0o600},
+		{prefix + ".pub", pub, 0o644},
+	} {
+		name := filepath.Base(output.path)
+		f, err := dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, output.mode)
+		if err != nil {
+			return err
+		}
+		created = append(created, name)
+		_, writeErr := f.Write(output.data)
+		if err := errors.Join(writeErr, f.Close()); err != nil {
+			return err
+		}
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.WriteFile(*out+".pub", pub, 0o644)
+	return nil
 }
 
 func loadSigner(path string) (*attest.Signer, error) {
@@ -526,6 +579,122 @@ func verifyEntry(args []string, stdout io.Writer) error {
 		"Not established by this check: the bundle around the line, and for a session call that its session's chain is whole; plimsoll-attest verify checks a whole bundle\n",
 		*line, attest.KeyID(pub), rec.SHA256, what, rec.Provider, rec.Isolation)
 	return nil
+}
+
+// signedStatement is a statement's two parts as sign-statement reads them and
+// open-statement prints them.
+type signedStatement struct {
+	KeyID     string           `json:"keyid,omitempty"`
+	Subject   []attest.Subject `json:"subject"`
+	Predicate json.RawMessage  `json:"predicate"`
+}
+
+// decodeOne decodes exactly one JSON value into v, refusing a field v does not have
+// and anything after the value.
+func decodeOne(raw []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("trailing data after the JSON value")
+	}
+	return nil
+}
+
+// signStatement signs an in-toto statement in the standard DSSE envelope, so a tool
+// that reads a standard predicate (in-toto's test-result, OpenVEX) takes it as it is.
+// The harness signs what it is given: a statement means what its maker derived it
+// from, so the reader rebuilds the predicate from the evidence it names and compares.
+func signStatement(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("sign-statement", flag.ContinueOnError)
+	keyPath := fs.String("key", "", "the signing key (PEM PKCS #8 Ed25519)")
+	predicateType := fs.String("type", "", "the predicate type URI")
+	out := fs.String("out", "", "where to write the envelope (never over an existing file)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *predicateType == "" || *out == "" || fs.NArg() != 1 {
+		return errors.New("sign-statement needs -type URI, -out FILE and one STATEMENT.json")
+	}
+	signer, err := loadSigner(*keyPath)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	var in signedStatement
+	if err := decodeOne(raw, &in); err != nil {
+		return fmt.Errorf("%s: %w", fs.Arg(0), err)
+	}
+	if in.KeyID != "" {
+		return fmt.Errorf("%s: keyid is what open-statement prints, not an input", fs.Arg(0))
+	}
+	if len(in.Predicate) == 0 {
+		return fmt.Errorf("%s: no predicate", fs.Arg(0))
+	}
+	env, err := signer.SignStatement(*predicateType, in.Subject, in.Predicate)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "signed a statement of type %s about %d subject(s) with key %s\n", *predicateType, len(in.Subject), signer.KeyID())
+	return nil
+}
+
+// openStatement checks an envelope against a trusted key and a predicate type and
+// prints the statement it carries. It proves who signed which statement, nothing
+// about whether the predicate is true.
+func openStatement(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("open-statement", flag.ContinueOnError)
+	pubPath := fs.String("pub", "", "the signer's public key (PEM PKIX Ed25519)")
+	predicateType := fs.String("type", "", "the predicate type URI the statement must carry")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *pubPath == "" || *predicateType == "" || fs.NArg() != 1 {
+		return errors.New("open-statement needs -pub FILE, -type URI and one ENVELOPE.json")
+	}
+	pub, err := loadPublic(*pubPath)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	var env attest.Envelope
+	if err := decodeOne(raw, &env); err != nil {
+		return fmt.Errorf("%s: %w", fs.Arg(0), err)
+	}
+	var predicate json.RawMessage
+	subjects, err := attest.NewVerifier(pub).OpenStatement(env, *predicateType, &predicate)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(signedStatement{KeyID: attest.KeyID(pub), Subject: subjects, Predicate: predicate})
+	if err != nil {
+		return err
+	}
+	_, err = stdout.Write(append(data, '\n'))
+	return err
 }
 
 // readLine reads line n of a bundle and nothing after it, parsing that line alone with

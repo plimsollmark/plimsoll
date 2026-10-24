@@ -439,7 +439,6 @@ func TestRestoreSandboxErrorPreservesSentinelAndConnectCode(t *testing.T) {
 		{connect.CodeDeadlineExceeded, context.DeadlineExceeded},
 		{connect.CodeFailedPrecondition, sandbox.ErrDisabled},
 		{connect.CodeUnimplemented, sandbox.ErrUnsupported},
-		{connect.CodeResourceExhausted, sandbox.ErrAtCapacity},
 		{connect.CodeInvalidArgument, sandbox.ErrInvalidRequest},
 	} {
 		wireErr := connect.NewError(tc.code, errors.New("wire detail"))
@@ -450,6 +449,27 @@ func TestRestoreSandboxErrorPreservesSentinelAndConnectCode(t *testing.T) {
 		if connect.CodeOf(got) != tc.code {
 			t.Errorf("code %v became %v", tc.code, connect.CodeOf(got))
 		}
+	}
+	// ResourceExhausted is "at capacity" only on the daemon's capacity refusal. An
+	// over-size request is the caller's to fix, and an unmarked one (connect-go's own
+	// error for an answer over the read limit, after the code ran) is neither (review B4,
+	// 2026-10-23).
+	capacity := restoreSandboxError(notDispatchedWireErr(connect.CodeResourceExhausted,
+		plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_CAPACITY, "sandbox is at capacity, retry shortly"))
+	if !errors.Is(capacity, sandbox.ErrAtCapacity) {
+		t.Fatalf("a capacity refusal restored as %v", capacity)
+	}
+	tooLarge := restoreSandboxError(notDispatchedWireErr(connect.CodeResourceExhausted,
+		plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST, "request body declares 9000000 bytes, over the 8388608-byte limit"))
+	if errors.Is(tooLarge, sandbox.ErrAtCapacity) || !errors.Is(tooLarge, sandbox.ErrInvalidRequest) {
+		t.Fatalf("an over-size request restored as %v", tooLarge)
+	}
+	answerTooLarge := restoreSandboxError(connect.NewError(connect.CodeResourceExhausted, errors.New("message size 20000000 is larger than configured max 16777216")))
+	if errors.Is(answerTooLarge, sandbox.ErrAtCapacity) {
+		t.Fatalf("an over-size answer, unmarked, restored as at capacity: %v", answerTooLarge)
+	}
+	if _, marked := sandbox.NotDispatchedReason(answerTooLarge); marked {
+		t.Fatal("an over-size answer was marked not dispatched")
 	}
 	// The reason separates the two meanings of FailedPrecondition, not the text:
 	// a message that merely names the isolation sentinel, with no detail, is the

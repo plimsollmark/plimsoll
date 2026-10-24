@@ -612,7 +612,7 @@
   document.getElementById("play").addEventListener("click", play);
   document.getElementById("reset").addEventListener("click", reset);
   reset();
-  // A link may open the floor on a scenario, and an adapter: #floor/lost_ack/adapter-v2.js.
+  {{/* A link may open the floor on a scenario, and an adapter: #floor/lost_ack/adapter-v2.js. */}}
   function fromHash() {
     var m = /^#floor\/([a-z_]+)(?:\/(.+))?$/.exec(location.hash);
     if (!m) return;

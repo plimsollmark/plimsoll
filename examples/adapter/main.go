@@ -42,10 +42,8 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -62,6 +60,7 @@ import (
 	"github.com/plimsollmark/plimsoll/examples/adapter/qualify"
 	"github.com/plimsollmark/plimsoll/examples/internal/daemonproc"
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
+	"github.com/plimsollmark/plimsoll/internal/auditline"
 	"github.com/plimsollmark/plimsoll/internal/specgen"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
@@ -100,15 +99,6 @@ func main() {
 	}
 }
 
-// auditLine is the part of the daemon's per-run audit line the page shows.
-type auditLine struct {
-	HostCalls    int `json:"host_calls"`
-	Denied       int `json:"host_calls_denied"`
-	Shed         int `json:"host_calls_shed"`
-	Findings     int `json:"advice_findings"`
-	AgentFixable int `json:"advice_agent_fixable"`
-}
-
 type opRow struct {
 	Method, Path, ID, Summary string
 	Granted                   bool
@@ -141,7 +131,7 @@ type scenarioRun struct {
 	AdviceTxt  string // the finding cell, or ""
 	PollsTxt   string // status reads, or ""
 	Millis     int64
-	Audit      auditLine
+	Audit      auditline.Run
 	Vendor2    []string // the vendor's own counts by route template
 	Refused    int
 	Advice     []sandbox.AdviceFinding
@@ -277,12 +267,20 @@ func run(ctx context.Context, out string) error {
 	if err != nil {
 		return err
 	}
+	// The daemon's log is captured so each run's audit line can be read back.
 	sink := &lineSink{}
-	daemon, err := startDaemon(ctx, binary, clientsPath, grantsPath, secret, sink)
-	if err != nil {
-		return fmt.Errorf("%w\n--- daemon log ---\n%s", err, sink.tail(40))
+	env := []string{"SANDBOX_PROVIDER=docker", "PLIMSOLL_CLIENTS_FILE=" + clientsPath,
+		"PLIMSOLL_GRANTS_FILE=" + grantsPath, secretEnv + "=" + secret}
+	if abs, err := filepath.Abs(filepath.Join("docker", "seccomp.json")); err == nil {
+		if _, err := os.Stat(abs); err == nil && os.Getenv("SANDBOX_DOCKER_SECCOMP") == "" {
+			env = append(env, "SANDBOX_DOCKER_SECCOMP="+abs)
+		}
 	}
-	defer daemon.Stop(10 * time.Second)
+	daemon, err := daemonproc.Start(ctx, binary, daemonproc.Options{Env: env, Ready: 3 * time.Minute, Log: sink})
+	if err != nil {
+		return fmt.Errorf("%w (is docker running, with the images from `make docker-images`?)\n--- daemon log ---\n%s", err, sink.tail(40))
+	}
+	defer func() { _ = daemon.Stop(10 * time.Second) }()
 
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -356,11 +354,11 @@ func run(ctx context.Context, out string) error {
 			r.Vendor2 = append(r.Vendor2, fmt.Sprintf("503 answered: %d", r.Refused))
 		}
 		r.Calls = fmt.Sprintf("%d served", r.Audit.HostCalls)
-		if r.Audit.Shed > 0 {
-			r.Calls += fmt.Sprintf(", %d shed", r.Audit.Shed)
+		if r.Audit.HostCallsShed > 0 {
+			r.Calls += fmt.Sprintf(", %d shed", r.Audit.HostCallsShed)
 		}
-		if r.Audit.Denied > 0 {
-			r.Calls += fmt.Sprintf(", %d denied", r.Audit.Denied)
+		if r.Audit.HostCallsDenied > 0 {
+			r.Calls += fmt.Sprintf(", %d denied", r.Audit.HostCallsDenied)
 		}
 		switch len(res.Advice) {
 		case 0:
@@ -408,7 +406,7 @@ func run(ctx context.Context, out string) error {
 		ev := qualify.Evidence{
 			Kind: qualify.KindAdapter, Scenario: sim.Scenario(), Plan: r.Plan, Ledger: sim.Ledger(), Robots: sim.Robots(), Reads: sim.Reads(), Told: sim.Told(),
 			Vendor:      qualify.VendorCounts{CatalogOnly: sim.Reached(), Unauthorized: sim.Unauthorized()},
-			Credentials: creds, BrokerDenied: r.Audit.Denied, ExitCode: res.Steps[0].ExitCode,
+			Credentials: creds, BrokerDenied: r.Audit.HostCallsDenied, ExitCode: res.Steps[0].ExitCode,
 		}
 		adapterPath := r.Adapter
 		if r.Group == "probe" {
@@ -457,7 +455,7 @@ func run(ctx context.Context, out string) error {
 		if !r.Measured && !slices.Equal(failed, r.WantFail) {
 			return fmt.Errorf("run %d (%s): failed rules %v, want %v: %s", r.N, r.Title, failed, r.WantFail, r.Verdict)
 		}
-		fmt.Printf("run %-2d    | %s: %s (%d host calls, %d shed, %d denied, %d finding(s), %d ms)\n", r.N, r.Title, r.Verdict, r.Audit.HostCalls, r.Audit.Shed, r.Audit.Denied, len(r.Advice), r.Millis)
+		fmt.Printf("run %-2d    | %s: %s (%d host calls, %d shed, %d denied, %d finding(s), %d ms)\n", r.N, r.Title, r.Verdict, r.Audit.HostCalls, r.Audit.HostCallsShed, r.Audit.HostCallsDenied, len(r.Advice), r.Millis)
 	}
 
 	// 5. What the story depends on, checked rather than asserted. Each run's failed
@@ -482,11 +480,11 @@ func run(ctx context.Context, out string) error {
 	if data.V2Calls >= data.V1Calls {
 		return fmt.Errorf("the second adapter made %d calls against the first's %d", data.V2Calls, data.V1Calls)
 	}
-	if overload.Audit.Shed == 0 || overload.Refused != fleetsim.DegradedRequests || overload.Report.Retries == 0 {
-		return fmt.Errorf("overload: shed %d, vendor refused %d, adapter retries %d", overload.Audit.Shed, overload.Refused, overload.Report.Retries)
+	if overload.Audit.HostCallsShed == 0 || overload.Refused != fleetsim.DegradedRequests || overload.Report.Retries == 0 {
+		return fmt.Errorf("overload: shed %d, vendor refused %d, adapter retries %d", overload.Audit.HostCallsShed, overload.Refused, overload.Report.Retries)
 	}
-	if probe.Audit.Denied != 1 {
-		return fmt.Errorf("probe: the broker denied %d, want 1", probe.Audit.Denied)
+	if probe.Audit.HostCallsDenied != 1 {
+		return fmt.Errorf("probe: the broker denied %d, want 1", probe.Audit.HostCallsDenied)
 	}
 	data.Credentials = len(credentials)
 	data.RunLost1, data.RunDrop1 = byTitle("first", fleetsim.ScenarioLostAck).N, byTitle("first", fleetsim.ScenarioDropped).N
@@ -1165,72 +1163,6 @@ func writeGrantsFile(dir, baseURL string, allow, catalog []string, batchOf map[s
 	return path, os.WriteFile(path, body, 0o600)
 }
 
-// startDaemon starts plimsolld on a free loopback port with the docker provider, its
-// log captured so each run's audit line can be read back.
-func startDaemon(ctx context.Context, binary, clientsPath, grantsPath, secret string, sink *lineSink) (*daemonHandle, error) {
-	addr, err := daemonproc.FreeAddr()
-	if err != nil {
-		return nil, err
-	}
-	env := append(os.Environ(),
-		"SANDBOX_PROVIDER=docker",
-		"PLIMSOLL_ADDR="+addr,
-		"PLIMSOLL_METRICS_ADDR=off",
-		"PLIMSOLL_CLIENTS_FILE="+clientsPath,
-		"PLIMSOLL_GRANTS_FILE="+grantsPath,
-		secretEnv+"="+secret,
-	)
-	if abs, err := filepath.Abs(filepath.Join("docker", "seccomp.json")); err == nil {
-		if _, err := os.Stat(abs); err == nil && os.Getenv("SANDBOX_DOCKER_SECCOMP") == "" {
-			env = append(env, "SANDBOX_DOCKER_SECCOMP="+abs)
-		}
-	}
-	cmd := exec.CommandContext(ctx, binary)
-	cmd.Env = env
-	cmd.Stdout = sink
-	cmd.Stderr = sink
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	h := &daemonHandle{Daemon: &daemonproc.Daemon{BaseURL: "http://" + addr}, cmd: cmd}
-	deadline := time.Now().Add(3 * time.Minute)
-	for time.Now().Before(deadline) {
-		if cmd.ProcessState != nil {
-			break
-		}
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, h.BaseURL+"/readyz", nil)
-		if resp, err := http.DefaultClient.Do(req); err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return h, nil
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	_ = cmd.Process.Kill()
-	return nil, errors.New("plimsolld did not become ready (is docker running, with the images from `make docker-images`?)")
-}
-
-type daemonHandle struct {
-	*daemonproc.Daemon
-	cmd *exec.Cmd
-}
-
-func (h *daemonHandle) Stop(grace time.Duration) {
-	if h == nil || h.cmd.Process == nil {
-		return
-	}
-	_ = h.cmd.Process.Signal(os.Interrupt)
-	done := make(chan struct{})
-	go func() { _ = h.cmd.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(grace):
-		_ = h.cmd.Process.Kill()
-		<-done
-	}
-}
-
 // lineSink collects the daemon's log so a run's audit line can be found after it.
 type lineSink struct {
 	mu  sync.Mutex
@@ -1249,22 +1181,16 @@ func (l *lineSink) mark() int {
 	return l.buf.Len()
 }
 
-// auditSince returns the last audit line written after mark: the one JSON line with
-// a host_calls field, which only a run's audit line carries.
-func (l *lineSink) auditSince(mark int) auditLine {
+// auditSince returns the last run's audit line written after mark (auditline).
+func (l *lineSink) auditSince(mark int) auditline.Run {
 	l.mu.Lock()
 	text := l.buf.String()[mark:]
 	l.mu.Unlock()
-	var found auditLine
+	var found auditline.Run
 	for _, line := range strings.Split(text, "\n") {
-		var probe map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(line), &probe); err != nil {
-			continue
+		if run, ok := auditline.Decode([]byte(line)); ok {
+			found = run
 		}
-		if _, ok := probe["host_calls"]; !ok {
-			continue
-		}
-		_ = json.Unmarshal([]byte(line), &found)
 	}
 	return found
 }

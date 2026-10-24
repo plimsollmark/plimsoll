@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"strings"
 	"sync"
 	"testing"
@@ -111,7 +112,10 @@ func TestTransportFailureMarksUseOnlyPreSendTypes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := fmt.Errorf("wrapped: %w", tc.err)
-			r := newRemote(t, "http://127.0.0.1", WithHTTPClient(answerHTTPFunc(func(*http.Request) (*http.Response, error) {
+			r := newRemote(t, "http://127.0.0.1", WithHTTPClient(answerHTTPFunc(func(req *http.Request) (*http.Response, error) {
+				// One attempt that sought a connection and wrote nothing, as a transport
+				// reports it through httptrace; only the error's type then decides.
+				httptrace.ContextClientTrace(req.Context()).GetConn(req.URL.Host)
 				return nil, err
 			})))
 			_, got := r.Describe(context.Background())
@@ -192,8 +196,9 @@ func TestEarlyRefusalIsMarkedRequest(t *testing.T) {
 	if r, ok := sandbox.NotDispatchedReason(err); !ok || r != sandbox.RefusalRequest {
 		t.Fatalf("err = %v, want marked request", err)
 	}
-	if !errors.Is(err, sandbox.ErrAtCapacity) {
-		t.Fatalf("err = %v, want the code's sentinel kept", err)
+	// Over-size is the caller's to fix: not "at capacity, retry later" (review B4, 2026-10-23).
+	if errors.Is(err, sandbox.ErrAtCapacity) || !errors.Is(err, sandbox.ErrInvalidRequest) {
+		t.Fatalf("err = %v, want ErrInvalidRequest and not ErrAtCapacity", err)
 	}
 	if total, _ := svc.RunCounts(); total != 0 {
 		t.Fatalf("the daemon ran %d runs", total)
@@ -274,5 +279,61 @@ func TestEveryCallSendsAFreshID(t *testing.T) {
 		if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
 			t.Fatalf("ID %q is not 32 lowercase hex digits", id)
 		}
+	}
+}
+
+// A retrying HTTP client can deliver the call on one attempt and fail to connect on the
+// next: the daemon took the code and died before answering. The last error is a refused
+// dial, and nothing may read that as "never sent", or the caller retries code that ran.
+// The control is the same client against a daemon that was never there.
+func TestARetriedDeliveryIsNotMarkedUnsent(t *testing.T) {
+	retrying := func(base *http.Client) answerHTTPFunc {
+		return func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			var last error
+			for range 3 {
+				attempt := req.Clone(req.Context())
+				attempt.Body = io.NopCloser(strings.NewReader(string(body)))
+				resp, err := base.Do(attempt)
+				if err == nil {
+					return resp, nil
+				}
+				last = err
+			}
+			return nil, last
+		}
+	}
+
+	var hits sync.WaitGroup
+	hits.Add(1)
+	dying := httptest.NewUnstartedServer(nil)
+	dying.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)  // the daemon has the code
+		_ = dying.Listener.Close() // and dies: every later dial is refused
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close() // without answering
+		}
+		hits.Done()
+	})
+	dying.Start()
+	t.Cleanup(dying.Close)
+	base := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 5 * time.Second}
+	_, err := newRemote(t, dying.URL, WithHTTPClient(retrying(base))).RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+	hits.Wait()
+	var op *net.OpError
+	if !errors.As(err, &op) || op.Op != "dial" {
+		t.Fatalf("err = %v, want the last attempt's refused dial", err)
+	}
+	if reason, marked := sandbox.NotDispatchedReason(err); marked {
+		t.Fatalf("a delivered call is marked not dispatched (%v): %v", reason, err)
+	}
+
+	_, err = newRemote(t, "http://127.0.0.1:1", WithHTTPClient(retrying(base))).RunJavaScript(context.Background(), sandbox.Request{Code: "1"})
+	if reason, ok := sandbox.NotDispatchedReason(err); !ok || reason != sandbox.RefusalEnvironment {
+		t.Fatalf("a call no attempt delivered is not marked environment: %v", err)
 	}
 }

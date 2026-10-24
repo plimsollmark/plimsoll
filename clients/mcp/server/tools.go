@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/plimsollmark/plimsoll/client"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -24,7 +26,12 @@ type runInput struct {
 	Files    []fileInput `json:"files,omitempty" jsonschema:"Text files written into the working directory before the code runs, for data the code should read."`
 	Sandbox  string      `json:"sandbox,omitempty" jsonschema:"A handle from open_sandbox, to run where earlier calls ran. Omit to run in a fresh sandbox."`
 	Kit      string      `json:"kit,omitempty"`
+	Trace    string      `json:"trace,omitempty" jsonschema:"Optional: an opaque ID tying this run to a log of yours, such as your coding session's ID; it is signed into the run's receipt. Letters, digits and . _ : - only, at most 64."`
 }
+
+// traceForm is the daemon's rule for a correlation id; one outside it would be dropped
+// there, leaving a run its caller meant to tag untagged, so it is refused here first.
+var traceForm = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 
 type openInput struct {
 	Kit string `json:"kit,omitempty"`
@@ -98,6 +105,7 @@ type recordJSON struct {
 	Sequence         uint64 `json:"sequence"`
 	PreviousSHA256   string `json:"previousSha256"`
 	Unanswered       string `json:"unanswered"`
+	Instance         string `json:"instance"`
 	SHA256           string `json:"sha256"`
 }
 
@@ -317,6 +325,9 @@ func (s *Server) full() *failure {
 // call its sandbox's first.
 func (s *Server) checkInput(in runInput) (sandbox.Language, []sandbox.File, *failure) {
 	lang := sandbox.Language(in.Language)
+	if in.Trace != "" && !traceForm.MatchString(in.Trace) {
+		return "", nil, refused(sandbox.RefusalRequest, "trace must be 1 to 64 letters, digits or . _ : -")
+	}
 	if lang != "" && !slices.Contains(s.cfg.Languages, lang) {
 		return "", nil, refused(sandbox.RefusalRequest, "this server runs %s, not %s", joinNames(s.cfg.Languages), in.Language)
 	}
@@ -393,6 +404,7 @@ func (s *Server) runCode(ctx context.Context, in runInput) (runOutput, *failure)
 		return runOutput{}, f
 	}
 	defer release()
+	ctx = client.NewTraceContext(ctx, in.Trace)
 	if in.Sandbox == "" {
 		return s.runFresh(ctx, lang, in.Code, files)
 	}
@@ -536,7 +548,7 @@ func (s *Server) getRecord(ctx context.Context, in recordInput) (recordOutput, *
 		Version: r.Version, RequestSHA256: r.RequestSHA256, ResultSHA256: r.ResultSHA256, Provider: r.Provider, Isolation: r.Isolation,
 		Environment: r.Environment, SoftwareIdentity: r.SoftwareIdentity, SoftwareRuleID: r.SoftwareRuleID, Policy: r.Policy,
 		StartedUnixMs: r.Started.UnixMilli(), EndedUnixMs: r.Ended.UnixMilli(), Session: r.Session, Sequence: r.Sequence,
-		PreviousSHA256: r.PreviousSHA256, Unanswered: r.Unanswered, SHA256: r.SHA256,
+		PreviousSHA256: r.PreviousSHA256, Unanswered: r.Unanswered, Instance: r.Instance, SHA256: r.SHA256,
 	}
 	software := r.SoftwareIdentity
 	if software == "" {

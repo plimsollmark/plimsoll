@@ -221,6 +221,13 @@ func (c *SpendCap) take(principal string, perCaller int64, want float64, why ref
 		return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity, fmt.Errorf(
 			"paid budget: the daemon's allowance for today cannot cover %s until 00:00 UTC; %s", why.subject, why.shorter))
 	}
+	return c.book(principal, want, day), nil
+}
+
+// book reserves want seconds for principal in day without checking any allowance: take
+// once its checks pass, and the restore of a session's own reservation, which is already
+// counted and must never be refused (sessionMeter.cover). c.mu is held.
+func (c *SpendCap) book(principal string, want float64, day string) *held {
 	c.caller[principal] += want
 	c.total += want
 	h := &held{principal: principal, want: want, start: c.now(), day: day}
@@ -228,7 +235,7 @@ func (c *SpendCap) take(principal string, perCaller int64, want float64, why ref
 		c.open = map[*held]struct{}{}
 	}
 	c.open[h] = struct{}{}
-	return h, nil
+	return h
 }
 
 // give settles h: it charges took, at most what h reserved, gives the rest back, and
@@ -311,10 +318,12 @@ func (m *sessionMeter) cover(want time.Duration) error {
 	h, err := c.take(m.principal, m.perCaller, want.Seconds(), sessionRefusal)
 	if err != nil {
 		// What the old reservation still covered was just given back, under this same
-		// lock, so it can be taken again: the session stays covered to where it was.
+		// lock, and is booked again without a check: the session stays covered to where
+		// it was. It used to be taken again through the checks with the result discarded,
+		// so a refusal there would have left a running paid session unmetered (review B5,
+		// 2026-10-23); no check refuses it today, but none may in future either.
 		rest := max(held-ran, 0)
-		m.h, _ = c.take(m.principal, m.perCaller, rest.Seconds(), sessionRefusal)
-		m.since = now
+		m.h, m.since = c.book(m.principal, rest.Seconds(), c.today()), now
 		return err
 	}
 	m.h, m.since = h, now

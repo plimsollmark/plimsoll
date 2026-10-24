@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -263,7 +264,8 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ctl := true
-		pd := pod{Meta: objectMeta{Name: "sb-" + name, Labels: map[string]string{"agents.x-k8s.io/sandbox-template-ref-hash": fakeHash},
+		// The API server gives every pod a UID; the fake derives one from the claim's name.
+		pd := pod{Meta: objectMeta{Name: "sb-" + name, UID: "pod-uid-" + name, Labels: map[string]string{"agents.x-k8s.io/sandbox-template-ref-hash": fakeHash},
 			OwnerReferences: []ownerReference{{Kind: "Sandbox", Name: "sb-" + name, UID: "sandbox-uid-" + name, Controller: &ctl}}},
 			Spec: goodSpec(digestOf(fakeToken))}
 		pd.Spec.NodeName = fakeNode
@@ -306,6 +308,9 @@ type fakeSandboxd struct {
 	// run answers a command; hang, when set, makes Start wait for its stream to end.
 	run  func(argv []string, stdin []byte) (stdout, stderr string, exit int32)
 	hang bool
+	// holdAfterExit keeps a guest command's stream open after its exit event until the
+	// client ends it, as a stream that never closes would.
+	holdAfterExit atomic.Bool
 	// tierAnswer is the answer to tierCheck, which is counted in tierChecks, not starts:
 	// gVisor's boot line and a seccomp filter unless a test sets another.
 	tierAnswer  string
@@ -386,6 +391,9 @@ func (f *fakeSandboxd) Start(ctx context.Context, req *connect.Request[processv1
 		if err := stream.Send(ev); err != nil {
 			return err
 		}
+	}
+	if !checking && f.holdAfterExit.Load() {
+		<-ctx.Done()
 	}
 	return nil
 }
@@ -791,11 +799,9 @@ func waitPendingDelete(t *testing.T, p *Provider, name string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		p.cleanup.mu.Lock()
-		d := p.cleanup.pending[name]
-		pending := d != nil && !d.running
-		p.cleanup.mu.Unlock()
-		if pending {
+		// Pending: held, and no deletion of it in progress (claimable, then given back).
+		if p.cleanup.Begin(name) {
+			p.cleanup.Done(name, false)
 			return
 		}
 		time.Sleep(time.Millisecond)

@@ -142,6 +142,11 @@ func (p *Provider) exec(ctx context.Context, ip string, argv []string, stdin []b
 			break
 		}
 	}
+	// cut: the stream after the exit event ended otherwise than by its own end (the grace
+	// cancelling it, a broken connection), so output the process wrote may be missing;
+	// both streams are then reported cut, never whole (review,
+	// 2026-10-23).
+	cut := false
 	if out.exited {
 		grace := time.AfterFunc(postExitGrace, cancel)
 		for stream.Receive() {
@@ -153,14 +158,15 @@ func (p *Provider) exec(ctx context.Context, ip string, argv []string, stdin []b
 			}
 		}
 		grace.Stop()
+		cut = stream.Err() != nil
 	}
 	cancel()
 	var sendErr error
 	if started {
 		sendErr = <-sent
 	}
-	out.stdout, out.stdoutTruncated = stdout.Buf, stdout.Dropped
-	out.stderr, out.stderrTruncated = stderr.Buf, stderr.Dropped
+	out.stdout, out.stdoutTruncated = stdout.Buf, stdout.Dropped || cut
+	out.stderr, out.stderrTruncated = stderr.Buf, stderr.Dropped || cut
 	switch {
 	case out.exited:
 		return out, nil

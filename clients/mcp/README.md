@@ -18,7 +18,7 @@ can reach. It serves MCP 2026-07-28 and the 2025 revisions (the official Go SDK,
 
 | Tool | What it does |
 |------|--------------|
-| `run_code` | Runs `code` (`language` `"python"` or `"javascript"`, optional text `files` written first). Without `sandbox` the call is fresh and nothing is kept. With `sandbox`, a handle from `open_sandbox`, it runs where that handle's earlier calls ran, so files and interpreter state remain. A program that fails is a result with its exit code. |
+| `run_code` | Runs `code` (`language` `"python"` or `"javascript"`, optional text `files` written first). Without `sandbox` the call is fresh and nothing is kept. With `sandbox`, a handle from `open_sandbox`, it runs where that handle's earlier calls ran, so files and interpreter state remain. An optional `trace` (1 to 64 letters, digits or `. _ : -`) ties the run to a log of the caller's, such as a coding session's ID, and is signed into its receipt; [the agent-session example](../../examples/agent-session/README.md) sets it from a hook. A program that fails is a result with its exit code. |
 | `open_sandbox` | Opens a sandbox that keeps state and answers once the daemon has opened it, with its handle, languages, tier and when it ends. At most `PLIMSOLL_MAX_SANDBOXES` are open; past that the open is refused (`capacity`) and names the idle sandboxes in `idleSandboxes`. Nothing is ever closed for room: deleting a sandbox's state takes a `close_sandbox` naming it, so `open_sandbox` is not marked destructive. |
 | `close_sandbox` | Closes a handle's sandbox; `deleted` says whether the daemon confirmed it. |
 | `get_record` | The run record of a call, by the `recordSha256` its result or failure gave. The last 256 are kept in memory until the server restarts. |
@@ -134,6 +134,38 @@ env_vars = ["PLIMSOLL_TOKEN"]
 startup_timeout_sec = 30
 tool_timeout_sec = 90
 ```
+
+Mirror 0.1.1 (`~/.mirror/mcp/plimsoll.json`, then `/connect plimsoll`):
+
+```json
+{
+  "command": "/absolute/path/to/plimsoll-mcp",
+  "env": {
+    "PLIMSOLL_URL": "PLIMSOLL_URL",
+    "PLIMSOLL_TOKEN": "PLIMSOLL_TOKEN"
+  },
+  "startupTimeoutSeconds": 30,
+  "toolTimeoutSeconds": 90
+}
+```
+
+Mirror treats each `env` value as the **name of an environment variable**, not
+its literal value. Supply `PLIMSOLL_URL` and the caller token to the process
+that launches Mirror, using your credential manager. For an open development
+daemon, remove the `PLIMSOLL_TOKEN` entry. To sign receipts, also forward
+`PLIMSOLL_SIGNING_KEY_FILE` and `PLIMSOLL_RECEIPTS_DIR` by name. Keep keys out of
+the connection file. Mirror's 90 s deadline sits above this server's default
+80 s deadline.
+
+Mirror exposes connected tools through `mcp_search`, `mcp_describe`, and
+`mcp_call`. Ask it to find Plimsoll's `run_code`, inspect its schema, and run
+code there. The underlying tool names include `mcp__plimsoll__run_code` and
+`mcp__plimsoll__get_record`. Select Beam with `/model reflection`, or use
+another model that supports tool calls. Model access and charges belong to
+that model provider. Connecting this server does not isolate Mirror's other
+shell or file tools. Keep approval enabled for normal use. See
+[EXTERNAL · Mirror MCP documentation ↗](https://developers.reflection.ai/mirror-mcp)
+and [EXTERNAL · Mirror 0.1.1 source ↗](https://github.com/reflection-oss/mirror/tree/80a9fa83c22e6ac2cc630ef907b427c295ffcc84/mirror-cli).
 
 The Claude Code plugin in `marketplace/`, the npm launcher in `npm/` (which picks the
 binary for its platform from a package npm installs for it) and the Claude Desktop bundles are

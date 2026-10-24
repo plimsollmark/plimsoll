@@ -170,7 +170,7 @@ func (h *holds) state() map[string]int64 {
 //	ECHO:HOLD       the run waits until /test/release or until its context ends
 //	ECHO:EXIT       the step exits 3 with "boom" on stderr, a failing guest
 //	ECHO:TIMEOUT    the step and the run time out
-//	ECHO:SETUP      setup_failed with no step's report (the code may or may not have run)
+//	ECHO:SETUP      setup_failed with no step's report: no step began, so the code did not run
 //	ECHO:PROTOCOL   protocol_error with no step's report: the sandbox answered nothing readable
 //	ECHO:LOUD       20,000 characters on stdout, past a tool's cut
 //	ECHO:LOST       an error with no not-dispatched mark: the code may have run

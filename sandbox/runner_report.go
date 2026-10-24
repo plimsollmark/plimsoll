@@ -33,15 +33,18 @@ func RunnerReport(provider string, isolation IsolationClass, stdout string, key 
 		res.Artifacts = append(res.Artifacts, Artifact(a))
 	}
 	res.ArtifactsTruncated = report.ArtifactsTruncated
-	// A runner-reported failure around step execution (illegal file path, unwritable
-	// file, over-budget result) is request-attributable: setup_failed. A step killed by
-	// its own time budget is a timed-out run, not a completed one; RunModule classifies
-	// the same event as timed_out, and the two operations must not disagree.
+	// A runner-reported failure before any step (illegal file path, unwritable file)
+	// is request-attributable: setup_failed. One after a step began is runner_failed:
+	// the caller's code ran. A step killed by the run's time budget is a timed-out run,
+	// not a completed one; RunModule classifies the same event as timed_out, and the two
+	// operations must not disagree.
 	outcome, detail := report.Outcome()
 	res.Outcome, res.Detail = ProjectOutcomeCompleted, detail
 	switch outcome {
 	case runnerwire.SetupFailed:
 		res.Outcome = ProjectOutcomeSetupFailed
+	case runnerwire.RunnerFailed:
+		res.Outcome = ProjectOutcomeRunnerFailed
 	case runnerwire.TimedOut:
 		res.Outcome = ProjectOutcomeTimedOut
 	}

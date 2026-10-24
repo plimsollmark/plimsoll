@@ -1,11 +1,16 @@
 package attest
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/plimsollmark/plimsoll/record"
+	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
 const testPredicateType = "https://example.com/verdict/v1"
@@ -30,6 +35,42 @@ func TestStatementRoundTrip(t *testing.T) {
 	}
 	if got != (testVerdict{Verdict: "pass", Runs: 4}) || len(subjects) != 1 || subjects[0].Digest["sha256"] != testSubject[0].Digest["sha256"] {
 		t.Fatalf("opened %+v about %+v", got, subjects)
+	}
+}
+
+func TestStatementRejectsRepeatedJSONNames(t *testing.T) {
+	key := newKey(t)
+	s, v := NewSigner(key), NewVerifier(publicOf(key))
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"passed":false,"passed":true}`),
+		json.RawMessage(`{"nested":[{"passed":false,"\u0070assed":true}]}`),
+	} {
+		if _, err := s.SignStatement(testPredicateType, testSubject, raw); err == nil {
+			t.Errorf("signed a predicate with repeated names: %s", raw)
+		}
+		// A trusted key can be used outside SignStatement; opening must check too.
+		payload, err := json.Marshal(statement{Type: StatementType, Subject: testSubject, PredicateType: testPredicateType, Predicate: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got json.RawMessage
+		if _, err := v.OpenStatement(s.envelope(payload), testPredicateType, &got); err == nil {
+			t.Errorf("opened an externally signed predicate with repeated names: %s", raw)
+		}
+	}
+	// Case-sensitive schema names and numbers outside float64's range remain valid.
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"x":1,"X":2,"nested":[{},[],{"n":1e5000}]}`),
+		json.RawMessage(`[]`), json.RawMessage(`true`),
+	} {
+		env, err := s.SignStatement(testPredicateType, testSubject, raw)
+		if err != nil {
+			t.Fatalf("valid predicate refused: %s: %v", raw, err)
+		}
+		var got json.RawMessage
+		if _, err := v.OpenStatement(env, testPredicateType, &got); err != nil {
+			t.Fatalf("valid predicate could not be opened: %s: %v", raw, err)
+		}
 	}
 }
 
@@ -113,3 +154,65 @@ func mustSign(t *testing.T, s *Signer, typ string, subjects []Subject) Envelope 
 }
 
 func publicOf(k ed25519.PrivateKey) ed25519.PublicKey { return k.Public().(ed25519.PublicKey) }
+
+// Every verifier reads a signed payload one way: a name respelled in another case, which
+// encoding/json would accept as the same field, is refused, whether it repeats a field
+// (two readings of one payload) or stands alone. Each payload is re-signed by the
+// trusted key, so only the decoding stands between it and acceptance.
+func TestVerifiersRefuseNamesSpelledAnotherWay(t *testing.T) {
+	key := newKey(t)
+	s, v := NewSigner(key), NewVerifier(publicOf(key))
+	_, resp := exchange("x()", "out", sandbox.RunRecord{})
+	run, err := s.Sign(record.FromWire(resp.GetRecord()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := s.Close(SessionClose{Session: record.SessionFingerprint("s"), Calls: 1, LastRecordSHA256: strings.Repeat("cd", 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := *seal(t, s, traced(t, s, "a"))[0].Link
+	stmt, err := s.SignStatement(testPredicateType, testSubject, testVerdict{Verdict: "pass", Runs: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiers := map[string]struct {
+		env    Envelope
+		verify func(Envelope) error
+	}{
+		"run record":    {run, func(e Envelope) error { _, err := v.Verify(e); return err }},
+		"session close": {closed.Envelope, func(e Envelope) error { _, err := v.VerifyClose(e); return err }},
+		"bundle link":   {link, func(e Envelope) error { _, err := v.VerifyLink(e); return err }},
+		"statement": {stmt, func(e Envelope) error {
+			var got testVerdict
+			_, err := v.OpenStatement(e, testPredicateType, &got)
+			return err
+		}},
+	}
+	for name, c := range verifiers {
+		payload, err := v.signedPayload(c.env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.verify(s.envelope(payload)); err != nil {
+			t.Fatalf("%s: the payload as signed is refused: %v", name, err)
+		}
+		var top map[string]json.RawMessage
+		if err := json.Unmarshal(payload, &top); err != nil {
+			t.Fatal(err)
+		}
+		variants := map[string][]byte{
+			"a second predicate spelled Predicate": append(append(bytes.TrimSuffix(payload, []byte("}")), `,"Predicate":`...), append(top["predicate"], '}')...),
+			"the subject's name spelled Name":      bytes.Replace(payload, []byte(`"name":`), []byte(`"Name":`), 1),
+			"_type spelled _TYPE":                  bytes.Replace(payload, []byte(`"_type":`), []byte(`"_TYPE":`), 1),
+		}
+		for what, p := range variants {
+			if bytes.Equal(p, payload) {
+				t.Fatalf("%s: variant %q changed nothing", name, what)
+			}
+			if err := c.verify(s.envelope(p)); err == nil {
+				t.Errorf("%s: accepted %s: %s", name, what, p)
+			}
+		}
+	}
+}

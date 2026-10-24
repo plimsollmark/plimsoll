@@ -322,8 +322,9 @@ func TestHardenedPolicyRequiresAPerCallerSessionCap(t *testing.T) {
 }
 
 // The paid-provider settings that need no sandbox are checked before the smoke test:
-// an allowance on a provider that does not bill is refused, as are sessions on one
-// that does; a negative allowance is refused.
+// an allowance on a provider that does not bill is refused, as are sessions on one that
+// does with no idle timeout; a negative allowance is refused. Sessions on a metered
+// provider are allowed: they draw on the allowance (review, 2026-10-23).
 func TestLoadPaidConfig(t *testing.T) {
 	for name, tc := range map[string]struct {
 		env     map[string]string
@@ -335,8 +336,9 @@ func TestLoadPaidConfig(t *testing.T) {
 		"set, metered":              {map[string]string{"SANDBOX_PAID_SECONDS_PER_DAY": "3600"}, true, 3600, false},
 		"set, not metered":          {map[string]string{"SANDBOX_PAID_SECONDS_PER_DAY": "3600"}, false, 0, true},
 		"negative":                  {map[string]string{"SANDBOX_PAID_SECONDS_PER_DAY": "-1"}, true, 0, true},
-		"sessions on a metered one": {map[string]string{"SANDBOX_MAX_SESSIONS": "2"}, true, 0, true},
-		"sessions, not metered":     {map[string]string{"SANDBOX_MAX_SESSIONS": "2"}, false, 0, false},
+		"sessions on a metered one": {map[string]string{"SANDBOX_MAX_SESSIONS": "2", "SANDBOX_PAID_SECONDS_PER_DAY": "600"}, true, 600, false},
+		"sessions that never idle on a metered one": {map[string]string{"SANDBOX_MAX_SESSIONS": "2", "SANDBOX_SESSION_IDLE": "0"}, true, 0, true},
+		"sessions, not metered":                     {map[string]string{"SANDBOX_MAX_SESSIONS": "2"}, false, 0, false},
 	} {
 		got, err := loadPaidConfig(getenvFrom(tc.env), tc.metered)
 		if (err != nil) != tc.bad || got != tc.want {

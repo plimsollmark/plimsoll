@@ -45,6 +45,7 @@ type box struct {
 	tier        sandbox.IsolationClass
 	node        string   // the node the pod runs on
 	roots       []string // writable roots from this actual pod, not the template
+	instance    string   // "k8s-pod-uid:" and the UID the API server gave the pod
 }
 
 // claimSandbox makes one claim on the warm pool for a run of at most lifetime, waits for
@@ -170,8 +171,12 @@ func (p *Provider) readBack(ctx context.Context, b box, c claim) (box, error) {
 	if err := p.checkPodImage(m[1]); err != nil {
 		return fail(err)
 	}
+	instance := sandbox.PodInstance(pd.Meta.UID)
+	if instance == "" {
+		return fail(fmt.Errorf("its UID %q is not a UID", pd.Meta.UID))
+	}
 	b.roots = roots
-	b.ip, b.environment, b.tier, b.node = ip, m[1], tier, pd.Spec.NodeName
+	b.ip, b.environment, b.tier, b.node, b.instance = ip, m[1], tier, pd.Spec.NodeName, instance
 	return b, nil
 }
 
@@ -265,15 +270,16 @@ type tierReport struct {
 }
 
 // deleteLater deletes the claim off the caller's path and holds the run's admitted
-// capacity until the pod is gone (sandbox.HoldCapacity): the pod, and anything the run left
-// running in it, lives until then. Call it before the call returns.
+// capacity until the pod is gone (sandbox.HoldCapacity, providerkit.Quarantine): the pod,
+// and anything the run left running in it, lives until then. Call it before the call
+// returns.
 func (p *Provider) deleteLater(ctx context.Context, b box) {
-	p.cleanup.mu.Lock()
-	if p.cleanup.pending == nil {
-		p.cleanup.pending = map[string]*claimDelete{}
-	}
-	p.cleanup.pending[b.claim] = &claimDelete{release: sandbox.HoldCapacity(ctx), running: true}
-	p.cleanup.mu.Unlock()
+	hold := sandbox.HoldCapacity(ctx)
+	p.cleanup.Hold(b.claim, func() {
+		hold()
+		// Drain seeing no lease also means the admitted capacity has been returned.
+		p.leases.Untrack(b.claim)
+	})
 	go p.destroy(b.claim)
 }
 
@@ -282,48 +288,9 @@ func (p *Provider) deleteLater(ctx context.Context, b box) {
 // for ReconcileOrphans, which retries pending deletions independently of their timestamps.
 func (p *Provider) destroy(name string) {
 	n, err := providerkit.Delete(p.deleteTimeout, func(ctx context.Context) error { return p.deleteAndWait(ctx, name) })
-	p.finishDelete(name, err)
-	if err != nil {
+	if !p.cleanup.Done(name, err == nil) {
 		slog.Error("agentsandbox: claim deletion pending; capacity held until ReconcileOrphans confirms it gone", "claim", name, "attempts", n, "error", err)
 	}
-}
-
-type claimCleanup struct {
-	mu      sync.Mutex
-	pending map[string]*claimDelete
-}
-
-type claimDelete struct {
-	release func()
-	running bool
-}
-
-// beginDelete reserves a pending deletion for one reconciler. A create, a live run and a
-// deletion already in progress cannot be taken over by reconciliation.
-func (p *Provider) beginDelete(name string) bool {
-	p.cleanup.mu.Lock()
-	defer p.cleanup.mu.Unlock()
-	d := p.cleanup.pending[name]
-	if d == nil || d.running {
-		return false
-	}
-	d.running = true
-	return true
-}
-
-func (p *Provider) finishDelete(name string, err error) {
-	p.cleanup.mu.Lock()
-	d := p.cleanup.pending[name]
-	if err != nil {
-		d.running = false
-		p.cleanup.mu.Unlock()
-		return
-	}
-	delete(p.cleanup.pending, name)
-	p.cleanup.mu.Unlock()
-	d.release()
-	// Drain seeing no lease also means the admitted capacity has been returned.
-	p.leases.Untrack(name)
 }
 
 func (p *Provider) deleteAndWait(ctx context.Context, name string) error {
@@ -365,21 +332,13 @@ func (p *Provider) Drain(ctx context.Context) error {
 // measured the clocks. It returns confirmed pending deletions plus orphan deletions the
 // API server accepted. A pending claim already absent from a list is still checked by name.
 func (p *Provider) ReconcileOrphans(ctx context.Context) (int, error) {
-	deleted := 0
-	var pendingErr error
-	for _, name := range p.leases.Keys() {
-		if !p.beginDelete(name) {
-			continue
-		}
+	deleted, pendingErr := p.cleanup.Retry(func(name string) error {
 		dctx, cancel := context.WithTimeout(ctx, p.deleteTimeout)
-		err := p.deleteAndWait(dctx, name)
-		cancel()
-		p.finishDelete(name, err)
-		if err != nil {
-			pendingErr = errors.Join(pendingErr, fmt.Errorf("agentsandbox: claim %s deletion pending: %w", name, err))
-		} else {
-			deleted++
-		}
+		defer cancel()
+		return p.deleteAndWait(dctx, name)
+	})
+	if pendingErr != nil {
+		pendingErr = fmt.Errorf("agentsandbox: claim deletion pending: %w", pendingErr)
 	}
 	cont := ""
 	for page := 0; page < maxListPages; page++ {

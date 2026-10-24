@@ -100,7 +100,7 @@ curl -sS -X POST http://127.0.0.1:8746/plimsoll.v1.SandboxService/Describe \
 ```
 
 ```
-{"sandbox":"wasm", "isolation":"process", "supportsJavascriptGrants":true, "protocol":2, "javascriptEnvironment":{"identity":"quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e", "maxTimeoutMs":30000}, "projectEnvironment":{}, "moduleEnvironment":{}, "resources":{}}
+{"sandbox":"wasm", "isolation":"process", "supportsJavascriptGrants":true, "protocol":4, "javascriptEnvironment":{"identity":"quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e", "maxTimeoutMs":30000}, "projectEnvironment":{}, "moduleEnvironment":{}, "resources":{}}
 ```
 
 The environment fields say what runs each kind of request (`javascript`, `project`,

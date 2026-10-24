@@ -19,9 +19,9 @@
    "stderr": "",
    "truncated": false,
    "isolation": "container",
-   "record_sha256": "8a5f6e2c8cd07351569ff4ee58189ac90deeb6626f475fd3e967f354f8ce34da"
+   "record_sha256": "201cfc6100677b13923e97e50d6864fa6f0d835de8413fde81f9c297b028ba4c"
   },
-  "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"
+  "source": "a real plimsolld (docker under runc, image docker-image:sha256:6c48d03275e4\u2026) on 2026-10-23 19:52 UTC"
  },
  "javascript": {
   "call": {
@@ -38,9 +38,9 @@
    "stderr": "",
    "truncated": false,
    "isolation": "container",
-   "record_sha256": "0a1e6134ac93fd48ca236a6d95ae31310ddb20dbdcfcb2dc8549fb855ee0e889"
+   "record_sha256": "147f2069c4c11449060e9988cb7eb0010f504b19cc32546c13b7a5362cb01f1a"
   },
-  "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"
+  "source": "a real plimsolld (docker under runc, image docker-image:sha256:6c48d03275e4\u2026) on 2026-10-23 19:52 UTC"
  },
  "fails": {
   "call": {
@@ -56,9 +56,9 @@
    "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import runpy; runpy.run_path(\".plimsoll/code.py\", run_name=\"__main__\")\n                  ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \".plimsoll/code.py\", line 2, in <module>\n    print(sum(units) / (len(units) - 4))\n          ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~\nZeroDivisionError: division by zero\n",
    "truncated": false,
    "isolation": "container",
-   "record_sha256": "6193b4ab0fe391451bb99d8f3fa25f8237801ec33a1260fe1bdf1af64af0e236"
+   "record_sha256": "b0e25eeacd8afa66d26f02b0bd7ad90f36e298792860f2c7f2ab69b8fb774ca0"
   },
-  "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"
+  "source": "a real plimsolld (docker under runc, image docker-image:sha256:6c48d03275e4\u2026) on 2026-10-23 19:52 UTC"
  },
  "no_install": {
   "call": {
@@ -74,9 +74,9 @@
    "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import runpy; runpy.run_path(\".plimsoll/code.py\", run_name=\"__main__\")\n                  ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \".plimsoll/code.py\", line 1, in <module>\n    import pandas as pd\nModuleNotFoundError: No module named 'pandas'\n",
    "truncated": false,
    "isolation": "container",
-   "record_sha256": "de2245d320c87f44b4000cf340ba1bb02abd3d0429e4577778d9f81b901930d5"
+   "record_sha256": "04fa944519f3b1203ad78ba01c6d06fac36cff8388ad2260c3866dee47edcf09"
   },
-  "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"
+  "source": "a real plimsolld (docker under runc, image docker-image:sha256:6c48d03275e4\u2026) on 2026-10-23 19:52 UTC"
  },
  "floor": {
   "call": {
@@ -87,7 +87,7 @@
    "refused": "isolation",
    "error": "the daemon is below CodeExecutor's isolation floor"
   },
-  "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"
+  "source": "a real plimsolld (docker under runc, image docker-image:sha256:6c48d03275e4\u2026) on 2026-10-23 19:52 UTC"
  },
  "wrong_language": {
   "call": {
@@ -95,7 +95,7 @@
    "language": "javascript"
   },
   "answer": "Agno refused the call before the tool ran: 1 validation error for plimsoll_run_code",
-  "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"
+  "source": "a real plimsolld (docker under runc, image docker-image:sha256:6c48d03275e4\u2026) on 2026-10-23 19:52 UTC"
  },
  "lost": {
   "call": {
@@ -124,9 +124,9 @@
      "stderr": "",
      "truncated": false,
      "isolation": "container",
-     "record_sha256": "6cc0f03870faff072ced32c2965891ed3d1dc1c3b5fc8e734d481bfcec870527"
+     "record_sha256": "cc7c88e56514181499613f68e1b518d2238addbad492fc08d92d825938ebdb16"
     },
-    "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"
+    "source": "a real plimsolld (docker under runc, image docker-image:sha256:6c48d03275e4\u2026) on 2026-10-23 19:52 UTC"
    },
    {
     "call": {
@@ -142,11 +142,11 @@
      "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import runpy; runpy.run_path(\".plimsoll/code.py\", run_name=\"__main__\")\n                  ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<frozen runpy>\", line 294, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \".plimsoll/code.py\", line 1, in <module>\n    print(x + 1)\n          ^\nNameError: name 'x' is not defined\n",
      "truncated": false,
      "isolation": "container",
-     "record_sha256": "40e3809ce0217c952870e350f6c5b3560538107fcf74194738fd9222a744525d"
+     "record_sha256": "ee3a2605beeccbee9c2f0fcd8881572346034073b425d4b26bf265ca90a69abb"
     },
-    "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"
+    "source": "a real plimsolld (docker under runc, image docker-image:sha256:6c48d03275e4\u2026) on 2026-10-23 19:52 UTC"
    }
   ],
-  "source": "a real plimsolld (docker under runc, image docker-image:sha256:3f5bc5ca9845\u2026) on 2026-10-08 01:08 UTC"
+  "source": "a real plimsolld (docker under runc, image docker-image:sha256:6c48d03275e4\u2026) on 2026-10-23 19:52 UTC"
  }
 }

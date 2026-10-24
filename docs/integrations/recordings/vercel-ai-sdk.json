@@ -20,9 +20,9 @@
       "stateKept": false,
       "filesPersist": false,
       "isolation": "kernel",
-      "recordSha256": "b6cec6f794646a8bbc62a283fef197942cb4ade36662ae7c32db0418daf8ec0e"
+      "recordSha256": "2d0eeb541cc16582d690f7afad74a438014fcea320780b39b30d527009c2533b"
     },
-    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
   },
   "javascript": {
     "call": {
@@ -39,9 +39,9 @@
       "stateKept": false,
       "filesPersist": false,
       "isolation": "kernel",
-      "recordSha256": "483467133aaddf2a21cb82cdde09935ab018bd85faf4a7a8cefa39e9f4f4e25d"
+      "recordSha256": "4ced13e0ea39cfe4b3822f30156ed659a01662f0f1c0e83be47cbb8db2774867"
     },
-    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
   },
   "guest_error": {
     "call": {
@@ -58,12 +58,12 @@
       "stateKept": false,
       "filesPersist": false,
       "isolation": "kernel",
-      "recordSha256": "271713185d55c3df966a580b965e4aa3bcf1211996a5acce5484e525396c0923"
+      "recordSha256": "fc2e13bf54035a1f2dd8cd0710f95acbc00694a9e1ae331de3c504ca7b2be4cd"
     },
-    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
   },
   "fresh": {
-    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection.",
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection.",
     "steps": [
       {
         "call": {
@@ -80,9 +80,9 @@
           "stateKept": false,
           "filesPersist": false,
           "isolation": "kernel",
-          "recordSha256": "20f6d693c9e2e8d1d23d9d1df7492bf642e16412822449ca1db5a71e5417caf4"
+          "recordSha256": "58f0342a0f90d6006ca53de4cf6bb66eb9827829ecd07b4da1fab58575957be9"
         },
-        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
       },
       {
         "call": {
@@ -99,14 +99,14 @@
           "stateKept": false,
           "filesPersist": false,
           "isolation": "kernel",
-          "recordSha256": "24477bf1def474d3fd99b9ba30ac3393111715f47070e5e810999db8a71f6997"
+          "recordSha256": "2193d881e073d58854b4de087141a6481def699aa319cca923d641c1a115c561"
         },
-        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
       }
     ]
   },
   "remember": {
-    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection.",
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection.",
     "steps": [
       {
         "call": {
@@ -125,9 +125,9 @@
           "filesPersist": true,
           "freshSandbox": true,
           "isolation": "kernel",
-          "recordSha256": "8ae9137a3ca2c861ec4448913a5aa31b9b14e06227b5ca7e1f3843e4e6841321"
+          "recordSha256": "2fe378a2bbc9456b02bea83f72cff4a0bee6099d20b36a8ee5a03dedaab4d64b"
         },
-        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
       },
       {
         "call": {
@@ -144,9 +144,9 @@
           "stateKept": true,
           "filesPersist": true,
           "isolation": "kernel",
-          "recordSha256": "e24d905066a62254168c340c57b5739b5160ddde5852a498e330a4c1869f850a"
+          "recordSha256": "fc202a067b2df2959e237c57704a628143f00a366dbc8d2f35e2d9f74a160482"
         },
-        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+        "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
       }
     ]
   },
@@ -167,9 +167,9 @@
       "filesPersist": true,
       "freshSandbox": true,
       "isolation": "kernel",
-      "recordSha256": "66e933d9fa68b3fceb17abf0cdd1a69c06be260cfe24740f1d451de195d6ce29"
+      "recordSha256": "ab8f594051ec6f99200c9cb121172a6bfad3420723460d67fb137977dda45e10"
     },
-    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
   },
   "disposed": {
     "call": {
@@ -188,9 +188,9 @@
       "filesPersist": true,
       "freshSandbox": true,
       "isolation": "kernel",
-      "recordSha256": "54b75899710fe17326fa724aa73b49dfbc5c7b2f7f8f9456391af694747360c5"
+      "recordSha256": "d8174b590a52fd0e19b086436056a137f7b259dc9f72328935908df33d505499"
     },
-    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
   },
   "floor": {
     "call": {
@@ -202,10 +202,10 @@
         "name": "PlimsollError",
         "code": "failed_precondition",
         "notDispatched": "isolation",
-        "message": "sandbox isolation requirement not met: provider isolation kernel is below requested minimum vm"
+        "message": "Nothing ran (isolation): sandbox isolation requirement not met: provider isolation kernel is below requested minimum vm"
       }
     },
-    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
   },
   "bad_file": {
     "call": {
@@ -223,9 +223,9 @@
         "name": "PlimsollError",
         "code": "invalid_argument",
         "notDispatched": "request",
-        "message": "invalid sandbox request: unsafe file path \"../secret.txt\""
+        "message": "Nothing ran (request): invalid sandbox request: unsafe file path \"../secret.txt\""
       }
     },
-    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-07T17:38:27.703Z. No model API. Exceptions shown as an application-readable projection."
+    "source": "Actual plimsollCodeTools.execute, Vercel AI SDK 7.0.126, local Docker with verified gVisor (kernel), 2026-10-23T19:55:23.822Z. No model API. Exceptions shown as an application-readable projection."
   }
 }

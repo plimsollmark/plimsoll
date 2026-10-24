@@ -31,7 +31,7 @@ func encodeAttachmentObject(t *testing.T, a, x object) {
 
 func fixtureImage(t *testing.T) *imageBOM {
 	t.Helper()
-	image, err := readImageBOM("", "../../docs/examples/sbom", "sha256:1c6cbab4a47d34da471ab4ab970709cbba18e2a3445fde884b5d90ec2c4c5b25")
+	image, err := readImageBOM("", "../../docs/examples/sbom", "sha256:a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c")
 	if err != nil || image == nil {
 		t.Fatalf("image evidence: %v", err)
 	}
@@ -40,7 +40,7 @@ func fixtureImage(t *testing.T) *imageBOM {
 
 func TestImageEvidenceIdentityAndReferences(t *testing.T) {
 	image := fixtureImage(t)
-	if image.SHA256 != "67f4c52093e4e364b86fb1d7db9cbda8572d25afc906e4cac6ec738a57dd0292" || image.Count != 694 || image.Generator != "syft" || image.GeneratorVersion != "1.54.1" {
+	if image.SHA256 != "7e0b9a40e742f401e3a006a7362ebba1c5f3ac832107858dcf104d8f2b6de603" || image.Count != 694 || image.Generator != "syft" || image.GeneratorVersion != "1.54.1" {
 		t.Fatalf("pinned image evidence changed: %+v", image)
 	}
 	s, _, p := fixtures(t)

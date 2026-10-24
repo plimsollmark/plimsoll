@@ -24,6 +24,7 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1/plimsollv1connect"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/internal/wireenum"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandboxtest"
@@ -684,11 +685,22 @@ func TestDescribeStatesTheSessionCaps(t *testing.T) {
 
 // An end a newer daemon has and this client does not is an end, never "open".
 func TestAnUnknownSessionEndIsAnEnd(t *testing.T) {
-	if got := sessionEndFromWire(plimsollv1.SessionEnd(99)); got != sandbox.SessionUnknown {
+	if got := wireenum.SessionEndFromWire(plimsollv1.SessionEnd(99)); got != sandbox.SessionUnknown {
 		t.Fatalf("end 99: %v; want unknown", got)
 	}
-	if got := sessionEndFromWire(plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED); got != sandbox.SessionOpen {
+	if got := wireenum.SessionEndFromWire(plimsollv1.SessionEnd_SESSION_END_UNSPECIFIED); got != sandbox.SessionOpen {
 		t.Fatalf("no end: %v; want open", got)
+	}
+	// Inside a SessionEnded detail, unspecified is an end too: the detail says the session
+	// ended (review B8, 2026-10-23, where TypeScript already read it so).
+	d, err := connect.NewErrorDetail(&plimsollv1.SessionEnded{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ce := connect.NewError(connect.CodeFailedPrecondition, errors.New("ended"))
+	ce.AddDetail(d)
+	if end, ok := sessionEndedDetail(ce); !ok || end.Reason != sandbox.SessionUnknown {
+		t.Fatalf("a SessionEnded detail with no reason: %v, %v; want unknown", end, ok)
 	}
 }
 
@@ -728,7 +740,7 @@ func TestAnUnclaimedSessionIsAnEnd(t *testing.T) {
 	if sandbox.SessionEndReason(s.Ended()) != sandbox.SessionUnclaimed {
 		t.Fatalf("Ended: %v; want unclaimed", s.Ended())
 	}
-	if got := sessionEndFromWire(plimsollv1.SessionEnd_SESSION_END_UNCLAIMED); got.String() != "unclaimed" {
+	if got := wireenum.SessionEndFromWire(plimsollv1.SessionEnd_SESSION_END_UNCLAIMED); got.String() != "unclaimed" {
 		t.Fatalf("end 10 is named %q; want unclaimed", got)
 	}
 }

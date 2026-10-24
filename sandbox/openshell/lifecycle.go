@@ -342,8 +342,39 @@ func (p *Provider) verifyConfig(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	return p.checkConfig(cfg)
+	return p.checkConfig(cfg, func() (string, error) { return p.releaseForPolicy(ctx) })
 }
+
+// releaseForPolicy is the gateway version the no-value rule (proposalsOff) reads. A
+// provider that has run no driver check yet, or whose last one could not reach the
+// gateway, holds none; it asks the gateway again rather than judge "no value" against an
+// unknown release, which refuses even a measured one. Found live on 2026-10-24: a create
+// before the first check was refused on a v0.1.2 gateway, and a check that failed once
+// would have refused every create and ended every session's read-back as "changed".
+func (p *Provider) releaseForPolicy(ctx context.Context) (string, error) {
+	if v := p.gatewayVersion(); v != "" {
+		return v, nil
+	}
+	_, err := p.checkDriver(ctx)
+	if v := p.gatewayVersion(); v != "" {
+		return v, nil // the version is known even when the driver check found a fault
+	}
+	if err == nil {
+		err = errors.New("the gateway reports none")
+	}
+	return "", &versionUnknownError{err}
+}
+
+// versionUnknownError is a policy check that needed the gateway's version and could not
+// learn it: the gateway did not answer, or reports none. It says nothing about whether
+// the sandbox changed.
+type versionUnknownError struct{ err error }
+
+func (e *versionUnknownError) Error() string {
+	return "openshell read policy back: the gateway's version is not known: " + e.err.Error()
+}
+
+func (e *versionUnknownError) Unwrap() error { return e.err }
 
 // readConfig reads the sandbox's effective configuration. Its error says the gateway
 // did not answer, not that the configuration differs.
@@ -355,8 +386,10 @@ func (p *Provider) readConfig(ctx context.Context, name string) (*sandboxv1.GetS
 	return resp.Msg, nil
 }
 
-// checkConfig is verifyConfig's comparison, of a configuration readConfig read.
-func (p *Provider) checkConfig(cfg *sandboxv1.GetSandboxConfigResponse) error {
+// checkConfig is verifyConfig's comparison, of a configuration readConfig read. release
+// gives the gateway's version, asked for only when the no-value rule needs it: an
+// explicit false needs no version (review, 2026-10-24).
+func (p *Provider) checkConfig(cfg *sandboxv1.GetSandboxConfigResponse, release func() (string, error)) error {
 	switch {
 	case cfg.GetPolicySource() != sandboxv1.PolicySource_POLICY_SOURCE_SANDBOX:
 		return fmt.Errorf("openshell read policy back: the effective policy comes from %v, not from the sandbox; a gateway-wide policy replaces the one plimsoll sent", cfg.GetPolicySource())
@@ -367,26 +400,52 @@ func (p *Provider) checkConfig(cfg *sandboxv1.GetSandboxConfigResponse) error {
 	case !cfg.GetConfigurationAdmitted():
 		return fmt.Errorf("openshell read policy back: the configuration is not admitted: %q", cfg.GetConfigurationError())
 	}
-	return proposalsOff(cfg.GetSettings())
+	return proposalsOff(cfg.GetSettings(), release)
 }
 
+// omittedMeansOff are the gateway releases measured to report agentProposalsSetting with
+// no value when nothing set it, and to default it to false (crates/openshell-core/src/
+// settings.rs at v0.1.2; measured 2026-09-29). A release joins only by the same
+// measurement.
+var omittedMeansOff = map[string]bool{"0.1.2": true}
+
 // proposalsOff proves agentProposalsSetting off, failing closed: only an explicit
-// boolean false, or the key reported with no value, which is the gateway's default of
-// false (crates/openshell-core/src/settings.rs at v0.1.2; a v0.1.2 gateway reports the
-// key with no value when nothing set it, measured 2026-09-29). A missing key, true, or
-// a value of another type cannot be proven off.
-func proposalsOff(settings map[string]*sandboxv1.EffectiveSetting) error {
+// boolean false, or the key reported with no value by a gateway release in
+// omittedMeansOff. Any other release that reports no value is refused, since its
+// default is not known: no value used to be accepted from every release, resting on
+// v0.1.2's default unchecked (review, 2026-10-23). An operator sets the key to false
+// gateway-wide to run on such a release. A missing key, true, or a value of another type
+// cannot be proven off.
+func proposalsOff(settings map[string]*sandboxv1.EffectiveSetting, release func() (string, error)) error {
 	setting, reported := settings[agentProposalsSetting]
 	if !reported {
 		return fmt.Errorf("openshell read policy back: the gateway did not report %s, so it cannot be proven off", agentProposalsSetting)
 	}
 	if setting.GetValue() == nil {
-		return nil
+		gatewayVersion, err := release()
+		if err != nil {
+			return err
+		}
+		if omittedMeansOff[gatewayRelease(gatewayVersion)] {
+			return nil
+		}
+		return fmt.Errorf("openshell read policy back: gateway %q reports %s with no value, and no measurement shows that release defaults it to false; set it to false gateway-wide", gatewayVersion, agentProposalsSetting)
 	}
 	if b, ok := setting.GetValue().GetValue().(*sandboxv1.SettingValue_BoolValue); ok && !b.BoolValue {
 		return nil
 	}
 	return fmt.Errorf("openshell read policy back: %s is on or not a boolean false, so code in the sandbox could propose policy changes after the read-back", agentProposalsSetting)
+}
+
+// gatewayRelease is the release a gateway version names: "v0.1.2" and "0.1.2+abc" (build
+// metadata) are release "0.1.2", but a prerelease such as "0.1.2-rc.1" is its own, since
+// its defaults were never measured (review, 2026-10-24).
+func gatewayRelease(version string) string {
+	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+	return v
 }
 
 // execOutput is one command's captured result. exited says the gateway delivered an
@@ -400,6 +459,9 @@ type execOutput struct {
 	// project run it could be the report; its arrival contradicts the ordering
 	// measured on v0.1.2, so it is logged too.
 	lateOutput bool
+	// cutAfterExit says the stream after the exit event ended otherwise than by its own
+	// end, so output may be missing; both streams are reported cut.
+	cutAfterExit bool
 }
 
 // exec runs argv in the sandbox over ExecSandboxInteractive, always the streaming RPC:
@@ -480,6 +542,11 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 		for {
 			ev, err := stream.Receive()
 			if err != nil {
+				// Anything but the stream's own end (the grace cancelling it, a broken
+				// connection) may have cut output the process wrote: both streams are
+				// then marked cut rather than reported whole (review,
+				// 2026-10-23).
+				out.cutAfterExit = !errors.Is(err, io.EOF)
 				break
 			}
 			switch pl := ev.GetPayload().(type) {
@@ -499,8 +566,8 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 	cancel()
 	sendErr := <-sent
 	_ = stream.CloseResponse()
-	out.stdout, out.stdoutTruncated = stdout.Buf, stdout.Dropped
-	out.stderr, out.stderrTruncated = stderr.Buf, stderr.Dropped
+	out.stdout, out.stdoutTruncated = stdout.Buf, stdout.Dropped || out.cutAfterExit
+	out.stderr, out.stderrTruncated = stderr.Buf, stderr.Dropped || out.cutAfterExit
 	switch {
 	case out.exited:
 		return out, nil
@@ -515,27 +582,42 @@ func (p *Provider) execWatch(ctx context.Context, b box, argv []string, env map[
 
 // deleteLater deletes b off the caller's path: the delete call takes about 5 s once a
 // sandbox is a second old, and a run's result does not wait for it. The name stays
-// tracked until the delete has finished or given up, and the capacity admitted for the
-// call ctx belongs to is held until then (sandbox.HoldCapacity, review F14): the
-// sandbox, and any process the run left in it, lives until the delete. Call it before
+// tracked, and the capacity admitted for the call ctx belongs to stays held
+// (sandbox.HoldCapacity, review F14), until the gateway confirms the sandbox gone: the
+// sandbox, and any process the run left in it, lives until then. A delete that gives up
+// leaves both held for ReconcileOrphans to retry, rather than giving the capacity back
+// while the sandbox lives on (review, 2026-10-23). Call it before
 // the call returns.
 func (p *Provider) deleteLater(ctx context.Context, b box) {
-	gone := sandbox.HoldCapacity(ctx)
-	go func() {
-		defer gone()
-		p.destroy(b)
-	}()
+	hold := sandbox.HoldCapacity(ctx)
+	p.quarantine.Hold(b.name, func() {
+		p.leases.Untrack(b.name)
+		hold()
+	})
+	go p.destroy(b)
 }
 
-// destroy deletes a sandbox on its own context, so it still runs after the run's
-// context has ended, retrying, and waits until the gateway no longer has it. The name
-// is untracked whatever happens: anything still alive under this instance's label
-// after that is an orphan, and ReconcileOrphans reaps it.
+// destroyAndWait deletes b and returns once the gateway confirms it gone, which may take
+// a ReconcileOrphans pass: a session's teardown, whose end gives the session's capacity
+// back.
+func (p *Provider) destroyAndWait(b box) {
+	gone := make(chan struct{})
+	p.quarantine.Hold(b.name, func() {
+		p.leases.Untrack(b.name)
+		close(gone)
+	})
+	p.destroy(b)
+	<-gone
+}
+
+// destroy deletes a sandbox whose name the caller holds in the quarantine, on its own
+// context, so it still runs after the run's context has ended, retrying, and waits
+// until the gateway no longer has it. Confirmed gone, the name is untracked and its
+// capacity given back; otherwise both stay held and ReconcileOrphans retries it.
 func (p *Provider) destroy(b box) {
-	defer p.leases.Untrack(b.name)
 	n, err := providerkit.Delete(deleteBudget, func(ctx context.Context) error { return p.deleteAndWait(ctx, b.name) })
-	if err != nil {
-		slog.Error("openshell: failed to delete sandbox; ReconcileOrphans will reap it",
+	if !p.quarantine.Done(b.name, err == nil) {
+		slog.Error("openshell: sandbox not confirmed deleted; its capacity stays held until ReconcileOrphans confirms it gone",
 			"sandbox", b.name, "id", b.id, "attempts", n, "error", err)
 	}
 }
@@ -602,7 +684,16 @@ func (p *Provider) Drain(ctx context.Context) error {
 // A sandbox already being deleted is left alone. It returns how many deletions the
 // gateway accepted.
 func (p *Provider) ReconcileOrphans(ctx context.Context) (int, error) {
-	deleted := 0
+	// Quarantined sandboxes first, whatever their age: each still holds the capacity of
+	// the call that made it, given back once the gateway confirms it gone.
+	deleted, stillHeld := p.quarantine.Retry(func(name string) error {
+		dctx, cancel := context.WithTimeout(ctx, deleteBudget)
+		defer cancel()
+		return p.deleteAndWait(dctx, name)
+	})
+	if stillHeld != nil {
+		slog.Error("openshell: quarantined sandboxes still not confirmed deleted; their capacity stays held", "error", stillHeld)
+	}
 	token := ""
 	for page := 0; page < maxListPages; page++ {
 		resp, err := p.client.ListSandboxes(ctx, connect.NewRequest(&openshellv1.ListSandboxesRequest{
@@ -612,7 +703,7 @@ func (p *Provider) ReconcileOrphans(ctx context.Context) (int, error) {
 			LabelSelector:  runLabel + "=1",
 		}))
 		if err != nil {
-			return deleted, fmt.Errorf("openshell list sandboxes: %w", err)
+			return deleted, errors.Join(stillHeld, fmt.Errorf("openshell list sandboxes: %w", err))
 		}
 		for _, sb := range resp.Msg.GetSandboxes() {
 			name := sb.GetMetadata().GetName()
@@ -631,10 +722,10 @@ func (p *Provider) ReconcileOrphans(ctx context.Context) (int, error) {
 			}
 		}
 		if token = resp.Msg.GetNextPageToken(); token == "" {
-			return deleted, nil
+			return deleted, stillHeld
 		}
 	}
-	return deleted, fmt.Errorf("openshell list sandboxes: more than %d pages", maxListPages)
+	return deleted, errors.Join(stillHeld, fmt.Errorf("openshell list sandboxes: more than %d pages", maxListPages))
 }
 
 // orphaned reports whether ReconcileOrphans may delete sb at now.

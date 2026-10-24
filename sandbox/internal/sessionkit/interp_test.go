@@ -1,6 +1,7 @@
 package sessionkit
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -212,13 +213,26 @@ func TestKernelJSRunsACellOnceWhateverTheChunks(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is not installed")
 	}
-	dir := t.TempDir()
+	// t.TempDir includes the test's long name. Under a project-local TMPDIR that
+	// exceeds Unix's socket-path limit, even though the root itself is usable.
+	dir, err := os.MkdirTemp("", "kjs-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	k := exec.Command("node", "-e", kernelJS, dir)
-	k.Stdout, k.Stderr = io.Discard, io.Discard
+	var stderr bytes.Buffer
+	k.Stdout, k.Stderr = io.Discard, &stderr
 	if err := k.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = k.Process.Kill(); _ = k.Wait() })
+	done := make(chan struct{})
+	var waitErr error
+	go func() {
+		waitErr = k.Wait()
+		close(done)
+	}()
+	t.Cleanup(func() { _ = k.Process.Kill(); <-done })
 	// node starts in well under a second on an idle machine and took over 5 s under
 	// the export's full parallel test run, which failed this at a 5 s bound; 30 s only
 	// bounds a kernel that never starts.
@@ -226,8 +240,15 @@ func TestKernelJSRunsACellOnceWhateverTheChunks(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, "ready")); err == nil {
 			break
 		}
+		select {
+		case <-done:
+			t.Fatalf("the kernel exited before readiness: %v; stderr: %s", waitErr, stderr.String())
+		default:
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("the kernel never became ready")
+			_ = k.Process.Kill()
+			<-done
+			t.Fatalf("the kernel never became ready; stderr: %s", stderr.String())
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

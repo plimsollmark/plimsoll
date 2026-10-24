@@ -13,6 +13,9 @@ jobs:
     env:
       PLIMSOLL_REF: ${{ vars.PLIMSOLL_RECEIPT_REF }}
       TEST_COMMAND: ${{ vars.PLIMSOLL_TEST_COMMAND || 'npm test' }}
+      JUNIT_PATH: ${{ vars.PLIMSOLL_JUNIT_PATH }}
+      COVERAGE_PATH: ${{ vars.PLIMSOLL_COVERAGE_PATH }}
+      SESSION_TRAILER: ${{ vars.PLIMSOLL_SESSION_TRAILER }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       PR_REPOSITORY: ${{ github.repository }}
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}

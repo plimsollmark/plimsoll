@@ -39,9 +39,12 @@
     sum() { return hash(concat(this.parts)); }
   }
   function requestDigest(q) {
-    const e = new Encoder(q.protocol >= 2 ? 'plimsoll.run-request.v2' : 'plimsoll.run-request.v1');
+    // Protocol 1 requests used the first request domain, which had no software rule; the
+    // Go record package reads both (record.requestDigest).
+    const first = Number(q.protocol) < 2;
+    const e = new Encoder(first ? 'plimsoll.run-request.v1' : 'plimsoll.run-request.v2');
     e.field('protocol', q.protocol).field('minimum_isolation', q.minimum_isolation).field('timeout_ms', q.timeout_ms);
-    if (q.protocol >= 2) {
+    if (!first) {
       const rule = q.software_rule || {mode: '', identities: []};
       e.field('software_mode', rule.mode).field('software_identities', rule.identities.length);
       for (const id of rule.identities) e.field('software_identity', id);
@@ -56,7 +59,7 @@
     for (const a of p.artifacts) e.field('artifact_path', a);
     return e.sum();
   }
-  const outcomes = ['unspecified', 'completed', 'setup_failed', 'timed_out', 'protocol_error'];
+  const outcomes = ['unspecified', 'completed', 'setup_failed', 'timed_out', 'protocol_error', 'runner_failed'];
   function outcomeNumber(p) {
     if (typeof p.outcome === 'number' && Number.isInteger(p.outcome) && p.outcome >= 0 && p.outcome < outcomes.length) return p.outcome;
     const i = outcomes.indexOf(p.outcome.replace('PROJECT_OUTCOME_', '').toLowerCase());
@@ -77,12 +80,13 @@
     for (const a of p.artifacts) e.field('artifact_path', a.path).field('artifact_content', from64(a.content));
     return e.sum();
   }
-  const recordFields = ['request_sha256', 'result_sha256', 'provider', 'isolation', 'environment', 'policy',
-    'software_identity', 'software_rule_id', 'started_unix_ms', 'ended_unix_ms', 'session', 'sequence', 'previous_sha256'];
+  const recordFields = ['request_sha256', 'result_sha256', 'unanswered', 'provider', 'isolation', 'environment', 'policy',
+    'software_identity', 'software_rule_id', 'instance', 'started_unix_ms', 'ended_unix_ms', 'session', 'sequence', 'previous_sha256'];
+  const instanceForm = /^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._:-]{1,127}$/;
   function recordDigest(r) {
-    if (r.version !== 2) throw new Error('Only answered version 2 receipts are supported');
-    const e = new Encoder('plimsoll.run-record.v2');
-    for (const field of recordFields) e.field(field, r[field]);
+    if (r.version !== 4) throw new Error('Only version 4 receipts are supported');
+    const e = new Encoder('plimsoll.run-record.v4');
+    for (const field of recordFields) e.field(field, r[field] ?? '');
     return e.sum();
   }
   const timestamp = ms => new Date(Number(ms)).toISOString();
@@ -166,6 +170,7 @@
       add('fields', 'Signed fields match the attached exchange', fields.every(k => String(p[k] ?? '') === String(r[k] ?? ''))
         && r.provider === x.response.sandbox && r.isolation === x.response.isolation && r.environment === x.response.environment
         && r.software_identity === x.response.software_identity && r.software_rule_id === ruleID
+        && (r.instance ?? '') === (x.response.instance ?? '') && (!r.instance || instanceForm.test(r.instance))
         && (!rule?.mode || rule.identities.includes(r.software_identity))
         && tiers.indexOf(r.isolation) >= Math.max(1, tiers.indexOf(x.request.minimum_isolation))
         && (!x.request.minimum_isolation || tiers.includes(x.request.minimum_isolation))

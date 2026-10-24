@@ -765,3 +765,17 @@ func TestASchemaRefusalIsAStructuredFailure(t *testing.T) {
 		t.Errorf("found %d refusals on the wire, want 2:\n%s", answers, c.wire.String())
 	}
 }
+
+// A daemon whose sessions state no languages proved none: its sandbox is offered no
+// language, so nothing is sent to it, where it used to be let try every one (review B9,
+// 2026-10-23).
+func TestASessionThatStatesNoLanguagesIsOfferedNone(t *testing.T) {
+	d := fakedaemon.Serve(t, fakedaemon.Options{Sessions: 4, SessionLanguages: []sandbox.Language{}})
+	c := connect(t, local(d.URL))
+	if f := c.fail("open_sandbox", nil); f.Ran != "no" {
+		t.Fatalf("open_sandbox on a daemon whose sessions run no language: %+v", f)
+	}
+	if n := d.OpenSessions(); n != 0 {
+		t.Errorf("%d sessions opened", n)
+	}
+}

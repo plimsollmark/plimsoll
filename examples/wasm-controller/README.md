@@ -52,7 +52,11 @@ it reproduce the JavaScript controller bit for bit?", and prints, per scenario, 
 fingerprint (the SHA-256 of the runner's per-tick record), whether both runs agree,
 whether it is the fingerprint recorded in [fingerprints.json](fingerprints.json), and
 the swing-up score: 1 minus the time the final unbroken upright stretch began, over
-20 s, and zero if the cart ever leaves the 2.4 m track.
+20 s, and zero if the cart ever leaves the 2.4 m track. The score is the
+environment's own grader's, `/oracle/graders/cartpole-swingup.mjs` in the image
+([source](../../docker/sim/graders/cartpole-swingup.mjs)), run on the first run's
+records in a project run of its own after the others. That run's record, whose
+digest the program prints, binds each score to the trajectory it read.
 
 ```
 s1  theta0 3.14159 cart 1    kg  e28dbdb6a0769585  run 1 = run 2, = recorded  upright from 2.41 s, score 0.879  JavaScript differs at tick 91 (force), 176 (force); state identical at every tick
