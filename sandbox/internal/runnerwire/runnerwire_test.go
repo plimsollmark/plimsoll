@@ -364,7 +364,9 @@ func TestProjectRunnerMarksBothStreamsCutWhenTheirTotalOverflows(t *testing.T) {
 	} {
 		work := t.TempDir()
 		cmd := guardedRunnerCommand(t, node, work)
-		step := fmt.Sprintf(`node -e 'const b="x".repeat(%d*1024); process.stdout.write(b); process.stderr.write(b, () => process.exit(3))'`, c.kib)
+		// exitCode, not process.exit: node exits once both writes have left it, where
+		// process.exit dropped stdout still queued behind a slow reader (CI, 2026-10-24).
+		step := fmt.Sprintf(`node -e 'const b="x".repeat(%d*1024); process.stdout.write(b); process.stderr.write(b); process.exitCode = 3'`, c.kib)
 		plan, err := (Plan{Steps: []string{step}, Budget: 60 * time.Second, ReportKey: testKey}).Encode()
 		if err != nil {
 			t.Fatal(err)
