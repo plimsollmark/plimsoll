@@ -138,6 +138,17 @@ func TestDockerCloudExecWrapperUnderBusyboxDocker(t *testing.T) {
 	// counts the guest's bytes without it (its line and the two newlines around it), case
 	// 4's time must reach the 1 s limit, case 2's endless output is a flood, and case 5's
 	// 2 MiB is dropped past the cap while the command runs on to its own exit.
+	//
+	// The wrapper here floods at 4 MiB, not the real 32 MiB: case 2 races its budget
+	// against its 5 s limit, and under gVisor on a loaded CI runner busybox head moved
+	// under 32 MiB in 5 s, so the kill came first (rc=137 fl=0, twice on 2026-10-24).
+	// 4 MiB is still twice case 5's output. The budget's value is tied to
+	// ProjectStepTransferBudget below, and the host-shell test runs the real one.
+	const testBudget = "4194304"
+	wrapper := strings.Replace(dcExecWrapper, "\nm="+dcStreamBudget+"\n", "\nm="+testBudget+"\n", 1)
+	if wrapper == dcExecWrapper {
+		t.Fatal("the wrapper no longer sets m on a line of its own; update this test's budget substitution")
+	}
 	const script = `sh wrapper.sh 5 11 sh -c 'printf out; printf err >&2; exit 3' >o1 2>e1; echo "case1 rc=$? out=$(cat o1) err=$(head -n1 e1)"
 sh wrapper.sh 5 11 yes >o2 2>e2; r=$?; t=$(tail -n1 e2); echo "case2 rc=$r outlen=$(wc -c <o2 | tr -d ' ') fl=${t##* }"
 sh wrapper.sh 5 11 sh -c 'yes >&2' >o3 2>e3; r=$?; t=$(tail -n1 e3); echo "case3 rc=$r errlen=$(( $(wc -c <e3) - ${#t} - 2 ))"
@@ -145,7 +156,7 @@ sh wrapper.sh 1 11 sleep 30 >o4 2>e4; r=$?; set -- $(tail -n1 e4); echo "case4 r
 sh wrapper.sh 5 11 sh -c 'yes x | head -c 2097152; echo done >&2; exit 7' >o5 2>e5; r=$?; t=$(tail -n1 e5); echo "case5 rc=$r outlen=$(wc -c <o5 | tr -d ' ') err=$(head -n1 e5) fl=${t##* }"
 `
 	res, err := d.RunProject(context.Background(), ProjectRequest{
-		Files:   []File{{Path: "wrapper.sh", Content: dcExecWrapper}, {Path: "cases.sh", Content: script}},
+		Files:   []File{{Path: "wrapper.sh", Content: wrapper}, {Path: "cases.sh", Content: script}},
 		Steps:   []string{"sh cases.sh"},
 		Timeout: 60 * time.Second,
 	})
