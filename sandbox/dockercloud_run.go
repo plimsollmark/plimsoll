@@ -186,11 +186,10 @@ func (d *DockerCloud) RunProject(ctx context.Context, req ProjectRequest) (res P
 	// (exec_steps.go).
 	steps, outcome, detail, err := runExecSteps(runCtx, req.Steps, func(ctx context.Context, i int, _ string) (stepOutput, error) {
 		out, err := d.execGuardedCap(ctx, vm, append(append([]string(nil), stepPrefix...), stepArgv(stepPaths[i])...), dir, ProjectStepOutputCap)
-		if err != nil {
-			return stepOutput{}, err
-		}
+		// With the error, whatever the exec had (the in-guest limit ends a step with its
+		// output and no error; the host deadline is the exec's error).
 		return stepOutput{stdout: out.stdout, stderr: out.stderr, stdoutTruncated: out.stdoutTruncated,
-			stderrTruncated: out.stderrTruncated, exitCode: out.exitCode, timedOut: out.timedOut}, nil
+			stderrTruncated: out.stderrTruncated, exitCode: out.exitCode, timedOut: out.timedOut}, err
 	})
 	if err != nil {
 		return fail, err

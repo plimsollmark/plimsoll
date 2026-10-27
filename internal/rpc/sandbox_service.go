@@ -547,14 +547,25 @@ func mapSandboxErr(err error) error {
 // message plimsoll writes, short of the megabyte a vendor's error body can be.
 const internalErrorLogBytes = 4096
 
+// cutForLog is text cut to internalErrorLogBytes, marked when it was cut.
+func cutForLog(text string) string {
+	if len(text) > internalErrorLogBytes {
+		text = text[:internalErrorLogBytes] + "...(cut)"
+	}
+	return text
+}
+
+// errAttr is err's text as a log attribute, cut as an internal error's is: a failed
+// run's audit line used to carry a vendor's error page whole (review, 2026-10-26).
+func errAttr(err error) slog.Attr {
+	return slog.String("error", cutForLog(err.Error()))
+}
+
 // logKept logs text a caller is not shown, cut to internalErrorLogBytes, under a fresh ID,
 // and returns the ID.
 func logKept(msg, text string) string {
 	id := internalErrorID()
-	if len(text) > internalErrorLogBytes {
-		text = text[:internalErrorLogBytes] + "...(cut)"
-	}
-	slog.Warn(msg, "error_id", id, "error", wireString(text))
+	slog.Warn(msg, "error_id", id, "error", wireString(cutForLog(text)))
 	return id
 }
 

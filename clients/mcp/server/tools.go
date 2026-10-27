@@ -491,7 +491,7 @@ func (s *Server) runFresh(ctx context.Context, lang sandbox.Language, code strin
 	}
 	if !info.SupportsProject {
 		if lang != sandbox.LanguageJavaScript || len(files) > 0 {
-			return runOutput{}, refused(sandbox.RefusalUnsupported, "the daemon (%s) runs JavaScript snippets only, without files", info.Sandbox)
+			return runOutput{}, refused(sandbox.RefusalUnsupported, "the daemon (%s) runs JavaScript snippets only, without files", clipRunes(info.Sandbox, 100))
 		}
 		r, err := s.remote.RunJavaScript(ctx, sandbox.Request{Code: snippetRunner(code), Timeout: s.cfg.RunTimeout, MinimumIsolation: s.cfg.MinimumIsolation, Software: s.cfg.Software})
 		if !answered(err, r.Record) {
@@ -504,7 +504,7 @@ func (s *Server) runFresh(ctx context.Context, lang sandbox.Language, code strin
 		return out, nil
 	}
 	if langs := s.offered(info.Environments.Project); !slices.Contains(langs, lang) {
-		return runOutput{}, refused(sandbox.RefusalUnsupported, "the daemon's image has no %s interpreter (it runs %v)", lang, info.Environments.Project.Languages)
+		return runOutput{}, refused(sandbox.RefusalUnsupported, "the daemon's image has no %s interpreter (it runs %s)", lang, clipRunes(fmt.Sprint(info.Environments.Project.Languages), 200))
 	}
 	runner := runners[lang]
 	req := sandbox.ProjectRequest{
@@ -524,6 +524,11 @@ func (s *Server) runFresh(ctx context.Context, lang sandbox.Language, code strin
 		// No step report: the outcome says what ended the run, not whether the code
 		// started, so there is no exit code to give; the checked record is kept.
 		f := &failure{Ran: "maybe", Summary: fmt.Sprintf("The run ended %s without a step report (%s); the code may have run. It was not retried.", r.Outcome, r.Detail)}
+		if r.Outcome == sandbox.ProjectOutcomeSetupFailed {
+			// The daemon's own classification: no step began (docs/run-results.md), so
+			// nothing of the code ran; it used to read as "may have run" (review, 2026-10-26).
+			f.Ran, f.Summary = "no", fmt.Sprintf("Nothing ran: the run's setup failed before any step began (%s).", r.Detail)
+		}
 		if r.Record != nil {
 			s.keep(ctx, r.Record)
 			f.RecordSHA256 = r.Record.SHA256
@@ -590,8 +595,8 @@ func (s *Server) serverInfo(ctx context.Context, _ struct{}) (infoOutput, *failu
 	info, err := s.remote.Describe(ctx)
 	line := ""
 	if err != nil {
-		out.DaemonError = err.Error()
-		line = "The daemon did not answer Describe: " + err.Error()
+		out.DaemonError = shown(err)
+		line = "The daemon did not answer Describe: " + shown(err)
 	} else {
 		s.mu.Lock()
 		s.info = &info

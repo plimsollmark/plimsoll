@@ -430,6 +430,8 @@ A docker session is the container a project run gets, kept for the session:
   not answer refuses the call too (reason `environment`), and the session goes on. After a
   call whose exit status may be docker's rather than the code's, a container found paused,
   stopped or gone ends the session; docker's exit status is never reported as the call's.
+  A read-back after a call that docker does not answer ends the session (`boundary_failed`):
+  what the code left running cannot be proved contained, so the session is not kept.
 - **API access.** A grant reaches its API routes through the <dfn>*broker*</dfn>, a part of plimsoll outside the sandbox that adds the
   credential, so the credential never enters the sandbox. A running container cannot gain
   a mount, so the session mounts the broker's socket at open. It serves a call's grant
@@ -445,7 +447,10 @@ A docker session is the container a project run gets, kept for the session:
 - **Cleanup.** The container is removed when the session ends. The session's end, and
   with it the return of its concurrency slot and memory share, waits until the removal is
   confirmed: a container whose removal fails stays counted, and the daemon retries the
-  removal on every orphan pass until the container is gone. The same holds for a one-shot
+  removal on every orphan pass until the container is gone (plimsolld runs the pass,
+  `ReconcileOrphans`, every minute; a program that embeds the provider and bounds its own
+  concurrency must call it too, or a session whose removal failed keeps its slot and memory
+  share for good). The same holds for a one-shot
   run's container on docker and for every `openshell` and `agentsandbox` sandbox. A container
   a crashed daemon left behind carries its lifetime as a label, and a running daemon removes it once
   that lifetime plus 5 minutes has passed. The broker's socket directory on the host is
@@ -541,8 +546,11 @@ where that code cannot become root:
   which no setuid program, `sudo` and `su` included, can raise its privileges. The
   open also locks the template's empty passwords, stops and masks its ssh server, refuses
   the machine if anything still listens on port 22, and then proves from inside, as that
-  user, that `sudo`, `su` and an ssh login to root all fail. A template whose `setpriv` is
-  not util-linux's is refused at open (BusyBox's cannot change user).
+  user, that `sudo`, `su` and an ssh login to root all fail, and that E2B's agent inside
+  the machine, through which plimsoll's own programs run as root, refuses that user a
+  process start and a reset of its access token at every address the machine has (or
+  listens at none of them). A template whose `setpriv` is not util-linux's is refused at
+  open (BusyBox's cannot change user).
 - **plimsoll's own programs run as root.** The process lister, the sweep after every call
   and the check of each relay's identity run as root through the agent E2B runs
   inside each machine, out of reach of the session's code. The sweep spares every

@@ -61,7 +61,7 @@ from somewhere else, such as another tool's output. The result's `exit_code` is 
 the code ran, 1 when it raised (the error is on `stderr`) and 124 at the deadline;
 `interpreter_started` says this call began with a fresh interpreter, so nothing defined
 earlier exists. Python cells need `python3` in the daemon's image: `describe()` lists the
-languages its startup checks proved on `project_environment.languages`.
+languages a session's cells run in on `session_environment.languages`.
 
 An app that serves many users on one token passes `open_session(owner=user_id)`. A daemon
 with `SANDBOX_MAX_SESSIONS_PER_OWNER` then holds each user to that many open sessions across
@@ -99,10 +99,11 @@ Cancelling an awaiting task cancels its request too:
 - **Not sent yet** (a session call waiting for the one before it, say): it is never
   sent, and the call ends in `RequestCanceledError` marked not dispatched (reason
   `request`).
-- **In flight** (connecting, in the TLS handshake, sent or waiting for its answer):
-  the connection is shut down, so the worker thread returns at once instead of waiting
-  out `request_timeout`. The error is unmarked: the daemon may have received the
-  request and run it. A session whose call was cut sends nothing more, since it can no
+- **In flight**: the connection is shut down, so the worker thread returns at once
+  instead of waiting out `request_timeout`. A cancel while connecting or in the TLS
+  handshake, before the first byte went out, is still marked not dispatched (reason
+  `request`); one after the request was sent, or while waiting for its answer, is
+  unmarked: the daemon may have received the request and run it. A session whose call was cut sends nothing more, since it can no
   longer follow the daemon's chain of records: open a new one.
 
 Two calls run to their end instead. `open_session`: cutting it after the daemon had

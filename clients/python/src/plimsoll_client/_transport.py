@@ -274,7 +274,10 @@ class Transport:
     def __init__(self, base_url: str, token: Optional[str], timeout: float, ssl_context: Optional[ssl.SSLContext]) -> None:
         u = urlsplit(base_url)
         self._https = u.scheme == "https"
-        self._host = u.hostname or ""
+        # An IPv6 literal goes to http.client in brackets: without them, and with no port
+        # of its own, it split the address at its last colon (review, 2026-10-26).
+        host = u.hostname or ""
+        self._host = f"[{host}]" if ":" in host else host
         self._port = u.port
         self._prefix = u.path.rstrip("/")
         self._token = token

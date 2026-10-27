@@ -11,6 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"image/png"
+	"io/fs"
+	"net"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -127,6 +130,9 @@ func New(cfg Config) (*Server, error) {
 }
 
 // MCP is the server to serve: mcp.StdioTransport for a local host.
+// A tool an embedder registers on the returned server directly must write its failures as
+// JSON objects: schemaRefusals reads any plain-text error result as a schema refusal that
+// ran nothing (review, 2026-10-26).
 func (s *Server) MCP() *mcp.Server { return s.mcp }
 
 // failure is a tool error as the model reads it: what happened in one sentence, then
@@ -169,6 +175,33 @@ func refused(reason sandbox.Refusal, format string, args ...any) *failure {
 	return &failure{Summary: "Nothing ran: " + fmt.Sprintf(format, args...), Ran: "no", Refusal: reason.String()}
 }
 
+// shown is err's text as the model may see it. A transport failure names the daemon's
+// address and a receipt failure the receipts directory's path, and over serve-http the
+// model is claude.ai's or chatgpt.com's, so those are told by kind: the operation and what
+// went wrong, never the address or the path (review, 2026-10-26).
+func shown(err error) string {
+	var oe *net.OpError
+	var de *net.DNSError
+	var ue *url.Error
+	var pe *fs.PathError
+	switch {
+	case err == nil:
+		return ""
+	case errors.As(err, &de):
+		return "the daemon's name could not be resolved"
+	case errors.As(err, &oe):
+		if oe.Err != nil {
+			return fmt.Sprintf("the daemon could not be reached (%s: %v)", oe.Op, oe.Err)
+		}
+		return "the daemon could not be reached (" + oe.Op + ")"
+	case errors.As(err, &ue):
+		return fmt.Sprintf("the %s request to the daemon failed: %v", ue.Op, ue.Err)
+	case errors.As(err, &pe):
+		return fmt.Sprintf("%s of a receipt file failed: %v", pe.Op, pe.Err)
+	}
+	return err.Error()
+}
+
 // failed describes err: nothing ran only when it carries the not-dispatched mark, or
 // failed in this server before any request carried code.
 func (s *Server) failed(ctx context.Context, err error) *failure {
@@ -176,14 +209,14 @@ func (s *Server) failed(ctx context.Context, err error) *failure {
 	switch reason, ok := sandbox.NotDispatchedReason(err); {
 	case ok:
 		f.Ran, f.Refusal = "no", reason.String()
-		f.Summary = fmt.Sprintf("Nothing ran (%s): %v", reason, err)
+		f.Summary = fmt.Sprintf("Nothing ran (%s): %s", reason, shown(err))
 	case errors.Is(err, errNotSent):
 		f.Ran = "no"
 		f.Summary = "Nothing ran: " + err.Error()
 	case errors.Is(err, context.DeadlineExceeded):
 		f.Summary = fmt.Sprintf("The call reached this server's %s deadline; the code may have run, and there is no checked answer for it. It was not retried; running it again could repeat what it did.", s.cfg.CallTimeout)
 	default:
-		f.Summary = fmt.Sprintf("The code may have run, and there is no checked answer for it: %v. It was not retried; running it again could repeat what it did.", err)
+		f.Summary = fmt.Sprintf("The code may have run, and there is no checked answer for it: %s. It was not retried; running it again could repeat what it did.", shown(err))
 	}
 	var ended *sandbox.SessionEndedError
 	if errors.As(err, &ended) {

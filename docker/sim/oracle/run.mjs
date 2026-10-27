@@ -1,7 +1,9 @@
-// Vendored from the plimsoll-sim repository at commit d3f9b28 (2026-09-18),
-// unchanged below this header. The judge of the physics oracle, baked into
-// plimsoll/sandbox-sim as /oracle/run.mjs; a project step names it and the
-// caller's controller file.
+// Vendored from the plimsoll-sim repository at commit d3f9b28 (2026-09-18); the
+// runner-guard block below (through the probe) was added here on 2026-10-26 and is
+// the same as judge.mjs's, so the claim in the next paragraph holds whatever the
+// host's ptrace setting; the sister repository does not have it yet. The judge of the
+// physics oracle, baked into plimsoll/sandbox-sim as /oracle/run.mjs; a project step
+// names it and the caller's controller file.
 // The judge. Loads a stepping plant compiled to WebAssembly, runs the caller's
 // controller as a SEPARATE process, and closes the loop one 10 ms tick at a
 // time: the state goes to the controller's stdin as one line, one number (the
@@ -15,10 +17,44 @@
 // Stdout carries the SHA-256 of OUT (the fingerprint), the tick count, whether
 // and when the pole fell (|theta| > pi/2), and the final cart position.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { WASI } from 'node:wasi';
+
+// The controller runs under this process's uid in the same container, so before anything
+// else this runner re-executes itself with the image's runner guard preloaded, which
+// makes it non-dumpable: its memory (the plant and the record) and its descriptors are
+// then closed to same-uid processes whatever the host's ptrace (Yama) setting, and a
+// same-uid probe must prove that before the plant is loaded. Without it the header's
+// claim held only where the host's ptrace policy already refused /proc/<pid>/mem to a
+// same-uid child (review, 2026-10-26). Copied from judge.mjs.
+const GUARD = '/usr/local/lib/plimsoll-runner-guard.so';
+if (process.env.PLIMSOLL_JUDGE_GUARD !== GUARD) {
+  // Same pid, new image: the guard's constructor runs before any of this code again.
+  process.execve(process.execPath,
+    [process.execPath, ...process.execArgv, fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+    { ...process.env, LD_PRELOAD: GUARD, PLIMSOLL_JUDGE_GUARD: GUARD });
+}
+// The guard stays in this process only; the controller and the probe start without it.
+delete process.env.LD_PRELOAD;
+delete process.env.PLIMSOLL_JUDGE_GUARD;
+{
+  // A loader can ignore a missing preload library, so prove the effect with the project
+  // runner's own probe: a same-uid child must be refused this process's descriptors and
+  // memory.
+  const probe = `const fs=require("node:fs");const p="/proc/"+process.ppid;const out=[];
+for(const [f,m] of [["/fd/0",fs.constants.O_RDONLY],["/fd/1",fs.constants.O_RDONLY],["/fd/1",fs.constants.O_WRONLY],["/mem",fs.constants.O_RDONLY]]){
+try{fs.closeSync(fs.openSync(p+f,m));out.push("open");}catch(e){out.push(e.code||"unknown");}}
+process.stdout.write(out.join(","));`;
+  const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', timeout: 5000, maxBuffer: 4096 });
+  const codes = (r.stdout ?? '').split(',');
+  if (r.error || r.status !== 0 || codes.length !== 4 || codes.some((c) => c !== 'EACCES' && c !== 'EPERM')) {
+    console.error(`the judge could not prove it is closed to the controller (${r.stdout || r.error})`);
+    process.exit(1);
+  }
+}
 
 const [controller, plantPath = '/models/cartpole.wasm', theta0Arg = '0.2', tEndArg = '20', outPath = 'trajectory.bin'] = process.argv.slice(2);
 if (!controller) { console.error('usage: node run.mjs CONTROLLER.js [PLANT.wasm] [theta0] [t_end] [OUT]'); process.exit(2); }

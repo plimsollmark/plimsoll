@@ -165,6 +165,45 @@ function open([guestArg, work, stage]) {
     if (r.error && r.error.code === "ENOENT") continue; // not installed here
     if (!r.error && r.status === 0) refuse(name + " gave the guest root");
   }
+  // envd's port answers inside the machine too, and plimsoll's own programs run as root
+  // through it, so the guest, holding no access token, must be refused a process start
+  // and a token reset at every address the machine has: loopback and each interface of
+  // its own. envd answers 401 to any request without the token except its health and
+  // signed file endpoints, and /init takes a token only when it matches the sandbox's or
+  // the orchestrator's hash of it, a reset to none included (its auth.go and init.go, read
+  // 2026-10-26). An address where nothing listens (connection refused) is one the guest
+  // cannot reach envd at, so it passes; the fake envd of the docker-backed tests listens
+  // on a Unix socket, so there every address is such. Anything else (an answer other than
+  // a refusal, a timeout, another error) refuses the open (review, 2026-10-26).
+  const envdProbe = `const http = require("http"), os = require("os");
+const post = (host, path, body) => new Promise((resolve) => {
+  const req = http.request({ host, port: 49983, path, method: "POST", headers: { "content-type": "application/json" }, timeout: 5000 },
+    (res) => { res.resume(); res.on("end", () => resolve(String(res.statusCode))); });
+  req.on("timeout", () => { req.destroy(); resolve("timeout"); });
+  req.on("error", (e) => resolve(e.code || "error"));
+  req.end(body);
+});
+(async () => {
+  const hosts = ["127.0.0.1", ...Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === "IPv4" && !i.internal).map((i) => i.address)];
+  const out = [];
+  for (const host of hosts) {
+    out.push(host, await post(host, "/process.Process/Start", JSON.stringify({ process: { cmd: "id" } })),
+      await post(host, "/init", JSON.stringify({ accessToken: "plimsoll-open-probe" })), await post(host, "/init", "{}"));
+  }
+  process.stdout.write(out.join(" "));
+})();`;
+  const envdAnswer = run([process.execPath, "-e", envdProbe], 60000);
+  if (envdAnswer.error || envdAnswer.status !== 0) refuse("the envd check could not run: " + (envdAnswer.error ? envdAnswer.error.message : envdAnswer.stderr));
+  const answers = (envdAnswer.stdout || "").trim().split(" ");
+  if (answers.length < 4 || answers.length % 4 !== 0) refuse("the envd check answered " + JSON.stringify(envdAnswer.stdout));
+  for (let i = 0; i < answers.length; i += 4) {
+    const [host, startCode, resetCode, clearCode] = answers.slice(i, i + 4);
+    if (startCode === "ECONNREFUSED") continue; // nothing listens there, so the guest reaches no envd at that address
+    if (startCode !== "401") refuse("envd at " + host + " answered " + startCode + " to the guest's token-less process start; 401 is the proof");
+    for (const [what, code] of [["reset", resetCode], ["clearing", clearCode]]) {
+      if (!/^[45]\d\d$/.test(code)) refuse("envd at " + host + " answered " + code + " to the guest's token " + what + "; a refusal is the proof");
+    }
+  }
   process.stdout.write(JSON.stringify({ envd: process.ppid }));
 }
 

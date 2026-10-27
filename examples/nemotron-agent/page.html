@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plimsoll: signed proof of what a Nemotron coding agent ran</title>
+<style>
+:root{color-scheme:light}
+body{margin:0;background:#fff;color:#111827;font:16px/1.5 Inter,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:980px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:34px;margin:0 0 6px;letter-spacing:-.3px}
+h2{font-size:22px;margin:40px 0 12px}
+p{margin:8px 0}
+.lede{color:#374151;font-size:18px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:20px 0}
+.tile{border:1px solid #d1d5db;border-radius:12px;padding:14px 16px;background:#f9fafb}
+.tile b{display:block;font-size:13px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.tile span{font-size:17px;overflow-wrap:anywhere}
+.ok{border-color:#0f766e;background:#ecfdf5}
+.bad{border-color:#b91c1c;background:#fef2f2}
+pre{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;overflow:auto;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.turn{border-left:4px solid #d1d5db;padding:4px 0 4px 16px;margin:16px 0}
+.run{border:1px solid #d1d5db;border-radius:12px;padding:14px 16px;margin:14px 0}
+.run h3{margin:0 0 8px;font-size:17px}
+.meta{color:#6b7280;font-size:14px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+td code{overflow-wrap:anywhere;word-break:break-all}
+td,th{border-bottom:1px solid #e5e7eb;padding:6px 8px;text-align:left;vertical-align:top}
+th{color:#6b7280;font-weight:600}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f3f4f6;padding:1px 4px;border-radius:4px}
+dfn{font-style:normal;border-bottom:1px dotted #6b7280}
+</style>
+</head>
+<body>
+<main>
+<nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/providers/index.html">Same run, different sandboxes</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
+<h1>Signed proof of what a Nemotron coding agent ran</h1>
+<p class="lede">An NVIDIA Nemotron model on Nebius Token Factory was given a task and one tool: run code in a plimsoll sandbox. Every run it made left a <dfn>run record</dfn> (the daemon's statement of what was sent, what came back and where it ran, as SHA-256 digests), signed by a <dfn>harness</dfn> (a signing program outside the daemon) into the bundle beside this page. Anyone can recheck the bundle offline with the public key. The agent's answer is below; the evidence is what it rests on.</p>
+
+<div class="tiles">
+<div class="tile {{if .Verified}}ok{{else}}bad{{end}}"><b>Bundle</b><span>{{if .Verified}}verified: {{.VerifyDetail}}{{else}}not verified: {{.VerifyDetail}}{{end}}</span></div>
+<div class="tile"><b>Model</b><span>{{.Model}}</span></div>
+<div class="tile"><b>Runs</b><span>{{len .Runs}} signed, {{.Usage.Calls}} model calls</span></div>
+<div class="tile"><b>Sandbox</b><span>{{.Provider}}, <dfn>isolation tier</dfn> {{.Tier}}</span></div>
+<div class="tile"><b>Image</b><span>{{.Environment}}</span></div>
+<div class="tile"><b>Tokens</b><span>{{.Usage.Prompt}} prompt, {{.Usage.Completion}} completion</span></div>
+<div class="tile"><b>Date</b><span>{{.Date}}</span></div>
+<div class="tile"><b>Signing key</b><span>{{.KeyID}}</span></div>
+</div>
+<p class="meta">The tier is the daemon's configuration and provider evidence plus its startup checks, never hardware attestation. The record proves what was sent and what came back; it does not make the guest's output true.</p>
+
+<h2>The task</h2>
+<pre>{{.Task}}</pre>
+
+<h2>The agent's final answer</h2>
+<pre>{{.Final}}</pre>
+
+<h2>The conversation</h2>
+{{range .Turns}}<div class="turn"><p class="meta">Turn {{.N}}{{if .Runs}}, runs {{range $i, $r := .Runs}}{{if $i}}, {{end}}{{$r}}{{end}}{{end}}</p>{{if .Text}}<pre>{{.Text}}</pre>{{else}}<p class="meta">(no text; the model called the tool)</p>{{end}}</div>{{end}}
+
+<h2>The runs, each with its signed record</h2>
+{{range .Runs}}<div class="run">
+<h3>Run {{.N}}: {{.Language}}, exit {{.ExitCode}}{{if .TimedOut}}, timed out{{end}}, {{.Millis}} ms</h3>
+<pre>{{.Code}}</pre>
+{{if .Stdout}}<p class="meta">stdout</p><pre>{{.Stdout}}</pre>{{end}}
+{{if .Stderr}}<p class="meta">stderr</p><pre>{{.Stderr}}</pre>{{end}}
+<table>
+<tr><th>record</th><td><code>{{.Record}}</code></td></tr>
+<tr><th>request digest</th><td><code>{{.Request}}</code></td></tr>
+<tr><th>result digest</th><td><code>{{.Result}}</code></td></tr>
+<tr><th>chain</th><td>call {{.Sequence}} of the session{{if .Previous}}, after <code>{{short .Previous}}</code>{{end}}</td></tr>
+</table>
+</div>{{end}}
+
+<h2>Check it yourself</h2>
+<p>The bundle (<code>bundle.jsonl</code>) and the public key (<code>harness.pub</code>) sit beside this page. From a clone of the repository:</p>
+<pre>go run ./cmd/plimsoll-attest verify -pub harness.pub bundle.jsonl</pre>
+<p>That recomputes every record's digests from the stored request and response, checks every signature and the session's chain (call {{.Calls}} closes it), and refuses the bundle if one byte of any run was changed or one call was dropped. The same program replays the session into a fresh sandbox:</p>
+<pre>go run ./cmd/plimsoll-attest replay -daemon http://127.0.0.1:8746 -pub harness.pub bundle.jsonl</pre>
+
+<h2>Verify in your browser</h2>
+<p>The same verification, compiled to WebAssembly (about 3.7 MB the first time, decompressed in the page): every record's digests recomputed from the stored request and response, every signature, every link and the session's chain. The bundle and the key never leave your browser. The second button changes one byte of a stored response first, so you can see the refusal.</p>
+<p><button id="verify" type="button">Verify bundle.jsonl here</button> <button id="tamper" type="button">Change one byte, then verify</button></p>
+<pre id="report">not run yet</pre>
+<script src="wasm_exec.js"></script>
+<script>
+(function () {
+  var ready = null;
+  function load() {
+    if (ready) return ready;
+    ready = (async function () {
+      var go = new Go();
+      var res = await fetch('verify.wasm.gz');
+      if (!res.ok) throw new Error('verify.wasm.gz: HTTP ' + res.status);
+      var bytes = await new Response(res.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+      var result = await WebAssembly.instantiate(bytes, go.importObject);
+      go.run(result.instance);
+      return true;
+    })();
+    return ready;
+  }
+  async function texts() {
+    var pair = await Promise.all([fetch('bundle.jsonl'), fetch('harness.pub')]);
+    if (!pair[0].ok || !pair[1].ok) throw new Error('bundle.jsonl or harness.pub is not beside this page');
+    return [await pair[0].text(), await pair[1].text()];
+  }
+  async function run(tamper) {
+    var out = document.getElementById('report');
+    out.textContent = 'loading the verifier…';
+    try {
+      await load();
+      var t = await texts();
+      var bundle = t[0];
+      if (tamper) {
+        var i = bundle.indexOf('"response":"') + 12;
+        bundle = bundle.slice(0, i) + (bundle[i] === 'A' ? 'B' : 'A') + bundle.slice(i + 1);
+      }
+      out.textContent = JSON.stringify(JSON.parse(plimsollVerify(bundle, t[1])), null, 2);
+    } catch (e) {
+      out.textContent = 'could not verify here: ' + e.message;
+    }
+  }
+  document.getElementById('verify').onclick = function () { run(false); };
+  document.getElementById('tamper').onclick = function () { run(true); };
+})();
+</script>
+
+<h2>How it was made</h2>
+<p>The program is <code>examples/nemotron-agent</code> in the plimsoll repository. It starts plimsolld on the docker provider under gVisor with the Python image, opens one session, and gives the model the task and the <code>run_code</code> tool. The model's code runs in the session; the result goes back to the model; the harness signs each exchange as the client makes it, and the session's close is signed with the count of calls. Nothing the page states about a run comes from the model: it comes from the daemon's answer, checked by the client, and signed.</p>
+</main>
+</body>
+</html>

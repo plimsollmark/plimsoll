@@ -7,7 +7,7 @@ import { createHash, type Hash } from "node:crypto";
 import { PlimsollError } from "./errors.ts";
 import { OUTCOMES, TIERS } from "./tables.gen.ts";
 
-import type { WireRecord, WireRunResponse, WireSoftwareRule } from "./wire.ts";
+import { wireBytes, WireShapeError, type WireRecord, type WireRunResponse, type WireSoftwareRule } from "./wire.ts";
 
 /** The record encoding version this client computes and checks: every field, every time, for an answered call and an unanswered session call alike. */
 export const RECORD_VERSION = 4;
@@ -152,7 +152,7 @@ export function outcomeNumber(name: string | number | undefined): number | undef
   return OUTCOMES[name];
 }
 
-const b64 = (s: string | undefined): Buffer => Buffer.from(s ?? "", "base64");
+const b64 = wireBytes;
 
 /** The result digest of a Run response as it arrived on the wire. */
 export function resultDigest(resp: WireRunResponse): string {
@@ -201,8 +201,9 @@ export function resultDigest(resp: WireRunResponse): string {
     e.bool("interpreter_started", c.interpreterStarted ?? false);
     e.bool("interpreter_ended", c.interpreterEnded ?? false);
   } else {
-    // A module result, or none: this client sends neither, so the kind check
-    // refuses the response before its digest matters.
+    // A module result, or none: this client sends neither, so the record check
+    // refuses the response as not of the request's kind, after this digest is
+    // computed and found not to match.
     e.str("kind", "");
   }
   return e.sum();
@@ -378,14 +379,28 @@ export function checkUnanswered(
  */
 export function checkRecord(
   reqDigest: string,
+  kind: "javascript" | "project" | "cell",
   rule: WireSoftwareRule | undefined,
   resp: WireRunResponse,
 ): { record: RunRecord } | { problem: string } {
   if (!resp.record) return { problem: "the response carries no run record" };
   const r = recordFromWire(resp.record);
-  const result = resultDigest(resp);
+  let result: string;
+  try {
+    result = resultDigest(resp);
+  } catch (e) {
+    if (e instanceof WireShapeError) return { problem: `the answer is malformed: ${e.message}` };
+    throw e;
+  }
   if (r.version !== RECORD_VERSION) return { problem: versionProblem(r.version) };
   if (r.unanswered !== "") return { problem: "an answered call's record states an unanswered code" };
+  // The kind, inside the check as in Go's record.check since 2026-10-26: a result of
+  // another kind fails here, before a session's chain moves on, so a daemon caught
+  // answering the wrong kind is not used further (review, 2026-10-26).
+  const kinds = (["javascript", "project", "module", "cell"] as const).filter((k) => resp[k] !== undefined && resp[k] !== null);
+  if (kinds.length > 1) return { problem: `the answer holds ${kinds.length} results; a run has one` };
+  if (kinds.length !== 1 || kinds[0] !== kind) return { problem: `the daemon answered a ${kind} request with ${kinds.length === 1 ? kinds[0] : "no"} result` };
+  if (r.endedUnixMs < r.startedUnixMs) return { problem: "the record ends before it starts" };
   if (r.requestSha256 !== reqDigest) return { problem: `request digest ${r.requestSha256}, the request sent digests to ${reqDigest}` };
   if (r.resultSha256 !== result) return { problem: `result digest ${r.resultSha256}, the result received digests to ${result}` };
   if (r.provider !== (resp.sandbox ?? "") || r.isolation !== (resp.isolation ?? "")) return { problem: "the record's provider or tier differs from the response's" };

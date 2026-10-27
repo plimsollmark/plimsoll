@@ -51,7 +51,7 @@ type E2B struct {
 	// SessionGrants is how a session's granted call reaches the guard
 	// (e2b_session_grant.go): "" refuses granted session calls, "session" creates the
 	// sandbox with one credential for the session's life, "call" puts a fresh one on for
-	// each granted call. Not yet proven against the live service.
+	// each granted call; both proven live by e2b_guard_live_test.go.
 	SessionGrants string
 
 	// Overridable for tests; empty uses the real E2B endpoints.
@@ -254,8 +254,8 @@ func (e *E2B) SmokeTest(ctx context.Context) error {
 		return fmt.Errorf("e2b template smoke: %w", err)
 	}
 	// Stage probe + step script in ONE multipart request and run the probe through
-	// `sh <script>` with cwd set — byte-for-byte the mechanics RunProject uses, so
-	// passing here means the template can actually serve project runs.
+	// `sh <script>` with cwd set, the mechanics RunProject uses (a step adds the outer
+	// shell of stepArgv), so passing here means the template can actually serve project runs.
 	dir := e.projectDir()
 	const stepPath = "/tmp/plimsoll-smoke-step.sh"
 	files := []File{
@@ -479,7 +479,7 @@ func (e *E2B) RunJavaScript(ctx context.Context, req Request) (res Result, err e
 		Stderr:          out.stderr,
 		StdoutTruncated: out.stdoutTruncated,
 		StderrTruncated: out.stderrTruncated,
-		ExitCode:        out.exitCode,
+		ExitCode:        exitStatus(out), // 128 plus the signal when one ended it, as a session reports it (review, 2026-10-26)
 		Duration:        time.Since(start),
 		Sandbox:         "e2b",
 		Isolation:       IsolationVM,
@@ -598,11 +598,10 @@ func (e *E2B) RunProject(ctx context.Context, req ProjectRequest) (res ProjectRe
 		}
 		argv := stepArgv(stepPath)
 		out, err := e.envdRun(ctx, vm, envdProcess{cmd: argv[0], args: argv[1:], cwd: dir, envs: envs}, ProjectStepOutputCap, ProjectStepOutputCap)
-		if err != nil {
-			return stepOutput{}, err
-		}
+		// With the error, what envd streamed before it: a step the deadline ends keeps
+		// its output (review, 2026-10-26).
 		return stepOutput{stdout: out.stdout, stderr: out.stderr, stdoutTruncated: out.stdoutTruncated,
-			stderrTruncated: out.stderrTruncated, exitCode: out.exitCode}, nil
+			stderrTruncated: out.stderrTruncated, exitCode: exitStatus(out)}, err
 	})
 	if err != nil {
 		return ProjectResult{Sandbox: "e2b", Isolation: IsolationVM}, err

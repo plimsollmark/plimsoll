@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/plimsollmark/plimsoll/gen/go/agentsandbox/processv1/processv1connect"
 	"slices"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func TestDockerRunsTheAgentSandboxBoundaryScript(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	const tmpSize = 16 << 20 // docker's default /tmp, which the snippet container mounts
-	code := fmt.Sprintf(boundaryScript, `[]`, fmt.Sprintf(`[["/tmp", %d]]`, tmpSize))
+	code := fmt.Sprintf(boundaryScript, `[]`, fmt.Sprintf(`[["/tmp", %d]]`, tmpSize), 9090, processv1connect.ProcessServiceStartProcedure)
 	res, err := d.RunJavaScript(ctx, sandbox.Request{Code: code, Timeout: 60 * time.Second})
 	if err != nil {
 		t.Fatal(err)

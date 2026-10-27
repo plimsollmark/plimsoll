@@ -113,10 +113,10 @@ test("an answered record stating an unanswered code, an old version or another i
   };
   record.recordSha256 = recordDigest(recordFromWire(record));
   resp.record = record;
-  assert.ok("record" in checkRecord("r", undefined, resp));
+  assert.ok("record" in checkRecord("r", "javascript", undefined, resp));
   const refused = (r: WireRecord, why: string) => {
     resp.record = { ...r, recordSha256: recordDigest(recordFromWire(r)) };
-    const got = checkRecord("r", undefined, resp);
+    const got = checkRecord("r", "javascript", undefined, resp);
     assert.ok("problem" in got && got.problem.includes(why), JSON.stringify(got));
   };
   refused({ ...record, unanswered: "unknown" }, "unanswered");
@@ -124,4 +124,47 @@ test("an answered record stating an unanswered code, an old version or another i
   refused({ ...record, instance: "k8s-pod-uid:other" }, "instance");
   refused({ ...record, instance: "/var/run/pod" }, "instance");
   assert.equal(resultDigest({ ...resp, instance: "k8s-pod-uid:other" }), resultDigest(resp), "the instance moved the result digest");
+});
+
+
+// The record check itself refuses a result of another kind than the request's, or none,
+// and a record that ends before it starts, as Go's record.check does since 2026-10-26.
+test("a result of another kind than the request's, or none, or a record ending before it starts, is refused", () => {
+  const resp: WireRunResponse = { sandbox: "docker", isolation: "container", javascript: { stdout: "" } };
+  const record: WireRecord = {
+    version: 4, requestSha256: "r", resultSha256: resultDigest(resp), provider: "docker", isolation: "container",
+    startedUnixMs: 2, endedUnixMs: 3,
+  };
+  record.recordSha256 = recordDigest(recordFromWire(record));
+  resp.record = record;
+  assert.ok("record" in checkRecord("r", "javascript", undefined, resp));
+  const other = checkRecord("r", "project", undefined, resp);
+  assert.ok("problem" in other && other.problem.includes("project request"), JSON.stringify(other));
+  const none = checkRecord("r", "javascript", undefined, { ...resp, javascript: undefined });
+  assert.ok("problem" in none && none.problem.includes("no result"), JSON.stringify(none));
+  const backwards: WireRecord = { ...record, startedUnixMs: 3, endedUnixMs: 2 };
+  backwards.recordSha256 = recordDigest(recordFromWire(backwards));
+  const refused = checkRecord("r", "javascript", undefined, { ...resp, record: backwards });
+  assert.ok("problem" in refused && refused.problem.includes("ends before it starts"), JSON.stringify(refused));
+});
+
+test("a bytes field that is not base64 text is refused before anything is allocated for it", () => {
+  // Buffer.from given {"length": n} allocates n bytes; the check must refuse the shape
+  // instead (Claude Security scan, 2026-10-27). 2e9 would take a minute and 2 GB here.
+  const huge = { length: 2_000_000_000 } as unknown as string;
+  const answers: WireRunResponse[] = [
+    { javascript: { stdout: huge } },
+    { javascript: { stderr: [1, 2] as unknown as string } },
+    { project: { steps: [{ stdout: huge }] } as WireRunResponse["project"] },
+    { project: { artifacts: [{ path: "a", content: huge }] } as WireRunResponse["project"] },
+    { cell: { stdout: huge } as WireRunResponse["cell"] },
+  ];
+  for (const resp of answers) {
+    resp.record = { version: 4, requestSha256: "r", startedUnixMs: 1, endedUnixMs: 1 };
+    const kind = resp.javascript ? "javascript" : resp.project ? "project" : "cell";
+    const t0 = Date.now();
+    const got = checkRecord("r", kind, undefined, resp);
+    assert.ok("problem" in got && got.problem.includes("malformed"), JSON.stringify(got));
+    assert.ok(Date.now() - t0 < 1000, "the refusal must not decode the field");
+  }
 });

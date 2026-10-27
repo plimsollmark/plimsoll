@@ -303,7 +303,13 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		d.removeOrHold(ctx, execState.host, name)
 	}
 
-	if ended != nil {
+	// An authenticated report is the result whatever the backstop says: the runner
+	// writes it after its steps ended, each step carries its own TimedOut, and the
+	// backstop (the budget plus a short grace, counted from before the container
+	// started) can fire while a report is already in stdout, which used to be thrown
+	// away as timed out with no steps (review, 2026-10-26).
+	res, reported := RunnerReport(d.Name(), isolation, stdout.String(), reportKey)
+	if !reported && ended != nil {
 		if _, ran := afterMarker(stderr.String(), started); !ran {
 			// Nothing shows the runner, so any step, started: not reported as a timeout.
 			// Unmarked, as below.
@@ -315,8 +321,6 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		}
 		return ProjectResult{Sandbox: d.Name(), Isolation: isolation, CallTrace: trace}, ended
 	}
-
-	res, reported := RunnerReport(d.Name(), isolation, stdout.String(), reportKey)
 	if !reported {
 		// The runner never reported. Distinguish two very different causes:
 		//   - no start marker: almost always docker never started the container's

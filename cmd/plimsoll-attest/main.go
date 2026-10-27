@@ -7,7 +7,8 @@
 //	plimsoll-attest keygen -out harness
 //	plimsoll-attest run -daemon http://127.0.0.1:8080 -key harness.key -bundle runs.jsonl request.json
 //	plimsoll-attest verify -pub harness.pub runs.jsonl
-//	plimsoll-attest replay -daemon http://127.0.0.1:8080 runs.jsonl
+//	plimsoll-attest replay -daemon http://127.0.0.1:8080 -pub harness.pub runs.jsonl
+//	plimsoll-attest verify-record -pub harness.pub -line 1 old-runs.jsonl
 //
 // replay sends each single run again, and each recorded session's calls, in
 // order, into a fresh session.
@@ -62,10 +63,18 @@ const usage = `usage:
                                                 its stored request and response, and its link;
                                                 not the bundle around it, nor (for a session
                                                 call) that its session's chain is whole
-  plimsoll-attest replay -daemon URL -pub FILE BUNDLE
+  plimsoll-attest verify-record -pub FILE -line N BUNDLE
+                                                check one call line's signature and its stored
+                                                request and response alone, with no link: for a
+                                                line from before links (v0.10.0 to v0.17.x); it
+                                                proves the exchange, not the line's place
+  plimsoll-attest replay -daemon URL -pub FILE [-with-grants] BUNDLE
                                                 verify the bundle as verify does, then run each
                                                 single run again and each session in a fresh
-                                                session, compare results
+                                                session, compare results; a request recorded
+                                                with a grant profile, or under another protocol
+                                                number, is reported and not sent (-with-grants
+                                                sends the former)
   plimsoll-attest sign-statement -key FILE -type URI -out FILE STATEMENT.json
                                                 sign an in-toto statement the harness makes
                                                 about evidence it checked; STATEMENT.json holds
@@ -100,6 +109,8 @@ func main() {
 		err = verify(os.Args[2:], os.Stdout)
 	case "verify-entry":
 		err = verifyEntry(os.Args[2:], os.Stdout)
+	case "verify-record":
+		err = verifyRecord(os.Args[2:], os.Stdout)
 	case "replay":
 		err = replay(os.Args[2:], os.Stdout)
 	case "sign-statement":
@@ -680,6 +691,10 @@ func openStatement(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if len(raw) > attest.MaxLineBytes {
+		// Every other reader is bounded; this one read a file whole (review, 2026-10-26).
+		return fmt.Errorf("%s is larger than %d bytes, the most an envelope may be", fs.Arg(0), attest.MaxLineBytes)
+	}
 	var env attest.Envelope
 	if err := decodeOne(raw, &env); err != nil {
 		return fmt.Errorf("%s: %w", fs.Arg(0), err)
@@ -701,10 +716,11 @@ func openStatement(args []string, stdout io.Writer) error {
 // the bundle reader's strict rules: a line being written after it, or a malformed line
 // elsewhere, does not stop a stored line from being checked. Lines before it are only
 // counted, in bounded memory.
-func readLine(path string, n int) (attest.Entry, error) {
+// readRawLine reads line n of path, newline included, bounded as a bundle line is.
+func readRawLine(path string, n int) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return attest.Entry{}, err
+		return nil, err
 	}
 	defer f.Close()
 	br := bufio.NewReaderSize(f, 64<<10)
@@ -718,9 +734,9 @@ func readLine(path string, n int) (attest.Entry, error) {
 				continue
 			}
 			if errors.Is(err, io.EOF) {
-				return attest.Entry{}, fmt.Errorf("%s has %d lines, not %d", path, i-1, n)
+				return nil, fmt.Errorf("%s has %d lines, not %d", path, i-1, n)
 			}
-			return attest.Entry{}, err
+			return nil, err
 		}
 	}
 	var line []byte
@@ -728,7 +744,7 @@ func readLine(path string, n int) (attest.Entry, error) {
 		chunk, err := br.ReadSlice('\n')
 		line = append(line, chunk...)
 		if len(line) > attest.MaxLineBytes {
-			return attest.Entry{}, fmt.Errorf("%w: line %d of %s is longer than a bundle line may be", attest.ErrLine, n, path)
+			return nil, fmt.Errorf("%w: line %d of %s is longer than a bundle line may be", attest.ErrLine, n, path)
 		}
 		if err == nil {
 			break
@@ -738,10 +754,19 @@ func readLine(path string, n int) (attest.Entry, error) {
 		}
 		if errors.Is(err, io.EOF) {
 			if len(line) == 0 {
-				return attest.Entry{}, fmt.Errorf("%s has %d lines, not %d", path, n-1, n)
+				return nil, fmt.Errorf("%s has %d lines, not %d", path, n-1, n)
 			}
-			return attest.Entry{}, fmt.Errorf("%w: line %d of %s is not finished (no newline): it may still be being written", attest.ErrLine, n, path)
+			return nil, fmt.Errorf("%w: line %d of %s is not finished (no newline): it may still be being written", attest.ErrLine, n, path)
 		}
+		return nil, err
+	}
+	return line, nil
+}
+
+// readLine reads line n of a bundle as ReadBundle reads it: a link is required.
+func readLine(path string, n int) (attest.Entry, error) {
+	line, err := readRawLine(path, n)
+	if err != nil {
 		return attest.Entry{}, err
 	}
 	entries, err := attest.ReadBundle(bytes.NewReader(line))
@@ -751,8 +776,75 @@ func readLine(path string, n int) (attest.Entry, error) {
 	return entries[0], nil
 }
 
+// readCallLine reads line n as readLine does, but without ReadBundle's link
+// requirement, since a line from before links has none (verify-record). The line is
+// still exactly the harness's encoding of its entry.
+func readCallLine(path string, n int) (attest.Entry, error) {
+	line, err := readRawLine(path, n)
+	if err != nil {
+		return attest.Entry{}, err
+	}
+	var e attest.Entry
+	dec := json.NewDecoder(bytes.NewReader(line))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&e); err != nil {
+		return attest.Entry{}, fmt.Errorf("line %d of %s: %w", n, path, err)
+	}
+	canonical, err := json.Marshal(e)
+	if err != nil || !bytes.Equal(canonical, bytes.TrimSuffix(line, []byte("\n"))) {
+		return attest.Entry{}, fmt.Errorf("line %d of %s: %w", n, path, attest.ErrLine)
+	}
+	return e, nil
+}
+
+// verifyRecord checks one call line with no link: a line from before links, or a
+// linked line whose link is not read here.
+func verifyRecord(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("verify-record", flag.ContinueOnError)
+	pubPath := fs.String("pub", "", "the harness's public key (PEM PKIX Ed25519)")
+	line := fs.Int("line", 0, "the line to check, from 1")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *pubPath == "" || *line < 1 || fs.NArg() != 1 {
+		return errors.New("verify-record needs -pub FILE, -line N (from 1) and one BUNDLE")
+	}
+	pub, err := loadPublic(*pubPath)
+	if err != nil {
+		return err
+	}
+	entry, err := readCallLine(fs.Arg(0), *line)
+	if err != nil {
+		return err
+	}
+	if len(entry.Request) == 0 && len(entry.Response) == 0 {
+		return fmt.Errorf("line %d of %s holds no call: it is a checkpoint or a session's close statement", *line, fs.Arg(0))
+	}
+	rec, err := attest.VerifyCall(attest.NewVerifier(pub), entry)
+	if err != nil {
+		return err
+	}
+	what := "a single run"
+	if rec.Session != "" {
+		what = fmt.Sprintf("call %d of session %s…", rec.Sequence, prefix(rec.Session, 12))
+	}
+	if rec.Unanswered != "" {
+		what += fmt.Sprintf(", which ended without an answer (%s) and may have run", rec.Unanswered)
+	}
+	linked := "The line carries no link"
+	if entry.Link != nil {
+		linked = "The line carries a link this check did not read (plimsoll-attest verify-entry reads it)"
+	}
+	fmt.Fprintf(stdout, "record verified: line %d, signed by key %s: a version %d record %s, %s; it states provider %s and isolation %q. "+
+		"It authenticates the recorded request and response, not that what the guest printed is true. %s. "+
+		"Not established by this check: the line's place in any bundle, so a holder could have dropped or reordered such lines unseen\n",
+		*line, attest.KeyID(pub), rec.Version, rec.SHA256, what, rec.Provider, rec.Isolation, linked)
+	return nil
+}
+
 func replay(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
+	withGrants := fs.Bool("with-grants", false, "send recorded requests that carry a grant profile too; they call the upstream API again")
 	daemon := fs.String("daemon", "", "the daemon's base URL")
 	pubPath := fs.String("pub", "", "the harness's public key (PEM PKIX Ed25519); the bundle is verified before anything is sent")
 	timeout := fs.Duration("timeout", 6*time.Minute, "how long to wait for each run")
@@ -785,11 +877,12 @@ func replay(args []string, stdout io.Writer) error {
 		resp, _, err := r.Exchange(ctx, req)
 		return resp, err
 	}
-	results, err := attest.Replay(context.Background(), entries, v, send)
+	opts := attest.ReplayOptions{WithGrants: *withGrants}
+	results, err := attest.Replay(context.Background(), entries, v, opts, send)
 	if err != nil {
 		return err
 	}
-	sessions, err := attest.ReplaySessions(context.Background(), entries, v, func(ctx context.Context) (attest.SessionSender, error) {
+	sessions, err := attest.ReplaySessions(context.Background(), entries, v, opts, func(ctx context.Context) (attest.SessionSender, error) {
 		s, err := r.OpenSession(ctx, client.SessionOptions{})
 		if err != nil {
 			return nil, err
@@ -800,12 +893,20 @@ func replay(args []string, stdout io.Writer) error {
 		return err
 	}
 	results = append(results, sessions...)
-	differ := 0
+	differ, skipped := 0, 0
 	for _, res := range results {
 		switch {
+		case errors.Is(res.Err, attest.ErrNotReplayable):
+			skipped++
+			fmt.Fprintf(stdout, "entry %d: not replayed: %v\n", res.Entry, res.Err)
 		case res.Err != nil:
 			differ++
 			fmt.Fprintf(stdout, "entry %d: the replay failed: %v\n", res.Entry, res.Err)
+		case res.Unanswered != "":
+			// The recorded call ended without a result, so there is nothing to compare;
+			// it used to print as a different result (review, 2026-10-26).
+			skipped++
+			fmt.Fprintf(stdout, "entry %d: the recorded call ended without a result (%s), nothing to compare; the replay gave %s\n", res.Entry, res.Unanswered, prefix(res.Replayed, 16))
 		case res.Match() && res.Session != "":
 			fmt.Fprintf(stdout, "entry %d (session %s…): same result (%s)\n", res.Entry, prefix(res.Session, 12), prefix(res.Recorded, 16))
 		case res.Match():
@@ -814,6 +915,9 @@ func replay(args []string, stdout io.Writer) error {
 			differ++
 			fmt.Fprintf(stdout, "entry %d: different result: recorded %s, replayed %s\n", res.Entry, prefix(res.Recorded, 16), prefix(res.Replayed, 16))
 		}
+	}
+	if skipped > 0 {
+		fmt.Fprintf(stdout, "%d of %d recorded calls were not compared\n", skipped, len(results))
 	}
 	if differ > 0 {
 		return fmt.Errorf("%d of %d replays did not reproduce the recorded result", differ, len(results))

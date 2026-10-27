@@ -9,6 +9,9 @@
 //   - WASM     — low-latency in-process QuickJS (process tier).
 //   - Docker   — self-hosted locked-down `docker run` (runc or verified runsc).
 //   - E2B      — remote Firecracker microVM; see e2b.go.
+//   - Docker Cloud — Docker Cloud Sandboxes microVM; see dockercloud.go.
+//   - OpenShell and agent-sandbox — their own packages (sandbox/openshell,
+//     sandbox/agentsandbox), built by plimsolld outside Build.
 //   - Disabled — safe default that refuses to execute (returns ErrDisabled).
 package sandbox
 
@@ -436,7 +439,8 @@ type ModuleCapable interface {
 
 // GrantCapable declares which operations can enforce HostAPIGrant without exposing
 // credentials or silently dropping the SDK contract. Capability support is
-// operation-specific: Docker brokers both snippets and projects, WASM rejects both,
+// operation-specific: Docker brokers both snippets and projects, WASM brokers snippets
+// only (it runs no projects),
 // and E2B supports both only with its configured host-side egress guard. The RPC
 // Describe method reports these facts so callers can fail before dispatch.
 type GrantCapable interface {
@@ -531,8 +535,9 @@ func MeteredTeardown(p any) time.Duration {
 
 // meteredDeleteAttempts and meteredDeleteBudget bound how E2B and Docker Cloud delete a
 // run's microVM: that many tries of that long each, a pause of one second after the
-// first and two after the second. meteredTeardown is the sum, the BillingTeardown both
-// report, so the reservation and the loops cannot drift apart.
+// first and two after the second. meteredTeardown is the sum; meteredBillingTail below
+// adds the artifact grace and is the BillingTeardown both report, so the reservation and
+// the loops cannot drift apart.
 const (
 	meteredDeleteAttempts = 3
 	meteredDeleteBudget   = 10 * time.Second

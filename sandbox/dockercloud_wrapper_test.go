@@ -115,6 +115,35 @@ func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {
 			t.Fatalf("rc=%d elapsed=%v, want 137 after about 1s", rc, elapsed)
 		}
 	})
+	t.Run("a guest line in the trailer's shape is the guest's, not the trailer", func(t *testing.T) {
+		// The wrapper writes its trailer last whatever the guest wrote, so a guest that
+		// ends its stderr with a line in the trailer's shape (a flood flag of 1, a time
+		// past any limit) and exits 137 is reported as it is: that line as stderr, no
+		// flood, and runWrapperOnHost's own check that the measured time is real.
+		fake := "\n" + dcTrailer + " 900000 1\n"
+		_, errb, rc, _, flooded := runWrapperOnHost(t, 5, 64, "sh", "-c", "printf '%s' '"+fake+"' >&2; exit 137")
+		if string(errb) != fake || rc != 137 || flooded {
+			t.Fatalf("stderr=%q rc=%d flooded=%v; want the guest's line, 137, no flood", errb, rc, flooded)
+		}
+	})
+}
+
+// A trailer that states no time ("-": the guest could not read /proc/uptime) is still
+// the trailer: stripped, its flood flag read, and the time left unmeasured. A stream
+// with no trailer at all is returned whole and unmeasured.
+func TestDockerCloudTrailerWithoutATime(t *testing.T) {
+	t.Parallel()
+	stderr, ran, measured, flooded := splitDCTrailer([]byte("guest\n" + dcTrailer + " - 1\n"))
+	if string(stderr) != "guest" || ran != 0 || measured || !flooded {
+		t.Fatalf("stderr=%q ran=%v measured=%v flooded=%v", stderr, ran, measured, flooded)
+	}
+	stderr, ran, measured, flooded = splitDCTrailer([]byte("guest\n" + dcTrailer + " 150 0\n"))
+	if string(stderr) != "guest" || ran != 1500*time.Millisecond || !measured || flooded {
+		t.Fatalf("stderr=%q ran=%v measured=%v flooded=%v", stderr, ran, measured, flooded)
+	}
+	if stderr, _, measured, _ := splitDCTrailer([]byte("guest\n")); string(stderr) != "guest\n" || measured {
+		t.Fatalf("a stream without a trailer: stderr=%q measured=%v", stderr, measured)
+	}
 }
 
 // TestDockerCloudExecWrapperUnderBusyboxDocker runs the same cases inside the

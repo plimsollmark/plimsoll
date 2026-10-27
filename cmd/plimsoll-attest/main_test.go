@@ -635,3 +635,19 @@ func TestSignAndOpenAStatement(t *testing.T) {
 		t.Fatal("sign-statement accepted a field it does not know")
 	}
 }
+
+// verify-record reads a line from before links, which every other reader refuses; it is
+// how a v0.10.0 to v0.17.x record is still checked (review, 2026-10-26).
+func TestVerifyRecordReadsAPreLinkLine(t *testing.T) {
+	const dir = "../../attest/testdata/published/v0.11.1-sessions/"
+	var out bytes.Buffer
+	if err := verifyRecord([]string{"-pub", dir + "harness.pub", "-line", "1", dir + "bundle.jsonl"}, &out); err != nil || !strings.Contains(out.String(), "record verified") {
+		t.Fatalf("verify-record on a v0.11.1 line: %v, %q", err, out.String())
+	}
+	if !strings.Contains(out.String(), "carries no link") {
+		t.Fatalf("the line has no link, which the report must say: %q", out.String())
+	}
+	if err := verifyEntry([]string{"-pub", dir + "harness.pub", "-line", "1", dir + "bundle.jsonl"}, &out); err == nil {
+		t.Fatal("verify-entry must refuse a line with no link")
+	}
+}

@@ -21,7 +21,7 @@ can reach. It serves MCP 2026-07-28 and the 2025 revisions (the official Go SDK,
 | `run_code` | Runs `code` (`language` `"python"` or `"javascript"`, optional text `files` written first). Without `sandbox` the call is fresh and nothing is kept. With `sandbox`, a handle from `open_sandbox`, it runs where that handle's earlier calls ran, so files and interpreter state remain. An optional `trace` (1 to 64 letters, digits or `. _ : -`) ties the run to a log of the caller's, such as a coding session's ID, and is signed into its receipt; [the agent-session example](../../examples/agent-session/README.md) sets it from a hook. A program that fails is a result with its exit code. |
 | `open_sandbox` | Opens a sandbox that keeps state and answers once the daemon has opened it, with its handle, languages, tier and when it ends. At most `PLIMSOLL_MAX_SANDBOXES` are open; past that the open is refused (`capacity`) and names the idle sandboxes in `idleSandboxes`. Nothing is ever closed for room: deleting a sandbox's state takes a `close_sandbox` naming it, so `open_sandbox` is not marked destructive. |
 | `close_sandbox` | Closes a handle's sandbox; `deleted` says whether the daemon confirmed it. |
-| `get_record` | The run record of a call, by the `recordSha256` its result or failure gave. The last 256 are kept in memory until the server restarts. |
+| `get_record` | The run record of a call, by the `recordSha256` its result or failure gave. The last 256 are kept in memory until the server restarts, at most 64 KiB each and 16 MiB in all. |
 | `server_info` | This server's version, its tools with a digest of their names, descriptions, schemas and annotations, and what the daemon states. If the tools listed differ from those the agent can call, the host's tool list is out of date. |
 
 MCP's 2026-07-28 revision has no protocol sessions, so state is a handle the model passes
@@ -37,7 +37,8 @@ block, because a host that passes on only the structured value would drop the bl
 
 A failure is a tool error whose text is JSON: `summary`, and `ran`, which is `"no"` when the
 daemon or this server refused before any code was sent (with the daemon's `refusal` reason
-when it gave one) and `"maybe"` when the code may have run without an answer that checked.
+when it gave one) or when the daemon classified a project run as `setup_failed` (no step
+began), and `"maybe"` when the code may have run without an answer that checked.
 A `"maybe"` is never retried: running the code again could repeat what it did. A session call
 that may have run still has a checked record, whose `recordSha256` the failure carries.
 
@@ -92,7 +93,7 @@ All from the environment. A value left as an unfilled placeholder such as
 | `PLIMSOLL_MIN_ISOLATION` | `kernel` | The weakest tier a run or sandbox accepts: `vm`, `kernel`, `container` or `process`. `kernel` is a verified gVisor runtime, the weakest fit for code you did not write. A plain docker daemon is `container`, which you must ask for. |
 | `PLIMSOLL_SOFTWARE_IDENTITY` | none | Image identities allowed to run code, comma-separated, such as `oci-manifest:linux/amd64@sha256:...`. One is an exact pin, several an approved set. Checked by the daemon before each run and by the client on each answer. |
 | `PLIMSOLL_TIMEOUT_MS` | `50000` | Each run's budget in the sandbox. |
-| `PLIMSOLL_CALL_TIMEOUT_MS` | `80000` | A whole tool call: the daemon's Describe, opening a sandbox, waiting for its turn and the run. At least 10 s over the run budget, and under the host's own tool timeout. |
+| `PLIMSOLL_CALL_TIMEOUT_MS` | `80000` | A whole tool call: the daemon's Describe, opening a sandbox, waiting for its turn and the run. At least 10 s over the run budget, and under the host's own tool timeout. A call that waited for its sandbox's turn is refused (`ran: "no"`, call again) when less than the run budget plus 5 s remains, rather than cut off mid-run. |
 | `PLIMSOLL_SANDBOX_LIFETIME_MS` | `1800000` | Asked of the daemon for each sandbox. A host may kill the server before it closes its sandboxes (Claude Code allows half a second), so this bounds how long an orphaned sandbox holds the daemon. |
 | `PLIMSOLL_LANGUAGES` | `python,javascript` | The languages `run_code` offers, the first the default; a sandbox offers those its image states. |
 | `PLIMSOLL_MAX_SANDBOXES` | `3` | Handles open at once, 1 to 16. Over the remote transport one approved app holds at most one fewer, and at least 2 is required. The daemon's own caps apply too. |
@@ -199,8 +200,8 @@ Desktop's own install and launch of a bundle, and both macOS builds, are not exe
 - It proves what the daemon stated and the client checked, not more: a tier is the daemon's
   configuration and provider evidence plus its startup smoke tests, never hardware
   attestation.
-- `get_record` keeps the last 256 records in memory; receipts on disk are kept until you
-  delete them.
+- `get_record` keeps the last 256 records in memory (at most 64 KiB each, 16 MiB in all);
+  receipts on disk are kept until you delete them.
 - No CycloneDX bill of materials yet: the mapping covers answered single project runs only,
   and is not yet a library.
 - No grant profile reaches the code, and the sandbox has no network.

@@ -85,3 +85,17 @@ which repository and workflow run uploaded each file. The workflow publishes onl
 release's tag must be `v` plus the client's version, and `clients/python` must be the same
 as at that tag. A release made before the workflow existed is published by running the
 workflow by hand on `main`.
+
+## Freezing the record vectors at a release
+
+A <dfn>*run record*</dfn> (the daemon's signed statement of what it ran and where, which
+comes back with every result) is worth keeping only if it can be checked later, so every
+record version a release has written stays readable (AGENTS.md, the one exception to no
+backward compatibility), and each is tied to what its own release produced. The first
+release that writes a new record version freezes its vectors: copy that release's
+`record/testdata/golden.json` to `record/testdata/published/<tag>-golden.json` and a
+bundle it wrote to `attest/testdata/published/<tag>-<name>/`, with the public key that
+signed it, and run
+`go test ./record ./attest`: `TestPublishedVectors` requires a frozen vector for every
+published version below the live one (version 1's is the v0.11.1 bundle). Until then the
+live version's only vector is `golden.json`, which changes with the encoding.

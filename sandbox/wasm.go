@@ -230,10 +230,18 @@ func (w *WasmSandbox) RunJavaScript(ctx context.Context, req Request) (Result, e
 		CallTrace:       broker.traceSnapshot(),
 	}
 
-	if deadline.Expired(runCtx) == context.DeadlineExceeded {
+	switch ended := deadline.Expired(runCtx); ended {
+	case nil:
+	case context.DeadlineExceeded:
 		res.TimedOut = true
 		res.ExitCode = 124
 		return res, nil
+	default:
+		// A cancel (the caller hung up): the context's error, as the docker and E2B
+		// providers return it. wazero ends a canceled run with a sys.ExitError whose
+		// code is 0xffffffff, which used to fall through below and come back as a
+		// normal result with exit 4294967295 (review, 2026-10-26).
+		return Result{Sandbox: w.Name(), Isolation: w.IsolationClass(), CallTrace: res.CallTrace}, ended
 	}
 	if err != nil {
 		var exitErr *sys.ExitError

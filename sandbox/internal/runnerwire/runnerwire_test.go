@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -285,6 +286,52 @@ func TestParseAcceptsOnlyAuthenticatedFrames(t *testing.T) {
 	}
 	if _, _, err := Parse(whole, testKey[:8]); err == nil {
 		t.Fatal("a short key was accepted")
+	}
+}
+
+// A guest that writes to the runner's stdout can print a marker every hundred bytes,
+// each claiming the rest of the stream as its body: hashing every candidate in full is
+// quadratic in the stream (review, 2026-10-26). Parse stops at hashBudget and reads the
+// stream as unauthenticated; a real report that comes first is still read in full.
+func TestParseBoundsTheBytesItHashes(t *testing.T) {
+	key := bytes.Repeat([]byte{7}, KeySize)
+	// 4,000 markers, each claiming exactly the rest of the stream as its body: about
+	// 2 GiB of hashing without the bound, under 2 x StdoutCap with it. The claims are
+	// sized from the end, since each depends on the digits of those after it.
+	const candidates = 4000
+	const filler = 200
+	pad := strings.Repeat("x", filler)
+	fakeMAC := strings.Repeat("ab", sha256.Size)
+	claims := make([]int, candidates)
+	suffix := 0
+	for i := candidates - 1; i >= 0; i-- {
+		claims[i] = filler + suffix
+		suffix += len(Marker) + 1 + len(strconv.Itoa(claims[i])) + 1 + len(fakeMAC) + 1 + filler
+	}
+	var sb strings.Builder
+	for _, claim := range claims {
+		fmt.Fprintf(&sb, "%s %d %s\n%s", Marker, claim, fakeMAC, pad)
+	}
+	out := sb.String()
+	rep, found, hashed, err := parse(out, key)
+	if !found || !errors.Is(err, ErrUnauthenticated) || rep.Err != "" {
+		t.Fatalf("found=%v err=%v rep=%+v; want found, unauthenticated, no report", found, err, rep)
+	}
+	if hashed < hashBudget || hashed > hashBudget+StdoutCap {
+		t.Fatalf("hashed %d bytes; want the budget reached, between %d and %d", hashed, hashBudget, hashBudget+StdoutCap)
+	}
+
+	// The real frame first, then the flood: the report is read and the flood never hashed.
+	body := []byte(`{"steps":[],"artifacts":[],"artifactsTruncated":false}`)
+	mac := hmac.New(sha256.New, key)
+	mac.Write(body)
+	real := fmt.Sprintf("%s %d %s\n%s", Marker, len(body), hex.EncodeToString(mac.Sum(nil)), body)
+	rep, found, hashed, err = parse(real+out, key)
+	if err != nil || !found || hashed != len(body) {
+		t.Fatalf("real frame first: err=%v found=%v hashed=%d; want the report with %d bytes hashed", err, found, hashed, len(body))
+	}
+	if rep.Err != "" || len(rep.Steps) != 0 {
+		t.Fatalf("report = %+v", rep)
 	}
 }
 

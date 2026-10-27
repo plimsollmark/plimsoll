@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"io"
 	"slices"
 	"sync"
@@ -354,6 +355,27 @@ func VerifyEntry(v *Verifier, e Entry) (sandbox.RunRecord, Link, error) {
 	return rec, l, nil
 }
 
+// VerifyCall verifies a call line's statement and its record against the stored request
+// and response alone, with no link and no bundle around it: what a line from before
+// links (v0.10.0 to v0.17.x) can prove, and what VerifyEntry proves of a linked line
+// before its link. It authenticates the recorded exchange, not where the line stands:
+// a holder can drop or reorder such lines unseen, which is why ReadBundle refuses a
+// bundle of them whole. plimsoll-attest verify-record is its command (review,
+// 2026-10-26).
+func VerifyCall(v *Verifier, e Entry) (sandbox.RunRecord, error) {
+	if len(e.Request) == 0 && len(e.Response) == 0 {
+		return sandbox.RunRecord{}, fmt.Errorf("%w: the line holds no call", ErrStatement)
+	}
+	rec, err := v.Verify(e.Envelope)
+	if err != nil {
+		return sandbox.RunRecord{}, err
+	}
+	if err := matchStored(e, rec); err != nil {
+		return sandbox.RunRecord{}, err
+	}
+	return rec, nil
+}
+
 // verifyEntries is VerifyBundle, also returning each call entry's signed record by
 // index (the zero record for a close statement), so a replay reads its baseline from
 // what was signed rather than from the stored response.
@@ -594,7 +616,7 @@ func (r Replayed) Match() bool { return r.Err == nil && r.Unanswered == "" && r.
 // fresh session and the calls in order. The bundle is verified with v first (as
 // VerifyBundle does) and nothing is sent unless it verifies; each baseline is the
 // signed record's result digest.
-func Replay(ctx context.Context, entries []Entry, v *Verifier, send func(context.Context, *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error)) ([]Replayed, error) {
+func Replay(ctx context.Context, entries []Entry, v *Verifier, opts ReplayOptions, send func(context.Context, *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error)) ([]Replayed, error) {
 	_, recs, err := verifyEntries(entries, v)
 	if err != nil {
 		return nil, err
@@ -609,6 +631,11 @@ func Replay(ctx context.Context, entries []Entry, v *Verifier, send func(context
 			return nil, fmt.Errorf("entry %d: %w", i+1, err)
 		}
 		r := Replayed{Entry: i + 1, Recorded: recs[i].ResultSHA256}
+		if skip := notReplayable(req, opts); skip != nil {
+			r.Err = skip
+			out = append(out, r)
+			continue
+		}
 		got, err := send(ctx, req)
 		if err != nil {
 			r.Err = err
@@ -618,6 +645,33 @@ func Replay(ctx context.Context, entries []Entry, v *Verifier, send func(context
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// ReplayOptions says what a replay may send again. A recorded request that carries a
+// grant profile reaches the upstream API again when sent, with a fresh route budget,
+// so it is not replayed unless WithGrants; a request recorded under another protocol
+// number is never replayed, since the fields that number governs may run differently
+// now. Both used to be sent as stored (review, 2026-10-26).
+type ReplayOptions struct {
+	WithGrants bool
+}
+
+// ErrNotReplayable marks a recorded request the replay did not send; the Replayed's
+// Err says why.
+var ErrNotReplayable = errors.New("attest: the recorded request was not replayed")
+
+func notReplayable(req *plimsollv1.RunRequest, opts ReplayOptions) error {
+	profile := req.GetJavascript().GetGrantProfile()
+	if profile == "" {
+		profile = req.GetProject().GetGrantProfile()
+	}
+	switch {
+	case req.GetProtocol() != protocol.Number:
+		return fmt.Errorf("%w: recorded under protocol %d, and this replay speaks %d", ErrNotReplayable, req.GetProtocol(), protocol.Number)
+	case profile != "" && !opts.WithGrants:
+		return fmt.Errorf("%w: it carries grant profile %q, which would call the upstream API again (allow grants to send it)", ErrNotReplayable, profile)
+	}
+	return nil
 }
 
 // SessionSender is a fresh session that a replay sends a recorded session's calls
@@ -632,7 +686,7 @@ type SessionSender interface {
 // session's later calls read what its earlier calls wrote, so only a whole session
 // replays; a deterministic session reproduces every call. The bundle is verified
 // with v first, as in Replay.
-func ReplaySessions(ctx context.Context, entries []Entry, v *Verifier, open func(context.Context) (SessionSender, error)) ([]Replayed, error) {
+func ReplaySessions(ctx context.Context, entries []Entry, v *Verifier, opts ReplayOptions, open func(context.Context) (SessionSender, error)) ([]Replayed, error) {
 	_, recs, err := verifyEntries(entries, v)
 	if err != nil {
 		return nil, err
@@ -651,7 +705,19 @@ func ReplaySessions(ctx context.Context, entries []Entry, v *Verifier, open func
 	}
 	var out []Replayed
 	for _, fp := range order {
-		sender, openErr := open(ctx)
+		// A session replays whole, so one call that may not be sent keeps the session
+		// unopened and marks every call of it.
+		var openErr error
+		for _, i := range calls[fp] {
+			req, _, _ := entries[i].Messages()
+			if openErr = notReplayable(req, opts); openErr != nil {
+				break
+			}
+		}
+		var sender SessionSender
+		if openErr == nil {
+			sender, openErr = open(ctx)
+		}
 		for _, i := range calls[fp] {
 			req, _, _ := entries[i].Messages()
 			r := Replayed{Entry: i + 1, Session: fp, Recorded: recs[i].ResultSHA256, Unanswered: recs[i].Unanswered}
@@ -685,6 +751,7 @@ type Harness struct {
 	w      io.Writer
 	lines  uint64 // lines in the bundle so far
 	prev   string // LineDigest of the last
+	err    error  // a failed write: the bundle may hold a partial line, so nothing more is appended
 }
 
 // NewHarness returns a Harness that signs with s and writes a new bundle to w.
@@ -710,13 +777,17 @@ func ResumeHarness(s *Signer, existing []Entry, w io.Writer) (*Harness, error) {
 func (h *Harness) write(e Entry) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.err != nil {
+		return h.err
+	}
 	link, err := h.signer.signLink(Link{Index: h.lines + 1, Previous: h.prev, Entry: ContentDigest(e)})
 	if err != nil {
 		return err
 	}
 	e.Link = &link
 	if err := WriteEntry(h.w, e); err != nil {
-		return err
+		h.err = fmt.Errorf("attest: a write failed and the bundle may hold a partial line, so this harness appends nothing more: %w", err)
+		return h.err
 	}
 	h.lines, h.prev = h.lines+1, LineDigest(e)
 	return nil
@@ -728,13 +799,17 @@ func (h *Harness) write(e Entry) error {
 func (h *Harness) Checkpoint() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.err != nil {
+		return h.err
+	}
 	link, err := h.signer.signLink(Link{Index: h.lines + 1, Previous: h.prev, Checkpoint: true, Lines: h.lines})
 	if err != nil {
 		return err
 	}
 	e := Entry{Link: &link}
 	if err := WriteEntry(h.w, e); err != nil {
-		return err
+		h.err = fmt.Errorf("attest: a write failed and the bundle may hold a partial line, so this harness appends nothing more: %w", err)
+		return h.err
 	}
 	h.lines, h.prev = h.lines+1, LineDigest(e)
 	return nil

@@ -160,7 +160,9 @@ in force ([docs/hardened-mode.md](docs/hardened-mode.md)).
 - `plimsolld` serves `plimsoll.v1.SandboxService` over Connect; auth is fail-closed when
   configured (`PLIMSOLL_CLIENTS_FILE`, then `PLIMSOLL_TOKEN`, then open dev mode with a
   warning). Every run is audit-logged with the principal, sizes, profile, provider, exit,
-  duration, never the code. Internal faults reach a caller as `internal error <id>` only.
+  duration, never the code (a run's outcome detail can carry the runner's own error text,
+  which may name a caller's file: [docs/efficiency-advisor.md](docs/efficiency-advisor.md)).
+  Internal faults reach a caller as `internal error <id>` only.
 - The advisor is post-dispatch analysis over a metadata-only `CallTrace`; it never calls a
   model and never changes a run. [docs/efficiency-advisor.md](docs/efficiency-advisor.md).
 
@@ -280,4 +282,5 @@ spent tags: never reuse one). **Do not re-add a `GONOSUMDB` exemption for this m
   `attest/testdata/published/`), because a record's value is that it can be checked
   later. Writers write the current version only, and a live answer must carry it. A
   published version is retired only by a dated, announced decision. Bundles from before
-  links (v0.10.0 to v0.17.x) are not read whole: their records verify one line at a time.
+  links (v0.10.0 to v0.17.x) are not read whole: their records verify one line at a time
+  (`plimsoll-attest verify-record`, `attest.VerifyCall`).

@@ -433,6 +433,7 @@ type e2bSmokeCalls struct {
 	procEnvs    map[string]string
 	starts      int // every process started, the language probe included
 	deleted     bool
+	end         string // the end event's object when a test scripts one; "" is exited with exitCode
 }
 
 // e2bSmokeFake serves the minimal control-plane + envd surface SmokeTest touches,
@@ -492,7 +493,11 @@ func e2bSmokeFake(t *testing.T, report string, exitCode int) (*httptest.Server, 
 			w.Header().Set("Content-Type", "application/connect+json")
 			stdout := base64.StdEncoding.EncodeToString([]byte(out))
 			_, _ = w.Write(frame(0, []byte(`{"event":{"data":{"stdout":"`+stdout+`"}}}`)))
-			_, _ = w.Write(frame(0, []byte(`{"event":{"end":{"exitCode":`+strconv.Itoa(exitCode)+`,"exited":true}}}`)))
+			end := `{"exitCode":` + strconv.Itoa(exitCode) + `,"exited":true}`
+			if calls.end != "" {
+				end = calls.end
+			}
+			_, _ = w.Write(frame(0, []byte(`{"event":{"end":`+end+`}}`)))
 			_, _ = w.Write(frame(0x2, []byte(`{}`)))
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -881,5 +886,41 @@ func TestE2BCreateBillsUntilTheTimeoutItAskedFor(t *testing.T) {
 	if want := before.Add(timeout + 10*time.Second); vm.billEnd.Before(want) {
 		t.Fatalf("billEnd is %v before the timeout it asked for ends; it must not charge less",
 			want.Sub(vm.billEnd))
+	}
+}
+
+// TestExitStatusReportsASignalAsAShellDoes: envd's end event read as a shell reports an
+// exit, its own code when it exited, 128 plus the signal when one ended it.
+func TestExitStatusReportsASignalAsAShellDoes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		out  procOutput
+		want int
+	}{
+		{procOutput{exitCode: 3, exited: true}, 3},
+		{procOutput{exitCode: -1, exited: false, status: "signal: killed"}, 137},
+		{procOutput{exitCode: -1, exited: false, status: "signal: terminated"}, 143},
+		{procOutput{exitCode: 9, exited: false, status: "something else"}, 9},
+	} {
+		if got := exitStatus(tc.out); got != tc.want {
+			t.Errorf("exitStatus(%+v) = %d, want %d", tc.out, got, tc.want)
+		}
+	}
+}
+
+// TestE2BSnippetEndedBySignalReportsShellStatus: a one-shot snippet a signal ended reports
+// 128 plus the signal, as a session's call and the runner do; it used to report envd's raw
+// code (review, 2026-10-26).
+func TestE2BSnippetEndedBySignalReportsShellStatus(t *testing.T) {
+	t.Parallel()
+	srv, calls := e2bSmokeFake(t, "", 0)
+	calls.end = `{"exitCode":-1,"exited":false,"status":"signal: killed"}`
+	e := &E2B{APIKey: "k", APIBase: srv.URL, EnvdHost: func(string) string { return srv.URL }, DefaultTimeout: 30 * time.Second, MaxTimeout: 30 * time.Second}
+	res, err := e.RunJavaScript(context.Background(), Request{Code: "1"})
+	if err != nil {
+		t.Fatalf("RunJavaScript: %v", err)
+	}
+	if res.ExitCode != 137 || res.TimedOut {
+		t.Fatalf("exit %d, timed out %v; want 137 and not timed out", res.ExitCode, res.TimedOut)
 	}
 }

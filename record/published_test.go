@@ -73,7 +73,14 @@ func TestPublishedVectorsStillHold(t *testing.T) {
 			versions[rec.Version] = true
 		}
 	}
-	for _, v := range []int{2, 3} {
+	// Every published version below the live one needs a frozen vector here, except
+	// version 1, whose vector is attest's v0.11.1 bundle; the live version's vector is
+	// frozen at its release (docs/releasing.md), so a literal list no longer decides
+	// (review, 2026-10-26).
+	for v := range published {
+		if v == Version || v == 1 {
+			continue
+		}
 		if !versions[v] {
 			t.Errorf("no published vector holds a version %d record", v)
 		}

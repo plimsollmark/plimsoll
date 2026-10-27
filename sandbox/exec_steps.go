@@ -43,8 +43,10 @@ type stepOutput struct {
 
 // runExecSteps runs steps in order through run, all inside ctx's deadline: it stops at
 // the first step that fails or times out, and a step ended by the deadline is reported
-// timed out (exit 124) and makes the run timed out, the steps before it kept. An error
-// that is not the deadline is the transport's, returned with the steps that ran.
+// timed out (exit 124) with what it wrote before, as the runner reports one, and makes
+// the run timed out, the steps before it kept. An error that is not the deadline is the
+// transport's, returned with the steps that ran. run returns what the transport had
+// captured with its error, so the deadline path keeps it (review, 2026-10-26).
 func runExecSteps(ctx context.Context, steps []string, run func(ctx context.Context, i int, step string) (stepOutput, error)) ([]StepResult, ProjectOutcome, string, error) {
 	var out []StepResult
 	for i, step := range steps {
@@ -52,7 +54,11 @@ func runExecSteps(ctx context.Context, steps []string, run func(ctx context.Cont
 		o, err := run(ctx, i, step)
 		if err != nil {
 			if deadline.Expired(ctx) == context.DeadlineExceeded {
-				out = append(out, StepResult{Command: step, ExitCode: 124, TimedOut: true, Duration: time.Since(start)})
+				out = append(out, StepResult{
+					Command: step, Stdout: o.stdout, Stderr: o.stderr,
+					StdoutTruncated: o.stdoutTruncated, StderrTruncated: o.stderrTruncated,
+					ExitCode: 124, TimedOut: true, Duration: time.Since(start),
+				})
 				return out, ProjectOutcomeTimedOut, "run exceeded the time budget", nil
 			}
 			return out, ProjectOutcomeUnspecified, "", err

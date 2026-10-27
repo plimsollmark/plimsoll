@@ -155,11 +155,27 @@ type Report struct {
 // result is (zero report, true, ErrUnauthenticated). Every verified frame carries the
 // same body (only the runner holds the key and it reports once; a copy is a replay),
 // so the first is taken.
+//
+// The bytes it hashes are bounded (hashBudget): a guest that can write to the runner's
+// stdout can print a marker every hundred bytes, each with a header claiming the rest
+// of the stream, and without the bound every candidate's body was hashed in full, about
+// 1.3 TiB from a 16 MiB stdout, inside the handler after the container had exited
+// (review, 2026-10-26). The runner reports once, so one body of at most StdoutCap is
+// all a real stream needs; past the budget the stream is a hostile one and reads as
+// unauthenticated, which such a guest could already force.
 func Parse(out string, key []byte) (Report, bool, error) {
+	rep, found, _, err := parse(out, key)
+	return rep, found, err
+}
+
+// hashBudget is the most bytes Parse hashes over every candidate frame together.
+const hashBudget = 2 * StdoutCap
+
+// parse is Parse, also returning how many bytes it hashed.
+func parse(out string, key []byte) (rep Report, found bool, hashed int, err error) {
 	if len(key) != KeySize {
-		return Report{}, false, fmt.Errorf("parse with a %d-byte report key, want %d", len(key), KeySize)
+		return Report{}, false, 0, fmt.Errorf("parse with a %d-byte report key, want %d", len(key), KeySize)
 	}
-	found := false
 	for i := 0; ; {
 		j := strings.Index(out[i:], Marker)
 		if j < 0 {
@@ -168,52 +184,60 @@ func Parse(out string, key []byte) (Report, bool, error) {
 		found = true
 		start := i + j + len(Marker)
 		i = start
-		body, ok := frameBody(out[start:], key)
+		body, n, ok := frameBody(out[start:], key, hashBudget-hashed)
+		hashed += n
+		if hashed >= hashBudget {
+			return Report{}, true, hashed, ErrUnauthenticated
+		}
 		if !ok {
 			continue
 		}
 		rep, err := decode(body)
 		if err != nil {
 			// Authenticated but undecodable: the runner itself wrote bad JSON.
-			return Report{}, true, err
+			return Report{}, true, hashed, err
 		}
-		return rep, true, nil
+		return rep, true, hashed, nil
 	}
 	if found {
-		return Report{}, true, ErrUnauthenticated
+		return Report{}, true, hashed, ErrUnauthenticated
 	}
-	return Report{}, false, nil
+	return Report{}, false, hashed, nil
 }
 
 // frameBody reads " <length> <mac>\n<body>" and returns the body if the header is
-// well formed, the body is complete, and its MAC verifies.
-func frameBody(rest string, key []byte) ([]byte, bool) {
+// well formed, the body is complete, and its MAC verifies, with the bytes it hashed. A
+// body longer than budget is not hashed: it counts as budget, and does not verify.
+func frameBody(rest string, key []byte, budget int) ([]byte, int, bool) {
 	nl := strings.IndexByte(rest, '\n')
 	if nl < 0 || nl > 96 {
-		return nil, false
+		return nil, 0, false
 	}
 	fields := strings.Split(rest[:nl], " ")
 	if len(fields) != 3 || fields[0] != "" {
-		return nil, false
+		return nil, 0, false
 	}
 	n, err := strconv.Atoi(fields[1])
 	if err != nil || n < 0 || n > StdoutCap || strconv.Itoa(n) != fields[1] {
-		return nil, false
+		return nil, 0, false
 	}
 	mac, err := hex.DecodeString(fields[2])
 	if err != nil || len(mac) != sha256.Size {
-		return nil, false
+		return nil, 0, false
 	}
 	if len(rest)-(nl+1) < n {
-		return nil, false
+		return nil, 0, false
+	}
+	if n > budget {
+		return nil, budget, false
 	}
 	body := []byte(rest[nl+1 : nl+1+n])
 	h := hmac.New(sha256.New, key)
 	h.Write(body)
 	if !hmac.Equal(h.Sum(nil), mac) {
-		return nil, false
+		return nil, n, false
 	}
-	return body, true
+	return body, n, true
 }
 
 func decode(body []byte) (Report, error) {

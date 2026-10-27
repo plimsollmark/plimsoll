@@ -59,6 +59,7 @@ func Run(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 		{"DeadlineEndsTheCallNotTheSession", deadlineEndsCall},
 		{"HeldOutputEndsAtTheDeadline", heldOutput},
 		{"SuspendKeepsFiles", suspendKeepsFiles},
+		{"DiskBudgetEndsTheSession", diskBudgetEndsSession},
 		{"FloorAboveTheTierIsRefusedBeforeDispatch", floorRefused},
 		{"CloseEndsTheSession", closeEnds},
 		{"LifetimeEndsTheSession", lifetimeEnds},
@@ -664,18 +665,68 @@ func suspendKeepsFiles(t *testing.T, p sandbox.SessionProvider, cfg Config) {
 	s := open(t, p, cfg.Lifetime)
 	tok := token(t)
 	js(t, s, fmt.Sprintf(`require("fs").writeFileSync("/tmp/s.txt",%q)`, tok), 10*time.Second)
+	// A live interpreter tells a real suspend from a no-op: a suspend that gives up the
+	// memory (a stopped container) must end it, one that holds the memory (a pause) must
+	// keep it, state included (review, 2026-10-26).
+	if first := cell(t, s, sandbox.LanguageJavaScript, "globalThis.kept = 41", 30*time.Second); first.ExitCode != 0 || !first.InterpreterStarted {
+		t.Fatalf("the cell before the suspend: %+v", first)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	start := time.Now()
-	if _, err := s.Suspend(ctx); err != nil {
+	holds, err := s.Suspend(ctx)
+	if err != nil {
 		t.Fatalf("Suspend: %v", err)
 	}
 	suspended := time.Since(start)
 	start = time.Now()
 	got := js(t, s, `process.stdout.write(require("fs").readFileSync("/tmp/s.txt","utf8"))`, 10*time.Second)
-	t.Logf("suspend took %v; the next call, resume included, %v", suspended.Round(time.Millisecond), time.Since(start).Round(time.Millisecond))
+	t.Logf("suspend took %v (holds memory %v); the next call, resume included, %v", suspended.Round(time.Millisecond), holds, time.Since(start).Round(time.Millisecond))
 	if got.Stdout != tok {
 		t.Fatalf("after suspend the session reads %q, want %q", got.Stdout, tok)
+	}
+	after := cell(t, s, sandbox.LanguageJavaScript, "console.log(globalThis.kept)", 30*time.Second)
+	switch {
+	case after.ExitCode != 0:
+		t.Fatalf("the cell after the suspend: %+v", after)
+	case holds && (after.InterpreterStarted || strings.TrimSpace(after.Stdout) != "41"):
+		t.Fatalf("a suspend that holds memory must keep the interpreter and its state: %+v", after)
+	case !holds && (!after.InterpreterStarted || strings.TrimSpace(after.Stdout) == "41"):
+		t.Fatalf("a suspend that gives up memory must end the interpreter, so the next cell starts one: %+v", after)
+	}
+}
+
+// diskBudgetEndsSession holds a provider to the disk budget every session here is opened
+// with (64 MiB): a call that leaves less goes on, a call that leaves more ends the session
+// with disk_exceeded, which the sweep after that call measures. The suite never wrote past
+// the budget before, so a Measure that measured nothing passed (review, 2026-10-26).
+func diskBudgetEndsSession(t *testing.T, p sandbox.SessionProvider, cfg Config) {
+	s := open(t, p, cfg.Lifetime)
+	write := func(name string, mib int) {
+		t.Helper()
+		res := js(t, s, fmt.Sprintf(`const fs=require("fs"),b=Buffer.alloc(1<<20,120);const fd=fs.openSync(%q,"w");for(let i=0;i<%d;i++)fs.writeSync(fd,b);fs.closeSync(fd)`, name, mib), 60*time.Second)
+		if res.ExitCode != 0 {
+			t.Fatalf("writing %d MiB to %s: exit %d, stderr %q", mib, name, res.ExitCode, res.Stderr)
+		}
+	}
+	write("under.bin", 40)
+	if res := js(t, s, `console.log(require("fs").statSync("under.bin").size)`, 10*time.Second); strings.TrimSpace(res.Stdout) != "41943040" {
+		t.Fatalf("after 40 MiB on a 64 MiB budget the session must go on: %+v", res)
+	}
+	js(t, s, `require("fs").unlinkSync("under.bin")`, 10*time.Second)
+	write("over.bin", 72)
+	// The sweep after that call measures 72 MiB against 64 and ends the session; Done
+	// closes once its sandbox is gone.
+	select {
+	case <-s.Done():
+	case <-time.After(cfg.Teardown + 60*time.Second):
+		t.Fatal("the session did not end after a call left 72 MiB on a 64 MiB budget")
+	}
+	if got := sandbox.SessionEndReason(s.Err()); got != sandbox.SessionDiskExceeded {
+		t.Fatalf("the session ended with %v (%v); want disk_exceeded", got, s.Err())
+	}
+	if _, err := s.RunJavaScript(context.Background(), sandbox.Request{Code: `console.log(1)`, Timeout: 10 * time.Second}); !errors.Is(err, sandbox.ErrSessionEnded) {
+		t.Fatalf("a call after the budget was passed: %v; want the session ended", err)
 	}
 }
 

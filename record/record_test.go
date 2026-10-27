@@ -639,3 +639,22 @@ func TestCheckRefusesUncoveredFieldsAndFloorViolations(t *testing.T) {
 		})
 	}
 }
+
+// A daemon that answers a request of one kind with a result of another, its record
+// stamped over that result so every digest matches, is refused by the record check
+// itself, live and stored, so no such exchange is signed into a bundle; so is an
+// answered record with no result at all (review, 2026-10-26).
+func TestCheckRefusesAResultOfAnotherKind(t *testing.T) {
+	req := jsRequest()
+	resp := signedResponse(req, projectResponse())
+	if _, err := Check(req, resp); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("a project result for a snippet request: %v, want ErrMismatch", err)
+	}
+	if _, err := CheckExchange(req, resp); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("stored, a project result for a snippet request: %v, want ErrMismatch", err)
+	}
+	none := signedResponse(req, &plimsollv1.RunResponse{})
+	if _, err := Check(req, none); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("no result for a snippet request: %v, want ErrMismatch", err)
+	}
+}

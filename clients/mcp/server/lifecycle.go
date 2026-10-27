@@ -318,11 +318,11 @@ func (s *Server) openSession(ctx context.Context) (*client.Session, []sandbox.La
 		return nil, nil, s.failed(ctx, err)
 	}
 	if !info.SupportsSessions {
-		return nil, nil, refused(sandbox.RefusalUnsupported, "this plimsoll daemon (%s) keeps no sessions (its SANDBOX_MAX_SESSIONS is 0, or its provider has none), so every run_code call runs fresh; call run_code without sandbox", info.Sandbox)
+		return nil, nil, refused(sandbox.RefusalUnsupported, "this plimsoll daemon (%s) keeps no sessions (its SANDBOX_MAX_SESSIONS is 0, or its provider has none), so every run_code call runs fresh; call run_code without sandbox", clipRunes(info.Sandbox, 100))
 	}
 	langs := s.offered(info.SessionEnvironment)
 	if len(langs) == 0 {
-		return nil, nil, refused(sandbox.RefusalUnsupported, "a sandbox here runs %v, none of the %s this server offers", info.SessionEnvironment.Languages, joinNames(s.cfg.Languages))
+		return nil, nil, refused(sandbox.RefusalUnsupported, "a sandbox here runs %s, none of the %s this server offers", clipRunes(fmt.Sprint(info.SessionEnvironment.Languages), 200), joinNames(s.cfg.Languages))
 	}
 	sess, err := s.remote.OpenSession(ctx, client.SessionOptions{
 		MinimumIsolation: s.cfg.MinimumIsolation,
@@ -337,7 +337,7 @@ func (s *Server) openSession(ctx context.Context) (*client.Session, []sandbox.La
 		f := s.failed(ctx, err)
 		if f.Ran != "no" {
 			f.Ran = "no"
-			f.Summary = fmt.Sprintf("Nothing ran: the sandbox did not open: %v", err)
+			f.Summary = "Nothing ran: the sandbox did not open: " + shown(err)
 		}
 		return nil, nil, f
 	}
@@ -474,10 +474,18 @@ func (s *Server) openSandbox(ctx context.Context, in openInput) (openOutput, *fa
 		return openOutput{}, f
 	}
 	if s.stopped || ctx.Err() != nil || s.grantRevokedLocked(ctx) {
+		why := shuttingDown
+		switch {
+		case s.stopped:
+		case s.grantRevokedLocked(ctx):
+			why = refused(sandbox.RefusalPermission, "the connector's authorization was revoked as the sandbox opened; the sandbox is being closed")
+		default:
+			why = refused(sandbox.RefusalRequest, "the call ended (canceled, or at this server's deadline) as the sandbox opened; the sandbox is being closed")
+		}
 		c := s.spawnLocked(nil, func(c *closing) closed { return s.closeSession(c, sess) })
 		c.grant, c.group = g, group
 		s.mu.Unlock()
-		return openOutput{}, shuttingDown
+		return openOutput{}, why
 	}
 	b := &box{grant: g, group: group, handle: newHandle(), turn: make(chan struct{}, 1), sess: sess, langs: langs, first: true, kit: k, kitDue: k != nil, changed: make(chan struct{})}
 	s.boxes[b.handle] = b
@@ -537,14 +545,14 @@ func (s *Server) closeSandbox(ctx context.Context, in handleInput) (closeOutput,
 		return out, nil
 	}
 	if c.firstErr != nil {
-		out.Summary = fmt.Sprintf("Sandbox %s is closed to this server and its handle no longer works, but the daemon has not confirmed its deletion (%v); it is tried once more in the background, and ends at its lifetime at the latest.", in.Sandbox, c.firstErr)
+		out.Summary = fmt.Sprintf("Sandbox %s is closed to this server and its handle no longer works, but the daemon has not confirmed its deletion (%s); it is tried once more in the background, and ends at its lifetime at the latest.", in.Sandbox, shown(c.firstErr))
 		return out, nil
 	}
 	// The handle's earlier sandboxes, ones the daemon ended and this server replaced, are
 	// deleted in the background: deleted is said only once every one is confirmed.
 	switch pending, err := s.deletionsOf(ctx, b); {
 	case err != nil:
-		out.Summary = fmt.Sprintf("Sandbox %s is closed to this server and its handle no longer works, and its last sandbox was deleted, but the daemon did not confirm the deletion of an earlier one (one it ended, which this server replaced): %v. That one ends at its lifetime at the latest.", in.Sandbox, err)
+		out.Summary = fmt.Sprintf("Sandbox %s is closed to this server and its handle no longer works, and its last sandbox was deleted, but the daemon did not confirm the deletion of an earlier one (one it ended, which this server replaced): %s. That one ends at its lifetime at the latest.", in.Sandbox, shown(err))
 		return out, nil
 	case pending:
 		out.Summary = fmt.Sprintf("Sandbox %s is closed to this server and its handle no longer works, and its last sandbox was deleted; an earlier one (one the daemon ended, which this server replaced) is still being deleted, so the daemon has not confirmed every deletion yet. It ends at its lifetime at the latest.", in.Sandbox)
@@ -563,6 +571,10 @@ func (s *Server) closeSandbox(ctx context.Context, in handleInput) (closeOutput,
 	}
 	return out, nil
 }
+
+// runAnswerMargin is what a run needs of a call's time beyond its own budget: the
+// daemon's answer, the record's check and its keeping.
+const runAnswerMargin = 5 * time.Second
 
 func (s *Server) runIn(ctx context.Context, handle string, lang sandbox.Language, code string, files []sandbox.File) (runOutput, *failure) {
 	s.mu.Lock()
@@ -587,15 +599,57 @@ func (s *Server) runIn(ctx context.Context, handle string, lang sandbox.Language
 		b.busy--
 		s.mu.Unlock()
 	}()
-	if err := b.acquire(ctx); err != nil {
-		return runOutput{}, refused(sandbox.RefusalCapacity, "the call waited for an earlier call in sandbox %s until this server's deadline", handle)
+	waitStart, waited := time.Now(), false
+	select {
+	case b.turn <- struct{}{}: // the turn was free: the call has its whole deadline
+	default:
+		waited = true
+		if err := b.acquire(ctx); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return runOutput{}, refused(sandbox.RefusalCapacity, "the call waited for an earlier call in sandbox %s until it was canceled", handle)
+			}
+			return runOutput{}, refused(sandbox.RefusalCapacity, "the call waited for an earlier call in sandbox %s until this server's deadline", handle)
+		}
 	}
 	defer b.unlock()
 	s.mu.Lock()
-	gone := s.stopped || s.boxes[handle] != b || s.grantRevokedLocked(ctx) || ctx.Err() != nil
+	stopped, replaced, revoked := s.stopped, s.boxes[handle] != b, s.grantRevokedLocked(ctx)
+	grant := s.grantLocked(ctx)
 	s.mu.Unlock()
-	if gone {
+	switch {
+	case stopped:
+		return runOutput{}, shuttingDown
+	case replaced:
 		return runOutput{}, refused(sandbox.RefusalRequest, "sandbox %s was closed while this call waited its turn", handle)
+	case revoked:
+		return runOutput{}, refused(sandbox.RefusalPermission, "the connector's authorization was revoked while this call waited its turn")
+	case ctx.Err() != nil:
+		return runOutput{}, refused(sandbox.RefusalCapacity, "the call ended (canceled, or at this server's deadline) while it waited for sandbox %s's turn", handle)
+	}
+	// A call that waited for its turn has only what is left of the call's deadline, and
+	// used to run under the whole run budget inside it, so the deadline cut the run off
+	// mid-way: a transport error with no record, the session given up as untrusted and its
+	// sandbox deleted, everything in it lost. Now it is refused before anything is sent
+	// when what is left is under the budget. A call that did not wait has the whole
+	// deadline, which Config sizes for the run (review, 2026-10-26).
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(s.cfg.CallTimeout)
+	}
+	if left := time.Until(deadline); waited && left < s.cfg.RunTimeout+runAnswerMargin {
+		return runOutput{}, refused(sandbox.RefusalCapacity, "the call waited %s for sandbox %s's turn and %s remain of this server's %s call deadline, under the %s run budget plus %s for the answer; call again",
+			time.Since(waitStart).Round(time.Second), handle, left.Round(time.Second), s.cfg.CallTimeout, s.cfg.RunTimeout, runAnswerMargin)
+	}
+	// The run itself goes under a context of this server's own: the host's cancellation
+	// (a user's Escape, notifications/cancelled, a dropped connection) used to cut a run
+	// off with the same effect as the deadline. The deadline, this server's shutdown and
+	// the grant's revocation still end it; a host that gave up does not see the answer,
+	// which is kept and recorded all the same.
+	runCtx, cancelRun := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+	defer cancelRun()
+	defer context.AfterFunc(s.stopCtx, cancelRun)()
+	if grant != nil {
+		defer context.AfterFunc(grant.ctx, cancelRun)()
 	}
 
 	for attempt := 0; ; attempt++ {
@@ -633,11 +687,11 @@ func (s *Server) runIn(ctx context.Context, handle string, lang sandbox.Language
 		if f := s.full(); f != nil { // the quota again, at dispatch, for a call that waited
 			return runOutput{}, f
 		}
-		r, err := b.sess.RunCell(ctx, req)
+		r, err := b.sess.RunCell(runCtx, req)
 		if answered(err, r.Record) {
 			// A result that checked, kept or not: only keeping its record can have failed.
 			ended := b.sess.Ended() != nil
-			out := s.output(ctx, use, r.ExitCode, r.TimedOut, r.Stdout, r.Stderr, r.StdoutTruncated || r.StderrTruncated, r.Isolation, r.SoftwareIdentity, r.Record)
+			out := s.output(runCtx, use, r.ExitCode, r.TimedOut, r.Stdout, r.Stderr, r.StdoutTruncated || r.StderrTruncated, r.Isolation, r.SoftwareIdentity, r.Record)
 			out.Receipt = s.receiptFor(r.Record, err)
 			out.StateKept = !r.InterpreterEnded && !ended
 			out.FreshInterpreter = r.InterpreterStarted
@@ -666,7 +720,7 @@ func (s *Server) runIn(ctx context.Context, handle string, lang sandbox.Language
 			b.sess = nil
 			continue
 		}
-		f := s.failed(ctx, err)
+		f := s.failed(runCtx, err)
 		if f.Ran == "maybe" {
 			// It may have left files or state: the next call must not say the sandbox is new.
 			b.first = false

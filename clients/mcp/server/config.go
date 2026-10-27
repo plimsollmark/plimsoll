@@ -324,7 +324,7 @@ func (c Config) withDefaults() (Config, error) {
 	// A run that cannot finish inside the call would be cut off by the server's own
 	// deadline, which the model would read as a run that may have happened.
 	if c.RunTimeout+10*time.Second > c.CallTimeout {
-		return c, fmt.Errorf("the run timeout (%s) must be at least 10 s under the call timeout (%s), which also covers opening a sandbox and waiting for its turn", c.RunTimeout, c.CallTimeout)
+		return c, fmt.Errorf("the run timeout (%s) must be at least 10 s under the call timeout (%s), which also covers opening a sandbox; a call that waited for its sandbox's turn is refused, not cut off, when less than the run timeout plus 5 s remains", c.RunTimeout, c.CallTimeout)
 	}
 	return c, nil
 }

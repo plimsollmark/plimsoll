@@ -58,7 +58,8 @@ class PlimsollError(Exception):
     is the HTTP status of the daemon's answer, ``None`` when there was none.
     ``unanswered`` is the record the daemon sends with a session call that may have
     run but ended in an error (an unanswered record, in its proto3 JSON form): the
-    Session checks it and keeps it in its chain, so the session goes on. ``record``
+    Session checks it and keeps it in its chain, so the session goes on; on a single
+    run's error it is kept as it came and checked by nothing. ``record``
     is that record once the Session has checked it (Go: ``UnansweredCallError.Record``),
     else ``None``. ``answer_not_bound`` is true for an error built from an answer that
     did not carry this request's ``Plimsoll-Request-Id`` back (Go:
@@ -178,8 +179,9 @@ class SessionEndedError(PlimsollError):
     (Go: ``sandbox.SessionEndedError``).
 
     ``reason`` is why it ended: ``closed``, ``expired``, ``disk_exceeded``,
-    ``main_process_ended``, ``boundary_failed``, ``sandbox_changed`` or
-    ``shutdown``. ``detail`` is the daemon's context, possibly empty.
+    ``main_process_ended``, ``boundary_failed``, ``sandbox_changed``, ``shutdown``,
+    ``replaced``, ``not_found``, ``unclaimed`` or, for a number this client has no name
+    for, ``unknown``. ``detail`` is the daemon's context, possibly empty.
     """
 
     default_code = "failed_precondition"

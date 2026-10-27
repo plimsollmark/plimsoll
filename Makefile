@@ -33,7 +33,7 @@ DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: audit build vet modules test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite agentsandbox-suite modproxy tools tools-check help
+.PHONY: nemotron-verifier audit build vet modules test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite agentsandbox-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
@@ -53,9 +53,19 @@ audit: tools-check build vet modules race lint buf vuln
 -include local.mk
 audit: $(EXTRA_AUDIT)
 
-## build: compile every package
+## build: compile every package, and the browser verifier for WebAssembly (nemotron-verifier builds the shipped file)
 build:
 	go build ./...
+	GOOS=js GOARCH=wasm go build -o /dev/null ./examples/nemotron-agent/verifier
+
+## nemotron-verifier: build the browser verifier (plimsoll's bundle verification compiled to WebAssembly) into docs/examples/nemotron-agent, gzip-compressed, with the Go toolchain's wasm_exec.js beside it
+nemotron-verifier:
+	@mkdir -p docs/examples/nemotron-agent
+	GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o tmp/verify.wasm ./examples/nemotron-agent/verifier
+	gzip -9 -n -c tmp/verify.wasm > docs/examples/nemotron-agent/verify.wasm.gz
+	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" docs/examples/nemotron-agent/wasm_exec.js
+	@rm -f tmp/verify.wasm
+	@ls -la docs/examples/nemotron-agent/verify.wasm.gz
 
 ## vet: go vet
 vet:

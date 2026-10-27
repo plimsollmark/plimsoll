@@ -11,7 +11,8 @@ protocol over `fetch` and keeps the promises the Go client keeps:
 
 - it states the protocol number on every request;
 - it checks every answer's **run record**: it recomputes the request and result digests
-  from what it sent and received ([run-records.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/run-records.md)), and an
+  from what it sent and received ([run-records.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/run-records.md)), refuses a
+  result of another kind than the request's and a record that ends before it starts, and an
   answer that does not check, or has no record, is a `data_loss` error with the result
   attached, because the code may have run;
 - it checks the reported isolation tier against the caller's floor the same way;
@@ -74,7 +75,7 @@ directory, before the code runs. Its result adds `interpreterStarted` (this call
 a fresh interpreter, so nothing defined earlier exists) and `interpreterEnded`; its exit code
 is 0 when the code ran, 1 when it raised and 124 at the deadline. Python needs `python3` in
 the daemon's image (`plimsoll/sandbox-python` has it, with NumPy and SciPy);
-`describe()` lists the languages the daemon proved on `environments.project.languages`.
+`describe()` lists the languages a session's cells run in on `sessionEnvironment.languages`.
 
 `close()` sends one `CloseSession` however many times it is called, and every later call
 gets the first one's summary or error: the daemon forgets a session at its first close and

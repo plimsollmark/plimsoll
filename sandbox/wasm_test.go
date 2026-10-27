@@ -105,6 +105,23 @@ func TestWasmTimeout(t *testing.T) {
 	}
 }
 
+// A run whose context is canceled mid-way (the caller hung up) is the context's error,
+// never a normal result: wazero reports the cancel as exit 0xffffffff, which read as a
+// result with exit 4294967295 (review, 2026-10-26).
+func TestWasmCanceledRunIsAnError(t *testing.T) {
+	w := testWasm()
+	w.DefaultTimeout = 10 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
+	res, err := w.RunJavaScript(ctx, Request{Code: `while (true) {}`})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, res = %+v; want context.Canceled", err, res)
+	}
+	if res.TimedOut || res.ExitCode != 0 {
+		t.Fatalf("a canceled run must carry no result: %+v", res)
+	}
+}
+
 // TestWasmZeroValueTimeoutFallbacks guards the fix for a hand-built WasmSandbox whose
 // MaxTimeout/DefaultTimeout were left zero: the zero value must still be bounded, not
 // treated as "no cap" (which let a caller pin an in-process slot indefinitely) and

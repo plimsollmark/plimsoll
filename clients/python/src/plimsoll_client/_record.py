@@ -14,7 +14,7 @@ import struct
 from typing import Iterable, Optional
 
 from ._wire import INT32, INT64, OUTCOMES, UINT32, UINT64, Msg
-from .errors import IsolationEvidenceMismatchError, NoRecordError, RecordMismatchError, RecordVersionError
+from .errors import IsolationEvidenceMismatchError, MalformedResponseError, NoRecordError, RecordMismatchError, RecordVersionError, ResultKindMismatchError
 from .types import RunRecord, SoftwareRule, meets
 
 VERSION = 4
@@ -259,10 +259,11 @@ def record_from_wire(m: Msg) -> RunRecord:
     )
 
 
-def check(req_digest: str, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:
+def check(req_digest: str, kind: str, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:
     """Everything a record states that the caller can recompute (record.check):
-    the version, both digests, the evidence the response repeats, the software
-    rule and the record's own digest. The rule was validated before sending."""
+    the version, that the result is of the request's kind, both digests, the
+    evidence the response repeats, the software rule, the record's own digest and
+    that it ends no earlier than it starts. The rule was validated before sending."""
     rec_msg = resp.get_msg("record")
     if rec_msg is None:
         raise NoRecordError("plimsoll: the response carries no run record")
@@ -272,6 +273,16 @@ def check(req_digest: str, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord
         raise RecordVersionError(_version_problem(r.version))
     if r.unanswered:
         raise RecordMismatchError("plimsoll: an answered call's record states an unanswered code")
+    # The kind, inside the check as in Go's record.check since 2026-10-26: a result of
+    # another kind fails here, before a session's chain moves on, so a daemon caught
+    # answering the wrong kind is not used further (review, 2026-10-26).
+    kinds = tuple(k for k in ("javascript", "project", "module", "cell") if resp.has(k))
+    if len(kinds) > 1:
+        raise MalformedResponseError(f"plimsoll: the answer holds {len(kinds)} results; a run has one")
+    if kinds != (kind,):
+        raise ResultKindMismatchError(f"plimsoll: the daemon answered a {kind} request with {kinds[0] if kinds else 'no'} result")
+    if r.ended_unix_ms < r.started_unix_ms:
+        raise RecordMismatchError("plimsoll: the record ends before it starts")
     if r.request_sha256 != req_digest:
         raise RecordMismatchError(f"plimsoll: request digest {r.request_sha256}, the request sent digests to {req_digest}")
     if r.result_sha256 != result:
@@ -320,9 +331,9 @@ def check_unanswered(req_digest: str, floor: str, rule: Optional[SoftwareRule], 
     return r
 
 
-def check_single(req_digest: str, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:
+def check_single(req_digest: str, kind: str, rule: Optional[SoftwareRule], resp: Msg) -> RunRecord:
     """check, for a single run: a single run's record carries no session fields (record.Check)."""
-    r = check(req_digest, rule, resp)
+    r = check(req_digest, kind, rule, resp)
     if r.session or r.sequence or r.previous_sha256:
         raise RecordMismatchError("plimsoll: a single run's record carries session fields")
     return r

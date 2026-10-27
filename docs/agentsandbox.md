@@ -128,6 +128,26 @@ a node whose runsc handler was remapped to runc under a running daemon.
   [An example template, pool and service account](agentsandbox-example.yaml) passes the
   read-back.
 
+### The control channel is cleartext
+
+sandboxd serves no TLS, so plimsolld reaches it over plain HTTP/2 at the pod's address, port
+9090. Everything a run needs crosses that path unencrypted: the sandboxd token in every
+request, the code and files, each project's plan with the run's report key (the key that
+proves a result came from plimsoll's runner and not from the guest), and every byte of
+output. The network policy above decides who may connect to the port; it does not stop
+anyone on the pod network from reading or rewriting the traffic. Someone who can do that
+can read every tenant's code and output, change a result before plimsolld records it, and
+replay the token, which stays valid for every later pod until it is changed.
+
+So run the provider only on a pod network that encrypts traffic between nodes and pods: a
+network plugin with WireGuard or IPsec turned on, or a service mesh with mutual TLS on the
+path from plimsolld to sandboxd. The daemon cannot check this, so hardened mode requires
+the operator to state it with `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1`
+([hardened mode](hardened-mode.md)). Change the sandboxd token on a schedule all the same:
+a new token file, the template's `--auth-token-sha256` of it, and a daemon restart. A local
+kind cluster's default network is not encrypted, so evidence recorded on one shows the
+boundary checks, not a protected channel.
+
 **A closed pod and container schema.** Both the template and each actual pod refuse unknown
 pod-spec and container fields, including unknown fields inside decoded probes, mounts and
 security contexts. Exec handlers in readiness, liveness and startup probes and in lifecycle
@@ -146,7 +166,9 @@ it checks and no others, and the smoke test proves the rest (where the guest can
 it can reach) for one template. So once it passes, a template whose name or spec differs
 from the one it ran on fails Preflight and readiness, and its runs are refused before
 anything is claimed (reason `environment`), until a restart proves it, as a docker tag
-re-pointed after startup is. The template is read again at most every 5 seconds.
+re-pointed after startup is. `Preflight`'s answer is reused for 5 seconds (`/readyz` is
+unauthenticated); every run reads the warm pool, the template and the runtime class again
+before it claims a pod.
 
 **The proven network policy set.** Before the smoke test sends a command, plimsoll records
 all policies in the namespace by name, UID (Kubernetes' identity for that object) and the
@@ -188,7 +210,9 @@ connections to time out; it is not implemented.
    Every request that carries sandboxd's token is sent before the guest's code starts. The
    deadline is plimsoll's: when it passes, plimsoll cancels the stream, which makes sandboxd
    kill the command's process group; sandboxd itself bounds neither time nor output, so
-   plimsoll keeps the first 1 MiB of each stream and flags the rest as dropped.
+   plimsoll keeps the first 64 KiB of each of a snippet's streams, 16 MiB of the runner's
+   stdout and 64 KiB of its stderr (a project step's own streams are capped at 1 MiB each
+   by the runner), and flags the rest as dropped.
 6. Returns the result, then deletes the claim in the foreground, so the pod is gone before
    the run gives back its capacity. A delete that exhausts its retry budget stays tracked
    as pending and keeps the capacity held. `ReconcileOrphans` retries it by name, with or

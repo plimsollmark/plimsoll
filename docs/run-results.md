@@ -106,8 +106,9 @@ Both paths keep one contract, and the suite in `sandbox/projecttest` holds every
 provider to it, sessions included:
 
 - Steps run in order in the work directory and stop at the first that fails.
-- A step the run's deadline ends is reported with exit 124 and makes the run
-  `timed_out`; the steps before it, and the artifacts the run wrote, still come back
+- A step the run's deadline ends is reported with exit 124, with what it wrote before
+  the deadline, and makes the run `timed_out`; the steps before it, and the artifacts
+  the run wrote, still come back
   (an exec-based provider reads them within five seconds past the deadline, the time
   docker gives the runner).
 - Artifacts come back after a failed step too. Past the 8 MiB total, the first artifact

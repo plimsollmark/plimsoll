@@ -298,3 +298,46 @@ func TestDecodeSlotIsHeldUntilTheRequestIsDecoded(t *testing.T) {
 	}
 	<-done
 }
+
+// Open dev mode has no credential, so a page that rebinds its own name to 127.0.0.1
+// must still be refused: its requests name the page's host (Claude Security scan,
+// 2026-10-27). The refusal is a marked permission refusal and never reaches the handler.
+func TestOpenModeAnswersOnlyLoopbackHosts(t *testing.T) {
+	for _, tc := range []struct {
+		host string
+		ok   bool
+	}{
+		{"127.0.0.1:8746", true},
+		{"localhost:8746", true},
+		{"LOCALHOST", true},
+		{"[::1]:8746", true},
+		{"::1", true},
+		{"127.0.0.2", true},
+		{"rebind.attacker.example:8746", false},
+		{"127.0.0.1.attacker.example", false},
+		{"localhost.attacker.example:8746", false},
+		{"0.0.0.0:8746", false},
+		{"10.0.0.1:8746", false},
+		{"plimsolld:8746", false},
+		{"", false},
+	} {
+		req := httptest.NewRequest(http.MethodPost, plimsollv1connect.SandboxServiceRunProcedure, nil)
+		req.Host = tc.host
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		called := false
+		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+		AuthenticateHTTP(nil, next).ServeHTTP(recorder, req)
+		if called != tc.ok {
+			t.Errorf("Host %q: handler reached = %v, want %v", tc.host, called, tc.ok)
+		}
+		if !tc.ok {
+			if recorder.Code != http.StatusForbidden {
+				t.Errorf("Host %q: status %d, want 403 (permission_denied)", tc.host, recorder.Code)
+			}
+			if !strings.Contains(recorder.Body.String(), "NotDispatched") {
+				t.Errorf("Host %q: the refusal carries no not-dispatched mark: %s", tc.host, recorder.Body.String())
+			}
+		}
+	}
+}

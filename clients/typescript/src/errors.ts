@@ -5,7 +5,7 @@
 
 import type { RunRecord } from "./record.ts";
 import { REFUSAL_NAMES, SESSION_END_NAMES } from "./tables.gen.ts";
-import type { WireError, WireRecord } from "./wire.ts";
+import { wireBytes, type WireError, type WireRecord } from "./wire.ts";
 
 /** Why a request was refused before any code ran (plimsoll.v1.NotDispatchedReason). */
 export type Refusal = (typeof REFUSAL_NAMES)[number];
@@ -60,6 +60,7 @@ export class PlimsollError extends Error {
    * The record the daemon sends with a session call that may have run but ended in
    * an error (an unanswered record, as it came off the wire). The Session checks it
    * and keeps it in its chain, so the session goes on; the call's outcome is unknown.
+   * On a single run's error it is kept as it came and checked by nothing.
    */
   readonly unanswered: WireRecord | undefined;
   /**
@@ -192,10 +193,29 @@ function decodeUnanswered(b: Uint8Array): WireRecord | undefined {
   let rec: WireRecord | undefined;
   for (let i = 0; i < b.length; ) {
     const [tag, j] = varint(b, i);
-    const [n, k] = varint(b, j);
-    if ((tag & 7) !== 2 || k + n > b.length) throw new Error("bad detail");
-    if (tag >>> 3 === 1) rec = decodeRecord(b.subarray(k, k + n));
-    i = k + n;
+    const field = tag >>> 3;
+    const wire = tag & 7;
+    if (field === 1) {
+      if (wire !== 2) throw new Error("UnansweredCall.record is not length-delimited");
+      const [n, k] = varint(b, j);
+      if (k + n > b.length) throw new Error("bad detail");
+      rec = decodeRecord(b.subarray(k, k + n));
+      i = k + n;
+    } else if (wire === 0) {
+      // A field this client does not know is skipped by its wire type, as Go and Python
+      // skip it; every field used to be read as length-delimited, so a scalar a newer
+      // daemon adds dropped the record and stopped the session (review, 2026-10-26).
+      i = varint(b, j)[1];
+    } else if (wire === 2) {
+      const [n, k] = varint(b, j);
+      if (k + n > b.length) throw new Error("bad detail");
+      i = k + n;
+    } else if (wire === 1 || wire === 5) {
+      i = j + (wire === 1 ? 8 : 4);
+      if (i > b.length) throw new Error("bad detail");
+    } else {
+      throw new Error("unexpected wire type");
+    }
   }
   return rec;
 }
@@ -251,7 +271,7 @@ export function errorFromWire(httpStatus: number, body: WireError | undefined, a
   let unanswered: WireRecord | undefined;
   for (const d of Array.isArray(wire?.details) ? wire.details : []) {
     try {
-      const bytes = Buffer.from(d.value ?? "", "base64");
+      const bytes = wireBytes(d.value);
       if (d.type === "plimsoll.v1.NotDispatched") {
         notDispatched = REFUSAL_NAMES[decodeDetail(bytes).reason] ?? "unknown";
       } else if (d.type === "plimsoll.v1.SessionEnded") {

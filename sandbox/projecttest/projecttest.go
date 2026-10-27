@@ -4,7 +4,7 @@
 // Docker Cloud). Those paths once disagreed on artifacts after a timeout, an artifact
 // over the size cap, links among the artifacts, the per-step output cap and a step that
 // killed its own shell (review D2, 2026-10-23). The suite is the counterpart of
-// sessiontest and needs a provider whose image runs sh, head, tr, yes and ln. It reads
+// sessiontest and needs a provider whose image runs sh, head, tr, yes, ln and mkfifo. It reads
 // no device file: OpenShell's filesystem policy denies /dev/zero.
 package projecttest
 
@@ -70,13 +70,13 @@ func Run(t *testing.T, sb Projects, timeout time.Duration) {
 			t.Fatalf("%s %q, steps %+v", res.Outcome, res.Detail, res.Steps)
 		}
 	})
-	t.Run("a step that hangs late keeps the earlier steps and the artifacts", func(t *testing.T) {
-		res := run(t, sandbox.ProjectRequest{Steps: []string{"echo one; echo kept > b.txt", "sleep 600"}, Artifacts: []string{"b.txt"}, Timeout: timeout})
+	t.Run("a step that hangs late keeps the earlier steps, its own output and the artifacts", func(t *testing.T) {
+		res := run(t, sandbox.ProjectRequest{Steps: []string{"echo one; echo kept > b.txt", "echo two; sleep 600"}, Artifacts: []string{"b.txt"}, Timeout: timeout})
 		if res.Outcome != sandbox.ProjectOutcomeTimedOut || len(res.Steps) != 2 || res.Steps[0].Stdout != "one\n" {
 			t.Fatalf("%s %q, steps %+v", res.Outcome, res.Detail, res.Steps)
 		}
-		if s := res.Steps[1]; !s.TimedOut || s.ExitCode != 124 {
-			t.Fatalf("the hung step: exit %d, timed out %v", s.ExitCode, s.TimedOut)
+		if s := res.Steps[1]; !s.TimedOut || s.ExitCode != 124 || s.Stdout != "two\n" {
+			t.Fatalf("the hung step: exit %d, timed out %v, stdout %q (what it wrote before the deadline is kept)", s.ExitCode, s.TimedOut, s.Stdout)
 		}
 		if got, ok := artifact(res, "b.txt"); !ok || got != "kept\n" {
 			t.Fatalf("the artifact written before the hang: %q, %v", got, ok)
@@ -129,8 +129,8 @@ func Run(t *testing.T, sb Projects, timeout time.Duration) {
 			if !cutFlag || len(cut) != StepOutputCap || strings.Trim(cut, "x") != "" {
 				t.Fatalf("%s: kept %d bytes, cut %v; want %d bytes of x, cut", c.other, len(cut), cutFlag, StepOutputCap)
 			}
-			if other != "other\n" || otherFlag || s.ExitCode != 7 || s.TimedOut {
-				t.Fatalf("%s past the cap: the other stream %q (cut %v), exit %d; want it whole and the step's own exit 7", c.other, other, otherFlag, s.ExitCode)
+			if other != "other\n" || otherFlag || s.ExitCode != 7 || s.TimedOut || res.Outcome != sandbox.ProjectOutcomeCompleted {
+				t.Fatalf("%s past the cap: the other stream %q (cut %v), exit %d, outcome %s; want it whole, the step's own exit 7 and a completed run", c.other, other, otherFlag, s.ExitCode, res.Outcome)
 			}
 		}
 	})
@@ -139,14 +139,23 @@ func Run(t *testing.T, sb Projects, timeout time.Duration) {
 		if len(res.Steps) != 1 {
 			t.Fatalf("steps %+v", res.Steps)
 		}
-		if s := res.Steps[0]; s.ExitCode != FloodExit || !s.StdoutTruncated || !s.StderrTruncated || s.TimedOut {
-			t.Fatalf("40 MiB of output: exit %d, cut %v and %v; want %d with both streams cut", s.ExitCode, s.StdoutTruncated, s.StderrTruncated, FloodExit)
+		if s := res.Steps[0]; s.ExitCode != FloodExit || !s.StdoutTruncated || !s.StderrTruncated || s.TimedOut || res.Outcome != sandbox.ProjectOutcomeCompleted {
+			t.Fatalf("40 MiB of output: exit %d, cut %v and %v, outcome %s; want %d with both streams cut and a completed run", s.ExitCode, s.StdoutTruncated, s.StderrTruncated, res.Outcome, FloodExit)
 		}
 	})
 	t.Run("a step that kills its own shell reports 128 plus the signal", func(t *testing.T) {
 		res := run(t, sandbox.ProjectRequest{Steps: []string{"kill -9 $$"}})
-		if len(res.Steps) != 1 || res.Steps[0].ExitCode != 137 || res.Steps[0].TimedOut {
+		if len(res.Steps) != 1 || res.Steps[0].ExitCode != 137 || res.Steps[0].TimedOut || res.Outcome != sandbox.ProjectOutcomeCompleted {
 			t.Fatalf("%s %q, steps %+v", res.Outcome, res.Detail, res.Steps)
+		}
+	})
+	t.Run("an artifact at a fifo is skipped and the run completes at once", func(t *testing.T) {
+		// sessiontest holds sessions to this; one-shot runs read their artifacts through a
+		// different path on the exec-based providers (review, 2026-10-26).
+		start := time.Now()
+		res := run(t, sandbox.ProjectRequest{Steps: []string{"mkfifo out.txt"}, Artifacts: []string{"out.txt"}})
+		if res.Outcome != sandbox.ProjectOutcomeCompleted || len(res.Artifacts) != 0 || time.Since(start) > 40*time.Second {
+			t.Fatalf("an artifact at a fifo: %s %q, %d artifacts after %v; want a completed run without it, at once", res.Outcome, res.Detail, len(res.Artifacts), time.Since(start))
 		}
 	})
 }

@@ -258,7 +258,7 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 		"--label", dockerSessionLabel + "=1"}
 	args = append(args, expiresLabelArgs(label)...)
 	args = append(args, d.lockdownFlags(true, state.runtime)...)
-	args = append(args, "-v", broker.sock+":"+containerSocketPath)
+	args = append(args, "--mount", bindMount(broker.sock, containerSocketPath, false))
 	if state.platform != "" {
 		args = append(args, "--platform", state.platform)
 	}
@@ -869,9 +869,11 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 	// a non-zero exit without it can be docker's: unlike docker run's 125, docker
 	// exec's own failures (a daemon error, a refused exec) exit 1, and 126 or 127 when
 	// the exec never started the script, so here any non-zero exit without it counts.
-	// Session code can write into the new process's stderr before the script does, but
-	// cannot learn started before the exec exists, so it can make its own call read as
-	// docker's failure and never docker's failure as a result.
+	// Session code can write into the new process's stderr before the script does, and
+	// can read started from the new process's command line once it exists, so it can
+	// make its own call read as docker's failure, or a docker failure as a protocol
+	// error, and never docker's failure as a result: the consequence stays inside the
+	// forger's own session (review, 2026-10-26).
 	started := startMarker()
 	argv, err := guestArgv(started, append(slices.Clone(s.env), env...), "node", "-")
 	if err != nil {
@@ -984,15 +986,20 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	unlend()
 	fail.CallTrace = core.traceSnapshot()
 	fail.SoftwareIdentity, fail.EnvironmentIdentity = s.manifest, dockerImageIdentity(s.imageID)
-	if _, ran := afterMarker(out.stderr, started); ended == context.DeadlineExceeded && ran && s.Err() == nil {
-		fail.Outcome, fail.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
-		return fail, nil
-	}
-	if err != nil || !out.exited {
-		return ProjectResult{Sandbox: s.d.Name(), Isolation: s.tier, CallTrace: fail.CallTrace}, s.life.CallError(runCtx, err)
-	}
+	// An authenticated report is the result whatever the backstop or the exec's own
+	// error says: the runner writes it after its steps ended, each step carries its own
+	// TimedOut, and here the backstop also covers the quiesce and the grant before the
+	// runner starts, so a report already in stdout was thrown away as timed out with no
+	// steps (review, 2026-10-26). A session that ended meanwhile says so on its next call.
 	res, reported := RunnerReport(s.d.Name(), s.tier, out.stdout, key)
 	if !reported {
+		if _, ran := afterMarker(out.stderr, started); ended == context.DeadlineExceeded && ran && s.Err() == nil {
+			fail.Outcome, fail.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
+			return fail, nil
+		}
+		if err != nil || !out.exited {
+			return ProjectResult{Sandbox: s.d.Name(), Isolation: s.tier, CallTrace: fail.CallTrace}, s.life.CallError(runCtx, err)
+		}
 		if s.stopped() {
 			return ProjectResult{Sandbox: s.d.Name(), Isolation: s.tier, CallTrace: fail.CallTrace}, s.Err()
 		}
@@ -1179,20 +1186,18 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 	if err != nil || state.host == "" {
 		return 0, nil // not preflighted yet: nothing is known to reap
 	}
-	// Quarantined containers first, whatever their age: each still holds the capacity
-	// of the call that made it, given back once its removal is confirmed.
-	confirmed, stillHeld := d.quarantine.Retry(func(name string) error { return removeContainer(ctx, state.host, name) })
-	if stillHeld != nil {
-		slog.Error("docker: quarantined containers still not confirmed gone; their capacity stays held", "error", stillHeld)
-	}
+	// The label listing first, so one quarantined container whose removal hangs cannot
+	// eat the whole pass before anything else is reaped (review, 2026-10-26); the
+	// quarantined names are skipped here and retried below, each within a slice of
+	// what the pass has left.
 	args, err := dockerArgs(state.host, "ps", "-a", "--filter", "label="+dockerExpiresLabel,
 		"--format", `{{.Names}}	{{.Label "`+dockerExpiresLabel+`"}}`)
 	if err != nil {
-		return confirmed, errors.Join(stillHeld, err)
+		return 0, err
 	}
 	out, err := dockerOutput(ctx, args...)
 	if err != nil {
-		return confirmed, errors.Join(stillHeld, fmt.Errorf("docker ps: %w", err))
+		return 0, fmt.Errorf("docker ps: %w", err)
 	}
 	held := map[string]bool{}
 	for _, l := range d.sessions.Open() {
@@ -1217,6 +1222,26 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 		// Counted only once confirmed gone; one that is not is tried again next pass.
 		if removeContainer(ctx, state.host, name) == nil {
 			reaped++
+		}
+	}
+	// Quarantined containers, whatever their age: each still holds the capacity of the
+	// call that made it, given back once its removal is confirmed. Each retry gets an
+	// equal slice of the pass's remaining time, at most a removal's own budget, so a
+	// removal that hangs costs its slice, not every other name's attempt.
+	var confirmed int
+	var stillHeld error
+	if names := d.quarantine.Names(); len(names) > 0 {
+		slice := dockerRemoveBudget
+		if dl, ok := ctx.Deadline(); ok {
+			slice = min(slice, time.Until(dl)/time.Duration(len(names)))
+		}
+		confirmed, stillHeld = d.quarantine.Retry(func(name string) error {
+			rctx, cancel := context.WithTimeout(ctx, slice)
+			defer cancel()
+			return removeContainer(rctx, state.host, name)
+		})
+		if stillHeld != nil {
+			slog.Error("docker: quarantined containers still not confirmed gone; their capacity stays held", "error", stillHeld)
 		}
 	}
 	return confirmed + reaped, stillHeld

@@ -34,3 +34,10 @@ test("every shared answer reads as the file says", () => {
     assert.deepEqual(got, a.expect, a.name);
   }
 });
+
+test("an error detail whose value is not base64 text states nothing and allocates nothing", () => {
+  const t0 = Date.now();
+  const e = errorFromWire(400, { code: "invalid_argument", message: "m", details: [{ type: "plimsoll.v1.NotDispatched", value: { length: 2_000_000_000 } }] }, { bound: true, mark: null });
+  assert.equal(e.notDispatched, undefined);
+  assert.ok(Date.now() - t0 < 1000);
+});

@@ -346,3 +346,25 @@ func TestLoadPaidConfig(t *testing.T) {
 		}
 	}
 }
+
+// sandboxd's channel is cleartext, so hardened mode serves agentsandbox only once the
+// operator states the pod network is encrypted (Claude Security scan, 2026-10-27).
+func TestHardenedPolicyAgentSandboxNeedsAnEncryptedPodNetwork(t *testing.T) {
+	f := hardenedDockerFacts()
+	f.Provider, f.Isolation = "agentsandbox", sandbox.IsolationKernel
+	env := map[string]string{"SANDBOX_MEMORY_MB": "256", "SANDBOX_CPUS": "1", "SANDBOX_DISK_MB": "64", "SANDBOX_REQUIRE_PINNED_IMAGES": "1",
+		"SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK": "1"}
+	if err := enforceHardenedPolicy(getenvFrom(env), f); err != nil {
+		t.Fatalf("compliant agentsandbox deployment rejected: %v", err)
+	}
+	for _, v := range []string{"", "0"} {
+		env["SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK"] = v
+		if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1") {
+			t.Fatalf("value %q: err = %v, want the encrypted-pod-network violation", v, err)
+		}
+	}
+	env["SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK"] = "yes please"
+	if err := enforceHardenedPolicy(getenvFrom(env), f); err == nil || !strings.Contains(err.Error(), "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK") {
+		t.Fatalf("an unreadable value: err = %v, want it reported", err)
+	}
+}

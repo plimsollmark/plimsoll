@@ -345,9 +345,10 @@ class Info:
 @dataclass(frozen=True)
 class SessionEnded:
     """Why a session ended: ``closed``, ``expired``, ``disk_exceeded``,
-    ``main_process_ended``, ``boundary_failed``, ``sandbox_changed``,
-    ``shutdown`` or ``replaced`` (the daemon closed it for a newer session of the same
-    owner), with the daemon's detail."""
+    ``main_process_ended``, ``boundary_failed``, ``sandbox_changed``, ``shutdown``,
+    ``replaced`` (the daemon closed it for a newer session of the same owner),
+    ``not_found``, ``unclaimed``, or ``unknown`` for a number this client has no name
+    for, with the daemon's detail."""
 
     reason: str
     detail: str

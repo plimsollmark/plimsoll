@@ -255,6 +255,51 @@ func requestDigest(protocol uint32, floor string, timeoutMs int32, rule *plimsol
 	return e.sum()
 }
 
+// requestKind is the payload kind a request carries (javascript, project, cell or
+// module), "" for none; sessionRequestKind and resultKind are a session request's and
+// a response's. A daemon that answered one kind with another used to have its exchange
+// signed into a bundle, the client refusing the answer only afterwards (review,
+// 2026-10-26).
+func requestKind(m *plimsollv1.RunRequest) string {
+	switch m.GetPayload().(type) {
+	case *plimsollv1.RunRequest_Javascript:
+		return "javascript"
+	case *plimsollv1.RunRequest_Project:
+		return "project"
+	case *plimsollv1.RunRequest_Cell:
+		return "cell"
+	case *plimsollv1.RunRequest_Module:
+		return "module"
+	}
+	return ""
+}
+
+func sessionRequestKind(m *plimsollv1.SessionRunRequest) string {
+	switch m.GetPayload().(type) {
+	case *plimsollv1.SessionRunRequest_Javascript:
+		return "javascript"
+	case *plimsollv1.SessionRunRequest_Project:
+		return "project"
+	case *plimsollv1.SessionRunRequest_Cell:
+		return "cell"
+	}
+	return ""
+}
+
+func resultKind(m *plimsollv1.RunResponse) string {
+	switch m.GetResult().(type) {
+	case *plimsollv1.RunResponse_Javascript:
+		return "javascript"
+	case *plimsollv1.RunResponse_Project:
+		return "project"
+	case *plimsollv1.RunResponse_Cell:
+		return "cell"
+	case *plimsollv1.RunResponse_Module:
+		return "module"
+	}
+	return ""
+}
+
 // ResultDigest is the result digest of a Run response: the result as sent, which
 // is what a replay of a deterministic workload reproduces. Durations are left out
 // (they differ on every run), and so is advice, which is analysis of the run
@@ -357,7 +402,7 @@ func readable(version int, live bool) (spec, error) {
 	s, ok := published[version]
 	switch {
 	case !ok:
-		return spec{}, fmt.Errorf("%w: version %d; this verifier reads versions %s, so a newer plimsoll wrote it: upgrade the verifier", ErrVersion, version, publishedList())
+		return spec{}, fmt.Errorf("%w: version %d; this verifier reads versions %s (a higher number means a newer plimsoll wrote it, so upgrade the verifier; zero or less, no release did)", ErrVersion, version, publishedList())
 	case live && version != Version:
 		return spec{}, fmt.Errorf("%w: the daemon answered with version %d; this client requires version %d of a live answer", ErrVersion, version, Version)
 	}
@@ -581,7 +626,7 @@ var ErrNoRecord = errors.New("record: the response carries no run record")
 // caller sent and the response it received, and returns it. A response with no
 // record is ErrNoRecord.
 func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	r, err := check(RunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
+	r, err := check(RunRequestDigest(req), requestKind(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
 	if err != nil {
 		return nil, err
 	}
@@ -596,7 +641,7 @@ func Check(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.R
 // own digest. A session call's place in its chain needs the chain around it, which
 // CheckSessionCall (live) and attest.VerifyBundle (stored) check.
 func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*sandbox.RunRecord, error) {
-	return check(RunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, false)
+	return check(RunRequestDigest(req), requestKind(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, false)
 }
 
 // CheckSessionCall verifies a session call's record against the request sent and
@@ -606,7 +651,7 @@ func CheckExchange(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) (*s
 // daemon executed a call this caller did not make: someone else holds the
 // session ID.
 func CheckSessionCall(req *plimsollv1.SessionRunRequest, resp *plimsollv1.RunResponse, fingerprint string, prevSeq uint64, prev string) (*sandbox.RunRecord, error) {
-	r, err := check(SessionRunRequestDigest(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
+	r, err := check(SessionRunRequestDigest(req), sessionRequestKind(req), req.GetMinimumIsolation(), softwarewire.FromWire(req.GetSoftwareRule()), resp, true)
 	if err != nil {
 		return nil, err
 	}
@@ -630,7 +675,7 @@ var ErrChain = errors.New("record: the session's chain of records is broken")
 // here, before anything signs or keeps it, as sandbox.ErrIsolationEvidenceMismatch.
 // Live, the record must be the current version; stored, any published version that
 // records an answered call, checked by that version's rules.
-func check(requestDigest, floor string, rule sandbox.SoftwareRule, resp *plimsollv1.RunResponse, live bool) (*sandbox.RunRecord, error) {
+func check(requestDigest, kind, floor string, rule sandbox.SoftwareRule, resp *plimsollv1.RunResponse, live bool) (*sandbox.RunRecord, error) {
 	if err := rule.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: invalid software rule: %v", ErrMismatch, err)
 	}
@@ -652,7 +697,16 @@ func check(requestDigest, floor string, rule sandbox.SoftwareRule, resp *plimsol
 	if err := s.statesOnly(r); err != nil {
 		return nil, err
 	}
+	if got := resultKind(resp); got == "" || got != kind {
+		what := "no result"
+		if got != "" {
+			what = "a " + got + " result"
+		}
+		return nil, fmt.Errorf("%w: a %s request answered with %s", ErrMismatch, kind, what)
+	}
 	switch {
+	case r.Ended.Before(r.Started):
+		return nil, fmt.Errorf("%w: the record ends before it starts", ErrMismatch)
 	case r.RequestSHA256 != requestDigest:
 		return nil, fmt.Errorf("%w: request digest %s, the request sent digests to %s", ErrMismatch, r.RequestSHA256, requestDigest)
 	case r.ResultSHA256 != ResultDigest(resp):

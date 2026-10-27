@@ -341,9 +341,13 @@ uses the standard library only (Ed25519, SHA-256, JSON).
   check ignores. The list binds what was sent, not what came back: a caller that also
   needs a result proven compares that call's `result_sha256` with its own log.
 - **Replay.** The bundle is verified first, and nothing is sent unless it verifies.
-  Each stored single run is then sent again and its result digest compared with the
-  signed one. It is meaningful for deterministic workloads; one that reads the
-  clock or random numbers differs by design.
+  Each stored single run is then sent again, and each recorded session's calls in
+  their order into a fresh session, and every result digest is compared with the
+  signed one. A request recorded with permission for its code to call the caller's own
+  API is reported and not sent, since sending it would call that API again
+  (`-with-grants` sends it), and a request recorded under another protocol number is
+  never sent, since the fields that number governs may run differently now. It is meaningful for deterministic workloads; one
+  that reads the clock or random numbers differs by design.
 
 From Go, one client option signs every run a client makes:
 
@@ -364,6 +368,7 @@ PLIMSOLL_CALLER_TOKEN=... go run ./cmd/plimsoll-attest run \
   -daemon http://127.0.0.1:8746 -key harness.key -bundle runs.jsonl request.json
 go run ./cmd/plimsoll-attest verify -pub harness.pub runs.jsonl
 go run ./cmd/plimsoll-attest verify-entry -pub harness.pub -line 3 runs.jsonl
+go run ./cmd/plimsoll-attest verify-record -pub harness.pub -line 1 old-runs.jsonl
 go run ./cmd/plimsoll-attest replay -daemon http://127.0.0.1:8746 -pub harness.pub runs.jsonl
 ```
 
@@ -373,6 +378,13 @@ states. It is for a line whose bundle is not whole yet, such as a call of a sess
 open, whose chain has no close statement and so fails `verify`. It says what it does not
 establish: that the line is in the bundle its holder names, that the bundle around it is
 whole, and, for a session call, that its session's chain is. `verify` is unchanged.
+
+`verify-record` checks one call line with no link at all (`attest.VerifyCall`): its
+signature, and its stored request and response against the signed record. It is how a
+record from before links (v0.10.0 to v0.17.x, whose bundles no reader accepts whole) is
+still checked, one line at a time. It proves the recorded exchange, not the line's place:
+a holder could have dropped or reordered such lines unseen, which is what links were
+added to prevent.
 
 ```sh
 go run ./cmd/plimsoll-attest sign-statement -key harness.key \

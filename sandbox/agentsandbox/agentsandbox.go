@@ -22,7 +22,7 @@
 // under env -i, so guest code cannot read the root process that relayed a plan carrying the
 // runner's report key. sandboxd must check plimsoll's token: without one, guest code could
 // ask it, on loopback, to run a command as root. The token travels with every request, so
-// each pod gets one command, and every request carrying the token is sent before guest
+// each pod gets plimsoll's commands alone (the tier check, then the run's), and every request carrying the token is sent before guest
 // code starts (the runner and node - both read their input to its end first): a guest
 // that killed or outlived sandboxd and listened on its port would otherwise be handed it.
 //
@@ -296,6 +296,16 @@ func (p *Provider) mounts() map[string]int64 {
 	return maps.Clone(p.volumes)
 }
 
+// imageIdentity is the environment identity of an image digest, as Environments
+// advertises it and as every result states it (the pod's real digest, which the read-back
+// compared with the pinned one). Empty for no digest.
+func imageIdentity(digest string) string {
+	if digest == "" {
+		return ""
+	}
+	return "agentsandbox-image:" + digest
+}
+
 // SupportsProjects is true: projects run through the image's /runner.mjs.
 func (*Provider) SupportsProjects() bool { return true }
 
@@ -311,7 +321,7 @@ func (*Provider) SupportsProjectGrants() bool    { return false }
 func (p *Provider) Environments() sandbox.Environments {
 	identity := ""
 	if d, ok := pinnedDigest(p.cfg.Image); ok {
-		identity = "agentsandbox-image:" + d
+		identity = imageIdentity(d)
 	}
 	return sandbox.Environments{
 		JavaScript: sandbox.PayloadEnvironment{Identity: identity, MaxTimeout: snippetMax},
@@ -491,6 +501,7 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 		Stdout: string(out.stdout), Stderr: string(out.stderr),
 		StdoutTruncated: out.stdoutTruncated, StderrTruncated: out.stderrTruncated,
 		ExitCode: out.exitCode, Duration: time.Since(start), Sandbox: Name, Isolation: b.tier, Instance: b.instance,
+		EnvironmentIdentity: imageIdentity(b.environment), // the signed record's environment; it was empty here (review, 2026-10-26)
 	}
 	if out.exited {
 		return res, nil
@@ -554,7 +565,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 // runPlan runs the runner with planJSON on stdin and classifies what came back, as the
 // docker and openshell providers do.
 func (p *Provider) runPlan(ctx context.Context, b box, planJSON, key []byte) (sandbox.ProjectResult, error) {
-	res := sandbox.ProjectResult{Sandbox: Name, Isolation: b.tier, Instance: b.instance}
+	res := sandbox.ProjectResult{Sandbox: Name, Isolation: b.tier, Instance: b.instance, EnvironmentIdentity: imageIdentity(b.environment)}
 	argv := guestArgv([]string{"PLIMSOLL_WORK=" + workDir + "/project"}, runnerCommand...)
 	out, err := p.exec(ctx, b.ip, argv, planJSON, runnerwire.StdoutCap, maxOutputBytes)
 	if !out.exited {

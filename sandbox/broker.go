@@ -392,11 +392,6 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 		b.trace.recordDenied()
 		return brokerError(http.StatusForbidden, "forbidden by sandbox capability allowlist")
 	}
-	if !b.chargeRouteCaps(method, call.RawTarget) {
-		b.trace.recordDenied()
-		return brokerError(http.StatusTooManyRequests, "host api call budget for this route is exhausted")
-	}
-
 	// Backpressure gate. An upstream 429/503 opens the per-run breaker; while open the
 	// broker sheds this permitted call instead of adding to the overload. A declared
 	// health route lets one elected caller probe for recovery and proceed if the API
@@ -433,6 +428,16 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	if requestURL.EscapedPath() != call.RawTarget {
 		b.trace.recordDenied()
 		return brokerError(http.StatusForbidden, "forbidden by sandbox capability allowlist")
+	}
+	// A route's cap bounds the calls that reach the API (docs/capability-grants.md), so
+	// it is charged last, once nothing else can refuse the call: a shed call, an
+	// over-size body or a non-canonical path used to spend it too, and backpressure
+	// alone could eat a run's whole allowance on a paid route (review, 2026-10-26). The
+	// per-run call budget above is different: every attempt spends it, denied ones
+	// included, so a guest cannot probe for free.
+	if !b.chargeRouteCaps(method, call.RawTarget) {
+		b.trace.recordDenied()
+		return brokerError(http.StatusTooManyRequests, "host api call budget for this route is exhausted")
 	}
 
 	// The deadline covers the response body too, which is read under the same context.

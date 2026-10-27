@@ -394,10 +394,20 @@ func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime string) []string {
 // source at target. Docker reads the value as one CSV record, so each field is
 // written by encoding/csv: a comma or quote in a temp directory's path stays inside
 // its field.
-func bindMountSpec(source, target string) string {
+func bindMountSpec(source, target string) string { return bindMount(source, target, true) }
+
+// bindMount is a `--mount` bind of source at target, CSV-quoted so a source path with a
+// comma or a quote is one field; the broker socket mounts use it too, since `-v` splits
+// on a colon and a temp directory with one in its path failed every session open with
+// docker's own option error (review, 2026-10-26).
+func bindMount(source, target string, readonly bool) string {
+	fields := []string{"type=bind", "source=" + source, "target=" + target}
+	if readonly {
+		fields = append(fields, "readonly")
+	}
 	var b strings.Builder
 	w := csv.NewWriter(&b)
-	_ = w.Write([]string{"type=bind", "source=" + source, "target=" + target, "readonly"})
+	_ = w.Write(fields)
 	w.Flush()
 	return strings.TrimSuffix(b.String(), "\n")
 }

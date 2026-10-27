@@ -104,7 +104,12 @@ func (d *DockerCloud) create(ctx context.Context, budget time.Duration) (dcVM, e
 			unknown = unknown || ce.foreign
 			if ce.stage == dcCreateSend && dcRefused(ce.err) {
 				// The service refused the create by a code that says it did nothing, so no
-				// code ran: marked, not left to read as "may have run". Its quota answer
+				// code ran: marked, not left to read as "may have run". The cleanup still
+				// sends one delete by this create's own name (TestDockerCloudDeletesOnEveryExitPath):
+				// a refusal is believed for the mark, not for the bill, and the delete of a
+				// name that exists nowhere is one quick answer unless the service is also
+				// refusing deletes (a quota storm, where it can hold an admission slot for
+				// the three tries; kept as the cheaper risk, review 2026-10-26). Its quota answer
 				// ("Maximum running sandboxes quota reached (10)", resource_exhausted over
 				// HTTP 429, 2026-10-05) is a capacity refusal a caller may retry later;
 				// any other refusal is about this configuration or account.
@@ -296,6 +301,9 @@ func (d *DockerCloud) ReconcileOrphans(ctx context.Context) (int, error) {
 // then a hung command and a flood prove the in-guest time limit and output cap.
 // It creates one billable sandbox, so the daemon runs it once at startup and never
 // on a poll path.
+// dcSmokeHangPath is the staged step the smoke's time-limit probe hangs in.
+const dcSmokeHangPath = "/tmp/plimsoll-smoke-hang.sh"
+
 func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 	if err := d.Preflight(ctx); err != nil {
 		return err
@@ -321,6 +329,7 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 	files := []File{
 		{Path: pathpkg.Join(dir, "plimsoll-smoke.cjs"), Content: vmSmokeProbe},
 		{Path: stepPath, Content: "node plimsoll-smoke.cjs\n"},
+		{Path: dcSmokeHangPath, Content: "sleep 30\n"},
 	}
 	if err := d.wire().upload(ctx, vm, files); err != nil {
 		return fmt.Errorf("dockercloud smoke: stage probe: %w", err)
@@ -355,13 +364,16 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 	// The bounds the API does not give must actually hold in this guest. busybox
 	// `timeout` fails open when kill(2) is refused (its watcher reads the error as
 	// "the process is gone"), so a hung command must really be killed at the limit,
-	// and a flood must really be capped.
-	hang, err := d.execLimited(ctx, vm, []string{"sleep", "30"}, "", 1, d.maxOutput())
+	// and a flood must really be capped. The hung command takes a step's shape
+	// (stepArgv: an outer shell, then the script's), since a timeout that ends only its
+	// direct child leaves the step running with its output open, which the bare sleep
+	// this probe used to be never showed (review, 2026-10-26).
+	hang, err := d.execLimited(ctx, vm, stepArgv(dcSmokeHangPath), "", 1, d.maxOutput())
 	if err != nil {
-		return fmt.Errorf("dockercloud smoke: time-limit probe: %w", err)
+		return fmt.Errorf("dockercloud smoke: time-limit probe (a timeout that ends only a step's outer shell leaves the step running): %w", err)
 	}
 	if !hang.timedOut {
-		return fmt.Errorf("dockercloud smoke: the in-guest time limit is not in force (sleep exited %d instead of being killed at 1s)", hang.exitCode)
+		return fmt.Errorf("dockercloud smoke: the in-guest time limit is not in force (a hung step exited %d instead of being ended at 1 s; the image's timeout must end the step's whole process group)", hang.exitCode)
 	}
 	flood, err := d.execLimited(ctx, vm, []string{"yes"}, "", 10, d.maxOutput())
 	if err != nil {

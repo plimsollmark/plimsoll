@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/plimsollmark/plimsoll/gen/go/agentsandbox/processv1/processv1connect"
 	"log/slog"
 	"maps"
 	"net"
@@ -45,6 +46,9 @@ type smokeEvidence struct {
 	Queues     string
 	Mounts     map[string]string
 	Filled     []string
+	// SandboxdAuth is what sandboxd answered the guest's token-less and wrong-token process
+	// starts on loopback: "16,16" when it refused both.
+	SandboxdAuth string
 }
 
 // boundaryScript runs as the guest with `node -`; the two %s are the JSON list of
@@ -52,8 +56,8 @@ type smokeEvidence struct {
 // as [mount path, size limit in bytes] pairs. It reports who it runs as, its environment
 // and resolver, a write attempted at every path it can reach, how much each volume took
 // before it refused, each connection attempt's outcome, and what kernel answers it.
-const boundaryScript = `const fs = require("fs"), net = require("net"), cp = require("child_process");
-const extra = %s, fills = %s;
+const boundaryScript = `const fs = require("fs"), net = require("net"), cp = require("child_process"), http2 = require("http2");
+const extra = %s, fills = %s, sandboxdPort = %d, startPath = %q;
 const read = f => { try { return fs.readFileSync(f, "utf8"); } catch (e) { return "unreadable: " + e.code; } };
 const status = read("/proc/self/status");
 const field = n => ((status.match(new RegExp("^" + n + ":[ \\t]*(.*)$", "m")) || [])[1] || "").trim();
@@ -115,9 +119,27 @@ const tcp = (host, port) => new Promise(done => {
 });
 const targets = ["1.1.1.1:443", "8.8.8.8:53", "169.254.169.254:80", "[2606:4700:4700::1111]:443", "[2001:4860:4860::8888]:53", ...extra];
 if (report.gateway) targets.push(report.gateway + ":` + kubeletPort + `");
+// sandboxd's own port answers on loopback inside the pod, and plimsoll's commands run as root
+// through it: a process start without the token, and one with a wrong token, must end with
+// gRPC status 16 (unauthenticated). A port that does not answer proves nothing.
+const grpcStatus = auth => new Promise(done => {
+  const c = http2.connect("http://127.0.0.1:" + sandboxdPort);
+  const t = setTimeout(() => { c.destroy(); done("timeout"); }, 2500);
+  c.on("error", e => { clearTimeout(t); done(e.code || String(e)); });
+  const h = { ":method": "POST", ":path": startPath, "content-type": "application/grpc", "te": "trailers" };
+  if (auth) h.authorization = auth;
+  const q = c.request(h);
+  let status = "";
+  const take = hs => { if (hs["grpc-status"] !== undefined) status = String(hs["grpc-status"]); };
+  q.on("response", take); q.on("trailers", take);
+  q.on("close", () => { clearTimeout(t); c.close(); done(status || "none"); });
+  q.on("error", e => { clearTimeout(t); c.close(); done(e.code || String(e)); });
+  q.end(Buffer.from([0, 0, 0, 0, 0]));
+});
 (async () => {
   const outcomes = await Promise.all(targets.map(t => { const i = t.lastIndexOf(":"); return tcp(t.slice(0, i).replace(/^\[|\]$/g, ""), t.slice(i + 1)); }));
   report.egress = Object.fromEntries(targets.map((t, i) => ["tcp " + t, outcomes[i]]));
+  report.sandboxd = { none: await grpcStatus(""), wrong: await grpcStatus("Bearer plimsoll-boundary-probe") };
   process.stdout.write(JSON.stringify(report));
 })();
 `
@@ -192,11 +214,20 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 		return fmt.Errorf("agentsandbox smoke: %w", err)
 	}
 	p.mu.Lock()
+	after := p.templateSum
+	p.mu.Unlock()
+	if after != proving {
+		// The runs above re-read the template while proven was still empty, so a template
+		// edited during the smoke would otherwise be bound to the digest read before them
+		// (review, 2026-10-26).
+		return errors.New("agentsandbox smoke: the template changed while the smoke test ran; restart plimsolld to prove the current one")
+	}
+	p.mu.Lock()
 	p.smoke, p.proven = &ev, proving
 	p.mu.Unlock()
 	slog.Info("agentsandbox smoke passed", "tier", tier.String(), "template", p.templateName(), "node", ev.Node,
 		"swept", ev.Swept, "writable", ev.Writable, "files", ev.Files, "egress", ev.Egress, "interfaces", ev.Interfaces,
-		"gateway", ev.Gateway, "kernel", ev.Kernel, "seccomp", ev.Seccomp, "queues", ev.Queues, "mounts", ev.Mounts, "filled", ev.Filled)
+		"gateway", ev.Gateway, "kernel", ev.Kernel, "seccomp", ev.Seccomp, "queues", ev.Queues, "mounts", ev.Mounts, "filled", ev.Filled, "sandboxd_auth", ev.SandboxdAuth)
 	return nil
 }
 
@@ -226,6 +257,7 @@ func (p *Provider) apiTargets(ctx context.Context) []string {
 }
 
 type boundaryReport struct {
+	Sandboxd   map[string]string `json:"sandboxd"` // what sandboxd answered the guest's token-less ("none") and wrong-token ("wrong") process starts
 	Node       string            `json:"node"`
 	UID        string            `json:"uid"`
 	GID        string            `json:"gid"`
@@ -270,7 +302,7 @@ func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClas
 	if err != nil {
 		return smokeEvidence{}, err
 	}
-	res, err := p.RunJavaScript(ctx, sandbox.Request{Code: fmt.Sprintf(boundaryScript, targets, fillJSON), Timeout: 30 * time.Second})
+	res, err := p.RunJavaScript(ctx, sandbox.Request{Code: fmt.Sprintf(boundaryScript, targets, fillJSON, p.cfg.sandboxdPort(), processv1connect.ProcessServiceStartProcedure), Timeout: 30 * time.Second})
 	if err != nil {
 		return smokeEvidence{}, fmt.Errorf("boundary test: %w", err)
 	}
@@ -282,7 +314,8 @@ func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClas
 		return smokeEvidence{}, fmt.Errorf("unparseable boundary report %q: %w", truncate(res.Stdout, 200), err)
 	}
 	ev := smokeEvidence{Node: r.Node, Swept: r.Swept, Writable: r.Writable, Files: r.Files, Egress: r.Egress,
-		Interfaces: r.Interfaces, Gateway: r.Gateway, Kernel: r.Dmesg, Seccomp: r.Seccomp, Mounts: map[string]string{}}
+		Interfaces: r.Interfaces, Gateway: r.Gateway, Kernel: r.Dmesg, Seccomp: r.Seccomp, Mounts: map[string]string{},
+		SandboxdAuth: r.Sandboxd["none"] + "," + r.Sandboxd["wrong"]}
 	roots, err := p.writableRoots()
 	if err != nil {
 		return ev, err
@@ -305,7 +338,21 @@ func (p *Provider) smokeBoundary(ctx context.Context, tier sandbox.IsolationClas
 		fill = checkRootMountKinds(r.Mounts, roots, []string{"tmpfs"})
 	}
 	return ev, errors.Join(checkIdentity(r), qerr, checkWritable(r.Swept, slices.Concat(r.Writable, created), r.Files, roots), checkNestedMounts(r.Mounts, roots), fill,
-		checkEgress(r.Egress, r.Gateway), checkKernel(tier, r.Dmesg), checkSeccompMode(tier, r.Seccomp))
+		checkEgress(r.Egress, r.Gateway), checkKernel(tier, r.Dmesg), checkSeccompMode(tier, r.Seccomp), checkSandboxdAuth(r))
+}
+
+// checkSandboxdAuth requires sandboxd to have refused the guest's token-less and wrong-token
+// process starts on loopback with gRPC status 16 (unauthenticated). The pinned sandboxd checks
+// the token in an interceptor on every call (its server/auth.go); this is the behavioral proof
+// of it from inside the pod, on every startup, since the token is the one guard on the port
+// from a process the pod itself runs (review, 2026-10-26).
+func checkSandboxdAuth(r boundaryReport) error {
+	for k, what := range map[string]string{"none": "token-less", "wrong": "wrong-token"} {
+		if got := r.Sandboxd[k]; got != "16" {
+			return fmt.Errorf("sandboxd answered %q to the guest's %s process start on loopback; gRPC status 16 (unauthenticated) is the proof", got, what)
+		}
+	}
+	return nil
 }
 
 // checkNestedMounts refuses every mount strictly beneath a writable root, at every tier.

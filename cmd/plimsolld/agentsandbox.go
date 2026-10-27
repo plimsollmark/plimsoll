@@ -25,6 +25,19 @@ func init() {
 			return []string{"SANDBOX_DISK_MB"}
 		},
 		pinnedImages: true,
+		// sandboxd serves no TLS, so its token, the code, each run's plan with its report
+		// key, and every result cross the pod network as cleartext HTTP/2. The network
+		// policy decides who may connect, not who may watch or rewrite the traffic. The
+		// daemon cannot see whether the CNI or a mesh encrypts that path, so hardened mode
+		// requires the operator to state it (Claude Security scan, 2026-10-27).
+		hardened: func(getenv func(string) string, fail func(string, ...any), bad func(error)) {
+			encrypted, err := sandbox.BoolFromEnv(getenv, "SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK")
+			if err != nil {
+				bad(err)
+			} else if !encrypted {
+				fail("hardened mode requires SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1: sandboxd's channel is cleartext HTTP/2 carrying its token, the code, each run's report key and the results, so the pod network between plimsolld and the sandbox pods must be encrypted (a CNI with WireGuard or IPsec, or a service mesh with mutual TLS) before a result can be trusted against anyone on that path")
+			}
+		},
 	}
 }
 
@@ -60,4 +73,11 @@ const agentsandboxUsage = `
                              SANDBOX_DISK_MB, when set, bounds the sum of its volumes'
                              size limits; SANDBOX_PIDS fails startup, because the
                              kubelet sets the process limit
+  SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK
+                             =1 states that the pod network between plimsolld and
+                             the sandbox pods is encrypted (a CNI with WireGuard or
+                             IPsec, or a mesh with mutual TLS). sandboxd's channel
+                             is cleartext HTTP/2 carrying its token, the code, each
+                             run's report key and the results; hardened mode
+                             requires the statement
 `

@@ -718,11 +718,9 @@ func (s *e2bSession) runProject(ctx, runCtx context.Context, req ProjectRequest,
 	// short is the session's error, never a timed-out step.
 	steps, outcome, detail, err := runExecSteps(runCtx, req.Steps, func(ctx context.Context, i int, _ string) (stepOutput, error) {
 		out, err := s.guest(ctx, stepArgv(fmt.Sprintf("%s/step-%d.sh", dir, i)), env, ProjectStepOutputCap, ProjectStepOutputCap)
-		if err != nil {
-			return stepOutput{}, err
-		}
+		// With the error, what envd streamed before it (review, 2026-10-26).
 		return stepOutput{stdout: out.stdout, stderr: out.stderr, stdoutTruncated: out.stdoutTruncated,
-			stderrTruncated: out.stderrTruncated, exitCode: exitStatus(out)}, nil
+			stderrTruncated: out.stderrTruncated, exitCode: exitStatus(out)}, err
 	})
 	endGrant()
 	if err != nil {

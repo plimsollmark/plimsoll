@@ -272,6 +272,10 @@ func checkMounts(s podSpec, c container) error {
 			return fmt.Errorf("volume %s is mounted with a subPath", m.Name)
 		case seen[m.MountPath]:
 			return fmt.Errorf("two volumes are mounted at %s", m.MountPath)
+		case m.ReadOnly:
+			// The comment above promised writable; the check did not read the flag, and the
+			// smoke's fill catches it only below the vm tier (review, 2026-10-26).
+			return fmt.Errorf("volume %s is mounted read-only at %s", m.Name, m.MountPath)
 		}
 		seen[m.MountPath] = true
 	}
@@ -445,6 +449,27 @@ func (p *Provider) checkIngressRule(r ingressRule) error {
 	if len(r.From) == 0 {
 		return errors.New("an ingress rule admits every source")
 	}
+	for _, raw := range r.From {
+		// A source is named when it is an address block narrower than everything, a
+		// pod selector with a term, or a namespace selector with a term: 0.0.0.0/0, {}
+		// and {} each admit every pod, and used to pass as "named" (review, 2026-10-26).
+		var peer struct {
+			IPBlock *struct {
+				CIDR string `json:"cidr"`
+			} `json:"ipBlock"`
+			PodSelector       *labelSelector `json:"podSelector"`
+			NamespaceSelector *labelSelector `json:"namespaceSelector"`
+		}
+		if err := json.Unmarshal(raw, &peer); err != nil {
+			return fmt.Errorf("an ingress rule's source cannot be read: %w", err)
+		}
+		named := peer.IPBlock != nil && !strings.HasSuffix(strings.TrimSpace(peer.IPBlock.CIDR), "/0") ||
+			peer.PodSelector != nil && !peer.PodSelector.empty() ||
+			peer.NamespaceSelector != nil && !peer.NamespaceSelector.empty()
+		if !named {
+			return errors.New("an ingress rule's source admits every address, pod or namespace; a source must be named")
+		}
+	}
 	if len(r.Ports) != 1 || r.Ports[0].EndPort != nil || (r.Ports[0].Protocol != "" && r.Ports[0].Protocol != "TCP") {
 		return fmt.Errorf("an ingress rule admits other ports than TCP %d", p.cfg.sandboxdPort())
 	}
@@ -454,6 +479,9 @@ func (p *Provider) checkIngressRule(r ingressRule) error {
 	}
 	return nil
 }
+
+// empty reports a selector with no term, which selects every pod or namespace.
+func (s labelSelector) empty() bool { return len(s.MatchLabels) == 0 && len(s.MatchExpressions) == 0 }
 
 // matches reports whether the selector selects a pod with these labels, as the API server
 // reads one: every matchLabels pair and every expression must hold, and an empty selector

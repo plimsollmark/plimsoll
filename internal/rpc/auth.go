@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -80,14 +81,17 @@ func authenticatePrincipal(ctx context.Context, header string, verifier TokenVer
 	}
 	p, ok, err := verifier.VerifyToken(ctx, token)
 	if err != nil {
+		// Marked: a verifier fails before anything is dispatched, so an unmarked answer
+		// here read as "may have run". The built-in verifiers never error; this is an
+		// embedder's (review, 2026-10-26).
 		switch {
 		case errors.Is(err, context.Canceled):
-			return Principal{}, connect.NewError(connect.CodeCanceled, context.Canceled)
+			return Principal{}, refuse(connect.CodeCanceled, sandbox.RefusalRequest, context.Canceled)
 		case errors.Is(err, context.DeadlineExceeded):
-			return Principal{}, connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)
+			return Principal{}, refuse(connect.CodeDeadlineExceeded, sandbox.RefusalRequest, context.DeadlineExceeded)
 		default:
 			slog.Error("token verifier failed", "error", err)
-			return Principal{}, connect.NewError(connect.CodeUnavailable, errors.New("authentication service unavailable"))
+			return Principal{}, refuse(connect.CodeUnavailable, sandbox.RefusalEnvironment, errors.New("authentication service unavailable"))
 		}
 	}
 	if !ok {
@@ -109,10 +113,23 @@ func authenticatePrincipal(ctx context.Context, header string, verifier TokenVer
 // unclosed: closing it would read it (Go's HTTP/1.x server drains a small unread body
 // on Close), and the server's unreadbody wrapper closes the connection instead.
 func AuthenticateHTTP(verifier TokenVerifier, next http.Handler) http.Handler {
-	if verifier == nil {
-		return next
-	}
 	errorWriter := connect.NewErrorWriter()
+	if verifier == nil {
+		// Open dev mode needs no credential, so the loopback bind is its only boundary,
+		// and a browser page that rebinds its own name to 127.0.0.1 would cross it as a
+		// same-origin request (DNS rebinding; Claude Security scan, 2026-10-27). Such a
+		// request still names the page's host, so open mode answers only a request
+		// addressed to localhost or a loopback address. This is not access control: any
+		// program on a reachable network can send that Host. A token is.
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !loopbackHost(r.Host) {
+				_ = errorWriter.Write(w, r, refuse(connect.CodePermissionDenied, sandbox.RefusalPermission,
+					errors.New("open dev mode answers only requests addressed to localhost or a loopback address; set PLIMSOLL_TOKEN or PLIMSOLL_CLIENTS_FILE to serve any other name")))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 	failures := &authFailureLog{}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := authenticatePrincipal(r.Context(), r.Header.Get("Authorization"), verifier)
@@ -130,6 +147,20 @@ func AuthenticateHTTP(verifier TokenVerifier, next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), principalKey{}, p)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// loopbackHost reports whether a request's Host names this machine: localhost or a
+// loopback address, with or without a port. An empty Host does not.
+func loopbackHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // authFailureLog counts refused credentials and logs the count at most once per
@@ -165,6 +196,9 @@ func (a *authFailureLog) note() {
 // end let more decoding run at once than the slots allow (round-7 review,
 // 2026-10-08). One caller may hold at most half the slots at once, so one caller's
 // requests, however slowly they arrive, always leave the other half for everyone else.
+// Callers are told apart by principal, so under a shared static token or in dev mode
+// every request is one caller and the daemon decodes at most half the slots at once:
+// the fairness is the clients file's.
 func LimitHTTPConcurrency(n int, next http.Handler) http.Handler {
 	if n < 1 {
 		n = 1

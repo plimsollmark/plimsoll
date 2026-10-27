@@ -25,6 +25,21 @@ Part of the [plimsoll README](../README.md).
   the plimsoll server that checks each call, so the credential and the route checks stay
   outside the hostile VM. Without a grant, an E2B run has no <dfn>*egress*</dfn>: nothing
   leaves the VM.
+- **A one-shot E2B run's code can be root inside its own microVM.** E2B's base template
+  gives its default user `sudo` without a password, and a one-shot run starts as that
+  user. The VM is the boundary: root inside it reaches nothing outside, and the VM is
+  deleted after the run. In a <dfn>*session*</dfn> (one sandbox kept for many calls),
+  the code runs as a user that cannot become root ([sessions](sessions.md)).
+- **An upload has 30 seconds to arrive.** The daemon's read timeout covers the request
+  body, up to its 8 MiB limit, so a client slower than about 280 KB/s on a full-size
+  project is cut off (8 MiB in 30 seconds); a faster link or a smaller project is the
+  remedy.
+- **The [agent-sandbox (INTERNAL · glossary →)](trainers/glossary.html#agent-sandbox)
+  provider's control channel is not encrypted.** plimsolld talks to each Kubernetes pod's
+  sandboxd over plain HTTP/2, so the token, the code, the report key and the output are as
+  private as the pod network is. Run it on an encrypted pod network;
+  [hardened mode (INTERNAL · glossary →)](trainers/glossary.html#hardened-mode) asks you to
+  say so ([agentsandbox.md](agentsandbox.md#the-control-channel-is-cleartext)).
 - **The E2B guard only works in the daemon process that started the run, so it cannot sit
   behind an ordinary load balancer.** A run's guard credential lives in the memory of the
   process that created the run, so a guard request sent to a second copy of the daemon is

@@ -30,8 +30,10 @@ type dcExecOutput struct {
 // inside the VM (dcTrailer). Guest code cannot change that measurement (it is the
 // wrapper's own, written after anything the guest can write) or shorten its run, so a
 // user program that merely exits 137 is not misread as a timeout, and neither is one
-// whose answer was slow to arrive. Without the trailer (a guest with no /proc), the
-// elapsed time around the call stands in, as it did before.
+// whose answer was slow to arrive. When the trailer states no time (a guest with no
+// readable /proc/uptime), the elapsed time around the call stands in, as it did
+// before. The trailer itself is always there: the wrapper writes it last whatever the
+// guest wrote, so a guest line in its shape is never read as it.
 func (d *DockerCloud) execGuarded(ctx context.Context, vm dcVM, argv []string, cwd string) (dcExecOutput, error) {
 	return d.execGuardedCap(ctx, vm, argv, cwd, d.maxOutput())
 }
@@ -84,20 +86,27 @@ func (d *DockerCloud) execLimited(ctx context.Context, vm dcVM, argv []string, c
 
 // splitDCTrailer separates the wrapper's trailer from the guest's stderr and returns the
 // time the command ran inside the VM. measured is false when the stream does not end with
-// the trailer.
+// the trailer (a wrapper that never ran: the stream is returned whole), or when the
+// trailer states no time ("-": the guest could not read /proc/uptime; the trailer is
+// still stripped and its flood flag read).
 func splitDCTrailer(b []byte) (stderr []byte, ran time.Duration, measured, flooded bool) {
 	m := dcTrailerForm.FindSubmatchIndex(b)
 	if m == nil {
 		return b, 0, false, false
 	}
-	cs, err := strconv.ParseInt(string(b[m[2]:m[3]]), 10, 64)
-	if err != nil {
-		return b, 0, false, false
+	flooded = b[m[4]] == '1'
+	field := string(b[m[2]:m[3]])
+	if field == "-" {
+		return b[:m[0]], 0, false, flooded
 	}
-	return b[:m[0]], time.Duration(cs) * 10 * time.Millisecond, true, b[m[4]] == '1'
+	cs, err := strconv.ParseInt(field, 10, 64)
+	if err != nil {
+		return b[:m[0]], 0, false, flooded
+	}
+	return b[:m[0]], time.Duration(cs) * 10 * time.Millisecond, true, flooded
 }
 
-var dcTrailerForm = regexp.MustCompile("\\n" + dcTrailer + " (-?[0-9]{1,15}) ([01])\\n$")
+var dcTrailerForm = regexp.MustCompile("\\n" + dcTrailer + " (-?[0-9]{1,15}|-) ([01])\\n$")
 
 func capStream(b []byte, max int) (string, bool) {
 	if len(b) > max {

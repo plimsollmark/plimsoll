@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"github.com/plimsollmark/plimsoll/protocol"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +40,7 @@ func newKey(t *testing.T) ed25519.PrivateKey {
 // exchange is a request and a response carrying a record, as a daemon sends it;
 // link sets a session call's chain fields.
 func exchange(code, stdout string, link sandbox.RunRecord) (*plimsollv1.RunRequest, *plimsollv1.RunResponse) {
-	req := &plimsollv1.RunRequest{Protocol: 1, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: code}}}
+	req := &plimsollv1.RunRequest{Protocol: protocol.Number, Payload: &plimsollv1.RunRequest_Javascript{Javascript: &plimsollv1.JavaScriptRun{Code: code}}}
 	resp := &plimsollv1.RunResponse{Sandbox: "fake", Isolation: "vm",
 		Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte(stdout)}}}
 	r := sandbox.RunRecord{
@@ -344,7 +345,7 @@ func TestReplayComparesResultDigests(t *testing.T) {
 		}
 		return &plimsollv1.RunResponse{Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte(out)}}}, nil
 	}
-	got, err := Replay(context.Background(), entries, NewVerifier(key.Public().(ed25519.PublicKey)), send)
+	got, err := Replay(context.Background(), entries, NewVerifier(key.Public().(ed25519.PublicKey)), ReplayOptions{}, send)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +395,7 @@ func TestHarnessRecordsThroughTheClient(t *testing.T) {
 		}
 		return resp.Msg, nil
 	}
-	replayed, err := Replay(context.Background(), entries, NewVerifier(key.Public().(ed25519.PublicKey)), send)
+	replayed, err := Replay(context.Background(), entries, NewVerifier(key.Public().(ed25519.PublicKey)), ReplayOptions{}, send)
 	if err != nil || len(replayed) != 2 || !replayed[0].Match() || !replayed[1].Match() {
 		t.Fatalf("replay %+v, %v", replayed, err)
 	}
@@ -457,7 +458,7 @@ func TestSessionRecordsVerifyAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReplaySessions(context.Background(), entries, NewVerifier(key.Public().(ed25519.PublicKey)), func(ctx context.Context) (SessionSender, error) {
+	got, err := ReplaySessions(context.Background(), entries, NewVerifier(key.Public().(ed25519.PublicKey)), ReplayOptions{}, func(ctx context.Context) (SessionSender, error) {
 		s, err := plain.OpenSession(ctx, client.SessionOptions{})
 		return replaySender{s}, err
 	})
@@ -591,5 +592,82 @@ func TestFloorViolationIsNotSignedOrVerified(t *testing.T) {
 	}
 	if _, err := VerifyBundle(seal(t, s, forged), v); !errors.Is(err, sandbox.ErrIsolationEvidenceMismatch) {
 		t.Fatalf("VerifyBundle accepted a container answer to a vm floor: %v", err)
+	}
+}
+
+// cutWriter accepts n bytes in all and fails the write that would pass them, as a full
+// disk does part way through a line.
+type cutWriter struct{ n, wrote int }
+
+func (w *cutWriter) Write(p []byte) (int, error) {
+	if w.wrote+len(p) > w.n {
+		k := w.n - w.wrote
+		w.wrote = w.n
+		return k, errors.New("disk full")
+	}
+	w.wrote += len(p)
+	return len(p), nil
+}
+
+// A harness whose write was cut short appends nothing more: the bundle may hold a
+// partial line, and every line after it would follow the fragment (review, 2026-10-26).
+func TestHarnessAppendsNothingAfterAFailedWrite(t *testing.T) {
+	key := newKey(t)
+	h := NewHarness(NewSigner(key), &cutWriter{n: 10})
+	req, resp := exchange("a()", "1\n", sandbox.RunRecord{})
+	if err := h.Record(req, resp); err == nil {
+		t.Fatal("a write cut short must fail")
+	}
+	if err := h.Record(req, resp); err == nil || !strings.Contains(err.Error(), "appends nothing more") {
+		t.Fatalf("a record after a failed write: %v", err)
+	}
+	if err := h.Checkpoint(); err == nil || !strings.Contains(err.Error(), "appends nothing more") {
+		t.Fatalf("a checkpoint after a failed write: %v", err)
+	}
+}
+
+// A replay does not send a recorded request that carries a grant profile unless told
+// to, nor one recorded under another protocol number (review, 2026-10-26).
+func TestReplayDoesNotSendGrantsOrOtherProtocols(t *testing.T) {
+	key := newKey(t)
+	s := NewSigner(key)
+	stamp := func(req *plimsollv1.RunRequest, resp *plimsollv1.RunResponse) {
+		resp.Record = record.Stamp(sandbox.RunRecord{RequestSHA256: record.RunRequestDigest(req),
+			Started: time.UnixMilli(1790000000000), Ended: time.UnixMilli(1790000000100)}, resp)
+	}
+	granted, grantedResp := exchange("g()", "x\n", sandbox.RunRecord{})
+	granted.GetJavascript().GrantProfile = "customer-api"
+	stamp(granted, grantedResp)
+	old, oldResp := exchange("o()", "y\n", sandbox.RunRecord{})
+	old.Protocol = 1
+	stamp(old, oldResp)
+	e1, err := s.Call(granted, grantedResp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2, err := s.Call(old, oldResp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := seal(t, s, e1, e2)
+	sent := 0
+	send := func(_ context.Context, req *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error) {
+		sent++
+		return &plimsollv1.RunResponse{Result: &plimsollv1.RunResponse_Javascript{Javascript: &plimsollv1.JavaScriptResult{Stdout: []byte("x\n")}}}, nil
+	}
+	v := NewVerifier(key.Public().(ed25519.PublicKey))
+	got, err := Replay(context.Background(), entries, v, ReplayOptions{}, send)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent != 0 || len(got) != 2 || !errors.Is(got[0].Err, ErrNotReplayable) || !errors.Is(got[1].Err, ErrNotReplayable) {
+		t.Fatalf("sent %d; replay %+v", sent, got)
+	}
+	got, err = Replay(context.Background(), entries, v, ReplayOptions{WithGrants: true}, send)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent != 1 || !got[0].Match() || !errors.Is(got[1].Err, ErrNotReplayable) {
+		t.Fatalf("with grants allowed: sent %d; replay %+v", sent, got)
 	}
 }

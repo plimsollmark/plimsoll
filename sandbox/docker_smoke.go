@@ -325,7 +325,7 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	}
 	if socketPath != "" {
 		// Mounted exactly as brokerForRun mounts the per-run broker socket.
-		runArgs = append(runArgs, "-v", socketPath+":"+containerSocketPath)
+		runArgs = append(runArgs, "--mount", bindMount(socketPath, containerSocketPath, false))
 	}
 	probeArgv, err := sessionkit.ControlArgv(nil, "node", "-")
 	if err != nil {

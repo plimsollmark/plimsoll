@@ -315,7 +315,11 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 	// concurrency cap one caller can hold every slot with long runs or running
 	// sessions. A suspended session holds no slot, so the session cap below bounds
 	// those.
-	if f.PerCaller <= 0 {
+	if f.MaxConcurrent < 2 {
+		// The two checks below cannot both pass at one slot, and their messages sent an
+		// operator in a circle (review, 2026-10-26).
+		fail("hardened mode requires SANDBOX_MAX_CONCURRENT of at least 2, so a per-caller cap can sit below it")
+	} else if f.PerCaller <= 0 {
 		fail("hardened mode requires a per-caller concurrency cap: SANDBOX_PER_KEY_CONCURRENT must be positive")
 	} else if f.PerCaller >= f.MaxConcurrent {
 		// A cap equal to the global one lets one caller hold every slot.

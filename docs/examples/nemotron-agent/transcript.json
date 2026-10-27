@@ -1,0 +1,72 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Task": "Write a Python function iso_duration_seconds(s) that converts an ISO 8601 duration string to a number of seconds (a float). It must handle: \"PT0S\" -\u003e 0, \"PT1H30M\" -\u003e 5400, \"P1DT2H\" -\u003e 93600, \"P1W\" -\u003e 604800, \"PT0.5S\" -\u003e 0.5, \"P2DT3H4M5.25S\" -\u003e 183845.25, and it must raise ValueError for \"\", \"P\", \"PT\", \"1H\" and \"P1H\". Use 1 day = 86400 seconds and 1 week = 7 days; years and months are not supported and must raise ValueError. Write the function and tests for every case above, run the tests, and fix the code until every test passes. Then report the final test output.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "9d0ca797543099d17953a308dd527f0184b69179d7afd0ef93c1807434d88714",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "\n\nAll tests passed! The function correctly converts ISO 8601 duration strings to seconds, handling the specified cases and raising ValueError for invalid inputs. Final test output shows each test case passing.",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "import re\n\ndef iso_duration_seconds(s):\n    if not isinstance(s, str):\n        raise ValueError(\"Input must be string\")\n    if s == \"\" or s == \"P\" or s == \"PT\":\n        raise ValueError(\"Invalid duration\")\n    # Must start with P\n    if not s.startswith('P'):\n        raise ValueError(\"Duration must start with 'P'\")\n    # Split date and time parts\n    if 'T' in s:\n        date_part, time_part = s[1:].split('T', 1)\n    else:\n        date_part, time_part = s[1:], ''\n    # Validate no unsupported units Y or M anywhere\n    if re.search(r'[YM]', s):\n        raise ValueError(\"Years and months not supported\")\n    total = 0.0\n    # Parse date part: only D allowed\n    if date_part:\n        # Expect pattern like (\\d+(\\.\\d+)?)D\n        m = re.fullmatch(r'(\\d+(?:\\.\\d+)?)D', date_part)\n        if not m:\n            raise ValueError(\"Invalid date part\")\n        days = float(m.group(1))\n        total += days * 86400\n    # Parse time part: H, M, S allowed, order not enforced but we parse sequentially\n    if time_part:\n        # Remove possible empty\n        # Use regex to find all number+unit\n        tokens = re.findall(r'(\\d+(?:\\.\\d+)?)([HMS])', time_part)\n        if not tokens:\n            raise ValueError(\"Invalid time part\")\n        # Ensure we consumed whole string\n        reconstructed = ''.join(num + unit for num, unit in tokens)\n        if reconstructed != time_part:\n            raise ValueError(\"Invalid time part format\")\n        for num, unit in tokens:\n            val = float(num)\n            if unit == 'H':\n                total += val * 3600\n            elif unit == 'M':\n                total += val * 60\n            elif unit == 'S':\n                total += val\n            else:\n                raise ValueError(\"Unsupported unit\")\n    # Ensure at least one component contributed\n    if total == 0 and s not in (\"PT0S\",):  # allow zero explicitly\n        # but also PT0S should be allowed\n        # check if any number present\n        if not re.search(r'\\d', s):\n            raise ValueError(\"No duration specified\")\n    return total\n\n# Tests\ntest_cases = [\n    (\"PT0S\", 0),\n    (\"PT1H30M\", 5400),\n    (\"P1DT2H\", 93600),\n    (\"P1W\", 604800),\n    (\"PT0.5S\", 0.5),\n    (\"P2DT3H4M5.25S\", 183845.25),\n]\nerrors = [\"\", \"P\", \"PT\", \"1H\", \"P1H\"]\n\nall_passed = True\nfor inp, expected in test_cases:\n    try:\n        result = iso_duration_seconds(inp)\n        if abs(result - expected) \u003e 1e-9:\n            print(f\"FAIL: {inp} -\u003e {result}, expected {expected}\")\n            all_passed = False\n        else:\n            print(f\"PASS: {inp} -\u003e {result}\")\n    except Exception as e:\n        print(f\"ERROR: {inp} raised {e}\")\n        all_passed = False\n\nfor inp in errors:\n    try:\n        result = iso_duration_seconds(inp)\n        print(f\"FAIL (should error): {inp} -\u003e {result}\")\n        all_passed = False\n    except ValueError:\n        print(f\"PASS (error): {inp} raised ValueError\")\n    except Exception as e:\n        print(f\"FAIL (wrong exception): {inp} raised {e}\")\n        all_passed = False\n\nif all_passed:\n    print(\"\\nAll tests passed!\")\nelse:\n    print(\"\\nSome tests failed.\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "PASS: PT0S -\u003e 0.0\nERROR: PT1H30M raised Years and months not supported\nPASS: P1DT2H -\u003e 93600.0\nERROR: P1W raised Invalid date part\nPASS: PT0.5S -\u003e 0.5\nERROR: P2DT3H4M5.25S raised Years and months not supported\nPASS (error):  raised ValueError\nPASS (error): P raised ValueError\nPASS (error): PT raised ValueError\nPASS (error): 1H raised ValueError\nPASS (error): P1H raised ValueError\n\nSome tests failed.\n",
+      "Stderr": "",
+      "Millis": 828,
+      "Record": "5722fb5f0c2771b29e93a9e4224c854c7534169b7b9a1806005a75d9ad7a4478",
+      "Request": "e23f15e44b639faa8decb17e35045dba192dbb568c7af813cd2053e98a6139ed",
+      "Result": "818191983545b19c44f9fcd2681f948f2de4f77f88c07e5c2985766f228817f1",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "import re\n\ndef iso_duration_seconds(s):\n    if not isinstance(s, str):\n        raise ValueError(\"Input must be string\")\n    if s == \"\" or s == \"P\" or s == \"PT\":\n        raise ValueError(\"Invalid duration\")\n    if not s.startswith('P'):\n        raise ValueError(\"Duration must start with 'P'\")\n    rest = s[1:]\n    # Split into date and time parts\n    if 'T' in rest:\n        date_part, time_part = rest.split('T', 1)\n    else:\n        date_part, time_part = rest, ''\n    # Years and months not allowed anywhere\n    if re.search(r'[YM]', s):\n        # But allow M as minute only if after T? Simpler: reject any M or Y.\n        # However we need to allow M for minutes. So we check for Y only.\n        if 'Y' in s:\n            raise ValueError(\"Years and months not supported\")\n        # For M, we need to ensure it's not a month. Since we don't support months,\n        # any M appearing before T is month. So check date_part for M.\n        if 'M' in date_part:\n            raise ValueError(\"Years and months not supported\")\n    total = 0.0\n    # Parse date part: D and/or W allowed\n    if date_part:\n        # Find all number+unit pairs\n        matches = re.findall(r'(\\d+(?:\\.\\d+)?)([DW])', date_part)\n        if not matches:\n            raise ValueError(\"Invalid date part\")\n        # Ensure we consumed the whole date_part\n        reconstructed = ''.join(num + unit for num, unit in matches)\n        if reconstructed != date_part:\n            raise ValueError(\"Invalid date part format\")\n        for num, unit in matches:\n            val = float(num)\n            if unit == 'D':\n                total += val * 86400\n            elif unit == 'W':\n                total += val * 7 * 86400\n            else:\n                raise ValueError(\"Unsupported date unit\")\n    # Parse time part: H, M, S allowed\n    if time_part:\n        matches = re.findall(r'(\\d+(?:\\.\\d+)?)([HMS])', time_part)\n        if not matches:\n            raise ValueError(\"Invalid time part\")\n        reconstructed = ''.join(num + unit for num, unit in matches)\n        if reconstructed != time_part:\n            raise ValueError(\"Invalid time part format\")\n        for num, unit in matches:\n            val = float(num)\n            if unit == 'H':\n                total += val * 3600\n            elif unit == 'M':\n                total += val * 60\n            elif unit == 'S':\n                total += val\n            else:\n                raise ValueError(\"Unsupported time unit\")\n    # Ensure at least one component contributed (except PT0S already handled)\n    if total == 0:\n        # Check if there was any number at all\n        if not re.search(r'\\d', s):\n            raise ValueError(\"No duration specified\")\n    return total\n\n# Tests\ntest_cases = [\n    (\"PT0S\", 0),\n    (\"PT1H30M\", 5400),\n    (\"P1DT2H\", 93600),\n    (\"P1W\", 604800),\n    (\"PT0.5S\", 0.5),\n    (\"P2DT3H4M5.25S\", 183845.25),\n]\nerrors = [\"\", \"P\", \"PT\", \"1H\", \"P1H\"]\n\nall_passed = True\nfor inp, expected in test_cases:\n    try:\n        result = iso_duration_seconds(inp)\n        if abs(result - expected) \u003e 1e-9:\n            print(f\"FAIL: {inp} -\u003e {result}, expected {expected}\")\n            all_passed = False\n        else:\n            print(f\"PASS: {inp} -\u003e {result}\")\n    except Exception as e:\n        print(f\"ERROR: {inp} raised {e}\")\n        all_passed = False\n\nfor inp in errors:\n    try:\n        result = iso_duration_seconds(inp)\n        print(f\"FAIL (should error): {inp} -\u003e {result}\")\n        all_passed = False\n    except ValueError:\n        print(f\"PASS (error): {inp} raised ValueError\")\n    except Exception as e:\n        print(f\"FAIL (wrong exception): {inp} raised {e}\")\n        all_passed = False\n\nif all_passed:\n    print(\"\\nAll tests passed!\")\nelse:\n    print(\"\\nSome tests failed.\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "PASS: PT0S -\u003e 0.0\nPASS: PT1H30M -\u003e 5400.0\nPASS: P1DT2H -\u003e 93600.0\nPASS: P1W -\u003e 604800.0\nPASS: PT0.5S -\u003e 0.5\nPASS: P2DT3H4M5.25S -\u003e 183845.25\nPASS (error):  raised ValueError\nPASS (error): P raised ValueError\nPASS (error): PT raised ValueError\nPASS (error): 1H raised ValueError\nPASS (error): P1H raised ValueError\n\nAll tests passed!\n",
+      "Stderr": "",
+      "Millis": 39,
+      "Record": "83c8343078ac6fb1b5d6daea37b71442ebcc47abf7322400d44c7b30376edbf4",
+      "Request": "a1779f6ff94f45a7d22cc67c68d3b4510f03363b96ff899a0c5364c52d6e6806",
+      "Result": "38459ee698d41bd003582722c280cd389673d537b434c19ed1c7294aa408b94f",
+      "Previous": "5722fb5f0c2771b29e93a9e4224c854c7534169b7b9a1806005a75d9ad7a4478",
+      "Sequence": 2
+    }
+  ],
+  "Final": "\n\nAll tests passed! The function correctly converts ISO 8601 duration strings to seconds, handling the specified cases and raising ValueError for invalid inputs. Final test output shows each test case passing.",
+  "Calls": 2,
+  "Verified": true,
+  "VerifyDetail": "4 lines, 1 session; the session's chain of 2 calls closed",
+  "KeyID": "494be0538432dcb1f093aaee210324b7b5722eb5618791bb5005323af2d6f60c",
+  "Usage": {
+    "Prompt": 5921,
+    "Completion": 2529,
+    "Calls": 3
+  }
+}

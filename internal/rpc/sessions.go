@@ -489,7 +489,13 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 	started := time.Now()
 	// A failed open's slot comes back once whatever sandbox it made is gone, which a
 	// provider that deletes it off the result path holds past the return (HoldCapacity).
-	openCtx, openFailed := sandbox.WithCapacity(ctx, release)
+	// The RPC edge's ceiling, as runContext gives a run: an open the provider never
+	// finishes must not hold a session place, a limiter slot and a paid reservation
+	// until the client disconnects, which the server's write timeout does not do
+	// (review, 2026-10-26).
+	edgeCtx, cancelEdge := runContext(ctx)
+	defer cancelEdge()
+	openCtx, openFailed := sandbox.WithCapacity(edgeCtx, release)
 	// A failed open whose sandbox could not be deleted reports here until when it bills;
 	// there is no session left to ask.
 	openCtx, openLeaked := sandbox.WatchTeardownUntil(openCtx)
@@ -517,7 +523,7 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 			slog.String("caller", auditCaller(ctx)),
 			slog.String("sandbox", s.Sandbox.Name()),
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
-			slog.String("error", err.Error()),
+			errAttr(err),
 		}
 		s.logger().LogAttrs(ctx, slog.LevelError, "session open failed", append(attrs, traceAttrs(env.traceID)...)...)
 		return nil, mapSandboxErr(err)
@@ -1150,15 +1156,19 @@ func (s *SandboxService) CloseSession(ctx context.Context, req *connect.Request[
 	e.mu.Lock()
 	e.stopIdle()
 	e.mu.Unlock()
-	_ = e.sess.Close(ctx)
+	// The RPC edge's ceiling bounds a close as it bounds an open (review, 2026-10-26).
+	closeCtx, cancelClose := runContext(ctx)
+	defer cancelClose()
+	_ = e.sess.Close(closeCtx)
 	// Close starts the end and Done says the sandbox is gone, which takes the
-	// provider's delete. The wait is the caller's to bound: a provider slow to finish
-	// must not hold the session's turn past it. The entry stays until Done, so closing
-	// again collects the count. Unmarked, because the close has begun.
+	// provider's delete. The wait is bounded by the caller and by the ceiling: a
+	// provider slow to finish must not hold the session's turn past it. The entry stays
+	// until Done, so closing again collects the count. Unmarked, because the close has
+	// begun.
 	select {
 	case <-e.sess.Done():
-	case <-ctx.Done():
-		return nil, mapSandboxErr(fmt.Errorf("the session is still ending; close it again to collect its count: %w", ctx.Err()))
+	case <-closeCtx.Done():
+		return nil, mapSandboxErr(fmt.Errorf("the session is still ending; close it again to collect its count: %w", closeCtx.Err()))
 	}
 	s.sessions.remove(e.id)
 	end := sandbox.SessionClosed

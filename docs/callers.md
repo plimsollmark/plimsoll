@@ -121,8 +121,8 @@ HTTP 401 and a Connect error body (shown without its `details` array, which carr
 {"code":"unauthenticated","message":"missing bearer token"}
 ```
 
-A recognised token whose scopes omit `code:run` gets `permission_denied` on the
-RPCs that run code instead. Every run's audit line carries the caller id
+A recognised token whose scopes omit `code:run` gets `permission_denied` on every
+procedure, `Describe` included, since it describes the code-running boundary. Every run's audit line carries the caller id
 (`caller=mcp-gateway`) and never the token.
 
 ## The id is what the rest of the system sees
@@ -156,8 +156,9 @@ the operator pays for by the second): seconds of that machine's wall time per UT
 run that crosses midnight counts in the new day for the part it ran after midnight),
 counted by each daemon on its own, so a caller on K daemons sharing this file can spend K
 times it. Before a run starts the daemon reserves its timeout (the provider's ceiling when
-the call sets none) plus the provider's teardown bound (33 seconds on E2B and Docker
-Cloud), refusing the run when that does not fit; at the end it charges what the run took,
+the call sets none) plus the provider's teardown bound (38 seconds on E2B and Docker
+Cloud: five to read a project's artifacts past its deadline, then up to 33 of delete
+attempts), refusing the run when that does not fit; at the end it charges what the run took,
 or the whole reservation when the provider could not delete the virtual machine (its
 delete gave up, or the create may have made one with nothing to delete it by: a create
 whose answer never came back or was neither a success nor a refusal, or on Docker Cloud
@@ -241,6 +242,10 @@ The daemon picks how it checks tokens in this order: `PLIMSOLL_CLIENTS_FILE` (th
 file, one principal per caller), then `PLIMSOLL_TOKEN` (one shared bearer token for
 every caller, with no per-caller identity), then open development mode (no token
 checked), which a real provider refuses unless `PLIMSOLL_INSECURE=1` acknowledges it.
+Open mode answers only a request addressed to `localhost` or a loopback address, so a web
+page that rebinds its own name to 127.0.0.1 is refused: its requests still name the page's
+host. That is not access control, since any program that can reach the port can send such a
+Host; bind loopback, and use a token for anything else.
 Hardened mode (`PLIMSOLL_HARDENED=1`), under which the daemon refuses to
 start unless every production safeguard is configured, accepts only the clients file.
 Per-caller identity is what makes the `allowed_callers` lists and per-run token

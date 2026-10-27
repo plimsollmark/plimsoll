@@ -453,7 +453,7 @@ class Client:
         digest = request_digest(req)
         resp = self._transport.call("Run", req, "RunResponse", cancel)
         floor = req.get("minimumIsolation", "")
-        return _finish(kind, resp, lambda: check_single(digest, rule, resp), floor)
+        return _finish(kind, resp, lambda: check_single(digest, kind, rule, resp), floor)
 
     def open_session(
         self,
@@ -739,20 +739,20 @@ class Session:
             # A number this client has no name for is an end all the same: "unknown".
             name = SESSION_END_NAMES[end] if 0 < end < len(SESSION_END_NAMES) else "unknown"
             self._ended = SessionEnded(reason=name, detail=m.get_str("endDetail"))
-        return _finish(kind, run, lambda: self._checked_chain(digest, rule, run, floor), floor)
+        return _finish(kind, run, lambda: self._checked_chain(kind, digest, rule, run, floor), floor)
 
-    def _checked_chain(self, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str) -> RunRecord:
+    def _checked_chain(self, kind: str, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str) -> RunRecord:
         try:
-            return self._check_chain(digest, rule, run, floor)
+            return self._check_chain(kind, digest, rule, run, floor)
         except PlimsollError as e:
             self._unanswered = e.message
             raise
 
-    def _check_chain(self, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str) -> RunRecord:
+    def _check_chain(self, kind: str, digest: str, rule: Optional[SoftwareRule], run: Msg, floor: str) -> RunRecord:
         # record.CheckSessionCall, then the chain this client tracks moves on. A tier
-        # below the call's floor fails it before the chain moves, as in Go's
-        # record.check, so the session sends nothing more.
-        r = check(digest, rule, run)
+        # below the call's floor, or a result of another kind, fails it before the chain
+        # moves, as in Go's record.check, so the session sends nothing more.
+        r = check(digest, kind, rule, run)
         if floor and not meets(r.isolation, floor):
             raise IsolationEvidenceMismatchError(
                 f"plimsoll: result isolation {r.isolation or 'unknown'} is below the requested minimum {floor}; execution may have occurred"

@@ -629,7 +629,8 @@ func fakeSmoke(t *testing.T, p *Provider, sd *fakeSandboxd, edit func(*boundaryR
 		}
 		ids := strings.Repeat("61000\t", 3) + "61000"
 		r := boundaryReport{Node: "v22.0.0", UID: ids, GID: ids, CapEff: "0000000000000000", CapPrm: "0000000000000000", NoNewPrivs: "1", Seccomp: "2",
-			Env: []string{"HOME", "PATH"}, Resolv: "nameserver 127.0.0.1\n", Swept: 1000, Gateway: "10.0.0.1", Egress: map[string]string{"tcp 10.0.0.1:10250": "timeout"},
+			Sandboxd: map[string]string{"none": "16", "wrong": "16"},
+			Env:      []string{"HOME", "PATH"}, Resolv: "nameserver 127.0.0.1\n", Swept: 1000, Gateway: "10.0.0.1", Egress: map[string]string{"tcp 10.0.0.1:10250": "timeout"},
 			Dmesg: "[   0.000000] Starting gVisor...", Mounts: []string{"none / overlay ro 0 0", "shm /dev/shm tmpfs rw 0 0"},
 		}
 		if p.IsolationClass() == sandbox.IsolationVM {

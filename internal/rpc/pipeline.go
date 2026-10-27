@@ -162,7 +162,7 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 			slog.String("sandbox", t.provider),
 			slog.String("isolation", t.tier.String()),
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
-			slog.String("error", err.Error()))
+			errAttr(err))
 		attrs = append(attrs, hostCallAttrs(k.trace())...)
 		// A failed run is exactly the one an operator will go looking for, so it
 		// carries the join key too.

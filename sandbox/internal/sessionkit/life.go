@@ -206,6 +206,13 @@ func (l *Life) Keep() []string {
 // once reg's Drain has begun; the caller then abandons the session.
 func (l *Life) Activate(reg *Registry, expires time.Time, disk int64) bool {
 	l.mu.Lock()
+	if l.end != nil {
+		// Already ended (its finish ran and unregistered it): registering it again
+		// would put it back among the open sessions with no way out (review,
+		// 2026-10-26). No current path reaches this; the caller abandons it.
+		l.mu.Unlock()
+		return false
+	}
 	l.expires, l.disk, l.reg = expires, disk, reg
 	l.mu.Unlock()
 	if !reg.register(l) {

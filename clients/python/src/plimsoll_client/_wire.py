@@ -4,7 +4,7 @@ Field names are protobuf's lowerCamelCase JSON names (the original snake_case
 names are accepted too, as protobuf's own JSON parser accepts them); ``bytes``
 are base64; 64-bit integers usually arrive as strings; enums as their names; a
 field at its zero value is omitted. Connect error details carry binary protobuf,
-and the two this client reads are decoded by hand below, so no protobuf runtime
+and the three this client reads are decoded by hand below, so no protobuf runtime
 is needed.
 """
 
@@ -489,7 +489,9 @@ def error_from_wire(status: int, body: bytes, *, bound: bool, mark: Optional[str
     parsed: Any = None
     try:
         parsed = loads(body) if body else None
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        # An error body nested a few thousand levels deep raised RecursionError past
+        # every caller that catches PlimsollError (review, 2026-10-26).
         parsed = None
     if not isinstance(parsed, dict):
         parsed = {}

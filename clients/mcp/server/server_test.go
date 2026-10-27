@@ -779,3 +779,48 @@ func TestASessionThatStatesNoLanguagesIsOfferedNone(t *testing.T) {
 		t.Errorf("%d sessions opened", n)
 	}
 }
+
+// A call that waited for its sandbox's turn is refused, not cut off, when less than the
+// run budget plus the answer margin remains of its deadline, and the sandbox survives
+// with its state; it used to run under the whole budget, be cut off by the call's
+// deadline, and lose the sandbox (review, 2026-10-26).
+func TestAQueuedCallShortOfItsRunBudgetIsRefusedNotCutOff(t *testing.T) {
+	d := fakedaemon.Serve(t, fakedaemon.Options{Sessions: 2})
+	cfg := local(d.URL)
+	cfg.RunTimeout, cfg.CallTimeout = time.Second, 11*time.Second
+	c := connect(t, cfg)
+	handle := c.ok("open_sandbox", nil)["sandbox"].(string)
+	c.ok("run_code", map[string]any{"code": "first", "sandbox": handle})
+	blocked := d.Provider.Blocked()
+	first := make(chan *mcp.CallToolResult, 1)
+	go func() {
+		res, _ := c.cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "run_code", Arguments: map[string]any{"code": fakedaemon.Block, "sandbox": handle}})
+		first <- res
+	}()
+	select {
+	case <-blocked:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the blocking call did not start")
+	}
+	queued := make(chan *mcp.CallToolResult, 1)
+	go func() {
+		res, _ := c.cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "run_code", Arguments: map[string]any{"code": "queued", "sandbox": handle}})
+		queued <- res
+	}()
+	// Past 6 s of the queued call's 11 s, less than its 1 s budget plus 5 s remain.
+	time.Sleep(6500 * time.Millisecond)
+	d.Provider.Release()
+	res := <-queued
+	if !res.IsError {
+		t.Fatalf("the queued call ran with its budget past the deadline: %s", text(res))
+	}
+	var f failure
+	if err := json.Unmarshal([]byte(text(res)), &f); err != nil || f.Ran != "no" || f.Refusal != "capacity" || !strings.Contains(f.Summary, "call again") {
+		t.Fatalf("the queued call: %v, %+v", err, f)
+	}
+	<-first
+	out := c.ok("run_code", map[string]any{"code": "after", "sandbox": handle})
+	if out["freshSandbox"] == true || out["sandboxReplaced"] != nil {
+		t.Fatalf("the handle's sandbox was given up after the refusal: %v", out)
+	}
+}

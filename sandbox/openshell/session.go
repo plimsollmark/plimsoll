@@ -282,6 +282,12 @@ func (s *session) readBack(ctx context.Context) error {
 	default:
 		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: fmt.Sprintf("the sandbox is in phase %v, not ready", ph)}
 	}
+	if got := sb.GetMetadata().GetId(); got != s.b.id {
+		// Every gateway call is by name, so a sandbox recreated under the session's name
+		// with the same labels, image, limits, policy and command passed every other
+		// comparison (review, 2026-10-26).
+		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: "a different sandbox answers to the session's name", Public: true}
+	}
 	if err := s.p.verifySandbox(sb, s.labels, sessionCommand, nil); err != nil {
 		return &sandbox.SessionEndedError{Reason: sandbox.SessionSandboxChanged, Detail: err.Error()}
 	}
@@ -363,14 +369,15 @@ func (s *session) RunJavaScript(ctx context.Context, req sandbox.Request) (sandb
 	start := time.Now()
 	out, err := s.p.exec(runCtx, s.b, sessionSnippetCommand, env, []byte(code), maxOutputBytes, maxOutputBytes)
 	res := sandbox.Result{
-		Stdout:          string(out.stdout),
-		Stderr:          string(out.stderr),
-		StdoutTruncated: out.stdoutTruncated,
-		StderrTruncated: out.stderrTruncated,
-		ExitCode:        out.exitCode,
-		Duration:        time.Since(start),
-		Sandbox:         Name,
-		Isolation:       s.tier,
+		Stdout:              string(out.stdout),
+		Stderr:              string(out.stderr),
+		StdoutTruncated:     out.stdoutTruncated,
+		StderrTruncated:     out.stderrTruncated,
+		ExitCode:            out.exitCode,
+		Duration:            time.Since(start),
+		Sandbox:             Name,
+		Isolation:           s.tier,
+		EnvironmentIdentity: s.p.imageIdentity(),
 	}
 	if g != nil {
 		g.broker.End()

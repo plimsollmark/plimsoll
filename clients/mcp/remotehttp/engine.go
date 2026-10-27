@@ -390,6 +390,8 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	allowed := false
 	switch path {
 	case "/mcp":
+		// GET and DELETE are admitted this far so an anonymous one gets the 401 challenge
+		// that names the resource metadata; once authenticated they are answered 405 below.
 		allowed = !e.cfg.Enrollment && (r.Method == "POST" || r.Method == "GET" || r.Method == "DELETE" || r.Method == "OPTIONS")
 	case "/oauth/authorize":
 		allowed = !e.cfg.Enrollment && (r.Method == "GET" || r.Method == "POST")
@@ -525,6 +527,14 @@ func (e *Engine) serveMCP(w http.ResponseWriter, r *http.Request, origin string)
 		reject(w, 503)
 		return
 	}
+	if r.Method != "POST" {
+		// The stateless SDK handler answers GET and DELETE with 405 anyway; they used to
+		// pass the call meter, the app slot, the request slot and the grant's registration
+		// first (review, 2026-10-26).
+		w.Header().Set("Allow", "POST, OPTIONS")
+		reject(w, 405)
+		return
+	}
 	refund, ok := e.takeCall(g.ID)
 	if !ok {
 		w.Header().Set("Retry-After", "1")
@@ -548,6 +558,7 @@ func (e *Engine) serveMCP(w http.ResponseWriter, r *http.Request, origin string)
 		return
 	}
 	if err = e.tools.RegisterGrant(g.ID, digest(g.Client)); err != nil {
+		refund() // no call was made (review, 2026-10-26)
 		reject(w, 403)
 		return
 	}
@@ -564,6 +575,7 @@ func (e *Engine) serveMCP(w http.ResponseWriter, r *http.Request, origin string)
 		return
 	}
 	if r.ContentLength > mcpBodyLimit {
+		refund() // no call was made
 		reject(w, 413)
 		return
 	}

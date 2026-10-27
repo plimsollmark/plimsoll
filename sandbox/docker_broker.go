@@ -139,5 +139,5 @@ func (d *DockerSandbox) brokerForRun(ctx context.Context, grant *HostAPIGrant, t
 		core.Close()
 		return nil, nil, nil, err
 	}
-	return b, []string{"-v", b.sock + ":" + containerSocketPath}, []string{"HOST_API_SOCKET=" + containerSocketPath}, nil
+	return b, []string{"--mount", bindMount(b.sock, containerSocketPath, false)}, []string{"HOST_API_SOCKET=" + containerSocketPath}, nil
 }

@@ -5,11 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
-
-	"google.golang.org/protobuf/proto"
-
-	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
-	"github.com/plimsollmark/plimsoll/record"
 )
 
 // publishedBundle reads a bundle and its harness key as a release published them
@@ -90,25 +85,10 @@ func recordVersions(t *testing.T, entries []Entry, v *Verifier) map[int]bool {
 		if e.Request == nil {
 			continue // a session-close or checkpoint line
 		}
-		rec, err := v.Verify(e.Envelope)
+		// The shipped path for a line with no link: plimsoll-attest verify-record.
+		rec, err := VerifyCall(v, e)
 		if err != nil {
 			t.Fatalf("line %d: %v", i+1, err)
-		}
-		req, resp := &plimsollv1.RunRequest{}, &plimsollv1.RunResponse{}
-		if err := proto.Unmarshal(e.Request, req); err != nil {
-			t.Fatalf("line %d: %v", i+1, err)
-		}
-		if err := proto.Unmarshal(e.Response, resp); err != nil {
-			t.Fatalf("line %d: %v", i+1, err)
-		}
-		if rec.Unanswered != "" {
-			err = record.CheckUnansweredExchange(req, rec)
-		} else {
-			resp.Record = record.ToWire(rec)
-			_, err = record.CheckExchange(req, resp)
-		}
-		if err != nil {
-			t.Fatalf("line %d: a version %d record: %v", i+1, rec.Version, err)
 		}
 		seen[rec.Version] = true
 	}

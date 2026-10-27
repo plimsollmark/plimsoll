@@ -1298,7 +1298,8 @@ type RunRecord struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// version is the encoding version, 4: every field below, every time. A
 	// session call that may have run but ended in an error sets unanswered and
-	// leaves result_sha256 empty. A verifier refuses any other version.
+	// leaves result_sha256 empty. A live answer must carry this version; a verifier
+	// of stored evidence reads every published version (record.published).
 	Version uint32 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
 	// request_sha256 covers what the caller sent: protocol number, floor,
 	// timeout, software rule and payload, never the trace id.
@@ -3010,7 +3011,7 @@ func (x *SessionEnded) GetDetail() string {
 	return ""
 }
 
-// NotDispatched is attached as an error detail to a Run (or Describe) error that
+// NotDispatched is attached as an error detail to any procedure's error that
 // was raised before any code was dispatched: nothing executed, so retrying the
 // request or sending it to another daemon cannot run it twice. Only refusals that
 // provably ran nothing carry it. An error WITHOUT this detail may have followed
@@ -3060,7 +3061,7 @@ func (x *NotDispatched) GetReason() NotDispatchedReason {
 }
 
 // UnansweredCall is the error detail of a session call that may have run but ended
-// in an error (an error without NotDispatched): its version 3 record, which the
+// in an error (an error without NotDispatched): its run record (the current version), which the
 // session's chain counts, so a call that ran is never missing from the chain.
 type UnansweredCall struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`

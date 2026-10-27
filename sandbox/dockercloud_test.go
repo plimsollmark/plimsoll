@@ -1271,7 +1271,7 @@ func (g *dcSmokeGuest) exec(argv []string) (int, string, string) {
 	switch strings.Join(argv, " ") {
 	case "sh /tmp/plimsoll-smoke-step.sh":
 		return g.probe()
-	case "sleep 30":
+	case strings.Join(stepArgv(dcSmokeHangPath), " "):
 		time.Sleep(1100 * time.Millisecond) // the in-guest limit is 1s
 		if g.hangEscape {
 			return 0, "", ""

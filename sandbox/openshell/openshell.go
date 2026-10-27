@@ -111,8 +111,9 @@ type Config struct {
 	CAFile   string
 	CertFile string
 	KeyFile  string
-	// Image is the OCI image every sandbox boots. It must carry node, sh and
-	// /runner.mjs, as plimsoll/sandbox does.
+	// Image is the OCI image every sandbox boots. It must carry node, sh, /usr/bin/env,
+	// /runner.mjs and the runner guard library (/usr/local/lib/plimsoll-runner-guard.so),
+	// as plimsoll/sandbox does; docs/openshell.md lists them.
 	Image string
 	// RequirePinnedImage refuses an Image that is not pinned by an @sha256: digest.
 	RequirePinnedImage bool
@@ -370,15 +371,23 @@ func (*Provider) SupportsModules() bool { return false }
 func (*Provider) SupportsJavaScriptGrants() bool { return true }
 func (*Provider) SupportsProjectGrants() bool    { return true }
 
+// imageIdentity is the environment identity Environments advertises and every result
+// states: the pinned image's digest, or "" for an image a tag names (a tag is not an
+// identity). Results used to leave it empty, so the signed record's environment was
+// empty on this provider (review, 2026-10-26).
+func (p *Provider) imageIdentity() string {
+	if !isDigestPinned(p.cfg.Image) {
+		return ""
+	}
+	return "openshell-image:" + strings.ToLower(p.cfg.Image[strings.LastIndex(p.cfg.Image, "@")+1:])
+}
+
 // Environments states the image digest when the image is pinned by one (a digest
 // reference names its content); a tag is not an identity. The policy is named by
 // the hash the gateway itself reports for it, which every run's read-back
 // compares.
 func (p *Provider) Environments() sandbox.Environments {
-	identity := ""
-	if isDigestPinned(p.cfg.Image) {
-		identity = "openshell-image:" + strings.ToLower(p.cfg.Image[strings.LastIndex(p.cfg.Image, "@")+1:])
-	}
+	identity := p.imageIdentity()
 	var langs []sandbox.Language
 	p.mu.Lock()
 	if p.smoke != nil {
@@ -472,7 +481,10 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	var g *grantRun
 	if req.Grant != nil {
 		if g, err = p.startGrant(runCtx, b, req.Grant, timeout, nil); err != nil {
-			return fail, providerkit.DeadlineAware(runCtx, err)
+			// The fresh sandbox ran only plimsoll's relay, never the guest's code: marked
+			// (a session's grant failure stays unmarked, its earlier calls having run;
+			// review, 2026-10-26).
+			return fail, sandbox.NotDispatched(sandbox.RefusalEnvironment, providerkit.DeadlineAware(runCtx, err))
 		}
 		defer g.Close()
 		code, env = sandbox.HostClientSnippet(req.Code, req.Grant), g.env()
@@ -481,14 +493,15 @@ func (p *Provider) RunJavaScript(ctx context.Context, req sandbox.Request) (sand
 	start := time.Now()
 	out, err := p.exec(runCtx, b, []string{"node", "-"}, env, []byte(code), maxOutputBytes, maxOutputBytes)
 	res := sandbox.Result{
-		Stdout:          string(out.stdout),
-		Stderr:          string(out.stderr),
-		StdoutTruncated: out.stdoutTruncated,
-		StderrTruncated: out.stderrTruncated,
-		ExitCode:        out.exitCode,
-		Duration:        time.Since(start),
-		Sandbox:         Name,
-		Isolation:       tier,
+		Stdout:              string(out.stdout),
+		Stderr:              string(out.stderr),
+		StdoutTruncated:     out.stdoutTruncated,
+		StderrTruncated:     out.stderrTruncated,
+		ExitCode:            out.exitCode,
+		Duration:            time.Since(start),
+		Sandbox:             Name,
+		Isolation:           tier,
+		EnvironmentIdentity: p.imageIdentity(),
 	}
 	if g != nil {
 		g.broker.End()
@@ -558,7 +571,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 	var g *grantRun
 	if req.Grant != nil {
 		if g, err = p.startGrant(runCtx, b, req.Grant, timeout+runnerGrace, nil); err != nil {
-			return fail, providerkit.DeadlineAware(runCtx, err)
+			return fail, sandbox.NotDispatched(sandbox.RefusalEnvironment, providerkit.DeadlineAware(runCtx, err)) // as for a snippet above
 		}
 		defer g.Close()
 	}
@@ -575,7 +588,7 @@ func (p *Provider) RunProject(ctx context.Context, req sandbox.ProjectRequest) (
 // report key planJSON carries; g, when not nil, is the run's grant, whose socket the
 // steps reach through the environment.
 func (p *Provider) runPlan(ctx context.Context, b box, tier sandbox.IsolationClass, planJSON, key []byte, g *grantRun) (sandbox.ProjectResult, error) {
-	res := sandbox.ProjectResult{Sandbox: Name, Isolation: tier}
+	res := sandbox.ProjectResult{Sandbox: Name, Isolation: tier, EnvironmentIdentity: p.imageIdentity()}
 	env := map[string]string{"PLIMSOLL_WORK": workDir}
 	if g != nil {
 		for k, v := range g.env() {

@@ -68,7 +68,7 @@ type SandboxServiceClient interface {
 	// daemon serves exactly one: a request that omits it is InvalidArgument and a
 	// request on any other number is Unimplemented, in both cases before the
 	// payload is read. The number is bumped when such a field is added; an
-	// informational field does not bump it. Current number: 2 (the Go constant
+	// informational field does not bump it. Current number: 4 (the Go constant
 	// protocol.Number, which Describe reports).
 	Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error)
 	// Describe reports the protocol number, the active provider, current isolation
@@ -186,7 +186,7 @@ type SandboxServiceHandler interface {
 	// daemon serves exactly one: a request that omits it is InvalidArgument and a
 	// request on any other number is Unimplemented, in both cases before the
 	// payload is read. The number is bumped when such a field is added; an
-	// informational field does not bump it. Current number: 2 (the Go constant
+	// informational field does not bump it. Current number: 4 (the Go constant
 	// protocol.Number, which Describe reports).
 	Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.Response[v1.RunResponse], error)
 	// Describe reports the protocol number, the active provider, current isolation

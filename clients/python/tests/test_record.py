@@ -20,6 +20,7 @@ from plimsoll_client import (
     NoRecordError,
     RecordMismatchError,
     RecordVersionError,
+    ResultKindMismatchError,
     RunRecord,
     SoftwareRule,
 )
@@ -263,7 +264,7 @@ class DigestCoverage(unittest.TestCase):
 class Check(unittest.TestCase):
     def test_a_matching_record_checks(self) -> None:
         req = js_request()
-        r = check_single(request_digest(req), None, Msg(stamped(req, js_response()), "r"))
+        r = check_single(request_digest(req), "javascript", None, Msg(stamped(req, js_response()), "r"))
         self.assertEqual(r.provider, "docker")
         self.assertEqual(r.sha256, record_digest(r))
 
@@ -303,7 +304,7 @@ class Check(unittest.TestCase):
                 q, s = copy.deepcopy(req), copy.deepcopy(good)
                 tamper(q, s)
                 with self.assertRaises(RecordMismatchError):
-                    check_single(request_digest(q), None, Msg(s, "r"))
+                    check_single(request_digest(q), "javascript", None, Msg(s, "r"))
 
     def test_a_single_run_claiming_a_session_is_a_mismatch(self) -> None:
         req = js_request()
@@ -315,18 +316,18 @@ class Check(unittest.TestCase):
         r = RunRecord(**{**r.__dict__, "sequence": 1})
         r = RunRecord(**{**r.__dict__, "sha256": record_digest(r)})
         s["record"] = wire_record(r)
-        check(request_digest(req), None, Msg(s, "r"))  # a session call's check accepts it
+        check(request_digest(req), "javascript", None, Msg(s, "r"))  # a session call's check accepts it
         with self.assertRaises(RecordMismatchError):
-            check_single(request_digest(req), None, Msg(s, "r"))
+            check_single(request_digest(req), "javascript", None, Msg(s, "r"))
 
     def test_no_record_and_versions(self) -> None:
         req = js_request()
         with self.assertRaises(NoRecordError):
-            check_single(request_digest(req), None, Msg(js_response(), "r"))
+            check_single(request_digest(req), "javascript", None, Msg(js_response(), "r"))
         future = stamped(req, js_response())
         future["record"]["version"] = 5
         with self.assertRaises(RecordVersionError):
-            check_single(request_digest(req), None, Msg(future, "r"))
+            check_single(request_digest(req), "javascript", None, Msg(future, "r"))
 
     def test_earlier_versions_are_refused(self) -> None:
         req = js_request()
@@ -337,7 +338,7 @@ class Check(unittest.TestCase):
                 r = RunRecord(**{**r.__dict__, "version": v})
                 resp["record"] = wire_record(RunRecord(**{**r.__dict__, "sha256": record_digest(r)}))
                 with self.assertRaises(RecordVersionError):
-                    check_single(request_digest(req), None, Msg(resp, "r"))
+                    check_single(request_digest(req), "javascript", None, Msg(resp, "r"))
 
     def test_instance_is_bound_to_the_response_and_typed(self) -> None:
         req = js_request()
@@ -345,10 +346,10 @@ class Check(unittest.TestCase):
         resp["instance"] = "k8s-pod-uid:7f3e9c2a-5b1d-4e8f-9a0c-2d6b8e4f1a37"
         self.assertEqual(result_digest(Msg(resp, "r")), result_digest(Msg(js_response(), "r")))
         good = stamped(req, resp)
-        self.assertEqual(check_single(request_digest(req), None, Msg(good, "r")).instance, resp["instance"])
+        self.assertEqual(check_single(request_digest(req), "javascript", None, Msg(good, "r")).instance, resp["instance"])
         bad = stamped(req, {**resp, "instance": "/var/run/pod"})
         with self.assertRaises(RecordMismatchError):
-            check_single(request_digest(req), None, Msg(bad, "r"))
+            check_single(request_digest(req), "javascript", None, Msg(bad, "r"))
         for s in ("", "k8s-pod-uid:a-b", "x:y"):
             self.assertTrue(valid_instance(s), s)
         for s in ("k8s-pod-uid:", "K8S:x", "a/b:c", "no-colon", "k8s-pod-uid:a/b"):
@@ -361,14 +362,37 @@ class Check(unittest.TestCase):
         resp = {"sandbox": "docker", "isolation": "kernel", "environment": "docker-image:sha256:outer",
                 "softwareIdentity": ident, "javascript": {}}
         good = stamped(req, resp, rule)
-        check_single(request_digest(req), rule, Msg(good, "r"))
+        check_single(request_digest(req), "javascript", rule, Msg(good, "r"))
         tampered = copy.deepcopy(good)
         tampered["softwareIdentity"] = ""
         with self.assertRaises(RecordMismatchError):
-            check_single(request_digest(req), rule, Msg(tampered, "r"))
+            check_single(request_digest(req), "javascript", rule, Msg(tampered, "r"))
         with self.assertRaises(RecordMismatchError):  # the rule the caller holds differs from the record's
-            check_single(request_digest(req), SoftwareRule.exact(APPROVED[1]), Msg(good, "r"))
+            check_single(request_digest(req), "javascript", SoftwareRule.exact(APPROVED[1]), Msg(good, "r"))
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KindAndTimes(unittest.TestCase):
+    """The record check itself refuses a result of another kind than the request's, or
+    none, and a record that ends before it starts, as Go's record.check does since
+    2026-10-26: in a session that is before the chain moves on."""
+
+    def test_a_result_of_another_kind_or_none_is_refused(self) -> None:
+        req = js_request()
+        good = stamped(req, js_response())
+        with self.assertRaises(ResultKindMismatchError):
+            check_single(request_digest(req), "project", None, Msg(good, "r"))
+        none = copy.deepcopy(good)
+        del none["javascript"]
+        with self.assertRaises(ResultKindMismatchError):
+            check_single(request_digest(req), "javascript", None, Msg(none, "r"))
+
+    def test_a_record_that_ends_before_it_starts_is_refused(self) -> None:
+        req = js_request()
+        s = stamped(req, js_response())
+        s["record"]["endedUnixMs"] = str(int(s["record"]["startedUnixMs"]) - 1)
+        with self.assertRaises(RecordMismatchError):
+            check_single(request_digest(req), "javascript", None, Msg(s, "r"))

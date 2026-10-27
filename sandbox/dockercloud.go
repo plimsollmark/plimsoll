@@ -188,16 +188,19 @@ var dcStartCmd = []string{"tail", "-f", "/dev/null"}
 //     and the host reports exit 153 with both streams cut (review, 2026-10-24). A
 //     missing wc fails closed: the stream reads as flooded.
 //   - The exit status travels through a file because POSIX sh has no pipefail.
-//   - The command's time inside the VM, in centiseconds from /proc/uptime, and 1 if a
-//     stream flooded (else 0), are the last line of stderr (dcTrailer), written after
-//     both keeps have ended: only the keeps
-//     write to the wrapper's own stderr, so no guest process can write after it, and
-//     the host strips it before reporting stderr. It decides whether `timeout` killed
-//     the command: the elapsed time around the remote call also counts the transport,
-//     which turned a quick exit 137 into a timeout (review, 2026-10-23). up drops the
-//     leading zeros of an uptime under a second ("0.89" is 089), which sh arithmetic
-//     reads as octal: 089 is a syntax error that ended the wrapper with exit 2 and no
-//     trailer, seen under gVisor, whose clock starts at zero with each sandbox.
+//   - The command's time inside the VM, in centiseconds from /proc/uptime (a "-" when
+//     the guest has no readable /proc/uptime), and 1 if a stream flooded (else 0), are
+//     the last line of stderr (dcTrailer), always written, after both keeps have ended:
+//     only the keeps write to the wrapper's own stderr, so no guest process can write
+//     after it, and the host strips it before reporting stderr. Always, because the
+//     host reads the last line in the trailer's shape: were it left out, a guest line
+//     in that shape would be read as the wrapper's (review, 2026-10-26). It decides
+//     whether `timeout` killed the command: the elapsed time around the remote call
+//     also counts the transport, which turned a quick exit 137 into a timeout (review,
+//     2026-10-23). up drops the leading zeros of an uptime under a second ("0.89" is
+//     089), which sh arithmetic reads as octal: 089 is a syntax error that ended the
+//     wrapper with exit 2 and no trailer, seen under gVisor, whose clock starts at zero
+//     with each sandbox.
 //
 // It uses only POSIX sh, timeout, head, wc and cat, which busybox provides. busybox
 // `timeout` needs kill(2): where a syscall filter refuses it, the limit fails open,
@@ -213,7 +216,8 @@ b=$(up)
 { { timeout -s KILL "$t" "$@"; echo "$?" >"$rc"; } 2>&1 1>&3 3>&- | keep 1>&2; } 3>&1 | keep
 e=$(up)
 f=0; if [ -e "$fl" ]; then f=1; rm -f "$fl"; fi
-if [ -n "$b" ] && [ -n "$e" ]; then printf '\n` + dcTrailer + ` %s %s\n' "$((e - b))" "$f" >&2; fi
+if [ -n "$b" ] && [ -n "$e" ]; then r=$((e - b)); else r=-; fi
+printf '\n` + dcTrailer + ` %s %s\n' "$r" "$f" >&2
 if [ -s "$rc" ]; then s=$(cat "$rc"); rm -f "$rc"; exit "$s"; fi
 exit 125`
 
@@ -222,7 +226,8 @@ exit 125`
 const dcStreamBudget = "33554432"
 
 // dcTrailer opens the wrapper's last stderr line, which states the command's time inside
-// the VM in centiseconds.
+// the VM in centiseconds, or "-" when the guest could not measure it, and whether a
+// stream flooded.
 const dcTrailer = "plimsoll-exec-centiseconds"
 
 // ---- configuration ----

@@ -25,6 +25,11 @@ unless all of the following are verifiably in force:
   <dfn>*E2B*</dfn>, a hosted service that runs each sandbox in a small virtual machine,
   offers no such pinning, so there it means an explicit `E2B_TEMPLATE` rather than the
   implicit default: a named template, not a fixed version;
+- for the backend that runs each sandbox in a Kubernetes pod (`SANDBOX_PROVIDER=agentsandbox`),
+  `SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK=1`,
+  the operator's statement that the pod network between plimsolld and the sandbox pods is
+  encrypted. The daemon talks to each pod's sandboxd over cleartext HTTP/2, and it cannot
+  see whether the network beneath encrypts that path ([agentsandbox.md](agentsandbox.md#the-control-channel-is-cleartext));
 - an explicit per-run resource envelope (the memory, CPU and other limits each run
   gets), and for docker, whose runs share the daemon's machine, an aggregate memory
   budget, the total memory all runs at once may use;

@@ -24,7 +24,7 @@ service SandboxService {
   // daemon serves exactly one: a request that omits it is InvalidArgument and a
   // request on any other number is Unimplemented, in both cases before the
   // payload is read. The number is bumped when such a field is added; an
-  // informational field does not bump it. Current number: 2 (the Go constant
+  // informational field does not bump it. Current number: 4 (the Go constant
   // protocol.Number, which Describe reports).
   rpc Run(RunRequest) returns (RunResponse);
   // Describe reports the protocol number, the active provider, current isolation
@@ -277,7 +277,8 @@ message RunResponse {
 message RunRecord {
   // version is the encoding version, 4: every field below, every time. A
   // session call that may have run but ended in an error sets unanswered and
-  // leaves result_sha256 empty. A verifier refuses any other version.
+  // leaves result_sha256 empty. A live answer must carry this version; a verifier
+  // of stored evidence reads every published version (record.published).
   uint32 version = 1;
   // request_sha256 covers what the caller sent: protocol number, floor,
   // timeout, software rule and payload, never the trace id.
@@ -607,7 +608,7 @@ message SessionEnded {
   string detail = 2;
 }
 
-// NotDispatched is attached as an error detail to a Run (or Describe) error that
+// NotDispatched is attached as an error detail to any procedure's error that
 // was raised before any code was dispatched: nothing executed, so retrying the
 // request or sending it to another daemon cannot run it twice. Only refusals that
 // provably ran nothing carry it. An error WITHOUT this detail may have followed
@@ -617,7 +618,7 @@ message NotDispatched {
 }
 
 // UnansweredCall is the error detail of a session call that may have run but ended
-// in an error (an error without NotDispatched): its version 3 record, which the
+// in an error (an error without NotDispatched): its run record (the current version), which the
 // session's chain counts, so a call that ran is never missing from the chain.
 message UnansweredCall {
   RunRecord record = 1;

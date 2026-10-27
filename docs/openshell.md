@@ -114,7 +114,9 @@ gateway with the docker driver.
    timeout is not used for that, because it reports exit 124 while the process keeps
    running.
 5. Returns the result, then deletes the sandbox without making the caller wait for the
-   delete. The run keeps its concurrency slot, and its share of `SANDBOX_TOTAL_MEMORY_MB`,
+   delete. (A run whose code was allowed to call the caller's API through the relay first
+   revokes that credential and waits for the relay to exit, each bounded at 10 seconds, so
+   a gateway that stops answering can hold the result about 20 seconds.) The run keeps its concurrency slot, and its share of `SANDBOX_TOTAL_MEMORY_MB`,
    until the delete is through, since the sandbox and any process the run left in it live
    until then. Daemon shutdown waits for those deletes.
 

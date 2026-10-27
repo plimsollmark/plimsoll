@@ -82,7 +82,9 @@ The daemon takes no arguments. Configuration is by environment variable:
   PLIMSOLL_TOKEN             one shared bearer granting code:run to every caller
                              (at least 32 characters)
   PLIMSOLL_INSECURE          =1 explicitly permits a real provider with auth
-                             disabled (development only; never expose that listener)
+                             disabled (development only; never expose that listener).
+                             Open mode answers only requests addressed to
+                             localhost or a loopback address
   PLIMSOLL_TLS_CERT / PLIMSOLL_TLS_KEY
                              PEM certificate and key; when set the daemon serves
                              TLS (HTTP/1.1 + HTTP/2 via ALPN) instead of cleartext
@@ -647,13 +649,17 @@ func main() {
 	//     again.
 	rec, reconciles := sb.(sandbox.OrphanReconciler)
 	pf, preflights := sb.(sandbox.Preflighter)
+	// The loop ends after the drain below, not at the signal: a run draining then may
+	// wait on a removal only this loop retries (review, 2026-10-26).
+	maintCtx, stopMaint := context.WithCancel(context.Background())
+	defer stopMaint()
 	if reconciles || preflights {
 		go func() {
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
 			for {
 				select {
-				case <-ctx.Done():
+				case <-maintCtx.Done():
 					return
 				case <-ticker.C:
 					if c := sb.IsolationClass(); preflights && (c == sandbox.IsolationUnknown || c < proven) {
@@ -738,6 +744,7 @@ func main() {
 			slog.Error("provider cleanup did not finish before shutdown; a later reconciliation reaps what is left", "provider", sb.Name(), "error", err)
 		}
 	}
+	stopMaint()
 	// The guard stays up through the drain, since a run still in flight makes its
 	// host calls through it; metrics too, so a scraper can watch the in-flight gauge
 	// fall. Once the runs are over neither has anything left to serve.

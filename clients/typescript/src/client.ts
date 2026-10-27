@@ -32,6 +32,7 @@ import type {
   WireSessionRunResponse,
   WireSoftwareRule,
 } from "./wire.ts";
+import { wireBytes } from "./wire.ts";
 
 /** The wire protocol number this client speaks (protocol.Number in Go). */
 export const PROTOCOL = 4;
@@ -319,7 +320,7 @@ function mergeRules(a: WireSoftwareRule | undefined, b: WireSoftwareRule | undef
 }
 
 const num = (v: string | number | undefined): number => Number(v ?? 0);
-const bytes = (s: string | undefined): Uint8Array => new Uint8Array(Buffer.from(s ?? "", "base64"));
+const bytes = (s: string | undefined): Uint8Array => new Uint8Array(wireBytes(s));
 const text = (b: Uint8Array): string => Buffer.from(b).toString("utf8");
 
 function adviceFromWire(a: WireAdvice[] | undefined): AdviceFinding[] {
@@ -670,6 +671,7 @@ export class PlimsollClient {
   private checked(env: WireEnvelope, payload: Payload, resp: WireRunResponse): { run: WireRunResponse; record: RunRecord } {
     const checked = checkRecord(
       requestDigest({ protocol: env.protocol, minimumIsolation: env.minimumIsolation ?? "", timeoutMs: env.timeoutMs ?? 0, softwareRule: env.softwareRule, payload: digestPayload(payload) }),
+      "javascript" in payload ? "javascript" : "project" in payload ? "project" : "cell",
       env.softwareRule,
       resp,
     );
@@ -882,15 +884,15 @@ export class Session {
       if (e instanceof PlimsollError && e.sessionEnded) this.#end = e.sessionEnded;
       throw e;
     }
-    return decoded(() => this.#chained(m, env, rule, digest));
+    return decoded(() => this.#chained(m, env, rule, digest, "javascript" in payload ? "javascript" : "project" in payload ? "project" : "cell"));
   }
 
-  #chained(m: WireSessionRunResponse, env: ReturnType<PlimsollClient["envelope"]>, rule: WireSoftwareRule | undefined, digest: string): { run: WireRunResponse; record: RunRecord } {
+  #chained(m: WireSessionRunResponse, env: ReturnType<PlimsollClient["envelope"]>, rule: WireSoftwareRule | undefined, digest: string, kind: "javascript" | "project" | "cell"): { run: WireRunResponse; record: RunRecord } {
     const run = m.run;
     if (!run) throw new PlimsollError("data_loss", "plimsoll: the session call's answer carries no run");
     const end = sessionEndFromWire(m.ended);
     if (end !== "open") this.#end = { reason: end, detail: m.endDetail ?? "" };
-    const checked = checkRecord(digest, rule, run);
+    const checked = checkRecord(digest, kind, rule, run);
     if ("problem" in checked) throw new PlimsollError("data_loss", `plimsoll: ${checked.problem}`, { result: run });
     const r = checked.record;
     if (r.session !== this.fingerprint || r.sequence !== this.#calls + 1n || r.previousSha256 !== this.#last) {

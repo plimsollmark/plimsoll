@@ -108,8 +108,8 @@ func WithJavaScriptGrantProfile(profile string) Option {
 }
 
 // WithProjectGrantProfile selects a named server-side capability only for
-// RunProject. Call Describe first: no built-in provider currently advertises this
-// capability.
+// RunProject. Call Describe first: docker and OpenShell advertise it, E2B and Docker
+// Cloud only with their egress guard configured, WASM and agent-sandbox never.
 func WithProjectGrantProfile(profile string) Option {
 	return func(cfg *config) { cfg.projectGrant = profile }
 }

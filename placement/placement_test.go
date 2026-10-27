@@ -652,3 +652,17 @@ func TestAHungBackendDoesNotStallPlacement(t *testing.T) {
 		}
 	}
 }
+
+// A backend on another protocol number is never chosen: during a rolling upgrade one
+// old daemon first in order used to answer every request with a protocol refusal, which
+// is not retried (review, 2026-10-26).
+func TestABackendOnAnotherProtocolIsUnfit(t *testing.T) {
+	info := client.Info{Sandbox: "docker", Isolation: sandbox.IsolationContainer, SupportsProject: true, Protocol: client.Protocol + 1}
+	if why := unfit(info, kindProject, Requirement{}); !strings.Contains(why, "protocol") {
+		t.Fatalf("unfit = %q, want a protocol reason", why)
+	}
+	info.Protocol = client.Protocol
+	if why := unfit(info, kindProject, Requirement{}); why != "" {
+		t.Fatalf("unfit = %q on the pool's own protocol, want fit", why)
+	}
+}

@@ -202,6 +202,11 @@ var ErrSignature = errors.New("attest: no valid signature from this key")
 // one record, or a record whose digest does not match its fields.
 var ErrStatement = errors.New("attest: the payload is not a valid run-record statement")
 
+// MaxSignatures bounds the signatures an envelope may carry: the harness writes one,
+// and each is a verification, so a line of them was a cost with no reading (review,
+// 2026-10-26).
+const MaxSignatures = 16
+
 // Verify checks the envelope's signature and statement and returns the record
 // it carries. It proves who signed which record; checking the record against
 // stored requests and results is VerifyBundle's.
@@ -248,6 +253,9 @@ func (v *Verifier) signedPayload(env Envelope) ([]byte, error) {
 	// what it decodes to was changed after signing.
 	if base64.StdEncoding.EncodeToString(payload) != env.Payload {
 		return nil, fmt.Errorf("%w: payload is not canonical base64", ErrStatement)
+	}
+	if len(env.Signatures) > MaxSignatures {
+		return nil, fmt.Errorf("%w: %d signatures; at most %d are read", ErrStatement, len(env.Signatures), MaxSignatures)
 	}
 	for _, s := range env.Signatures {
 		if s.KeyID != "" && s.KeyID != v.keyID {

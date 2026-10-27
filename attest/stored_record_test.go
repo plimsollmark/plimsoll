@@ -38,7 +38,7 @@ func TestVerifyBundleChecksTheStoredResponsesRecord(t *testing.T) {
 		t.Error("VerifyBundle accepted a stored response whose record was edited")
 	}
 	sent := false
-	_, err = Replay(context.Background(), seal(t, s, e), v, func(context.Context, *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error) {
+	_, err = Replay(context.Background(), seal(t, s, e), v, ReplayOptions{}, func(context.Context, *plimsollv1.RunRequest) (*plimsollv1.RunResponse, error) {
 		sent = true
 		return resp, nil
 	})

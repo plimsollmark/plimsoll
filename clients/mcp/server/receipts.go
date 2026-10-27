@@ -643,7 +643,7 @@ func (r *Receipts) Close() {
 // result (nil, or one wrapping ErrNotRecorded).
 func (r *Receipts) receiptOf(recordSHA256 string, err error) *Receipt {
 	if err != nil {
-		return &Receipt{Status: "failed", Reason: err.Error()}
+		return &Receipt{Status: "failed", Reason: shown(err)}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

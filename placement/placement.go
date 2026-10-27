@@ -303,6 +303,12 @@ func (p *Pool) candidates(ctx context.Context, k kind, req Requirement) ([]Backe
 
 // unfit says why a backend cannot take the request, or "" when it can.
 func unfit(info client.Info, k kind, req Requirement) string {
+	if info.Protocol != client.Protocol {
+		// A request on another number is refused before its payload is read, and that
+		// refusal is not retried, so one backend on another number blocked the whole
+		// pool during a rolling upgrade (review, 2026-10-26).
+		return fmt.Sprintf("protocol %d, not %d", info.Protocol, client.Protocol)
+	}
 	if req.Provider != "" && info.Sandbox != req.Provider {
 		return "provider is " + info.Sandbox + ", not " + req.Provider
 	}
@@ -382,7 +388,9 @@ func notDispatched(err error) error {
 
 // retryable reports whether a refusal proves nothing ran and another backend may
 // take the same request. A mark of request, permission or protocol would fail the
-// same way anywhere, so it is not retried either.
+// same way anywhere, so it is not retried either (a backend on another protocol
+// number is unfit before anything is sent, so a protocol refusal is a daemon that
+// changed number since it was described).
 func retryable(err error) (sandbox.Refusal, bool) {
 	reason, marked := sandbox.NotDispatchedReason(err)
 	if !marked {

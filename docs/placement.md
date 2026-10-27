@@ -102,8 +102,10 @@ same name; the caller must keep the profiles aligned when that distinction matte
 
 A refusal is retried on the next backend **only when it proves nothing ran**: it carries
 the not-dispatched mark with reason `unsupported`, `isolation`, `environment` or `capacity`. A mark of
-`request`, `permission` or `protocol` would fail the same way everywhere, and an error
-with no mark at all may have executed, so neither is re-sent
+`request` or `permission` would fail the same way everywhere, a `protocol` mark means a
+daemon changed its number since it was described (a backend whose description names
+another number is never chosen), and an error
+with no mark at all may have executed, so none of them is re-sent
 ([run results](run-results.md#did-anything-run-the-error-says-so)). The refusals that
 came before the answer are in `Choice.Retried`. One consequence for a provider billed by the
 second: a caller's daily allowance (`paid_seconds_per_day`) is counted by each daemon on
@@ -118,7 +120,10 @@ and on a timer. Either way, a backend whose description is missing or older than
 pool's time-to-live (the second argument to `placement.New`, `time.Minute` in the example
 above) is described again when a request needs it. So a daemon that was down is used
 again without restarting the caller, and one that now reports a weaker tier stops
-receiving requests that need a stronger one.
+receiving requests that need a stronger one. A description made on demand has 5
+seconds (`Describe` is a small call, so that fails only a daemon that is not answering),
+and a backend whose description failed is not asked again for 5 seconds, so one down
+daemon costs each request at most one bounded attempt, not its whole deadline.
 
 ## Sessions
 

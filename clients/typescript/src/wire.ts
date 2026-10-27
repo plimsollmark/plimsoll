@@ -177,3 +177,19 @@ export type WireError = {
   message?: string;
   details?: { type?: string; value?: string }[];
 };
+
+/** A bytes field that is not base64 text: the answer is not the protocol's. */
+export class WireShapeError extends Error {}
+
+/**
+ * Decodes a bytes field of the daemon's answer. Only a string (or an absent field) is
+ * accepted: the answer is parsed JSON, and Buffer.from given an object with a
+ * "length" allocates that many bytes and reads each index, so a 30-byte
+ * {"length":2000000000} would cost 2 GB and a blocked event loop past the
+ * response's 32 MiB cap (Claude Security scan, 2026-10-27).
+ */
+export function wireBytes(v: unknown): Buffer {
+  if (v === undefined || v === null) return Buffer.alloc(0);
+  if (typeof v !== "string") throw new WireShapeError(`a bytes field holds a ${Array.isArray(v) ? "list" : typeof v}, not base64 text`);
+  return Buffer.from(v, "base64");
+}
