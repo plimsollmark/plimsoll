@@ -1,0 +1,66 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Task": "Write a Python function merge_intervals(intervals) that takes a list of [start, end] pairs of integers (closed intervals, start \u003c= end) in any order and returns a new list of merged pairs sorted by start. Two intervals merge when they overlap or touch: [1, 3] and [3, 5] merge to [1, 5]; [1, 2] and [3, 4] do not merge. Each returned pair is a list of two ints, not a tuple. Do not modify the input list or its pairs. If any pair has start \u003e end, raise ValueError. Examples: [[1, 3], [2, 6], [8, 10], [15, 18]] -\u003e [[1, 6], [8, 10], [15, 18]], [[1, 4], [4, 5]] -\u003e [[1, 5]], [] -\u003e [], [[3, 1]] raises ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "3f5bd4d80b1da6a131713a12476377957cadae9686c949cf193f666c5533e9c3",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "All tests passed. The function correctly handles all the required examples and additional edge cases.\n\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def merge_intervals(intervals):\n    \"\"\"\n    Takes a list of [start, end] pairs of integers (closed intervals, start \u003c= end)\n    and returns a new list of merged pairs sorted by start.\n    Two intervals merge when they overlap or touch.\n    \"\"\"\n    # Validate input\n    for interval in intervals:\n        if interval[0] \u003e interval[1]:\n            raise ValueError(f\"Invalid interval: start {interval[0]} \u003e end {interval[1]}\")\n    \n    # Create a copy to avoid modifying input\n    sorted_intervals = sorted([list(interval) for interval in intervals], key=lambda x: x[0])\n    \n    if not sorted_intervals:\n        return []\n    \n    merged = [sorted_intervals[0]]\n    \n    for current in sorted_intervals[1:]:\n        last = merged[-1]\n        # Check if current overlaps or touches last\n        if current[0] \u003c= last[1]:\n            # Merge: extend the end if needed\n            last[1] = max(last[1], current[1])\n        else:\n            merged.append(current)\n    \n    return merged\n\n\n# Test script\ndef test_merge_intervals():\n    # Test case 1: Basic merging\n    result = merge_intervals([[1, 3], [2, 6], [8, 10], [15, 18]])\n    expected = [[1, 6], [8, 10], [15, 18]]\n    assert result == expected, f\"Test 1 failed: got {result}, expected {expected}\"\n    print(\"Test 1 passed\")\n    \n    # Test case 2: Touching intervals\n    result = merge_intervals([[1, 4], [4, 5]])\n    expected = [[1, 5]]\n    assert result == expected, f\"Test 2 failed: got {result}, expected {expected}\"\n    print(\"Test 2 passed\")\n    \n    # Test case 3: Empty list\n    result = merge_intervals([])\n    expected = []\n    assert result == expected, f\"Test 3 failed: got {result}, expected {expected}\"\n    print(\"Test 3 passed\")\n    \n    # Test case 4: ValueError for start \u003e end\n    try:\n        merge_intervals([[3, 1]])\n        assert False, \"Test 4 failed: should have raised ValueError\"\n    except ValueError:\n        print(\"Test 4 passed\")\n    \n    # Additional test cases\n    \n    # Test case 5: Single interval\n    result = merge_intervals([[5, 10]])\n    expected = [[5, 10]]\n    assert result == expected, f\"Test 5 failed: got {result}, expected {expected}\"\n    print(\"Test 5 passed\")\n    \n    # Test case 6: Non-overlapping intervals\n    result = merge_intervals([[1, 2], [3, 4], [5, 6]])\n    expected = [[1, 2], [3, 4], [5, 6]]\n    assert result == expected, f\"Test 6 failed: got {result}, expected {expected}\"\n    print(\"Test 6 passed\")\n    \n    # Test case 7: All overlapping\n    result = merge_intervals([[1, 5], [2, 6], [3, 7]])\n    expected = [[1, 7]]\n    assert result == expected, f\"Test 7 failed: got {result}, expected {expected}\"\n    print(\"Test 7 passed\")\n    \n    # Test case 8: Unsorted input\n    result = merge_intervals([[8, 10], [1, 3], [15, 18], [2, 6]])\n    expected = [[1, 6], [8, 10], [15, 18]]\n    assert result == expected, f\"Test 8 failed: got {result}, expected {expected}\"\n    print(\"Test 8 passed\")\n    \n    # Test case 9: Intervals that touch at multiple points\n    result = merge_intervals([[1, 2], [2, 3], [3, 4]])\n    expected = [[1, 4]]\n    assert result == expected, f\"Test 9 failed: got {result}, expected {expected}\"\n    print(\"Test 9 passed\")\n    \n    # Test case 10: Input not modified\n    original = [[1, 3], [2, 6]]\n    result = merge_intervals(original)\n    assert original == [[1, 3], [2, 6]], f\"Test 10 failed: input was modified to {original}\"\n    print(\"Test 10 passed\")\n    \n    # Test case 11: Returns lists not tuples\n    result = merge_intervals([[1, 3], [2, 4]])\n    assert all(isinstance(interval, list) for interval in result), \"Test 11 failed: returned tuples not lists\"\n    print(\"Test 11 passed\")\n    \n    # Test case 12: Negative numbers\n    result = merge_intervals([[-5, -2], [-3, 0], [1, 3]])\n    expected = [[-5, 0], [1, 3]]\n    assert result == expected, f\"Test 12 failed: got {result}, expected {expected}\"\n    print(\"Test 12 passed\")\n    \n    # Test case 13: ValueError for multiple invalid intervals\n    try:\n        merge_intervals([[1, 2], [5, 3]])\n        assert False, \"Test 13 failed: should have raised ValueError\"\n    except ValueError:\n        print(\"Test 13 passed\")\n    \n    print(\"\\nALL TESTS PASSED\")\n\ntest_merge_intervals()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Test 1 passed\nTest 2 passed\nTest 3 passed\nTest 4 passed\nTest 5 passed\nTest 6 passed\nTest 7 passed\nTest 8 passed\nTest 9 passed\nTest 10 passed\nTest 11 passed\nTest 12 passed\nTest 13 passed\n\nALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 610,
+      "Record": "f6ce608c6a392b8d3e439979485ad4c5890fef42faad291dca2c1691c5004579",
+      "Request": "9efe1f0a3693d2ee0e425b49e5d3a5fec2a7f9152757ac6d3b7ce7d03b8808ba",
+      "Result": "c831b063ede32bd722ee3b3649075fcdbb0dcd5c0f6e2320de094acbb64ca233",
+      "Previous": "",
+      "Sequence": 1
+    }
+  ],
+  "Final": "All tests passed. The function correctly handles all the required examples and additional edge cases.\n\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 2,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6W1tbMSwzXSxbMiw2XSxbOCwxMF0sWzE1LDE4XV1dLCJleHBlY3QiOltbMSw2XSxbOCwxMF0sWzE1LDE4XV19LHsiYXJncyI6W1tbMSw0XSxbNCw1XV1dLCJleHBlY3QiOltbMSw1XV19LHsiYXJncyI6W1tdXSwiZXhwZWN0IjpbXX0seyJhcmdzIjpbW1szLDFdXV0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOltbWzEsMl0sWzMsNF1dXSwiZXhwZWN0IjpbWzEsMl0sWzMsNF1dfSx7ImFyZ3MiOltbWzUsNV1dXSwiZXhwZWN0IjpbWzUsNV1dfSx7ImFyZ3MiOltbWzgsMTBdLFsxLDNdLFsyLDZdXV0sImV4cGVjdCI6W1sxLDZdLFs4LDEwXV19LHsiYXJncyI6W1tbMSwxMF0sWzIsM11dXSwiZXhwZWN0IjpbWzEsMTBdXX0seyJhcmdzIjpbW1sxLDRdLFswLDRdXV0sImV4cGVjdCI6W1swLDRdXX0seyJhcmdzIjpbW1stNSwtMV0sWy0xLDJdXV0sImV4cGVjdCI6W1stNSwyXV19LHsiYXJncyI6W1tbMSwyXSxbMiwzXSxbMyw0XV1dLCJleHBlY3QiOltbMSw0XV19LHsiYXJncyI6W1tbMSw1XSxbMiwzXSxbNCw4XV1dLCJleHBlY3QiOltbMSw4XV19LHsiYXJncyI6W1tbMSwyXSxbMSwyXV1dLCJleHBlY3QiOltbMSwyXV19LHsiYXJncyI6W1tbMCwwXSxbMSwxXV1dLCJleHBlY3QiOltbMCwwXSxbMSwxXV19LHsiYXJncyI6W1tbMSwyXSxbNSw0XV1dLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbW1szLDRdLFsxLDJdXV0sImV4cGVjdCI6W1sxLDJdLFszLDRdXX1dLCJmdW5jdGlvbiI6Im1lcmdlX2ludGVydmFscyIsInVuY2hhbmdlZCI6dHJ1ZX0=\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 16, \"Total\": 16, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 44,
+    "Record": "57cf78132a228dee0aecd19e4364cbd75bcf8918425d0616b331a4b86c5031fa",
+    "Request": "38540b75fd6057a03286743c05c86ac28b20be0f7bd906228a6f177a8aa34569",
+    "Result": "d14308c7d78885a66971b5a04edc34ecaa9ceb7f37c8767a57de61c2fb47a797",
+    "Previous": "f6ce608c6a392b8d3e439979485ad4c5890fef42faad291dca2c1691c5004579",
+    "Sequence": 2
+  },
+  "Calls": 2,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Usage": {
+    "Prompt": 3044,
+    "Completion": 1364,
+    "Calls": 2
+  }
+}

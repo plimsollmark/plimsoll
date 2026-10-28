@@ -18,6 +18,7 @@ import (
 
 	"github.com/plimsollmark/plimsoll/attest"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
+	"github.com/plimsollmark/plimsoll/sandbox"
 	"github.com/plimsollmark/plimsoll/sandboxtest"
 )
 
@@ -140,5 +141,41 @@ func TestAgentStopsAtItsTurnBudget(t *testing.T) {
 	page, _ := os.ReadFile(out)
 	if !strings.Contains(string(page), "budget of 3 turns") {
 		t.Fatal("the page does not say the budget ended the agent")
+	}
+}
+
+// TestWhenAdmittedRetriesOnlyCapacityRefusals: a capacity refusal (admission full, the
+// rate limit) is asked again, since no code ran; any other refusal, or an error with no
+// not-dispatched mark (execution may have happened), comes back at once.
+func TestWhenAdmittedRetriesOnlyCapacityRefusals(t *testing.T) {
+	defer func(p time.Duration) { admitPause = p }(admitPause)
+	admitPause = time.Millisecond
+	capacity := sandbox.NotDispatched(sandbox.RefusalCapacity, fmt.Errorf("rate limit: 30 runs/min per caller"))
+	cases := []struct {
+		name      string
+		errs      []error
+		wantCalls int
+		wantErr   bool
+	}{
+		{"admitted after two capacity refusals", []error{capacity, capacity, nil}, 3, false},
+		{"capacity every time gives up after the retries", []error{capacity, capacity, capacity, capacity, capacity, capacity, capacity}, admitRetries + 1, true},
+		{"a request refusal is not retried", []error{sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("bad"))}, 1, true},
+		{"an unmarked error is not retried", []error{fmt.Errorf("connection reset")}, 1, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			calls := 0
+			v, err := whenAdmitted(context.Background(), func() (int, error) {
+				err := c.errs[calls]
+				calls++
+				return calls, err
+			})
+			if calls != c.wantCalls || (err != nil) != c.wantErr {
+				t.Fatalf("calls %d err %v, want %d calls and error %v", calls, err, c.wantCalls, c.wantErr)
+			}
+			if err == nil && v != calls {
+				t.Fatalf("value %d, want the last call's %d", v, calls)
+			}
+		})
 	}
 }

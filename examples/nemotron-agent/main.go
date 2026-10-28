@@ -31,11 +31,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"html/template"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/plimsollmark/plimsoll/attest"
@@ -60,11 +61,42 @@ func main() {
 	image := flag.String("image", "plimsoll/sandbox-python:latest", "the session image for the daemon this program starts")
 	maxTurns := flag.Int("max-turns", 8, "the most model turns the agent takes")
 	out := flag.String("out", filepath.Join("docs", "examples", "nemotron-agent", "index.html"), "the page to write; the bundle, key and transcript go beside it")
+	suite := flag.String("suite", "", "run a batch instead of one task: a suite file (suite/tasks.json); -models, -only, -tries, -parallel and -suite-out apply")
+	models := flag.String("models", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B,nvidia/Nemotron-3_5-Lightning,nvidia/nemotron-3-super-120b-a12b,nvidia/Nemotron-3-Ultra-550b-a55b", "the batch's models, comma-separated")
+	only := flag.String("only", "", "the batch's task ids, comma-separated (default: every task)")
+	tries := flag.Int("tries", 3, "the batch's tries per task and model, one session each")
+	parallel := flag.Int("parallel", 4, "the batch's sessions at once")
+	budget := flag.Float64("budget", 0, "the batch's spending limit in dollars at list price (required with -suite): no session starts once the spend so far plus a worst-case reserve for the sessions in flight would pass it")
+	tokenCap := flag.Int("token-cap", 400000, "the batch's per-session cap on prompt plus completion tokens, the same for every model")
+	suiteOut := flag.String("suite-out", filepath.Join("docs", "examples", "nemotron-agent", "batch"), "the batch's directory: results.json, the public keys, and each session's bundle and transcript")
+	render := flag.Bool("render", false, "rewrite the page from the transcript beside it and the batch's results (-suite-out), calling no model")
 	flag.Parse()
+	titles := *suite
+	if titles == "" {
+		titles = filepath.Join("examples", "nemotron-agent", "suite", "tasks.json")
+	}
+	if *render {
+		if err := renderOnly(*out, *suiteOut, titles); err != nil {
+			fmt.Fprintln(os.Stderr, "render failed:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	key := os.Getenv("NEBIUS_API_KEY")
 	if key == "" {
 		fmt.Fprintln(os.Stderr, "set NEBIUS_API_KEY (a Nebius Token Factory key; it is read from the environment and never written)")
 		os.Exit(2)
+	}
+	// The daemon this program starts inherits its environment; it has no use for the key.
+	_ = os.Unsetenv("NEBIUS_API_KEY")
+	if *suite != "" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := runSuite(ctx, *base, key, *suite, *models, *only, *tries, *parallel, *maxTurns, *daemon, *runtime, *image, *suiteOut, *budget, *tokenCap); err != nil {
+			fmt.Fprintln(os.Stderr, "batch failed:", err)
+			os.Exit(1)
+		}
+		return
 	}
 	m := &chat{base: *base, key: key, model: *model, http: &http.Client{Timeout: 4 * time.Minute}}
 	if err := run(context.Background(), m, *task, *daemon, *runtime, *image, *maxTurns, *out); err != nil {
@@ -117,7 +149,7 @@ func run(ctx context.Context, m *chat, task, daemonURL, runtime, image string, m
 	if err != nil {
 		return err
 	}
-	ev, err := agent(ctx, m, remote, task, maxTurns)
+	ev, err := agent(ctx, m, remote, task, maxTurns, func(f string, a ...any) { fmt.Printf(f, a...) }, nil)
 	if err != nil {
 		return err
 	}
@@ -157,7 +189,11 @@ func run(ctx context.Context, m *chat, task, daemonURL, runtime, image string, m
 			return err
 		}
 	}
-	page, err := renderPage(ev)
+	batch, err := readBatch(filepath.Join(dir, "batch"), "batch", filepath.Join("examples", "nemotron-agent", "suite", "tasks.json"))
+	if err != nil {
+		return err
+	}
+	page, err := renderPage(ev, batch)
 	if err != nil {
 		return err
 	}
@@ -191,6 +227,9 @@ type evidence struct {
 	Turns        []turn
 	Runs         []runRow
 	Final        string
+	Answered     bool
+	CloseError   string  `json:",omitempty"`
+	Grader       *runRow `json:",omitempty"`
 	Calls        uint64
 	Verified     bool
 	VerifyDetail string
@@ -246,11 +285,19 @@ func runCodeTool(langs []sandbox.Language) tool {
 
 const systemPrompt = `You are a careful coding agent. You have one tool, run_code, which runs code in a sandbox that keeps files and interpreter state between calls in the same language. Write code, run it, read the real output, fix what is wrong and run again. When the task is done, answer in plain words with what you ran and what you observed, quoting the actual output. Never claim a result you did not run. Keep each run small.`
 
+// closeTimeout is how long a session's close may take, counted from the close.
+var closeTimeout = 2 * time.Minute
+
+// lengthNudge follows a reply that reached the token limit with nothing in it.
+const lengthNudge = "Your last reply reached the length limit before any answer or tool call. Continue, more briefly."
+
 // maxToolOutput is what of a run's output goes back to the model, per stream.
 const maxToolOutput = 8 << 10
 
 // agent opens the session and runs the loop; the harness on remote signs every call.
-func agent(ctx context.Context, m *chat, remote *client.Remote, task string, maxTurns int) (*evidence, error) {
+// say prints progress. after, when set, runs in the session once the loop has ended and
+// before the session closes, so what it runs is recorded and signed in the same chain.
+func agent(ctx context.Context, m *chat, remote *client.Remote, task string, maxTurns int, say func(string, ...any), after func(context.Context, *client.Session, []sandbox.Language, *evidence) error) (*evidence, error) {
 	info, err := remote.Describe(ctx)
 	if err != nil {
 		return nil, err
@@ -262,7 +309,9 @@ func agent(ctx context.Context, m *chat, remote *client.Remote, task string, max
 	if len(langs) == 0 {
 		return nil, errors.New("the daemon states no session languages")
 	}
-	sess, err := remote.OpenSession(ctx, client.SessionOptions{MinimumIsolation: sandbox.IsolationContainer, Languages: langs})
+	sess, err := whenAdmitted(ctx, func() (*client.Session, error) {
+		return remote.OpenSession(ctx, client.SessionOptions{MinimumIsolation: sandbox.IsolationContainer, Languages: langs})
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -270,28 +319,52 @@ func agent(ctx context.Context, m *chat, remote *client.Remote, task string, max
 	if ev.Environment == "" {
 		ev.Environment = "none stated"
 	}
-	fmt.Printf("session   | opened on %s at the %s tier (fingerprint %s…)\n", info.Sandbox, ev.Tier, ev.Session[:16])
+	say("session   | opened on %s at the %s tier (fingerprint %s…)\n", info.Sandbox, ev.Tier, ev.Session[:16])
 	messages := []message{{Role: "system", Content: systemPrompt}, {Role: "user", Content: task}}
 	tools := []tool{runCodeTool(langs)}
-	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-	defer cancel()
 	defer func() {
-		if sum, err := sess.Close(closeCtx); err == nil {
-			ev.Calls = sum.Calls
+		// The close gets its own two minutes from the moment it starts: a deadline taken
+		// when the session opened had passed by the close of any session longer than that,
+		// which then had no signed close and so no verifiable bundle.
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
+		defer cancel()
+		sum, err := sess.Close(closeCtx)
+		if err != nil {
+			// Without a signed close a verifier cannot rule out a cut session, so the bundle
+			// will not verify; the reason is kept where the page and the batch can show it.
+			ev.CloseError = err.Error()
+			say("close     | %v\n", err)
+			return
 		}
+		ev.Calls = sum.Calls
 	}()
 	for t := 1; t <= maxTurns; t++ {
+		if m.tokenCap > 0 && m.usage.Prompt+m.usage.Completion >= m.tokenCap {
+			ev.Final = fmt.Sprintf("(the agent reached the session's cap of %d tokens without a final answer)", m.tokenCap)
+			say("turn %-4d | token cap reached\n", t)
+			return ev, finish(ctx, after, sess, langs, ev)
+		}
 		reply, err := m.complete(ctx, messages, tools)
 		if err != nil {
 			return nil, fmt.Errorf("turn %d: %w", t, err)
 		}
 		messages = append(messages, reply)
 		tr := turn{N: t, Text: reply.Content}
+		if len(reply.ToolCalls) == 0 && strings.TrimSpace(reply.Content) == "" && reply.Finish == "length" && t < maxTurns {
+			// Cut off at the token budget before any answer or tool call: the same nudge for
+			// every model, and the turn counts against its budget.
+			messages = append(messages, message{Role: "user", Content: lengthNudge})
+			tr.Text = "(the reply reached the token limit with no answer and no tool call; the program asked the model to continue, more briefly)"
+			ev.Turns = append(ev.Turns, tr)
+			say("turn %-4d | cut off at the token limit; asked to continue\n", t)
+			continue
+		}
 		if len(reply.ToolCalls) == 0 {
 			ev.Final = reply.Content
+			ev.Answered = true
 			ev.Turns = append(ev.Turns, tr)
-			fmt.Printf("turn %-4d | the model answered without a run\n", t)
-			return ev, nil
+			say("turn %-4d | the model answered without a run\n", t)
+			return ev, finish(ctx, after, sess, langs, ev)
 		}
 		for _, call := range reply.ToolCalls {
 			var args struct {
@@ -303,6 +376,13 @@ func agent(ctx context.Context, m *chat, remote *client.Remote, task string, max
 				result["error"] = "the only tool is run_code(language, code); the arguments did not fit"
 			} else {
 				r, err := runOnce(ctx, sess, langs, args.Language, args.Code, len(ev.Runs)+1)
+				if errors.Is(err, errLanguage) {
+					result["error"] = err.Error()
+					b, _ := json.Marshal(result)
+					messages = append(messages, message{Role: "tool", ToolCallID: call.ID, Name: "run_code", Content: string(b)})
+					say("turn %-4d | %v\n", t, err)
+					continue
+				}
 				if err != nil {
 					// The client's checks failed or the session ended: the model is told, the
 					// loop ends, and the page says so. Nothing unverified is reported as run.
@@ -311,7 +391,7 @@ func agent(ctx context.Context, m *chat, remote *client.Remote, task string, max
 				ev.Runs = append(ev.Runs, r)
 				tr.Runs = append(tr.Runs, r.N)
 				result = map[string]any{"exit_code": r.ExitCode, "timed_out": r.TimedOut, "stdout": clip(r.Stdout, maxToolOutput), "stderr": clip(r.Stderr, maxToolOutput), "record_sha256": r.Record, "isolation": ev.Tier}
-				fmt.Printf("run %-5d | %s, exit %d, %d ms, record %s…\n", r.N, r.Language, r.ExitCode, r.Millis, r.Record[:16])
+				say("run %-5d | %s, exit %d, %d ms, record %s…\n", r.N, r.Language, r.ExitCode, r.Millis, r.Record[:16])
 			}
 			b, _ := json.Marshal(result)
 			messages = append(messages, message{Role: "tool", ToolCallID: call.ID, Name: "run_code", Content: string(b)})
@@ -319,21 +399,55 @@ func agent(ctx context.Context, m *chat, remote *client.Remote, task string, max
 		ev.Turns = append(ev.Turns, tr)
 	}
 	ev.Final = fmt.Sprintf("(the agent reached its budget of %d turns without a final answer)", maxTurns)
-	return ev, nil
+	return ev, finish(ctx, after, sess, langs, ev)
+}
+
+// finish runs after, when there is one, in the still-open session.
+func finish(ctx context.Context, after func(context.Context, *client.Session, []sandbox.Language, *evidence) error, sess *client.Session, langs []sandbox.Language, ev *evidence) error {
+	if after == nil {
+		return nil
+	}
+	return after(ctx, sess, langs, ev)
+}
+
+// errLanguage is a run_code call naming a language the session does not run; the model
+// is told, and nothing runs.
+var errLanguage = errors.New("unknown language")
+
+// pickLanguage reads the language a model named, with the usual aliases. It never falls
+// back to another language: code run under the wrong interpreter fails for a reason that
+// is the harness's, not the model's.
+func pickLanguage(name string, langs []sandbox.Language) (sandbox.Language, error) {
+	n := strings.ToLower(strings.TrimSpace(name))
+	switch n {
+	case "py", "python3", "python 3", "py3":
+		n = "python"
+	case "js", "node", "nodejs", "node.js":
+		n = "javascript"
+	}
+	for _, l := range langs {
+		if string(l) == n {
+			return l, nil
+		}
+	}
+	names := make([]string, len(langs))
+	for i, l := range langs {
+		names[i] = string(l)
+	}
+	return "", fmt.Errorf("%w %q: run_code takes one of %s", errLanguage, name, strings.Join(names, ", "))
 }
 
 // runOnce runs one cell in the session and keeps what the record states.
 func runOnce(ctx context.Context, sess *client.Session, langs []sandbox.Language, language, code string, n int) (runRow, error) {
-	lang := sandbox.Language(strings.ToLower(strings.TrimSpace(language)))
-	known := false
-	for _, l := range langs {
-		known = known || l == lang
-	}
-	if !known {
-		lang = langs[0]
+	lang, err := pickLanguage(language, langs)
+	if err != nil {
+		return runRow{}, err
 	}
 	start := time.Now()
-	res, err := sess.RunCell(ctx, sandbox.CellRequest{Language: lang, Code: code, Timeout: 60 * time.Second, MinimumIsolation: sandbox.IsolationContainer})
+	res, err := whenAdmitted(ctx, func() (sandbox.CellResult, error) {
+		start = time.Now()
+		return sess.RunCell(ctx, sandbox.CellRequest{Language: lang, Code: code, Timeout: 60 * time.Second, MinimumIsolation: sandbox.IsolationContainer})
+	})
 	if err != nil {
 		return runRow{}, err
 	}
@@ -344,21 +458,29 @@ func runOnce(ctx context.Context, sess *client.Session, langs []sandbox.Language
 	return r, nil
 }
 
-func renderPage(ev *evidence) ([]byte, error) {
-	tmpl, err := template.New("page").Funcs(template.FuncMap{"short": func(s string) string {
-		if len(s) > 16 {
-			return s[:16] + "…"
+// admitRetries and admitPause bound the wait on a refusal the daemon marks as capacity
+// (admission full, or the per-caller rate limit). Such a refusal is marked as sent before
+// any code was dispatched, so asking again is safe and the session stays usable. The pause
+// doubles from 2 s: five retries wait about a minute, one window of the rate limit. Before
+// this, the batch recorded 46 of its 120 sessions as errors on this refusal (2026-10-27).
+const admitRetries = 5
+
+var admitPause = 2 * time.Second
+
+func whenAdmitted[T any](ctx context.Context, f func() (T, error)) (T, error) {
+	pause := admitPause
+	for i := 0; ; i++ {
+		v, err := f()
+		if reason, marked := sandbox.NotDispatchedReason(err); err == nil || !marked || reason != sandbox.RefusalCapacity || i == admitRetries {
+			return v, err
 		}
-		return s
-	}}).Parse(pageTemplate)
-	if err != nil {
-		return nil, err
+		select {
+		case <-ctx.Done():
+			return v, err
+		case <-time.After(pause):
+		}
+		pause *= 2
 	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, ev); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // plural picks the word for n.

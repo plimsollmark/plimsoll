@@ -1,0 +1,308 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Task": "Write a Python function parse_csv_line(line) that splits one line of CSV into a list of field strings. Fields are separated by commas. A field whose first character is a double quote is quoted: it runs to its closing quote; inside it a comma is an ordinary character and two double quotes in a row stand for one double quote; the closing quote must be followed by a comma or the end of the line. Any other field is unquoted and must not contain a double quote. Spaces are ordinary characters and are kept. Raise ValueError for a double quote in an unquoted field, a quoted field with no closing quote, or anything but a comma after a closing quote. The empty line is one empty field. Examples: 'a,b,c' -\u003e ['a', 'b', 'c'], '\"a,b\",c' -\u003e ['a,b', 'c'], '\"say \"\"hi\"\"\",x' -\u003e ['say \"hi\"', 'x'], '' -\u003e [''], 'a\"b' raises ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "1169ee36e642816065114bc7caa44dc7a523bfd21bf9b29e7448db24c78c8cee",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "",
+      "Runs": [
+        3
+      ]
+    },
+    {
+      "N": 4,
+      "Text": "",
+      "Runs": [
+        4
+      ]
+    },
+    {
+      "N": 5,
+      "Text": "",
+      "Runs": [
+        5
+      ]
+    },
+    {
+      "N": 6,
+      "Text": "",
+      "Runs": [
+        6
+      ]
+    },
+    {
+      "N": 7,
+      "Text": "",
+      "Runs": [
+        7
+      ]
+    },
+    {
+      "N": 8,
+      "Text": "",
+      "Runs": [
+        8
+      ]
+    },
+    {
+      "N": 9,
+      "Text": "",
+      "Runs": [
+        9
+      ]
+    },
+    {
+      "N": 10,
+      "Text": "",
+      "Runs": [
+        10
+      ]
+    },
+    {
+      "N": 11,
+      "Text": "",
+      "Runs": [
+        11
+      ]
+    },
+    {
+      "N": 12,
+      "Text": "",
+      "Runs": [
+        12
+      ]
+    },
+    {
+      "N": 13,
+      "Text": "\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c= n:\n        if i == n:\n            # reached end without starting new field? Actually we handle at loop start?\n            break\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            start = i\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check next char\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        # escaped quote\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma =\u003e empty field\n    if line.endswith(','):\n        fields.append('')\n    # also handle case where line ends without adding last field? Already added.\n    # Edge case: empty line should produce ['']\n    if line == '':\n        return ['']\n    return fields\n\n# Test script\ndef test():\n    cases = [\n        ('a,b,c', ['a','b','c']),\n        ('\"a,b\",c', ['a,b','c']),\n        ('\"\"\"say \"\"hi\"\"\",x', ['say \"hi\"','x']),  # note triple quotes? Actually input: '\"say \"\"hi\"\"\",x'\n    ]\n    # Fix third case\n    cases = [\n        ('a,b,c', ['a','b','c']),\n        ('\"a,b\",c', ['a,b','c']),\n        ('\"\"\"say \"\"hi\"\"\",x', ['say \"hi\"','x']),  # Wait this is wrong string literal.\n    ]\n    # Let's just write directly.\n    tests = [\n        (\"a,b,c\", [\"a\",\"b\",\"c\"]),\n        ('\"a,b\",c', [\"a,b\",\"c\"]),\n        ('\"\"\"say \"\"hi\"\"\",x', None),  # we'll compute manually later\n    ]\n    # Better to just run asserts.\n    \nprint(\"Testing...\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Testing...\n",
+      "Stderr": "",
+      "Millis": 605,
+      "Record": "c6411fa052e0cbe5d9e3ea748c12c4906d357001def81a67d68182728505615f",
+      "Request": "3c7046be968bfe1eeac7e7b59526d53ea9ec0006486201c28f88d6a7f4d181ce",
+      "Result": "d673daf8ade7b56bb1345f55bafda123430520991f419cea141fe4e8b7352bc6",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            start = i\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\n# Tests\ndef test():\n    test_cases = [\n        ('a,b,c', ['a','b','c']),\n        ('\"a,b\",c', ['a,b','c']),\n        ('\"\"\"say \"\"hi\"\"\",x', ['say \"hi\"','x']),  # Need correct input: '\"say \"\"hi\"\"\",x'\n        ('', ['']),\n        ('a\"b', None),  # expect ValueError\n        ('\"unclosed', None),  # ValueError\n        ('\"a\",b', ['a','b']),\n        ('\"a,,b\",c', ['a,,b','c']),\n        ('a,b,', ['a','b','']),\n        (',a,b', ['','a','b']),\n        ('\"\"', ['']),  # empty quoted field\n        ('\"\"\"\",', ['\"', '']),  # quote then comma? Actually field containing a quote: \"\"\"\", -\u003e field is '\"' then empty? Let's skip.\n    ]\n    for inp, expected in test_cases:\n        try:\n            result = parse_csv_line(inp)\n            if expected is None:\n                print(f'FAIL: {inp!r} expected ValueError but got {result}')\n                return\n            if result != expected:\n                print(f'FAIL: {inp!r} expected {expected} got {result}')\n                return\n        except ValueError as e:\n            if expected is None:\n                # expected error, ok\n                continue\n            else:\n                print(f'FAIL: {inp!r} unexpected ValueError: {e}')\n                return\n    print('ALL TESTS PASSED')\n\ntest()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "FAIL: '\"\"\"say \"\"hi\"\"\",x' expected ['say \"hi\"', 'x'] got ['\"say \"hi\"', 'x']\n",
+      "Stderr": "",
+      "Millis": 39,
+      "Record": "80944c1f358a78e1c103ad4b5268f3a09bc4fdb65ee7559329a71f7a23b9bc8b",
+      "Request": "f81dd260378d001b47f6ae65d0797d15f7c0e3f33310750609bf0129080a6307",
+      "Result": "e8590b85fb03f5dd227cdde1f86cfb97e1080014e56fdf7c3a632d1a629a723c",
+      "Previous": "c6411fa052e0cbe5d9e3ea748c12c4906d357001def81a67d68182728505615f",
+      "Sequence": 2
+    },
+    {
+      "N": 3,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            start = i\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\nprint(repr(parse_csv_line('\"\"\"say \"\"hi\"\"\",x')))",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "['\"say \"hi\"', 'x']\n",
+      "Stderr": "",
+      "Millis": 37,
+      "Record": "a339adb89117ac4db973e95c94e434fa4fca8edc32547354273c86d9b23f0463",
+      "Request": "330995df79a7b1a2636ee6b65c2cf763ae446e87f61ca229e7f088c1ba0fe1b1",
+      "Result": "d8f170684c8e31c70cebaf549ab335a59e6cea7ff9e9d973e82c8cc40efe808a",
+      "Previous": "80944c1f358a78e1c103ad4b5268f3a09bc4fdb65ee7559329a71f7a23b9bc8b",
+      "Sequence": 3
+    },
+    {
+      "N": 4,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            start = i\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\nprint(repr(parse_csv_line('\"\"\"say \"\"hi\"\"\",x')))",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "['\"say \"hi\"', 'x']\n",
+      "Stderr": "",
+      "Millis": 49,
+      "Record": "1923e2b3d88a33692c89dc624cbbdbffedb0a36fdc887f6262a64f9f7cf742e9",
+      "Request": "330995df79a7b1a2636ee6b65c2cf763ae446e87f61ca229e7f088c1ba0fe1b1",
+      "Result": "d8f170684c8e31c70cebaf549ab335a59e6cea7ff9e9d973e82c8cc40efe808a",
+      "Previous": "a339adb89117ac4db973e95c94e434fa4fca8edc32547354273c86d9b23f0463",
+      "Sequence": 4
+    },
+    {
+      "N": 5,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            start = i\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\n# Debug\nline = '\"say \"\"hi\"\"\",x'\nprint('Input:', repr(line))\nprint('Output:', parse_csv_line(line))\n# Let's add prints inside\ndef parse_csv_line_debug(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            print('Found quote at', i)\n            i += 1\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        print('Escaped quote, added quote, i now', i+2)\n                        i += 2\n                    else:\n                        print('Closing quote at', i)\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            print('Field chars:', repr(''.join(field_chars)))\n            if i \u003c n:\n                i += 1\n        else:\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                i += 1\n    if line.endswith(','):\n        fields.append('')\n    if line == '':\n        return ['']\n    return fields\n\nprint(parse_csv_line_debug(line))",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Input: '\"say \"\"hi\"\"\",x'\nOutput: ['say \"hi\"', 'x']\nFound quote at 0\nEscaped quote, added quote, i now 7\nEscaped quote, added quote, i now 11\nClosing quote at 11\nField chars: 'say \"hi\"'\n['say \"hi\"', 'x']\n",
+      "Stderr": "",
+      "Millis": 75,
+      "Record": "5cdb54ac37fec07e4855abf5d6db07284662be736d1ac451b2ef37020017f47e",
+      "Request": "a182657df3f0abcbb36f947c21971605198ca80b9eaa5d67ed194afffa7fd264",
+      "Result": "115bbb3c39b4eda279246e5a91dcea6c8c210b3f5f63b5ef599198f6c06a8843",
+      "Previous": "1923e2b3d88a33692c89dc624cbbdbffedb0a36fdc887f6262a64f9f7cf742e9",
+      "Sequence": 5
+    },
+    {
+      "N": 6,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\ndef test():\n    test_cases = [\n        ('a,b,c', ['a','b','c']),\n        ('\"a,b\",c', ['a,b','c']),\n        ('\"\"\"say \"\"hi\"\"\",x', ['say \"hi\"','x']),  # This is wrong; let's compute correct input.\n    ]\n    # Actually the example: '\"say \"\"hi\"\"\",x' -\u003e ['say \"hi\"', 'x']\n    # So we need to test that exact string.\n    test_cases = [\n        ('a,b,c', ['a','b','c']),\n        ('\"a,b\",c', ['a,b','c']),\n        ('\"\"\"say \"\"hi\"\"\",x', None),  # placeholder\n    ]\n    # Let's just manually test.\n    inputs_outputs = [\n        ('a,b,c', ['a','b','c']),\n        ('\"a,b\",c', ['a,b','c']),\n        ('\"\"\"say \"\"hi\"\"\",x', ['say \"hi\"','x']),  # Wait this input is three quotes then say etc. That's not correct.\n    ]\n    # Let's stop and just run the specific examples.\n    print('Testing examples...')\n    # Example 1\n    assert parse_csv_line('a,b,c') == ['a','b','c']\n    # Example 2\n    assert parse_csv_line('\"a,b\",c') == ['a,b','c']\n    # Example 3\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x']  # This is the given example? Actually the example is '\"say \"\"hi\"\"\",x'\n    # Let's test the correct one.\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x']  # I'm confused.\n    # Instead, let's directly test the string from the problem.\n    s = '\"say \"\"hi\"\"\",x'\n    print('Testing:', repr(s))\n    result = parse_csv_line(s)\n    print('Result:', result)\n    assert result == ['say \"hi\"','x']\n    # Empty line\n    assert parse_csv_line('') == ['']\n    # Error cases\n    try:\n        parse_csv_line('a\"b')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"unclosed')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"a\",b c')  # after closing quote there is space not comma\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    print('ALL TESTS PASSED')\n\ntest()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "Testing examples...\n",
+      "Stderr": "Traceback (most recent call last):\n  File \"\u003ccell 6\u003e\", line 106, in \u003cmodule\u003e\n    test()\n    ~~~~^^\n  File \"\u003ccell 6\u003e\", line 77, in test\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x']  # This is the given example? Actually the example is '\"say \"\"hi\"\"\",x'\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+      "Millis": 76,
+      "Record": "46f76b97f9ce73c9abf0f79c7128ee4b1515fa6689b8e2c248c05ecda9db00e7",
+      "Request": "e8c8fe8f3dce97687fea7fcdde089a0458aa9b28815a49353c390a6ecb2a1ed7",
+      "Result": "0dd681a108beb3bbd125014af0d132d168a3df5907763845d92d1c6297ec0b1f",
+      "Previous": "5cdb54ac37fec07e4855abf5d6db07284662be736d1ac451b2ef37020017f47e",
+      "Sequence": 6
+    },
+    {
+      "N": 7,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\ndef test():\n    # Examples from problem\n    assert parse_csv_line('a,b,c') == ['a','b','c']\n    assert parse_csv_line('\"a,b\",c') == ['a,b','c']\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x']  # Wait this is not the example; let's use the correct string.\n    # Actually the example is '\"say \"\"hi\"\"\",x'\n    # Let's test that:\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x']  # I'm still confused.\n    # Let's print the string we think is correct.\n    s = '\"say \"\"hi\"\"\",x'\n    print('Testing string:', repr(s))\n    assert parse_csv_line(s) == ['say \"hi\"','x']\n    # Empty line\n    assert parse_csv_line('') == ['']\n    # Error cases\n    try:\n        parse_csv_line('a\"b')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"unclosed')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"a\",b c')  # space after closing quote\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    # Additional tests\n    assert parse_csv_line('a,b,') == ['a','b','']\n    assert parse_csv_line(',a,b') == ['','a','b']\n    assert parse_csv_line('\"\"') == ['']\n    assert parse_csv_line('\"\"\"\",') == ['\"','']  # field containing a quote then comma? Actually '\"\",': field is '\"' then empty? Let's compute: line = '\"\",' -\u003e first field quoted: starts with \", then next char is \" (second) which is closing? Actually pattern: quote, quote, quote? Wait '\"\"' is two quotes: opening quote, then immediate closing quote (since two quotes in a row inside quoted field is an escaped quote? Actually inside quotes, two quotes represent a literal quote. So '\"\":' -\u003e field contains a quote, then closing quote? Let's trust our function.)\n    print('ALL TESTS PASSED')\n\ntest()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "Traceback (most recent call last):\n  File \"\u003ccell 7\u003e\", line 88, in \u003cmodule\u003e\n    test()\n    ~~~~^^\n  File \"\u003ccell 7\u003e\", line 55, in test\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x']  # Wait this is not the example; let's use the correct string.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+      "Millis": 56,
+      "Record": "54f90a82e46bb80f2f7acc65ad699839f85a5b5241a25a199e3294adeb8184c5",
+      "Request": "84e4e370ed8c6c728c1c7507188bbe5f25a93b05439d2d68dbccb452cff38625",
+      "Result": "2b2a2187c66f79ce34544a15b853fd8d89863256126692b176bbacf7e372d6c8",
+      "Previous": "46f76b97f9ce73c9abf0f79c7128ee4b1515fa6689b8e2c248c05ecda9db00e7",
+      "Sequence": 7
+    },
+    {
+      "N": 8,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            start = i\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped quote\n                    if i + 1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\ndef test():\n    # Examples from problem\n    assert parse_csv_line('a,b,c') == ['a','b','c']\n    assert parse_csv_line('\"a,b\",c') == ['a,b','c']\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x'])  # Wrong, let's use correct string.\n    # Actually the example is '\"say \"\"hi\"\"\",x'\n    s = '\"say \"\"hi\"\"\",x'\n    assert parse_csv_line(s) == ['say \"hi\"','x']\n    # Empty line\n    assert parse_csv_line('') == ['']\n    # Error cases\n    try:\n        parse_csv_line('a\"b')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"unclosed')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"a\",b c')  # space after closing quote\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    # Additional tests\n    assert parse_csv_line('a,b,') == ['a','b','']\n    assert parse_csv_line(',a,b') == ['','a','b']\n    assert parse_csv_line('\"\"') == ['']\n    assert parse_csv_line('\"\"\"\",') == ['\"','']  # field containing a quote then comma\n    print('ALL TESTS PASSED')\n\ntest()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "  File \"\u003ccell 8\u003e\", line 56\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x'])  # Wrong, let's use correct string.\n                                                                 ^\nSyntaxError: unmatched ')'\n",
+      "Millis": 50,
+      "Record": "dd82e5717fae592552793cecbc69f32a7878b34106ad19dec243216551080e9c",
+      "Request": "cf0b7592af694b33917f117f2c32436baad4bca2e93e94b17f149cf3f41629e6",
+      "Result": "f1e4907df4947dccf665eca479885fc42e4ec37351e037d4f22788bc246bef35",
+      "Previous": "54f90a82e46bb80f2f7acc65ad699839f85a5b5241a25a199e3294adeb8184c5",
+      "Sequence": 8
+    },
+    {
+      "N": 9,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped quote\n                    if i + 1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\ndef test():\n    # Examples from problem\n    assert parse_csv_line('a,b,c') == ['a','b','c']\n    assert parse_csv_line('\"a,b\",c') == ['a,b','c']\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x'])  # This line is problematic; let's comment out and use correct.\n    # Actually the example is '\"say \"\"hi\"\"\",x'\n    s = '\"say \"\"hi\"\"\",x'\n    assert parse_csv_line(s) == ['say \"hi\"','x']\n    # Empty line\n    assert parse_csv_line('') == ['']\n    # Error cases\n    try:\n        parse_csv_line('a\"b')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"unclosed')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"a\",b c')  # space after closing quote\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    # Additional tests\n    assert parse_csv_line('a,b,') == ['a','b','']\n    assert parse_csv_line(',a,b') == ['','a','b']\n    assert parse_csv_line('\"\"') == ['']\n    assert parse_csv_line('\"\"\"\",') == ['\"','']  # field containing a quote then comma\n    print('ALL TESTS PASSED')\n\nif __name__ == '__main__':\n    test()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "  File \"\u003ccell 9\u003e\", line 55\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x'])  # This line is problematic; let's comment out and use correct.\n                                                                 ^\nSyntaxError: unmatched ')'\n",
+      "Millis": 35,
+      "Record": "dc01b88bffcf03556c264bb8d769af031b9e631cb7781a4a86cb6b5a9e39b2b2",
+      "Request": "f18dfc2db60fde2ba9cb284a7063e18eef6a2d79476b92415e284d8b57f3ff8c",
+      "Result": "bd0fea930abedae9335586e742a2f7eb779c2e9f875d52d96d6dbbdfa126ac37",
+      "Previous": "dd82e5717fae592552793cecbc69f32a7878b34106ad19dec243216551080e9c",
+      "Sequence": 9
+    },
+    {
+      "N": 10,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped quote\n                    if i + 1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\ndef test():\n    # Examples from problem\n    assert parse_csv_line('a,b,c') == ['a','b','c']\n    assert parse_csv_line('\"a,b\",c') == ['a,b','c']\n    # The tricky example: '\"say \"\"hi\"\"\",x' -\u003e ['say \"hi\"', 'x']\n    s = '\"say \"\"hi\"\"\",x'\n    assert parse_csv_line(s) == ['say \"hi\"','x']\n    # Empty line\n    assert parse_csv_line('') == ['']\n    # Error cases\n    try:\n        parse_csv_line('a\"b')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"unclosed')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"a\",b c')  # space after closing quote\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    # Additional tests\n    assert parse_csv_line('a,b,') == ['a','b','']\n    assert parse_csv_line(',a,b') == ['','a','b']\n    assert parse_csv_line('\"\"') == ['']\n    assert parse_csv_line('\"\"\"\",') == ['\"','']  # field containing a quote then comma\n    print('ALL TESTS PASSED')\n\nif __name__ == '__main__':\n    test()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "Traceback (most recent call last):\n  File \"\u003ccell 10\u003e\", line 84, in \u003cmodule\u003e\n    test()\n    ~~~~^^\n  File \"\u003ccell 10\u003e\", line 73, in test\n    assert False, 'Expected ValueError'\n           ^^^^^\nAssertionError: Expected ValueError\n",
+      "Millis": 41,
+      "Record": "0a4311477ed1f1a4ea4e13b5237354492760ae06aad966b6289e4ae05c14bd89",
+      "Request": "bfdabd8133e9abedce599a8eb7ae7cb47c676056acedcf6bfb80d378f1e1dda5",
+      "Result": "cd2f4c3358f4f56ee259eac1489cea5619973acc60271dde4411f40fa4572378",
+      "Previous": "dc01b88bffcf03556c264bb8d769af031b9e631cb7781a4a86cb6b5a9e39b2b2",
+      "Sequence": 10
+    },
+    {
+      "N": 11,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped quote\n                    if i + 1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\ndef test():\n    # Examples from problem\n    assert parse_csv_line('a,b,c') == ['a','b','c']\n    assert parse_csv_line('\"a,b\",c') == ['a,b','c']\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x'])  # Let's compute correct input later.\n    # Actually the example is '\"say \"\"hi\"\"\",x'\n    s = '\"say \"\"hi\"\"\",x'\n    assert parse_csv_line(s) == ['say \"hi\"','x']\n    # Empty line\n    assert parse_csv_line('') == ['']\n    # Error cases\n    try:\n        parse_csv_line('a\"b')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"unclosed')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"a\"b')  # closing quote followed by b (not comma or end)\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    # Additional tests\n    assert parse_csv_line('a,b,') == ['a','b','']\n    assert parse_csv_line(',a,b') == ['','a','b']\n    assert parse_csv_line('\"\"') == ['']\n    assert parse_csv_line('\"\"\"\",') == ['\"','']  # field containing a quote then comma\n    # Test spaces\n    assert parse_csv_line('a, b ,c') == ['a',' b ','c']  # spaces kept\n    print('ALL TESTS PASSED')\n\nif __name__ == '__main__':\n    test()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "  File \"\u003ccell 11\u003e\", line 55\n    assert parse_csv_line('\"\"\"say \"\"hi\"\"\",x') == ['say \"hi\"','x'])  # Let's compute correct input later.\n                                                                 ^\nSyntaxError: unmatched ')'\n",
+      "Millis": 31,
+      "Record": "f5c8f9d01f7e9a13cf32a54c4c7309f0bb4de9ad889887ddd6569d71a1a90507",
+      "Request": "58b478c15cfc2ef4e9479b6c75d95f51ee5f3be75f602c66cafe6b7fdb815d02",
+      "Result": "048844e20074db698bb95d0fc7b36e7862feab9bec71ce8c8073ef74e2c47044",
+      "Previous": "0a4311477ed1f1a4ea4e13b5237354492760ae06aad966b6289e4ae05c14bd89",
+      "Sequence": 11
+    },
+    {
+      "N": 12,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    # check if escaped quote\n                    if i + 1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Invalid character after closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # skip comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # skip comma\n                i += 1\n    # handle trailing comma (empty field after last comma)\n    if line.endswith(','):\n        fields.append('')\n    # handle empty line\n    if line == '':\n        return ['']\n    return fields\n\ndef test():\n    # Examples from problem\n    assert parse_csv_line('a,b,c') == ['a','b','c']\n    assert parse_csv_line('\"a,b\",c') == ['a,b','c']\n    # The tricky example: '\"say \"\"hi\"\"\",x' -\u003e ['say \"hi\"', 'x']\n    s = '\"say \"\"hi\"\"\",x'\n    assert parse_csv_line(s) == ['say \"hi\"','x']\n    # Empty line\n    assert parse_csv_line('') == ['']\n    # Error cases\n    try:\n        parse_csv_line('a\"b')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"unclosed')\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    try:\n        parse_csv_line('\"a\"b')  # closing quote followed by b (not comma or end)\n        assert False, 'Expected ValueError'\n    except ValueError:\n        pass\n    # Additional tests\n    assert parse_csv_line('a,b,') == ['a','b','']\n    assert parse_csv_line(',a,b') == ['','a','b']\n    assert parse_csv_line('\"\"') == ['']\n    assert parse_csv_line('\"\"\"\",') == ['\"','']  # field containing a quote then comma\n    # Test spaces\n    assert parse_csv_line('a, b ,c') == ['a',' b ','c']  # spaces kept\n    print('ALL TESTS PASSED')\n\nif __name__ == '__main__':\n    test()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 42,
+      "Record": "f3a7adcb4f4742ee7b5eacf126b8b102ee2f71706ce0fac7db8440430457e32c",
+      "Request": "f04116927ff45b49df058c6de8fdff1285e4b72dfc30cec7f09313b86b126345",
+      "Result": "ab00f2eb57e2670c621682ad7ffc5e0b95f307c5df9527f0b63b8d140b20acb3",
+      "Previous": "f5c8f9d01f7e9a13cf32a54c4c7309f0bb4de9ad889887ddd6569d71a1a90507",
+      "Sequence": 12
+    }
+  ],
+  "Final": "\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 13,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyJhLGIsYyJdLCJleHBlY3QiOlsiYSIsImIiLCJjIl19LHsiYXJncyI6WyJcImEsYlwiLGMiXSwiZXhwZWN0IjpbImEsYiIsImMiXX0seyJhcmdzIjpbIlwic2F5IFwiXCJoaVwiXCJcIix4Il0sImV4cGVjdCI6WyJzYXkgXCJoaVwiIiwieCJdfSx7ImFyZ3MiOlsiIl0sImV4cGVjdCI6WyIiXX0seyJhcmdzIjpbImFcImIiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyIsLCJdLCJleHBlY3QiOlsiIiwiIiwiIl19LHsiYXJncyI6WyIgYSAsIGIgIl0sImV4cGVjdCI6WyIgYSAiLCIgYiAiXX0seyJhcmdzIjpbIlwiXCIseCJdLCJleHBlY3QiOlsiIiwieCJdfSx7ImFyZ3MiOlsiXCJhXCJiIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiXCJhYmMiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJhLFwiYiJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlwiYVwiXCIiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJcIlwiXCJcIiJdLCJleHBlY3QiOlsiXCIiXX0seyJhcmdzIjpbImEsIFwiYlwiIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsieCwiXSwiZXhwZWN0IjpbIngiLCIiXX0seyJhcmdzIjpbIlwieFwiLCJdLCJleHBlY3QiOlsieCIsIiJdfSx7ImFyZ3MiOlsiXCJhLGIiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJcImFcIlwiYlwiLFwiXCIiXSwiZXhwZWN0IjpbImFcImIiLCIiXX0seyJhcmdzIjpbImEsYiwiXSwiZXhwZWN0IjpbImEiLCJiIiwiIl19XSwiZnVuY3Rpb24iOiJwYXJzZV9jc3ZfbGluZSIsInVuY2hhbmdlZCI6ZmFsc2V9\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 19, \"Total\": 19, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 42,
+    "Record": "88d1425eb1c02bb58ee3683640fc5c8e1de9085bef89d8948a92b8aa9520ad7e",
+    "Request": "2f27a24b2d40cba9cc6df1158c06ecc908be2cdc59eed697fc18c3436fc0e7ae",
+    "Result": "402e8e7f487a53aa7a5d5e3d014569a18ff763e0d218e9d616bf08bab3c2ac7b",
+    "Previous": "f3a7adcb4f4742ee7b5eacf126b8b102ee2f71706ce0fac7db8440430457e32c",
+    "Sequence": 13
+  },
+  "Calls": 13,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Usage": {
+    "Prompt": 75250,
+    "Completion": 11211,
+    "Calls": 13
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Task": "Write a Python function wrap(text, width) that word-wraps text into a list of lines. Words are the runs of non-whitespace characters (what str.split() with no arguments returns). Fill lines greedily: a word joins the current line, after one space, if the line's length plus 1 plus the word's length is at most width; otherwise the current line is finished and the word starts the next line. A word longer than width is first cut into pieces of exactly width characters (the last piece may be shorter), and each piece is then placed as a word by the same rule, so further words may follow the last piece on its line. Lines never have leading or trailing spaces. Return [] when text has no words. If width is less than 1, raise ValueError. Examples: wrap(\"the quick brown fox\", 10) -\u003e [\"the quick\", \"brown fox\"], wrap(\"abcdefghij\", 4) -\u003e [\"abcd\", \"efgh\", \"ij\"], wrap(\"\", 5) -\u003e [], wrap(\"a b\", 0) raises ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "09dbc7a3f8564957bc896cc2e815b0eb4c0f9f07c069d6dc3c4be87ee8f329c9",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "",
+      "Runs": [
+        3
+      ]
+    },
+    {
+      "N": 4,
+      "Text": "All tests pass. The function correctly handles all the given examples and additional edge cases. The test script prints \"ALL TESTS PASSED\" as its last line.\n\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def wrap(text, width):\n    \"\"\"Word-wrap text into a list of lines with given width.\"\"\"\n    if width \u003c 1:\n        raise ValueError(\"width must be at least 1\")\n    \n    words = text.split()\n    if not words:\n        return []\n    \n    lines = []\n    current_line = \"\"\n    \n    for word in words:\n        # Handle words longer than width by cutting them into pieces\n        while len(word) \u003e width:\n            piece = word[:width]\n            word = word[width:]\n            \n            # Place the piece as a word\n            if not current_line:\n                current_line = piece\n            elif len(current_line) + 1 + len(piece) \u003c= width:\n                current_line += \" \" + piece\n            else:\n                lines.append(current_line)\n                current_line = piece\n        \n        # Now place the remaining word (which is \u003c= width)\n        if not current_line:\n            current_line = word\n        elif len(current_line) + 1 + len(word) \u003c= width:\n            current_line += \" \" + word\n        else:\n            lines.append(current_line)\n            current_line = word\n    \n    if current_line:\n        lines.append(current_line)\n    \n    return lines\n\n\n# Test script\ndef test_wrap():\n    tests = [\n        # Given examples\n        ((\"the quick brown fox\", 10), [\"the quick\", \"brown fox\"]),\n        ((\"abcdefghij\", 4), [\"abcd\", \"efgh\", \"ij\"]),\n        ((\"\", 5), []),\n        ((\"a b\", 0), ValueError),\n        \n        # Additional test cases\n        ((\"hello world\", 11), [\"hello world\"]),  # fits exactly\n        ((\"hello world\", 10), [\"hello\", \"world\"]),  # doesn't fit\n        ((\"a\", 1), [\"a\"]),  # single char\n        ((\"a b c\", 1), [\"a\", \"b\", \"c\"]),  # width 1\n        ((\"longword\", 3), [\"lon\", \"gwo\", \"rd\"]),  # word longer than width\n        ((\"a longword b\", 3), [\"a\", \"lon\", \"gwo\", \"rd\", \"b\"]),  # long word in middle\n        ((\"  spaced  out  \", 5), [\"spaced\", \"out\"]),  # leading/trailing/multiple spaces\n        ((\"word\", 10), [\"word\"]),  # single word shorter than width\n        ((\"word\", 4), [\"word\"]),  # single word exactly width\n        ((\"word\", 3), [\"wor\", \"d\"]),  # single word longer than width\n        ((\"a bc def\", 3), [\"a bc\", \"def\"]),  # multiple words\n        ((\"a bc def\", 2), [\"a\", \"bc\", \"de\", \"f\"]),  # tight width\n    ]\n    \n    passed = 0\n    failed = 0\n    \n    for i, (args, expected) in enumerate(tests):\n        try:\n            result = wrap(*args)\n            if expected is ValueError:\n                print(f\"Test {i+1}: FAIL - Expected ValueError but got {result}\")\n                failed += 1\n            elif result == expected:\n                print(f\"Test {i+1}: PASS\")\n                passed += 1\n            else:\n                print(f\"Test {i+1}: FAIL - Expected {expected}, got {result}\")\n                failed += 1\n        except ValueError as e:\n            if expected is ValueError:\n                print(f\"Test {i+1}: PASS (ValueError raised)\")\n                passed += 1\n            else:\n                print(f\"Test {i+1}: FAIL - Unexpected ValueError: {e}\")\n                failed += 1\n        except Exception as e:\n            print(f\"Test {i+1}: FAIL - Unexpected exception: {e}\")\n            failed += 1\n    \n    print(f\"\\nPassed: {passed}, Failed: {failed}\")\n    if failed == 0:\n        print(\"ALL TESTS PASSED\")\n    else:\n        print(\"NOT ALL TESTS PASSED\")\n\n\nif __name__ == \"__main__\":\n    test_wrap()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Test 1: PASS\nTest 2: PASS\nTest 3: PASS\nTest 4: PASS (ValueError raised)\nTest 5: PASS\nTest 6: PASS\nTest 7: PASS\nTest 8: PASS\nTest 9: PASS\nTest 10: PASS\nTest 11: FAIL - Expected ['spaced', 'out'], got ['space', 'd out']\nTest 12: PASS\nTest 13: PASS\nTest 14: PASS\nTest 15: FAIL - Expected ['a bc', 'def'], got ['a', 'bc', 'def']\nTest 16: PASS\n\nPassed: 14, Failed: 2\nNOT ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 682,
+      "Record": "af838ce9aa646f884cb39317f373cc40bb891dafbf9e58a0e90eebab16fdee4f",
+      "Request": "4fec1493e51e108ca14244af9c317b84137e7ba56d10fe5305e8e770dc850de4",
+      "Result": "a8991ad43fb40fe5e4ba42bb029bb03ee04381d19848e600482d3e6a6c42d0b3",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "def wrap(text, width):\n    \"\"\"Word-wrap text into a list of lines with given width.\"\"\"\n    if width \u003c 1:\n        raise ValueError(\"width must be at least 1\")\n    \n    words = text.split()\n    if not words:\n        return []\n    \n    lines = []\n    current_line = \"\"\n    \n    for word in words:\n        # Handle words longer than width by cutting them into pieces\n        while len(word) \u003e width:\n            piece = word[:width]\n            word = word[width:]\n            \n            # Place the piece as a word\n            if not current_line:\n                current_line = piece\n            elif len(current_line) + 1 + len(piece) \u003c= width:\n                current_line += \" \" + piece\n            else:\n                lines.append(current_line)\n                current_line = piece\n        \n        # Now place the remaining word (which is \u003c= width)\n        if not current_line:\n            current_line = word\n        elif len(current_line) + 1 + len(word) \u003c= width:\n            current_line += \" \" + word\n        else:\n            lines.append(current_line)\n            current_line = word\n    \n    if current_line:\n        lines.append(current_line)\n    \n    return lines\n\n\n# Test script\ndef test_wrap():\n    tests = [\n        # Given examples\n        ((\"the quick brown fox\", 10), [\"the quick\", \"brown fox\"]),\n        ((\"abcdefghij\", 4), [\"abcd\", \"efgh\", \"ij\"]),\n        ((\"\", 5), []),\n        ((\"a b\", 0), ValueError),\n        \n        # Additional test cases (corrected to match spec)\n        ((\"hello world\", 11), [\"hello world\"]),  # fits exactly\n        ((\"hello world\", 10), [\"hello\", \"world\"]),  # doesn't fit\n        ((\"a\", 1), [\"a\"]),  # single char\n        ((\"a b c\", 1), [\"a\", \"b\", \"c\"]),  # width 1\n        ((\"longword\", 3), [\"lon\", \"gwo\", \"rd\"]),  # word longer than width\n        ((\"a longword b\", 3), [\"a\", \"lon\", \"gwo\", \"rd\", \"b\"]),  # long word in middle\n        ((\"  spaced  out  \", 5), [\"space\", \"d out\"]),  # leading/trailing/multiple spaces - \"spaced\" (6) \u003e 5, so cut\n        ((\"word\", 10), [\"word\"]),  # single word shorter than width\n        ((\"word\", 4), [\"word\"]),  # single word exactly width\n        ((\"word\", 3), [\"wor\", \"d\"]),  # single word longer than width\n        ((\"a bc def\", 3), [\"a\", \"bc\", \"def\"]),  # \"a bc\" = 4 \u003e 3, so separate lines\n        ((\"a bc def\", 2), [\"a\", \"bc\", \"de\", \"f\"]),  # tight width\n        # Edge cases\n        ((\"a  b\", 3), [\"a b\"]),  # multiple spaces between words\n        ((\"a\\nb\\tc\", 5), [\"a b c\"]),  # different whitespace\n        ((\"verylongword\", 5), [\"veryl\", \"ongwo\", \"rd\"]),  # very long word\n        ((\"a verylongword b\", 5), [\"a\", \"veryl\", \"ongwo\", \"rd\", \"b\"]),  # long word in middle\n    ]\n    \n    passed = 0\n    failed = 0\n    \n    for i, (args, expected) in enumerate(tests):\n        try:\n            result = wrap(*args)\n            if expected is ValueError:\n                print(f\"Test {i+1}: FAIL - Expected ValueError but got {result}\")\n                failed += 1\n            elif result == expected:\n                print(f\"Test {i+1}: PASS\")\n                passed += 1\n            else:\n                print(f\"Test {i+1}: FAIL - Expected {expected}, got {result}\")\n                failed += 1\n        except ValueError as e:\n            if expected is ValueError:\n                print(f\"Test {i+1}: PASS (ValueError raised)\")\n                passed += 1\n            else:\n                print(f\"Test {i+1}: FAIL - Unexpected ValueError: {e}\")\n                failed += 1\n        except Exception as e:\n            print(f\"Test {i+1}: FAIL - Unexpected exception: {e}\")\n            failed += 1\n    \n    print(f\"\\nPassed: {passed}, Failed: {failed}\")\n    if failed == 0:\n        print(\"ALL TESTS PASSED\")\n    else:\n        print(\"NOT ALL TESTS PASSED\")\n\n\nif __name__ == \"__main__\":\n    test_wrap()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Test 1: PASS\nTest 2: PASS\nTest 3: PASS\nTest 4: PASS (ValueError raised)\nTest 5: PASS\nTest 6: PASS\nTest 7: PASS\nTest 8: PASS\nTest 9: PASS\nTest 10: PASS\nTest 11: PASS\nTest 12: PASS\nTest 13: PASS\nTest 14: PASS\nTest 15: PASS\nTest 16: PASS\nTest 17: PASS\nTest 18: PASS\nTest 19: PASS\nTest 20: FAIL - Expected ['a', 'veryl', 'ongwo', 'rd', 'b'], got ['a', 'veryl', 'ongwo', 'rd b']\n\nPassed: 19, Failed: 1\nNOT ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 43,
+      "Record": "60ed262d8dafd872a8772c7e6fa28a066fe201cf5a4ff5274b9d57a6a5d5be9e",
+      "Request": "25b80df12a5c6c5f9ac89674bc0ec108c423bf287e03d9dcaa400621f0157eeb",
+      "Result": "a37fe900c2f48f25c97075a51483828aa5f83dcc3e383495f1af42b1f9a840c4",
+      "Previous": "af838ce9aa646f884cb39317f373cc40bb891dafbf9e58a0e90eebab16fdee4f",
+      "Sequence": 2
+    },
+    {
+      "N": 3,
+      "Language": "python",
+      "Code": "def wrap(text, width):\n    \"\"\"Word-wrap text into a list of lines with given width.\"\"\"\n    if width \u003c 1:\n        raise ValueError(\"width must be at least 1\")\n    \n    words = text.split()\n    if not words:\n        return []\n    \n    lines = []\n    current_line = \"\"\n    \n    for word in words:\n        # Handle words longer than width by cutting them into pieces\n        while len(word) \u003e width:\n            piece = word[:width]\n            word = word[width:]\n            \n            # Place the piece as a word\n            if not current_line:\n                current_line = piece\n            elif len(current_line) + 1 + len(piece) \u003c= width:\n                current_line += \" \" + piece\n            else:\n                lines.append(current_line)\n                current_line = piece\n        \n        # Now place the remaining word (which is \u003c= width)\n        if not current_line:\n            current_line = word\n        elif len(current_line) + 1 + len(word) \u003c= width:\n            current_line += \" \" + word\n        else:\n            lines.append(current_line)\n            current_line = word\n    \n    if current_line:\n        lines.append(current_line)\n    \n    return lines\n\n\n# Test script\ndef test_wrap():\n    tests = [\n        # Given examples\n        ((\"the quick brown fox\", 10), [\"the quick\", \"brown fox\"]),\n        ((\"abcdefghij\", 4), [\"abcd\", \"efgh\", \"ij\"]),\n        ((\"\", 5), []),\n        ((\"a b\", 0), ValueError),\n        \n        # Additional test cases\n        ((\"hello world\", 11), [\"hello world\"]),  # fits exactly\n        ((\"hello world\", 10), [\"hello\", \"world\"]),  # doesn't fit\n        ((\"a\", 1), [\"a\"]),  # single char\n        ((\"a b c\", 1), [\"a\", \"b\", \"c\"]),  # width 1\n        ((\"longword\", 3), [\"lon\", \"gwo\", \"rd\"]),  # word longer than width\n        ((\"a longword b\", 3), [\"a\", \"lon\", \"gwo\", \"rd\", \"b\"]),  # long word in middle\n        ((\"  spaced  out  \", 5), [\"space\", \"d out\"]),  # \"spaced\" (6) \u003e 5, so cut into \"space\" + \"d\"\n        ((\"word\", 10), [\"word\"]),  # single word shorter than width\n        ((\"word\", 4), [\"word\"]),  # single word exactly width\n        ((\"word\", 3), [\"wor\", \"d\"]),  # single word longer than width\n        ((\"a bc def\", 3), [\"a\", \"bc\", \"def\"]),  # \"a bc\" = 4 \u003e 3, so separate lines\n        ((\"a bc def\", 2), [\"a\", \"bc\", \"de\", \"f\"]),  # tight width\n        # Edge cases\n        ((\"a  b\", 3), [\"a b\"]),  # multiple spaces between words\n        ((\"a\\nb\\tc\", 5), [\"a b c\"]),  # different whitespace\n        ((\"verylongword\", 5), [\"veryl\", \"ongwo\", \"rd\"]),  # very long word\n        ((\"a verylongword b\", 5), [\"a\", \"veryl\", \"ongwo\", \"rd b\"]),  # last piece \"rd\" + \"b\" fits on same line\n    ]\n    \n    passed = 0\n    failed = 0\n    \n    for i, (args, expected) in enumerate(tests):\n        try:\n            result = wrap(*args)\n            if expected is ValueError:\n                print(f\"Test {i+1}: FAIL - Expected ValueError but got {result}\")\n                failed += 1\n            elif result == expected:\n                print(f\"Test {i+1}: PASS\")\n                passed += 1\n            else:\n                print(f\"Test {i+1}: FAIL - Expected {expected}, got {result}\")\n                failed += 1\n        except ValueError as e:\n            if expected is ValueError:\n                print(f\"Test {i+1}: PASS (ValueError raised)\")\n                passed += 1\n            else:\n                print(f\"Test {i+1}: FAIL - Unexpected ValueError: {e}\")\n                failed += 1\n        except Exception as e:\n            print(f\"Test {i+1}: FAIL - Unexpected exception: {e}\")\n            failed += 1\n    \n    print(f\"\\nPassed: {passed}, Failed: {failed}\")\n    if failed == 0:\n        print(\"ALL TESTS PASSED\")\n    else:\n        print(\"NOT ALL TESTS PASSED\")\n\n\nif __name__ == \"__main__\":\n    test_wrap()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Test 1: PASS\nTest 2: PASS\nTest 3: PASS\nTest 4: PASS (ValueError raised)\nTest 5: PASS\nTest 6: PASS\nTest 7: PASS\nTest 8: PASS\nTest 9: PASS\nTest 10: PASS\nTest 11: PASS\nTest 12: PASS\nTest 13: PASS\nTest 14: PASS\nTest 15: PASS\nTest 16: PASS\nTest 17: PASS\nTest 18: PASS\nTest 19: PASS\nTest 20: PASS\n\nPassed: 20, Failed: 0\nALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 39,
+      "Record": "4e82c150c860f8db29de5ac1db07ac221eb3a75b80bf51ba3a9517eed6122f22",
+      "Request": "db56b2c755d46505c7c7ed71033e64442971defd736f09d4dcf291a57ee28e31",
+      "Result": "06b343ceb1dd9b9042c56686f0803533d6cc4412083a73c36708fc1062b1ab40",
+      "Previous": "60ed262d8dafd872a8772c7e6fa28a066fe201cf5a4ff5274b9d57a6a5d5be9e",
+      "Sequence": 3
+    }
+  ],
+  "Final": "All tests pass. The function correctly handles all the given examples and additional edge cases. The test script prints \"ALL TESTS PASSED\" as its last line.\n\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 4,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyJ0aGUgcXVpY2sgYnJvd24gZm94IiwxMF0sImV4cGVjdCI6WyJ0aGUgcXVpY2siLCJicm93biBmb3giXX0seyJhcmdzIjpbImFiY2RlZmdoaWoiLDRdLCJleHBlY3QiOlsiYWJjZCIsImVmZ2giLCJpaiJdfSx7ImFyZ3MiOlsiIiw1XSwiZXhwZWN0IjpbXX0seyJhcmdzIjpbImEgYiIsMF0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiICAgIiw1XSwiZXhwZWN0IjpbXX0seyJhcmdzIjpbImEgYiIsLTFdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbImhlbGxvIHdvcmxkIiw1XSwiZXhwZWN0IjpbImhlbGxvIiwid29ybGQiXX0seyJhcmdzIjpbImhlbGxvIHdvcmxkIiwxMV0sImV4cGVjdCI6WyJoZWxsbyB3b3JsZCJdfSx7ImFyZ3MiOlsiYVx0YlxuYyIsM10sImV4cGVjdCI6WyJhIGIiLCJjIl19LHsiYXJncyI6WyJhYmNkZSBmIiw0XSwiZXhwZWN0IjpbImFiY2QiLCJlIGYiXX0seyJhcmdzIjpbImFiIGNkZWZnaCIsNF0sImV4cGVjdCI6WyJhYiIsImNkZWYiLCJnaCJdfSx7ImFyZ3MiOlsieCIsMV0sImV4cGVjdCI6WyJ4Il19LHsiYXJncyI6WyJhYSBiYiIsMV0sImV4cGVjdCI6WyJhIiwiYSIsImIiLCJiIl19LHsiYXJncyI6WyJvbmUgIHR3byIsM10sImV4cGVjdCI6WyJvbmUiLCJ0d28iXX0seyJhcmdzIjpbImhlbGxvIHdvcmxkIiw0XSwiZXhwZWN0IjpbImhlbGwiLCJvIiwid29ybCIsImQiXX0seyJhcmdzIjpbImEgYmIgY2NjIGRkZGQiLDZdLCJleHBlY3QiOlsiYSBiYiIsImNjYyIsImRkZGQiXX0seyJhcmdzIjpbIiAgbGVhZCBhbmQgdHJhaWwgICIsOV0sImV4cGVjdCI6WyJsZWFkIGFuZCIsInRyYWlsIl19XSwiZnVuY3Rpb24iOiJ3cmFwIiwidW5jaGFuZ2VkIjpmYWxzZX0=\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 17, \"Total\": 17, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 38,
+    "Record": "c18c01bdb299fa3e89d4c63ab24e2c6b9d2f24e7887ae432693094102de2a08e",
+    "Request": "dd94ffa425264057c633c04760ff5305eaf2252314d99e496576925f15941559",
+    "Result": "41129440483a951ae06fa84bb8d48a18570ba9a0ee056268367465c6b60dd848",
+    "Previous": "4e82c150c860f8db29de5ac1db07ac221eb3a75b80bf51ba3a9517eed6122f22",
+    "Sequence": 4
+  },
+  "Calls": 4,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Usage": {
+    "Prompt": 11219,
+    "Completion": 4357,
+    "Calls": 4
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Task": "Write a Python function parse_csv_line(line) that splits one line of CSV into a list of field strings. Fields are separated by commas. A field whose first character is a double quote is quoted: it runs to its closing quote; inside it a comma is an ordinary character and two double quotes in a row stand for one double quote; the closing quote must be followed by a comma or the end of the line. Any other field is unquoted and must not contain a double quote. Spaces are ordinary characters and are kept. Raise ValueError for a double quote in an unquoted field, a quoted field with no closing quote, or anything but a comma after a closing quote. The empty line is one empty field. Examples: 'a,b,c' -\u003e ['a', 'b', 'c'], '\"a,b\",c' -\u003e ['a,b', 'c'], '\"say \"\"hi\"\"\",x' -\u003e ['say \"hi\"', 'x'], '' -\u003e [''], 'a\"b' raises ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "fc0b8c6e46ccd58e680b41e56c38aeeb4c5e744aad9df72719f487dd14ce56cb",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c= n:\n        if i == n:\n            # reached end, add empty field? Actually we handle at loop start?\n            break\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            start = i\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Anything but a comma after a closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # consume comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in an unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # consume comma\n                i += 1\n    # Handle trailing comma =\u003e empty field\n    if line.endswith(','):\n        fields.append('')\n    # Empty line case: returns ['']\n    if line == '' and not fields:\n        fields.append('')\n    return fields\n\n# Test script\ntests = [\n    ('a,b,c', ['a','b','c']),\n    ('\"a,b\",c', ['a,b','c']),\n    ('\"\"\"say \"\"hi\"\"\",x', ['say \"hi\"','x']),  # note triple? Actually input: '\"say \"\"hi\"\"\",x'\n]\n# Fix test\ntests = [\n    ('a,b,c', ['a','b','c']),\n    ('\"a,b\",c', ['a,b','c']),\n    ('\"say \"\"hi\"\"\",x', ['say \"hi\"','x']),\n    ('', ['']),\n]\n\ndef test():\n    all_pass = True\n    for inp, expected in tests:\n        try:\n            got = parse_csv_line(inp)\n        except Exception as e:\n            got = f'ERROR: {e}'\n        if got != expected:\n            print(f'FAIL: {repr(inp)} -\u003e expected {expected}, got {got}')\n            all_pass = False\n        else:\n            print(f'PASS: {repr(inp)} -\u003e {got}')\n    # Additional tests\n    # Unquoted with quote should raise\n    try:\n        parse_csv_line('a\"b')\n        print('FAIL: a\"b should raise')\n        all_pass = False\n    except ValueError:\n        print('PASS: a\"b raises ValueError')\n    # Quoted no closing\n    try:\n        parse_csv_line('\"abc')\n        print('FAIL: \"abc should raise')\n        all_pass = False\n    except ValueError:\n        print('PASS: \"abc raises ValueError')\n    # Anything but comma after closing quote\n    try:\n        parse_csv_line('\"abc\"d')\n        print('FAIL: \"abc\"d should raise')\n        all_pass = False\n    except ValueError:\n        print('PASS: \"abc\"d raises ValueError')\n    # Trailing comma empty field\n    if parse_csv_line('a,') != ['a','']:\n        print('FAIL: trailing comma')\n        all_pass = False\n    else:\n        print('PASS: trailing comma')\n    # Double quotes inside quoted\n    if parse_csv_line('\"\"') != ['']:  # two quotes =\u003e empty string? Actually \"\" is escaped quote inside? According to spec, two double quotes stand for one double quote. So field \"\"\"? Wait: field starts with \", then content: \"\" (two quotes) =\u003e one quote, then closing? Actually pattern: field whose first char is \", runs to its closing quote. Inside it two double quotes stand for one double quote. So \"\"\"? Example: '\"say \"\"hi\"\"\",x' -\u003e field: say \"hi\". So for input '\"\"' we have opening quote, then content: \"\"? That's two quotes meaning one quote, then we need closing quote after that? Actually string '\"\"' length 2: first \", second \". According to rule: after opening quote, we look for closing quote; two quotes in a row represent one quote, so we consume both as a single quote and continue? Then we have no closing quote -\u003e error. So '\"\"' should raise. We'll skip.\n    if all_pass:\n        print('ALL TESTS PASSED')\n    else:\n        print('NOT ALL TESTS PASSED')\n\ntest()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "  File \"\u003ccell 1\u003e\", line 110\n    if all_pass:\n    ^^\nIndentationError: expected an indented block after 'if' statement on line 109\n",
+      "Millis": 710,
+      "Record": "b6fc5ea188b8161fd298bcc5dca3bbb7a0a347535d0509f4c4e8f78d237d25f4",
+      "Request": "a684fc9997a373c3a9e5506ac45ef276344606d74ab3a36cb157fc4e01148e54",
+      "Result": "2a4ab832dfca50b6d46240509e21bd7c3d07fcfa073787f5984b7cb94c75fb77",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "def parse_csv_line(line):\n    fields = []\n    i = 0\n    n = len(line)\n    while i \u003c n:\n        if line[i] == '\"':\n            # quoted field\n            i += 1\n            field_chars = []\n            while i \u003c n:\n                if line[i] == '\"':\n                    if i+1 \u003c n and line[i+1] == '\"':\n                        field_chars.append('\"')\n                        i += 2\n                    else:\n                        # closing quote\n                        i += 1\n                        break\n                else:\n                    field_chars.append(line[i])\n                    i += 1\n            else:\n                raise ValueError('Quoted field with no closing quote')\n            # after closing quote, must be comma or end\n            if i \u003c n and line[i] != ',':\n                raise ValueError('Anything but a comma after a closing quote')\n            fields.append(''.join(field_chars))\n            if i \u003c n:\n                # consume comma\n                i += 1\n        else:\n            # unquoted field\n            start = i\n            while i \u003c n and line[i] != ',':\n                if line[i] == '\"':\n                    raise ValueError('Double quote in an unquoted field')\n                i += 1\n            fields.append(line[start:i])\n            if i \u003c n:\n                # consume comma\n                i += 1\n    # Handle case where line ends with comma -\u003e empty field\n    if line.endswith(','):\n        fields.append('')\n    # Empty line case\n    if line == '' and not fields:\n        fields.append('')\n    return fields\n\n# Test script\ntests = [\n    ('a,b,c', ['a','b','c']),\n    ('\"a,b\",c', ['a,b','c']),\n    ('\"say \"\"hi\"\"\",x', ['say \"hi\"','x']),\n    ('', ['']),\n]\n\ndef test():\n    all_pass = True\n    for inp, expected in tests:\n        try:\n            got = parse_csv_line(inp)\n        except Exception as e:\n            got = f'ERROR: {e}'\n        if got != expected:\n            print(f'FAIL: {repr(inp)} -\u003e expected {expected}, got {got}')\n            all_pass = False\n        else:\n            print(f'PASS: {repr(inp)} -\u003e {got}')\n    # Additional tests\n    # Unquoted with quote should raise\n    try:\n        parse_csv_line('a\"b')\n        print('FAIL: a\"b should raise')\n        all_pass = False\n    except ValueError:\n        print('PASS: a\"b raises ValueError')\n    # Quoted no closing\n    try:\n        parse_csv_line('\"abc')\n        print('FAIL: \"abc should raise')\n        all_pass = False\n    except ValueError:\n        print('PASS: \"abc raises ValueError')\n    # Anything but comma after closing quote\n    try:\n        parse_csv_line('\"abc\"d')\n        print('FAIL: \"abc\"d should raise')\n        all_pass = False\n    except ValueError:\n        print('PASS: \"abc\"d raises ValueError')\n    # Trailing comma empty field\n    if parse_csv_line('a,') != ['a','']:\n        print('FAIL: trailing comma')\n        all_pass = False\n    else:\n        print('PASS: trailing comma')\n    # Empty field between commas\n    if parse_csv_line('a,,c') != ['a','','c']:\n        print('FAIL: empty field')\n        all_pass = False\n    else:\n        print('PASS: empty field')\n    # Quoted empty string\n    if parse_csv_line('\"\"') != ['']:  # Actually this should raise? Let's think: opening quote, then immediate closing quote? No content. According to rules: inside quoted field, two double quotes stand for one double quote. But we have just two quotes total: opening and closing? Actually string '\"\"' is two double quotes. First is opening quote, second is closing quote (since not followed by another quote). So field content is empty. Should be allowed. Let's test.\n        print('FAIL: quoted empty string')\n        all_pass = False\n    else:\n        print('PASS: quoted empty string')\n    if all_pass:\n        print('ALL TESTS PASSED')\n    else:\n        print('NOT ALL TESTS PASSED')\n\ntest()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "PASS: 'a,b,c' -\u003e ['a', 'b', 'c']\nPASS: '\"a,b\",c' -\u003e ['a,b', 'c']\nPASS: '\"say \"\"hi\"\"\",x' -\u003e ['say \"hi\"', 'x']\nPASS: '' -\u003e ['']\nPASS: a\"b raises ValueError\nPASS: \"abc raises ValueError\nPASS: \"abc\"d raises ValueError\nPASS: trailing comma\nPASS: empty field\nPASS: quoted empty string\nALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 46,
+      "Record": "ff819780b26b50c269238695acc924769d20891f4eedb4a5ce74c52094d4c930",
+      "Request": "186f1bb7edf54923d4c5155e8d9ba12bab4047f61aee89c88da5e74bd9570806",
+      "Result": "2d5e36869b8433c33754c0b15c32954a8ef0184805a4bd7d9f1f55e35f8dbe25",
+      "Previous": "b6fc5ea188b8161fd298bcc5dca3bbb7a0a347535d0509f4c4e8f78d237d25f4",
+      "Sequence": 2
+    }
+  ],
+  "Final": "\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 3,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyJhLGIsYyJdLCJleHBlY3QiOlsiYSIsImIiLCJjIl19LHsiYXJncyI6WyJcImEsYlwiLGMiXSwiZXhwZWN0IjpbImEsYiIsImMiXX0seyJhcmdzIjpbIlwic2F5IFwiXCJoaVwiXCJcIix4Il0sImV4cGVjdCI6WyJzYXkgXCJoaVwiIiwieCJdfSx7ImFyZ3MiOlsiIl0sImV4cGVjdCI6WyIiXX0seyJhcmdzIjpbImFcImIiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyIsLCJdLCJleHBlY3QiOlsiIiwiIiwiIl19LHsiYXJncyI6WyIgYSAsIGIgIl0sImV4cGVjdCI6WyIgYSAiLCIgYiAiXX0seyJhcmdzIjpbIlwiXCIseCJdLCJleHBlY3QiOlsiIiwieCJdfSx7ImFyZ3MiOlsiXCJhXCJiIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiXCJhYmMiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJhLFwiYiJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlwiYVwiXCIiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJcIlwiXCJcIiJdLCJleHBlY3QiOlsiXCIiXX0seyJhcmdzIjpbImEsIFwiYlwiIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsieCwiXSwiZXhwZWN0IjpbIngiLCIiXX0seyJhcmdzIjpbIlwieFwiLCJdLCJleHBlY3QiOlsieCIsIiJdfSx7ImFyZ3MiOlsiXCJhLGIiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJcImFcIlwiYlwiLFwiXCIiXSwiZXhwZWN0IjpbImFcImIiLCIiXX0seyJhcmdzIjpbImEsYiwiXSwiZXhwZWN0IjpbImEiLCJiIiwiIl19XSwiZnVuY3Rpb24iOiJwYXJzZV9jc3ZfbGluZSIsInVuY2hhbmdlZCI6ZmFsc2V9\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 19, \"Total\": 19, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 46,
+    "Record": "bd08d8555e990b268fcc4d23089bfbb6867241ce6550f1daf62e73b84198089c",
+    "Request": "2f27a24b2d40cba9cc6df1158c06ecc908be2cdc59eed697fc18c3436fc0e7ae",
+    "Result": "402e8e7f487a53aa7a5d5e3d014569a18ff763e0d218e9d616bf08bab3c2ac7b",
+    "Previous": "ff819780b26b50c269238695acc924769d20891f4eedb4a5ce74c52094d4c930",
+    "Sequence": 3
+  },
+  "Calls": 3,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Usage": {
+    "Prompt": 6248,
+    "Completion": 2145,
+    "Calls": 3
+  }
+}

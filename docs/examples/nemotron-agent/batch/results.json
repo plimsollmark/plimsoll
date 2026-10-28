@@ -1,0 +1,3442 @@
+[
+ {
+  "Task": "brackets",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "d0d470b136ae23697104da8559f503a0756db91be7614ee14d58629b4e623fa6",
+  "KeyID": "73679e2ae3a0193ad9ad668dd20b2f99a9ba4d28790b5d12b597418ae672cc5d",
+  "Turns": 16,
+  "Runs": 8,
+  "Answered": false,
+  "Claim": "none",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 55961,
+   "Completion": 78482,
+   "Calls": 16
+  },
+  "CostUSD": 0.02219334,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/brackets-1",
+  "Seconds": 551.396452214
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "8661dd6089f29bac2086726b247c83be0e084cd9207c30f55ff709c78671ad56",
+  "KeyID": "dd7a633e88cd5fca8580ff9b7ea57bc8f7f0e8b5b2b662753a7af13808392ff7",
+  "Turns": 16,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 58361,
+   "Completion": 94830,
+   "Calls": 16
+  },
+  "CostUSD": 0.02626086,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/brackets-2",
+  "Seconds": 546.927757728
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "ea925b7a53363312fff47c1dfd2153e28b3a74cde7453350f23c6a499cff6487",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 7082,
+   "Completion": 13999,
+   "Calls": 4
+  },
+  "CostUSD": 0.00378468,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/brackets-3",
+  "Seconds": 95.703089557
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "d519305bb5510cf149fe6cb70c7f814648f88394f49000cf91fcd8ab636e76bf",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2636,
+   "Completion": 5160,
+   "Calls": 2
+  },
+  "CostUSD": 0.00139656,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/business-days-1",
+  "Seconds": 59.880038795
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "7cb72081efef8518da9f91edb3d2697adde7ec7debc6f25d8922189b45898df2",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 4,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 12095,
+   "Completion": 7483,
+   "Calls": 4
+  },
+  "CostUSD": 0.00252162,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/business-days-2",
+  "Seconds": 43.141271063
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "39b2f091233d0666125428523afd89dbd709e6ac25c358ef6feca3e8b3368df5",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 5,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 10037,
+   "Completion": 13719,
+   "Calls": 5
+  },
+  "CostUSD": 0.0038947799999999996,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/business-days-3",
+  "Seconds": 87.365562559
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "c7ab24adfb3e06f3210b3422e5b2cc63a150139474b98132496a209877b4cc32",
+  "KeyID": "73679e2ae3a0193ad9ad668dd20b2f99a9ba4d28790b5d12b597418ae672cc5d",
+  "Turns": 5,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 15,
+   "Total": 19,
+   "Failed": [
+    "[\",,\"]: returned ['', ''], expected [\"\", \"\", \"\"]",
+    "[\"x,\"]: returned ['x'], expected [\"x\", \"\"]",
+    "[\"\\\"x\\\",\"]: returned ['x'], expected [\"x\", \"\"]",
+    "[\"a,b,\"]: returned ['a', 'b'], expected [\"a\", \"b\", \"\"]"
+   ]
+  },
+  "Usage": {
+   "Prompt": 13054,
+   "Completion": 10438,
+   "Calls": 5
+  },
+  "CostUSD": 0.0032883599999999997,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/csv-line-1",
+  "Seconds": 138.005306392
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "3130e00d4be51b58b0fc26572ec8702f1fa4c0a050a6ca537fad5f0346369f80",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 19,
+   "Total": 19,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 5500,
+   "Completion": 7880,
+   "Calls": 3
+  },
+  "CostUSD": 0.0022212,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/csv-line-2",
+  "Seconds": 43.568366678
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "072f387ae3526f200a1ba71876ccc2263608ccfe4c794da9523ef9ac3eac52d2",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 16,
+  "Runs": 11,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 10,
+   "Total": 19,
+   "Failed": [
+    "[\"\\\"a,b\\\",c\"]: raised ValueError, expected [\"a,b\", \"c\"]",
+    "[\"\\\"say \\\"\\\"hi\\\"\\\"\\\",x\"]: raised ValueError, expected [\"say \\\"hi\\\"\", \"x\"]",
+    "[\",,\"]: returned ['', ''], expected [\"\", \"\", \"\"]",
+    "[\"\\\"\\\",x\"]: raised ValueError, expected [\"\", \"x\"]",
+    "[\"\\\"\\\"\\\"\\\"\"]: raised ValueError, expected [\"\\\"\"]"
+   ]
+  },
+  "Usage": {
+   "Prompt": 170674,
+   "Completion": 115772,
+   "Calls": 16
+  },
+  "CostUSD": 0.03802572,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/csv-line-3",
+  "Seconds": 756.869898557
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "cc63b9976b904456d4bbc7b7db3009c9bc24dde7a0d74438a9ae15f1fa30be4a",
+  "KeyID": "7a18587d071f80248dfd17aa50c3d4f89f18b17d8544bdd31a36f5a13c8c388a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2351,
+   "Completion": 3685,
+   "Calls": 2
+  },
+  "CostUSD": 0.00102546,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/from-roman-1",
+  "Seconds": 35.447603545
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "a4147394ddab05b90edf1c76382c16fc84b091b5fd69fb2e67a9769fd98094f8",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2379,
+   "Completion": 5530,
+   "Calls": 2
+  },
+  "CostUSD": 0.00146994,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/from-roman-2",
+  "Seconds": 26.747846437
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "75bd452ecf469ca38950131dd7479ec5b70244611810533b4efe5ad587e1d91a",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2555,
+   "Completion": 5221,
+   "Calls": 2
+  },
+  "CostUSD": 0.0014063399999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/from-roman-3",
+  "Seconds": 61.792741041
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "506279d6b2a9de140b89d1d0ace33b731381c586593433f3719111dc70803f12",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2398,
+   "Completion": 3818,
+   "Calls": 2
+  },
+  "CostUSD": 0.0010601999999999999,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/intervals-1",
+  "Seconds": 42.987405045
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "864d69f491e04557be3374de2b2532225c7ff5318247ca47687a2949efbda1e7",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2925,
+   "Completion": 4332,
+   "Calls": 2
+  },
+  "CostUSD": 0.0012151800000000002,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/intervals-2",
+  "Seconds": 21.195031903
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "a16670852759b967189fcd46692d65566131ed9b71303bceb65f7a16f5cd1352",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2416,
+   "Completion": 3542,
+   "Calls": 2
+  },
+  "CostUSD": 0.00099504,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/intervals-3",
+  "Seconds": 21.760106163
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "81e689bb022d1d4ba159b315860f001dfb1754e952fa66a2d6c3ea3cf35a88fe",
+  "KeyID": "73679e2ae3a0193ad9ad668dd20b2f99a9ba4d28790b5d12b597418ae672cc5d",
+  "Turns": 7,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 25,
+   "Total": 30,
+   "Failed": [
+    "[\"P0D\"]: raised ValueError, expected 0.0",
+    "[\"PT1.S\"]: returned 1.0, expected ValueError",
+    "[\"PT.5S\"]: returned 0.5, expected ValueError",
+    "[\"P1.5D\"]: raised ValueError, expected 129600.0",
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 11856,
+   "Completion": 56519,
+   "Calls": 7
+  },
+  "CostUSD": 0.01427592,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/iso-duration-1",
+  "Seconds": 398.522155006
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "b962bc3e6ca2b0109b7e7bd7b7bcd92ab49a70559fde161e255be2bc108b77a9",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 7,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 27,
+   "Total": 30,
+   "Failed": [
+    "[\"P0D\"]: raised ValueError, expected 0.0",
+    "[\"P1.5D\"]: raised ValueError, expected 129600.0",
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 19891,
+   "Completion": 36154,
+   "Calls": 7
+  },
+  "CostUSD": 0.009870419999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/iso-duration-2",
+  "Seconds": 181.441344065
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "09a417069c440df0bd49a931e239ecc52932f1e8d6336a54fefd14bd36ffcc50",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 16,
+  "Runs": 7,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 30,
+   "Failed": [
+    "[\"PT0S\"]: raised ValueError, expected 0.0",
+    "[\"PT1H30M\"]: raised ValueError, expected 5400.0",
+    "[\"P1DT2H\"]: raised ValueError, expected 93600.0",
+    "[\"P1W\"]: raised ValueError, expected 604800.0",
+    "[\"PT0.5S\"]: raised ValueError, expected 0.5"
+   ]
+  },
+  "Usage": {
+   "Prompt": 95237,
+   "Completion": 162382,
+   "Calls": 16
+  },
+  "CostUSD": 0.0446859,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/iso-duration-3",
+  "Seconds": 1078.590336619
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "ba07933e50001ccdd3ae579fbde3ea254caa170e6409eab135c718641a503535",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3974,
+   "Completion": 4528,
+   "Calls": 3
+  },
+  "CostUSD": 0.0013251600000000001,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/luhn-1",
+  "Seconds": 50.719280819
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "4e28a3a896d55a238ebc86b7a8e63b9c24257bfd35d149dd812702e024df26bc",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2012,
+   "Completion": 3940,
+   "Calls": 2
+  },
+  "CostUSD": 0.00106632,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/luhn-2",
+  "Seconds": 25.343745125
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "3a24e8aee87be21d51b225fd7fc0c3e0d3624f5a1e5acd9a3ca7e2074733a444",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2092,
+   "Completion": 4889,
+   "Calls": 2
+  },
+  "CostUSD": 0.0012988799999999999,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/luhn-3",
+  "Seconds": 33.062523067
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "8c5dc62386a66df2c0a1cff79f7ff0793dc2ae2e408a2050fc5e8589b2424fbc",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2822,
+   "Completion": 7587,
+   "Calls": 2
+  },
+  "CostUSD": 0.0019901999999999997,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/number-words-1",
+  "Seconds": 76.954019288
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "5b87f4164f05e7f2b59971b54066827091ba24f644f177a183c7b058d0f5d4a8",
+  "KeyID": "ad72ba3d7d1addf14976904b345ec1e0db88bae7312d9282987e9851b12c2f2c",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2449,
+   "Completion": 4276,
+   "Calls": 2
+  },
+  "CostUSD": 0.00117318,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/number-words-2",
+  "Seconds": 19.663777971000002
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "820ea450f593fde7ea26c7e7d4933273e24c13d7bb57718b2dede61d19ab2814",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2444,
+   "Completion": 5159,
+   "Calls": 2
+  },
+  "CostUSD": 0.0013847999999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/number-words-3",
+  "Seconds": 36.886230185
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "e11f3f613ae4da308d11ba5ddcdd5aa342e55fb51d7aa0fd57b68b4b5c2433fc",
+  "KeyID": "7a18587d071f80248dfd17aa50c3d4f89f18b17d8544bdd31a36f5a13c8c388a",
+  "Turns": 9,
+  "Runs": 8,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 36,
+   "Total": 38,
+   "Failed": [
+    "[\"1.0.0-\\u00df\", \"1.0.0\"]: returned -1, expected ValueError",
+    "[\"1.0.0+build.01\", \"1.0.0\"]: raised ValueError, expected 0"
+   ]
+  },
+  "Usage": {
+   "Prompt": 63967,
+   "Completion": 27249,
+   "Calls": 9
+  },
+  "CostUSD": 0.01037778,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/semver-1",
+  "Seconds": 555.255740821
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "f051dde9f8055a7454ef4f96cd8d6e1eba3d6ac41e419b5a355bab314dd328f8",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 36,
+   "Total": 38,
+   "Failed": [
+    "[\"1.0.0-\\u00df\", \"1.0.0\"]: returned -1, expected ValueError",
+    "[\"1.0.0+build.01\", \"1.0.0\"]: raised ValueError, expected 0"
+   ]
+  },
+  "Usage": {
+   "Prompt": 22312,
+   "Completion": 19698,
+   "Calls": 5
+  },
+  "CostUSD": 0.00606624,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/semver-2",
+  "Seconds": 116.987686201
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "2d38a8de94fc6bc1cf48c9c6e010b81bbb451b368510a594db46a1e4bddc5a97",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 6,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 36,
+   "Total": 38,
+   "Failed": [
+    "[\"1.0.0-\", \"1.0.0\"]: returned -1, expected ValueError",
+    "[\"1.0.0+\", \"1.0.0\"]: returned 0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 13076,
+   "Completion": 49552,
+   "Calls": 6
+  },
+  "CostUSD": 0.012677039999999999,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/semver-3",
+  "Seconds": 287.78634673
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 1,
+  "Session": "f6e46aa505b608dbb42831cef34cf44d436967bdef7d7f45361a79870252ef67",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 3,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3260,
+   "Completion": 19316,
+   "Calls": 3
+  },
+  "CostUSD": 0.00483144,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/wrap-1",
+  "Seconds": 209.876227888
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 2,
+  "Session": "6749d4798ecb37919111c74b5ec490f5596d7f592a23cfc7f5c48ec0a6373f01",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2222,
+   "Completion": 5945,
+   "Calls": 2
+  },
+  "CostUSD": 0.00156012,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/wrap-2",
+  "Seconds": 49.152909487
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Try": 3,
+  "Session": "5cff301d26a77867c36c6c64507c78b429b7ad63eecdc1e801e7d81b757552f3",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 16,
+  "Runs": 2,
+  "Answered": false,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 24214,
+   "Completion": 15073,
+   "Calls": 16
+  },
+  "CostUSD": 0.0050703599999999995,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nvidia-nemotron-3-nano-30b-a3b/wrap-3",
+  "Seconds": 93.982711288
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "fdc16404c646c42cdc36b4fb0140882861b9c63440909bf5d4f056371f09022d",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 16,
+  "Runs": 16,
+  "Answered": false,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 146985,
+   "Completion": 22031,
+   "Calls": 16
+  },
+  "CostUSD": 0.213078,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/brackets-1",
+  "Seconds": 81.093399115
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "04fe2dd9adbdea12ea057385ec86772fc8e138f2310bcf182b9a82490ea76d84",
+  "KeyID": "dd7a633e88cd5fca8580ff9b7ea57bc8f7f0e8b5b2b662753a7af13808392ff7",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 21976,
+   "Completion": 5262,
+   "Calls": 5
+  },
+  "CostUSD": 0.037762,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/brackets-2",
+  "Seconds": 18.811144797
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "4f60e1122b994e4ca2301a57cba6e69cc9d80fcf82113840acb85127f6001171",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3415,
+   "Completion": 1531,
+   "Calls": 2
+  },
+  "CostUSD": 0.008008,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/brackets-3",
+  "Seconds": 6.6140694920000005
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "10baa30ed8e55e9cf5ca82b2fc77790b1b4221fe00a7524163b6a615f27e9702",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 6421,
+   "Completion": 2590,
+   "Calls": 3
+  },
+  "CostUSD": 0.014191,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/business-days-1",
+  "Seconds": 9.293651074
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "394ad16a4fbd52741ed31fb048b3ca3a61fbad82403747c4993b3fab6ced4332",
+  "KeyID": "ad72ba3d7d1addf14976904b345ec1e0db88bae7312d9282987e9851b12c2f2c",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 16290,
+   "Completion": 5371,
+   "Calls": 4
+  },
+  "CostUSD": 0.032403,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/business-days-2",
+  "Seconds": 17.667127878
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "afb95695815c612040f39dca6fe75099ec548fcb67f7d57287b7de0a54c30964",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 6891,
+   "Completion": 2608,
+   "Calls": 3
+  },
+  "CostUSD": 0.014715,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/business-days-3",
+  "Seconds": 9.206114317
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "c95893b2d692a44a9dfce6ed7746dbfa5dea065de8d1eaa6ee4e262e40c84c3a",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 6,
+  "Runs": 5,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 19,
+   "Total": 19,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 38321,
+   "Completion": 9105,
+   "Calls": 6
+  },
+  "CostUSD": 0.065636,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/csv-line-1",
+  "Seconds": 31.09042079
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "f3a80b5276945f0c821361ed92a6c13ec1c420cfb4d8c746605118620914996c",
+  "KeyID": "ad72ba3d7d1addf14976904b345ec1e0db88bae7312d9282987e9851b12c2f2c",
+  "Turns": 9,
+  "Runs": 8,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 19,
+   "Total": 19,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 73845,
+   "Completion": 10312,
+   "Calls": 9
+  },
+  "CostUSD": 0.104781,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/csv-line-2",
+  "Seconds": 40.554416601
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "cb2ee83c9af91110fbefef91e954af4b476852e77cfeb6e83c567e50873243bc",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 6,
+  "Runs": 5,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 19,
+   "Total": 19,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 35056,
+   "Completion": 7246,
+   "Calls": 6
+  },
+  "CostUSD": 0.056794,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/csv-line-3",
+  "Seconds": 24.839029929
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "d40996fb5b835a8d58d0253426a2eb1a78b48ba8f51e5736fe921d9d7bd23ec4",
+  "KeyID": "7a18587d071f80248dfd17aa50c3d4f89f18b17d8544bdd31a36f5a13c8c388a",
+  "Turns": 6,
+  "Runs": 5,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 32719,
+   "Completion": 7471,
+   "Calls": 6
+  },
+  "CostUSD": 0.055132,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/from-roman-1",
+  "Seconds": 32.023239913
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "3504ec3d666d05d0e57fb260d1a42e3de14f39f1de4fa632ec362ea1c74b71af",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 20318,
+   "Completion": 6268,
+   "Calls": 4
+  },
+  "CostUSD": 0.039122,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/from-roman-2",
+  "Seconds": 18.855473457
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "87a11a1673be063ef4cc60335c75757e08b26bec2ab622bc16e3dd04cb60035d",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 21037,
+   "Completion": 5535,
+   "Calls": 4
+  },
+  "CostUSD": 0.037642,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/from-roman-3",
+  "Seconds": 19.007974495
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "3f5bd4d80b1da6a131713a12476377957cadae9686c949cf193f666c5533e9c3",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3044,
+   "Completion": 1364,
+   "Calls": 2
+  },
+  "CostUSD": 0.007136,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/intervals-1",
+  "Seconds": 6.43165297
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "f9b28bdf68c43384fd772907b153267c6a741094fbd3fb9a023e539fe1f1bc94",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3303,
+   "Completion": 1596,
+   "Calls": 2
+  },
+  "CostUSD": 0.008091,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/intervals-2",
+  "Seconds": 5.641351874
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "21b7d506c1b10913bceae297305c21bf7100fc92ade1783d8f709fdcd3d43833",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3198,
+   "Completion": 1577,
+   "Calls": 2
+  },
+  "CostUSD": 0.007929,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/intervals-3",
+  "Seconds": 5.691853107
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "15fa16286ca34fa80c7615e7b482ef1031b076ebdd465cd65e71f780ad775a9b",
+  "KeyID": "7a18587d071f80248dfd17aa50c3d4f89f18b17d8544bdd31a36f5a13c8c388a",
+  "Turns": 15,
+  "Runs": 13,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 29,
+   "Total": 30,
+   "Failed": [
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 212419,
+   "Completion": 38592,
+   "Calls": 15
+  },
+  "CostUSD": 0.328195,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/iso-duration-1",
+  "Seconds": 111.438959342
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "b1e9c2123f57ff5adfed61c1e330fadb189f3658bb4b5e686fa71c805e467a45",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 6,
+  "Runs": 5,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 29,
+   "Total": 30,
+   "Failed": [
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 37188,
+   "Completion": 7173,
+   "Calls": 6
+  },
+  "CostUSD": 0.058707,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/iso-duration-2",
+  "Seconds": 26.414526483
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "25a4861519bace3b92448219a86460169a093be4057be8af568914b50f2a590a",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 29,
+   "Total": 30,
+   "Failed": [
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 26922,
+   "Completion": 6363,
+   "Calls": 5
+  },
+  "CostUSD": 0.046011,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/iso-duration-3",
+  "Seconds": 21.691075161
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "d18f8a9fc7b9ff3c2359f71955359e90d31e5782c981651f5502d8f51f6a4ab0",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2813,
+   "Completion": 1018,
+   "Calls": 2
+  },
+  "CostUSD": 0.005867,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/luhn-1",
+  "Seconds": 4.685087122
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "2763aaa4377c4d723f12f9a7146d937f49f23ea01557f298b2f0e818f664b85e",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 14017,
+   "Completion": 3404,
+   "Calls": 4
+  },
+  "CostUSD": 0.024229,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/luhn-2",
+  "Seconds": 14.671709704
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "be6cbb0d534ae678fc8d0f3864d58b79d0f2c097bfd661b5f55424fb515ce4db",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 18684,
+   "Completion": 4425,
+   "Calls": 5
+  },
+  "CostUSD": 0.031959,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/luhn-3",
+  "Seconds": 15.601223456
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "b22bbae7dbd6ab7999baa81e5aa0ee797f913c865dc8d8b7c4ea52091784b869",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 4337,
+   "Completion": 1728,
+   "Calls": 2
+  },
+  "CostUSD": 0.009521,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/number-words-1",
+  "Seconds": 7.184808461
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "4adf8f78a8ea9ff3de302e95849dabac1bdb83dcb253e2e3f58b201bf3babc8e",
+  "KeyID": "ad72ba3d7d1addf14976904b345ec1e0db88bae7312d9282987e9851b12c2f2c",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 8583,
+   "Completion": 3370,
+   "Calls": 3
+  },
+  "CostUSD": 0.018693,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/number-words-2",
+  "Seconds": 11.720781997
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "efa9721607eeaf2806a368f31949878488959418016ae0b73187872f5e788691",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 4167,
+   "Completion": 1932,
+   "Calls": 2
+  },
+  "CostUSD": 0.009963,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/number-words-3",
+  "Seconds": 6.767282079
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "57ec9e90370a9d01309e8392ddb1d5aded21a34cf3420875af9af8aa6945ff4c",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 38,
+   "Total": 38,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 6066,
+   "Completion": 3032,
+   "Calls": 2
+  },
+  "CostUSD": 0.015162,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/semver-1",
+  "Seconds": 12.659822615
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "e2099b05607de3bcef0503edfc9f5a63b3634e7665074d82b63d9430c12d3cfc",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 38,
+   "Total": 38,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 6437,
+   "Completion": 3007,
+   "Calls": 2
+  },
+  "CostUSD": 0.015458,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/semver-2",
+  "Seconds": 10.37377818
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "c39510a320c5c3c49f26f251867ee37e22b4cbda3f40a25d5cd39d1dbaeeb6c2",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 38,
+   "Total": 38,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 5564,
+   "Completion": 2931,
+   "Calls": 2
+  },
+  "CostUSD": 0.014357,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/semver-3",
+  "Seconds": 9.878107616
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 1,
+  "Session": "e6e0575415240a1655ef9e2d239047ce5da10d4f2d9fbf300d9497040ee5409b",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 15944,
+   "Completion": 4428,
+   "Calls": 5
+  },
+  "CostUSD": 0.029228,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/wrap-1",
+  "Seconds": 16.225555181
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 2,
+  "Session": "09dbc7a3f8564957bc896cc2e815b0eb4c0f9f07c069d6dc3c4be87ee8f329c9",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 11219,
+   "Completion": 4357,
+   "Calls": 4
+  },
+  "CostUSD": 0.02429,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/wrap-2",
+  "Seconds": 14.406797046
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/Nemotron-3-Ultra-550b-a55b",
+  "Try": 3,
+  "Session": "6658407d4e19eb41b1bd3b465d23f1b508bd6bdf7d7f08a794e07962b2734abf",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 13946,
+   "Completion": 4766,
+   "Calls": 4
+  },
+  "CostUSD": 0.028244,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-ultra-550b-a55b/wrap-3",
+  "Seconds": 16.258742357
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "8a8098d0ff45a612466dd7454597d858e8dba707dab4455ddfce9b6d782e7eae",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 11,
+  "Runs": 10,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 73080,
+   "Completion": 8400,
+   "Calls": 11
+  },
+  "CostUSD": 0.0064008,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/brackets-1",
+  "Seconds": 36.23410578
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "1b9451c5f5d93657944ce20e9fb6127e35e7766bf34b0029d18eaddab5aa463f",
+  "KeyID": "dd7a633e88cd5fca8580ff9b7ea57bc8f7f0e8b5b2b662753a7af13808392ff7",
+  "Turns": 16,
+  "Runs": 16,
+  "Answered": false,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 95529,
+   "Completion": 7520,
+   "Calls": 16
+  },
+  "CostUSD": 0.0075365399999999996,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/brackets-2",
+  "Seconds": 38.27764269
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "c48b59d94fda4ddc2c51fb506dd509a12764ec62887a41a870d91ff4e9bc3152",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 7,
+  "Runs": 6,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 30263,
+   "Completion": 5784,
+   "Calls": 7
+  },
+  "CostUSD": 0.0032039399999999997,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/brackets-3",
+  "Seconds": 27.31072506
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "c595592ca0831e8d26be32c39e431ca7e6835bf3c1db70f3778ebd206e4f4e03",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 16,
+  "Runs": 16,
+  "Answered": false,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 221177,
+   "Completion": 22054,
+   "Calls": 16
+  },
+  "CostUSD": 0.01856358,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/business-days-1",
+  "Seconds": 97.157667817
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "9950dcb74db1741f2d99abc10558e8169a7ba8f9265c19847d8bb5e9efcf386b",
+  "KeyID": "dd7a633e88cd5fca8580ff9b7ea57bc8f7f0e8b5b2b662753a7af13808392ff7",
+  "Turns": 9,
+  "Runs": 8,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 59683,
+   "Completion": 10235,
+   "Calls": 9
+  },
+  "CostUSD": 0.00603738,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/business-days-2",
+  "Seconds": 40.191469436
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "53333339315aeb5e4c96d8bcebaa90be3fc745248124e21083cdbd4e2f5d8e3b",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 13840,
+   "Completion": 3389,
+   "Calls": 5
+  },
+  "CostUSD": 0.00164376,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/business-days-3",
+  "Seconds": 15.471978301
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "d76457b92d1a48a0de7ff8d97468851f87936d975cf5899ae378946013979074",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 15,
+   "Total": 19,
+   "Failed": [
+    "[\",,\"]: returned ['', ''], expected [\"\", \"\", \"\"]",
+    "[\"x,\"]: returned ['x'], expected [\"x\", \"\"]",
+    "[\"\\\"x\\\",\"]: returned ['x'], expected [\"x\", \"\"]",
+    "[\"a,b,\"]: returned ['a', 'b'], expected [\"a\", \"b\", \"\"]"
+   ]
+  },
+  "Usage": {
+   "Prompt": 15171,
+   "Completion": 3266,
+   "Calls": 5
+  },
+  "CostUSD": 0.0016940999999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/csv-line-1",
+  "Seconds": 24.825416199
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "14de7920c86cc01863824215e64603c2d27def561d0f4c0c36894232799966f5",
+  "KeyID": "ad72ba3d7d1addf14976904b345ec1e0db88bae7312d9282987e9851b12c2f2c",
+  "Turns": 10,
+  "Runs": 9,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 15,
+   "Total": 19,
+   "Failed": [
+    "[\",,\"]: returned ['', ''], expected [\"\", \"\", \"\"]",
+    "[\"x,\"]: returned ['x'], expected [\"x\", \"\"]",
+    "[\"\\\"x\\\",\"]: returned ['x'], expected [\"x\", \"\"]",
+    "[\"a,b,\"]: returned ['a', 'b'], expected [\"a\", \"b\", \"\"]"
+   ]
+  },
+  "Usage": {
+   "Prompt": 68327,
+   "Completion": 8627,
+   "Calls": 10
+  },
+  "CostUSD": 0.0061701,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/csv-line-2",
+  "Seconds": 39.199754638
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "20d72158e622dfaf3a6ad7ad149e1b56ba410039ec34962fbe18e2721da8d47e",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 16,
+  "Runs": 16,
+  "Answered": false,
+  "Claim": "none",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 19,
+   "Total": 19,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 162621,
+   "Completion": 15121,
+   "Calls": 16
+  },
+  "CostUSD": 0.013386299999999999,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/csv-line-3",
+  "Seconds": 102.024713826
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "6bd134b2be6337e5f6c8b96bd8b7462a0cb1e2e3a6541d3b5a66bed9c20e196c",
+  "KeyID": "7a18587d071f80248dfd17aa50c3d4f89f18b17d8544bdd31a36f5a13c8c388a",
+  "Turns": 7,
+  "Runs": 6,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 27528,
+   "Completion": 4609,
+   "Calls": 7
+  },
+  "CostUSD": 0.0027578399999999997,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/from-roman-1",
+  "Seconds": 27.715286477
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "7ef552a83540c5a0436ab002e6afdff793b13b25b42ce922bc9f1405d7541973",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 10,
+  "Runs": 9,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 106758,
+   "Completion": 15145,
+   "Calls": 10
+  },
+  "CostUSD": 0.010040279999999999,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/from-roman-2",
+  "Seconds": 64.003635748
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "6038163909e503d0c2df2bdb4d98c6056512f035e41d45e2b172e3a96d35d610",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 15564,
+   "Completion": 3669,
+   "Calls": 5
+  },
+  "CostUSD": 0.0018143999999999999,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/from-roman-3",
+  "Seconds": 17.201905959
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "09f791b554075116f1947cf0ea1456d49f8fbf3f61575f69a62921376793de09",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 5851,
+   "Completion": 2088,
+   "Calls": 3
+  },
+  "CostUSD": 0.00085218,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/intervals-1",
+  "Seconds": 10.998540688
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "ecf4227bf3cfa1d60392edbfdab865674797f0542aaae8046c8d741ae3f91672",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 5828,
+   "Completion": 2014,
+   "Calls": 3
+  },
+  "CostUSD": 0.00083304,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/intervals-2",
+  "Seconds": 9.374523606
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "240ddddf5d0b82ba92f7ec05a6817a62154183b5cee6ccc0f2e231e169f47ab3",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 5853,
+   "Completion": 1992,
+   "Calls": 3
+  },
+  "CostUSD": 0.00082926,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/intervals-3",
+  "Seconds": 8.769220378
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "47e69fabf621cea684cc8797a3b6598b876e4b87051a010b33a7a72af8ded5ef",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 16,
+  "Runs": 16,
+  "Answered": false,
+  "Claim": "none",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 29,
+   "Total": 30,
+   "Failed": [
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 241481,
+   "Completion": 26201,
+   "Calls": 16
+  },
+  "CostUSD": 0.0207771,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/iso-duration-1",
+  "Seconds": 135.62307169299999
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "d97c5bdd7527a1edf5a819929f4f01586daa2ac580448907223f41f227d5568a",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 15,
+  "Runs": 14,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 30,
+   "Failed": [
+    "[\"P1DT\"]: returned 86400.0, expected ValueError",
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 227129,
+   "Completion": 23919,
+   "Calls": 15
+  },
+  "CostUSD": 0.019368299999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/iso-duration-2",
+  "Seconds": 92.304254475
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "90f073cbae2ca1fe5cae2c6c5b64dd6e7e2ce7eb69e23143114d33f5559c57ed",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 12,
+  "Runs": 11,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 29,
+   "Total": 30,
+   "Failed": [
+    "[\"P1DT\"]: returned 86400.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 198674,
+   "Completion": 25968,
+   "Calls": 12
+  },
+  "CostUSD": 0.018152759999999997,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/iso-duration-3",
+  "Seconds": 101.049520377
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "21acbadb51816fe8ef58f29fc4d21c7368e99159d8eece780f46ecf10b819b58",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 7,
+  "Runs": 6,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 23594,
+   "Completion": 3578,
+   "Calls": 7
+  },
+  "CostUSD": 0.0022743599999999996,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/luhn-1",
+  "Seconds": 19.611925754
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "281b7e5866d5e5167ee56a03d27e30df98035c55c2045570cd6a259698dd4807",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 12540,
+   "Completion": 2456,
+   "Calls": 5
+  },
+  "CostUSD": 0.00134184,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/luhn-2",
+  "Seconds": 12.824782275
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "538648795d7ebacbe51df207d0bbb0464b9570790a62539590f2950e78127ce8",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 8727,
+   "Completion": 1934,
+   "Calls": 4
+  },
+  "CostUSD": 0.00098778,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/luhn-3",
+  "Seconds": 9.861152084
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "d7115b005f4934b1345e0428cb644ceb0f5607befdcd20f6ce1463a9cb02836c",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 6,
+  "Runs": 5,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 33919,
+   "Completion": 6398,
+   "Calls": 6
+  },
+  "CostUSD": 0.00357066,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/number-words-1",
+  "Seconds": 25.341569724
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "8aef923a1d790832aa383b0625124313074b2056432b640092916adfc15b4ace",
+  "KeyID": "ad72ba3d7d1addf14976904b345ec1e0db88bae7312d9282987e9851b12c2f2c",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 12121,
+   "Completion": 2406,
+   "Calls": 4
+  },
+  "CostUSD": 0.0013046999999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/number-words-2",
+  "Seconds": 11.842180594
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "6c4f9c951035142a3dd585a5170ecf2900309b48e0575dcf7b374d7641166a9c",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 11306,
+   "Completion": 2199,
+   "Calls": 4
+  },
+  "CostUSD": 0.00120612,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/number-words-3",
+  "Seconds": 10.889820916
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "ce04e119c24147b4d32e8c04952a5abe5d2d8ce276c6cfed12b2ad7134127732",
+  "KeyID": "75726271653a02ce43d23be175ada985c95a38edfca5803ec57b7eaefc6a25ae",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 37,
+   "Total": 38,
+   "Failed": [
+    "[\"1.0.0-01\", \"1.0.0\"]: returned -1, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 9226,
+   "Completion": 2566,
+   "Calls": 3
+  },
+  "CostUSD": 0.0011694000000000001,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/semver-1",
+  "Seconds": 18.161861639
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "874a4b593d9db385330aa99f9e1be8c665918fedf64c9f88986c3dcbefc76da3",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 38,
+   "Total": 38,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 23089,
+   "Completion": 4810,
+   "Calls": 5
+  },
+  "CostUSD": 0.00253974,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/semver-2",
+  "Seconds": 20.158459542
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "9345711a0b50a434677b0374e5c29d6fee7385453f1a91bc19ec1b20913440c1",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 36,
+   "Total": 38,
+   "Failed": [
+    "[\"1.0.0-01\", \"1.0.0\"]: returned -1, expected ValueError",
+    "[\"1.0.0-rc.1+build.1\", \"1.0.0-rc.1+build.2\"]: returned -1, expected 0"
+   ]
+  },
+  "Usage": {
+   "Prompt": 13399,
+   "Completion": 3773,
+   "Calls": 4
+  },
+  "CostUSD": 0.00170946,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/semver-3",
+  "Seconds": 16.78085474
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 1,
+  "Session": "095810ddbe87335829415b71dd0ba32c128ff2db40d5ac18edd4043975583d10",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "none",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 7926,
+   "Completion": 1742,
+   "Calls": 4
+  },
+  "CostUSD": 0.00089364,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/wrap-1",
+  "Seconds": 21.043428308
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 2,
+  "Session": "478226b9a66eb96079a427c8ccd662acdcadc8a9afb13e1b7a0771bcb857c879",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 8,
+  "Runs": 7,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 33310,
+   "Completion": 5633,
+   "Calls": 8
+  },
+  "CostUSD": 0.0033505199999999996,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/wrap-2",
+  "Seconds": 23.776883912
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Try": 3,
+  "Session": "70ecfa83bbe81471c9a3a13d4b4229dc8feb2d6e0b05be8e7b62067cd273e48d",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 12048,
+   "Completion": 2464,
+   "Calls": 5
+  },
+  "CostUSD": 0.00131424,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3_5-lightning/wrap-3",
+  "Seconds": 13.618356365
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "477bd5337f81d8433ca46ce56bf6ee418d14a88a05152a855fd72232b7c8d773",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 16,
+  "Runs": 16,
+  "Answered": false,
+  "Claim": "none",
+  "OwnLastRun": "failed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 88754,
+   "Completion": 16253,
+   "Calls": 16
+  },
+  "CostUSD": 0.0412539,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/brackets-1",
+  "Seconds": 103.142818475
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "776754175a6e5e9bf78ab07785f7bcc98810c5b362691065d9dccae3ccae3e26",
+  "KeyID": "dd7a633e88cd5fca8580ff9b7ea57bc8f7f0e8b5b2b662753a7af13808392ff7",
+  "Turns": 6,
+  "Runs": 5,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 14228,
+   "Completion": 4268,
+   "Calls": 6
+  },
+  "CostUSD": 0.0081096,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/brackets-2",
+  "Seconds": 27.711323809
+ },
+ {
+  "Task": "brackets",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "41b0a4243ff63b0f688cafe7a23d68c8a9dc393d78b09d33d4b0bd81f769418f",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 10,
+  "Runs": 9,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 39695,
+   "Completion": 8601,
+   "Calls": 10
+  },
+  "CostUSD": 0.0196494,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/brackets-3",
+  "Seconds": 51.094318183
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "3632a006d1c171524a86a6b77dab523d4b503860d0ffaf1e5391e0dace4ea689",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 15088,
+   "Completion": 5291,
+   "Calls": 5
+  },
+  "CostUSD": 0.0092883,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/business-days-1",
+  "Seconds": 28.647402802
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "4a9c8af68cba5eeefae05f050ed4614c4a1cab652e9ac8dcbf0d471477cd14f1",
+  "KeyID": "ad72ba3d7d1addf14976904b345ec1e0db88bae7312d9282987e9851b12c2f2c",
+  "Turns": 5,
+  "Runs": 4,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 18,
+   "Total": 18,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 18458,
+   "Completion": 5243,
+   "Calls": 5
+  },
+  "CostUSD": 0.010256099999999999,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/business-days-2",
+  "Seconds": 35.867966776
+ },
+ {
+  "Task": "business-days",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "2c2ff201631739e4e7cbb374c86e00b8efe75d87415299f6013aa523cd7a1c58",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 18,
+   "Failed": [
+    "[\"2026-1-05\", 1, []]: returned '2026-01-06', expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 6592,
+   "Completion": 3478,
+   "Calls": 3
+  },
+  "CostUSD": 0.0051078,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/business-days-3",
+  "Seconds": 24.037471989
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "fc0b8c6e46ccd58e680b41e56c38aeeb4c5e744aad9df72719f487dd14ce56cb",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 19,
+   "Total": 19,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 6248,
+   "Completion": 2145,
+   "Calls": 3
+  },
+  "CostUSD": 0.0038048999999999995,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/csv-line-1",
+  "Seconds": 14.653347435
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "1169ee36e642816065114bc7caa44dc7a523bfd21bf9b29e7448db24c78c8cee",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 13,
+  "Runs": 12,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 19,
+   "Total": 19,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 75250,
+   "Completion": 11211,
+   "Calls": 13
+  },
+  "CostUSD": 0.032664900000000004,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/csv-line-2",
+  "Seconds": 78.539925968
+ },
+ {
+  "Task": "csv-line",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "546b8df20c548a67223963bd618e53561131646165dae5df49fa37b334146ca0",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 6,
+  "Runs": 5,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 19,
+   "Total": 19,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 21080,
+   "Completion": 4363,
+   "Calls": 6
+  },
+  "CostUSD": 0.010250700000000001,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/csv-line-3",
+  "Seconds": 25.033742741
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "bf9dff633cdfeb389f99560d3195e733c410ff4f9869102550a59b1598f4a0b9",
+  "KeyID": "7a18587d071f80248dfd17aa50c3d4f89f18b17d8544bdd31a36f5a13c8c388a",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 27,
+   "Total": 28,
+   "Failed": [
+    "[\"MCM\\n\"]: raised KeyError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 4246,
+   "Completion": 990,
+   "Calls": 3
+  },
+  "CostUSD": 0.0021648,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/from-roman-1",
+  "Seconds": 10.066430784
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "1c4324850c31b9cc3ec84ec20cee2c6d36387545cc1a976982b1cd0e49453048",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2762,
+   "Completion": 748,
+   "Calls": 2
+  },
+  "CostUSD": 0.0015018000000000002,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/from-roman-2",
+  "Seconds": 7.135005314
+ },
+ {
+  "Task": "from-roman",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "fa652de00fa7c628c2887dc0ed157b1692f278d7e978c993b8f02cffd9679bb4",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 28,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2400,
+   "Completion": 488,
+   "Calls": 2
+  },
+  "CostUSD": 0.0011592,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/from-roman-3",
+  "Seconds": 7.937473676
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "79e9276148752cd7296e9b7342a0d06ced3391a4ef28aebf1b77177b17ef8939",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3936,
+   "Completion": 902,
+   "Calls": 3
+  },
+  "CostUSD": 0.0019925999999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/intervals-1",
+  "Seconds": 8.764672325
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "001977373d73d41921bd5192833844a19cf530179e5c5f2f378f7506723c4b06",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2296,
+   "Completion": 619,
+   "Calls": 2
+  },
+  "CostUSD": 0.0012459,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/intervals-2",
+  "Seconds": 6.147208531
+ },
+ {
+  "Task": "intervals",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "bab5b2a39707794511505ee331ee8296896e88fde5c7146c3fe48ca7b683973e",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 16,
+   "Total": 16,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2159,
+   "Completion": 429,
+   "Calls": 2
+  },
+  "CostUSD": 0.0010337999999999999,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/intervals-3",
+  "Seconds": 4.76777608
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "f9c61d87d36dd9f89921399203687b02f2095cb7a53d7b9a058012ce0d7a8685",
+  "KeyID": "7a18587d071f80248dfd17aa50c3d4f89f18b17d8544bdd31a36f5a13c8c388a",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 30,
+   "Failed": [
+    "[\"P0D\"]: raised ValueError, expected 0.0",
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 6478,
+   "Completion": 2487,
+   "Calls": 3
+  },
+  "CostUSD": 0.0041817,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/iso-duration-1",
+  "Seconds": 14.925872356
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "0310a4a80080c2f850f736bae857ec0960b7ab1121404bb4f0654c53be5d5973",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 28,
+   "Total": 30,
+   "Failed": [
+    "[\"P1DT\"]: returned 86400.0, expected ValueError",
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 10529,
+   "Completion": 4063,
+   "Calls": 4
+  },
+  "CostUSD": 0.006815399999999999,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/iso-duration-2",
+  "Seconds": 26.463729106
+ },
+ {
+  "Task": "iso-duration",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "74207afc6bd925832093738066a0d44502fa41d5fba1890891af9b9c6ea52b87",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 7,
+  "Runs": 6,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 29,
+   "Total": 30,
+   "Failed": [
+    "[\"PT\\u0661S\"]: returned 1.0, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 30236,
+   "Completion": 9275,
+   "Calls": 7
+  },
+  "CostUSD": 0.017418299999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/iso-duration-3",
+  "Seconds": 85.572293088
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "2685aee9762d7e61f9492fd104541c6568f6ad91d97f6d9164700bd337caaad9",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2264,
+   "Completion": 553,
+   "Calls": 2
+  },
+  "CostUSD": 0.0011768999999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/luhn-1",
+  "Seconds": 4.9853534459999995
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "695e61a4eadaee569e3a74f2d649058130aca67413c02aee0fdc897379081db0",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2257,
+   "Completion": 542,
+   "Calls": 2
+  },
+  "CostUSD": 0.0011649000000000002,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/luhn-2",
+  "Seconds": 7.892245826
+ },
+ {
+  "Task": "luhn",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "d8c672b93a1b2bd95518883132e745049df3757507093e519ca0996e1e3c9840",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 21,
+   "Total": 21,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2506,
+   "Completion": 546,
+   "Calls": 2
+  },
+  "CostUSD": 0.0012432,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/luhn-3",
+  "Seconds": 5.21900862
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "54ac612c5f932417eabba5e5474aef562af752b4fb9f6588bd4746ec8fa9dc4b",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3422,
+   "Completion": 1291,
+   "Calls": 2
+  },
+  "CostUSD": 0.0021885,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/number-words-1",
+  "Seconds": 8.844436502
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "307d29e9a0d274f33e513838e81a71685e876a38f667e47b0ba1a8cfdbe1844f",
+  "KeyID": "dd7a633e88cd5fca8580ff9b7ea57bc8f7f0e8b5b2b662753a7af13808392ff7",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3554,
+   "Completion": 1182,
+   "Calls": 2
+  },
+  "CostUSD": 0.00213,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/number-words-2",
+  "Seconds": 7.260845776
+ },
+ {
+  "Task": "number-words",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "78553f99c6464d05607c8768d9aa52bc15eeb3de3acc656d60e31f0177c7716b",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 23,
+   "Total": 23,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 3076,
+   "Completion": 973,
+   "Calls": 2
+  },
+  "CostUSD": 0.0017985,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/number-words-3",
+  "Seconds": 6.230337061
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "07096a4c48bb1948532960ddf2a5a092141d5829c008ace69c2f64854c0a7c0e",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 3,
+  "Runs": 2,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 37,
+   "Total": 38,
+   "Failed": [
+    "[\"1.0.0-01\", \"1.0.0\"]: returned -1, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 7014,
+   "Completion": 2681,
+   "Calls": 3
+  },
+  "CostUSD": 0.0045171000000000005,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/semver-1",
+  "Seconds": 15.397280319
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "72366d8419a2e21f23e97ed56e0cf0d02dd56a6e4d50a1918ca5b0a6de5045db",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 37,
+   "Total": 38,
+   "Failed": [
+    "[\"1.0.0-01\", \"1.0.0\"]: returned -1, expected ValueError"
+   ]
+  },
+  "Usage": {
+   "Prompt": 3311,
+   "Completion": 1116,
+   "Calls": 2
+  },
+  "CostUSD": 0.0019977,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/semver-2",
+  "Seconds": 7.660130761
+ },
+ {
+  "Task": "semver",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "756c17a1613978a1b8de97d6461c83987737ed9356bb469eabc0cdbb99f8bc54",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 7,
+  "Runs": 6,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 38,
+   "Total": 38,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 37735,
+   "Completion": 11435,
+   "Calls": 7
+  },
+  "CostUSD": 0.021612,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/semver-3",
+  "Seconds": 80.634018845
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 1,
+  "Session": "d4d75063820398353a422731733426f366a40c863d0f480f6f36c40996ed12e0",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Turns": 4,
+  "Runs": 3,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 8205,
+   "Completion": 2278,
+   "Calls": 4
+  },
+  "CostUSD": 0.0045117,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/wrap-1",
+  "Seconds": 15.893257147
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 2,
+  "Session": "f53ce054cdb20637a0d4139215335255ecf90ee4b2b0b6cda123fd034d18abae",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Turns": 2,
+  "Runs": 1,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 2189,
+   "Completion": 421,
+   "Calls": 2
+  },
+  "CostUSD": 0.0010355999999999998,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/wrap-2",
+  "Seconds": 6.305489703
+ },
+ {
+  "Task": "wrap",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Try": 3,
+  "Session": "27323ca3308f17ab445836bee7ad8020a9554fdd463d9211a23bd961638649f7",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Turns": 7,
+  "Runs": 6,
+  "Answered": true,
+  "Claim": "pass",
+  "OwnLastRun": "passed",
+  "Grade": {
+   "Defined": true,
+   "Passed": 17,
+   "Total": 17,
+   "Failed": []
+  },
+  "Usage": {
+   "Prompt": 16225,
+   "Completion": 4468,
+   "Calls": 7
+  },
+  "CostUSD": 0.008888700000000001,
+  "Verified": true,
+  "VerifyDetail": "",
+  "Dir": "runs/nemotron-3-super-120b-a12b/wrap-3",
+  "Seconds": 35.118972281
+ }
+]

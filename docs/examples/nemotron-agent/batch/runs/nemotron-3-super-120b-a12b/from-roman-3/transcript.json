@@ -1,0 +1,66 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Task": "Write a Python function from_roman(s) that converts a Roman numeral to an int. Accept only the standard form of a number from 1 to 3999, using I=1, V=5, X=10, L=50, C=100, D=500, M=1000: the thousands, hundreds, tens and units digits are written in that order, a zero digit is written as nothing, and each other digit d is written with that place's one-symbol (I, X, C or M), five-symbol (V, L or D) and the next place's one-symbol: 1 to 3 as that many one-symbols, 4 as one-symbol then five-symbol (IV, XL, CD), 5 as the five-symbol, 6 to 8 as the five-symbol then 1 to 3 one-symbols, 9 as one-symbol then the next place's one-symbol (IX, XC, CM); thousands are 1 to 3 M. Uppercase only. Any other string, including the empty string, must raise ValueError. Examples: \"III\" -\u003e 3, \"IV\" -\u003e 4, \"IX\" -\u003e 9, \"LVIII\" -\u003e 58, \"MCMXCIV\" -\u003e 1994; \"IIII\", \"IC\" and \"\" raise ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "fa652de00fa7c628c2887dc0ed157b1692f278d7e978c993b8f02cffd9679bb4",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def from_roman(s):\n    if not isinstance(s, str) or not s:\n        raise ValueError('Invalid Roman numeral')\n    roman = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}\n    total = 0\n    prev = 0\n    for ch in reversed(s):\n        if ch not in roman:\n            raise ValueError('Invalid character')\n        val = roman[ch]\n        if val \u003c prev:\n            total -= val\n        else:\n            total += val\n            prev = val\n    # Validate range and canonical form by converting back? We'll just check no invalid patterns like 'IIII'\n    # Simple validation: ensure no more than 3 repeats of I,X,C,M except subtractive combos\n    import re\n    pattern = r'^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$'\n    if not re.match(pattern, s):\n        raise ValueError('Not standard form')\n    return total\n\n# Test script\ntests = [\n    ('III', 3),\n    ('IV', 4),\n    ('IX', 9),\n    ('LVIII', 58),\n    ('MCMXCIV', 1994),\n]\ninvalid = ['IIII', 'IC', '', 'VX', 'DM', 'MMMM']\nfor roman, expected in tests:\n    got = from_roman(roman)\n    assert got == expected, f'{roman}: expected {expected}, got {got}'\nfor roman in invalid:\n    try:\n        from_roman(roman)\n        assert False, f'{roman} should raise ValueError'\n    except ValueError:\n        pass\nprint('ALL TESTS PASSED')",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 645,
+      "Record": "50b1d587f66ac63e7857aeb2a2524f76d55feeb47a19b5ee869ab2c971a2d29a",
+      "Request": "702ff8d7ed5208873c36c44c3a5f37f3d69c2e719f88b5920529a6e9cf76da60",
+      "Result": "248ae4ee161dbe475b28997db64dc95be0f5c7e025e7413bb47455c1e32051c3",
+      "Previous": "",
+      "Sequence": 1
+    }
+  ],
+  "Final": "\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 2,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyJJSUkiXSwiZXhwZWN0IjozfSx7ImFyZ3MiOlsiSVYiXSwiZXhwZWN0Ijo0fSx7ImFyZ3MiOlsiSVgiXSwiZXhwZWN0Ijo5fSx7ImFyZ3MiOlsiTFZJSUkiXSwiZXhwZWN0Ijo1OH0seyJhcmdzIjpbIk1DTVhDSVYiXSwiZXhwZWN0IjoxOTk0fSx7ImFyZ3MiOlsiSUlJSSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIklDIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiTU1NQ01YQ0lYIl0sImV4cGVjdCI6Mzk5OX0seyJhcmdzIjpbIlhMSVgiXSwiZXhwZWN0Ijo0OX0seyJhcmdzIjpbIkNEIl0sImV4cGVjdCI6NDAwfSx7ImFyZ3MiOlsiSSJdLCJleHBlY3QiOjF9LHsiYXJncyI6WyJNTU1NIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiVlgiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJJTCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIm1jbSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIkRDRCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlZWIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiWFhYWCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIklJViJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIk1DTSAiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJNQ01cbiJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIkNNIl0sImV4cGVjdCI6OTAwfSx7ImFyZ3MiOlsiWENJWCJdLCJleHBlY3QiOjk5fSx7ImFyZ3MiOlsiSVZJIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiTiJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIk1NWFhWSSJdLCJleHBlY3QiOjIwMjZ9LHsiYXJncyI6WyJMWEwiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9XSwiZnVuY3Rpb24iOiJmcm9tX3JvbWFuIiwidW5jaGFuZ2VkIjpmYWxzZX0=\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 28, \"Total\": 28, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 72,
+    "Record": "63a6d759583243ac2baa9f7150e72315c189c2b88c3d7b603ce860c72ceeb27e",
+    "Request": "71d34e31a6c3e6c81558711172716121aa2562c11d2178adca7a501553c14139",
+    "Result": "237445c78b86facb270b87a120b00b4f011c4991f3f3c2d2f5afd253c873cb63",
+    "Previous": "50b1d587f66ac63e7857aeb2a2524f76d55feeb47a19b5ee869ab2c971a2d29a",
+    "Sequence": 2
+  },
+  "Calls": 2,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Usage": {
+    "Prompt": 2400,
+    "Completion": 488,
+    "Calls": 2
+  }
+}

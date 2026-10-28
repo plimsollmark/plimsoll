@@ -1,0 +1,110 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Task": "Write a Python function iso_duration_seconds(s) that converts an ISO 8601 duration string to a number of seconds (a float). The accepted forms are exactly these: \"P\", then a week count, then \"W\", and nothing else (for example \"P2W\"); or \"P\", then an optional day count and \"D\", then optionally \"T\" followed by at least one of an hour count with \"H\", a minute count with \"M\" and a second count with \"S\", in that order. At least one count must be present. A count is one or more ASCII digits, optionally followed by \".\" and one or more ASCII digits. Letters are uppercase. 1 week = 7 days and 1 day = 86400 seconds. Any other string, including years (\"Y\"), months (\"M\" before \"T\"), lowercase letters, spaces and signs, must raise ValueError. Examples: \"PT0S\" -\u003e 0, \"PT1H30M\" -\u003e 5400, \"P1DT2H\" -\u003e 93600, \"P1W\" -\u003e 604800, \"PT0.5S\" -\u003e 0.5, \"P2DT3H4M5.25S\" -\u003e 183845.25; \"\", \"P\", \"PT\", \"1H\" and \"P1H\" raise ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "0310a4a80080c2f850f736bae857ec0960b7ab1121404bb4f0654c53be5d5973",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "",
+      "Runs": [
+        3
+      ]
+    },
+    {
+      "N": 4,
+      "Text": "\n\nThe function `iso_duration_seconds` was implemented and tested with the provided examples and additional cases. The test script printed:\n\n```\nALL TESTS PASSED\n```\n\nAll assertions succeeded, confirming correct conversion for valid ISO‑8601 duration strings and proper raising of `ValueError` for invalid inputs.\n\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "import re\n\ndef iso_duration_seconds(s):\n    # pattern for P[n]W form\n    m = re.fullmatch(r'P(\\d+(?:\\.\\d+)?)W', s)\n    if m:\n        weeks = float(m.group(1))\n        return weeks * 7 * 86400\n    # pattern for P[...][T...]\n    # overall: P (optional D part) (optional T part)\n    # Ensure no Y/M etc outside allowed positions\n    # Use full match with groups\n    pat = r'^P(?:(\\d+(?:\\.\\d+)?)D)?(?:T(?:(\\d+(?:\\.\\d+)?)H)?(?:(\\d+(?:\\.\\d+)?)M)?(?:(\\d+(?:\\.\\d+)?)S)?)?$'\n    m = re.fullmatch(pat, s)\n    if not m:\n        raise ValueError('Invalid ISO duration')\n    days_str, hours_str, minutes_str, seconds_str = m.groups()\n    total = 0.0\n    if days_str is not None:\n        total += float(days_str) * 86400\n    if hours_str is not None:\n        total += float(hours_str) * 3600\n    if minutes_str is not None:\n        total += float(minutes_str) * 60\n    if seconds_str is not None:\n        total += float(seconds_str)\n    # ensure at least one component present\n    if all(x is None for x in (days_str, hours_str, minutes_str, seconds_str)):\n        raise ValueError('No time components')\n    return total\n\n# Test script\ndef test():\n    cases = [\n        (\"PT0S\", 0),\n        (\"PT1H30M\", 5400),\n        (\"P1DT2H\", 93600),\n        (\"P1W\", 604800),\n        (\"PT0.5S\", 0.5),\n        (\"P2DT3H4M5.25S\", 183845.25),\n    ]\n    for inp, expected in cases:\n        got = iso_duration_seconds(inp)\n        assert abs(got - expected) \u003c 1e-9, f'{inp}: expected {expected}, got {got}'\n    # invalid cases\n    invalid = [\"\", \"P\", \"PT\", \"1H\", \"P1H\"]\n    for inv in invalid:\n        try:\n            iso_duration_seconds(inv)\n            assert False, f'{inv} should raise'\n        except ValueError:\n            pass\n    # extra own tests\n    own = [\n        (\"P0W\", 0),\n        (\"P0.5W\", 0.5*7*86400),\n        (\"P2D\", 2*86400),\n        (\"PT12H\", 12*3600),\n        (\"PT45M\", 45*60),\n        (\"PT30.5S\", 30.5),\n        (\"P1DT0H0M0S\", 86400),\n    ]\n    for inp, expected in own:\n        got = iso_duration_seconds(inp)\n        assert abs(got - expected) \u003c 1e-9, f'{inp}: expected {expected}, got {got}'\n    # invalid extra\n    invalid2 = [\"PY1\", \"PM1\", \"Pt1H\", \"p1w\", \"P1Y2M\", \"P1M2DT\", \"P1DT2S\", \"P1DT2M\", \"P1DT2H\", \"P1DT2H3M4Sextra\"]\n    for inv in invalid2:\n        try:\n            iso_duration_seconds(inv)\n            assert False, f'{inv} should raise'\n        except ValueError:\n            pass\n    print(\"ALL TESTS PASSED\")\n\nif __name__ == \"__main__\":\n    test()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "Traceback (most recent call last):\n  File \"\u003ccell 1\u003e\", line 77, in \u003cmodule\u003e\n    test()\n    ~~~~^^\n  File \"\u003ccell 1\u003e\", line 71, in test\n    assert False, f'{inv} should raise'\n           ^^^^^\nAssertionError: P1DT2S should raise\n",
+      "Millis": 1061,
+      "Record": "c0354cc9de7ac8c4337246c93cbd62034d7655ab760a9462cbacef071d4d6cba",
+      "Request": "e3a90c494ed9c05afeb73293ac98af025675961a1a2ea3fefb323d27c9755a1a",
+      "Result": "226cfae702b1881067a09375d9b03b85d7b052c197f3b8f4482f609ca58df1cf",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "import re\n\ndef iso_duration_seconds(s):\n    # pattern for P[n]W form\n    m = re.fullmatch(r'P(\\d+(?:\\.\\d+)?)W', s)\n    if m:\n        weeks = float(m.group(1))\n        return weeks * 7 * 86400\n    # pattern for P[...][T...]\n    # overall: P (optional D part) (optional T part)\n    # Ensure no Y/M etc outside allowed positions\n    # Use full match with groups\n    pat = r'^P(?:(\\d+(?:\\.\\d+)?)D)?(?:T(?:(\\d+(?:\\.\\d+)?)H)?(?:(\\d+(?:\\.\\d+)?)M)?(?:(\\d+(?:\\.\\d+)?)S)?)?$'\n    m = re.fullmatch(pat, s)\n    if not m:\n        raise ValueError('Invalid ISO duration')\n    days_str, hours_str, minutes_str, seconds_str = m.groups()\n    total = 0.0\n    if days_str is not None:\n        total += float(days_str) * 86400\n    if hours_str is not None:\n        total += float(hours_str) * 3600\n    if minutes_str is not None:\n        total += float(minutes_str) * 60\n    if seconds_str is not None:\n        total += float(seconds_str)\n    # ensure at least one component present\n    if all(x is None for x in (days_str, hours_str, minutes_str, seconds_str)):\n        raise ValueError('No time components')\n    return total\n\n# Test script\ndef test():\n    cases = [\n        (\"PT0S\", 0),\n        (\"PT1H30M\", 5400),\n        (\"P1DT2H\", 93600),\n        (\"P1W\", 604800),\n        (\"PT0.5S\", 0.5),\n        (\"P2DT3H4M5.25S\", 183845.25),\n    ]\n    for inp, expected in cases:\n        got = iso_duration_seconds(inp)\n        assert abs(got - expected) \u003c 1e-9, f'{inp}: expected {expected}, got {got}'\n    # invalid cases\n    invalid = [\"\", \"P\", \"PT\", \"1H\", \"P1H\"]\n    for inv in invalid:\n        try:\n            iso_duration_seconds(inv)\n            assert False, f'{inv} should raise'\n        except ValueError:\n            pass\n    # extra own tests\n    own = [\n        (\"P0W\", 0),\n        (\"P0.5W\", 0.5*7*86400),\n        (\"P2D\", 2*86400),\n        (\"PT12H\", 12*3600),\n        (\"PT45M\", 45*60),\n        (\"PT30.5S\", 30.5),\n        (\"P1DT0H0M0S\", 86400),\n        (\"P1DT2S\", 2),  # D + S\n        (\"P1DT2M\", 2*60), # D + M (allowed per our regex)\n        (\"P1DT2H30S\", 2*3600+30), # H and S\n    ]\n    for inp, expected in own:\n        got = iso_duration_seconds(inp)\n        assert abs(got - expected) \u003c 1e-9, f'{inp}: expected {expected}, got {got}'\n    # invalid extra\n    invalid2 = [\"PY1\", \"PM1\", \"Pt1H\", \"p1w\", \"P1Y2M\", \"P1M2DT\", \"P1DT2Sextra\", \"P1DT2Mextra\"]\n    for inv in invalid2:\n        try:\n            iso_duration_seconds(inv)\n            assert False, f'{inv} should raise'\n        except ValueError:\n            pass\n    print(\"ALL TESTS PASSED\")\n\nif __name__ == \"__main__\":\n    test()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "Traceback (most recent call last):\n  File \"\u003ccell 2\u003e\", line 80, in \u003cmodule\u003e\n    test()\n    ~~~~^^\n  File \"\u003ccell 2\u003e\", line 68, in test\n    assert abs(got - expected) \u003c 1e-9, f'{inp}: expected {expected}, got {got}'\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: P1DT2S: expected 2, got 86402.0\n",
+      "Millis": 64,
+      "Record": "98eccf099d47a23f3f329deb3e56f9bfff899936e8d997a99ba4f21e657802e9",
+      "Request": "6770b898ec32d3f64228450a8036892d90449086104012583bd64f5a76c0fa67",
+      "Result": "6cfa7ecfb0c4c8793c3c5246f8bbe6ecbe1e65a3ca1b255a7fbfbd9d2ab59ea1",
+      "Previous": "c0354cc9de7ac8c4337246c93cbd62034d7655ab760a9462cbacef071d4d6cba",
+      "Sequence": 2
+    },
+    {
+      "N": 3,
+      "Language": "python",
+      "Code": "import re\n\ndef iso_duration_seconds(s):\n    # pattern for P[n]W form\n    m = re.fullmatch(r'P(\\d+(?:\\.\\d+)?)W', s)\n    if m:\n        weeks = float(m.group(1))\n        return weeks * 7 * 86400\n    # pattern for P[...][T...]\n    pat = r'^P(?:(\\d+(?:\\.\\d+)?)D)?(?:T(?:(\\d+(?:\\.\\d+)?)H)?(?:(\\d+(?:\\.\\d+)?)M)?(?:(\\d+(?:\\.\\d+)?)S)?)?$'\n    m = re.fullmatch(pat, s)\n    if not m:\n        raise ValueError('Invalid ISO duration')\n    days_str, hours_str, minutes_str, seconds_str = m.groups()\n    total = 0.0\n    if days_str is not None:\n        total += float(days_str) * 86400\n    if hours_str is not None:\n        total += float(hours_str) * 3600\n    if minutes_str is not None:\n        total += float(minutes_str) * 60\n    if seconds_str is not None:\n        total += float(seconds_str)\n    # ensure at least one component present\n    if all(x is None for x in (days_str, hours_str, minutes_str, seconds_str)):\n        raise ValueError('No time components')\n    return total\n\ndef test():\n    cases = [\n        (\"PT0S\", 0),\n        (\"PT1H30M\", 5400),\n        (\"P1DT2H\", 93600),\n        (\"P1W\", 604800),\n        (\"PT0.5S\", 0.5),\n        (\"P2DT3H4M5.25S\", 183845.25),\n    ]\n    for inp, expected in cases:\n        got = iso_duration_seconds(inp)\n        assert abs(got - expected) \u003c 1e-9, f'{inp}: expected {expected}, got {got}'\n    invalid = [\"\", \"P\", \"PT\", \"1H\", \"P1H\"]\n    for inv in invalid:\n        try:\n            iso_duration_seconds(inv)\n            assert False, f'{inv} should raise'\n        except ValueError:\n            pass\n    own = [\n        (\"P0W\", 0),\n        (\"P0.5W\", 0.5*7*86400),\n        (\"P2D\", 2*86400),\n        (\"PT12H\", 12*3600),\n        (\"PT45M\", 45*60),\n        (\"PT30.5S\", 30.5),\n        (\"P1DT0H0M0S\", 86400),\n        (\"P1DT2S\", 86400 + 2),\n        (\"P1DT2M\", 86400 + 2*60),\n        (\"P1DT2H\", 86400 + 2*3600),\n        (\"P1DT2H30S\", 86400 + 2*3600 + 30),\n        (\"P1DT2H30M\", 86400 + 2*3600 + 30*60),\n    ]\n    for inp, expected in own:\n        got = iso_duration_seconds(inp)\n        assert abs(got - expected) \u003c 1e-9, f'{inp}: expected {expected}, got {got}'\n    invalid2 = [\"PY1\", \"PM1\", \"Pt1H\", \"p1w\", \"P1Y2M\", \"P1M2DT\", \"P1DT2Sextra\", \"P1DT2Mextra\", \"P1DT2XT\", \"P1DT2HS\"]\n    for inv in invalid2:\n        try:\n            iso_duration_seconds(inv)\n            assert False, f'{inv} should raise'\n        except ValueError:\n            pass\n    print(\"ALL TESTS PASSED\")\n\nif __name__ == \"__main__\":\n    test()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 58,
+      "Record": "d7739e18924b778acb098f7dbae7557d3300d996fa9637a5c2500feb4e7dfea1",
+      "Request": "debb1110f8ac0e92a9cfacbd8064c29ad2eb94082dd98a323515f29695b49bcb",
+      "Result": "ab00f2eb57e2670c621682ad7ffc5e0b95f307c5df9527f0b63b8d140b20acb3",
+      "Previous": "98eccf099d47a23f3f329deb3e56f9bfff899936e8d997a99ba4f21e657802e9",
+      "Sequence": 3
+    }
+  ],
+  "Final": "\n\nThe function `iso_duration_seconds` was implemented and tested with the provided examples and additional cases. The test script printed:\n\n```\nALL TESTS PASSED\n```\n\nAll assertions succeeded, confirming correct conversion for valid ISO‑8601 duration strings and proper raising of `ValueError` for invalid inputs.\n\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 4,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyJQVDBTIl0sImV4cGVjdCI6MC4wfSx7ImFyZ3MiOlsiUFQxSDMwTSJdLCJleHBlY3QiOjU0MDAuMH0seyJhcmdzIjpbIlAxRFQySCJdLCJleHBlY3QiOjkzNjAwLjB9LHsiYXJncyI6WyJQMVciXSwiZXhwZWN0Ijo2MDQ4MDAuMH0seyJhcmdzIjpbIlBUMC41UyJdLCJleHBlY3QiOjAuNX0seyJhcmdzIjpbIlAyRFQzSDRNNS4yNVMiXSwiZXhwZWN0IjoxODM4NDUuMjV9LHsiYXJncyI6WyIiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJQIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiUFQiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyIxSCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAxSCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAxWSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAxTSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAyVyJdLCJleHBlY3QiOjEyMDk2MDAuMH0seyJhcmdzIjpbIlAxVzJEIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiUDFEVCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlBUMU0zMFMiXSwiZXhwZWN0Ijo5MC4wfSx7ImFyZ3MiOlsiUDBEIl0sImV4cGVjdCI6MC4wfSx7ImFyZ3MiOlsicHQxcyJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIiBQVDFTIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiUFQxLjVNIl0sImV4cGVjdCI6OTAuMH0seyJhcmdzIjpbIlBUMVMxTSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAzRFQ0SCJdLCJleHBlY3QiOjI3MzYwMC4wfSx7ImFyZ3MiOlsiUFQzNkgiXSwiZXhwZWN0IjoxMjk2MDAuMH0seyJhcmdzIjpbIlBUMS5TIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiUFQuNVMiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJQMS41RCJdLCJleHBlY3QiOjEyOTYwMC4wfSx7ImFyZ3MiOlsiLVBUMVMiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJQVDFTXG4iXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJQVFx1MDY2MVMiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9XSwiZnVuY3Rpb24iOiJpc29fZHVyYXRpb25fc2Vjb25kcyIsInVuY2hhbmdlZCI6ZmFsc2V9\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 28, \"Total\": 30, \"Failed\": [\"[\\\"P1DT\\\"]: returned 86400.0, expected ValueError\", \"[\\\"PT\\\\u0661S\\\"]: returned 1.0, expected ValueError\"]}\n",
+    "Stderr": "",
+    "Millis": 63,
+    "Record": "2f9c1290c16196758f7136a83c06a0d86756272e7c324e98a0998dc293997f4f",
+    "Request": "88aae99e2ef8837ed41c3d3edf87fbe2052762b62118e9e31e194175f4f53adc",
+    "Result": "173541f411f777fa9215f906495dd510a3bd08d3d57485bb38decaeb3087806b",
+    "Previous": "d7739e18924b778acb098f7dbae7557d3300d996fa9637a5c2500feb4e7dfea1",
+    "Sequence": 4
+  },
+  "Calls": 4,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Usage": {
+    "Prompt": 10529,
+    "Completion": 4063,
+    "Calls": 4
+  }
+}

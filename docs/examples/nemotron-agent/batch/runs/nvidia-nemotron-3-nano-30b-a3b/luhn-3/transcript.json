@@ -1,0 +1,66 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Task": "Write a Python function luhn_valid(s) that returns True if s is a valid Luhn number and False otherwise. s may contain ASCII digits and spaces; spaces are ignored. If s contains any other character, or has fewer than two digits once the spaces are removed, return False. The Luhn rule: starting from the rightmost digit, double every second digit (the second from the right, the fourth, and so on), subtracting 9 from any doubled value above 9; the number is valid when the sum of all the digits so treated is a multiple of 10. Never raise for a string input. Examples: \"4539 3195 0343 6467\" -\u003e True, \"8273 1232 7352 0569\" -\u003e False, \"059\" -\u003e True, \"0\" -\u003e False, \"055-444-285\" -\u003e False.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "3a24e8aee87be21d51b225fd7fc0c3e0d3624f5a1e5acd9a3ca7e2074733a444",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def luhn_valid(s):\n    # Ensure input is string; if not, return False\n    if not isinstance(s, str):\n        return False\n    # Remove spaces\n    s_no_space = s.replace(\" \", \"\")\n    # Check that all characters are digits\n    if not s_no_space.isdigit():\n        return False\n    # Must have at least two digits\n    if len(s_no_space) \u003c 2:\n        return False\n    # Luhn algorithm\n    total = 0\n    # Iterate from rightmost\n    for i, ch in enumerate(reversed(s_no_space)):\n        d = int(ch)\n        # Double every second digit (i % 2 == 1)\n        if i % 2 == 1:\n            d *= 2\n            if d \u003e 9:\n                d -= 9\n        total += d\n    return total % 10 == 0\n\nif __name__ == \"__main__\":\n    test_cases = [\n        (\"4539 3195 0343 6467\", True),\n        (\"8273 1232 7352 0569\", False),\n        (\"059\", True),\n        (\"0\", False),\n        (\"055-444-285\", False),\n        (\"4992 7398 716\", True),\n        (\"1234 5678 9012 3456\", False),\n        (\" 4539 3195 0343 6467 \", True),\n        (\"4 5 3 9\", False),\n        (\"00\", True),\n        (\"12\", False),\n    ]\n    all_passed = True\n    for s, expected in test_cases:\n        result = luhn_valid(s)\n        if result != expected:\n            print(f\"FAIL: {s!r} expected {expected} got {result}\")\n            all_passed = False\n    if all_passed:\n        print(\"ALL TESTS PASSED\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 623,
+      "Record": "7f7985c198d35da39305d4db183ea63e61002e16745da89800fd4451e638b307",
+      "Request": "46bfa068f724ea5fa1e3320163644f6669c6635364838ad045e9efb4f2b5e5c0",
+      "Result": "248ae4ee161dbe475b28997db64dc95be0f5c7e025e7413bb47455c1e32051c3",
+      "Previous": "",
+      "Sequence": 1
+    }
+  ],
+  "Final": "\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 2,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyI0NTM5IDMxOTUgMDM0MyA2NDY3Il0sImV4cGVjdCI6dHJ1ZX0seyJhcmdzIjpbIjgyNzMgMTIzMiA3MzUyIDA1NjkiXSwiZXhwZWN0IjpmYWxzZX0seyJhcmdzIjpbIjA1OSJdLCJleHBlY3QiOnRydWV9LHsiYXJncyI6WyIwIl0sImV4cGVjdCI6ZmFsc2V9LHsiYXJncyI6WyIwNTUtNDQ0LTI4NSJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiMDU1IDQ0NCAyODUiXSwiZXhwZWN0Ijp0cnVlfSx7ImFyZ3MiOlsiIDAiXSwiZXhwZWN0IjpmYWxzZX0seyJhcmdzIjpbIjAgMCJdLCJleHBlY3QiOnRydWV9LHsiYXJncyI6WyIwMCJdLCJleHBlY3QiOnRydWV9LHsiYXJncyI6WyIwOTEiXSwiZXhwZWN0Ijp0cnVlfSx7ImFyZ3MiOlsiMDU5YSJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiIl0sImV4cGVjdCI6ZmFsc2V9LHsiYXJncyI6WyIgICJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiMSJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiNzk5MjczOTg3MTMiXSwiZXhwZWN0Ijp0cnVlfSx7ImFyZ3MiOlsiNzk5MjczOTg3MTAiXSwiZXhwZWN0IjpmYWxzZX0seyJhcmdzIjpbIlx1MDY2MVx1MDY2Mlx1MDY2MyJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiNDUzOVx0MzE5NSJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiMDk1IDI0NSA4OCJdLCJleHBlY3QiOnRydWV9LHsiYXJncyI6WyIyMzQgNTY3IDg5MSAyMzQiXSwiZXhwZWN0Ijp0cnVlfSx7ImFyZ3MiOlsiMTgiXSwiZXhwZWN0Ijp0cnVlfV0sImZ1bmN0aW9uIjoibHVobl92YWxpZCIsInVuY2hhbmdlZCI6ZmFsc2V9\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 21, \"Total\": 21, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 39,
+    "Record": "90a19fc6cb91214509910ad33831795be9c34abf1dcec912e0b0f8bc9da57ecd",
+    "Request": "bf0739117cb201962cfe0665c05c9d45ce0a5e46824ceaae6fb9615c2328d795",
+    "Result": "4fbca951452bc127da499bff1305053d9fd86da057290f4e50ad515b8d6f93f1",
+    "Previous": "7f7985c198d35da39305d4db183ea63e61002e16745da89800fd4451e638b307",
+    "Sequence": 2
+  },
+  "Calls": 2,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Usage": {
+    "Prompt": 2092,
+    "Completion": 4889,
+    "Calls": 2
+  }
+}

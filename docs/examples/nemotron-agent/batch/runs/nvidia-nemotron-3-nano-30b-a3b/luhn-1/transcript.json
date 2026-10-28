@@ -1,0 +1,88 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Task": "Write a Python function luhn_valid(s) that returns True if s is a valid Luhn number and False otherwise. s may contain ASCII digits and spaces; spaces are ignored. If s contains any other character, or has fewer than two digits once the spaces are removed, return False. The Luhn rule: starting from the rightmost digit, double every second digit (the second from the right, the fourth, and so on), subtracting 9 from any doubled value above 9; the number is valid when the sum of all the digits so treated is a multiple of 10. Never raise for a string input. Examples: \"4539 3195 0343 6467\" -\u003e True, \"8273 1232 7352 0569\" -\u003e False, \"059\" -\u003e True, \"0\" -\u003e False, \"055-444-285\" -\u003e False.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "ba07933e50001ccdd3ae579fbde3ea254caa170e6409eab135c718641a503535",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "\nHere is a complete, self‑contained Python script that implements `luhn_valid(s)` according to the specification and tests it against the required examples plus additional cases. The script prints **ALL TESTS PASSED** only when every test succeeds.\n\n```python\ndef luhn_valid(s):\n    # Remove spaces\n    s = s.replace(\" \", \"\")\n    # Must contain only digits and have at least two digits\n    if not s.isdigit() or len(s) \u003c 2:\n        return False\n    # Luhn algorithm\n    total = 0\n    for i, ch in enumerate(reversed(s)):\n        digit = int(ch)\n        # Every second digit from the right (i % 2 == 1) is doubled\n        if i % 2 == 1:\n            digit *= 2\n            if digit \u003e 9:\n                digit -= 9\n        total += digit\n    return total % 10 == 0\n\n\ndef run_tests():\n    test_cases = [\n        # Provided examples\n        (\"4539 3195 0343 6467\", True),\n        (\"8273 1232 7352 0569\", False),\n        (\"059\", True),\n        (\"0\", False),\n        (\"055-444-285\", False),\n        # Additional checks\n        (\"1234 5678 9012 3456\", False),\n        (\"1111 1111 1111 1111\", False),\n        (\"79927398713\", True),\n        (\"79927398710\", False),\n        (\"  4 5 3 9  \", False),          # spaced but not a valid Luhn number\n        (\"12a3\", False),                 # contains non‑digit\n        (\"\", False),                     # empty string\n        (\" 1 \", False),                  # single digit after stripping spaces\n        (\" 799 273 9871 3 \", True),     # spaced version of a known valid number\n        (\" 8273 1232 7352 0569 \", False), # spaced version of a known invalid number\n    ]\n\n    for s, expected in test_cases:\n        result = luhn_valid(s)\n        if result != expected:\n            print(f\"FAIL: {s!r} expected {expected} got {result}\")\n            return\n    print(\"ALL TESTS PASSED\")\n\n\nif __name__ == \"__main__\":\n    run_tests()\n```\n\nThe script has been executed in the sandbox and produced the output:\n\n```\nALL TESTS PASSED\n```\n\nHence, all tests pass.\n\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def luhn_valid(s):\n    # Remove spaces\n    s = s.replace(\" \", \"\")\n    # Must contain only digits\n    if not s.isdigit():\n        return False\n    # Must have at least two digits\n    if len(s) \u003c 2:\n        return False\n    # Luhn algorithm\n    total = 0\n    for i, ch in enumerate(reversed(s)):\n        digit = int(ch)\n        if i % 2 == 1:  # every second digit from the right\n            digit *= 2\n            if digit \u003e 9:\n                digit -= 9\n        total += digit\n    return total % 10 == 0\n\ndef run_tests():\n    test_cases = [\n        (\"4539 3195 0343 6467\", True),\n        (\"8273 1232 7352 0569\", False),\n        (\"059\", True),\n        (\"0\", False),\n        (\"055-444-285\", False),\n        (\"1234 5678 9012 3456\", False),\n        (\"1111 1111 1111 1111\", False),\n        (\"79927398713\", True),\n        (\"79927398710\", False),\n        (\"  4 5 3 9  \", True),\n        (\"12a3\", False),\n        (\"\", False),\n        (\" 1 \", False),\n    ]\n    for s, expected in test_cases:\n        result = luhn_valid(s)\n        if result != expected:\n            print(f\"FAIL: {s!r} expected {expected} got {result}\")\n            return\n    print(\"ALL TESTS PASSED\")\n\nif __name__ == \"__main__\":\n    run_tests()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "FAIL: '  4 5 3 9  ' expected True got False\n",
+      "Stderr": "",
+      "Millis": 699,
+      "Record": "6ed97f95ada3fa88deb5f814e81e952d52ca67225450b2af3e4168c1481ccc85",
+      "Request": "c96b3b312903b97c6e9986eac8d3e72f57e7a5c99d0a1710c28349bfc30b1153",
+      "Result": "a94858ec49dedb2cbd25cbecddf16a144b6ff5469c0652b195596225e412baa2",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "def luhn_valid(s):\n    s = s.replace(\" \", \"\")\n    if not s.isdigit():\n        return False\n    if len(s) \u003c 2:\n        return False\n    total = 0\n    for i, ch in enumerate(reversed(s)):\n        digit = int(ch)\n        if i % 2 == 1:\n            digit *= 2\n            if digit \u003e 9:\n                digit -= 9\n        total += digit\n    return total % 10 == 0\n\ndef test():\n    cases = [\n        (\"4539 3195 0343 6467\", True),\n        (\"8273 1232 7352 0569\", False),\n        (\"059\", True),\n        (\"0\", False),\n        (\"055-444-285\", False),\n        (\"1234 5678 9012 3456\", False),\n        (\"1111 1111 1111 1111\", False),\n        (\"79927398713\", True),\n        (\"79927398710\", False),\n        (\"  4 5 3 9  \", False),  # \"4539\" is not valid\n        (\"12a3\", False),\n        (\"\", False),\n        (\" 1 \", False),\n        (\" 799 273 9871 3 \", True),  # spaced version of known valid\n        (\" 8273 1232 7352 0569 \", False),  # spaced version of known invalid\n    ]\n    for s, expected in cases:\n        result = luhn_valid(s)\n        if result != expected:\n            print(f\"FAIL: {s!r} expected {expected} got {result}\")\n            return\n    print(\"ALL TESTS PASSED\")\n\nif __name__ == \"__main__\":\n    test()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 42,
+      "Record": "bb7673d32dff07bc6fe0bbbe827bf10c810c6bfdc24f9bd47cb8f095dafcbe29",
+      "Request": "7c27c197366b7c0c78a69652e282f7e9cd4fa923ff1ceb57f72f625a480a6bdf",
+      "Result": "ab00f2eb57e2670c621682ad7ffc5e0b95f307c5df9527f0b63b8d140b20acb3",
+      "Previous": "6ed97f95ada3fa88deb5f814e81e952d52ca67225450b2af3e4168c1481ccc85",
+      "Sequence": 2
+    }
+  ],
+  "Final": "\nHere is a complete, self‑contained Python script that implements `luhn_valid(s)` according to the specification and tests it against the required examples plus additional cases. The script prints **ALL TESTS PASSED** only when every test succeeds.\n\n```python\ndef luhn_valid(s):\n    # Remove spaces\n    s = s.replace(\" \", \"\")\n    # Must contain only digits and have at least two digits\n    if not s.isdigit() or len(s) \u003c 2:\n        return False\n    # Luhn algorithm\n    total = 0\n    for i, ch in enumerate(reversed(s)):\n        digit = int(ch)\n        # Every second digit from the right (i % 2 == 1) is doubled\n        if i % 2 == 1:\n            digit *= 2\n            if digit \u003e 9:\n                digit -= 9\n        total += digit\n    return total % 10 == 0\n\n\ndef run_tests():\n    test_cases = [\n        # Provided examples\n        (\"4539 3195 0343 6467\", True),\n        (\"8273 1232 7352 0569\", False),\n        (\"059\", True),\n        (\"0\", False),\n        (\"055-444-285\", False),\n        # Additional checks\n        (\"1234 5678 9012 3456\", False),\n        (\"1111 1111 1111 1111\", False),\n        (\"79927398713\", True),\n        (\"79927398710\", False),\n        (\"  4 5 3 9  \", False),          # spaced but not a valid Luhn number\n        (\"12a3\", False),                 # contains non‑digit\n        (\"\", False),                     # empty string\n        (\" 1 \", False),                  # single digit after stripping spaces\n        (\" 799 273 9871 3 \", True),     # spaced version of a known valid number\n        (\" 8273 1232 7352 0569 \", False), # spaced version of a known invalid number\n    ]\n\n    for s, expected in test_cases:\n        result = luhn_valid(s)\n        if result != expected:\n            print(f\"FAIL: {s!r} expected {expected} got {result}\")\n            return\n    print(\"ALL TESTS PASSED\")\n\n\nif __name__ == \"__main__\":\n    run_tests()\n```\n\nThe script has been executed in the sandbox and produced the output:\n\n```\nALL TESTS PASSED\n```\n\nHence, all tests pass.\n\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 3,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyI0NTM5IDMxOTUgMDM0MyA2NDY3Il0sImV4cGVjdCI6dHJ1ZX0seyJhcmdzIjpbIjgyNzMgMTIzMiA3MzUyIDA1NjkiXSwiZXhwZWN0IjpmYWxzZX0seyJhcmdzIjpbIjA1OSJdLCJleHBlY3QiOnRydWV9LHsiYXJncyI6WyIwIl0sImV4cGVjdCI6ZmFsc2V9LHsiYXJncyI6WyIwNTUtNDQ0LTI4NSJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiMDU1IDQ0NCAyODUiXSwiZXhwZWN0Ijp0cnVlfSx7ImFyZ3MiOlsiIDAiXSwiZXhwZWN0IjpmYWxzZX0seyJhcmdzIjpbIjAgMCJdLCJleHBlY3QiOnRydWV9LHsiYXJncyI6WyIwMCJdLCJleHBlY3QiOnRydWV9LHsiYXJncyI6WyIwOTEiXSwiZXhwZWN0Ijp0cnVlfSx7ImFyZ3MiOlsiMDU5YSJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiIl0sImV4cGVjdCI6ZmFsc2V9LHsiYXJncyI6WyIgICJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiMSJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiNzk5MjczOTg3MTMiXSwiZXhwZWN0Ijp0cnVlfSx7ImFyZ3MiOlsiNzk5MjczOTg3MTAiXSwiZXhwZWN0IjpmYWxzZX0seyJhcmdzIjpbIlx1MDY2MVx1MDY2Mlx1MDY2MyJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiNDUzOVx0MzE5NSJdLCJleHBlY3QiOmZhbHNlfSx7ImFyZ3MiOlsiMDk1IDI0NSA4OCJdLCJleHBlY3QiOnRydWV9LHsiYXJncyI6WyIyMzQgNTY3IDg5MSAyMzQiXSwiZXhwZWN0Ijp0cnVlfSx7ImFyZ3MiOlsiMTgiXSwiZXhwZWN0Ijp0cnVlfV0sImZ1bmN0aW9uIjoibHVobl92YWxpZCIsInVuY2hhbmdlZCI6ZmFsc2V9\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 21, \"Total\": 21, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 41,
+    "Record": "dc87d2aa2d45a2290834593a1362356b2632f950670cdb96f79f52a375aadd12",
+    "Request": "bf0739117cb201962cfe0665c05c9d45ce0a5e46824ceaae6fb9615c2328d795",
+    "Result": "4fbca951452bc127da499bff1305053d9fd86da057290f4e50ad515b8d6f93f1",
+    "Previous": "bb7673d32dff07bc6fe0bbbe827bf10c810c6bfdc24f9bd47cb8f095dafcbe29",
+    "Sequence": 3
+  },
+  "Calls": 3,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Usage": {
+    "Prompt": 3974,
+    "Completion": 4528,
+    "Calls": 3
+  }
+}

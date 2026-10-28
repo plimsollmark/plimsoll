@@ -1,0 +1,1897 @@
+[
+ {
+  "id": "iso-duration",
+  "title": "ISO 8601 durations to seconds",
+  "function": "iso_duration_seconds",
+  "spec": "Write a Python function iso_duration_seconds(s) that converts an ISO 8601 duration string to a number of seconds (a float). The accepted forms are exactly these: \"P\", then a week count, then \"W\", and nothing else (for example \"P2W\"); or \"P\", then an optional day count and \"D\", then optionally \"T\" followed by at least one of an hour count with \"H\", a minute count with \"M\" and a second count with \"S\", in that order. At least one count must be present. A count is one or more ASCII digits, optionally followed by \".\" and one or more ASCII digits. Letters are uppercase. 1 week = 7 days and 1 day = 86400 seconds. Any other string, including years (\"Y\"), months (\"M\" before \"T\"), lowercase letters, spaces and signs, must raise ValueError. Examples: \"PT0S\" -> 0, \"PT1H30M\" -> 5400, \"P1DT2H\" -> 93600, \"P1W\" -> 604800, \"PT0.5S\" -> 0.5, \"P2DT3H4M5.25S\" -> 183845.25; \"\", \"P\", \"PT\", \"1H\" and \"P1H\" raise ValueError.",
+  "unchanged": false,
+  "cases": [
+   {
+    "args": [
+     "PT0S"
+    ],
+    "expect": 0.0
+   },
+   {
+    "args": [
+     "PT1H30M"
+    ],
+    "expect": 5400.0
+   },
+   {
+    "args": [
+     "P1DT2H"
+    ],
+    "expect": 93600.0
+   },
+   {
+    "args": [
+     "P1W"
+    ],
+    "expect": 604800.0
+   },
+   {
+    "args": [
+     "PT0.5S"
+    ],
+    "expect": 0.5
+   },
+   {
+    "args": [
+     "P2DT3H4M5.25S"
+    ],
+    "expect": 183845.25
+   },
+   {
+    "args": [
+     ""
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "P"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "PT"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "1H"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "P1H"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "P1Y"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "P1M"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "P2W"
+    ],
+    "expect": 1209600.0
+   },
+   {
+    "args": [
+     "P1W2D"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "P1DT"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "PT1M30S"
+    ],
+    "expect": 90.0
+   },
+   {
+    "args": [
+     "P0D"
+    ],
+    "expect": 0.0
+   },
+   {
+    "args": [
+     "pt1s"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     " PT1S"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "PT1.5M"
+    ],
+    "expect": 90.0
+   },
+   {
+    "args": [
+     "PT1S1M"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "P3DT4H"
+    ],
+    "expect": 273600.0
+   },
+   {
+    "args": [
+     "PT36H"
+    ],
+    "expect": 129600.0
+   },
+   {
+    "args": [
+     "PT1.S"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "PT.5S"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "P1.5D"
+    ],
+    "expect": 129600.0
+   },
+   {
+    "args": [
+     "-PT1S"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "PT1S\n"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "PT\u0661S"
+    ],
+    "raises": "ValueError"
+   }
+  ]
+ },
+ {
+  "id": "from-roman",
+  "title": "Strict Roman numerals",
+  "function": "from_roman",
+  "spec": "Write a Python function from_roman(s) that converts a Roman numeral to an int. Accept only the standard form of a number from 1 to 3999, using I=1, V=5, X=10, L=50, C=100, D=500, M=1000: the thousands, hundreds, tens and units digits are written in that order, a zero digit is written as nothing, and each other digit d is written with that place's one-symbol (I, X, C or M), five-symbol (V, L or D) and the next place's one-symbol: 1 to 3 as that many one-symbols, 4 as one-symbol then five-symbol (IV, XL, CD), 5 as the five-symbol, 6 to 8 as the five-symbol then 1 to 3 one-symbols, 9 as one-symbol then the next place's one-symbol (IX, XC, CM); thousands are 1 to 3 M. Uppercase only. Any other string, including the empty string, must raise ValueError. Examples: \"III\" -> 3, \"IV\" -> 4, \"IX\" -> 9, \"LVIII\" -> 58, \"MCMXCIV\" -> 1994; \"IIII\", \"IC\" and \"\" raise ValueError.",
+  "unchanged": false,
+  "cases": [
+   {
+    "args": [
+     "III"
+    ],
+    "expect": 3
+   },
+   {
+    "args": [
+     "IV"
+    ],
+    "expect": 4
+   },
+   {
+    "args": [
+     "IX"
+    ],
+    "expect": 9
+   },
+   {
+    "args": [
+     "LVIII"
+    ],
+    "expect": 58
+   },
+   {
+    "args": [
+     "MCMXCIV"
+    ],
+    "expect": 1994
+   },
+   {
+    "args": [
+     "IIII"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "IC"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     ""
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "MMMCMXCIX"
+    ],
+    "expect": 3999
+   },
+   {
+    "args": [
+     "XLIX"
+    ],
+    "expect": 49
+   },
+   {
+    "args": [
+     "CD"
+    ],
+    "expect": 400
+   },
+   {
+    "args": [
+     "I"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "MMMM"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "VX"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "IL"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "mcm"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "DCD"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "VV"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "XXXX"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "IIV"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "MCM "
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "MCM\n"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "CM"
+    ],
+    "expect": 900
+   },
+   {
+    "args": [
+     "XCIX"
+    ],
+    "expect": 99
+   },
+   {
+    "args": [
+     "IVI"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "N"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "MMXXVI"
+    ],
+    "expect": 2026
+   },
+   {
+    "args": [
+     "LXL"
+    ],
+    "raises": "ValueError"
+   }
+  ]
+ },
+ {
+  "id": "semver",
+  "title": "Semantic version precedence",
+  "function": "semver_compare",
+  "spec": "Write a Python function semver_compare(a, b) that compares two Semantic Versioning 2.0.0 version strings and returns -1 if a has lower precedence than b, 0 if equal precedence and 1 if higher. A version is MAJOR.MINOR.PATCH, each a non-negative integer written without leading zeros (\"0\" is fine, \"01\" is not), optionally followed by \"-\" and a pre-release, then optionally by \"+\" and build metadata. The pre-release and the build metadata are each one or more dot-separated identifiers; an identifier is non-empty and made only of ASCII letters, ASCII digits and \"-\"; a pre-release identifier made only of digits must not have a leading zero. Precedence: compare MAJOR, MINOR and PATCH numerically; a version with a pre-release is lower than the same version without one; two pre-releases compare identifier by identifier from the left: two all-digit identifiers numerically, two others in ASCII order, and an all-digit identifier is lower than any other; if every shared identifier is equal, the one with more identifiers is higher. Build metadata is ignored. An invalid version string must raise ValueError. Examples: (\"1.0.0\", \"2.0.0\") -> -1, (\"2.1.1\", \"2.1.0\") -> 1, (\"1.0.0-alpha\", \"1.0.0\") -> -1, (\"1.0.0-alpha.1\", \"1.0.0-alpha.beta\") -> -1, (\"1.0.0+build.5\", \"1.0.0\") -> 0; (\"1.0\", \"1.0.0\") and (\"01.0.0\", \"1.0.0\") raise ValueError.",
+  "unchanged": false,
+  "cases": [
+   {
+    "args": [
+     "1.0.0",
+     "2.0.0"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "2.1.1",
+     "2.1.0"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-alpha",
+     "1.0.0"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "1.0.0-alpha.1",
+     "1.0.0-alpha.beta"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "1.0.0+build.5",
+     "1.0.0"
+    ],
+    "expect": 0
+   },
+   {
+    "args": [
+     "1.0",
+     "1.0.0"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "01.0.0",
+     "1.0.0"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "1.0.0-alpha",
+     "1.0.0-alpha.1"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "1.0.0-alpha.1",
+     "1.0.0-alpha.beta"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "1.0.0-alpha.beta",
+     "1.0.0-beta"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "1.0.0-beta",
+     "1.0.0-beta.2"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "1.0.0-beta.2",
+     "1.0.0-beta.11"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "1.0.0-beta.11",
+     "1.0.0-rc.1"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "1.0.0-rc.1",
+     "1.0.0"
+    ],
+    "expect": -1
+   },
+   {
+    "args": [
+     "1.0.0-alpha.1",
+     "1.0.0-alpha"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-alpha.beta",
+     "1.0.0-alpha.1"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-beta",
+     "1.0.0-alpha.beta"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-beta.2",
+     "1.0.0-beta"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-beta.11",
+     "1.0.0-beta.2"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-rc.1",
+     "1.0.0-beta.11"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0",
+     "1.0.0-rc.1"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-alpha",
+     "1.0.0-alpha"
+    ],
+    "expect": 0
+   },
+   {
+    "args": [
+     "1.0.0-01",
+     "1.0.0"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "1.0.0-",
+     "1.0.0"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "1.0.0+",
+     "1.0.0"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "1.0.0-a..b",
+     "1.0.0"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "1.0.0-rc.1+build.1",
+     "1.0.0-rc.1+build.2"
+    ],
+    "expect": 0
+   },
+   {
+    "args": [
+     "1.10.0",
+     "1.9.0"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-0A",
+     "1.0.0-0"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-alpha-1",
+     "1.0.0-alpha"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "v1.0.0",
+     "1.0.0"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     " 1.0.0",
+     "1.0.0"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "1.0.0-\u00df",
+     "1.0.0"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "1.0.0+build.01",
+     "1.0.0"
+    ],
+    "expect": 0
+   },
+   {
+    "args": [
+     "1.2.3-alpha.10",
+     "1.2.3-alpha.9"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0",
+     "1.0.0-x"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "0.0.0",
+     "0.0.0-0"
+    ],
+    "expect": 1
+   },
+   {
+    "args": [
+     "1.0.0-1",
+     "1.0.0-a"
+    ],
+    "expect": -1
+   }
+  ]
+ },
+ {
+  "id": "luhn",
+  "title": "Luhn check digits",
+  "function": "luhn_valid",
+  "spec": "Write a Python function luhn_valid(s) that returns True if s is a valid Luhn number and False otherwise. s may contain ASCII digits and spaces; spaces are ignored. If s contains any other character, or has fewer than two digits once the spaces are removed, return False. The Luhn rule: starting from the rightmost digit, double every second digit (the second from the right, the fourth, and so on), subtracting 9 from any doubled value above 9; the number is valid when the sum of all the digits so treated is a multiple of 10. Never raise for a string input. Examples: \"4539 3195 0343 6467\" -> True, \"8273 1232 7352 0569\" -> False, \"059\" -> True, \"0\" -> False, \"055-444-285\" -> False.",
+  "unchanged": false,
+  "cases": [
+   {
+    "args": [
+     "4539 3195 0343 6467"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "8273 1232 7352 0569"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "059"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "0"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "055-444-285"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "055 444 285"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     " 0"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "0 0"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "00"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "091"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "059a"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     ""
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "  "
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "1"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "79927398713"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "79927398710"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "\u0661\u0662\u0663"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "4539\t3195"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "095 245 88"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "234 567 891 234"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "18"
+    ],
+    "expect": true
+   }
+  ]
+ },
+ {
+  "id": "wrap",
+  "title": "Greedy word wrap",
+  "function": "wrap",
+  "spec": "Write a Python function wrap(text, width) that word-wraps text into a list of lines. Words are the runs of non-whitespace characters (what str.split() with no arguments returns). Fill lines greedily: a word joins the current line, after one space, if the line's length plus 1 plus the word's length is at most width; otherwise the current line is finished and the word starts the next line. A word longer than width is first cut into pieces of exactly width characters (the last piece may be shorter), and each piece is then placed as a word by the same rule, so further words may follow the last piece on its line. Lines never have leading or trailing spaces. Return [] when text has no words. If width is less than 1, raise ValueError. Examples: wrap(\"the quick brown fox\", 10) -> [\"the quick\", \"brown fox\"], wrap(\"abcdefghij\", 4) -> [\"abcd\", \"efgh\", \"ij\"], wrap(\"\", 5) -> [], wrap(\"a b\", 0) raises ValueError.",
+  "unchanged": false,
+  "cases": [
+   {
+    "args": [
+     "the quick brown fox",
+     10
+    ],
+    "expect": [
+     "the quick",
+     "brown fox"
+    ]
+   },
+   {
+    "args": [
+     "abcdefghij",
+     4
+    ],
+    "expect": [
+     "abcd",
+     "efgh",
+     "ij"
+    ]
+   },
+   {
+    "args": [
+     "",
+     5
+    ],
+    "expect": []
+   },
+   {
+    "args": [
+     "a b",
+     0
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "   ",
+     5
+    ],
+    "expect": []
+   },
+   {
+    "args": [
+     "a b",
+     -1
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "hello world",
+     5
+    ],
+    "expect": [
+     "hello",
+     "world"
+    ]
+   },
+   {
+    "args": [
+     "hello world",
+     11
+    ],
+    "expect": [
+     "hello world"
+    ]
+   },
+   {
+    "args": [
+     "a\tb\nc",
+     3
+    ],
+    "expect": [
+     "a b",
+     "c"
+    ]
+   },
+   {
+    "args": [
+     "abcde f",
+     4
+    ],
+    "expect": [
+     "abcd",
+     "e f"
+    ]
+   },
+   {
+    "args": [
+     "ab cdefgh",
+     4
+    ],
+    "expect": [
+     "ab",
+     "cdef",
+     "gh"
+    ]
+   },
+   {
+    "args": [
+     "x",
+     1
+    ],
+    "expect": [
+     "x"
+    ]
+   },
+   {
+    "args": [
+     "aa bb",
+     1
+    ],
+    "expect": [
+     "a",
+     "a",
+     "b",
+     "b"
+    ]
+   },
+   {
+    "args": [
+     "one  two",
+     3
+    ],
+    "expect": [
+     "one",
+     "two"
+    ]
+   },
+   {
+    "args": [
+     "hello world",
+     4
+    ],
+    "expect": [
+     "hell",
+     "o",
+     "worl",
+     "d"
+    ]
+   },
+   {
+    "args": [
+     "a bb ccc dddd",
+     6
+    ],
+    "expect": [
+     "a bb",
+     "ccc",
+     "dddd"
+    ]
+   },
+   {
+    "args": [
+     "  lead and trail  ",
+     9
+    ],
+    "expect": [
+     "lead and",
+     "trail"
+    ]
+   }
+  ]
+ },
+ {
+  "id": "intervals",
+  "title": "Merging closed intervals",
+  "function": "merge_intervals",
+  "spec": "Write a Python function merge_intervals(intervals) that takes a list of [start, end] pairs of integers (closed intervals, start <= end) in any order and returns a new list of merged pairs sorted by start. Two intervals merge when they overlap or touch: [1, 3] and [3, 5] merge to [1, 5]; [1, 2] and [3, 4] do not merge. Each returned pair is a list of two ints, not a tuple. Do not modify the input list or its pairs. If any pair has start > end, raise ValueError. Examples: [[1, 3], [2, 6], [8, 10], [15, 18]] -> [[1, 6], [8, 10], [15, 18]], [[1, 4], [4, 5]] -> [[1, 5]], [] -> [], [[3, 1]] raises ValueError.",
+  "unchanged": true,
+  "cases": [
+   {
+    "args": [
+     [
+      [
+       1,
+       3
+      ],
+      [
+       2,
+       6
+      ],
+      [
+       8,
+       10
+      ],
+      [
+       15,
+       18
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      1,
+      6
+     ],
+     [
+      8,
+      10
+     ],
+     [
+      15,
+      18
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       1,
+       4
+      ],
+      [
+       4,
+       5
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      1,
+      5
+     ]
+    ]
+   },
+   {
+    "args": [
+     []
+    ],
+    "expect": []
+   },
+   {
+    "args": [
+     [
+      [
+       3,
+       1
+      ]
+     ]
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     [
+      [
+       1,
+       2
+      ],
+      [
+       3,
+       4
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      1,
+      2
+     ],
+     [
+      3,
+      4
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       5,
+       5
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      5,
+      5
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       8,
+       10
+      ],
+      [
+       1,
+       3
+      ],
+      [
+       2,
+       6
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      1,
+      6
+     ],
+     [
+      8,
+      10
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       1,
+       10
+      ],
+      [
+       2,
+       3
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      1,
+      10
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       1,
+       4
+      ],
+      [
+       0,
+       4
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      0,
+      4
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       -5,
+       -1
+      ],
+      [
+       -1,
+       2
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      -5,
+      2
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       1,
+       2
+      ],
+      [
+       2,
+       3
+      ],
+      [
+       3,
+       4
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      1,
+      4
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       1,
+       5
+      ],
+      [
+       2,
+       3
+      ],
+      [
+       4,
+       8
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      1,
+      8
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       1,
+       2
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      1,
+      2
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       1
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      0,
+      0
+     ],
+     [
+      1,
+      1
+     ]
+    ]
+   },
+   {
+    "args": [
+     [
+      [
+       1,
+       2
+      ],
+      [
+       5,
+       4
+      ]
+     ]
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     [
+      [
+       3,
+       4
+      ],
+      [
+       1,
+       2
+      ]
+     ]
+    ],
+    "expect": [
+     [
+      1,
+      2
+     ],
+     [
+      3,
+      4
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "id": "csv-line",
+  "title": "One line of CSV",
+  "function": "parse_csv_line",
+  "spec": "Write a Python function parse_csv_line(line) that splits one line of CSV into a list of field strings. Fields are separated by commas. A field whose first character is a double quote is quoted: it runs to its closing quote; inside it a comma is an ordinary character and two double quotes in a row stand for one double quote; the closing quote must be followed by a comma or the end of the line. Any other field is unquoted and must not contain a double quote. Spaces are ordinary characters and are kept. Raise ValueError for a double quote in an unquoted field, a quoted field with no closing quote, or anything but a comma after a closing quote. The empty line is one empty field. Examples: 'a,b,c' -> ['a', 'b', 'c'], '\"a,b\",c' -> ['a,b', 'c'], '\"say \"\"hi\"\"\",x' -> ['say \"hi\"', 'x'], '' -> [''], 'a\"b' raises ValueError.",
+  "unchanged": false,
+  "cases": [
+   {
+    "args": [
+     "a,b,c"
+    ],
+    "expect": [
+     "a",
+     "b",
+     "c"
+    ]
+   },
+   {
+    "args": [
+     "\"a,b\",c"
+    ],
+    "expect": [
+     "a,b",
+     "c"
+    ]
+   },
+   {
+    "args": [
+     "\"say \"\"hi\"\"\",x"
+    ],
+    "expect": [
+     "say \"hi\"",
+     "x"
+    ]
+   },
+   {
+    "args": [
+     ""
+    ],
+    "expect": [
+     ""
+    ]
+   },
+   {
+    "args": [
+     "a\"b"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     ",,"
+    ],
+    "expect": [
+     "",
+     "",
+     ""
+    ]
+   },
+   {
+    "args": [
+     " a , b "
+    ],
+    "expect": [
+     " a ",
+     " b "
+    ]
+   },
+   {
+    "args": [
+     "\"\",x"
+    ],
+    "expect": [
+     "",
+     "x"
+    ]
+   },
+   {
+    "args": [
+     "\"a\"b"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "\"abc"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "a,\"b"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "\"a\"\""
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "\"\"\"\""
+    ],
+    "expect": [
+     "\""
+    ]
+   },
+   {
+    "args": [
+     "a, \"b\""
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "x,"
+    ],
+    "expect": [
+     "x",
+     ""
+    ]
+   },
+   {
+    "args": [
+     "\"x\","
+    ],
+    "expect": [
+     "x",
+     ""
+    ]
+   },
+   {
+    "args": [
+     "\"a,b"
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "\"a\"\"b\",\"\""
+    ],
+    "expect": [
+     "a\"b",
+     ""
+    ]
+   },
+   {
+    "args": [
+     "a,b,"
+    ],
+    "expect": [
+     "a",
+     "b",
+     ""
+    ]
+   }
+  ]
+ },
+ {
+  "id": "business-days",
+  "title": "Adding business days",
+  "function": "add_business_days",
+  "spec": "Write a Python function add_business_days(start, n, holidays) where start is a date string 'YYYY-MM-DD', n is an int >= 0 and holidays is a list of 'YYYY-MM-DD' strings. Business days are Monday to Friday, except holidays. Return, as a 'YYYY-MM-DD' string, the date reached by moving forward from start one calendar day at a time, counting only business days, and stopping once n business days have been counted; start itself is never counted. When n is 0, return start unchanged, even if it is not a business day. Raise ValueError if n is negative or not an int (a bool is not an int here), or if start or any holiday is not a valid date written in exactly that format (four digits, a hyphen, two digits, a hyphen, two digits). Examples: add_business_days('2026-10-23', 1, []) -> '2026-10-26' (a Friday to the next Monday), add_business_days('2026-10-23', 1, ['2026-10-26']) -> '2026-10-27', add_business_days('2026-10-24', 0, []) -> '2026-10-24'.",
+  "unchanged": false,
+  "cases": [
+   {
+    "args": [
+     "2026-10-23",
+     1,
+     []
+    ],
+    "expect": "2026-10-26"
+   },
+   {
+    "args": [
+     "2026-10-23",
+     1,
+     [
+      "2026-10-26"
+     ]
+    ],
+    "expect": "2026-10-27"
+   },
+   {
+    "args": [
+     "2026-10-24",
+     0,
+     []
+    ],
+    "expect": "2026-10-24"
+   },
+   {
+    "args": [
+     "2026-10-24",
+     1,
+     []
+    ],
+    "expect": "2026-10-26"
+   },
+   {
+    "args": [
+     "2026-12-31",
+     1,
+     [
+      "2027-01-01"
+     ]
+    ],
+    "expect": "2027-01-04"
+   },
+   {
+    "args": [
+     "2026-10-23",
+     5,
+     []
+    ],
+    "expect": "2026-10-30"
+   },
+   {
+    "args": [
+     "2026-10-23",
+     -1,
+     []
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "2026-02-30",
+     1,
+     []
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "2026-1-05",
+     1,
+     []
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "2026-10-23",
+     1,
+     [
+      "2026-13-01"
+     ]
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "2026-10-23",
+     true,
+     []
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "2026-10-23",
+     1.0,
+     []
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "2024-02-28",
+     1,
+     []
+    ],
+    "expect": "2024-02-29"
+   },
+   {
+    "args": [
+     "2026-10-23",
+     2,
+     [
+      "2026-10-24"
+     ]
+    ],
+    "expect": "2026-10-27"
+   },
+   {
+    "args": [
+     "20261023",
+     1,
+     []
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     "2026-10-23",
+     10,
+     []
+    ],
+    "expect": "2026-11-06"
+   },
+   {
+    "args": [
+     "2026-10-23",
+     3,
+     [
+      "2026-10-26",
+      "2026-10-27"
+     ]
+    ],
+    "expect": "2026-10-30"
+   },
+   {
+    "args": [
+     "2026-10-23 ",
+     1,
+     []
+    ],
+    "raises": "ValueError"
+   }
+  ]
+ },
+ {
+  "id": "number-words",
+  "title": "Numbers in English words",
+  "function": "number_to_words",
+  "spec": "Write a Python function number_to_words(n) that writes an int from 0 to 999999999 in English words: lowercase, American style, never using \"and\". Zero to nineteen are single words (zero, one, ..., nineteen). Tens are twenty, thirty, forty, fifty, sixty, seventy, eighty, ninety, joined to a following unit by a hyphen (twenty-one). A hundreds digit is written \"<unit> hundred\", followed by a space and the rest when the rest is not zero. Thousands and millions are groups of three digits written the same way and followed by \" thousand\" or \" million\"; a group that is zero is left out. Words are separated by single spaces. Raise ValueError for an int outside the range and for anything that is not an int (a bool is not an int here). Examples: 0 -> 'zero', 13 -> 'thirteen', 21 -> 'twenty-one', 105 -> 'one hundred five', 1000 -> 'one thousand', 1234567 -> 'one million two hundred thirty-four thousand five hundred sixty-seven'.",
+  "unchanged": false,
+  "cases": [
+   {
+    "args": [
+     0
+    ],
+    "expect": "zero"
+   },
+   {
+    "args": [
+     13
+    ],
+    "expect": "thirteen"
+   },
+   {
+    "args": [
+     21
+    ],
+    "expect": "twenty-one"
+   },
+   {
+    "args": [
+     105
+    ],
+    "expect": "one hundred five"
+   },
+   {
+    "args": [
+     1000
+    ],
+    "expect": "one thousand"
+   },
+   {
+    "args": [
+     1234567
+    ],
+    "expect": "one million two hundred thirty-four thousand five hundred sixty-seven"
+   },
+   {
+    "args": [
+     999999999
+    ],
+    "expect": "nine hundred ninety-nine million nine hundred ninety-nine thousand nine hundred ninety-nine"
+   },
+   {
+    "args": [
+     1000000000
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     -1
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     100
+    ],
+    "expect": "one hundred"
+   },
+   {
+    "args": [
+     110
+    ],
+    "expect": "one hundred ten"
+   },
+   {
+    "args": [
+     1000010
+    ],
+    "expect": "one million ten"
+   },
+   {
+    "args": [
+     1001000
+    ],
+    "expect": "one million one thousand"
+   },
+   {
+    "args": [
+     20
+    ],
+    "expect": "twenty"
+   },
+   {
+    "args": [
+     40
+    ],
+    "expect": "forty"
+   },
+   {
+    "args": [
+     90000
+    ],
+    "expect": "ninety thousand"
+   },
+   {
+    "args": [
+     700000000
+    ],
+    "expect": "seven hundred million"
+   },
+   {
+    "args": [
+     true
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     5.0
+    ],
+    "raises": "ValueError"
+   },
+   {
+    "args": [
+     15
+    ],
+    "expect": "fifteen"
+   },
+   {
+    "args": [
+     1000001
+    ],
+    "expect": "one million one"
+   },
+   {
+    "args": [
+     19019
+    ],
+    "expect": "nineteen thousand nineteen"
+   },
+   {
+    "args": [
+     80080080
+    ],
+    "expect": "eighty million eighty thousand eighty"
+   }
+  ]
+ },
+ {
+  "id": "brackets",
+  "title": "Balanced brackets around quoted strings",
+  "function": "balanced",
+  "spec": "Write a Python function balanced(s) that returns True if the brackets (), [] and {} in s are balanced and properly nested, and False otherwise. Characters inside quoted strings are ignored: a quoted string starts at a single or double quote and ends at the next unescaped quote of the same kind; inside it, a backslash escapes the character after it, so a backslash then a quote does not end the string. Outside quoted strings a backslash is an ordinary character. A quoted string still open at the end of s makes the result False. All other characters are ignored. Examples: '([]{})' -> True, '([)]' -> False, 'f(\"(\")' -> True, '\"abc' -> False, '' -> True.",
+  "unchanged": false,
+  "cases": [
+   {
+    "args": [
+     "([]{})"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "([)]"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "f(\"(\")"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "\"abc"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     ""
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "a(b)c"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "("
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     ")("
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "{[()()]}"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "\"\\\"\"()"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "'(' + ')'"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "x = \"it\\'s\""
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "'\\'"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "\\("
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "\"[\" ]"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "'\"'"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "\"a\\\\\"("
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "[']'"
+    ],
+    "expect": false
+   },
+   {
+    "args": [
+     "\"\\\\\""
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "'a' [\"b\"]"
+    ],
+    "expect": true
+   },
+   {
+    "args": [
+     "\"\\"
+    ],
+    "expect": false
+   }
+  ]
+ }
+]

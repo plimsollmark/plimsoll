@@ -1,0 +1,115 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "Task": "Write a Python function add_business_days(start, n, holidays) where start is a date string 'YYYY-MM-DD', n is an int \u003e= 0 and holidays is a list of 'YYYY-MM-DD' strings. Business days are Monday to Friday, except holidays. Return, as a 'YYYY-MM-DD' string, the date reached by moving forward from start one calendar day at a time, counting only business days, and stopping once n business days have been counted; start itself is never counted. When n is 0, return start unchanged, even if it is not a business day. Raise ValueError if n is negative or not an int (a bool is not an int here), or if start or any holiday is not a valid date written in exactly that format (four digits, a hyphen, two digits, a hyphen, two digits). Examples: add_business_days('2026-10-23', 1, []) -\u003e '2026-10-26' (a Friday to the next Monday), add_business_days('2026-10-23', 1, ['2026-10-26']) -\u003e '2026-10-27', add_business_days('2026-10-24', 0, []) -\u003e '2026-10-24'.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "39b2f091233d0666125428523afd89dbd709e6ac25c358ef6feca3e8b3368df5",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": null
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 4,
+      "Text": "",
+      "Runs": [
+        3
+      ]
+    },
+    {
+      "N": 5,
+      "Text": "\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "import datetime\ndef weekday_str(date_str):\n    d = datetime.datetime.strptime(date_str, \"%Y-%m-%d\").date()\n    return d.strftime(\"%A\")\nprint(weekday_str('2026-10-23'))  # Friday\nprint(weekday_str('2026-10-24'))  # Saturday\nprint(weekday_str('2026-10-25'))  # Sunday\nprint(weekday_str('2026-10-26'))  # Monday\nprint(weekday_str('2026-10-27'))  # Tuesday\nprint(weekday_str('2026-10-28'))  # Wednesday\nprint(weekday_str('2026-10-29'))  # Thursday\nprint(weekday_str('2026-10-30'))  # Friday",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Friday\nSaturday\nSunday\nMonday\nTuesday\nWednesday\nThursday\nFriday\n",
+      "Stderr": "",
+      "Millis": 1462,
+      "Record": "e6ccb8ab14e17a18166d37f848844c751947ba15bb9939f8b98e1d8c8333d947",
+      "Request": "362ec17482f84dcd49db9b83d827acae2a6ae384d42313ca184aa27e1657b8dd",
+      "Result": "2471690b9380894df905518e350c57ac2638b31fdf14be49ab225697ffd65aaa",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "import re\nimport datetime\n\ndef add_business_days(start, n, holidays):\n    # Validate start format\n    if not re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}', start):\n        raise ValueError(f\"Invalid start date format: {start}\")\n    try:\n        start_date = datetime.datetime.strptime(start, \"%Y-%m-%d\").date()\n    except ValueError:\n        raise ValueError(f\"Invalid start date: {start}\")\n    # Validate n\n    if type(n) is not int or n \u003c 0:\n        raise ValueError(\"n must be a non-negative integer\")\n    # Validate holidays\n    holiday_set = set()\n    for h in holidays:\n        if not re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}', h):\n            raise ValueError(f\"Invalid holiday date format: {h}\")\n        try:\n            hd = datetime.datetime.strptime(h, \"%Y-%m-%d\").date()\n            holiday_set.add(hd)\n        except ValueError:\n            raise ValueError(f\"Invalid holiday date: {h}\")\n    # If n == 0, return start unchanged\n    if n == 0:\n        return start\n    # Iterate forward\n    current = start_date + datetime.timedelta(days=1)\n    count = 0\n    while count \u003c n:\n        if current.weekday() \u003c 5 and current not in holiday_set:\n            count += 1\n        current += datetime.timedelta(days=1)\n    return current.strftime(\"%Y-%m-%d\")\n\n# Test cases\ntests = [\n    (('2026-10-23', 1, []), '2026-10-26'),\n    (('2026-10-23', 1, ['2026-10-26']), '2026-10-27'),\n    (('2026-10-24', 0, []), '2026-10-24'),\n    (('2026-10-25', 1, []), '2026-10-26'),\n    (('2026-10-24', 1, []), '2026-10-26'),\n    (('2026-10-27', 2, []), '2026-10-29'),\n    (('2026-10-23', 2, []), '2026-10-27'),\n    (('2026-10-23', 2, ['2026-10-26']), '2026-10-28'),\n    (('2026-02-28', 1, []), '2026-03-02'),\n    (('2026-12-31', 1, []), '2027-01-01'),\n]\n\nall_passed = True\nfor i, (args, expected) in enumerate(tests):\n    try:\n        result = add_business_days(*args)\n        if result != expected:\n            print(f\"Test {i+1} FAILED: input {args} expected {expected} got {result}\")\n            all_passed = False\n    except Exception as e:\n        print(f\"Test {i+1} ERROR: {e}\")\n        all_passed = False\n\nif all_passed:\n    print(\"ALL TESTS PASSED\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Test 1 FAILED: input ('2026-10-23', 1, []) expected 2026-10-26 got 2026-10-27\nTest 2 FAILED: input ('2026-10-23', 1, ['2026-10-26']) expected 2026-10-27 got 2026-10-28\nTest 4 FAILED: input ('2026-10-25', 1, []) expected 2026-10-26 got 2026-10-27\nTest 5 FAILED: input ('2026-10-24', 1, []) expected 2026-10-26 got 2026-10-27\nTest 6 FAILED: input ('2026-10-27', 2, []) expected 2026-10-29 got 2026-10-30\nTest 7 FAILED: input ('2026-10-23', 2, []) expected 2026-10-27 got 2026-10-28\nTest 8 FAILED: input ('2026-10-23', 2, ['2026-10-26']) expected 2026-10-28 got 2026-10-29\nTest 9 FAILED: input ('2026-02-28', 1, []) expected 2026-03-02 got 2026-03-03\nTest 10 FAILED: input ('2026-12-31', 1, []) expected 2027-01-01 got 2027-01-02\n",
+      "Stderr": "",
+      "Millis": 49,
+      "Record": "848ecb054747fe89598b2acd6a56d98011cf3c79b8dd36590472673bad7065c3",
+      "Request": "5bc92b06d102651df63455ccb44560e108940f7df86aeba7a6002b6e314e343e",
+      "Result": "a16e200e816166d160f5d293fe6e65db6c89a52022d75f1092848c331a0808e3",
+      "Previous": "e6ccb8ab14e17a18166d37f848844c751947ba15bb9939f8b98e1d8c8333d947",
+      "Sequence": 2
+    },
+    {
+      "N": 3,
+      "Language": "python",
+      "Code": "import re\nimport datetime\n\ndef add_business_days(start, n, holidays):\n    # Validate start format\n    if not re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}', start):\n        raise ValueError(f\"Invalid start date format: {start}\")\n    try:\n        start_date = datetime.datetime.strptime(start, \"%Y-%m-%d\").date()\n    except ValueError:\n        raise ValueError(f\"Invalid start date: {start}\")\n    # Validate n: must be int and non-negative; bool is not considered int\n    if type(n) is not int or n \u003c 0:\n        raise ValueError(\"n must be a non-negative integer\")\n    # Validate holidays\n    holiday_set = set()\n    for h in holidays:\n        if not re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}', h):\n            raise ValueError(f\"Invalid holiday date format: {h}\")\n        try:\n            hd = datetime.datetime.strptime(h, \"%Y-%m-%d\").date()\n            holiday_set.add(hd)\n        except ValueError:\n            raise ValueError(f\"Invalid holiday date: {h}\")\n    # If n == 0, return start unchanged\n    if n == 0:\n        return start\n    # Iterate forward day by day, counting business days\n    current = start_date\n    count = 0\n    while count \u003c n:\n        current += datetime.timedelta(days=1)\n        if current.weekday() \u003c 5 and current not in holiday_set:\n            count += 1\n    return current.strftime(\"%Y-%m-%d\")\n\n# Test cases\ntests = [\n    (('2026-10-23', 1, []), '2026-10-26'),\n    (('2026-10-23', 1, ['2026-10-26']), '2026-10-27'),\n    (('2026-10-24', 0, []), '2026-10-24'),\n    (('2026-10-25', 1, []), '2026-10-26'),\n    (('2026-10-24', 1, []), '2026-10-26'),\n    (('2026-10-27', 2, []), '2026-10-29'),\n    (('2026-10-23', 2, []), '2026-10-27'),\n    (('2026-10-23', 2, ['2026-10-26']), '2026-10-28'),\n    (('2026-02-28', 1, []), '2026-03-02'),\n    (('2026-12-31', 1, []), '2027-01-01'),\n]\n\nall_passed = True\nfor i, (args, expected) in enumerate(tests):\n    try:\n        result = add_business_days(*args)\n        if result != expected:\n            print(f\"Test {i+1} FAILED: input {args} expected {expected} got {result}\")\n            all_passed = False\n    except Exception as e:\n        print(f\"Test {i+1} ERROR: {e}\")\n        all_passed = False\n\nif all_passed:\n    print(\"ALL TESTS PASSED\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 37,
+      "Record": "0293bc7a429fdfb9236da1ba3c02cdd6fafa1847da2417912ba6a0f0557882e5",
+      "Request": "ab8f6134e083075a83c85f34e319dbbab3a56335b9dd7683b4ee024b83b95717",
+      "Result": "ab00f2eb57e2670c621682ad7ffc5e0b95f307c5df9527f0b63b8d140b20acb3",
+      "Previous": "848ecb054747fe89598b2acd6a56d98011cf3c79b8dd36590472673bad7065c3",
+      "Sequence": 3
+    }
+  ],
+  "Final": "\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 4,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyIyMDI2LTEwLTIzIiwxLFtdXSwiZXhwZWN0IjoiMjAyNi0xMC0yNiJ9LHsiYXJncyI6WyIyMDI2LTEwLTIzIiwxLFsiMjAyNi0xMC0yNiJdXSwiZXhwZWN0IjoiMjAyNi0xMC0yNyJ9LHsiYXJncyI6WyIyMDI2LTEwLTI0IiwwLFtdXSwiZXhwZWN0IjoiMjAyNi0xMC0yNCJ9LHsiYXJncyI6WyIyMDI2LTEwLTI0IiwxLFtdXSwiZXhwZWN0IjoiMjAyNi0xMC0yNiJ9LHsiYXJncyI6WyIyMDI2LTEyLTMxIiwxLFsiMjAyNy0wMS0wMSJdXSwiZXhwZWN0IjoiMjAyNy0wMS0wNCJ9LHsiYXJncyI6WyIyMDI2LTEwLTIzIiw1LFtdXSwiZXhwZWN0IjoiMjAyNi0xMC0zMCJ9LHsiYXJncyI6WyIyMDI2LTEwLTIzIiwtMSxbXV0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiMjAyNi0wMi0zMCIsMSxbXV0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiMjAyNi0xLTA1IiwxLFtdXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyIyMDI2LTEwLTIzIiwxLFsiMjAyNi0xMy0wMSJdXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyIyMDI2LTEwLTIzIix0cnVlLFtdXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyIyMDI2LTEwLTIzIiwxLjAsW11dLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIjIwMjQtMDItMjgiLDEsW11dLCJleHBlY3QiOiIyMDI0LTAyLTI5In0seyJhcmdzIjpbIjIwMjYtMTAtMjMiLDIsWyIyMDI2LTEwLTI0Il1dLCJleHBlY3QiOiIyMDI2LTEwLTI3In0seyJhcmdzIjpbIjIwMjYxMDIzIiwxLFtdXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyIyMDI2LTEwLTIzIiwxMCxbXV0sImV4cGVjdCI6IjIwMjYtMTEtMDYifSx7ImFyZ3MiOlsiMjAyNi0xMC0yMyIsMyxbIjIwMjYtMTAtMjYiLCIyMDI2LTEwLTI3Il1dLCJleHBlY3QiOiIyMDI2LTEwLTMwIn0seyJhcmdzIjpbIjIwMjYtMTAtMjMgIiwxLFtdXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9XSwiZnVuY3Rpb24iOiJhZGRfYnVzaW5lc3NfZGF5cyIsInVuY2hhbmdlZCI6ZmFsc2V9\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 18, \"Total\": 18, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 40,
+    "Record": "d8265fd9815a149fc4d907fe25dcc2546c61aaed2ef79144950d4a9c270b4c69",
+    "Request": "17cf4f2e44365cffbaae8a56de3326937cde7a6011f072e5ff261175e3104e41",
+    "Result": "3d6de5bdd740a6c3ead8557353c3f4b4abcf572841d1a7b4a9e1d6cb2b7b8177",
+    "Previous": "0293bc7a429fdfb9236da1ba3c02cdd6fafa1847da2417912ba6a0f0557882e5",
+    "Sequence": 4
+  },
+  "Calls": 4,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Usage": {
+    "Prompt": 10037,
+    "Completion": 13719,
+    "Calls": 5
+  }
+}

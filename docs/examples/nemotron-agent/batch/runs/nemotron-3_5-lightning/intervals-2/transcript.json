@@ -1,0 +1,88 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Task": "Write a Python function merge_intervals(intervals) that takes a list of [start, end] pairs of integers (closed intervals, start \u003c= end) in any order and returns a new list of merged pairs sorted by start. Two intervals merge when they overlap or touch: [1, 3] and [3, 5] merge to [1, 5]; [1, 2] and [3, 4] do not merge. Each returned pair is a list of two ints, not a tuple. Do not modify the input list or its pairs. If any pair has start \u003e end, raise ValueError. Examples: [[1, 3], [2, 6], [8, 10], [15, 18]] -\u003e [[1, 6], [8, 10], [15, 18]], [[1, 4], [4, 5]] -\u003e [[1, 5]], [] -\u003e [], [[3, 1]] raises ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "ecf4227bf3cfa1d60392edbfdab865674797f0542aaae8046c8d741ae3f91672",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "The function and test script have been written and all tests pass.\n\n**Function:** `merge_intervals(intervals)` validates input, sorts intervals by start, then merges overlapping or touching intervals (where `current_start \u003c= previous_end`). It returns new lists without modifying the input.\n\n**Test script:** Verified all provided examples plus additional cases (single interval, non-overlapping, touching, complete overlap, input preservation, ValueError for inverted intervals). The script prints `ALL TESTS PASSED` as its last line.\n\nCLAIMS: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def merge_intervals(intervals):\n    # Validate input\n    for pair in intervals:\n        if len(pair) != 2:\n            raise ValueError(\"Each pair must have exactly 2 elements\")\n        if pair[0] \u003e pair[1]:\n            raise ValueError(f\"Invalid interval: {pair}, start \u003e end\")\n    \n    if not intervals:\n        return []\n    \n    # Sort intervals by start\n    sorted_intervals = sorted(intervals, key=lambda x: x[0])\n    \n    merged = [list(sorted_intervals[0])]  # Make a copy\n    \n    for current in sorted_intervals[1:]:\n        previous = merged[-1]\n        # Check if current overlaps or touches previous\n        # Two intervals [a, b] and [c, d] overlap/touch if c \u003c= b\n        if current[0] \u003c= previous[1]:\n            # Merge: extend the end if needed\n            if current[1] \u003e previous[1]:\n                previous[1] = current[1]\n        else:\n            merged.append(list(current))\n    \n    return merged\n\n# Test script\ndef test_merge_intervals():\n    # Example 1\n    result = merge_intervals([[1, 3], [2, 6], [8, 10], [15, 18]])\n    expected = [[1, 6], [8, 10], [15, 18]]\n    assert result == expected, f\"Example 1 failed: {result} != {expected}\"\n    \n    # Example 2\n    result = merge_intervals([[1, 4], [4, 5]])\n    expected = [[1, 5]]\n    assert result == expected, f\"Example 2 failed: {result} != {expected}\"\n    \n    # Example 3\n    result = merge_intervals([])\n    expected = []\n    assert result == expected, f\"Example 3 failed: {result} != {expected}\"\n    \n    # Example 4\n    try:\n        merge_intervals([[3, 1]])\n        assert False, \"Example 4 failed: should have raised ValueError\"\n    except ValueError:\n        pass  # Expected\n    \n    # Additional test cases\n    # Single interval\n    result = merge_intervals([[1, 5]])\n    expected = [[1, 5]]\n    assert result == expected, f\"Single interval failed: {result} != {expected}\"\n    \n    # Non-overlapping, not touching\n    result = merge_intervals([[1, 2], [3, 4]])\n    expected = [[1, 2], [3, 4]]\n    assert result == expected, f\"Non-overlapping failed: {result} != {expected}\"\n    \n    # Touching at a point\n    result = merge_intervals([[1, 3], [3, 5]])\n    expected = [[1, 5]]\n    assert result == expected, f\"Touching failed: {result} != {expected}\"\n    \n    # Complete overlap\n    result = merge_intervals([[1, 10], [2, 5]])\n    expected = [[1, 10]]\n    assert result == expected, f\"Complete overlap failed: {result} != {expected}\"\n    \n    # Adjacent intervals in different order\n    result = merge_intervals([[5, 8], [1, 3], [3, 5]])\n    expected = [[1, 8]]\n    assert result == expected, f\"Adjacent different order failed: {result} != {expected}\"\n    \n    # Input not modified\n    original = [[1, 3], [2, 6], [8, 10], [15, 18]]\n    import copy\n    original_copy = copy.deepcopy(original)\n    merge_intervals(original)\n    assert original == original_copy, \"Input was modified!\"\n    \n    # Input pairs not modified\n    original2 = [[1, 3], [2, 6]]\n    import copy\n    original2_copy = copy.deepcopy(original2)\n    merge_intervals(original2)\n    assert original2 == original2_copy, \"Input pairs were modified!\"\n    \n    print(\"ALL TESTS PASSED\")\n\ntest_merge_intervals()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 697,
+      "Record": "5995ece17c6f8db0e761a46096835e5c620bd3b90bd4697031c47872e15a6b81",
+      "Request": "2340256ccea43d608212109feb8331c313a12943b98f889cf32ce23ff201fa27",
+      "Result": "248ae4ee161dbe475b28997db64dc95be0f5c7e025e7413bb47455c1e32051c3",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "def merge_intervals(intervals):\n    # Validate input\n    for pair in intervals:\n        if len(pair) != 2:\n            raise ValueError(\"Each pair must have exactly 2 elements\")\n        if pair[0] \u003e pair[1]:\n            raise ValueError(f\"Invalid interval: {pair}, start \u003e end\")\n    \n    if not intervals:\n        return []\n    \n    # Sort intervals by start\n    sorted_intervals = sorted(intervals, key=lambda x: x[0])\n    \n    merged = [list(sorted_intervals[0])]  # Make a copy\n    \n    for current in sorted_intervals[1:]:\n        previous = merged[-1]\n        # Check if current overlaps or touches previous\n        # Two intervals [a, b] and [c, d] overlap/touch if c \u003c= b\n        if current[0] \u003c= previous[1]:\n            # Merge: extend the end if needed\n            if current[1] \u003e previous[1]:\n                previous[1] = current[1]\n        else:\n            merged.append(list(current))\n    \n    return merged\n\n# Test script\ndef test_merge_intervals():\n    # Example 1\n    result = merge_intervals([[1, 3], [2, 6], [8, 10], [15, 18]])\n    expected = [[1, 6], [8, 10], [15, 18]]\n    assert result == expected, f\"Example 1 failed: {result} != {expected}\"\n    \n    # Example 2\n    result = merge_intervals([[1, 4], [4, 5]])\n    expected = [[1, 5]]\n    assert result == expected, f\"Example 2 failed: {result} != {expected}\"\n    \n    # Example 3\n    result = merge_intervals([])\n    expected = []\n    assert result == expected, f\"Example 3 failed: {result} != {expected}\"\n    \n    # Example 4\n    try:\n        merge_intervals([[3, 1]])\n        assert False, \"Example 4 failed: should have raised ValueError\"\n    except ValueError:\n        pass  # Expected\n    \n    # Additional test cases\n    # Single interval\n    result = merge_intervals([[1, 5]])\n    expected = [[1, 5]]\n    assert result == expected, f\"Single interval failed: {result} != {expected}\"\n    \n    # Non-overlapping, not touching\n    result = merge_intervals([[1, 2], [3, 4]])\n    expected = [[1, 2], [3, 4]]\n    assert result == expected, f\"Non-overlapping failed: {result} != {expected}\"\n    \n    # Touching at a point\n    result = merge_intervals([[1, 3], [3, 5]])\n    expected = [[1, 5]]\n    assert result == expected, f\"Touching failed: {result} != {expected}\"\n    \n    # Complete overlap\n    result = merge_intervals([[1, 10], [2, 5]])\n    expected = [[1, 10]]\n    assert result == expected, f\"Complete overlap failed: {result} != {expected}\"\n    \n    # Adjacent intervals in different order\n    result = merge_intervals([[5, 8], [1, 3], [3, 5]])\n    expected = [[1, 8]]\n    assert result == expected, f\"Adjacent different order failed: {result} != {expected}\"\n    \n    # Input not modified\n    import copy\n    original = [[1, 3], [2, 6], [8, 10], [15, 18]]\n    original_copy = copy.deepcopy(original)\n    merge_intervals(original)\n    assert original == original_copy, \"Input was modified!\"\n    \n    # Input pairs not modified\n    original2 = [[1, 3], [2, 6]]\n    original2_copy = copy.deepcopy(original2)\n    merge_intervals(original2)\n    assert original2 == original2_copy, \"Input pairs were modified!\"\n    \n    print(\"ALL TESTS PASSED\")\n\ntest_merge_intervals()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 37,
+      "Record": "c0a2d91d86e7e24fb535e83ce32bfcb2b3f130c9aae9ee6901180b0ca8716ea5",
+      "Request": "382adbf7188e0c148425083f47888c9a3c684135997046f1b3ae49be34d78852",
+      "Result": "ab00f2eb57e2670c621682ad7ffc5e0b95f307c5df9527f0b63b8d140b20acb3",
+      "Previous": "5995ece17c6f8db0e761a46096835e5c620bd3b90bd4697031c47872e15a6b81",
+      "Sequence": 2
+    }
+  ],
+  "Final": "The function and test script have been written and all tests pass.\n\n**Function:** `merge_intervals(intervals)` validates input, sorts intervals by start, then merges overlapping or touching intervals (where `current_start \u003c= previous_end`). It returns new lists without modifying the input.\n\n**Test script:** Verified all provided examples plus additional cases (single interval, non-overlapping, touching, complete overlap, input preservation, ValueError for inverted intervals). The script prints `ALL TESTS PASSED` as its last line.\n\nCLAIMS: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 3,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6W1tbMSwzXSxbMiw2XSxbOCwxMF0sWzE1LDE4XV1dLCJleHBlY3QiOltbMSw2XSxbOCwxMF0sWzE1LDE4XV19LHsiYXJncyI6W1tbMSw0XSxbNCw1XV1dLCJleHBlY3QiOltbMSw1XV19LHsiYXJncyI6W1tdXSwiZXhwZWN0IjpbXX0seyJhcmdzIjpbW1szLDFdXV0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOltbWzEsMl0sWzMsNF1dXSwiZXhwZWN0IjpbWzEsMl0sWzMsNF1dfSx7ImFyZ3MiOltbWzUsNV1dXSwiZXhwZWN0IjpbWzUsNV1dfSx7ImFyZ3MiOltbWzgsMTBdLFsxLDNdLFsyLDZdXV0sImV4cGVjdCI6W1sxLDZdLFs4LDEwXV19LHsiYXJncyI6W1tbMSwxMF0sWzIsM11dXSwiZXhwZWN0IjpbWzEsMTBdXX0seyJhcmdzIjpbW1sxLDRdLFswLDRdXV0sImV4cGVjdCI6W1swLDRdXX0seyJhcmdzIjpbW1stNSwtMV0sWy0xLDJdXV0sImV4cGVjdCI6W1stNSwyXV19LHsiYXJncyI6W1tbMSwyXSxbMiwzXSxbMyw0XV1dLCJleHBlY3QiOltbMSw0XV19LHsiYXJncyI6W1tbMSw1XSxbMiwzXSxbNCw4XV1dLCJleHBlY3QiOltbMSw4XV19LHsiYXJncyI6W1tbMSwyXSxbMSwyXV1dLCJleHBlY3QiOltbMSwyXV19LHsiYXJncyI6W1tbMCwwXSxbMSwxXV1dLCJleHBlY3QiOltbMCwwXSxbMSwxXV19LHsiYXJncyI6W1tbMSwyXSxbNSw0XV1dLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbW1szLDRdLFsxLDJdXV0sImV4cGVjdCI6W1sxLDJdLFszLDRdXX1dLCJmdW5jdGlvbiI6Im1lcmdlX2ludGVydmFscyIsInVuY2hhbmdlZCI6dHJ1ZX0=\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 16, \"Total\": 16, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 33,
+    "Record": "3b9f0a1309507d0956f641c3090e3d3ae479ab678d4d67a39e8265f0dbd9d423",
+    "Request": "38540b75fd6057a03286743c05c86ac28b20be0f7bd906228a6f177a8aa34569",
+    "Result": "d14308c7d78885a66971b5a04edc34ecaa9ceb7f37c8767a57de61c2fb47a797",
+    "Previous": "c0a2d91d86e7e24fb535e83ce32bfcb2b3f130c9aae9ee6901180b0ca8716ea5",
+    "Sequence": 3
+  },
+  "Calls": 3,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "17577bf6b3c9e21920cefd97bd76d7919c4164bf43b2a2e21289b4b71adf95f1",
+  "Usage": {
+    "Prompt": 5828,
+    "Completion": 2014,
+    "Calls": 3
+  }
+}

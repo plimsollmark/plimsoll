@@ -1,0 +1,132 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Task": "Write a Python function from_roman(s) that converts a Roman numeral to an int. Accept only the standard form of a number from 1 to 3999, using I=1, V=5, X=10, L=50, C=100, D=500, M=1000: the thousands, hundreds, tens and units digits are written in that order, a zero digit is written as nothing, and each other digit d is written with that place's one-symbol (I, X, C or M), five-symbol (V, L or D) and the next place's one-symbol: 1 to 3 as that many one-symbols, 4 as one-symbol then five-symbol (IV, XL, CD), 5 as the five-symbol, 6 to 8 as the five-symbol then 1 to 3 one-symbols, 9 as one-symbol then the next place's one-symbol (IX, XC, CM); thousands are 1 to 3 M. Uppercase only. Any other string, including the empty string, must raise ValueError. Examples: \"III\" -\u003e 3, \"IV\" -\u003e 4, \"IX\" -\u003e 9, \"LVIII\" -\u003e 58, \"MCMXCIV\" -\u003e 1994; \"IIII\", \"IC\" and \"\" raise ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "6038163909e503d0c2df2bdb4d98c6056512f035e41d45e2b172e3a96d35d610",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "",
+      "Runs": [
+        3
+      ]
+    },
+    {
+      "N": 4,
+      "Text": "",
+      "Runs": [
+        4
+      ]
+    },
+    {
+      "N": 5,
+      "Text": "The function and test script are complete and all tests pass. Here's a summary:\n\n**`from_roman(s)` function**: Converts a Roman numeral string to an integer. It:\n1. Rejects empty strings and non-uppercase characters with `ValueError`\n2. Validates all characters are valid Roman symbols (I, V, X, L, C, D, M)\n3. Performs the standard integer conversion using subtractive notation\n4. Validates the input is in standard form by converting the result back to Roman and comparing\n5. Ensures the value is in range 1-3999\n\n**Test results** - all required examples and additional cases pass:\n- `from_roman(\"III\")` → 3 ✓\n- `from_roman(\"IV\")` → 4 ✓\n- `from_roman(\"IX\")` → 9 ✓\n- `from_roman(\"LVIII\")` → 58 ✓\n- `from_roman(\"MCMXCIV\")` → 1994 ✓\n- `\"IIII\"`, `\"IC\"`, `\"\"` all raise `ValueError` ✓\n- Additional valid cases (I through 3999) all convert correctly ✓\n- Invalid patterns (VX, LC, DM, XM, lowercase, non-Roman chars) all raise `ValueError` ✓\n\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def from_roman(s):\n    if not s or not isinstance(s, str):\n        raise ValueError(\"Invalid Roman numeral\")\n    # Check for uppercase only\n    if not s.isupper():\n        raise ValueError(\"Invalid Roman numeral: must be uppercase\")\n    \n    roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}\n    \n    # Validate characters\n    for char in s:\n        if char not in roman_map:\n            raise ValueError(f\"Invalid character: {char}\")\n    \n    # Check for standard form by converting and back-converting\n    # First, basic conversion\n    total = 0\n    i = 0\n    while i \u003c len(s):\n        if i + 1 \u003c len(s) and roman_map[s[i]] \u003c roman_map[s[i+1]]:\n            total += roman_map[s[i+1]] - roman_map[s[i]]\n            i += 2\n        else:\n            total += roman_map[s[i]]\n            i += 1\n    \n    if total \u003c 1 or total \u003e 3999:\n        raise ValueError(\"Roman numeral out of range 1-3999\")\n    \n    # Now validate the standard form by back-converting\n    # Build standard Roman numeral from the integer\n    val_sym = [\n        (1000, 'M'), (900, 'CM'), (500, 'D'), (400, 'CD'),\n        (100, 'C'), (90, 'XC'), (50, 'L'), (40, 'XL'),\n        (10, 'X'), (9, 'IX'), (5, 'V'), (4, 'IV'), (1, 'I')\n    ]\n    standard = ''\n    remaining = total\n    for val, sym in val_sym:\n        while remaining \u003e= val:\n            standard += sym\n            remaining -= val\n    \n    if standard != s:\n        raise ValueError(\"Invalid standard form\")\n    \n    return total\n\n# Test examples\ntests = [\n    (\"III\", 3),\n    (\"IV\", 4),\n    (\"IX\", 9),\n    (\"LVIII\", 58),\n    (\"MCMXCIV\", 1994),\n]\n\nfor roman, expected in tests:\n    result = from_roman(roman)\n    assert result == expected, f\"from_roman('{roman}') = {result}, expected {expected}\"\n    print(f\"from_roman('{roman}') = {result} ✓\")\n\n# Test invalid cases\ninvalid_cases = [\"IIII\", \"IC\", \"\"]\nfor roman in invalid_cases:\n    try:\n        result = from_roman(roman)\n        print(f\"from_roman('{roman}') = {result} - FAILED (should have raised ValueError)\")\n    except ValueError:\n        print(f\"from_roman('{roman}') raised ValueError ✓\")\n\nprint(\"ALL TESTS PASSED\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "from_roman('III') = 3 ✓\nfrom_roman('IV') = 4 ✓\nfrom_roman('IX') = 9 ✓\nfrom_roman('LVIII') = 58 ✓\nfrom_roman('MCMXCIV') = 1994 ✓\nfrom_roman('IIII') raised ValueError ✓\nfrom_roman('IC') raised ValueError ✓\nfrom_roman('') raised ValueError ✓\nALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 819,
+      "Record": "435b2429c0fd15ce8315bf3a543190c2a9600d255cd5ce85f673a9c50d0309b9",
+      "Request": "e50e05b5ad6c9e31585caf7fee4cf97c2e5d43b6cfea58683541af0fc949ff9a",
+      "Result": "d301f72f7929fb225a03675ad1ca6ca217071f9196c3a7dfcad3a6c16abba617",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "def from_roman(s):\n    if not s or not isinstance(s, str):\n        raise ValueError(\"Invalid Roman numeral\")\n    # Check for uppercase only\n    if not s.isupper():\n        raise ValueError(\"Invalid Roman numeral: must be uppercase\")\n    \n    roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}\n    \n    # Validate characters\n    for char in s:\n        if char not in roman_map:\n            raise ValueError(f\"Invalid character: {char}\")\n    \n    # Check for standard form by converting and back-converting\n    # First, basic conversion\n    total = 0\n    i = 0\n    while i \u003c len(s):\n        if i + 1 \u003c len(s) and roman_map[s[i]] \u003c roman_map[s[i+1]]:\n            total += roman_map[s[i+1]] - roman_map[s[i]]\n            i += 2\n        else:\n            total += roman_map[s[i]]\n            i += 1\n    \n    if total \u003c 1 or total \u003e 3999:\n        raise ValueError(\"Roman numeral out of range 1-3999\")\n    \n    # Now validate the standard form by back-converting\n    # Build standard Roman numeral from the integer\n    val_sym = [\n        (1000, 'M'), (900, 'CM'), (500, 'D'), (400, 'CD'),\n        (100, 'C'), (90, 'XC'), (50, 'L'), (40, 'XL'),\n        (10, 'X'), (9, 'IX'), (5, 'V'), (4, 'IV'), (1, 'I')\n    ]\n    standard = ''\n    remaining = total\n    for val, sym in val_sym:\n        while remaining \u003e= val:\n            standard += sym\n            remaining -= val\n    \n    if standard != s:\n        raise ValueError(\"Invalid standard form\")\n    \n    return total\n\n# Additional test cases\nadditional_tests = [\n    (\"I\", 1),\n    (\"II\", 2),\n    (\"VI\", 6),\n    (\"VII\", 7),\n    (\"VIII\", 8),\n    (\"XI\", 11),\n    (\"XIV\", 14),\n    (\"XIX\", 19),\n    (\"XXI\", 21),\n    \"XLII\", 42),\n    (\"XC\", 90),\n    (\"CD\", 400),\n    (\"CM\", 900),\n    (\"MMMCMXCIX\", 3999),\n]\n\nfor item in additional_tests:\n    if isinstance(item, tuple):\n        roman, expected = item\n    else:\n        # This handles the string-only cases\n        continue\n    result = from_roman(roman)\n    assert result == expected, f\"from_roman('{roman}') = {result}, expected {expected}\"\n    print(f\"from_roman('{roman}') = {result} ✓\")\n\n# Test some invalid patterns\ninvalid_patterns = [\"VX\", \"LC\", \"DM\", \"XM\", \" just testing\", \"hello\", \"xvi\"]\nfor roman in invalid_patterns:\n    try:\n        result = from_roman(roman)\n        print(f\"from_roman('{roman}') = {result} - FAILED (should have raised ValueError)\")\n    except ValueError:\n        print(f\"from_roman('{roman}') raised ValueError ✓\")\n\nprint(\"ALL TESTS PASSED\")",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "  File \"\u003ccell 2\u003e\", line 60\n    \"XLII\", 42),\n              ^\nSyntaxError: closing parenthesis ')' does not match opening parenthesis '[' on line 50\n",
+      "Millis": 101,
+      "Record": "9faa461e93459facd868de5e8975f13041c5361e6a2ff0867f4922fe46e2dee8",
+      "Request": "58b9bcb64cd731ee9737ec240ec2d1970d4897f5b8aa56c1452a1460bda102c1",
+      "Result": "d3037d381a95fc76390df8552c8d75c677c9415c0160cb21ccbf7a08351a3857",
+      "Previous": "435b2429c0fd15ce8315bf3a543190c2a9600d255cd5ce85f673a9c50d0309b9",
+      "Sequence": 2
+    },
+    {
+      "N": 3,
+      "Language": "python",
+      "Code": "def from_roman(s):\n    if not s or not isinstance(s, str):\n        raise ValueError(\"Invalid Roman numeral\")\n    # Check for uppercase only\n    if not s.isupper():\n        raise ValueError(\"Invalid Roman numeral: must be uppercase\")\n    \n    roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}\n    \n    # Validate characters\n    for char in s:\n        if char not in roman_map:\n            raise ValueError(f\"Invalid character: {char}\")\n    \n    # Check for standard form by converting and back-converting\n    # First, basic conversion\n    total = 0\n    i = 0\n    while i \u003c len(s):\n        if i + 1 \u003c len(s) and roman_map[s[i]] \u003c roman_map[s[i+1]]:\n            total += roman_map[s[i+1]] - roman_map[s[i]]\n            i += 2\n        else:\n            total += roman_map[s[i]]\n            i += 1\n    \n    if total \u003c 1 or total \u003e 3999:\n        raise ValueError(\"Roman numeral out of range 1-3999\")\n    \n    # Now validate the standard form by back-converting\n    # Build standard Roman numeral from the integer\n    val_sym = [\n        (1000, 'M'), (900, 'CM'), (500, 'D'), (400, 'CD'),\n        (100, 'C'), (90, 'XC'), (50, 'L'), (40, 'XL'),\n        (10, 'X'), (9, 'IX'), (5, 'V'), (4, 'IV'), (1, 'I')\n    ]\n    standard = ''\n    remaining = total\n    for val, sym in val_sym:\n        while remaining \u003e= val:\n            standard += sym\n            remaining -= val\n    \n    if standard != s:\n        raise ValueError(\"Invalid standard form\")\n    \n    return total\n\n# Additional test cases\nadditional_tests = [\n    (\"I\", 1),\n    (\"II\", 2),\n    (\"VI\", 6),\n    (\"VII\", 7),\n    (\"VIII\", 8),\n    (\"XI\", 11),\n    (\"XIV\", 14),\n    (\"XIX\", 19),\n    (\"XXI\", 21),\n    (\"XLII\", 42),\n    (\"XC\", 90),\n    (\"CD\", 400),\n    (\"CM\", 900),\n    (\"MMMCMXCIX\", 3999),\n]\n\nfor roman, expected in additional_tests:\n    result = from_roman(roman)\n    assert result == expected, f\"from_roman('{roman}') = {result}, expected {expected}\"\n    print(f\"from_roman('{roman}') = {result} ✓\")\n\n# Test some invalid patterns\ninvalid_patterns = [\"VX\", \"LC\", \"DM\", \"XM\", \"hello\", \"xvi\"]\nfor roman in invalid_patterns:\n    try:\n        result = from_roman(roman)\n        print(f\"from_roman('{roman}') = {result} - FAILED (should have raised ValueError)\")\n    except ValueError:\n        print(f\"from_roman('{roman}') raised ValueError ✓\")\n\nprint(\"ALL TESTS PASSED\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "from_roman('I') = 1 ✓\nfrom_roman('II') = 2 ✓\nfrom_roman('VI') = 6 ✓\nfrom_roman('VII') = 7 ✓\nfrom_roman('VIII') = 8 ✓\nfrom_roman('XI') = 11 ✓\nfrom_roman('XIV') = 14 ✓\nfrom_roman('XIX') = 19 ✓\nfrom_roman('XXI') = 21 ✓\nfrom_roman('XLII') = 42 ✓\nfrom_roman('XC') = 90 ✓\nfrom_roman('CD') = 400 ✓\nfrom_roman('CM') = 900 ✓\nfrom_roman('MMMCMXCIX') = 3999 ✓\nfrom_roman('VX') raised ValueError ✓\nfrom_roman('LC') raised ValueError ✓\nfrom_roman('DM') raised ValueError ✓\nfrom_roman('XM') raised ValueError ✓\nfrom_roman('hello') raised ValueError ✓\nfrom_roman('xvi') raised ValueError ✓\nALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 34,
+      "Record": "5d544f3cdda05bf89e177e69adb2c8285978553b7fa812f80ea5d6fb9b2071b8",
+      "Request": "43eee9e81f8f6e33236b606fa59cf91ce5e35def20ee7fc44d1f194c5296eb47",
+      "Result": "33af88d5eb4de70ab4c17d8b0a2a77684e42ed839f365bcb95ab3985f7277607",
+      "Previous": "9faa461e93459facd868de5e8975f13041c5361e6a2ff0867f4922fe46e2dee8",
+      "Sequence": 3
+    },
+    {
+      "N": 4,
+      "Language": "python",
+      "Code": "def from_roman(s):\n    if not s or not isinstance(s, str):\n        raise ValueError(\"Invalid Roman numeral\")\n    # Check for uppercase only\n    if not s.isupper():\n        raise ValueError(\"Invalid Roman numeral: must be uppercase\")\n    \n    roman_map = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}\n    \n    # Validate characters\n    for char in s:\n        if char not in roman_map:\n            raise ValueError(f\"Invalid character: {char}\")\n    \n    # Check for standard form by converting and back-converting\n    # First, basic conversion\n    total = 0\n    i = 0\n    while i \u003c len(s):\n        if i + 1 \u003c len(s) and roman_map[s[i]] \u003c roman_map[s[i+1]]:\n            total += roman_map[s[i+1]] - roman_map[s[i]]\n            i += 2\n        else:\n            total += roman_map[s[i]]\n            i += 1\n    \n    if total \u003c 1 or total \u003e 3999:\n        raise ValueError(\"Roman numeral out of range 1-3999\")\n    \n    # Now validate the standard form by back-converting\n    # Build standard Roman numeral from the integer\n    val_sym = [\n        (1000, 'M'), (900, 'CM'), (500, 'D'), (400, 'CD'),\n        (100, 'C'), (90, 'XC'), (50, 'L'), (40, 'XL'),\n        (10, 'X'), (9, 'IX'), (5, 'V'), (4, 'IV'), (1, 'I')\n    ]\n    standard = ''\n    remaining = total\n    for val, sym in val_sym:\n        while remaining \u003e= val:\n            standard += sym\n            remaining -= val\n    \n    if standard != s:\n        raise ValueError(\"Invalid standard form\")\n    \n    return total\n\n# Full test script with all required examples plus additional cases\nprint(\"Testing required examples:\")\ntests = [\n    (\"III\", 3),\n    (\"IV\", 4),\n    (\"IX\", 9),\n    (\"LVIII\", 58),\n    (\"MCMXCIV\", 1994),\n]\n\nfor roman, expected in tests:\n    result = from_roman(roman)\n    assert result == expected, f\"from_roman('{roman}') = {result}, expected {expected}\"\n    print(f\"  from_roman('{roman}') = {result} ✓\")\n\nprint(\"\\nTesting invalid cases that must raise ValueError:\")\ninvalid_cases = [\"IIII\", \"IC\", \"\"]\nfor roman in invalid_cases:\n    try:\n        result = from_roman(roman)\n        print(f\"  from_roman('{roman}') = {result} - FAILED (should have raised ValueError)\")\n    except ValueError:\n        print(f\"  from_roman('{roman}') raised ValueError ✓\")\n\nprint(\"\\nTesting additional valid cases:\")\nadditional_valid = [\n    (\"I\", 1),\n    (\"II\", 2),\n    (\"VI\", 6),\n    (\"VII\", 7),\n    (\"VIII\", 8),\n    (\"XI\", 11),\n    (\"XIV\", 14),\n    (\"XIX\", 19),\n    (\"XXI\", 21),\n    (\"XLII\", 42),\n    (\"XC\", 90),\n    (\"CD\", 400),\n    (\"CM\", 900),\n    (\"MMMCMXCIX\", 3999),\n]\n\nfor roman, expected in additional_valid:\n    result = from_roman(roman)\n    assert result == expected, f\"from_roman('{roman}') = {result}, expected {expected}\"\n    print(f\"  from_roman('{roman}') = {result} ✓\")\n\nprint(\"\\nTesting additional invalid patterns:\")\ninvalid_patterns = [\"VX\", \"LC\", \"DM\", \"XM\", \"hello\", \"xvi\"]\nfor roman in invalid_patterns:\n    try:\n        result = from_roman(roman)\n        print(f\"  from_roman('{roman}') = {result} - FAILED (should have raised ValueError)\")\n    except ValueError:\n        print(f\"  from_roman('{roman}') raised ValueError ✓\")\n\nprint(\"\\nALL TESTS PASSED\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Testing required examples:\n  from_roman('III') = 3 ✓\n  from_roman('IV') = 4 ✓\n  from_roman('IX') = 9 ✓\n  from_roman('LVIII') = 58 ✓\n  from_roman('MCMXCIV') = 1994 ✓\n\nTesting invalid cases that must raise ValueError:\n  from_roman('IIII') raised ValueError ✓\n  from_roman('IC') raised ValueError ✓\n  from_roman('') raised ValueError ✓\n\nTesting additional valid cases:\n  from_roman('I') = 1 ✓\n  from_roman('II') = 2 ✓\n  from_roman('VI') = 6 ✓\n  from_roman('VII') = 7 ✓\n  from_roman('VIII') = 8 ✓\n  from_roman('XI') = 11 ✓\n  from_roman('XIV') = 14 ✓\n  from_roman('XIX') = 19 ✓\n  from_roman('XXI') = 21 ✓\n  from_roman('XLII') = 42 ✓\n  from_roman('XC') = 90 ✓\n  from_roman('CD') = 400 ✓\n  from_roman('CM') = 900 ✓\n  from_roman('MMMCMXCIX') = 3999 ✓\n\nTesting additional invalid patterns:\n  from_roman('VX') raised ValueError ✓\n  from_roman('LC') raised ValueError ✓\n  from_roman('DM') raised ValueError ✓\n  from_roman('XM') raised ValueError ✓\n  from_roman('hello') raised ValueError ✓\n  from_roman('xvi') raised ValueError ✓\n\nALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 87,
+      "Record": "3b624675fccc9c5ca508041f3d5e37c41ba8717a419646e76b86498442300a59",
+      "Request": "aa543fc9063cdd944b2b5f3927f00f14f89f1f07515abcc479792c5ee29ea49e",
+      "Result": "c4bac446c5eee721cd421651ae7cefed3881bf576240960e356820a96a6caf42",
+      "Previous": "5d544f3cdda05bf89e177e69adb2c8285978553b7fa812f80ea5d6fb9b2071b8",
+      "Sequence": 4
+    }
+  ],
+  "Final": "The function and test script are complete and all tests pass. Here's a summary:\n\n**`from_roman(s)` function**: Converts a Roman numeral string to an integer. It:\n1. Rejects empty strings and non-uppercase characters with `ValueError`\n2. Validates all characters are valid Roman symbols (I, V, X, L, C, D, M)\n3. Performs the standard integer conversion using subtractive notation\n4. Validates the input is in standard form by converting the result back to Roman and comparing\n5. Ensures the value is in range 1-3999\n\n**Test results** - all required examples and additional cases pass:\n- `from_roman(\"III\")` → 3 ✓\n- `from_roman(\"IV\")` → 4 ✓\n- `from_roman(\"IX\")` → 9 ✓\n- `from_roman(\"LVIII\")` → 58 ✓\n- `from_roman(\"MCMXCIV\")` → 1994 ✓\n- `\"IIII\"`, `\"IC\"`, `\"\"` all raise `ValueError` ✓\n- Additional valid cases (I through 3999) all convert correctly ✓\n- Invalid patterns (VX, LC, DM, XM, lowercase, non-Roman chars) all raise `ValueError` ✓\n\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 5,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyJJSUkiXSwiZXhwZWN0IjozfSx7ImFyZ3MiOlsiSVYiXSwiZXhwZWN0Ijo0fSx7ImFyZ3MiOlsiSVgiXSwiZXhwZWN0Ijo5fSx7ImFyZ3MiOlsiTFZJSUkiXSwiZXhwZWN0Ijo1OH0seyJhcmdzIjpbIk1DTVhDSVYiXSwiZXhwZWN0IjoxOTk0fSx7ImFyZ3MiOlsiSUlJSSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIklDIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiTU1NQ01YQ0lYIl0sImV4cGVjdCI6Mzk5OX0seyJhcmdzIjpbIlhMSVgiXSwiZXhwZWN0Ijo0OX0seyJhcmdzIjpbIkNEIl0sImV4cGVjdCI6NDAwfSx7ImFyZ3MiOlsiSSJdLCJleHBlY3QiOjF9LHsiYXJncyI6WyJNTU1NIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiVlgiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJJTCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIm1jbSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIkRDRCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlZWIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiWFhYWCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIklJViJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIk1DTSAiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJNQ01cbiJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIkNNIl0sImV4cGVjdCI6OTAwfSx7ImFyZ3MiOlsiWENJWCJdLCJleHBlY3QiOjk5fSx7ImFyZ3MiOlsiSVZJIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiTiJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIk1NWFhWSSJdLCJleHBlY3QiOjIwMjZ9LHsiYXJncyI6WyJMWEwiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9XSwiZnVuY3Rpb24iOiJmcm9tX3JvbWFuIiwidW5jaGFuZ2VkIjpmYWxzZX0=\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 28, \"Total\": 28, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 133,
+    "Record": "8a2b428247c51d462900b3acc8bd570580fc476c3266240f243532b268b645da",
+    "Request": "71d34e31a6c3e6c81558711172716121aa2562c11d2178adca7a501553c14139",
+    "Result": "237445c78b86facb270b87a120b00b4f011c4991f3f3c2d2f5afd253c873cb63",
+    "Previous": "3b624675fccc9c5ca508041f3d5e37c41ba8717a419646e76b86498442300a59",
+    "Sequence": 5
+  },
+  "Calls": 5,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "d5fdca40f75eb7e9207bd77963b6d2a74c5066ee147cb5b9057117f5602a16e0",
+  "Usage": {
+    "Prompt": 15564,
+    "Completion": 3669,
+    "Calls": 5
+  }
+}

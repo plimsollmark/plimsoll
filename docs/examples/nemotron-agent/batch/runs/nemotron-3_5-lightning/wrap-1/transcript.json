@@ -1,0 +1,110 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/Nemotron-3_5-Lightning",
+  "Task": "Write a Python function wrap(text, width) that word-wraps text into a list of lines. Words are the runs of non-whitespace characters (what str.split() with no arguments returns). Fill lines greedily: a word joins the current line, after one space, if the line's length plus 1 plus the word's length is at most width; otherwise the current line is finished and the word starts the next line. A word longer than width is first cut into pieces of exactly width characters (the last piece may be shorter), and each piece is then placed as a word by the same rule, so further words may follow the last piece on its line. Lines never have leading or trailing spaces. Return [] when text has no words. If width is less than 1, raise ValueError. Examples: wrap(\"the quick brown fox\", 10) -\u003e [\"the quick\", \"brown fox\"], wrap(\"abcdefghij\", 4) -\u003e [\"abcd\", \"efgh\", \"ij\"], wrap(\"\", 5) -\u003e [], wrap(\"a b\", 0) raises ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "095810ddbe87335829415b71dd0ba32c128ff2db40d5ac18edd4043975583d10",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "",
+      "Runs": [
+        3
+      ]
+    },
+    {
+      "N": 4,
+      "Text": "All tests pass. The function works correctly for the given examples and additional cases.\n\nCLAIMS: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "def wrap(text, width):\n    if width \u003c 1:\n        raise ValueError\n    words = text.split()\n    if not words:\n        return []\n    result = []\n    current_line = []\n    current_length = 0\n    for word in words:\n        if len(word) \u003e width:\n            # cut the word into pieces of exactly width characters\n            pieces = []\n            while len(word) \u003e 0:\n                pieces.append(word[:width])\n                word = word[width:]\n            # process each piece as a word by the same rule\n            for piece in pieces:\n                if current_line and current_length + 1 + len(piece) \u003c= width:\n                    current_line.append(piece)\n                    current_length = current_length + 1 + len(piece)\n                else:\n                    if current_line:\n                        result.append(' '.join(current_line))\n                        current_line = []\n                        current_length = 0\n                    current_line.append(piece)\n                    current_length = len(piece)\n        else:\n            if current_line and current_length + 1 + len(word) \u003c= width:\n                current_line.append(word)\n                current_length = current_length + 1 + len(word)\n            else:\n                if current_line:\n                    result.append(' '.join(current_line))\n                    current_line = []\n                    current_length = 0\n                current_line.append(word)\n                current_length = len(word)\n    if current_line:\n        result.append(' '.join(current_line))\n    return result\n\n# Test examples\nprint(wrap(\"the quick brown fox\", 10))  # -\u003e [\"the quick\", \"brown fox\"]\nprint(wrap(\"abcdefghij\", 4))  # -\u003e [\"abcd\", \"efgh\", \"ij\"]\nprint(wrap(\"\", 5))  # -\u003e []\ntry:\n    wrap(\"a b\", 0)\n    print(\"No ValueError raised\")\nexcept ValueError:\n    print(\"ValueError raised for width=0\")\n\n# Additional test cases\nprint(wrap(\"a b\", 1))  # ?\nprint(wrap(\"hello world\", 5))  # ?",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "['the quick', 'brown fox']\n['abcd', 'efgh', 'ij']\n[]\nValueError raised for width=0\n['a', 'b']\n['hello', 'world']\n",
+      "Stderr": "",
+      "Millis": 677,
+      "Record": "e02a0fff3157b1acf4b9e5ad0b9dbcaa860de555b6eae0482dd72e0c3ec164a1",
+      "Request": "8d68598a7143b235006d03c7b2fbf78dae7c9662c0acd513c74f2502471ee816",
+      "Result": "a6fa4158e570ebe759dc81707e0bc35734fdab06476e5a3548aaa43dc9f9a3ab",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "def wrap(text, width):\n    if width \u003c 1:\n        raise ValueError\n    words = text.split()\n    if not words:\n        return []\n    result = []\n    current_line = []\n    current_length = 0\n    for word in words:\n        if len(word) \u003e width:\n            # cut the word into pieces of exactly width characters\n            pieces = []\n            while len(word) \u003e 0:\n                pieces.append(word[:width])\n                word = word[width:]\n            # process each piece as a word by the same rule\n            for piece in pieces:\n                if current_line and current_length + 1 + len(piece) \u003c= width:\n                    current_line.append(piece)\n                    current_length = current_length + 1 + len(piece)\n                else:\n                    if current_line:\n                        result.append(' '.join(current_line))\n                        current_line = []\n                        current_length = 0\n                    current_line.append(piece)\n                    current_length = len(piece)\n        else:\n            if current_line and current_length + 1 + len(word) \u003c= width:\n                current_line.append(word)\n                current_length = current_length + 1 + len(word)\n            else:\n                if current_line:\n                    result.append(' '.join(current_line))\n                    current_line = []\n                    current_length = 0\n                current_line.append(word)\n                current_length = len(word)\n    if current_line:\n        result.append(' '.join(current_line))\n    return result\n\n# Test examples\nprint(\"Test 1:\", wrap(\"the quick brown fox\", 10))  # -\u003e [\"the quick\", \"brown fox\"]\nprint(\"Test 2:\", wrap(\"abcdefghij\", 4))  # -\u003e [\"abcd\", \"efgh\", \"ij\"]\nprint(\"Test 3:\", wrap(\"\", 5))  # -\u003e []\ntry:\n    wrap(\"a b\", 0)\n    print(\"Test 4: No ValueError raised\")\nexcept ValueError:\n    print(\"Test 4: ValueError raised for width=0\")\n\n# Additional test cases\nprint(\"Test 5:\", wrap(\"a b\", 1))  # ?\nprint(\"Test 6:\", wrap(\"hello world\", 5))  # ?\nprint(\"Test 7:\", wrap(\"a bc def\", 5))  # ?\nprint(\"Test 8:\", wrap(\"a b c d\", 2))  # ?",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "Test 1: ['the quick', 'brown fox']\nTest 2: ['abcd', 'efgh', 'ij']\nTest 3: []\nTest 4: ValueError raised for width=0\nTest 5: ['a', 'b']\nTest 6: ['hello', 'world']\nTest 7: ['a bc', 'def']\nTest 8: ['a', 'b', 'c', 'd']\n",
+      "Stderr": "",
+      "Millis": 38,
+      "Record": "cf43ea4244d06f11be5ee050ab2c3381dc5d8bf0674823e46d9c9be649583243",
+      "Request": "4e13a6d83a9728ddf679c99f7347faad055442ead45ada267ed1170f6bfaa174",
+      "Result": "1c21d0748ca931765bf62561cd0288234a4f3abceb0b391e36648747cf45c8e6",
+      "Previous": "e02a0fff3157b1acf4b9e5ad0b9dbcaa860de555b6eae0482dd72e0c3ec164a1",
+      "Sequence": 2
+    },
+    {
+      "N": 3,
+      "Language": "python",
+      "Code": "def wrap(text, width):\n    if width \u003c 1:\n        raise ValueError\n    words = text.split()\n    if not words:\n        return []\n    result = []\n    current_line = []\n    current_length = 0\n    for word in words:\n        if len(word) \u003e width:\n            # cut the word into pieces of exactly width characters\n            pieces = []\n            while len(word) \u003e 0:\n                pieces.append(word[:width])\n                word = word[width:]\n            # process each piece as a word by the same rule\n            for piece in pieces:\n                if current_line and current_length + 1 + len(piece) \u003c= width:\n                    current_line.append(piece)\n                    current_length = current_length + 1 + len(piece)\n                else:\n                    if current_line:\n                        result.append(' '.join(current_line))\n                        current_line = []\n                        current_length = 0\n                    current_line.append(piece)\n                    current_length = len(piece)\n        else:\n            if current_line and current_length + 1 + len(word) \u003c= width:\n                current_line.append(word)\n                current_length = current_length + 1 + len(word)\n            else:\n                if current_line:\n                    result.append(' '.join(current_line))\n                    current_line = []\n                    current_length = 0\n                current_line.append(word)\n                current_length = len(word)\n    if current_line:\n        result.append(' '.join(current_line))\n    return result\n\n# Test examples\ntests = [\n    (\"the quick brown fox\", 10, [\"the quick\", \"brown fox\"]),\n    (\"abcdefghij\", 4, [\"abcd\", \"efgh\", \"ij\"]),\n    (\"\", 5, []),\n]\n\nall_pass = True\nfor text, width, expected in tests:\n    result = wrap(text, width)\n    if result != expected:\n        print(f\"FAIL: wrap({repr(text)}, {width}) = {result}, expected {expected}\")\n        all_pass = False\n    else:\n        print(f\"PASS: wrap({repr(text)}, {width}) = {result}\")\n\n# Test ValueError\ntry:\n    wrap(\"a b\", 0)\n    print(\"FAIL: wrap('a b', 0) should raise ValueError\")\n    all_pass = False\nexcept ValueError:\n    print(\"PASS: wrap('a b', 0) raises ValueError\")\n\n# Additional test cases\nprint(\"\\nAdditional tests:\")\nadditional = [\n    (\"a b\", 1, [\"a\", \"b\"]),\n    (\"hello world\", 5, [\"hello\", \"world\"]),\n    (\"a bc def\", 5, [\"a bc\", \"def\"]),\n    (\"a b c d\", 2, [\"a\", \"b\", \"c\", \"d\"]),\n]\nfor text, width, expected in additional:\n    result = wrap(text, width)\n    if result != expected:\n        print(f\"FAIL: wrap({repr(text)}, {width}) = {result}, expected {expected}\")\n        all_pass = False\n    else:\n        print(f\"PASS: wrap({repr(text)}, {width}) = {result}\")\n\nif all_pass:\n    print(\"ALL TESTS PASSED\")\nelse:\n    print(\"NOT ALL TESTS PASSED\")",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "PASS: wrap('the quick brown fox', 10) = ['the quick', 'brown fox']\nPASS: wrap('abcdefghij', 4) = ['abcd', 'efgh', 'ij']\nPASS: wrap('', 5) = []\nPASS: wrap('a b', 0) raises ValueError\n\nAdditional tests:\nPASS: wrap('a b', 1) = ['a', 'b']\nPASS: wrap('hello world', 5) = ['hello', 'world']\nPASS: wrap('a bc def', 5) = ['a bc', 'def']\nPASS: wrap('a b c d', 2) = ['a', 'b', 'c', 'd']\nALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 44,
+      "Record": "e62984323d24fe21c3028be102e1fe51ab0f6f5cc79df3fffb109f7db7f2a34b",
+      "Request": "040d3efec10c9e2355e36381376e58f8ac7dbe4d506bdabbe1d79e85ecdfcd12",
+      "Result": "737e19f0cd49485499beefaa60adcea73d75f1a8701ac13dc8c08a9208089220",
+      "Previous": "cf43ea4244d06f11be5ee050ab2c3381dc5d8bf0674823e46d9c9be649583243",
+      "Sequence": 3
+    }
+  ],
+  "Final": "All tests pass. The function works correctly for the given examples and additional cases.\n\nCLAIMS: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 4,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyJ0aGUgcXVpY2sgYnJvd24gZm94IiwxMF0sImV4cGVjdCI6WyJ0aGUgcXVpY2siLCJicm93biBmb3giXX0seyJhcmdzIjpbImFiY2RlZmdoaWoiLDRdLCJleHBlY3QiOlsiYWJjZCIsImVmZ2giLCJpaiJdfSx7ImFyZ3MiOlsiIiw1XSwiZXhwZWN0IjpbXX0seyJhcmdzIjpbImEgYiIsMF0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiICAgIiw1XSwiZXhwZWN0IjpbXX0seyJhcmdzIjpbImEgYiIsLTFdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbImhlbGxvIHdvcmxkIiw1XSwiZXhwZWN0IjpbImhlbGxvIiwid29ybGQiXX0seyJhcmdzIjpbImhlbGxvIHdvcmxkIiwxMV0sImV4cGVjdCI6WyJoZWxsbyB3b3JsZCJdfSx7ImFyZ3MiOlsiYVx0YlxuYyIsM10sImV4cGVjdCI6WyJhIGIiLCJjIl19LHsiYXJncyI6WyJhYmNkZSBmIiw0XSwiZXhwZWN0IjpbImFiY2QiLCJlIGYiXX0seyJhcmdzIjpbImFiIGNkZWZnaCIsNF0sImV4cGVjdCI6WyJhYiIsImNkZWYiLCJnaCJdfSx7ImFyZ3MiOlsieCIsMV0sImV4cGVjdCI6WyJ4Il19LHsiYXJncyI6WyJhYSBiYiIsMV0sImV4cGVjdCI6WyJhIiwiYSIsImIiLCJiIl19LHsiYXJncyI6WyJvbmUgIHR3byIsM10sImV4cGVjdCI6WyJvbmUiLCJ0d28iXX0seyJhcmdzIjpbImhlbGxvIHdvcmxkIiw0XSwiZXhwZWN0IjpbImhlbGwiLCJvIiwid29ybCIsImQiXX0seyJhcmdzIjpbImEgYmIgY2NjIGRkZGQiLDZdLCJleHBlY3QiOlsiYSBiYiIsImNjYyIsImRkZGQiXX0seyJhcmdzIjpbIiAgbGVhZCBhbmQgdHJhaWwgICIsOV0sImV4cGVjdCI6WyJsZWFkIGFuZCIsInRyYWlsIl19XSwiZnVuY3Rpb24iOiJ3cmFwIiwidW5jaGFuZ2VkIjpmYWxzZX0=\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 17, \"Total\": 17, \"Failed\": []}\n",
+    "Stderr": "",
+    "Millis": 67,
+    "Record": "7461684e3f0e768424beacbba7590b4adcbfb1656b9864d439cd2003a7f6adaf",
+    "Request": "dd94ffa425264057c633c04760ff5305eaf2252314d99e496576925f15941559",
+    "Result": "41129440483a951ae06fa84bb8d48a18570ba9a0ee056268367465c6b60dd848",
+    "Previous": "e62984323d24fe21c3028be102e1fe51ab0f6f5cc79df3fffb109f7db7f2a34b",
+    "Sequence": 4
+  },
+  "Calls": 4,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "ab31812a47335ab899c561a424342baa02a3a4aac8e49e5a27c299108360457a",
+  "Usage": {
+    "Prompt": 7926,
+    "Completion": 1742,
+    "Calls": 4
+  }
+}

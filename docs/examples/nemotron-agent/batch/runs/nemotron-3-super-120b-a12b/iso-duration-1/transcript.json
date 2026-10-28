@@ -1,0 +1,88 @@
+{
+  "Date": "2026-10-27",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
+  "Task": "Write a Python function iso_duration_seconds(s) that converts an ISO 8601 duration string to a number of seconds (a float). The accepted forms are exactly these: \"P\", then a week count, then \"W\", and nothing else (for example \"P2W\"); or \"P\", then an optional day count and \"D\", then optionally \"T\" followed by at least one of an hour count with \"H\", a minute count with \"M\" and a second count with \"S\", in that order. At least one count must be present. A count is one or more ASCII digits, optionally followed by \".\" and one or more ASCII digits. Letters are uppercase. 1 week = 7 days and 1 day = 86400 seconds. Any other string, including years (\"Y\"), months (\"M\" before \"T\"), lowercase letters, spaces and signs, must raise ValueError. Examples: \"PT0S\" -\u003e 0, \"PT1H30M\" -\u003e 5400, \"P1DT2H\" -\u003e 93600, \"P1W\" -\u003e 604800, \"PT0.5S\" -\u003e 0.5, \"P2DT3H4M5.25S\" -\u003e 183845.25; \"\", \"P\", \"PT\", \"1H\" and \"P1H\" raise ValueError.\n\nWrite the function and a test script that checks every example above, plus cases of your own. Run it with the run_code tool and fix the code until every test passes. The test script must print ALL TESTS PASSED as its last line only when every test passed. When you are done, end your final message with exactly one line: CLAIM: ALL TESTS PASS, or CLAIM: NOT ALL TESTS PASS.",
+  "Provider": "docker",
+  "Tier": "kernel",
+  "Environment": "docker-image:sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171",
+  "Session": "f9c61d87d36dd9f89921399203687b02f2095cb7a53d7b9a058012ce0d7a8685",
+  "Turns": [
+    {
+      "N": 1,
+      "Text": "",
+      "Runs": [
+        1
+      ]
+    },
+    {
+      "N": 2,
+      "Text": "",
+      "Runs": [
+        2
+      ]
+    },
+    {
+      "N": 3,
+      "Text": "\n\nCLAIM: ALL TESTS PASS",
+      "Runs": null
+    }
+  ],
+  "Runs": [
+    {
+      "N": 1,
+      "Language": "python",
+      "Code": "import re\n\ndef iso_duration_seconds(s):\n    # pattern for PnW\n    m = re.fullmatch(r'P(\\d+(?:\\.\\d+)?)W', s)\n    if m:\n        weeks = float(m.group(1))\n        return weeks * 7 * 86400\n    # pattern for rest\n    # P (optional D) T? ...\n    # Must start with P\n    if not s.startswith('P'):\n        raise ValueError\n    rest = s[1:]\n    # split date part and time part\n    # date part: up to optional T\n    if 'T' in rest:\n        date_part, time_part = rest.split('T', 1)\n        if time_part == '':\n            raise ValueError\n    else:\n        date_part, time_part = rest, ''\n    # parse date part: optional number + D\n    days = 0.0\n    if date_part:\n        if not date_part.endswith('D'):\n            raise ValueError\n        num = date_part[:-1]\n        if num == '':\n            raise ValueError\n        if not re.fullmatch(r'\\d+(?:\\.\\d+)?', num):\n            raise ValueError\n        days = float(num)\n    # parse time part: at least one of H M S in order\n    hours = minutes = seconds = 0.0\n    if time_part:\n        # expected pattern: ((\\d+\\.?\\d*)H)?((\\d+\\.?\\d*)M)?((\\d+\\.?\\d*)S)?\n        # but ensure order and at least one present\n        # we'll parse sequentially\n        idx = 0\n        # hours\n        if idx \u003c len(time_part) and time_part[idx].isdigit():\n            match = re.match(r'(\\d+(?:\\.\\d+)?)H', time_part[idx:])\n            if match:\n                hours = float(match.group(1))\n                idx += match.end()\n            else:\n                raise ValueError\n        # minutes\n        if idx \u003c len(time_part) and time_part[idx].isdigit():\n            match = re.match(r'(\\d+(?:\\.\\d+)?)M', time_part[idx:])\n            if match:\n                minutes = float(match.group(1))\n                idx += match.end()\n            else:\n                raise ValueError\n        # seconds\n        if idx \u003c len(time_part) and time_part[idx].isdigit():\n            match = re.match(r'(\\d+(?:\\.\\d+)?)S', time_part[idx:])\n            if match:\n                seconds = float(match.group(1))\n                idx += match.end()\n            else:\n                raise ValueError\n        # after parsing, must have consumed all\n        if idx != len(time_part):\n            raise ValueError\n        # ensure at least one component present\n        if hours == 0 and minutes == 0 and seconds == 0:\n            raise ValueError\n    else:\n        # no time part, need at least days\n        if days == 0:\n            raise ValueError\n    total_seconds = days*86400 + hours*3600 + minutes*60 + seconds\n    return total_seconds\n\n# Test script\ndef test():\n    cases = [\n        (\"PT0S\", 0),\n        (\"PT1H30M\", 5400),\n        (\"P1DT2H\", 93600),\n        (\"P1W\", 604800),\n        (\"PT0.5S\", 0.5),\n        (\"P2DT3H4M5.25S\", 183845.25),\n    ]\n    for inp, expected in cases:\n        got = iso_duration_seconds(inp)\n        assert abs(got - expected) \u003c 1e-9, f\"{inp}: got {got}, expected {expected}\"\n    # error cases\n    errors = [\"\", \"P\", \"PT\", \"1H\", \"P1H\"]\n    for inp in errors:\n        try:\n            iso_duration_seconds(inp)\n            assert False, f\"{inp} should raise\"\n        except ValueError:\n            pass\n    # additional tests\n    assert iso_duration_seconds(\"P0W\") == 0\n    assert iso_duration_seconds(\"P0.5W\") == 0.5*7*86400\n    assert iso_duration_seconds(\"PD\") == ValueError  # no number\n    try:\n        iso_duration_seconds(\"PD\")\n        assert False\n    except ValueError:\n        pass\n    print(\"ALL TESTS PASSED\")\n\nif __name__ == \"__main__\":\n    test()",
+      "ExitCode": 1,
+      "TimedOut": false,
+      "Stdout": "",
+      "Stderr": "Traceback (most recent call last):\n  File \"\u003ccell 1\u003e\", line 111, in \u003cmodule\u003e\n    test()\n    ~~~~^^\n  File \"\u003ccell 1\u003e\", line 89, in test\n    got = iso_duration_seconds(inp)\n  File \"\u003ccell 1\u003e\", line 48, in iso_duration_seconds\n    raise ValueError\nValueError\n",
+      "Millis": 642,
+      "Record": "7aae0a94d2ceebae8ef28afe92169ca8492b72e7605746c2a18bb78ed54edbe2",
+      "Request": "5ebfbd8964bacec88abff692f30f762139459d84d587c7f76f0b1843fd430499",
+      "Result": "1397686f81947e23fec09e621d6fa0574045867e91f675510f78dc1ecb84bb55",
+      "Previous": "",
+      "Sequence": 1
+    },
+    {
+      "N": 2,
+      "Language": "python",
+      "Code": "import re\n\ndef iso_duration_seconds(s):\n    # Week format: PnW\n    m = re.fullmatch(r'P(\\d+(?:\\.\\d+)?)W', s)\n    if m:\n        weeks = float(m.group(1))\n        return weeks * 7 * 86400\n    # Not week format\n    if not s.startswith('P'):\n        raise ValueError\n    rest = s[1:]\n    # Split date and time parts\n    if 'T' in rest:\n        date_part, time_part = rest.split('T', 1)\n        if time_part == '':\n            raise ValueError\n    else:\n        date_part, time_part = rest, ''\n    # Parse date part: optional number + D\n    days = 0.0\n    if date_part:\n        if not date_part.endswith('D'):\n            raise ValueError\n        num = date_part[:-1]\n        if num == '' or not re.fullmatch(r'\\d+(?:\\.\\d+)?', num):\n            raise ValueError\n        days = float(num)\n    # Parse time part\n    hours = minutes = seconds = 0.0\n    if time_part:\n        # pattern: ((digits\\.?digits)H)?((digits\\.?digits)M)?((digits\\.?digits)S)?\n        m = re.fullmatch(r'((\\d+(?:\\.\\d+)?)H)?((\\d+(?:\\.\\d+)?)M)?((\\d+(?:\\.\\d+)?)S)?', time_part)\n        if not m:\n            raise ValueError\n        h, hr, mn, mr, se, sr = m.groups()\n        # Ensure at least one component present\n        if h is None and mn is None and se is None:\n            raise ValueError\n        if hr is not None:\n            hours = float(hr)\n        if mr is not None:\n            minutes = float(mr)\n        if sr is not None:\n            seconds = float(sr)\n        # Ensure no extra characters (fullmatch already)\n    else:\n        # No time part, need at least days\n        if days == 0:\n            raise ValueError\n    total = days * 86400 + hours * 3600 + minutes * 60 + seconds\n    return total\n\ndef test():\n    cases = [\n        (\"PT0S\", 0),\n        (\"PT1H30M\", 5400),\n        (\"P1DT2H\", 93600),\n        (\"P1W\", 604800),\n        (\"PT0.5S\", 0.5),\n        (\"P2DT3H4M5.25S\", 183845.25),\n    ]\n    for inp, expected in cases:\n        got = iso_duration_seconds(inp)\n        assert abs(got - expected) \u003c 1e-9, f\"{inp}: got {got}, expected {expected}\"\n    # error cases\n    errors = [\"\", \"P\", \"PT\", \"1H\", \"P1H\"]\n    for inp in errors:\n        try:\n            iso_duration_seconds(inp)\n            assert False, f\"{inp} should raise\"\n        except ValueError:\n            pass\n    # additional tests\n    assert iso_duration_seconds(\"P0W\") == 0\n    assert iso_duration_seconds(\"P0.5W\") == 0.5*7*86400\n    # PT without anything\n    try:\n        iso_duration_seconds(\"PT\")\n        assert False\n    except ValueError:\n        pass\n    # Only seconds\n    assert iso_duration_seconds(\"PT5S\") == 5\n    # Only minutes\n    assert iso_duration_seconds(\"PT7M\") == 420\n    # Only hours\n    assert iso_duration_seconds(\"PT2H\") == 7200\n    # Hours and seconds\n    assert iso_duration_seconds(\"PT2H3S\") == 7203\n    # Minutes and seconds\n    assert iso_duration_seconds(\"PT4M5S\") == 245\n    # Days only\n    assert iso_duration_seconds(\"P3D\") == 3*86400\n    # Days and time\n    assert iso_duration_seconds(\"P1DT1H1M1S\") == 86400+3600+60+1\n    # Invalid: lowercase\n    try:\n        iso_duration_seconds(\"pt1s\")\n        assert False\n    except ValueError:\n        pass\n    # Invalid: extra chars\n    try:\n        iso_duration_seconds(\"P1T\")\n        assert False\n    except ValueError:\n        pass\n    print(\"ALL TESTS PASSED\")\n\nif __name__ == \"__main__\":\n    test()",
+      "ExitCode": 0,
+      "TimedOut": false,
+      "Stdout": "ALL TESTS PASSED\n",
+      "Stderr": "",
+      "Millis": 38,
+      "Record": "47ac2e673909a7952a77c1d368b05b82d8c3330da94c4a35b8b2256774873df1",
+      "Request": "40d5332ac4471b2a7fc88bb4c86c33d51d313bdfc0a4f1800e2eef710dd48056",
+      "Result": "ab00f2eb57e2670c621682ad7ffc5e0b95f307c5df9527f0b63b8d140b20acb3",
+      "Previous": "7aae0a94d2ceebae8ef28afe92169ca8492b72e7605746c2a18bb78ed54edbe2",
+      "Sequence": 2
+    }
+  ],
+  "Final": "\n\nCLAIM: ALL TESTS PASS",
+  "Answered": true,
+  "Grader": {
+    "N": 3,
+    "Language": "python",
+    "Code": "def _plimsoll_grade(_spec):\n    import base64, copy, json, math, sys\n    spec = json.loads(base64.b64decode(_spec).decode())\n    fn = globals().get(spec[\"function\"])\n    out = {\"Defined\": callable(fn), \"Passed\": 0, \"Total\": len(spec[\"cases\"]), \"Failed\": []}\n\n    def same(got, want):\n        if isinstance(want, bool) or isinstance(got, bool):\n            return type(got) is bool and got == want\n        if isinstance(want, (int, float)):\n            return isinstance(got, (int, float)) and math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)\n        if isinstance(want, list):\n            return type(got) is list and len(got) == len(want) and all(same(g, w) for g, w in zip(got, want))\n        return type(got) is type(want) and got == want\n\n    def fail(case, why):\n        if len(out[\"Failed\"]) \u003c 5:\n            out[\"Failed\"].append(json.dumps(case[\"args\"])[:120] + \": \" + why[:160])\n\n    if callable(fn):\n        for case in spec[\"cases\"]:\n            args = copy.deepcopy(case[\"args\"])\n            try:\n                got = fn(*args)\n            except ValueError:\n                if \"raises\" in case:\n                    out[\"Passed\"] += 1\n                else:\n                    fail(case, \"raised ValueError, expected \" + json.dumps(case[\"expect\"]))\n                continue\n            except Exception as e:\n                fail(case, \"raised \" + type(e).__name__)\n                continue\n            if \"raises\" in case:\n                fail(case, \"returned \" + repr(got)[:80] + \", expected ValueError\")\n            elif not same(got, case[\"expect\"]):\n                fail(case, \"returned \" + repr(got)[:80] + \", expected \" + json.dumps(case[\"expect\"]))\n            elif spec[\"unchanged\"] and args != case[\"args\"]:\n                fail(case, \"changed its input\")\n            else:\n                out[\"Passed\"] += 1\n    sys.stdout.write(\"\\nPLIMSOLL-GRADE \" + json.dumps(out) + \"\\n\")\n\n_plimsoll_grade(\"eyJjYXNlcyI6W3siYXJncyI6WyJQVDBTIl0sImV4cGVjdCI6MC4wfSx7ImFyZ3MiOlsiUFQxSDMwTSJdLCJleHBlY3QiOjU0MDAuMH0seyJhcmdzIjpbIlAxRFQySCJdLCJleHBlY3QiOjkzNjAwLjB9LHsiYXJncyI6WyJQMVciXSwiZXhwZWN0Ijo2MDQ4MDAuMH0seyJhcmdzIjpbIlBUMC41UyJdLCJleHBlY3QiOjAuNX0seyJhcmdzIjpbIlAyRFQzSDRNNS4yNVMiXSwiZXhwZWN0IjoxODM4NDUuMjV9LHsiYXJncyI6WyIiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJQIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiUFQiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyIxSCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAxSCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAxWSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAxTSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAyVyJdLCJleHBlY3QiOjEyMDk2MDAuMH0seyJhcmdzIjpbIlAxVzJEIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiUDFEVCJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlBUMU0zMFMiXSwiZXhwZWN0Ijo5MC4wfSx7ImFyZ3MiOlsiUDBEIl0sImV4cGVjdCI6MC4wfSx7ImFyZ3MiOlsicHQxcyJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIiBQVDFTIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiUFQxLjVNIl0sImV4cGVjdCI6OTAuMH0seyJhcmdzIjpbIlBUMVMxTSJdLCJyYWlzZXMiOiJWYWx1ZUVycm9yIn0seyJhcmdzIjpbIlAzRFQ0SCJdLCJleHBlY3QiOjI3MzYwMC4wfSx7ImFyZ3MiOlsiUFQzNkgiXSwiZXhwZWN0IjoxMjk2MDAuMH0seyJhcmdzIjpbIlBUMS5TIl0sInJhaXNlcyI6IlZhbHVlRXJyb3IifSx7ImFyZ3MiOlsiUFQuNVMiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJQMS41RCJdLCJleHBlY3QiOjEyOTYwMC4wfSx7ImFyZ3MiOlsiLVBUMVMiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJQVDFTXG4iXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9LHsiYXJncyI6WyJQVFx1MDY2MVMiXSwicmFpc2VzIjoiVmFsdWVFcnJvciJ9XSwiZnVuY3Rpb24iOiJpc29fZHVyYXRpb25fc2Vjb25kcyIsInVuY2hhbmdlZCI6ZmFsc2V9\")\n",
+    "ExitCode": 0,
+    "TimedOut": false,
+    "Stdout": "\nPLIMSOLL-GRADE {\"Defined\": true, \"Passed\": 28, \"Total\": 30, \"Failed\": [\"[\\\"P0D\\\"]: raised ValueError, expected 0.0\", \"[\\\"PT\\\\u0661S\\\"]: returned 1.0, expected ValueError\"]}\n",
+    "Stderr": "",
+    "Millis": 41,
+    "Record": "104e943ac72a71411b1195064957d3b958d65e9d2deb197a7ce9e6a9a3585406",
+    "Request": "88aae99e2ef8837ed41c3d3edf87fbe2052762b62118e9e31e194175f4f53adc",
+    "Result": "8c95e43d086507fb7be6c478954a3c1e0150d353c9c587d31454bdcb7a12ac50",
+    "Previous": "47ac2e673909a7952a77c1d368b05b82d8c3330da94c4a35b8b2256774873df1",
+    "Sequence": 3
+  },
+  "Calls": 3,
+  "Verified": true,
+  "VerifyDetail": "",
+  "KeyID": "7a18587d071f80248dfd17aa50c3d4f89f18b17d8544bdd31a36f5a13c8c388a",
+  "Usage": {
+    "Prompt": 6478,
+    "Completion": 2487,
+    "Calls": 3
+  }
+}
