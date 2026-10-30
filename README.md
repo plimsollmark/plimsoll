@@ -30,6 +30,18 @@ the results is *fan-in*. Each tile runs twice so the example can compare answers
 across the nine configurations shown.
 [INTERNAL · example guide and reproduction commands →](docs/example-programs.md).
 
+## Nemotron on Nebius Token Factory
+
+plimsoll's entry in the Nebius x NVIDIA Global AI Hackathon is
+[`examples/nemotron-agent`](examples/nemotron-agent/): an NVIDIA Nemotron model on
+[Nebius Token Factory](https://tokenfactory.nebius.com/) (EXTERNAL · product page ↗) writes code,
+plimsoll runs it behind <dfn>*gVisor*</dfn>, a separate user-space kernel, and every run leaves a
+signed record anyone can recheck. Token Factory's OpenAI-compatible API let one
+Go HTTP client drive four Nemotron models by changing the model name, so 120 recorded tries across
+them cost $1.98. Token Factory is the only Nebius service the example uses.
+[INTERNAL · setup and run steps →](examples/nemotron-agent/README.md) ·
+[INTERNAL · live page with every run's signed records →](https://plimsollmark.github.io/plimsoll/examples/nemotron-agent/)
+
 ## Run something locally
 
 With Go installed:
@@ -62,8 +74,7 @@ or a `vm` provider with its own virtual machine.
 The example explicitly selects a provider. The library and `plimsolld`, the
 Plimsoll server, default to **Disabled**, which runs nothing.
 [INTERNAL · getting started →](docs/getting-started.md) covers a running server,
-caller credentials, isolation requirements and switching to <dfn>*gVisor*</dfn>, a separate
-user-space kernel, without changing the client.
+caller credentials, isolation requirements and switching to gVisor without changing the client.
 
 ## What you can do
 
