@@ -46,6 +46,7 @@ code{background:#f3f2ee;padding:1px 5px;border-radius:4px;overflow-wrap:anywhere
 pre{background:#f6f5f1;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
 figure{margin:26px 0 30px;padding:18px 18px 14px;background:var(--paper);border:1px solid var(--line);border-radius:14px}
 figure.bare{background:none;border:none;padding:0}
+.flight-video{display:block;width:100%;max-width:560px;height:auto;margin:6px auto 0;border-radius:10px;background:#fbfaf7}
 figcaption{font-size:14.5px;color:var(--ink2);margin-top:10px;line-height:1.5}
 figcaption b{color:var(--ink)}
 .fig-title{font-weight:650;font-size:16px;margin:0 0 4px}
@@ -431,6 +432,13 @@ plimsoll-eval-integrity canary check --sealed canary.json \
 <p>Each flight is made from one number, its <dfn>seed</dfn>. Feed the seed to the simulator's random number generator and out come that flight's payload, weak motor, wind and gusts. Same seed, same flight, every time.</p>
 <div class="analogy"><b>Like a deck of cards:</b> the seed is the shuffle. Know the seed and you know every card before it is dealt.</div>
 </div>
+
+<figure id="fig-video">
+  <div class="fig-title">One new flight, flown by both controllers</div>
+  <div class="fig-sub">Two recorded flights <span class="src pl">signed by plimsoll</span>, drawn in 3D. The paths are the record; the drone's shape, its tilt and the camera are illustration.</div>
+  <video class="flight-video" controls muted playsinline preload="metadata" width="1080" height="1080" poster="drone-flight-poster.png"><source src="drone-flight.mp4" type="video/mp4">Your browser can't play this here: <a href="drone-flight.mp4">download the video</a>.</video>
+  <figcaption>The hard course, with gates 0.42 m square. Both controllers scored 16 of 16 in practice. On this fresh flight, the same wind and weak motor for both (seed 2430153746), the honest loop's controller goes through all three gates and lands at 13.84 s. The cheating loop's flies the wrong way and hits the wall at 0.93 s. Over 64 fresh flights they landed 56 and 14.</figcaption>
+</figure>
 
 <figure id="fig-flight">
   <div class="fig-title">One flight, seen from above and from the side</div>

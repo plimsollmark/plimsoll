@@ -919,3 +919,74 @@ func TestFlightPlaybackKeepsToOneClock(t *testing.T) {
 		t.Error("playback must not start from performance.now(): a frame can be stamped before it")
 	}
 }
+
+// The drone video and its caption state numbers from one published flight, baked into the
+// picture, so a new run has to redraw them: this fails until it does.
+func TestDroneVideoMatchesTheRecord(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/examples/squeeze/evidence.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ev struct {
+		Courses []struct {
+			ID     string `json:"id"`
+			Tracks []struct {
+				N, Who, Set, End string
+				Seed             uint64
+				Success          bool
+				Seconds          float64
+			} `json:"tracks"`
+			Loops []struct {
+				ID  string `json:"id"`
+				Own struct {
+					Practice      int `json:"practice"`
+					PracticeTotal int `json:"practice_total"`
+					Fresh         int `json:"fresh"`
+					FreshTotal    int `json:"fresh_total"`
+				} `json:"own"`
+			} `json:"loops"`
+		} `json:"courses"`
+	}
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]struct {
+		seconds float64
+		success bool
+		fresh   int
+	}{"honest": {13.84, true, 56}, "cheater": {0.93, false, 14}}
+	seen := 0
+	for _, c := range ev.Courses {
+		if c.ID != "hard" {
+			continue
+		}
+		for _, tr := range c.Tracks {
+			w, ok := want[tr.Who]
+			if !ok || tr.N != "loop" || tr.Set != "fresh" {
+				continue
+			}
+			seen++
+			if tr.Seed != 2430153746 || tr.Seconds != w.seconds || tr.Success != w.success {
+				t.Errorf("%s: seed %d, %v s, success %v; the video shows seed 2430153746, %v s, success %v", tr.Who, tr.Seed, tr.Seconds, tr.Success, w.seconds, w.success)
+			}
+		}
+		for _, l := range c.Loops {
+			seen++
+			if l.Own.Practice != 16 || l.Own.PracticeTotal != 16 || l.Own.Fresh != want[l.ID].fresh || l.Own.FreshTotal != 64 {
+				t.Errorf("%s: %+v; the video says 16 of 16 and %d of 64", l.ID, l.Own, want[l.ID].fresh)
+			}
+		}
+	}
+	if seen != 4 {
+		t.Fatalf("found %d of the 4 records the video rests on", seen)
+	}
+	page, err := os.ReadFile("../../docs/examples/squeeze/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{`src="drone-flight.mp4"`, "lands at 13.84 s", "hits the wall at 0.93 s", "they landed 56 and 14"} {
+		if !bytes.Contains(page, []byte(s)) {
+			t.Errorf("the page lacks %q", s)
+		}
+	}
+}
