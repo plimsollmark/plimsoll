@@ -148,7 +148,16 @@ func qualified(bundle, pem, qualification []byte, pages string, lines []int) ([]
 	if err != nil {
 		return nil, err
 	}
-	verified, err := qualify.Verify(pub, statements, entries)
+	if len(lines) == 0 || lines[0] < 1 || lines[0] > len(entries) {
+		return nil, fmt.Errorf("no run line to read the requirements file from")
+	}
+	// The requirements file the statements pin, as the first selected run carried it;
+	// Verify holds every other run's copy and every pin to the same bytes.
+	reqs, err := qualify.CarriedRequirements(entries[lines[0]-1])
+	if err != nil {
+		return nil, fmt.Errorf("line %d: %w", lines[0], err)
+	}
+	verified, err := qualify.Verify(pub, reqs, statements, entries)
 	if err != nil {
 		return nil, fmt.Errorf("qualification refused: %w", err)
 	}
@@ -471,6 +480,7 @@ func checkBOM(raw, trustedPEM []byte, image *imageBOM, have sharedFiles) ([]stri
 	}
 	qualifiedBOM := len(*bom.Declarations.Evidence) == 2
 	var statementBytes []byte
+	var selectedReqs qualify.Requirements // the requirements file the attached run carried
 	if qualifiedBOM {
 		q := (*bom.Declarations.Evidence)[1]
 		if q.BOMRef != "evidence-qualification" {
@@ -537,10 +547,15 @@ func checkBOM(raw, trustedPEM []byte, image *imageBOM, have sharedFiles) ([]stri
 		if err := sd.Decode(&st); err != nil {
 			return nil, err
 		}
-		ver, err := qualify.VerifyOne(pub, st, selected.Entry)
+		reqs, err := qualify.CarriedRequirements(selected.Entry)
 		if err != nil {
 			return nil, fmt.Errorf("qualification statement: %w", err)
 		}
+		ver, err := qualify.VerifyOne(pub, reqs, st, selected.Entry)
+		if err != nil {
+			return nil, fmt.Errorf("qualification statement: %w", err)
+		}
+		selectedReqs = reqs
 		pred := ver.Predicate
 		selected.Statement, selected.Verdict = &st, &pred
 	}
@@ -595,13 +610,13 @@ func checkBOM(raw, trustedPEM []byte, image *imageBOM, have sharedFiles) ([]stri
 				if err != nil {
 					return nil, err
 				}
-				if _, err := qualify.Verify(pub, statements, entries); err != nil {
+				if _, err := qualify.Verify(pub, selectedReqs, statements, entries); err != nil {
 					return nil, fmt.Errorf("qualification file refused: %w", err)
 				}
 				if !slices.ContainsFunc(statements, func(s attest.Envelope) bool { return reflect.DeepEqual(s, *selected.Statement) }) {
 					return nil, fmt.Errorf("the attached statement is not in the referenced qualification file")
 				}
-				qualificationLine = fmt.Sprintf("PASS: the attached statement is one of the referenced qualification file's %d, every verdict rebuilt from its evidence, no credential serving two runs.", len(statements))
+				qualificationLine = fmt.Sprintf("PASS: the attached statement is one of the referenced qualification file's %d, every verdict rebuilt from its evidence, every adapter statement pinning the same requirements file, no credential serving two runs.", len(statements))
 			}
 		}
 	} else if have.Qualification != nil {
@@ -637,7 +652,7 @@ func checkBOM(raw, trustedPEM []byte, image *imageBOM, have sharedFiles) ([]stri
 		"PASS: file-set digest recomputed from file components and bound to the signed request.",
 	}
 	if qualifiedBOM {
-		lines2 = append(lines2, "PASS: the qualification statement's seal, its subject (this record), its files, step, report and exit code against the line, and its verdict re-evaluated from its evidence.")
+		lines2 = append(lines2, fmt.Sprintf("PASS: the qualification statement's seal, its subject (this record), its files, step, report and exit code against the line, and its verdict re-evaluated from its evidence; for an adapter run, the requirements file it pins is the one the run carried (%s, sha256 %s), and each requirement's verdict is rebuilt from its rules through it.", qualify.RequirementsPath, selectedReqs.SHA256()))
 	}
 	lines2 = append(lines2, "PASS: every mapped field and claim matches the verified exchange.", trust, bundleLine)
 	if qualificationLine != "" {

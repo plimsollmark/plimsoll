@@ -1,0 +1,7 @@
+# The Open Policy Agent release the receipt verifier's policy gate is tested against
+# (make policy-suite, through opa.sh). The latest release on 2026-10-27, from the GitHub
+# API. The digest is the release's opa_linux_amd64_static asset as its own .sha256 file
+# states it; opa.sh refuses a binary with any other digest before it runs. To move to a
+# new release: change both lines, run make policy-suite, commit.
+version=v1.21.4
+sha256_linux_amd64_static=2ab571f367f293bb19523b76f92f1945bbf245003392c7f392903f95c2b9b630

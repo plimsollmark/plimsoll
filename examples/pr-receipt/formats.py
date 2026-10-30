@@ -10,7 +10,8 @@ already hold:
   the operator's key as test-result.intoto.json (`plimsoll-attest sign-statement`). The
   subject is the repository and commit the signed request names; the result is PASSED
   only when the run completed, every step exited 0 without timing out, and the returned
-  JUnit report lists no failures; the test names come from junit.xml. The
+  JUnit report lists no failures and at least one test that ran and passed (zero tests, or
+  skipped ones only, is FAILED); the test names come from junit.xml. The
   predicate has no field for where the tests ran, so the run record's entry under
   `configuration` carries the isolation tier, provider and environment as annotations,
   the standard's own extension point.
@@ -68,7 +69,7 @@ def test_report(report):
     Unreadable reports still permit a receipt, but cannot support PASSED."""
     ok, bad = [], []
     try:
-        root = ET.fromstring(report)
+        root = junit.parse_report(report)
     except (ET.ParseError, ValueError, LookupError):
         return [], [], False
     tag = lambda node: node.tag.rsplit('}', 1)[-1]
@@ -97,13 +98,18 @@ def test_report(report):
 def test_result(x):
     """The statement's subject and predicate, and where its test names came from. A run
     asked for a JUnit file that did not return one still gets a FAILED statement,
-    with no test names: it cannot establish a passing report."""
+    with no test names: it cannot establish a passing report. So does one whose report lists
+    no test that ran. A higher minimum (PLIMSOLL_MIN_TESTS) is the gate's setting, not the
+    signed result's, so the statement does not carry it; it lists the passed tests, which a
+    policy can count."""
     report, source = junit.junit(x)
     record = x['response']['record']
     repository, commit = subject_file(x)
     ok, bad, report_passed = test_report(report) if report is not None else ([], [], False)
     predicate = {
-        'result': 'PASSED' if passed(x) and report_passed else 'FAILED',
+        # ok: at least one test ran and passed. A report of zero tests, or of skipped ones
+        # only, shows no test ran, which is never a pass (the gate's default minimum of one).
+        'result': 'PASSED' if passed(x) and report_passed and ok else 'FAILED',
         'configuration': [
             {'name': 'plimsoll run record', 'digest': {'sha256': record['record_sha256']},
              'annotations': {'isolation': record['isolation'], 'provider': record['provider'],

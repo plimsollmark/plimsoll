@@ -2,13 +2,62 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/plimsollmark/plimsoll/sandbox/internal/sessionkit"
 )
+
+// A session's call whose stderr holds no start marker fails in plimsoll's own words:
+// session code can write into the new process's stderr before the marker, so what
+// docker exec left there is never in the error, which the daemon writes to the
+// operator's log (the 2026-10-29 public-source scan, finding 2). A docker that reads the
+// container back as running, answers every exec (the call and the sweep after it) with a
+// canary on stderr and exit 1, and removes the container stands in for both. The failed
+// sweep ends the session, and the test waits for its teardown with that docker still
+// first on PATH.
+func TestDockerSessionUnmarkedCallErrorQuotesNoStderr(t *testing.T) {
+	const canary = "CANARY-guest-wrote-this-4d1f"
+	const running = `[{"State":{"Running":true},"HostConfig":{}}]`
+	dir := t.TempDir()
+	fake := "#!/bin/sh\nfor a; do\n  case $a in\n    inspect) printf '%s' '" + running + "'; exit 0 ;;\n    rm) exit 0 ;;\n    exec) break ;;\n  esac\ndone\n" +
+		"cat >/dev/null\nprintf '%s\\n' '" + canary + "' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var insp []dockerInspect
+	if err := json.Unmarshal([]byte(running), &insp); err != nil {
+		t.Fatal(err)
+	}
+	broker, err := startDockerSessionBroker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &dockerSession{d: DefaultDocker(""), name: "plsm-session-test", host: "unix:///nonexistent.sock", snapshot: insp[0].securitySnapshot(), broker: broker}
+	s.life = sessionkit.NewLife("plsm-session-test", s.hooks())
+	defer func() {
+		s.life.Close()
+		select {
+		case <-s.life.Done():
+		case <-time.After(30 * time.Second):
+			t.Error("the session's teardown did not finish")
+		}
+	}()
+	_, err = s.RunJavaScript(context.Background(), Request{Code: "1", Timeout: 5 * time.Second})
+	if err == nil || !strings.Contains(err.Error(), "docker could not run the call in the session's container (exit 1)") {
+		t.Fatalf("an unmarked call: %v; want the session's no-marker error", err)
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Fatalf("the error quotes stderr: %v", err)
+	}
+}
 
 // A call that gives up waiting for the turn, held here as the previous call's sweep
 // holds it, ran nothing: it is marked so, as the daemon's own busy refusal is.

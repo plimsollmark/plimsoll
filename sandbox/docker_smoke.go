@@ -319,7 +319,7 @@ func (d *DockerSandbox) smokeProbe(ctx context.Context, state dockerExecutionSta
 	name := "crsbx-smoke-" + randID()
 	// The probe is plimsoll's own program: it starts under sessionkit.ControlArgv, so nothing the
 	// image's environment declares can change what it reports.
-	runArgs := d.lockdownArgs(name, d.containerExpiry(ctx), workTmpfs, state.runtime)
+	runArgs := d.lockdownArgs(name, d.containerExpiry(ctx), workTmpfs, state.runtime, state.seccomp.defaultPath)
 	if state.platform != "" {
 		runArgs = append(runArgs, "--platform", state.platform)
 	}
@@ -607,7 +607,7 @@ func (d *DockerSandbox) proveSandboxPidsLimit(ctx context.Context, state dockerE
 	name := "crsbx-smoke-pids-" + randID()
 	// lockdownArgs starts with "run", "--rm", "-i"; detach so the container is alive
 	// while its cgroup is read. --rm stays, and forceRemove covers every exit path.
-	runArgs := append([]string{"run", "-d"}, d.lockdownArgs(name, d.containerExpiry(ctx), false, state.runtime)[1:]...)
+	runArgs := append([]string{"run", "-d"}, d.lockdownArgs(name, d.containerExpiry(ctx), false, state.runtime, state.seccomp.defaultPath)[1:]...)
 	if state.platform != "" {
 		runArgs = append(runArgs, "--platform", state.platform)
 	}

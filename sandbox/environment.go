@@ -84,6 +84,10 @@ func (d *DockerSandbox) Environments() Environments {
 		env.JavaScript.SoftwareIdentity = state.imageManifest
 		env.Project.SoftwareIdentity = state.projectManifest
 		env.Module.SoftwareIdentity = state.moduleManifest
+		// The seccomp profile runs apply, by digest, and the variant a run whose grant
+		// sets sdk_env gets instead (docker_seccomp.go); each run's record names the one
+		// it applied.
+		env.Policy = state.seccomp.describe(state.runtime)
 	}
 	d.stateMu.RLock()
 	env.Project.Languages = slices.Clone(d.projectLanguages)
@@ -121,8 +125,9 @@ func (d *DockerCloud) Environments() Environments {
 		identity = "dockercloud-image:" + strings.ToLower(image[strings.LastIndex(image, "@")+1:])
 	}
 	ceiling := runCeiling(d.MaxTimeout)
+	langs := d.languages()
 	return Environments{
-		JavaScript: PayloadEnvironment{Identity: identity, MaxTimeout: ceiling},
-		Project:    PayloadEnvironment{Identity: identity, MaxTimeout: ceiling},
+		JavaScript: PayloadEnvironment{Identity: identity, MaxTimeout: ceiling, Languages: langs},
+		Project:    PayloadEnvironment{Identity: identity, MaxTimeout: ceiling, Languages: langs},
 	}
 }

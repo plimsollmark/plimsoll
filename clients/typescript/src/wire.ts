@@ -21,12 +21,14 @@ export type WireEnvelope = {
   traceId?: string;
   timeoutMs?: number;
   softwareRule?: WireSoftwareRule;
+  /** Run only, with a cell: the daemon may run it in a waiting pool member. */
+  preferWarm?: boolean;
 };
 
 /** A session's call to its interpreter (sessions.md, "Interpreters"). */
 export type WireCellRun = { language: string; code: string; files?: { path: string; content: string }[] };
 
-export type WireRunRequest = WireEnvelope & { javascript?: WireJavaScriptRun; project?: WireProjectRun };
+export type WireRunRequest = WireEnvelope & { javascript?: WireJavaScriptRun; project?: WireProjectRun; cell?: WireCellRun };
 
 export type WireSessionRunRequest = WireRunRequest & { sessionId: string };
 
@@ -113,6 +115,7 @@ export type WireRunResponse = {
   softwareIdentity?: string;
   environment?: string;
   instance?: string;
+  warm?: boolean;
   javascript?: WireJavaScriptResult;
   project?: WireProjectResult;
   module?: unknown;
@@ -142,6 +145,7 @@ export type WireDescribeResponse = {
   maxSessionsPerCaller?: number;
   maxSessionsPerOwner?: number;
   sessionEnvironment?: WirePayloadEnvironment;
+  sessionPool?: number;
 };
 
 export type WireOpenSessionRequest = {
@@ -152,6 +156,8 @@ export type WireOpenSessionRequest = {
   idleTimeoutMs?: number;
   softwareRule?: WireSoftwareRule;
   languages?: string[];
+  owner?: string;
+  warmOnly?: boolean;
 };
 
 export type WireOpenSessionResponse = {

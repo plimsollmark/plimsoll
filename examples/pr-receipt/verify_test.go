@@ -127,6 +127,25 @@ func TestReceiptVerifierOnThePublishedReceipt(t *testing.T) {
 		t.Errorf("a JUnit path the receipt was not made with: %v %s", ok, detail)
 	}
 
+	// The receipt asked for no test report, so it has no tests check; a minimum given anyway
+	// cannot be met, since there is nothing to count.
+	for _, c := range r.Checks {
+		if c.Check == "tests" {
+			t.Errorf("a receipt with no test report has a tests check: %+v", c)
+		}
+	}
+	r, _ = verify(receipt, operator, "--min-tests", "1")
+	if ok, detail := r.check(t, "tests"); ok == nil || *ok || !strings.Contains(detail, "no test report was requested") || !strings.Contains(detail, "at least 1 test that ran") {
+		t.Errorf("a minimum with no test report: %v %s", ok, detail)
+	}
+	for _, bad := range []string{"0", "01", "-1", "two"} {
+		out, err := receiptCommand(t, nil, "python3", "-I", "verify.py", "--sbom", sbom, "--receipt", receipt, "--trusted-pub", operator,
+			"--repo", project, "--repository", "example/pr-receipt-fixture", "--head", commit, "--pr", "0", "--command", "npm test", "--min-tests", bad)
+		if e, ok := err.(*exec.ExitError); !ok || e.ExitCode() != 2 || !strings.Contains(string(out), "--min-tests") {
+			t.Errorf("--min-tests %s: %v\n%s", bad, err, out)
+		}
+	}
+
 	// The receipt was made with no base, so a base names a different subject.
 	r, _ = verify(receipt, operator, "--base", commit)
 	if ok, detail := r.check(t, "head"); ok == nil || *ok || !strings.Contains(detail, "names base") {
@@ -173,12 +192,12 @@ func TestReceiptVerifierOnThePublishedReceipt(t *testing.T) {
 		"another key":    {receipt, filepath.Join(keys, "other.pub"), "signed with a key other than the operator's"},
 		"edited receipt": {edit, operator, ""},
 	} {
-		r, code := verify(c.receipt, c.pub)
+		r, code := verify(c.receipt, c.pub, "--min-tests", "2")
 		ok, detail := r.check(t, "signature")
 		if code != 1 || r.Verified || ok == nil || *ok || !strings.Contains(detail, c.want) {
 			t.Errorf("%s: exit %d, signature %v %q", name, code, ok, detail)
 		}
-		for _, later := range []string{"head", "result"} {
+		for _, later := range []string{"head", "result", "tests"} {
 			if ok, detail := r.check(t, later); ok != nil || !strings.Contains(detail, "not checked") {
 				t.Errorf("%s: %s was judged on an unverified receipt: %v %s", name, later, ok, detail)
 			}

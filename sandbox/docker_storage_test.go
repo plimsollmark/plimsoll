@@ -53,7 +53,7 @@ func TestDockerWritableBudgetValidation(t *testing.T) {
 func TestDockerLockdownBoundsWritableMounts(t *testing.T) {
 	t.Parallel()
 	d := DefaultDocker("")
-	args := strings.Join(d.lockdownArgs("c", time.Now(), true, d.Runtime), " ")
+	args := strings.Join(d.lockdownArgs("c", time.Now(), true, d.Runtime, d.Seccomp), " ")
 	for _, want := range []string{
 		"--read-only",
 		"--tmpfs /tmp:rw,noexec,nosuid,size=16m",
@@ -67,7 +67,7 @@ func TestDockerLockdownBoundsWritableMounts(t *testing.T) {
 
 	d.DiskBudgetMB = 512
 	d.TmpDiskMB = 32
-	args = strings.Join(d.lockdownArgs("c", time.Now(), true, d.Runtime), " ")
+	args = strings.Join(d.lockdownArgs("c", time.Now(), true, d.Runtime, d.Seccomp), " ")
 	for _, want := range []string{
 		"--tmpfs /tmp:rw,noexec,nosuid,size=32m",
 		"--tmpfs /work:rw,noexec,nosuid,size=464m,mode=1777", // 512 - 32 - 16

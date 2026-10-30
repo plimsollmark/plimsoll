@@ -20,7 +20,8 @@ plimsoll reads the tier, never takes it as configuration: the runtime class's ha
 `kernel` tier, `runc` (an ordinary container) the `container` tier, Kata Containers' Cloud
 Hypervisor handlers `kata-clh` and `kata-clh-runtime-rs` and AKS Pod Sandboxing's `kata` (a
 small virtual machine with its own Linux kernel per pod, [below](#kata-containers-the-vm-tier))
-the `vm` tier, and any other handler is refused. The startup smoke test then holds each tier to what a guest can observe
+the `vm` tier, and any other handler is refused unless the operator declares it as gVisor
+([below](#what-the-operator-sets-up)). The startup smoke test then holds each tier to what a guest can observe
 (below), and every run holds its own pod to it again. As
 for every provider, a reported tier is configuration and provider evidence plus that
 behavioural test, never attestation.
@@ -69,6 +70,16 @@ a node whose runsc handler was remapped to runc under a running daemon.
   SandboxClaim kinds), and a runtime class whose handler is `runsc` (gVisor), `runc`, or one
   of Kata's two Cloud Hypervisor handlers. Prefer gVisor or Kata: hardened mode accepts only
   the kernel and vm tiers.
+- **Optionally, gVisor under another handler name.** gVisor's options (its debug log, for
+  one) are set per containerd runtime, so a cluster can register the same runsc shim a
+  second time under another handler, such as `runsc-receipt`.
+  `SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS` is a comma list of such names, which this daemon then
+  reads as the `kernel` tier only. A declaration is not trusted: the smoke test and every
+  pod's own check hold a declared handler to gVisor's boot line exactly as they hold
+  `runsc`, so a name the node maps to runc or to Kata is refused before any code runs.
+  Each name must be a DNS label (the form Kubernetes requires of a handler); an empty entry,
+  a name given twice, or one of the handlers above stops startup. Hardened mode accepts the
+  setting.
 - **plimsolld running in the cluster.** It reaches each pod's sandboxd at the pod's address,
   which only the cluster network routes; Kubernetes' port-forward does not reach a pod under
   gVisor. With no settings for them, the API server, its certificate authority and the token
@@ -184,17 +195,31 @@ policies, network-plugin state and changes after the read-back remain outside th
 A per-run connection test could check enforcement again, at the cost of waiting for blocked
 connections to time out; it is not implemented.
 
+**The proven runtime class.** The smoke test also records the runtime class it runs on:
+its UID, its handler, and its `overhead` and `scheduling` settings, which decide where its
+pods run. Kubernetes keeps a class's handler immutable, so a class whose handler changes is
+one deleted and made again under the same name, with a new UID. Every later read of the
+class (Preflight, each run's check before it claims a pod, and each pod's read-back) refuses
+a class that differs, reason `environment`, before anything is claimed or sent; restart
+plimsolld to prove the new one. Once observed, a difference remains a refusal even if the
+original is restored, since the warm pool may still hold pods made from the other class.
+Labels and annotations do not change the pin. This applies with or without hardened mode,
+so an operator who changes the class restarts the daemon, as for a changed template.
+
 ## What each run does
 
 1. Reads the warm pool, its template and the runtime class, and refuses any difference from
-   the above, or a template other than the one the smoke test proved. The tier is the
-   handler's.
+   the above, or a template or runtime class other than the one the smoke test proved. The
+   tier is the handler's, read again on every run, and compared with the run's floor: the
+   caller's `minimum_isolation`, raised in hardened mode to the daemon's own floor of
+   `kernel` ([hardened mode](hardened-mode.md#isolation-is-a-floor-on-every-run-not-only-a-startup-check)),
+   so a weaker tier is refused, reason `isolation`, before anything is claimed.
 2. Creates a claim on the pool, labelled with this daemon instance, `plimsoll.run=1` and
    the run's lifetime, and with a shutdown time five minutes past the run's end, at which
    agent-sandbox deletes it even if plimsolld is gone. A claim is refused when the API
    server's clock is more than a minute from plimsolld's.
 3. Reads the claimed pod back (the same checks, its image by digest, every network policy
-   that selects it) before any code is sent.
+   that selects it, the runtime class again) before any code is sent.
 4. Runs one command of its own in the pod, as the guest, before any of the run's code: the
    first line of the kernel log, which under the kernel tier must be gVisor's boot line and
    under Kata a Linux kernel's; the kernel's boot ID, which under Kata must differ from the
@@ -203,7 +228,7 @@ connections to time out; it is not implemented.
    each node, which the API does not show: live on kind, with a node's runsc handler remapped
    to runc after the smoke test had passed, a run was signed at the kernel tier on the host's
    kernel until this check was added. A pod that fails it is refused, not dispatched, reason
-   `environment`. On kind it cost nothing measurable (a median of 75 ms per snippet with and
+   `environment`; one that passes is held to the run's floor at its tier, reason `isolation`. On kind it cost nothing measurable (a median of 75 ms per snippet with and
    without it).
 5. Sends one command to sandboxd: the snippet to `node -`, or a project's plan to the
    runner, as the guest user (uid 61000, no capabilities, `no_new_privs`, under `env -i`).
@@ -275,7 +300,10 @@ claim's own shutdown time deletes it anyway, at the same mark, if no plimsolld i
 - **Process count.** The kubelet sets it for every pod on a node (`podPidsLimit`), which the
   API does not show, so `SANDBOX_PIDS` fails startup.
 - **Other runtimes.** Kata's QEMU handlers and any other handler are refused until plimsoll
-  has tested them.
+  has tested them; the one exception is a handler the operator declares as gVisor, which is
+  held to gVisor's boot line like `runsc`. That check reads what the guest sees, so like every
+  tier here it is evidence, not attestation: a node that forged gVisor's boot line would
+  pass it, under `runsc` as under a declared name.
 - **Policies outside the namespace.** The read-back sees Kubernetes NetworkPolicy objects
   only; a cluster-wide admin policy or a network plugin's own kinds can allow traffic too,
   which only the smoke test's connection attempts would catch.

@@ -9,7 +9,8 @@ enforces at startup, because a warning is not a policy. The daemon refuses to se
 unless all of the following are verifiably in force:
 
 - VM or verified kernel isolation, the two strongest of the four levels described in
-  [isolation-tiers.md](isolation-tiers.md);
+  [isolation-tiers.md](isolation-tiers.md), checked at startup and then held on every run
+  (below);
 - multi-client auth, where each caller has its own token ([callers.md](callers.md));
 - TLS on any non-loopback listener (the metrics listener and the one hosted sandboxes call
   for API access, `PLIMSOLL_GUARD_ADDR`, included), that is, any
@@ -21,7 +22,8 @@ unless all of the following are verifiably in force:
   from the account's own store, with `SANDBOX_DOCKERCLOUD_API=connect` set explicitly,
   since only that API reports which image a sandbox booted. For docker also no `unconfined`
   <dfn>*seccomp*</dfn>: seccomp is the kernel feature that limits which requests a
-  container may make to the kernel, and `unconfined` switches it off.
+  container may make to the kernel, and `unconfined` switches it off; the check covers
+  both profile settings, `SANDBOX_DOCKER_SECCOMP` and `SANDBOX_DOCKER_SECCOMP_SDK`.
   <dfn>*E2B*</dfn>, a hosted service that runs each sandbox in a small virtual machine,
   offers no such pinning, so there it means an explicit `E2B_TEMPLATE` rather than the
   implicit default: a named template, not a fixed version;
@@ -53,3 +55,28 @@ Every rule but isolation is checked before the startup smoke test, which on E2B 
 Docker Cloud creates a billed virtual machine; isolation is checked once the smoke test
 has proven the isolation level. Every violation is reported at once, so it is one fix pass rather
 than a startup loop.
+
+## Isolation is a floor on every run, not only a startup check
+
+A provider can find a weaker boundary after startup than the one the smoke test proved.
+The Kubernetes provider reads its runtime class again on every run
+([agentsandbox.md](agentsandbox.md#what-each-run-does)), so a class replaced under a
+running daemon with one whose handler is `runc` would give its next pod the container
+level. (That provider also refuses a class other than the one its smoke test ran on, but
+the rule below does not depend on it.) A daemon that checked isolation only at startup
+would then run code at that level for any caller that set no `minimum_isolation` of its
+own.
+
+So with `PLIMSOLL_HARDENED=1` the daemon also holds a <dfn>*floor*</dfn> of its own, the
+weakest isolation level a run may have: `kernel`, the weaker of the two levels this policy
+accepts. It is joined to every request's minimum, the stronger of the two winning, as the
+request is read and before any check that uses it: a run (snippet, project or module), the
+opening of a session, and each call in a session. The provider receives the joined minimum
+in the request and checks it against the boundary it finds for that run, session or call,
+as it checks a caller's own minimum, so a weaker sandbox is refused before any code runs:
+the refusal is marked as one where nothing ran, with the reason `isolation`, and is safe to
+retry once the cluster is fixed. `/readyz` answers not ready while the provider's reported
+level is below the floor, since every run would be refused. Without `PLIMSOLL_HARDENED`, the
+operator's `SANDBOX_MIN_ISOLATION` is held the same way ([isolation-tiers.md](isolation-tiers.md));
+a daemon with neither holds no floor and runs as before, and a caller that needs a floor
+on every run against such a daemon sets `minimum_isolation`.

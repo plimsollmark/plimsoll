@@ -24,6 +24,8 @@ func envelopeReq(payload any) *connect.Request[plimsollv1.RunRequest] {
 		msg.Payload = &plimsollv1.RunRequest_Project{Project: p}
 	case *plimsollv1.ModuleRun:
 		msg.Payload = &plimsollv1.RunRequest_Module{Module: p}
+	case *plimsollv1.CellRun:
+		msg.Payload = &plimsollv1.RunRequest_Cell{Cell: p}
 	case nil:
 	default:
 		panic("envelopeReq: not a payload kind")

@@ -1,0 +1,1048 @@
+{
+  "date": "2026-10-29",
+  "verifiers": "0.4.1.dev97",
+  "pin": "verifiers==0.4.1.dev97",
+  "client": "",
+  "python": "3.12.3",
+  "scripted": true,
+  "image": "plimsoll-wip/verifiers-agent:dev",
+  "image_id": "sha256:ad5b2477d638bc9190d1439f33b0db7c64c4ec1d459a301c5d291027f3c4982b",
+  "baseline": "python:3.11-slim",
+  "baseline_id": "sha256:ae952e0a57138a4317b9b61caaa19a8217c2f356803f8d7e63aad08769950937",
+  "task": {
+    "repo": "PrimeIntellect-ai/prime-envs",
+    "commit": "e221a6514f2e8317af7922649a0d528aea5d087f",
+    "path": "environments/reasoning/uuid_ctf",
+    "files": {
+      "README.md": "f1e2e0fff9a62c1a37982af7d337945e70bec13f3d943a88dd41237d5fd6be5a",
+      "pyproject.toml": "b7adf8fdad4ca96a3e337d378a700ae49c55a77d84241929e8a8574a177e8591",
+      "uuid_ctf/__init__.py": "f685dbc0245a548fe88e4c9ba613ee0acaf49d32bdc0540b6c3f6784a9736d1a",
+      "uuid_ctf/taskset.py": "c288d09395a75534364abc62fec62592668f2b2674cb66efdd362cd2d667441b"
+    }
+  },
+  "validate": [
+    {
+      "docker_runtime": "runc",
+      "floor": "container",
+      "valid": true,
+      "gold": {
+        "valid": true,
+        "reason": "valid"
+      },
+      "untouched": {
+        "valid": true,
+        "reason": "valid",
+        "reward": 0,
+        "rewards": {
+          "correct": 0
+        }
+      },
+      "log": "records/validate-runc.jsonl"
+    },
+    {
+      "docker_runtime": "runsc",
+      "floor": "kernel",
+      "valid": true,
+      "gold": {
+        "valid": true,
+        "reason": "valid"
+      },
+      "untouched": {
+        "valid": true,
+        "reason": "valid",
+        "reward": 0,
+        "rewards": {
+          "correct": 0
+        }
+      },
+      "log": "records/validate-runsc.jsonl"
+    }
+  ],
+  "attempts": [
+    {
+      "name": "uuid-gold-runc",
+      "task": "uuid-ctf",
+      "policy": "gold",
+      "harness": "plimsoll-bash",
+      "runtime": "plimsoll",
+      "docker_runtime": "runc",
+      "floor": "container",
+      "reward": 1,
+      "rewards": {
+        "solved": 1
+      },
+      "metrics": {
+        "source_uuid_fraction": 1
+      },
+      "stop": "agent_completed",
+      "seconds": {
+        "agent": 1.713,
+        "boot": 0.716,
+        "finalize": 0,
+        "scoring": 0.537,
+        "setup": 1.4
+      },
+      "total_s": 4.367,
+      "model_turns": 6,
+      "tool_results": 5,
+      "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+      "log": "records/uuid-gold-runc.jsonl",
+      "chain": [
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 1,
+          "op": "root",
+          "tier": "container",
+          "sha256": "ff53715b1d0ac10937d6b6680364a519ea8d5a413f1e2f416b273153fb6f5abd",
+          "started_unix_ms": 1793292931184,
+          "millis": 157,
+          "phase": "boot"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 2,
+          "op": "run",
+          "tier": "container",
+          "sha256": "5d98173819a81b063f2a157a76497b0ed81b10973bd488cc7362f9f07c93b90e",
+          "started_unix_ms": 1793292931343,
+          "millis": 287,
+          "phase": "boot"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 3,
+          "op": "run",
+          "tier": "container",
+          "sha256": "e67121d7e21ad24810fcbd3c62604400531906f7fbb06ec2a62f84695d86e748",
+          "started_unix_ms": 1793292931632,
+          "millis": 242,
+          "phase": "setup"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 4,
+          "op": "write",
+          "tier": "container",
+          "sha256": "192fc596143c3831c2644ed8a201c08b42b63fe76704a7a92ca830d434ae6bf0",
+          "started_unix_ms": 1793292931876,
+          "millis": 283,
+          "phase": "setup"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 5,
+          "op": "run",
+          "tier": "container",
+          "sha256": "2150f3109ef2fffb2d50e45a32a39f4836c5905ed96be3eec63820cc10edf643",
+          "started_unix_ms": 1793292932161,
+          "millis": 289,
+          "phase": "setup"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 6,
+          "op": "run",
+          "tier": "container",
+          "sha256": "ba14180ecb4a111f14e46b46ab88e49abd5e867203348054937284a5b96cc098",
+          "started_unix_ms": 1793292932451,
+          "millis": 272,
+          "phase": "setup"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 7,
+          "op": "run",
+          "tier": "container",
+          "sha256": "bb4ddf29e944206975e431e08047045fd9434e3b0f69e903ea9aad3de9120c7c",
+          "started_unix_ms": 1793292932724,
+          "millis": 291,
+          "phase": "setup"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 8,
+          "op": "run",
+          "tier": "container",
+          "sha256": "3695e10dbb6097d54028fead3925cddb3839bc41ff6aec410d1066fde35120e3",
+          "started_unix_ms": 1793292933329,
+          "millis": 189,
+          "phase": "agent"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 9,
+          "op": "run",
+          "tier": "container",
+          "sha256": "306f872d2b982bf923e8f6133571b42579bee20a64368bcf5ac82a109c194ae7",
+          "started_unix_ms": 1793292933526,
+          "millis": 306,
+          "phase": "agent"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 10,
+          "op": "run",
+          "tier": "container",
+          "sha256": "88160f1a510a264f282e9f68af8441dec5efb6b74f92ae8d73775f15daef8122",
+          "started_unix_ms": 1793292933840,
+          "millis": 292,
+          "phase": "agent"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 11,
+          "op": "run",
+          "tier": "container",
+          "sha256": "4e3e2c4afcd62ae119470feaff83f2aadfe7e36f2776b94cce80c9529f592a70",
+          "started_unix_ms": 1793292934140,
+          "millis": 320,
+          "phase": "agent"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 12,
+          "op": "run",
+          "tier": "container",
+          "sha256": "2f4eec0035bb85bc8d8c13c25d38629251db86ff39ecc3ae5e580593543192e5",
+          "started_unix_ms": 1793292934468,
+          "millis": 269,
+          "phase": "agent"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 13,
+          "op": "run",
+          "tier": "container",
+          "sha256": "f97e9bcf8265421fefedcabc2b8b2aed8e3946cf2e787f75c1de6eb469b00d64",
+          "started_unix_ms": 1793292934746,
+          "millis": 254,
+          "phase": "scoring"
+        },
+        {
+          "session": "6a3cc03779789721b3dbce487451c5b72674b382ec4e1d39f2be22d8064da45d",
+          "sequence": 14,
+          "op": "run",
+          "tier": "container",
+          "sha256": "e55617dfe6d974be9f3678298dcc4cceb8dc194aed4ec27f4104983360ea61c6",
+          "started_unix_ms": 1793292935002,
+          "millis": 279,
+          "phase": "scoring"
+        }
+      ],
+      "tools": [
+        {
+          "tool": "bash",
+          "input": "ls /workspace; cat /workspace/corpus/ops/recovery_index.json",
+          "output": "corpus",
+          "lines": 52,
+          "record": "3695e10dbb6097d54028fead3925cddb3839bc41ff6aec410d1066fde35120e3"
+        },
+        {
+          "tool": "bash",
+          "input": "python3 /workspace/corpus/ops/extract_recovery_sources.py",
+          "output": "\"case\": \"INC-3575\",",
+          "lines": 19,
+          "record": "306f872d2b982bf923e8f6133571b42579bee20a64368bcf5ac82a109c194ae7"
+        },
+        {
+          "tool": "bash",
+          "input": "python3 - \u003c\u003c'PY'\nimport hashlib, json, uuid\nr = json.load(open('/workspace/recovered_sources.json'))\npayload = r['domain_separator'].encode('utf-8') + b''.join(uuid.UUID(u).bytes for u in r['source_uuids'])\nderived = str(uuid.UUID(bytes=hashlib.sha256(payload).digest()[:16]))\nanswer = {'result_uuid': 'PENDING', 'source_uuids': r['source_uuids'], 'evidence_paths': r['evidence_paths']}\nopen('/workspace/answer.json', 'w').write(json.dumps(answer, indent=2) + '\\n')\nprint(derived)\nPY",
+          "output": "078fbbe4-adec-65a0-3629-496c56239d16",
+          "lines": 1,
+          "record": "88160f1a510a264f282e9f68af8441dec5efb6b74f92ae8d73775f15daef8122"
+        },
+        {
+          "tool": "edit",
+          "input": "in /workspace/answer.json, replace \"PENDING\" with \"078fbbe4-adec-65a0-3629-496c56239d16\"",
+          "output": "Edited /workspace/answer.json",
+          "lines": 1,
+          "record": "4e3e2c4afcd62ae119470feaff83f2aadfe7e36f2776b94cce80c9529f592a70"
+        },
+        {
+          "tool": "bash",
+          "input": "cat /workspace/answer.json",
+          "output": "\"result_uuid\": \"078fbbe4-adec-65a0-3629-496c56239d16\",",
+          "lines": 17,
+          "record": "2f4eec0035bb85bc8d8c13c25d38629251db86ff39ecc3ae5e580593543192e5"
+        }
+      ]
+    },
+    {
+      "name": "uuid-wrong-runc",
+      "task": "uuid-ctf",
+      "policy": "wrong",
+      "harness": "plimsoll-bash",
+      "runtime": "plimsoll",
+      "docker_runtime": "runc",
+      "floor": "container",
+      "reward": 0,
+      "rewards": {
+        "solved": 0
+      },
+      "metrics": {
+        "source_uuid_fraction": 0
+      },
+      "stop": "agent_completed",
+      "seconds": {
+        "agent": 0.472,
+        "boot": 0.752,
+        "finalize": 0,
+        "scoring": 0.556,
+        "setup": 1.451
+      },
+      "total_s": 3.23,
+      "model_turns": 2,
+      "tool_results": 1,
+      "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+      "log": "records/uuid-wrong-runc.jsonl",
+      "chain": [
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 1,
+          "op": "root",
+          "tier": "container",
+          "sha256": "c59caec06787b64a1b6742eb00989795c8278071f30e2e6b8124ac0d41f1fbd6",
+          "started_unix_ms": 1793292944909,
+          "millis": 171,
+          "phase": "boot"
+        },
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 2,
+          "op": "run",
+          "tier": "container",
+          "sha256": "7df0b7b38b648e8330966c6d08a50511b294ff59475def025dfaedaddcc63c09",
+          "started_unix_ms": 1793292945082,
+          "millis": 286,
+          "phase": "boot"
+        },
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 3,
+          "op": "run",
+          "tier": "container",
+          "sha256": "e7475479e7d15ec2b579d1ab98948cf53aa1e9190f2de4f64358fe7da6e47bca",
+          "started_unix_ms": 1793292945370,
+          "millis": 298,
+          "phase": "setup"
+        },
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 4,
+          "op": "write",
+          "tier": "container",
+          "sha256": "58d76e238c74d92ae11172e144c5fd02be9acfcd5b185c2453615fed8c592b07",
+          "started_unix_ms": 1793292945670,
+          "millis": 289,
+          "phase": "setup"
+        },
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 5,
+          "op": "run",
+          "tier": "container",
+          "sha256": "825c80cbe89e736f43ecf701a79b76f00f8bfc146b7a6c7cdae4267ea6e6aa56",
+          "started_unix_ms": 1793292945960,
+          "millis": 280,
+          "phase": "setup"
+        },
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 6,
+          "op": "run",
+          "tier": "container",
+          "sha256": "cfaa6933ef2925aeddfaab3826137b9f93d0c6e506931fea5c35185395a73ff4",
+          "started_unix_ms": 1793292946241,
+          "millis": 277,
+          "phase": "setup"
+        },
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 7,
+          "op": "run",
+          "tier": "container",
+          "sha256": "2569a4405194102b8930f6618d1706b687eed33c095160d7184bdef66850d33b",
+          "started_unix_ms": 1793292946520,
+          "millis": 281,
+          "phase": "setup"
+        },
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 8,
+          "op": "run",
+          "tier": "container",
+          "sha256": "83aeb11cd00dc1a9fb5be4301c57390192487c7fd555d083c6e2f534cbbbb7a6",
+          "started_unix_ms": 1793292947115,
+          "millis": 169,
+          "phase": "agent"
+        },
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 9,
+          "op": "run",
+          "tier": "container",
+          "sha256": "eb309769d006f2784580ed4d8e185877fe3668e4cc65b14d8d4f65dd117b49c1",
+          "started_unix_ms": 1793292947292,
+          "millis": 254,
+          "phase": "scoring"
+        },
+        {
+          "session": "03b674548d862e02dac6f943aae55cea3e6f4f57f404d3d42a109eb9482925a4",
+          "sequence": 10,
+          "op": "run",
+          "tier": "container",
+          "sha256": "893a5e87b111f8d83d07baf838d45e1cb7addac3f8d4bf9c751d46a852260135",
+          "started_unix_ms": 1793292947548,
+          "millis": 298,
+          "phase": "scoring"
+        }
+      ],
+      "tools": [
+        {
+          "tool": "bash",
+          "input": "printf '{\"result_uuid\": \"00000000-0000-4000-8000-000000000000\"}\\n' \u003e /workspace/answer.json",
+          "output": "",
+          "lines": 1,
+          "record": "83aeb11cd00dc1a9fb5be4301c57390192487c7fd555d083c6e2f534cbbbb7a6"
+        }
+      ]
+    },
+    {
+      "name": "uuid-gold-runsc",
+      "task": "uuid-ctf",
+      "policy": "gold",
+      "harness": "plimsoll-bash",
+      "runtime": "plimsoll",
+      "docker_runtime": "runsc",
+      "floor": "kernel",
+      "reward": 1,
+      "rewards": {
+        "solved": 1
+      },
+      "metrics": {
+        "source_uuid_fraction": 1
+      },
+      "stop": "agent_completed",
+      "seconds": {
+        "agent": 2.621,
+        "boot": 0.979,
+        "finalize": 0,
+        "scoring": 0.766,
+        "setup": 2.013
+      },
+      "total_s": 6.38,
+      "model_turns": 6,
+      "tool_results": 5,
+      "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+      "log": "records/uuid-gold-runsc.jsonl",
+      "chain": [
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 1,
+          "op": "root",
+          "tier": "kernel",
+          "sha256": "7f72ef0f7373628d6ee4662d22e7ed0ceb92d4c17fb82ed5d8a4c4a63653794f",
+          "started_unix_ms": 1793292957728,
+          "millis": 281,
+          "phase": "boot"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 2,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "494b890a35d5d78b57396836c4c4870a78c7d36163f169dad8f8b48adb648dd1",
+          "started_unix_ms": 1793292958011,
+          "millis": 396,
+          "phase": "boot"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 3,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "4d3939e4407ebe232f65f2c9d237770d596cdedca451fb7eaeac50c128926be4",
+          "started_unix_ms": 1793292958409,
+          "millis": 407,
+          "phase": "setup"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 4,
+          "op": "write",
+          "tier": "kernel",
+          "sha256": "8d17c5306c5bc1d077caac9ee5c99a3fe2483e4fa9bd409db3febd44a9ac23d9",
+          "started_unix_ms": 1793292958818,
+          "millis": 384,
+          "phase": "setup"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 5,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "a24f00968183f2e16f8eb67466396f59e15f78f3d65dc03887be037812bc3152",
+          "started_unix_ms": 1793292959204,
+          "millis": 412,
+          "phase": "setup"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 6,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "d9c6d318d3650ebea76f11af7a642a13ff63811d4ea0a5d06c53efbea5d2811d",
+          "started_unix_ms": 1793292959617,
+          "millis": 401,
+          "phase": "setup"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 7,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "cee26c5e218762dcee9ff8ab769f2ab1f7b01ad6d150074bf864a0cf9a6354ec",
+          "started_unix_ms": 1793292960020,
+          "millis": 384,
+          "phase": "setup"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 8,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "c73a9852415634bc674a667e39bdabb646a7ee33df94841dfd8b1c4cf965c06a",
+          "started_unix_ms": 1793292960722,
+          "millis": 296,
+          "phase": "agent"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 9,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "666fab644d16a23e93f5b07849370cc206eca46ba8332dd7fed622aa627cfd21",
+          "started_unix_ms": 1793292961026,
+          "millis": 475,
+          "phase": "agent"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 10,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "a7e925a87c3f9bae02fe0914d6c3ba8f578675d6565f3ee76de69c5998a3925d",
+          "started_unix_ms": 1793292961509,
+          "millis": 488,
+          "phase": "agent"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 11,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "aa0ca89be9766c055278b71b524835e70a829083d511a39aebc5c8d47233b606",
+          "started_unix_ms": 1793292962005,
+          "millis": 594,
+          "phase": "agent"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 12,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "2f3f812a01339f3dad4487d35f24b42b9d126e5f2b29e8fe05c34af000977da8",
+          "started_unix_ms": 1793292962608,
+          "millis": 423,
+          "phase": "agent"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 13,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "7e7c6f94c1167dc85d469742268e564003d461d491f97ee392471aa7a19c9545",
+          "started_unix_ms": 1793292963043,
+          "millis": 362,
+          "phase": "scoring"
+        },
+        {
+          "session": "bc01e0c1d8079feb831f7887e046a74860759f85d0448be4abdc89af21f1d406",
+          "sequence": 14,
+          "op": "run",
+          "tier": "kernel",
+          "sha256": "b7de17e752e2b19e48b617fc12558f6b73c36874e516f323664c2ff688e12e83",
+          "started_unix_ms": 1793292963407,
+          "millis": 400,
+          "phase": "scoring"
+        }
+      ],
+      "tools": [
+        {
+          "tool": "bash",
+          "input": "ls /workspace; cat /workspace/corpus/ops/recovery_index.json",
+          "output": "corpus",
+          "lines": 52,
+          "record": "c73a9852415634bc674a667e39bdabb646a7ee33df94841dfd8b1c4cf965c06a"
+        },
+        {
+          "tool": "bash",
+          "input": "python3 /workspace/corpus/ops/extract_recovery_sources.py",
+          "output": "\"case\": \"INC-3575\",",
+          "lines": 19,
+          "record": "666fab644d16a23e93f5b07849370cc206eca46ba8332dd7fed622aa627cfd21"
+        },
+        {
+          "tool": "bash",
+          "input": "python3 - \u003c\u003c'PY'\nimport hashlib, json, uuid\nr = json.load(open('/workspace/recovered_sources.json'))\npayload = r['domain_separator'].encode('utf-8') + b''.join(uuid.UUID(u).bytes for u in r['source_uuids'])\nderived = str(uuid.UUID(bytes=hashlib.sha256(payload).digest()[:16]))\nanswer = {'result_uuid': 'PENDING', 'source_uuids': r['source_uuids'], 'evidence_paths': r['evidence_paths']}\nopen('/workspace/answer.json', 'w').write(json.dumps(answer, indent=2) + '\\n')\nprint(derived)\nPY",
+          "output": "078fbbe4-adec-65a0-3629-496c56239d16",
+          "lines": 1,
+          "record": "a7e925a87c3f9bae02fe0914d6c3ba8f578675d6565f3ee76de69c5998a3925d"
+        },
+        {
+          "tool": "edit",
+          "input": "in /workspace/answer.json, replace \"PENDING\" with \"078fbbe4-adec-65a0-3629-496c56239d16\"",
+          "output": "Edited /workspace/answer.json",
+          "lines": 1,
+          "record": "aa0ca89be9766c055278b71b524835e70a829083d511a39aebc5c8d47233b606"
+        },
+        {
+          "tool": "bash",
+          "input": "cat /workspace/answer.json",
+          "output": "\"result_uuid\": \"078fbbe4-adec-65a0-3629-496c56239d16\",",
+          "lines": 17,
+          "record": "2f3f812a01339f3dad4487d35f24b42b9d126e5f2b29e8fe05c34af000977da8"
+        }
+      ]
+    },
+    {
+      "name": "uuid-shipped-runc",
+      "task": "uuid-ctf",
+      "policy": "gold",
+      "harness": "bash",
+      "runtime": "plimsoll",
+      "docker_runtime": "runc",
+      "floor": "container",
+      "reward": null,
+      "stop": "harness_error",
+      "error": "wget: bad address 'astral.sh'",
+      "seconds": {
+        "boot": 0.704,
+        "setup": 6.723
+      },
+      "total_s": 7.427,
+      "model_turns": 0,
+      "tool_results": 0,
+      "session": "6b8f4ca93232781b51f4261c9850ad98411fc72e7dbe748b112260b414e5a9a1",
+      "log": "records/uuid-shipped-runc.jsonl",
+      "chain": [
+        {
+          "session": "6b8f4ca93232781b51f4261c9850ad98411fc72e7dbe748b112260b414e5a9a1",
+          "sequence": 1,
+          "op": "root",
+          "tier": "container",
+          "sha256": "2fefa4dfbd0d7a0766b2457a255c2cb7b4cee50f7d4e87ff89f9327861015d71",
+          "started_unix_ms": 1793292973637,
+          "millis": 158,
+          "phase": "boot"
+        },
+        {
+          "session": "6b8f4ca93232781b51f4261c9850ad98411fc72e7dbe748b112260b414e5a9a1",
+          "sequence": 2,
+          "op": "run",
+          "tier": "container",
+          "sha256": "9f869c89eafbea5aec3c2e8cd1f97f7fd641147e81bcd0e87f031b9bb6a5511b",
+          "started_unix_ms": 1793292973796,
+          "millis": 249,
+          "phase": "boot"
+        },
+        {
+          "session": "6b8f4ca93232781b51f4261c9850ad98411fc72e7dbe748b112260b414e5a9a1",
+          "sequence": 3,
+          "op": "run",
+          "tier": "container",
+          "sha256": "c27d98db9da300eeba2736f940f849932f9c94ff0c4f449e15a42fb1c9589099",
+          "started_unix_ms": 1793292974047,
+          "millis": 268,
+          "phase": "boot"
+        },
+        {
+          "session": "6b8f4ca93232781b51f4261c9850ad98411fc72e7dbe748b112260b414e5a9a1",
+          "sequence": 4,
+          "op": "write",
+          "tier": "container",
+          "sha256": "9884221886d9f6d6210580e5aceadd02d9e85d7959c2da18654d61feba576770",
+          "started_unix_ms": 1793292974317,
+          "millis": 289,
+          "phase": "setup"
+        },
+        {
+          "session": "6b8f4ca93232781b51f4261c9850ad98411fc72e7dbe748b112260b414e5a9a1",
+          "sequence": 5,
+          "op": "run",
+          "tier": "container",
+          "sha256": "f339abdd7f7b3fd87ed1f13d67328fa768f4b82befbedff7cb133de0b12e2d30",
+          "started_unix_ms": 1793292974607,
+          "millis": 307,
+          "phase": "setup"
+        },
+        {
+          "session": "6b8f4ca93232781b51f4261c9850ad98411fc72e7dbe748b112260b414e5a9a1",
+          "sequence": 6,
+          "op": "run",
+          "tier": "container",
+          "sha256": "f09eb6b7893582eb3f807f94a44b322dce7c2e687d91528aa7cef15309cd5e07",
+          "started_unix_ms": 1793292974915,
+          "millis": 291,
+          "phase": "setup"
+        },
+        {
+          "session": "6b8f4ca93232781b51f4261c9850ad98411fc72e7dbe748b112260b414e5a9a1",
+          "sequence": 7,
+          "op": "write",
+          "tier": "container",
+          "sha256": "30e2327c9ccaf5ff9c668f6014652fad4e95c64db0df7241daeb45512523670c",
+          "started_unix_ms": 1793292975208,
+          "millis": 273,
+          "phase": "setup"
+        },
+        {
+          "session": "6b8f4ca93232781b51f4261c9850ad98411fc72e7dbe748b112260b414e5a9a1",
+          "sequence": 8,
+          "op": "run",
+          "tier": "container",
+          "sha256": "3f1b7b0303f8a72a95a2f94685021b1cf35e27e3363cb75377b88cf85c9e7cb5",
+          "started_unix_ms": 1793292975482,
+          "millis": 5285,
+          "phase": "setup"
+        }
+      ]
+    },
+    {
+      "name": "uuid-gold-docker",
+      "task": "uuid-ctf",
+      "policy": "gold",
+      "harness": "bash",
+      "runtime": "docker",
+      "reward": 1,
+      "rewards": {
+        "solved": 1
+      },
+      "metrics": {
+        "source_uuid_fraction": 1
+      },
+      "stop": "agent_completed",
+      "seconds": {
+        "agent": 0.858,
+        "boot": 0.594,
+        "finalize": 0,
+        "scoring": 0.079,
+        "setup": 8.904
+      },
+      "total_s": 10.435,
+      "model_turns": 6,
+      "tool_results": 5,
+      "session": "f5da74b31ea2"
+    }
+  ],
+  "equivalence": {
+    "messages": 13,
+    "identical": 12,
+    "diffs": [
+      "message 1 (system): only on plimsoll, \"External network access is disabled.\""
+    ],
+    "same_tools": true
+  },
+  "calls": {
+    "rounds": 5,
+    "calls_per_round": 20,
+    "rows": {
+      "docker": {
+        "read_1k": {
+          "median_ms": 63.8,
+          "min_ms": 28.4,
+          "max_ms": 97.8,
+          "n": 5
+        },
+        "run_true": {
+          "median_ms": 29.8,
+          "min_ms": 26.8,
+          "max_ms": 80.2,
+          "n": 100
+        },
+        "start": {
+          "median_ms": 677.6,
+          "min_ms": 609.2,
+          "max_ms": 769.1,
+          "n": 5
+        },
+        "teardown": {
+          "median_ms": 367.1,
+          "min_ms": 365.6,
+          "max_ms": 469.4,
+          "n": 5
+        },
+        "write_1k": {
+          "median_ms": 30.1,
+          "min_ms": 28.8,
+          "max_ms": 49.1,
+          "n": 5
+        }
+      },
+      "plimsoll-runc": {
+        "read_1k": {
+          "median_ms": 274.2,
+          "min_ms": 266.2,
+          "max_ms": 316.2,
+          "n": 5
+        },
+        "run_true": {
+          "median_ms": 282.7,
+          "min_ms": 251.6,
+          "max_ms": 450.8,
+          "n": 100
+        },
+        "start": {
+          "median_ms": 806.2,
+          "min_ms": 592.3,
+          "max_ms": 867,
+          "n": 5
+        },
+        "teardown": {
+          "median_ms": 118.5,
+          "min_ms": 111.9,
+          "max_ms": 138.8,
+          "n": 5
+        },
+        "write_1k": {
+          "median_ms": 283,
+          "min_ms": 259.6,
+          "max_ms": 292,
+          "n": 5
+        }
+      },
+      "plimsoll-runsc": {
+        "read_1k": {
+          "median_ms": 398.4,
+          "min_ms": 369.8,
+          "max_ms": 402.6,
+          "n": 5
+        },
+        "run_true": {
+          "median_ms": 401.6,
+          "min_ms": 366.1,
+          "max_ms": 492.1,
+          "n": 100
+        },
+        "start": {
+          "median_ms": 955.9,
+          "min_ms": 621.6,
+          "max_ms": 986.8,
+          "n": 5
+        },
+        "teardown": {
+          "median_ms": 125.3,
+          "min_ms": 114.8,
+          "max_ms": 162.1,
+          "n": 5
+        },
+        "write_1k": {
+          "median_ms": 402.3,
+          "min_ms": 393.3,
+          "max_ms": 417.4,
+          "n": 5
+        }
+      }
+    }
+  },
+  "census": {
+    "repo": "harbor-framework/terminal-bench-2",
+    "commit": "2fd12b88aafdd04a52c298e3940bcb189f9766d6",
+    "tasks": 89,
+    "image": 89,
+    "internet": 89,
+    "fetch": 89,
+    "logs": 89,
+    "tests": 89,
+    "app": 88,
+    "runnable": 0
+  },
+  "logs": [
+    {
+      "file": "records/validate-runc.jsonl",
+      "floor": "container",
+      "python": {
+        "sessions": 3,
+        "records": 21,
+        "closed": 3,
+        "tiers": {
+          "container": 21
+        },
+        "incomplete": []
+      },
+      "go": {
+        "sessions": 3,
+        "records": 21,
+        "closed": 3,
+        "tiers": {
+          "container": 21
+        },
+        "incomplete": []
+      }
+    },
+    {
+      "file": "records/validate-runsc.jsonl",
+      "floor": "kernel",
+      "python": {
+        "sessions": 3,
+        "records": 21,
+        "closed": 3,
+        "tiers": {
+          "kernel": 21
+        },
+        "incomplete": []
+      },
+      "go": {
+        "sessions": 3,
+        "records": 21,
+        "closed": 3,
+        "tiers": {
+          "kernel": 21
+        },
+        "incomplete": []
+      }
+    },
+    {
+      "file": "records/uuid-gold-runc.jsonl",
+      "floor": "container",
+      "python": {
+        "sessions": 1,
+        "records": 14,
+        "closed": 1,
+        "tiers": {
+          "container": 14
+        },
+        "incomplete": []
+      },
+      "go": {
+        "sessions": 1,
+        "records": 14,
+        "closed": 1,
+        "tiers": {
+          "container": 14
+        },
+        "incomplete": []
+      }
+    },
+    {
+      "file": "records/uuid-wrong-runc.jsonl",
+      "floor": "container",
+      "python": {
+        "sessions": 1,
+        "records": 10,
+        "closed": 1,
+        "tiers": {
+          "container": 10
+        },
+        "incomplete": []
+      },
+      "go": {
+        "sessions": 1,
+        "records": 10,
+        "closed": 1,
+        "tiers": {
+          "container": 10
+        },
+        "incomplete": []
+      }
+    },
+    {
+      "file": "records/uuid-gold-runsc.jsonl",
+      "floor": "kernel",
+      "python": {
+        "sessions": 1,
+        "records": 14,
+        "closed": 1,
+        "tiers": {
+          "kernel": 14
+        },
+        "incomplete": []
+      },
+      "go": {
+        "sessions": 1,
+        "records": 14,
+        "closed": 1,
+        "tiers": {
+          "kernel": 14
+        },
+        "incomplete": []
+      }
+    },
+    {
+      "file": "records/uuid-shipped-runc.jsonl",
+      "floor": "container",
+      "python": {
+        "sessions": 1,
+        "records": 8,
+        "closed": 1,
+        "tiers": {
+          "container": 8
+        },
+        "incomplete": []
+      },
+      "go": {
+        "sessions": 1,
+        "records": 8,
+        "closed": 1,
+        "tiers": {
+          "container": 8
+        },
+        "incomplete": []
+      }
+    },
+    {
+      "file": "records/calls-runc.jsonl",
+      "floor": "container",
+      "python": {
+        "sessions": 5,
+        "records": 115,
+        "closed": 5,
+        "tiers": {
+          "container": 115
+        },
+        "incomplete": []
+      },
+      "go": {
+        "sessions": 5,
+        "records": 115,
+        "closed": 5,
+        "tiers": {
+          "container": 115
+        },
+        "incomplete": []
+      }
+    },
+    {
+      "file": "records/calls-runsc.jsonl",
+      "floor": "kernel",
+      "python": {
+        "sessions": 5,
+        "records": 115,
+        "closed": 5,
+        "tiers": {
+          "kernel": 115
+        },
+        "incomplete": []
+      },
+      "go": {
+        "sessions": 5,
+        "records": 115,
+        "closed": 5,
+        "tiers": {
+          "kernel": 115
+        },
+        "incomplete": []
+      }
+    }
+  ]
+}

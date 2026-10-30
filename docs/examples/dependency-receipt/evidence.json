@@ -1,0 +1,2143 @@
+{
+  "date": "2026-10-29",
+  "cluster": {
+    "kubernetes": "v1.37.0",
+    "container_runtime": "containerd://2.3.4",
+    "agent_sandbox": "registry.k8s.io/agent-sandbox/agent-sandbox-controller:v1.0.7",
+    "runtime_class": "gvisor-receipt",
+    "handler": "runsc-receipt",
+    "image": "plimsoll/sandbox-agentsandbox:dev",
+    "runsc": "release-20260907.0",
+    "runsc_configuration_sha256": "1469f8adb827c216bd3451bd590203169c3613c052b3f35988737f9ad8b32955",
+    "strace_syscalls": 46,
+    "strace_log_size": 16,
+    "runsc_network": "sandbox"
+  },
+  "daemon": {
+    "SANDBOX_AGENTSANDBOX_API_SERVER": "https://172.24.0.2:6443",
+    "SANDBOX_AGENTSANDBOX_IMAGE": "plimsoll/sandbox-agentsandbox:dev",
+    "SANDBOX_AGENTSANDBOX_NAMESPACE": "plimsoll-dependency-receipt",
+    "SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS": "runsc-receipt",
+    "SANDBOX_AGENTSANDBOX_RUNTIME_CLASS": "gvisor-receipt",
+    "SANDBOX_AGENTSANDBOX_WARM_POOL": "receipt",
+    "SANDBOX_CPUS": "1",
+    "SANDBOX_MEMORY_MB": "512",
+    "SANDBOX_MIN_ISOLATION": "kernel",
+    "SANDBOX_PROVIDER": "agentsandbox"
+  },
+  "smoke": {
+    "tier": "kernel",
+    "kernel": "[   0.000000] Starting gVisor...",
+    "swept": 4903,
+    "writable": [
+      "/dev/shm",
+      "/tmp",
+      "/work"
+    ],
+    "egress": {
+      "tcp 1.1.1.1:443": "timeout",
+      "tcp 10.244.0.1:10250": "timeout",
+      "tcp 169.254.169.254:80": "timeout",
+      "tcp 172.24.0.2:6443": "timeout",
+      "tcp 8.8.8.8:53": "timeout",
+      "tcp [2001:4860:4860::8888]:53": "ENETUNREACH",
+      "tcp [2606:4700:4700::1111]:443": "ENETUNREACH"
+    }
+  },
+  "build": {
+    "go": "go1.26.10",
+    "revision": "47b36cdd3d41ef6b3d8d29737309130579ef9e35",
+    "main_base": "1c9951d63ad629edda0faa885ced96b4adfdead0",
+    "ahead_of_main": [
+      "agentsandbox: a completed project run's result names its image too. runPlan returned the runner's report, a fresh value, with the pod added back but not the image digest, so the signed record of every completed agent-sandbox project run had an empty environment (snippets were fixed on 2026-10-26). Found on the dependency receipt's first live run through plimsoll. TestRunsClaimRunAndDelete now requires a snippet's and a project's result to name the pod's image by digest, and fails without the fix (project environment \"\"). Live on kind afterwards: three project records name agentsandbox-image:sha256:c7750b79."
+    ],
+    "uncommitted": [
+      "docs/example-programs.md",
+      "examples/dependency-receipt/README.md",
+      "examples/dependency-receipt/live/cluster.yaml",
+      "examples/dependency-receipt/live/evidence.go",
+      "examples/dependency-receipt/live/live_test.go",
+      "examples/dependency-receipt/live/main.go",
+      "examples/dependency-receipt/live/page.go",
+      "examples/dependency-receipt/live/page.html.tmpl",
+      "examples/dependency-receipt/live/run.go",
+      "examples/dependency-receipt/live/tamper.go",
+      "scripts/public-manifest.txt"
+    ]
+  },
+  "key": "6a9724e384b8de2aadcebd12cd9d967c736214522fdb220d1de49bc73f56a8f4",
+  "bundle": {
+    "sha256": "cbc289183cd9b399b1ef6701649057e6c3bdc3a7740e6ca701da8befac740528",
+    "lines": 4,
+    "runs": 3
+  },
+  "runs": [
+    {
+      "fixture": "quiet",
+      "line": 1,
+      "scripts": {},
+      "minimum_isolation": "kernel",
+      "request_sha256": "2341227771ce3c336dd89dcc198bd1f8fb5353903b50d1af1b89ca9f23abcff7",
+      "record_sha256": "b69b8960903c708887f2eaeecd140224e9a9306efd7d3cafd5ee35bcd1291205",
+      "record_version": 4,
+      "instance": "k8s-pod-uid:fcbbc735-79ae-4871-b08f-3a8dab68675f",
+      "provider": "agentsandbox",
+      "isolation": "kernel",
+      "environment": "agentsandbox-image:sha256:c7750b7916591611e93978029237cdb1cd3268d885e79b7b91624514ba2b72ff",
+      "started": "2026-10-29T18:14:04.78Z",
+      "ms": 6879,
+      "outcome": "completed",
+      "steps": [
+        {
+          "command": "npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/quiet",
+          "exit": 0,
+          "ms": 5518,
+          "stdout": "\nadded 1 package in 1s\n",
+          "stderr": ""
+        },
+        {
+          "command": "node -e 'require(\"plimsoll-fixture-quiet\")'",
+          "exit": 0,
+          "ms": 59,
+          "stdout": "",
+          "stderr": ""
+        }
+      ],
+      "log": {
+        "file": "logs/quiet.boot.json.gz",
+        "gzip_bytes": 244229,
+        "sha256": "8f458f815dbe87f88031f6e8956cfc54e336ff452a4ab95b623f2629c356833e",
+        "instance": "k8s-pod-uid:fcbbc735-79ae-4871-b08f-3a8dab68675f",
+        "bytes": 3476259,
+        "entries": 13365,
+        "calls": 11264
+      },
+      "receipt": {
+        "file": "receipts/quiet.intoto.json.gz",
+        "gzip_bytes": 43641,
+        "bytes": 378633,
+        "sha256": "de4e04ca075b9464c26c4124d8379238f48e6aff68131fd0b7cef127f5aac037"
+      },
+      "seen": {
+        "processes": 13,
+        "programs": 19,
+        "written": 563,
+        "totals": {
+          "effected": {
+            "opened": 565,
+            "changes": 571,
+            "network": 28
+          },
+          "attempted": {
+            "opened": 1,
+            "changes": 16,
+            "network": 7
+          },
+          "undetermined": {
+            "opened": 0,
+            "changes": 0,
+            "network": 0
+          }
+        },
+        "unclear": 0,
+        "groups": [
+          {
+            "kind": "sandbox",
+            "processes": [
+              {
+                "pid": 1,
+                "exit": 0,
+                "command": "",
+                "loaded": 0
+              },
+              {
+                "pid": 8,
+                "parent": 1,
+                "exit": 0,
+                "command": "",
+                "loaded": 0
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 0,
+                "changes": 0,
+                "network": 11
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 0,
+                "network": 1
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "::1",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "::ffff:7f00:1",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "port 9090",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "listen",
+                "what": "socket:[4]",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "port 8080",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "listen",
+                "what": "socket:[5]",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "attempted",
+                "kind": "socket",
+                "what": "AF_INET SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK",
+                "result": "errno=22 (invalid argument)",
+                "pid": 1
+              }
+            ]
+          },
+          {
+            "kind": "check",
+            "processes": [
+              {
+                "pid": 9,
+                "parent": 1,
+                "exit": 0,
+                "command": "cat /proc/mounts",
+                "loaded": 4
+              },
+              {
+                "pid": 11,
+                "parent": 9,
+                "exit": 0,
+                "command": "",
+                "loaded": 0
+              },
+              {
+                "pid": 12,
+                "parent": 11,
+                "exit": 0,
+                "command": "dmesg",
+                "loaded": 1
+              },
+              {
+                "pid": 13,
+                "parent": 11,
+                "exit": 0,
+                "command": "head -n 1",
+                "loaded": 1
+              },
+              {
+                "pid": 14,
+                "parent": 9,
+                "exit": 0,
+                "command": "cat /proc/sys/kernel/random/boot_id",
+                "loaded": 1
+              },
+              {
+                "pid": 15,
+                "parent": 9,
+                "exit": 0,
+                "command": "grep ^Seccomp: /proc/self/status",
+                "loaded": 1
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 1,
+                "changes": 0,
+                "network": 3
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 0,
+                "network": 3
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 9
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 9
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 9
+              }
+            ],
+            "exit": 0
+          },
+          {
+            "kind": "runner",
+            "processes": [
+              {
+                "pid": 16,
+                "parent": 1,
+                "exit": 0,
+                "command": "node /runner.mjs",
+                "loaded": 4
+              },
+              {
+                "pid": 17,
+                "parent": 16,
+                "exit": 0,
+                "command": "mkdir -p /work/project",
+                "loaded": 1
+              },
+              {
+                "pid": 24,
+                "parent": 16,
+                "exit": 0,
+                "command": "/usr/local/bin/node -e const fs=require(\"node:fs\");\nconst p=\"/proc/\"+process.ppid;\nconst checks=[[p+\"/fd/0\",fs.constants.O_RDONLY],[p+\"/fd/1\",fs.constants.O_RDONLY],\n  [p+\"/fd/1\",fs.constants.O_WRONLY],[p+\"/mem\",fs.constants.O_RDONLY]];\nconst results=[];\nfor(const [path,flags] of checks){\n  try{const fd=fs.openSync(path,flags);fs.closeSync(fd);results.push(\"open\");}\n  catch(e){results.push(e.code||\"unknown\");}\n}\nprocess.stdout.write(results.join(\",\"));",
+                "loaded": 1
+              }
+            ],
+            "written": 3,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 3,
+                "changes": 3,
+                "network": 3
+              },
+              "attempted": {
+                "opened": 1,
+                "changes": 5,
+                "network": 3
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "attempted",
+                "kind": "open for writing",
+                "what": "/proc/16/fd/1",
+                "result": "errno=13 (permission denied)",
+                "pid": 24
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/",
+                "result": "errno=17 (file exists)",
+                "pid": 17
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/",
+                "result": "errno=17 (file exists)",
+                "pid": 17
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project",
+                "result": "errno=17 (file exists)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/packages/quiet",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/packages/quiet",
+                "result": "errno=17 (file exists)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              }
+            ],
+            "exit": 0
+          },
+          {
+            "kind": "step",
+            "step": 1,
+            "processes": [
+              {
+                "pid": 31,
+                "parent": 16,
+                "exit": 0,
+                "command": "node /usr/local/bin/npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/quiet",
+                "loaded": 3
+              }
+            ],
+            "written": 560,
+            "compile_cache": 552,
+            "counts": {
+              "effected": {
+                "opened": 561,
+                "changes": 568,
+                "network": 11
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 11,
+                "network": 0
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "effected",
+                "kind": "connect",
+                "what": "127.0.0.1 port 65535",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "connect",
+                "what": "::1 port 65535",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/tmp/node-compile-cache/v22.23.4-x64-9ac5647c-61000",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project",
+                "result": "errno=17 (file exists)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/node_modules/plimsoll-fixture-quiet",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/node_modules/plimsoll-fixture-quiet",
+                "result": "errno=17 (file exists)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/tmp",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512/ad/89",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512/ad",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512/ad/89",
+                "result": "errno=17 (file exists)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/index-v5/fe/d1",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/index-v5/fe",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              }
+            ],
+            "exit": 0
+          },
+          {
+            "kind": "step",
+            "step": 2,
+            "processes": [
+              {
+                "pid": 43,
+                "parent": 16,
+                "exit": 0,
+                "command": "node -e require(\"plimsoll-fixture-quiet\")",
+                "loaded": 2
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [],
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "network",
+      "line": 2,
+      "scripts": {
+        "postinstall": "node install.js"
+      },
+      "minimum_isolation": "kernel",
+      "request_sha256": "3d7e7dc55ce23ee022ea79843bd274460b22079a119c5c83c3222a70740a608c",
+      "record_sha256": "bf86e832588ee1c77659c9bae0763b7e614aa40d51bceb525b80fcdcccf6013d",
+      "record_version": 4,
+      "instance": "k8s-pod-uid:6ff9c6f1-4b63-40a0-af88-869b1a087a1b",
+      "provider": "agentsandbox",
+      "isolation": "kernel",
+      "environment": "agentsandbox-image:sha256:c7750b7916591611e93978029237cdb1cd3268d885e79b7b91624514ba2b72ff",
+      "started": "2026-10-29T18:14:10.717Z",
+      "ms": 7223,
+      "outcome": "completed",
+      "steps": [
+        {
+          "command": "npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/network",
+          "exit": 0,
+          "ms": 6809,
+          "stdout": "\n\u003e plimsoll-fixture-network@1.0.0 postinstall\n\u003e node install.js\n\n\nadded 1 package in 6s\n",
+          "stderr": ""
+        },
+        {
+          "command": "node -e 'require(\"plimsoll-fixture-network\")'",
+          "exit": 0,
+          "ms": 104,
+          "stdout": "",
+          "stderr": ""
+        }
+      ],
+      "log": {
+        "file": "logs/network.boot.json.gz",
+        "gzip_bytes": 255637,
+        "sha256": "98f9a3e05af99afbd6e853613b30757033376c58946b36ee9b846ca4899a65e0",
+        "instance": "k8s-pod-uid:6ff9c6f1-4b63-40a0-af88-869b1a087a1b",
+        "bytes": 3607184,
+        "entries": 13883,
+        "calls": 11518
+      },
+      "receipt": {
+        "file": "receipts/network.intoto.json.gz",
+        "gzip_bytes": 44107,
+        "bytes": 381113,
+        "sha256": "6badd677815cd1df8051b01e94d21726a129ef9aa8bc88a60e8823c3822b130c"
+      },
+      "seen": {
+        "processes": 14,
+        "programs": 21,
+        "written": 565,
+        "totals": {
+          "effected": {
+            "opened": 567,
+            "changes": 571,
+            "network": 38
+          },
+          "attempted": {
+            "opened": 1,
+            "changes": 17,
+            "network": 7
+          },
+          "undetermined": {
+            "opened": 0,
+            "changes": 0,
+            "network": 1
+          }
+        },
+        "unclear": 0,
+        "groups": [
+          {
+            "kind": "sandbox",
+            "processes": [
+              {
+                "pid": 1,
+                "exit": 0,
+                "command": "",
+                "loaded": 0
+              },
+              {
+                "pid": 8,
+                "parent": 1,
+                "exit": 0,
+                "command": "",
+                "loaded": 0
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 0,
+                "changes": 0,
+                "network": 11
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 0,
+                "network": 1
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "::1",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "::ffff:7f00:1",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "port 9090",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "listen",
+                "what": "socket:[4]",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "port 8080",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "listen",
+                "what": "socket:[5]",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "attempted",
+                "kind": "socket",
+                "what": "AF_INET SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK",
+                "result": "errno=22 (invalid argument)",
+                "pid": 1
+              }
+            ]
+          },
+          {
+            "kind": "check",
+            "processes": [
+              {
+                "pid": 9,
+                "parent": 1,
+                "exit": 0,
+                "command": "cat /proc/mounts",
+                "loaded": 4
+              },
+              {
+                "pid": 11,
+                "parent": 9,
+                "exit": 0,
+                "command": "",
+                "loaded": 0
+              },
+              {
+                "pid": 12,
+                "parent": 11,
+                "exit": 0,
+                "command": "dmesg",
+                "loaded": 1
+              },
+              {
+                "pid": 13,
+                "parent": 11,
+                "exit": 0,
+                "command": "head -n 1",
+                "loaded": 1
+              },
+              {
+                "pid": 14,
+                "parent": 9,
+                "exit": 0,
+                "command": "cat /proc/sys/kernel/random/boot_id",
+                "loaded": 1
+              },
+              {
+                "pid": 15,
+                "parent": 9,
+                "exit": 0,
+                "command": "grep ^Seccomp: /proc/self/status",
+                "loaded": 1
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 1,
+                "changes": 0,
+                "network": 3
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 0,
+                "network": 3
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 9
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 9
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 9
+              }
+            ],
+            "exit": 0
+          },
+          {
+            "kind": "runner",
+            "processes": [
+              {
+                "pid": 16,
+                "parent": 1,
+                "exit": 0,
+                "command": "node /runner.mjs",
+                "loaded": 4
+              },
+              {
+                "pid": 17,
+                "parent": 16,
+                "exit": 0,
+                "command": "mkdir -p /work/project",
+                "loaded": 1
+              },
+              {
+                "pid": 24,
+                "parent": 16,
+                "exit": 0,
+                "command": "/usr/local/bin/node -e const fs=require(\"node:fs\");\nconst p=\"/proc/\"+process.ppid;\nconst checks=[[p+\"/fd/0\",fs.constants.O_RDONLY],[p+\"/fd/1\",fs.constants.O_RDONLY],\n  [p+\"/fd/1\",fs.constants.O_WRONLY],[p+\"/mem\",fs.constants.O_RDONLY]];\nconst results=[];\nfor(const [path,flags] of checks){\n  try{const fd=fs.openSync(path,flags);fs.closeSync(fd);results.push(\"open\");}\n  catch(e){results.push(e.code||\"unknown\");}\n}\nprocess.stdout.write(results.join(\",\"));",
+                "loaded": 1
+              }
+            ],
+            "written": 4,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 4,
+                "changes": 3,
+                "network": 3
+              },
+              "attempted": {
+                "opened": 1,
+                "changes": 6,
+                "network": 3
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "attempted",
+                "kind": "open for writing",
+                "what": "/proc/16/fd/1",
+                "result": "errno=13 (permission denied)",
+                "pid": 24
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/",
+                "result": "errno=17 (file exists)",
+                "pid": 17
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/",
+                "result": "errno=17 (file exists)",
+                "pid": 17
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project",
+                "result": "errno=17 (file exists)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/packages/network",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/packages/network",
+                "result": "errno=17 (file exists)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/packages/network",
+                "result": "errno=17 (file exists)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              }
+            ],
+            "exit": 0
+          },
+          {
+            "kind": "step",
+            "step": 1,
+            "processes": [
+              {
+                "pid": 31,
+                "parent": 16,
+                "exit": 0,
+                "command": "node /usr/local/bin/npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/network",
+                "loaded": 3
+              }
+            ],
+            "written": 561,
+            "compile_cache": 552,
+            "counts": {
+              "effected": {
+                "opened": 562,
+                "changes": 568,
+                "network": 11
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 11,
+                "network": 0
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "effected",
+                "kind": "connect",
+                "what": "127.0.0.1 port 65535",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "connect",
+                "what": "::1 port 65535",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/tmp/node-compile-cache/v22.23.4-x64-9ac5647c-61000",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project",
+                "result": "errno=17 (file exists)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/node_modules/plimsoll-fixture-network",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/node_modules/plimsoll-fixture-network",
+                "result": "errno=17 (file exists)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/tmp",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512/5d/37",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512/5d",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512/5d/37",
+                "result": "errno=17 (file exists)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/index-v5/10/b1",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/index-v5/10",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              }
+            ],
+            "exit": 0
+          },
+          {
+            "kind": "script",
+            "script": "postinstall",
+            "processes": [
+              {
+                "pid": 43,
+                "parent": 31,
+                "exit": 0,
+                "command": "node install.js",
+                "loaded": 2
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 0,
+                "changes": 0,
+                "network": 10
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 1
+              }
+            },
+            "calls": [
+              {
+                "side": "effected",
+                "kind": "socket",
+                "what": "AF_INET SOCK_DGRAM|SOCK_CLOEXEC|SOCK_NONBLOCK",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "effected",
+                "kind": "socket",
+                "what": "AF_INET SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "effected",
+                "kind": "socket",
+                "what": "AF_INET SOCK_DGRAM|SOCK_CLOEXEC|SOCK_NONBLOCK",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "sendmsg: the destination is not in the log; the message header changed during the call",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 43
+              },
+              {
+                "side": "undetermined",
+                "kind": "connect",
+                "what": "203.0.113.7 port 443",
+                "detail": "AF_INET",
+                "result": "errno=115 (operation now in progress)",
+                "pid": 43
+              }
+            ],
+            "exit": 0
+          },
+          {
+            "kind": "step",
+            "step": 2,
+            "processes": [
+              {
+                "pid": 54,
+                "parent": 16,
+                "exit": 0,
+                "command": "node -e require(\"plimsoll-fixture-network\")",
+                "loaded": 2
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [],
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "canary",
+      "line": 3,
+      "scripts": {
+        "postinstall": "node install.js"
+      },
+      "minimum_isolation": "kernel",
+      "request_sha256": "ae4f83ed28de7748f4188e03cb72c15e86eb41f04b271931e25650d1a78f3830",
+      "record_sha256": "3400f04835e2a3395e3a8ba9f624586b5df21619cc959d8cfc1c08e2e15f1ef7",
+      "record_version": 4,
+      "instance": "k8s-pod-uid:7f4001ae-cf30-4523-868f-50168cf8fd58",
+      "provider": "agentsandbox",
+      "isolation": "kernel",
+      "environment": "agentsandbox-image:sha256:c7750b7916591611e93978029237cdb1cd3268d885e79b7b91624514ba2b72ff",
+      "started": "2026-10-29T18:14:17.942Z",
+      "ms": 6764,
+      "outcome": "completed",
+      "steps": [
+        {
+          "command": "npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/canary",
+          "exit": 1,
+          "ms": 6437,
+          "stdout": "\n\u003e plimsoll-fixture-canary@1.0.0 postinstall\n\u003e node install.js\n\n",
+          "stderr": "node:fs:2430\n    return binding.writeFileUtf8(\n                   ^\n\nError: EACCES: permission denied, open '/root/.canary'\n    at Object.writeFileSync (node:fs:2430:20)\n    at Object.\u003canonymous\u003e (/work/project/node_modules/plimsoll-fixture-canary/install.js:4:4)\n    at Module._compile (node:internal/modules/cjs/loader:1781:14)\n    at Object..js (node:internal/modules/cjs/loader:1913:10)\n    at Module.load (node:internal/modules/cjs/loader:1505:32)\n    at Function._load (node:internal/modules/cjs/loader:1309:12)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:254:19)\n    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)\n    at node:internal/main/run_main_module:36:49 {\n  errno: -13,\n  code: 'EACCES',\n  syscall: 'open',\n  path: '/root/.canary'\n}\n\nNode.js v22.23.4\nnpm error code 1\nnpm error path /work/project/node_modules/plimsoll-fixture-canary\nnpm error command failed\nnpm error command sh -c node install.js\nnpm error A complete log of this run can be found in: /work/.npm/_logs/2026-10-29T18_14_18_523Z-debug-0.log\n"
+        }
+      ],
+      "log": {
+        "file": "logs/canary.boot.json.gz",
+        "gzip_bytes": 249869,
+        "sha256": "13e70966358938126ca8e0fe77bcbe57e4c534d4916eff2487423fc8c51a33c2",
+        "instance": "k8s-pod-uid:7f4001ae-cf30-4523-868f-50168cf8fd58",
+        "bytes": 3547143,
+        "entries": 13585,
+        "calls": 11308
+      },
+      "receipt": {
+        "file": "receipts/canary.intoto.json.gz",
+        "gzip_bytes": 44130,
+        "bytes": 379945,
+        "sha256": "26e901c3ff8a3992fe718d6079340880ec7c27bc8903fe1c8f723e88385c9ea2"
+      },
+      "seen": {
+        "processes": 13,
+        "programs": 19,
+        "written": 562,
+        "totals": {
+          "effected": {
+            "opened": 564,
+            "changes": 576,
+            "network": 28
+          },
+          "attempted": {
+            "opened": 2,
+            "changes": 19,
+            "network": 7
+          },
+          "undetermined": {
+            "opened": 0,
+            "changes": 0,
+            "network": 0
+          }
+        },
+        "unclear": 0,
+        "groups": [
+          {
+            "kind": "sandbox",
+            "processes": [
+              {
+                "pid": 1,
+                "exit": 0,
+                "command": "",
+                "loaded": 0
+              },
+              {
+                "pid": 8,
+                "parent": 1,
+                "exit": 0,
+                "command": "",
+                "loaded": 0
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 0,
+                "changes": 0,
+                "network": 11
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 0,
+                "network": 1
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "::1",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "::ffff:7f00:1",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "port 9090",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "listen",
+                "what": "socket:[4]",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "port 8080",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "effected",
+                "kind": "listen",
+                "what": "socket:[5]",
+                "result": "ok",
+                "pid": 1
+              },
+              {
+                "side": "attempted",
+                "kind": "socket",
+                "what": "AF_INET SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK",
+                "result": "errno=22 (invalid argument)",
+                "pid": 1
+              }
+            ]
+          },
+          {
+            "kind": "check",
+            "processes": [
+              {
+                "pid": 9,
+                "parent": 1,
+                "exit": 0,
+                "command": "cat /proc/mounts",
+                "loaded": 4
+              },
+              {
+                "pid": 11,
+                "parent": 9,
+                "exit": 0,
+                "command": "",
+                "loaded": 0
+              },
+              {
+                "pid": 12,
+                "parent": 11,
+                "exit": 0,
+                "command": "dmesg",
+                "loaded": 1
+              },
+              {
+                "pid": 13,
+                "parent": 11,
+                "exit": 0,
+                "command": "head -n 1",
+                "loaded": 1
+              },
+              {
+                "pid": 14,
+                "parent": 9,
+                "exit": 0,
+                "command": "cat /proc/sys/kernel/random/boot_id",
+                "loaded": 1
+              },
+              {
+                "pid": 15,
+                "parent": 9,
+                "exit": 0,
+                "command": "grep ^Seccomp: /proc/self/status",
+                "loaded": 1
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 1,
+                "changes": 0,
+                "network": 3
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 0,
+                "network": 3
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 9
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 9
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 9
+              }
+            ],
+            "exit": 0
+          },
+          {
+            "kind": "runner",
+            "processes": [
+              {
+                "pid": 16,
+                "parent": 1,
+                "exit": 0,
+                "command": "node /runner.mjs",
+                "loaded": 4
+              },
+              {
+                "pid": 17,
+                "parent": 16,
+                "exit": 0,
+                "command": "mkdir -p /work/project",
+                "loaded": 1
+              },
+              {
+                "pid": 24,
+                "parent": 16,
+                "exit": 0,
+                "command": "/usr/local/bin/node -e const fs=require(\"node:fs\");\nconst p=\"/proc/\"+process.ppid;\nconst checks=[[p+\"/fd/0\",fs.constants.O_RDONLY],[p+\"/fd/1\",fs.constants.O_RDONLY],\n  [p+\"/fd/1\",fs.constants.O_WRONLY],[p+\"/mem\",fs.constants.O_RDONLY]];\nconst results=[];\nfor(const [path,flags] of checks){\n  try{const fd=fs.openSync(path,flags);fs.closeSync(fd);results.push(\"open\");}\n  catch(e){results.push(e.code||\"unknown\");}\n}\nprocess.stdout.write(results.join(\",\"));",
+                "loaded": 1
+              }
+            ],
+            "written": 4,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 4,
+                "changes": 3,
+                "network": 3
+              },
+              "attempted": {
+                "opened": 1,
+                "changes": 6,
+                "network": 3
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "attempted",
+                "kind": "open for writing",
+                "what": "/proc/16/fd/1",
+                "result": "errno=13 (permission denied)",
+                "pid": 24
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/",
+                "result": "errno=17 (file exists)",
+                "pid": 17
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/",
+                "result": "errno=17 (file exists)",
+                "pid": 17
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project",
+                "result": "errno=17 (file exists)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/packages/canary",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/packages/canary",
+                "result": "errno=17 (file exists)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/packages/canary",
+                "result": "errno=17 (file exists)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              },
+              {
+                "side": "attempted",
+                "kind": "connect",
+                "what": "/var/run/nscd/socket",
+                "detail": "AF_UNIX",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 16
+              }
+            ],
+            "exit": 0
+          },
+          {
+            "kind": "step",
+            "step": 1,
+            "processes": [
+              {
+                "pid": 31,
+                "parent": 16,
+                "exit": 1,
+                "command": "node /usr/local/bin/npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/canary",
+                "loaded": 3
+              }
+            ],
+            "written": 558,
+            "compile_cache": 552,
+            "counts": {
+              "effected": {
+                "opened": 559,
+                "changes": 573,
+                "network": 11
+              },
+              "attempted": {
+                "opened": 0,
+                "changes": 13,
+                "network": 0
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "effected",
+                "kind": "connect",
+                "what": "127.0.0.1 port 65535",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "connect",
+                "what": "::1 port 65535",
+                "detail": "AF_INET6",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "bind",
+                "what": "",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "effected",
+                "kind": "send",
+                "what": "127.0.0.1 port 53",
+                "detail": "AF_INET",
+                "result": "ok",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/tmp/node-compile-cache/v22.23.4-x64-9ac5647c-61000",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project",
+                "result": "errno=17 (file exists)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/node_modules/plimsoll-fixture-canary",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/project/node_modules/plimsoll-fixture-canary",
+                "result": "errno=17 (file exists)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/tmp",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512/c2/97",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512/c2",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/content-v2/sha512/c2/97",
+                "result": "errno=17 (file exists)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/index-v5/5d/5c",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "mkdir",
+                "what": "/work/.npm/_cacache/index-v5/5d",
+                "result": "errno=2 (no such file or directory)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "rmdir",
+                "what": "/work/project/node_modules",
+                "result": "errno=39 (directory not empty)",
+                "pid": 31
+              },
+              {
+                "side": "attempted",
+                "kind": "rmdir",
+                "what": "/work/project/node_modules/plimsoll-fixture-canary",
+                "result": "errno=39 (directory not empty)",
+                "pid": 31
+              }
+            ],
+            "exit": 1
+          },
+          {
+            "kind": "script",
+            "script": "postinstall",
+            "processes": [
+              {
+                "pid": 43,
+                "parent": 31,
+                "exit": 1,
+                "command": "node install.js",
+                "loaded": 2
+              }
+            ],
+            "written": 0,
+            "compile_cache": 0,
+            "counts": {
+              "effected": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              },
+              "attempted": {
+                "opened": 1,
+                "changes": 0,
+                "network": 0
+              },
+              "undetermined": {
+                "opened": 0,
+                "changes": 0,
+                "network": 0
+              }
+            },
+            "calls": [
+              {
+                "side": "attempted",
+                "kind": "open to create or empty",
+                "what": "/root/.canary",
+                "result": "errno=13 (permission denied)",
+                "pid": 43
+              }
+            ],
+            "exit": 1
+          }
+        ]
+      }
+    }
+  ],
+  "dropped": {
+    "file": "tampered/network-connection-deleted.intoto.json.gz",
+    "gzip_bytes": 44040,
+    "fixture": "network",
+    "side": "undetermined",
+    "call": {
+      "kind": "connect",
+      "pid": 43,
+      "family": "AF_INET",
+      "addr": "203.0.113.7",
+      "port": 443,
+      "result": "errno=115 (operation now in progress)"
+    }
+  },
+  "edit": {
+    "fixture": "network",
+    "offset": 1676748,
+    "was": "7",
+    "now": "8",
+    "before": "cket:[35], 0x7ed67f746660 {Family: AF_INET, Addr: 203.0.113.",
+    "after": ", Port: 443}, 0x10)\",\"level\":\"",
+    "sha256": "a8ce7729abe09505e8b2e1ea24bf3988acd1a8df008a0ef65cc15d30d1d0b109"
+  },
+  "not_observed": [
+    "behavior the package keeps for later: one install and one import is one observation, and code that waits, or checks whether it is watched, shows nothing",
+    "names looked up in DNS: a lookup shows as a datagram to port 53, not the name",
+    "the destination of a datagram sent with sendmsg",
+    "writes through shared memory mappings, sendfile, splice, copy_file_range and fallocate",
+    "paths of calls that take no descriptor are copied from the program's memory before the call reads them, so a second thread can change them in between; files written are named from descriptors and are not affected",
+    "the pod's whole life is one observation: a pod that served several calls shows all of them",
+    "anything outside gVisor"
+  ],
+  "transcripts": [
+    {
+      "name": "sign quiet",
+      "args": [
+        "-log",
+        "logs/quiet.boot.json.gz",
+        "-key",
+        "secrets/harness.key",
+        "-out",
+        "receipts/quiet.intoto.json",
+        "-bundle",
+        "bundle.jsonl",
+        "-line",
+        "1"
+      ],
+      "exit": 0,
+      "stdout": "signed a dependency behavior receipt with key 6a9724e384b8de2aadcebd12cd9d967c736214522fdb220d1de49bc73f56a8f4: sandbox k8s-pod-uid:fcbbc735-79ae-4871-b08f-3a8dab68675f, 19 programs started in 13 processes, 563 files written, network destinations tried: connect /var/run/nscd/socket:0, connect 127.0.0.1:65535, connect ::1:65535, send 127.0.0.1:53; calls that returned an error: 24; calls whose outcome is not in the log: 0; unclear entries: 0; log sha256 8f458f815dbe87f88031f6e8956cfc54e336ff452a4ab95b623f2629c356833e; joined to run record b69b8960903c708887f2eaeecd140224e9a9306efd7d3cafd5ee35bcd1291205 (agentsandbox, isolation kernel)\n",
+      "stderr": ""
+    },
+    {
+      "name": "check quiet",
+      "args": [
+        "-check",
+        "receipts/quiet.intoto.json",
+        "-pub",
+        "harness.pub",
+        "-log",
+        "logs/quiet.boot.json.gz",
+        "-bundle",
+        "bundle.jsonl",
+        "-line",
+        "1"
+      ],
+      "exit": 0,
+      "stdout": "receipt checked: signed by key 6a9724e384b8de2aadcebd12cd9d967c736214522fdb220d1de49bc73f56a8f4, and exactly what the log shows: sandbox k8s-pod-uid:fcbbc735-79ae-4871-b08f-3a8dab68675f, 19 programs started in 13 processes, 563 files written, network destinations tried: connect /var/run/nscd/socket:0, connect 127.0.0.1:65535, connect ::1:65535, send 127.0.0.1:53; calls that returned an error: 24; calls whose outcome is not in the log: 0; unclear entries: 0; log sha256 8f458f815dbe87f88031f6e8956cfc54e336ff452a4ab95b623f2629c356833e; joined to run record b69b8960903c708887f2eaeecd140224e9a9306efd7d3cafd5ee35bcd1291205 (agentsandbox, isolation kernel). Not established by this check: that the log is the one runsc wrote for that pod (that is the signer's word), and anything the receipt lists as not observed\n",
+      "stderr": ""
+    },
+    {
+      "name": "sign network",
+      "args": [
+        "-log",
+        "logs/network.boot.json.gz",
+        "-key",
+        "secrets/harness.key",
+        "-out",
+        "receipts/network.intoto.json",
+        "-bundle",
+        "bundle.jsonl",
+        "-line",
+        "2"
+      ],
+      "exit": 0,
+      "stdout": "signed a dependency behavior receipt with key 6a9724e384b8de2aadcebd12cd9d967c736214522fdb220d1de49bc73f56a8f4: sandbox k8s-pod-uid:6ff9c6f1-4b63-40a0-af88-869b1a087a1b, 21 programs started in 14 processes, 565 files written, network destinations tried: connect /var/run/nscd/socket:0, connect 127.0.0.1:65535, connect 203.0.113.7:443, connect ::1:65535, send 127.0.0.1:53; calls that returned an error: 25; calls whose outcome is not in the log: 1; unclear entries: 0; log sha256 98f9a3e05af99afbd6e853613b30757033376c58946b36ee9b846ca4899a65e0; joined to run record bf86e832588ee1c77659c9bae0763b7e614aa40d51bceb525b80fcdcccf6013d (agentsandbox, isolation kernel)\n",
+      "stderr": ""
+    },
+    {
+      "name": "check network",
+      "args": [
+        "-check",
+        "receipts/network.intoto.json",
+        "-pub",
+        "harness.pub",
+        "-log",
+        "logs/network.boot.json.gz",
+        "-bundle",
+        "bundle.jsonl",
+        "-line",
+        "2"
+      ],
+      "exit": 0,
+      "stdout": "receipt checked: signed by key 6a9724e384b8de2aadcebd12cd9d967c736214522fdb220d1de49bc73f56a8f4, and exactly what the log shows: sandbox k8s-pod-uid:6ff9c6f1-4b63-40a0-af88-869b1a087a1b, 21 programs started in 14 processes, 565 files written, network destinations tried: connect /var/run/nscd/socket:0, connect 127.0.0.1:65535, connect 203.0.113.7:443, connect ::1:65535, send 127.0.0.1:53; calls that returned an error: 25; calls whose outcome is not in the log: 1; unclear entries: 0; log sha256 98f9a3e05af99afbd6e853613b30757033376c58946b36ee9b846ca4899a65e0; joined to run record bf86e832588ee1c77659c9bae0763b7e614aa40d51bceb525b80fcdcccf6013d (agentsandbox, isolation kernel). Not established by this check: that the log is the one runsc wrote for that pod (that is the signer's word), and anything the receipt lists as not observed\n",
+      "stderr": ""
+    },
+    {
+      "name": "sign canary",
+      "args": [
+        "-log",
+        "logs/canary.boot.json.gz",
+        "-key",
+        "secrets/harness.key",
+        "-out",
+        "receipts/canary.intoto.json",
+        "-bundle",
+        "bundle.jsonl",
+        "-line",
+        "3"
+      ],
+      "exit": 0,
+      "stdout": "signed a dependency behavior receipt with key 6a9724e384b8de2aadcebd12cd9d967c736214522fdb220d1de49bc73f56a8f4: sandbox k8s-pod-uid:7f4001ae-cf30-4523-868f-50168cf8fd58, 19 programs started in 13 processes, 562 files written, network destinations tried: connect /var/run/nscd/socket:0, connect 127.0.0.1:65535, connect ::1:65535, send 127.0.0.1:53; calls that returned an error: 28; calls whose outcome is not in the log: 0; unclear entries: 0; log sha256 13e70966358938126ca8e0fe77bcbe57e4c534d4916eff2487423fc8c51a33c2; joined to run record 3400f04835e2a3395e3a8ba9f624586b5df21619cc959d8cfc1c08e2e15f1ef7 (agentsandbox, isolation kernel)\n",
+      "stderr": ""
+    },
+    {
+      "name": "check canary",
+      "args": [
+        "-check",
+        "receipts/canary.intoto.json",
+        "-pub",
+        "harness.pub",
+        "-log",
+        "logs/canary.boot.json.gz",
+        "-bundle",
+        "bundle.jsonl",
+        "-line",
+        "3"
+      ],
+      "exit": 0,
+      "stdout": "receipt checked: signed by key 6a9724e384b8de2aadcebd12cd9d967c736214522fdb220d1de49bc73f56a8f4, and exactly what the log shows: sandbox k8s-pod-uid:7f4001ae-cf30-4523-868f-50168cf8fd58, 19 programs started in 13 processes, 562 files written, network destinations tried: connect /var/run/nscd/socket:0, connect 127.0.0.1:65535, connect ::1:65535, send 127.0.0.1:53; calls that returned an error: 28; calls whose outcome is not in the log: 0; unclear entries: 0; log sha256 13e70966358938126ca8e0fe77bcbe57e4c534d4916eff2487423fc8c51a33c2; joined to run record 3400f04835e2a3395e3a8ba9f624586b5df21619cc959d8cfc1c08e2e15f1ef7 (agentsandbox, isolation kernel). Not established by this check: that the log is the one runsc wrote for that pod (that is the signer's word), and anything the receipt lists as not observed\n",
+      "stderr": ""
+    },
+    {
+      "name": "check a receipt with a connection deleted",
+      "args": [
+        "-check",
+        "tampered/network-connection-deleted.intoto.json",
+        "-pub",
+        "harness.pub",
+        "-log",
+        "logs/network.boot.json.gz",
+        "-bundle",
+        "bundle.jsonl",
+        "-line",
+        "2"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "dependency-receipt: receipt: the signed receipt is not what its evidence rebuilds: the log shows something other than the receipt states\n"
+    },
+    {
+      "name": "check the receipt against the log with one byte changed",
+      "args": [
+        "-check",
+        "receipts/network.intoto.json",
+        "-pub",
+        "harness.pub",
+        "-log",
+        "tampered/network-one-byte.boot.json",
+        "-bundle",
+        "bundle.jsonl",
+        "-line",
+        "2"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "dependency-receipt: receipt: the signed receipt is not what its evidence rebuilds: the receipt is about log 98f9a3e05af99afbd6e853613b30757033376c58946b36ee9b846ca4899a65e0, the log given is a8ce7729abe09505e8b2e1ea24bf3988acd1a8df008a0ef65cc15d30d1d0b109\n"
+    },
+    {
+      "name": "sign the network log joined to the quiet run's record",
+      "args": [
+        "-log",
+        "logs/network.boot.json.gz",
+        "-key",
+        "secrets/harness.key",
+        "-out",
+        "tampered/never-written.intoto.json",
+        "-bundle",
+        "bundle.jsonl",
+        "-line",
+        "1"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "dependency-receipt: receipt: refused: the run record names instance \"k8s-pod-uid:fcbbc735-79ae-4871-b08f-3a8dab68675f\", the log names \"k8s-pod-uid:6ff9c6f1-4b63-40a0-af88-869b1a087a1b\"\n"
+    }
+  ]
+}

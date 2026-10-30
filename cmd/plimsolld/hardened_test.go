@@ -110,6 +110,7 @@ func TestHardenedPolicyFailsClosedPerViolation(t *testing.T) {
 		{"unpinned images", func(e map[string]string) { e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "" }, nil, "SANDBOX_REQUIRE_PINNED_IMAGES"},
 		{"malformed pin flag", func(e map[string]string) { e["SANDBOX_REQUIRE_PINNED_IMAGES"] = "yes" }, nil, "SANDBOX_REQUIRE_PINNED_IMAGES"},
 		{"seccomp unconfined", func(e map[string]string) { e["SANDBOX_DOCKER_SECCOMP"] = "unconfined" }, nil, "unconfined"},
+		{"sdk seccomp unconfined", func(e map[string]string) { e["SANDBOX_DOCKER_SECCOMP_SDK"] = "unconfined" }, nil, "SANDBOX_DOCKER_SECCOMP_SDK=unconfined"},
 		{"missing memory budget", func(e map[string]string) { delete(e, "SANDBOX_MEMORY_MB") }, nil, "SANDBOX_MEMORY_MB"},
 		{"zero memory budget", func(e map[string]string) { e["SANDBOX_MEMORY_MB"] = "0" }, nil, "SANDBOX_MEMORY_MB must be greater than zero"},
 		{"zero cpus", func(e map[string]string) { e["SANDBOX_CPUS"] = "0" }, nil, "SANDBOX_CPUS must be greater than zero"},
@@ -356,6 +357,12 @@ func TestHardenedPolicyAgentSandboxNeedsAnEncryptedPodNetwork(t *testing.T) {
 		"SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK": "1"}
 	if err := enforceHardenedPolicy(getenvFrom(env), f); err != nil {
 		t.Fatalf("compliant agentsandbox deployment rejected: %v", err)
+	}
+	// A declared gVisor handler is held to gVisor by the smoke test and in every pod, and
+	// the daemon's floor holds every run to the kernel tier, so hardened mode accepts it.
+	env["SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS"] = "runsc-receipt"
+	if err := enforceHardenedPolicy(getenvFrom(env), f); err != nil {
+		t.Fatalf("a declared gVisor handler rejected: %v", err)
 	}
 	for _, v := range []string{"", "0"} {
 		env["SANDBOX_AGENTSANDBOX_ENCRYPTED_POD_NETWORK"] = v

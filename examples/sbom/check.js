@@ -144,6 +144,21 @@
     p.rules.forEach((o, i) => { s += (i ? '; ' : ' ') + (ruleNames[o.rule] || o.rule) + ': ' + (o.held ? 'held' : 'broken') + (o.detail ? ` (${o.detail})` : ''); });
     return s + `. Verdict: ${p.verdict}.`;
   }
+  // Each requirement's verdict as the emitter's verifier rebuilds it: held when every rule
+  // it names held, not_held naming the ones that did not, not_tested when it names none.
+  function requirementsFollow(q, content) {
+    try {
+      const reqs = JSON.parse(content).requirements, verdicts = q.requirement_verdicts;
+      const held = new Map((q.rules || []).map(o => [o.rule, o.held]));
+      return Array.isArray(reqs) && Array.isArray(verdicts) && reqs.length === verdicts.length && reqs.every((r, i) => {
+        const rules = r.rules || [], v = verdicts[i];
+        if (!rules.every(rule => held.has(rule))) return false;
+        const failed = rules.filter(rule => !held.get(rule));
+        const status = rules.length === 0 ? 'not_tested' : failed.length ? 'not_held' : 'held';
+        return v.id === r.id && v.status === status && JSON.stringify(v.rules || []) === JSON.stringify(rules) && JSON.stringify(v.failed || []) === JSON.stringify(failed);
+      });
+    } catch { return false; }
+  }
   async function check(bom, imageFiles = {}) {
     const lines = [];
     const add = (id, label, ok, detail = '') => lines.push({id, label, ok: Boolean(ok), detail});
@@ -241,18 +256,21 @@
         && refs.length === 1 && equalHash(refs[0].hashes, bomProps['plimsoll:bundle_sha256']));
       if (qualified) {
         const st = JSON.parse(decode.decode(attached['statement.json']));
-        const verdict = await sealed(st, key, keyID, 'https://plimsollmark.github.io/plimsoll/examples/adapter/qualification/v1');
+        const verdict = await sealed(st, key, keyID, 'https://plimsollmark.github.io/plimsoll/examples/adapter/qualification/v2');
         const q = verdict.statement.predicate || {};
         add('statement', "Referee's statement sealed under the same key and bound to this record", verdict.ok
           && verdict.statement.subject[0].name === 'run-record' && verdict.statement.subject[0].digest.sha256 === recHash
           && String(q.run) === bomProps['plimsoll:bundle_line']);
         const judged = stored.find(f => f.path === q.adapter?.path), harness = stored.find(f => f.path === 'harness.js');
+        const pinned = q.requirements ? stored.filter(f => f.path === q.requirements.path) : [];
         const judgedOK = judged && await hash(utf8(judged.content)) === q.adapter.sha256
-          && (q.evidence?.kind !== 'adapter' || (harness && await hash(utf8(harness.content)) === q.harness_sha256));
+          && (q.evidence?.kind !== 'adapter' || (harness && await hash(utf8(harness.content)) === q.harness_sha256
+            && pinned.length === 1 && await hash(utf8(pinned[0].content)) === q.requirements.sha256 && requirementsFollow(q, pinned[0].content)))
+          && (q.evidence?.kind === 'adapter' || (q.requirements == null && q.requirement_verdicts == null));
         const held = Array.isArray(q.rules) && q.rules.length > 0 && q.rules.every(o => o.held);
         const claim = bom.declarations.claims[3], map = bom.declarations.attestations[0].map[3];
         const qrefs = program.externalReferences.filter(ref => ref.type === 'attestation' && ref.url.endsWith('qualification.jsonl'));
-        add('verdict', 'Verdict claim and conformance score say what the sealed statement says; the judged files are the stored ones', judgedOK
+        add('verdict', 'Verdict claim and conformance score say what the sealed statement says; the judged files, the pinned requirements file included, are the stored ones, and each requirement verdict follows from the rules', judgedOK
           && (q.verdict === 'pass') === held && (q.verdict === 'pass' || q.verdict === 'fail')
           && claim?.['bom-ref'] === 'claim-verdict' && claim.target === 'program' && claim.predicate === verdictText(q)
           && claim.evidence.length === 2 && claim.evidence[0] === 'evidence-qualification' && claim.evidence[1] === 'evidence-run-record'

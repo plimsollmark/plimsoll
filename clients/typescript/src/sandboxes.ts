@@ -9,11 +9,15 @@
 // cell: code run in an interpreter the session keeps alive, so variables and
 // loaded data survive between calls as they do in a notebook, and the files a call
 // is given or writes stay in the work directory. On any other daemon, and for a
-// call without a key, each call runs in a fresh sandbox through a small runner that
-// prints the last expression the same way; nothing persists. The tool's output says
-// which, so the model is never told state survived when it did not. A daemon without
-// projects (wasm) runs a fresh call as a JavaScript snippet, and refuses Python and
-// files before sending anything.
+// call without a key, each call is one cell the daemon runs by itself (runCell), in a
+// sandbox of its own: nothing persists. The tool's output says which, so the model is
+// never told state survived when it did not. The call asks for a sandbox the daemon
+// keeps ready (preferWarm, unless sessions is "never"): on a daemon with a warm pool a
+// waiting one that has run nothing answers it and is deleted after; otherwise, and
+// when none is waiting, the daemon runs it in a sandbox made for it, through a runner
+// that prints the last expression the same way. A daemon without projects (wasm) runs
+// it as a JavaScript snippet, and this instance refuses Python and files there before
+// sending anything.
 //
 // Whether earlier state exists is something only the sandbox knows: this instance
 // forgets a key when it is disposed or idles out, and a conversation that resumes
@@ -34,7 +38,7 @@
 
 import { createHash } from "node:crypto";
 
-import { PlimsollClient, type Info, type Isolation, type Language, type ProjectResult, type Session } from "./client.ts";
+import { PlimsollClient, type Info, type Isolation, type Language, type Session } from "./client.ts";
 import { PlimsollError, type Refusal } from "./errors.ts";
 import type { RunRecord } from "./record.ts";
 
@@ -130,7 +134,7 @@ export type CodeSandboxesOptions = {
   /**
    * "auto" (default) keeps a session per key when the daemon supports sessions,
    * else runs each call fresh. "always" fails when it does not; "never" always
-   * runs fresh.
+   * runs fresh, and never in a sandbox the daemon kept ready (no preferWarm).
    */
   sessions?: SessionMode;
   /** The languages the tool offers, the first being the default. Default python, then javascript. */
@@ -249,98 +253,6 @@ type Entry = {
   answered: boolean;
   /** Calls in flight, which the idle close waits for. */
   busy: number;
-};
-
-/** @internal A fresh call on a daemon without projects: the code as a snippet, its last value printed. Node and QuickJS alike. */
-export function snippetRunner(code: string): string {
-  return [
-    "(() => {",
-    "  const show = (v) => {",
-    '    if (typeof require === "function") { try { return require("node:util").inspect(v, { depth: 4 }); } catch (_) {} }',
-    "    try { const s = JSON.stringify(v); if (s !== undefined) return s; } catch (_) {}",
-    "    return String(v);",
-    "  };",
-    `  const v = (0, eval)(${JSON.stringify(code)});`,
-    "  Promise.resolve(v).then((v) => { if (v !== undefined) console.log(show(v)); });",
-    "})();",
-    "",
-  ].join("\n");
-}
-
-/**
- * @internal A fresh run prints its last expression as a cell does, through these
- * runners, and takes what a cell takes: top-level await, and imports from the work
- * directory (Python's own imports first, in isolated mode, as the session kernel
- * does; Node's require resolving from the work directory, and the image's baked
- * packages above it).
- */
-export const RUNNERS: Record<Language, { path: string; file: string; step: string; source: string }> = {
-  python: {
-    path: ".plimsoll/run.py",
-    file: ".plimsoll/cell.py",
-    step: "python3 -I .plimsoll/run.py",
-    // As the session kernel runs a cell: at module level, an event loop only for code
-    // that awaits at the top level, so the cell's own asyncio.run works.
-    source: [
-      "import ast, asyncio, inspect, linecache, sys",
-      "sys.path.insert(0, '')",
-      // UTF-8, as the client wrote it: the guest gets the image's environment, and an
-      // image whose locale is not UTF-8 would otherwise misread non-ASCII code.
-      "src = open('.plimsoll/cell.py', encoding='utf-8').read()",
-      "linecache.cache['cell'] = (len(src), None, src.splitlines(True), 'cell')",
-      "tree = ast.parse(src, 'cell', 'exec')",
-      "last = ast.Expression(tree.body.pop().value) if tree.body and isinstance(tree.body[-1], ast.Expr) else None",
-      "ns = {'__name__': '__main__', '__builtins__': __builtins__}",
-      "flags = ast.PyCF_ALLOW_TOP_LEVEL_AWAIT",
-      "loop = asyncio.new_event_loop()",
-      "def settle(r):",
-      "    return loop.run_until_complete(r) if inspect.isawaitable(r) else r",
-      "settle(eval(compile(tree, 'cell', 'exec', flags=flags), ns))",
-      "if last is not None:",
-      "    value = settle(eval(compile(last, 'cell', 'eval', flags=flags), ns))",
-      "    if value is not None:",
-      "        print(repr(value))",
-      "",
-    ].join("\n"),
-  },
-  javascript: {
-    path: ".plimsoll/run.cjs",
-    file: ".plimsoll/cell.js",
-    step: "node --expose-internals .plimsoll/run.cjs",
-    source: [
-      "const fs = require('node:fs'), util = require('node:util'), vm = require('node:vm');",
-      // The names a cell in the session's `node -e` interpreter sees as globals.
-      "globalThis.require = require('node:module').createRequire(process.cwd() + '/');",
-      "globalThis.module = { exports: {} }; globalThis.exports = globalThis.module.exports;",
-      "globalThis.__dirname = '.'; globalThis.__filename = '[eval]';",
-      // Top-level await comes from Node's private module internal/repl/await (the
-      // REPL's own rewrite of a cell), which only --expose-internals makes loadable. It
-      // is not a public API. The suite runs this runner on the node that runs the suite:
-      // 22.18.0 in CI, the line of the project image's node:22 base; it also passed on
-      // 26.3.1 on 2026-10-07. If a Node release moves or removes it, the require below
-      // fails and the cell runs without the rewrite: a cell that awaits at the top level
-      // then fails visibly (a SyntaxError on stderr, exit code 1), and so does the runner
-      // test "imports from the work directory and awaits at the top level"; a cell
-      // without top-level await runs as before.
-      "let tla = null;",
-      "try { tla = require('internal/repl/await').processTopLevelAwait; } catch {}",
-      "const src = fs.readFileSync('.plimsoll/cell.js', 'utf8');",
-      "let wrapped = null;",
-      "if (tla) { try { wrapped = tla(src); } catch {} }",
-      "(async () => {",
-      "  let v;",
-      "  if (wrapped) {",
-      "    const out = await vm.runInThisContext(wrapped, { filename: 'cell.js' });",
-      "    v = out === undefined ? undefined : out.value;",
-      "  } else {",
-      "    v = vm.runInThisContext(src, { filename: 'cell.js' });",
-      "    if (v instanceof Promise) v = await v;",
-      "  }",
-      "  if (v !== undefined) console.log(util.inspect(v, { depth: 4 }));",
-      "})().catch((e) => { console.error(e); process.exitCode = 1; });",
-      "",
-    ].join("\n"),
-  },
 };
 
 export class CodeSandboxes {
@@ -560,8 +472,8 @@ export class CodeSandboxes {
     return this.#opts.minimumIsolation ?? "kernel";
   }
 
-  // A fresh sandbox for one call: the files, the code and a runner that prints the
-  // last expression, as one project.
+  // A sandbox of its own for one call: one cell the daemon runs by itself, in a sandbox
+  // it kept ready when one is waiting (preferWarm), else in one made for it.
   async #fresh(
     key: SandboxKey | undefined,
     info: Info,
@@ -582,38 +494,12 @@ export class CodeSandboxes {
           notDispatched: "unsupported",
         });
       }
-      const r = await this.client.runJavaScript(snippetRunner(code), opts);
-      this.#record(r.record, key);
-      return {
-        ...this.#cut(language, r.exitCode, r.timedOut, r.stdout, r.stderr, r.stdoutTruncated || r.stderrTruncated),
-        stateKept: false,
-        filesPersist: false,
-        isolation: r.isolation,
-        recordSha256: r.record.sha256,
-      };
     }
-    const runner = RUNNERS[language];
-    const r: ProjectResult = await this.client.runProject(
-      {
-        files: [...files, { path: runner.file, content: code }, { path: runner.path, content: runner.source }],
-        steps: [runner.step],
-      },
-      opts,
-    );
+    const preferWarm = (this.#opts.sessions ?? "auto") !== "never";
+    const r = await this.client.runCell({ language, code, files }, { ...opts, preferWarm });
     this.#record(r.record, key);
-    const step = r.steps[0];
-    if (!step) {
-      // No step report: the outcome says what ended the run (a timeout, a lost report),
-      // not whether the code had started, so there is no exit code to give. Unmarked,
-      // as anything that may have run is; the checked result rides on the error.
-      throw new PlimsollError(
-        "unknown",
-        `plimsoll: the run ended ${r.outcome} without a step report (${r.detail}). It was not retried; running it again could repeat what it did.`,
-        { result: r },
-      );
-    }
     return {
-      ...this.#cut(language, step.exitCode, step.timedOut || r.outcome === "timed_out", step.stdout, step.stderr, step.stdoutTruncated || step.stderrTruncated),
+      ...this.#cut(language, r.exitCode, r.timedOut, r.stdout, r.stderr, r.stdoutTruncated || r.stderrTruncated),
       stateKept: false,
       filesPersist: false,
       isolation: r.isolation,

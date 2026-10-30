@@ -35,7 +35,7 @@ import type {
 import { wireBytes } from "./wire.ts";
 
 /** The wire protocol number this client speaks (protocol.Number in Go). */
-export const PROTOCOL = 4;
+export const PROTOCOL = 5;
 
 const SERVICE = "plimsoll.v1.SandboxService";
 
@@ -193,6 +193,13 @@ export type CellResult = Evidence & {
   interpreterStarted: boolean;
   /** The interpreter ended during this call; the next cell starts a fresh one. */
   interpreterEnded: boolean;
+  /**
+   * A waiting pool member ran the cell: a sandbox made before the call that had run only
+   * plimsoll's own programs, handed to this call alone and deleted after it (runCell with
+   * preferWarm). False for a session's cell and for one run in a sandbox made for it. The
+   * record does not cover it.
+   */
+  warm: boolean;
 };
 
 export type Info = {
@@ -215,6 +222,12 @@ export type Info = {
    */
   maxSessionsPerCaller: number;
   maxSessionsPerOwner: number;
+  /**
+   * How many sandboxes the daemon keeps ready for sessions, 0 when it keeps none: with
+   * one, a cell run with runCell's preferWarm, or a session opened with warmOnly, can
+   * answer without a sandbox being made for it. Stated with supportsSessions.
+   */
+  sessionPool: number;
   environments: { javascript: PayloadEnvironment; project: PayloadEnvironment; module: PayloadEnvironment; policy: string };
   resources: { memoryMb: number; cpus: number; pids: number; diskMb: number };
 };
@@ -241,6 +254,15 @@ export type SessionOptions = {
    * refused before anything is sent.
    */
   owner?: string;
+  /**
+   * A waiting pool member or nothing: on a daemon with none to hand over the open is
+   * refused, not dispatched, reason capacity, and no sandbox is made, so the caller can
+   * run fresh instead. It never closes another session of the owner to make room. A
+   * daemon that predates the field would have ignored it and made a sandbox, so it came
+   * with protocol 5, which such a daemon refuses before reading the open. A cell for one
+   * call needs no session of its own: runCell with preferWarm.
+   */
+  warmOnly?: boolean;
   signal?: AbortSignal;
 };
 
@@ -413,6 +435,7 @@ function cellResult(resp: WireRunResponse, record: RunRecord): CellResult {
     stderrTruncated: c.stderrTruncated ?? false,
     interpreterStarted: c.interpreterStarted ?? false,
     interpreterEnded: c.interpreterEnded ?? false,
+    warm: resp.warm ?? false,
   };
 }
 
@@ -576,6 +599,7 @@ export class PlimsollClient {
       sessionEnvironment: env(m.sessionEnvironment),
       maxSessionsPerCaller: m.maxSessionsPerCaller ?? 0,
       maxSessionsPerOwner: m.maxSessionsPerOwner ?? 0,
+      sessionPool: m.sessionPool ?? 0,
       environments: {
         javascript: env(m.javascriptEnvironment),
         project: env(m.projectEnvironment),
@@ -604,6 +628,36 @@ export class PlimsollClient {
   }
 
   /**
+   * Runs a cell by itself: code for an interpreter of its language, its files written
+   * into the work directory first, its final expression's value printed, in a sandbox
+   * of its own that keeps nothing after the call (interpreterStarted and
+   * interpreterEnded are both true). Files under .plimsoll/, where the code and its
+   * runner go, are refused.
+   *
+   * preferWarm lets the daemon run it in a sandbox it keeps ready for sessions
+   * (Info.sessionPool): one that has run only plimsoll's own programs, with the
+   * interpreter already running, claimed for this call alone and deleted after it, so
+   * the call answers without a sandbox being made for it. When none fits the cell runs
+   * in a sandbox made for it, as without the flag: a miss is never a refusal. The
+   * result's warm says which ran. What it costs: a pool member runs the cell in the
+   * session image (on docker the project image, which a fresh cell uses too), in a
+   * sandbox that waited with plimsoll's interpreters in it. The record is a single
+   * run's either way, and does not cover warm.
+   */
+  async runCell(req: CellRequest, opts: RunOptions & { preferWarm?: boolean } = {}): Promise<CellResult> {
+    if (req.language !== "javascript" && req.language !== "python") {
+      throw new PlimsollError("invalid_argument", `plimsoll: unknown cell language ${JSON.stringify(req.language)}`, { notDispatched: "request" });
+    }
+    if (opts.preferWarm !== undefined && typeof opts.preferWarm !== "boolean") {
+      throw new PlimsollError("invalid_argument", "plimsoll: preferWarm must be a boolean", { notDispatched: "request" });
+    }
+    const files = (req.files ?? []).map((f) => ({ path: f.path, content: f.content }));
+    const env: WireEnvelope = { ...this.envelope(opts, validateRule(opts.software)), preferWarm: opts.preferWarm || undefined };
+    const resp = await this.exchange("Run", env, { cell: { language: req.language, code: req.code, files } }, opts);
+    return decoded(() => finish(resp.run, resp.record, cellResult, "cell", opts.minimumIsolation));
+  }
+
+  /**
    * Opens a session: one sandbox kept for many calls, files persisting, and of
    * processes only the interpreters runCell keeps. Only on a daemon whose Describe
    * states supportsSessions.
@@ -620,6 +674,9 @@ export class PlimsollClient {
     if (opts.owner !== undefined && (typeof opts.owner !== "string" || opts.owner === "")) {
       throw new PlimsollError("invalid_argument", "plimsoll: owner must be a nonempty string, or omitted for none", { notDispatched: "request" });
     }
+    if (opts.warmOnly !== undefined && typeof opts.warmOnly !== "boolean") {
+      throw new PlimsollError("invalid_argument", "plimsoll: warmOnly must be a boolean", { notDispatched: "request" });
+    }
     const m = await this.call<WireOpenSessionResponse>(
       "OpenSession",
       {
@@ -631,6 +688,7 @@ export class PlimsollClient {
         softwareRule: rule,
         languages: opts.languages?.length ? [...new Set(opts.languages)] : undefined,
         owner: opts.owner === undefined ? undefined : ownerDigest(this.token, opts.owner),
+        warmOnly: opts.warmOnly || undefined,
       },
       opts.signal,
     );

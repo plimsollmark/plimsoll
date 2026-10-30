@@ -110,6 +110,69 @@ func TestOpenShellDaemonLive(t *testing.T) {
 	}
 }
 
+// TestOpenShellDaemonSessionPoolLive runs the daemon with sessions and a warm pool on
+// the gateway: startup makes the pool and runs the session check on a claimed member,
+// a session opened over RPC answers its first Python cell from an interpreter reported
+// as new, and after SIGTERM no sandbox the daemon made, waiting members included, is
+// left. Same opt-in as TestOpenShellDaemonLive.
+func TestOpenShellDaemonSessionPoolLive(t *testing.T) {
+	if os.Getenv("OPENSHELL_LIVE") != "1" {
+		t.Skip("the live OpenShell suite runs with OPENSHELL_LIVE=1 and a gateway")
+	}
+	tokenBytes := make([]byte, 16)
+	_, _ = rand.Read(tokenBytes)
+	token := hex.EncodeToString(tokenBytes)
+	env := []string{"SANDBOX_PROVIDER=openshell", "PLIMSOLL_ADDR=127.0.0.1:0", "PLIMSOLL_METRICS_ADDR=off", "PLIMSOLL_TOKEN=" + token,
+		"SANDBOX_MAX_SESSIONS=3", "SANDBOX_SESSION_POOL=2"}
+	var missing []string
+	for _, name := range openshellVars {
+		if os.Getenv(name) == "" {
+			missing = append(missing, name)
+		}
+		env = append(env, name+"="+os.Getenv(name))
+	}
+	if len(missing) > 0 {
+		t.Fatalf("OPENSHELL_LIVE=1 but %s not set", strings.Join(missing, ", "))
+	}
+	gw := liveGatewayClient(t)
+	before := runSandboxes(t, gw)
+
+	start := time.Now()
+	d := startDaemon(t, env, 3*time.Minute)
+	t.Logf("daemon ready in %v (pool, smoke test and session check included)", time.Since(start).Round(time.Millisecond))
+	remote, err := client.New("http://"+d.addr, client.WithToken(token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	s, err := remote.OpenSession(ctx, client.SessionOptions{Lifetime: 5 * time.Minute, Languages: []sandbox.Language{sandbox.LanguagePython}})
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	cellStart := time.Now()
+	res, err := s.RunCell(ctx, sandbox.CellRequest{Language: sandbox.LanguagePython, Code: "6 * 7"})
+	if err != nil || res.ExitCode != 0 || !res.InterpreterStarted || strings.TrimSpace(res.Stdout) != "42" {
+		t.Fatalf("first Python cell: %+v, %v", res, err)
+	}
+	t.Logf("first Python cell over RPC in a pooled session: %v", time.Since(cellStart).Round(time.Millisecond))
+	if _, err := s.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	d.stop(t, 2*time.Minute)
+	after := runSandboxes(t, gw)
+	var left []string
+	for name := range after {
+		if !before[name] {
+			left = append(left, name)
+		}
+	}
+	if len(left) > 0 {
+		t.Fatalf("sandboxes left after the daemon drained, a waiting member's among them: %v", left)
+	}
+}
+
 // liveGatewayClient is a gateway client for checking the daemon from outside, built
 // from the same files the daemon gets.
 func liveGatewayClient(t *testing.T) openshellv1connect.OpenShellClient {

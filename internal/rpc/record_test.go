@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,6 +145,54 @@ func finishedFake(name string) fakeSandbox {
 		jsResult:   sandbox.Result{Stdout: "4\n", Sandbox: name, Isolation: sandbox.IsolationVM, Duration: 3 * time.Millisecond},
 		projResult: sandbox.ProjectResult{Sandbox: name, Isolation: sandbox.IsolationVM, Outcome: sandbox.ProjectOutcomeCompleted, Steps: []sandbox.StepResult{{Command: "true"}}},
 		modResult:  sandbox.ModuleResult{Sandbox: name, Isolation: sandbox.IsolationVM, Outcome: sandbox.ProjectOutcomeCompleted, Width: 1, Runs: []sandbox.ModuleRun{{Status: 1, Outputs: []float64{0.5}}}},
+	}
+}
+
+// A provider that selects a policy per run (docker names the seccomp profile each run
+// applied) states it on the result, and the run's record names that one, not the
+// provider's Describe answer; a result without one falls back to the Describe answer.
+func TestRunRecordNamesTheRunsOwnPolicy(t *testing.T) {
+	fake := &describedFake{fakeSandbox: finishedFake("fake")}
+	fake.jsResult.Policy = "seccomp:sha256:" + strings.Repeat("ab", 32)
+	svc := NewSandboxService(fake)
+	resp, err := svc.Run(context.Background(), jsReq("console.log(1)"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := record.Check(jsReq("console.log(1)").Msg, resp.Msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Policy != fake.jsResult.Policy {
+		t.Fatalf("record policy = %q, want the run's own %q", rec.Policy, fake.jsResult.Policy)
+	}
+	resp, err = svc.Run(context.Background(), envelopeReq(&plimsollv1.ProjectRun{Steps: []string{"true"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := record.Check(envelopeReq(&plimsollv1.ProjectRun{Steps: []string{"true"}}).Msg, resp.Msg); err != nil || rec.Policy != "test-policy:1" {
+		t.Fatalf("a result without its own policy: %v, %v; want the provider's test-policy:1", rec, err)
+	}
+}
+
+// A Run's cell states the policy of the run that carried it (docker names the seccomp
+// profile the sandbox applied), not the provider's Describe answer, which names two
+// profiles when a variant is configured (release review, 2026-10-29).
+func TestRunRecordOfACellNamesItsOwnPolicy(t *testing.T) {
+	fake := &describedFake{fakeSandbox: finishedFake("fake")}
+	fake.jsResult.Policy = "seccomp:sha256:" + strings.Repeat("cd", 32)
+	svc := NewSandboxService(fake)
+	req := envelopeReq(&plimsollv1.CellRun{Language: "javascript", Code: "1"})
+	resp, err := svc.Run(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := record.Check(req.Msg, resp.Msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Policy != fake.jsResult.Policy {
+		t.Fatalf("a cell's record policy = %q, want the run's own %q", rec.Policy, fake.jsResult.Policy)
 	}
 }
 

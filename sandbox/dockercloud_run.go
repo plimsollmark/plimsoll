@@ -269,10 +269,12 @@ func deadlineOr(ctx context.Context, fallback time.Time) time.Time {
 
 // deadlineAware keeps the caller's own deadline recognizable: a create that ran out
 // of time is reported as context.DeadlineExceeded rather than as whatever transport
-// error the cancelled request produced.
+// error the cancelled request produced. err stays wrapped too, so a refusal it carries
+// keeps its not-dispatched mark: a quota refusal whose cleanup outlived the caller's
+// deadline ran nothing, and the caller may retry it (found in review, 2026-10-27).
 func (d *DockerCloud) deadlineAware(ctx context.Context, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
-		return fmt.Errorf("%w: %v", ctxErr, err)
+		return fmt.Errorf("%w: %w", ctxErr, err)
 	}
 	return err
 }

@@ -28,7 +28,7 @@ type guardedSandbox struct {
 
 func (g *guardedSandbox) EgressGuardPath() string                 { return g.path }
 func (g *guardedSandbox) EgressGuardKnownToken(token string) bool { return token == "run-token" }
-func (g *guardedSandbox) EgressGuardCall(context.Context, string, string, string, []byte) sandbox.EgressGuardResponse {
+func (g *guardedSandbox) EgressGuardCall(context.Context, string, sandbox.GuardRequest) sandbox.EgressGuardResponse {
 	return sandbox.EgressGuardResponse{Status: http.StatusOK, Body: []byte("guarded")}
 }
 

@@ -135,6 +135,12 @@ The official client also checks the tier that comes back. A mismatch is
 `ErrIsolationEvidenceMismatch`, and it deliberately does not mean "safe to retry": the
 code may already have run.
 
-`SANDBOX_MIN_ISOLATION` is the operator's floor for the whole daemon, checked at startup.
+`SANDBOX_MIN_ISOLATION` is the operator's floor for the whole daemon, checked at startup and
+held on every run: it is merged into each request's minimum, so a provider that finds a weaker
+boundary after startup refuses the run, not dispatched, and `/readyz` reports not ready.
 It does not replace a caller's own floor on each request: a `Describe` answer the caller
 read earlier can be out of date, and must never be what allows a weaker run later.
+A daemon started with `PLIMSOLL_HARDENED=1` adds a floor of its own, `kernel`, which it
+joins to every request's minimum, so there a caller that sets none is still refused a
+weaker sandbox
+([hardened-mode.md](hardened-mode.md#isolation-is-a-floor-on-every-run-not-only-a-startup-check)).

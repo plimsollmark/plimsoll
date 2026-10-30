@@ -60,6 +60,15 @@ type Run struct {
 	AddedLatencyMs  int64     `json:"advice_added_latency_ms"`
 	BytesMoved      int       `json:"advice_bytes_moved"`
 	Findings        []Finding `json:"advice_finding_details"`
+	// The ship scan (docs/ship-scan.md), on a daemon with a withheld set: its status
+	// (scanned, exempt, not_scanned, incomplete), the set's SHA-256, the labels of the
+	// entries found, whatever their mode, and each part an archive bound was reached in
+	// or that holds an archive the scan cannot read, and why ("files[2].content:
+	// archive_bytes", "files[0].content: archive_zip_encrypted").
+	WithheldScan       string   `json:"withheld_scan"`
+	WithheldSet        string   `json:"withheld_set"`
+	WithheldFound      []string `json:"withheld_found"`
+	WithheldIncomplete []string `json:"withheld_incomplete"`
 }
 
 // Finding is one efficiency finding on a run's line (advice_finding_details).

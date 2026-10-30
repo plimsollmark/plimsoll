@@ -20,6 +20,7 @@ import (
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/internal/softwarewire"
 	"github.com/plimsollmark/plimsoll/internal/wireenum"
+	"github.com/plimsollmark/plimsoll/internal/withheld"
 	"github.com/plimsollmark/plimsoll/protocol"
 	"github.com/plimsollmark/plimsoll/record"
 	"github.com/plimsollmark/plimsoll/sandbox"
@@ -81,13 +82,24 @@ type SandboxService struct {
 	// (spend.go); nil = no bound.
 	Spend  *SpendCap
 	Grants *grants.Registry // optional; nil/empty = no host-API profiles
-	Logger *slog.Logger     // optional; nil = slog.Default()
+	// Withheld is the operator's withheld set, scanned for in every call's payload
+	// (withheld.go); nil = no ship scan.
+	Withheld *withheld.Set
+	Logger   *slog.Logger // optional; nil = slog.Default()
 	// Resources is the per-run envelope the provider was built with, reported by
 	// Describe (sandbox.Build returns it as Provider.Resources). Zero = not stated.
 	Resources sandbox.Resources
 	// Sessions is the operator's session settings; the zero value keeps sessions off.
 	Sessions SessionConfig
 	sessions sessionRegistry
+	// Floor is the daemon's own isolation floor: every request's minimum is raised to
+	// it (the stronger of the two wins) where the envelope is parsed, so the floor the
+	// pipeline checks and the one every provider request carries hold it. A provider
+	// that reads its boundary again on each dispatch (agentsandbox reads its runtime
+	// class) then refuses a weaker sandbox before code runs, even for a caller that set
+	// no minimum. IsolationUnknown, the zero value, is no floor. Hardened mode sets it
+	// to kernel. Set it before serving; it is read without a lock.
+	Floor sandbox.IsolationClass
 
 	// run counters for /metrics (design-review #9). A non-zero user exit is a normal
 	// result, not a failure; runsFailed counts only infrastructure errors.
@@ -189,6 +201,10 @@ func (s *SandboxService) limit(ctx context.Context) (func(), error) {
 	if p, ok := PrincipalFrom(ctx); ok && p.UserID != "" {
 		key = p.UserID
 	}
+	if shipScanFrom(ctx).rateCharged() {
+		// The ship scan took this call's rate token before it ran (withheld.go).
+		return s.Limiter.Hold(key)
+	}
 	return s.Limiter.Acquire(ctx, key)
 }
 
@@ -257,6 +273,7 @@ func (s *SandboxService) Describe(_ context.Context, _ *connect.Request[plimsoll
 		SessionEnvironment:   sessionEnv,
 		MaxSessionsPerCaller: sessionCap(supportsSessions, s.Sessions.MaxPerCaller),
 		MaxSessionsPerOwner:  sessionCap(supportsSessions, s.Sessions.MaxPerOwner),
+		SessionPool:          sessionCap(supportsSessions, s.Sessions.Pool),
 	}), nil
 }
 
@@ -300,6 +317,7 @@ type target struct {
 	js       func(context.Context, sandbox.Request) (sandbox.Result, error)
 	project  func(context.Context, sandbox.ProjectRequest) (sandbox.ProjectResult, error)
 	module   func(context.Context, sandbox.ModuleRequest) (sandbox.ModuleResult, error) // runs only
+	cell     func(context.Context, sandbox.CellRequest) (sandbox.CellResult, error)
 	// teardown is the provider's BillingTeardown: positive when it bills by the second
 	// (sandbox.Metered), so a run draws on the daily allowances (SpendCap). Runs only:
 	// a session's paid time is charged by its sessionMeter, from its open to its
@@ -336,13 +354,15 @@ func (s *SandboxService) runTarget() target {
 // (Unimplemented), in both cases before the payload is read, so nothing can run.
 // Then the floor is parsed (an unparseable floor is InvalidArgument, never "no
 // floor") and the timeout clamped.
-func checkEnvelope(req *plimsollv1.RunRequest) (envelope, error) {
-	return parseEnvelope(req.GetProtocol(), req.GetMinimumIsolation(), req.GetTimeoutMs(), req.GetTraceId(), req.GetSoftwareRule())
+func (s *SandboxService) checkEnvelope(req *plimsollv1.RunRequest) (envelope, error) {
+	return s.parseEnvelope(req.GetProtocol(), req.GetMinimumIsolation(), req.GetTimeoutMs(), req.GetTraceId(), req.GetSoftwareRule())
 }
 
-// parseEnvelope is checkEnvelope over the fields themselves, which a session
-// call's request shares.
-func parseEnvelope(proto uint32, floor string, timeoutMs int32, traceID string, rule *plimsollv1.SoftwareRule) (envelope, error) {
+// parseEnvelope is checkEnvelope over the fields themselves, which opening a session
+// and a session call's request share. It is where the daemon's floor joins the
+// caller's: every procedure that reaches a provider parses its envelope here, so no
+// payload kind and no session path can carry a floor weaker than the daemon's.
+func (s *SandboxService) parseEnvelope(proto uint32, floor string, timeoutMs int32, traceID string, rule *plimsollv1.SoftwareRule) (envelope, error) {
 	if err := checkProtocol(proto); err != nil {
 		return envelope{}, err
 	}
@@ -354,7 +374,14 @@ func parseEnvelope(proto uint32, floor string, timeoutMs int32, traceID string, 
 	if err := software.Validate(); err != nil {
 		return envelope{}, mapSandboxErr(err)
 	}
-	return envelope{minimum: minimum, timeout: clampTimeoutMs(timeoutMs), traceID: traceID, software: software}, nil
+	return envelope{minimum: strongerFloor(minimum, s.Floor), timeout: clampTimeoutMs(timeoutMs), traceID: traceID, software: software}, nil
+}
+
+// strongerFloor is the stronger of two floors, either of which may be
+// IsolationUnknown (no floor). The tiers are ordered by strength (sandbox.Meets
+// compares them so), and Unknown sits below every tier.
+func strongerFloor(a, b sandbox.IsolationClass) sandbox.IsolationClass {
+	return max(a, b)
 }
 
 // checkProtocol refuses a request that omits the protocol number or states
@@ -372,13 +399,15 @@ func checkProtocol(p uint32) error {
 
 // Run is the one execution procedure: envelope checked, then exactly one payload
 // kind dispatched. Every kind goes through the same floor check, the same
-// limiter, the same audit line shape, and returns the same evidence fields.
+// limiter, the same audit line shape, and returns the same evidence fields. A cell
+// runs by itself, in a sandbox of its own (onecall.go).
 func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
 	received := time.Now()
-	env, err := checkEnvelope(req.Msg)
+	env, err := s.checkEnvelope(req.Msg)
 	if err != nil {
 		return nil, err
 	}
+	t := s.runTarget()
 	var k kind
 	switch p := req.Msg.GetPayload().(type) {
 	case *plimsollv1.RunRequest_Javascript:
@@ -388,18 +417,40 @@ func (s *SandboxService) Run(ctx context.Context, req *connect.Request[plimsollv
 	case *plimsollv1.RunRequest_Module:
 		k = &moduleKind{p: p.Module}
 	case *plimsollv1.RunRequest_Cell:
-		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
-			fmt.Errorf("%w: a cell runs only in a session (SessionRun)", sandbox.ErrInvalidRequest))
+		ck := &cellKind{p: p.Cell, run: true}
+		// Refused here, before anything else, when this daemon has no way to run the
+		// cell in a sandbox made for it: whether a pool member happens to be waiting
+		// never decides a refusal.
+		if err := sandbox.CheckRunCell(s.Sandbox, ck.request(env)); err != nil {
+			return nil, mapSandboxErr(err)
+		}
+		k, t.cell = ck, s.cellRun(req.Msg.GetPreferWarm())
 	default:
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
-			errors.New("payload must be exactly one of javascript, project, or module"))
+			errors.New("payload must be exactly one of javascript, project, module or cell"))
 	}
-	resp, err := s.pipeline(ctx, env, k, s.runTarget())
+	if _, cell := k.(*cellKind); req.Msg.GetPreferWarm() && !cell {
+		// A snippet or a project run as a cell would answer differently, and a flag that
+		// never acted would hide that from its caller.
+		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
+			fmt.Errorf("%w: prefer_warm takes a cell payload only", sandbox.ErrInvalidRequest))
+	}
+	resp, err := s.pipeline(ctx, env, k, t)
 	if err != nil {
 		return nil, err
 	}
-	resp.Record = s.runRecord(record.RunRequestDigest(req.Msg), resp, received, time.Now(), sandbox.RunRecord{}, env.software)
+	resp.Record = s.runRecord(record.RunRequestDigest(req.Msg), resp, received, time.Now(), sandbox.RunRecord{}, env.software, s.recordPolicy(k))
 	return connect.NewResponse(resp), nil
+}
+
+// recordPolicy is the policy a run's record names: the one the provider states for
+// that run (docker names the seccomp profile the run applied), or the provider's one
+// policy when it states none per run.
+func (s *SandboxService) recordPolicy(k kind) string {
+	if p := k.ran().policy; p != "" {
+		return p
+	}
+	return s.policy()
 }
 
 // runRecord states a finished run for the caller's harness to check and sign: the
@@ -416,11 +467,11 @@ func recordEnd(started, ended time.Time) time.Time {
 	return started.Add(max(ended.Sub(started), 0))
 }
 
-func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunResponse, started, ended time.Time, link sandbox.RunRecord, rule sandbox.SoftwareRule) *plimsollv1.RunRecord {
+func (s *SandboxService) runRecord(requestDigest string, resp *plimsollv1.RunResponse, started, ended time.Time, link sandbox.RunRecord, rule sandbox.SoftwareRule, policy string) *plimsollv1.RunRecord {
 	return record.Stamp(sandbox.RunRecord{
 		RequestSHA256:  requestDigest,
 		SoftwareRuleID: rule.ID(),
-		Policy:         s.policy(),
+		Policy:         policy,
 		Started:        started,
 		Ended:          recordEnd(started, ended),
 		Session:        link.Session,

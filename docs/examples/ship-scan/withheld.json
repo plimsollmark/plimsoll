@@ -1,0 +1,67 @@
+{
+  "version": 2,
+  "mode": "refuse",
+  "entries": [
+    {
+      "kind": "file",
+      "sha256": "62e26e5f36be9a02907922370eb658f43ffcb3f0f3e143231fea746e26269599",
+      "label": "harness/sim.py"
+    },
+    {
+      "kind": "source",
+      "lines": [
+        "e4fd2d693f806c18767a23182dca36ead6bf073d663f2c0b4fc7829a07e28fb0",
+        "5d8f3096964d4971e1f6d5266064a33548f9dc2f2023e0dae759437a3bfffec9",
+        "775d051efa381c2146eb5a8a5ca892f032b5abbcc1545d0cbb06f3dede580df1",
+        "39d3743bbff488ed53161e01357e3bb4a1ce9e046d5f05f65e5adc48228707c8",
+        "543cba60b2fc4ac577549d9a17a509d7a080898ef06e58bdeef70fe160e2a433",
+        "553562bf47824703c856a80e07d1aa9947ad420a54cd36fdfae5a077e5d635d7",
+        "3fef41ec9d98c74bb294ff58b89584406fe8d9a180cfa05cd26eac46f1ed8008",
+        "6378e45e42f83b3218f833825514d855b9786c6fe0ddee0ece0d3145ac5b4df9",
+        "aeb1493c9a37770a65d61f1492ffdebb285392e0ee0d6688f28a4994cef52ffd",
+        "7fe235d13f9fdf7151811dd72b1efcbf6c7ed8e3192c157a8cc9ebc6f24a4d04",
+        "5ccbad4e6db2b577b7b18bfc64cb77223a8db9dd05dced62cbd200210ec29cdd",
+        "afac5cdeecd87c5fa9f3b9395c0770b81651c82b4b2356f96c2d7f18c6f15bd7",
+        "6564118fa25737c926e98fc18e310d2678b302bfa2e14d850cec15384520b5eb",
+        "f9c1f3758924771ab47faad26e2284bb6f2da7aa644719952a6894ac3559764f",
+        "d71bef67370f9ed86ec2a9579f51ac96d41d232c6c1e8576fc2424da12c42c75",
+        "0b3efd7fbf376b1e2e039096da8f9805320c2ffefd391e3376dfeed8622efb0b",
+        "63cb7969876216f4e53535c716dfca998b05e225e3170422d7127bf20651a2f8",
+        "4af363f0796d2c59cd0693c482343859ba8aa702c14156fd6bba65fb3529705e",
+        "be1248b43c45f7c8ddc3ab9943405b9b2d1ff45906f7e5a86601dee78b7495ba",
+        "c336659f4d6c664c180dd790d33452d5d1090a417527cd0d6f0387351601acbb",
+        "0f4070b768a02ffe3a17b8b7f8831e185a5d54d005574365b3f9a90ce6a6945f",
+        "2d945db28380bf55de924d9d5e6619cd42c884fc71c63b87bce996d53d4db243",
+        "87ecfa4f6a22043364f5b97f3ceee2396bd8c8a80dff21ef518dae4854bdb05a",
+        "dfa6d43a49822aea82f11b235da25ae45ed964c915a06afb666b22e512e5e6e4",
+        "fd6ba98c831edafdcf22e619af2dc09f4cf8a1a3c37bffba07b8011fbdc6d818",
+        "ef3a6e9832af476b6c629526b8f448fc8c6ec8bfacbdd0af1d1cf7614990276f",
+        "e2850c77bdb615d9b0bec4bdf47eb381d8238db7e66085366e38d1c86b42552e"
+      ],
+      "min_lines": 9,
+      "label": "harness/sim.py",
+      "mode": "refuse"
+    },
+    {
+      "kind": "value",
+      "sha256": "9b53f4ee2f419aac7cd5c383184b0921e262a12a01541a08d5c4600b1ad05543",
+      "length": 10,
+      "label": "seeds.txt:1",
+      "mode": "audit"
+    },
+    {
+      "kind": "value",
+      "sha256": "ee805cafca99c3c323a1cd1246da715a7c49a1e852ab14cbdf521b99cd8d7223",
+      "length": 10,
+      "label": "seeds.txt:2",
+      "mode": "audit"
+    },
+    {
+      "kind": "value",
+      "sha256": "3933f08b4aa21f114c0f5330afa0d333aaa5e83f6c70660da2c80ac4df8211d6",
+      "length": 10,
+      "label": "seeds.txt:3",
+      "mode": "audit"
+    }
+  ]
+}

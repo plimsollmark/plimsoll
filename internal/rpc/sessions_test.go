@@ -577,16 +577,17 @@ func TestCloseSessionHonoursItsContext(t *testing.T) {
 }
 
 // A cell runs in the session's interpreter and comes back as a cell result with a
-// record; on Run it is refused before dispatch, since a cell has no Run of its own.
-func TestCellRunsOnlyInASession(t *testing.T) {
+// record; on Run, a provider that runs neither projects nor snippets (this one runs
+// only sessions) has no sandbox to run it in by itself, and refuses it before dispatch.
+func TestCellRunsInASession(t *testing.T) {
 	svc, p := sessionService()
 	ctx := authenticatedContext("alice")
 	cell := &plimsollv1.CellRun{Language: "python", Code: "1 + 1", Files: []*plimsollv1.ProjectFile{{Path: "a.txt", Content: "a"}}}
 	_, err := svc.Run(ctx, connect.NewRequest(&plimsollv1.RunRequest{Protocol: protocol.Number, Payload: &plimsollv1.RunRequest_Cell{Cell: cell}}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+	if connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("Run with a cell: %v", err)
 	}
-	wantNotDispatched(t, "Run with a cell", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_REQUEST)
+	wantNotDispatched(t, "Run with a cell", err, plimsollv1.NotDispatchedReason_NOT_DISPATCHED_REASON_UNSUPPORTED)
 	open, err := svc.OpenSession(ctx, openReq())
 	if err != nil {
 		t.Fatal(err)
@@ -1909,5 +1910,48 @@ func TestAnUnclaimedMeteredSessionStopsBilling(t *testing.T) {
 	waitGone(t, e, "the unclaimed metered session")
 	if a, _ := svc.Spend.spent("alice"); a > 1 || e.paid.running() {
 		t.Fatalf("after the close: %v spent, running %v; want a fraction of a second, stopped", a, e.paid.running())
+	}
+}
+
+// listenerSessions is a session provider whose open checks the listeners inside each
+// session's machine, and whose sessions say how many their check
+// could not read (sandbox.ListenerCounter).
+type listenerSessions struct{ *sandboxtest.Sessions }
+
+func (p listenerSessions) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
+	s, err := p.Sessions.OpenSession(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return countedSession{s}, nil
+}
+
+type countedSession struct{ sandbox.Session }
+
+func (countedSession) UnreadListeners() int { return 0 }
+
+// The open's audit line carries how many listeners its check could not read (a count,
+// never the check's lines). Describe states nothing about the check: the open refuses
+// over an unread listener on every daemon, so there is no policy to choose between.
+func TestSessionOpenAuditCarriesTheUnreadCount(t *testing.T) {
+	svc, p := sessionService()
+	svc.Sandbox = listenerSessions{p}
+	var buf bytes.Buffer
+	svc.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	open, err := svc.OpenSession(authenticatedContext("alice"), openReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CloseSession(authenticatedContext("alice"), closeReq(open.Msg.GetSessionId())); err != nil {
+		t.Fatal(err)
+	}
+	var opened string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, `"msg":"session opened"`) {
+			opened = line
+		}
+	}
+	if !strings.Contains(opened, `"unread_listeners":0`) {
+		t.Fatalf("the open's audit line %q does not carry its unread count", opened)
 	}
 }

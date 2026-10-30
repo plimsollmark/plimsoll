@@ -86,6 +86,28 @@ func dockerRunnerArgv(marker string) ([]string, error) {
 	return guestArgv(marker, []string{"LD_PRELOAD=" + dockerRunnerGuard}, "node", "/runner.mjs")
 }
 
+// dockerForwardingRunnerArgv starts the runner for a granted project run: behind
+// plimsoll's loopback forwarder (hostForwarderWrapperJS), which listens on hostAPIListen,
+// passes each connection to the broker's socket, and runs the runner as its child with
+// the same stdin and stdout. The guard loads into both, since the forwarder holds the
+// same descriptors the runner does.
+func dockerForwardingRunnerArgv(marker, listen string) ([]string, error) {
+	return guestArgv(marker, []string{"LD_PRELOAD=" + dockerRunnerGuard}, "node", "--eval", hostForwarderWrapperJS, listen, containerSocketPath, "--", "--", "node", "/runner.mjs")
+}
+
+// dockerForwardingSnippetArgv starts a snippet with sdk_env behind the forwarder: the
+// wrapper runs under the control environment, listens, and then starts `node -` with
+// env, the guest's environment (the image's and the grant's), which never reaches the
+// wrapper itself.
+func dockerForwardingSnippetArgv(marker, listen string, env []string) ([]string, error) {
+	if err := checkEnvEntries(env); err != nil {
+		return nil, err
+	}
+	argv := append([]string{"node", "--eval", hostForwarderWrapperJS, listen, containerSocketPath, "--"}, env...)
+	argv = append(argv, "--", "node", "-")
+	return guestArgv(marker, nil, argv...)
+}
+
 // guarded runs argv non-dumpable: the guard is loaded into the process that execs
 // argv, never into sh, and only into that one program.
 func guarded(argv []string) []string {
@@ -121,17 +143,12 @@ type dockerSession struct {
 	manifest string
 	env      []string // the image's environment: what the session's guest processes start with
 	tier     IsolationClass
+	// policy is the seccomp profile the container applies for its life, as a run's record
+	// names it (the default's identity, or skipped under runsc): a session never gets the
+	// sdk_env variant (CheckSessionGrant), so every call in it ran under this one.
+	policy   string
 	snapshot string // the security-relevant read-back at open
 	broker   *dockerSessionBroker
-	// label is the end of the lifetime the container declares, fixed at creation;
-	// key is the execution state it was created under (dockerPoolKey). A pool member
-	// is claimed only while both allow it; born and warm are when the pool made it and
-	// the languages it started.
-	label time.Time
-	key   string
-	born  time.Time
-	warm  []string
-
 	// life is the lifecycle every provider's sessions share: the turn, the lifetime,
 	// suspend and the sweep after every call (sessionkit.Life), with the session's
 	// interpreters, which a pause keeps.
@@ -176,12 +193,16 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 	// state the last Preflight verified, which a failed Preflight withdraws. An open
 	// counts toward the pool's demand once it passes the floor, where opens are
 	// refused, so a caller whose opens are refused cannot move the pool toward its
-	// languages; and before the claim, so the refill the claim asks for sees it.
+	// languages; and before the claim, so the refill the claim asks for sees it. A
+	// warm-only open is refused when no member may be handed over, so it counts only
+	// after a claim that found one: refused warm-only opens cost the caller nothing,
+	// and counted they would steer the pool to whatever such a caller names (found in
+	// review, 2026-10-28).
 	pool := d.pool.Load()
 	observed := false
 	observe := func() {
 		if pool != nil && !observed {
-			pool.observe(want)
+			pool.Observe(languageNames(want))
 			observed = true
 		}
 	}
@@ -190,8 +211,11 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 			if err := CheckMinimumIsolation(state.isolation, opts.MinimumIsolation); err != nil {
 				return nil, err
 			}
-			observe()
-			if s := pool.claim(state, expires, want); s != nil {
+			if !opts.WarmOnly {
+				observe()
+			}
+			if s, ok := pool.Claim(dockerPoolKey(state), expires, languageNames(want)); ok {
+				observe()
 				if err := d.activate(s, expires, opts.DiskBytes); err != nil {
 					s.abandon(ctx)
 					return nil, err
@@ -199,6 +223,11 @@ func (d *DockerSandbox) OpenSession(ctx context.Context, opts SessionOptions) (S
 				return s, nil
 			}
 		}
+	}
+	// Nothing is made for a warm-only open: no pool, no state a member could be claimed
+	// under, or no member that may be handed over.
+	if opts.WarmOnly {
+		return nil, RefuseNoWarmSandbox()
 	}
 	if err := d.ensurePreflight(ctx); err != nil {
 		return nil, notReady(ctx, err)
@@ -234,8 +263,8 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 	}
 	s := &dockerSession{
 		d: d, host: state.host, name: "plsm-session-" + randID(),
-		imageID: state.projectImageID, manifest: state.projectManifest, env: state.guestEnv(state.projectImageID), tier: state.isolation,
-		key: dockerPoolKey(state), label: label, broker: broker, routes: NewRouteBudget(),
+		imageID: state.projectImageID, manifest: state.projectManifest, env: state.guestEnv(state.projectImageID), tier: state.isolation, policy: state.sessionPolicy(),
+		broker: broker, routes: NewRouteBudget(),
 	}
 	s.life = sessionkit.NewLife(s.name, s.hooks())
 	s.life.Interps.Checker = s.checkFunc
@@ -257,7 +286,10 @@ func (d *DockerSandbox) newSessionContainer(ctx context.Context, state dockerExe
 	args := []string{"run", "-d", "--name", s.name, "--log-driver", "none", "--init",
 		"--label", dockerSessionLabel + "=1"}
 	args = append(args, expiresLabelArgs(label)...)
-	args = append(args, d.lockdownFlags(true, state.runtime)...)
+	// A session's container applies the default profile for its life: a grant with
+	// sdk_env is refused in a session (CheckSessionGrant), since a later call could not
+	// change the profile of processes already running.
+	args = append(args, d.lockdownFlags(true, state.runtime, state.seccomp.defaultPath)...)
 	args = append(args, "--mount", bindMount(broker.sock, containerSocketPath, false))
 	if state.platform != "" {
 		args = append(args, "--platform", state.platform)
@@ -844,7 +876,7 @@ func (s *dockerSession) lend(ctx context.Context, grant *HostAPIGrant, timeout t
 
 // RunJavaScript runs req.Code with `node -` in the session's container.
 func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result, error) {
-	fail := Result{Sandbox: s.d.Name(), Isolation: s.tier}
+	fail := Result{Sandbox: s.d.Name(), Isolation: s.tier, Policy: s.policy}
 	if err := ValidateRequest(req); err != nil {
 		return fail, err
 	}
@@ -897,6 +929,7 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 		SoftwareIdentity:    s.manifest,
 		EnvironmentIdentity: dockerImageIdentity(s.imageID),
 		CallTrace:           core.traceSnapshot(),
+		Policy:              s.policy,
 	}
 	if ended == context.DeadlineExceeded && guestStarted && s.Err() == nil {
 		// The call's own deadline: the CLI is killed, and the sweep that follows kills
@@ -916,9 +949,12 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 	if !guestStarted {
 		// No start marker, whatever docker exited with: almost always docker exec never
 		// started the call's start script. Unmarked: an attach stream that broke could lose
-		// the marker of a call that ran.
+		// the marker of a call that ran. plimsoll's own words, as for the runner: session
+		// code can write into this stderr before the marker (above), and the daemon logs
+		// this error, so docker's text cannot be told from the guest's and stays out (the
+		// 2026-10-29 public-source scan, finding 2).
 		fail.CallTrace = res.CallTrace
-		return fail, fmt.Errorf("docker could not run the call in the session's container (exit %d): %s", out.exitCode, truncateForError(strings.TrimSpace(out.stderr)))
+		return fail, fmt.Errorf("docker could not run the call in the session's container (exit %d)", out.exitCode)
 	}
 	res.ExitCode = out.exitCode
 	return res, nil
@@ -928,7 +964,7 @@ func (s *dockerSession) RunJavaScript(ctx context.Context, req Request) (Result,
 // session's container. The work directory is /work, so files persist to the next
 // call.
 func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (ProjectResult, error) {
-	fail := ProjectResult{Sandbox: s.d.Name(), Isolation: s.tier}
+	fail := ProjectResult{Sandbox: s.d.Name(), Isolation: s.tier, Policy: s.policy}
 	if err := ValidateProjectRequest(req); err != nil {
 		return fail, err
 	}
@@ -991,7 +1027,7 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 	// TimedOut, and here the backstop also covers the quiesce and the grant before the
 	// runner starts, so a report already in stdout was thrown away as timed out with no
 	// steps (review, 2026-10-26). A session that ended meanwhile says so on its next call.
-	res, reported := RunnerReport(s.d.Name(), s.tier, out.stdout, key)
+	res, reported := RunnerReport(fail, out.stdout, key)
 	if !reported {
 		if _, ran := afterMarker(out.stderr, started); ended == context.DeadlineExceeded && ran && s.Err() == nil {
 			fail.Outcome, fail.Detail = ProjectOutcomeTimedOut, "run exceeded the time budget"
@@ -1014,8 +1050,6 @@ func (s *dockerSession) RunProject(ctx context.Context, req ProjectRequest) (Pro
 		fail.Outcome, fail.Detail = ProjectOutcomeProtocolError, fmt.Sprintf("the runner did not report (it exited %d)", out.exitCode)
 		return fail, nil
 	}
-	res.CallTrace = fail.CallTrace
-	res.SoftwareIdentity, res.EnvironmentIdentity = s.manifest, dockerImageIdentity(s.imageID)
 	return res, nil
 }
 
@@ -1100,7 +1134,7 @@ func (s *dockerSession) attach(argv []string, env map[string]string) (sessionkit
 // when none is alive (sandbox/internal/sessionkit), through a relay the session keeps
 // attached, so a warm cell starts no process. A cell's budget is a project's.
 func (s *dockerSession) RunCell(ctx context.Context, req CellRequest) (CellResult, error) {
-	fail := CellResult{Sandbox: s.d.Name(), Isolation: s.tier}
+	fail := CellResult{Sandbox: s.d.Name(), Isolation: s.tier, Policy: s.policy}
 	if err := ValidateCellRequest(req); err != nil {
 		return fail, err
 	}
@@ -1138,7 +1172,7 @@ func (d *DockerSandbox) Drain(ctx context.Context) error {
 	// registered, and so ended below, or refused with its container removed.
 	d.sessions.Drain()
 	opened := d.sessions.Opened()
-	poolErr := d.pool.Load().close(ctx)
+	poolErr := d.pool.Load().Close(ctx)
 	var openErr error
 	select {
 	case <-opened:
@@ -1203,7 +1237,7 @@ func (d *DockerSandbox) ReconcileOrphans(ctx context.Context) (int, error) {
 	for _, l := range d.sessions.Open() {
 		held[l.Name] = true
 	}
-	for _, name := range d.pool.Load().members() {
+	for _, name := range d.pool.Load().Members() {
 		held[name] = true
 	}
 	for _, name := range d.quarantine.Names() {

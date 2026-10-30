@@ -75,6 +75,15 @@ type DockerSandbox struct {
 	//   "unconfined"  -> disable seccomp (NOT for hostile code; opt-out escape hatch)
 	// Ignored for Runtime=="runsc" (gVisor), which does its own syscall interception.
 	Seccomp string
+	// SeccompSDK is the profile a run gets in place of Seccomp when its grant asks for
+	// the local address a standard client library reaches the broker through (the
+	// profile set sdk_env), which needs the IPv4 TCP sockets the shipped default denies:
+	// SeccompSDKDerived ("derived": made from Seccomp at Preflight, deriveSDKSeccomp) or
+	// an operator's own file. It needs Seccomp to be a profile file (verifySeccomp) and
+	// is selected per dispatch from the grant
+	// (dockerSeccomp.seccompFor); every other run keeps Seccomp. "" means no variant:
+	// such a run is refused before dispatch when Seccomp is a file.
+	SeccompSDK string
 
 	// RequirePinnedImages fails Preflight unless Image and ProjectImage are pinned to
 	// an immutable @sha256: digest. The sandbox image is the TCB confining hostile
@@ -123,8 +132,18 @@ type DockerSandbox struct {
 	// outer image index. An empty value means this Docker store did not expose a
 	// verifiable manifest descriptor.
 	verifiedManifestIDs map[string]string
-	verifiedPlatform    string
-	lastVerified        time.Time
+	// verifiedSeccomp is the pinned seccomp profiles the last Preflight verified
+	// (docker_seccomp.go): what runs apply and what their records name.
+	verifiedSeccomp dockerSeccomp
+	// verifiedSeccompSettings are the two settings verifiedSeccomp was made from; a
+	// changed setting is not ready until Preflight runs again, as a changed runtime is.
+	verifiedSeccompSettings [2]string
+	verifiedPlatform        string
+	lastVerified            time.Time
+	// loopbackListen, when a test sets it, replaces hostAPIListen as the address the
+	// forwarder of a run with sdk_env listens on, so a listener that cannot bind can be
+	// exercised (hostAPIListenAddr).
+	loopbackListen string
 	// provenImageIDs are the image IDs the last successful SmokeTest probed, by
 	// reference; nil until one has run. Runs launch only these once it has: a tag
 	// re-pointed after startup names content whose lockdown, runner guard and
@@ -293,8 +312,10 @@ func (d *DockerSandbox) validateWritableBudget() error {
 }
 
 // lockdownArgs returns the common `docker run` isolation flags for a named,
-// throwaway container. workTmpfs adds a writable work dir for project runs.
-func (d *DockerSandbox) lockdownArgs(name string, expires time.Time, workTmpfs bool, runtime string) []string {
+// throwaway container. workTmpfs adds a writable work dir for project runs. seccomp is
+// the profile this container applies (the run's selection, dockerSeccomp.seccompFor):
+// a pinned profile path, "unconfined", or "" for docker's built-in profile.
+func (d *DockerSandbox) lockdownArgs(name string, expires time.Time, workTmpfs bool, runtime, seccomp string) []string {
 	args := []string{
 		"run", "--rm", "-i",
 		"--name", name,
@@ -305,7 +326,7 @@ func (d *DockerSandbox) lockdownArgs(name string, expires time.Time, workTmpfs b
 	// The container's lifetime, so ReconcileOrphans reaps it if it outlives its CLI
 	// and every removal attempt (review F2).
 	args = append(args, expiresLabelArgs(expires)...)
-	return append(args, d.lockdownFlags(workTmpfs, runtime)...)
+	return append(args, d.lockdownFlags(workTmpfs, runtime, seccomp)...)
 }
 
 // launch is the tail of a docker run that starts argv in imageID, whatever the
@@ -326,7 +347,7 @@ func (d *DockerSandbox) containerExpiry(ctx context.Context) time.Time {
 
 // lockdownFlags are the flags that confine a container, shared by a run's container
 // and a session's.
-func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime string) []string {
+func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime, seccomp string) []string {
 	var args []string
 	// gVisor (or any alternate OCI runtime) when configured — a real kernel
 	// boundary around hostile code, not just runc namespaces.
@@ -366,9 +387,11 @@ func (d *DockerSandbox) lockdownFlags(workTmpfs bool, runtime string) []string {
 	// set). "" leaves docker's built-in default in force (there is no keyword to name
 	// it explicitly — only a path or "unconfined"). gVisor (runsc) intercepts syscalls
 	// in its own user-space kernel, so a host seccomp profile is redundant/conflicting
-	// there — skip it for that runtime.
-	if runtime != "runsc" && d.Seccomp != "" {
-		args = append(args, "--security-opt", "seccomp="+d.Seccomp)
+	// there — skip it for that runtime. The profile is the caller's per-run selection
+	// (a pinned copy, docker_seccomp.go), never read from the provider's settings here,
+	// so two runs at once can apply different profiles with nothing shared.
+	if runtime != "runsc" && seccomp != "" {
+		args = append(args, "--security-opt", "seccomp="+seccomp)
 	}
 	// Always fully network-isolated. When a host-API capability is granted, the
 	// container still has NO network — it reaches the host API only through a

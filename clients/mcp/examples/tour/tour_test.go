@@ -286,7 +286,9 @@ func TestRecordingHoldsNoSecret(t *testing.T) {
 	var got struct{ Stdout, Stderr string }
 	_ = json.Unmarshal(first.Steps[0].Arguments, &sent)
 	_ = json.Unmarshal(first.Steps[0].Result, &got)
-	runner, err := os.ReadFile("../../server/runners/run.py")
+	// The recording predates the daemon's Run cell: its first example ran as a project
+	// carrying the runner the daemon now holds (sandbox/cellrunner).
+	runner, err := os.ReadFile("../../../../sandbox/cellrunner/run.py")
 	if err != nil {
 		t.Fatal(err)
 	}

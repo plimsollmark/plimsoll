@@ -70,6 +70,11 @@ func TestRunsClaimRunAndDelete(t *testing.T) {
 	if !strings.HasPrefix(pr.Instance, "k8s-pod-uid:pod-uid-") || pr.Instance == res.Instance {
 		t.Fatalf("project instance %q (the snippet's was %q; each run claims its own pod)", pr.Instance, res.Instance)
 	}
+	// And the image its pod ran, by digest, which the signed record states as its
+	// environment: a completed project returned the runner's report without it.
+	if image := "agentsandbox-image:sha256:" + strings.Repeat("1", 64); res.EnvironmentIdentity != image || pr.EnvironmentIdentity != image {
+		t.Fatalf("environment: snippet %q, project %q, want %q", res.EnvironmentIdentity, pr.EnvironmentIdentity, image)
+	}
 	drained(t, p)
 	sd.mu.Lock()
 	defer sd.mu.Unlock()

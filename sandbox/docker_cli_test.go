@@ -42,19 +42,20 @@ func TestDockerCommandGetsNoDaemonEnvironment(t *testing.T) {
 		t.Fatalf("the client config directory %s: %v, %v; want it empty", cmd.Args[2], entries, err)
 	}
 	// Beside it in the private directory, the liveness socket the reaper checks
-	// (docker_hostdirs.go) and the resolv.conf containers mount, nothing else.
+	// (docker_hostdirs.go), the resolv.conf containers mount, and the directory
+	// Preflight pins the seccomp profiles into (docker_seccomp.go), nothing else.
 	files, err := dockerProcessFiles()
 	if err != nil || filepath.Dir(cmd.Args[2]) != files.dir || files.config != cmd.Args[2] {
 		t.Fatalf("the client config %s is not in the private directory %+v (%v)", cmd.Args[2], files, err)
 	}
 	entries, err := os.ReadDir(files.dir)
-	if err != nil || len(entries) != 3 {
-		t.Fatalf("the private directory %s: %v, %v; want the config directory, the liveness socket and resolv.conf", files.dir, entries, err)
+	if err != nil || len(entries) != 4 {
+		t.Fatalf("the private directory %s: %v, %v; want the config directory, the liveness socket, resolv.conf and the seccomp directory", files.dir, entries, err)
 	}
 	for _, e := range entries {
 		var want fs.FileMode
 		switch e.Name() {
-		case "config":
+		case "config", "seccomp":
 			want = fs.ModeDir
 		case dockerAliveSocket:
 			want = fs.ModeSocket

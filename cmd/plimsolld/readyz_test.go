@@ -21,7 +21,7 @@ func (failingPreflight) Preflight(context.Context) error {
 // keeps its detail for the log (v0.15.0 review, M1).
 func TestReadyzDoesNotEchoPreflightErrors(t *testing.T) {
 	rec := httptest.NewRecorder()
-	readyzHandler(failingPreflight{sandbox.Disabled{}})(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	readyzHandler(failingPreflight{sandbox.Disabled{}}, sandbox.IsolationUnknown)(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	body := rec.Body.String()
 	if rec.Code != http.StatusServiceUnavailable || strings.TrimSpace(body) != "not ready" {
 		t.Fatalf("readyz = %d %q; want 503 and a fixed body", rec.Code, body)

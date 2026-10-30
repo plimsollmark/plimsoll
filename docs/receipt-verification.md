@@ -38,6 +38,16 @@ receipt. Changing the artifact file fails its SHA-256 check.
 No command here contacts a model, timestamp service, daemon or network endpoint.
 Go may download the exact configured toolchain and build dependencies if they are uncached.
 
+**Verification runs offline**, on a machine with no network connection at all: build the
+binary where there is a network (`go build ./cmd/plimsoll-attest`) and carry it over with the
+evidence and a policy you obtained separately. On 2026-10-28 the example above,
+`plimsoll-attest verify` on a whole published run bundle and `verify-entry` on one of its lines
+all passed inside a Linux network <dfn>*namespace*</dfn> (a separate copy of the kernel's network
+stack, seen only by the processes started in it) whose only interface was a loopback that was
+down (`unshare -rn`; a connection even to 127.0.0.1 was refused as unreachable), and the changed
+envelope still failed there. This covers checking evidence only: running plimsolld, or
+signing, without a network is another matter.
+
 ## The trust boundary
 
 The consumer must obtain and authenticate its policy separately. A receipt sender

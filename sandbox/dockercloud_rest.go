@@ -182,13 +182,21 @@ func dcRESTSandboxPath(uid string) string { return "/v1/sandboxes/" + url.PathEs
 // ---- sandboxes ----
 
 type dcRESTSandbox struct {
-	UID         string `json:"uid"`
+	UID string `json:"uid"`
+	// Name is the resource name, sandboxes/{uid}.
+	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
 	Core        struct {
-		Status    string    `json:"status"`
-		CreatedAt time.Time `json:"createdAt"`
-		Etag      string    `json:"etag"`
-		ImageRef  string    `json:"imageRef"`
+		Status    string            `json:"status"`
+		CreatedAt time.Time         `json:"createdAt"`
+		Etag      string            `json:"etag"`
+		ImageRef  string            `json:"imageRef"`
+		Image     string            `json:"image"`
+		Labels    map[string]string `json:"labels"`
+		Platform  *struct {
+			OS           string `json:"os"`
+			Architecture string `json:"architecture"`
+		} `json:"platform"`
 		Resources *struct {
 			Cpus      *protoUint `json:"cpus"`
 			MemoryMib *protoUint `json:"memoryMib"`
@@ -197,12 +205,37 @@ type dcRESTSandbox struct {
 			URI          string   `json:"uri"`
 			Protocol     string   `json:"protocol"`
 			Capabilities []string `json:"capabilities"`
+			// Sandbox (sandboxes/{uid}) and SandboxUID name the sandbox the endpoint
+			// serves; a session uses an endpoint only when both name the one it opened.
+			Sandbox    string `json:"sandbox"`
+			SandboxUID string `json:"sandboxUid"`
 		} `json:"endpoint"`
 	} `json:"core"`
-	Failure *struct {
+	// EffectiveFeatures is what the service guarantees this sandbox (a session reads its
+	// stop guarantee and its armed deadline; runs read none of it).
+	EffectiveFeatures *dcRESTFeatures `json:"effectiveFeatures"`
+	Failure           *struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"failure"`
+}
+
+// dcRESTFeatures is a sandbox's effectiveFeatures, the fields a session checks.
+type dcRESTFeatures struct {
+	Lifecycle *struct {
+		// StopMemoryOutcome is preserve (a start resumes the stopped process tree) or
+		// discard (disk kept, a fresh process tree).
+		StopMemoryOutcome string `json:"stopMemoryOutcome"`
+		AutoResume        *bool  `json:"autoResume"`
+	} `json:"lifecycle"`
+	Timeouts *struct {
+		OnTimeout  string `json:"onTimeout"`
+		AutoResume *bool  `json:"autoResume"`
+		// ExpiresAt is the armed deadline: absent while stopped.
+		ExpiresAt      *time.Time `json:"expiresAt"`
+		InitialTimeout string     `json:"initialTimeout"`
+		ResumeTimeout  string     `json:"resumeTimeout"`
+	} `json:"timeouts"`
 }
 
 // dcRESTEndpointNeeds are the endpoint capabilities a run uses.
@@ -273,6 +306,9 @@ func (d dcREST) createSandbox(ctx context.Context, spec dcCreateSpec) (dcReporte
 		// 409 failedPrecondition, "network_policies cannot be enforced while a local
 		// account-default policy governs this sandbox"). verifyEgressDenied reads the
 		// effective policy back before any guest code runs.
+	}
+	if len(spec.labels) > 0 {
+		in["labels"] = spec.labels
 	}
 	// The key replays to the same sandbox for 24 hours (probe: same uid, 201), so a
 	// retried create cannot make a second one.
@@ -453,7 +489,7 @@ func (d dcREST) listSandboxes(ctx context.Context, pageToken string) ([]dcListed
 	}
 	page := make([]dcListed, 0, len(out.Sandboxes))
 	for _, sb := range out.Sandboxes {
-		page = append(page, dcListed{name: sb.DisplayName, id: sb.UID, createdAt: sb.Core.CreatedAt})
+		page = append(page, dcListed{name: sb.DisplayName, id: sb.UID, createdAt: sb.Core.CreatedAt, labels: sb.Core.Labels})
 	}
 	return page, out.NextPageToken, nil
 }
@@ -522,11 +558,19 @@ func (d dcREST) credential(ctx context.Context, vm dcVM, fresh bool) (string, er
 	if deadline, ok := ctx.Deadline(); ok {
 		need = deadline.Add(dcRESTCredMargin)
 	}
+	c, err := d.credentialFor(ctx, vm, need, fresh)
+	return c.token, err
+}
+
+// credentialFor returns a credential for one sandbox that is still valid at need,
+// minting one when the cached one is not (or fresh asks for a new one), with its
+// expiry.
+func (d dcREST) credentialFor(ctx context.Context, vm dcVM, need time.Time, fresh bool) (dcRESTCred, error) {
 	d.restCredMu.Lock()
 	c, ok := d.restCreds[vm.id]
 	d.restCredMu.Unlock()
 	if ok && !fresh && c.expires.After(need) {
-		return c.token, nil
+		return c, nil
 	}
 	in := map[string]any{"permissions": dcRESTPermissions, "ttl": protoDuration(dcRESTCredentialTTL)}
 	var ans dcRESTAnswer
@@ -538,19 +582,19 @@ func (d dcREST) credential(ctx context.Context, vm dcVM, fresh bool) (string, er
 		// again after a pause.
 		if dcCodeIs(err, "resource_exhausted") && attempt < dcRESTGetAttempts {
 			if err := sleepCtx(ctx, dcRESTRetryAfter(ans.header, attempt)); err != nil {
-				return "", err
+				return dcRESTCred{}, err
 			}
 			continue
 		}
 		if err != nil {
-			return "", err
+			return dcRESTCred{}, err
 		}
 		var out struct {
 			Token      string    `json:"token"`
 			ExpireTime time.Time `json:"expireTime"`
 		}
 		if err := json.Unmarshal(ans.raw, &out); err != nil || out.Token == "" {
-			return "", errors.New("dockercloud mint endpoint credential: the answer holds no token")
+			return dcRESTCred{}, errors.New("dockercloud mint endpoint credential: the answer holds no token")
 		}
 		// The earlier of the two, so a clock behind the service's cannot stretch it.
 		c = dcRESTCred{token: out.Token, expires: minted.Add(dcRESTCredentialTTL)}
@@ -570,7 +614,7 @@ func (d dcREST) credential(ctx context.Context, vm dcVM, fresh bool) (string, er
 	}
 	d.restCreds[vm.id] = c
 	d.restCredMu.Unlock()
-	return c.token, nil
+	return c, nil
 }
 
 // forgetCredential drops a deleted sandbox's credential.
@@ -630,9 +674,17 @@ func (d dcREST) endpoint(ctx context.Context, vm dcVM, method, path string, head
 // API's own cut (incomplete, at 4 MiB of output in the probe): either means the
 // in-guest caps did not hold, which only guest code working around them can cause.
 func (d dcREST) exec(ctx context.Context, vm dcVM, cmd []string, cwd string, limit int64) (dcExecResponse, bool, error) {
+	return d.execAs(ctx, vm, "", cmd, cwd, limit)
+}
+
+// execAs is exec as user ("" is the service's default, which a run takes).
+func (d dcREST) execAs(ctx context.Context, vm dcVM, user string, cmd []string, cwd string, limit int64) (dcExecResponse, bool, error) {
 	in := map[string]any{"cmd": cmd}
 	if cwd != "" {
 		in["workingDir"] = cwd
+	}
+	if user != "" {
+		in["user"] = user
 	}
 	body, _ := json.Marshal(in)
 	ans, err := d.endpoint(ctx, vm, http.MethodPost, "/v1/processes/exec",

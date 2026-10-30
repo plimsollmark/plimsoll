@@ -177,8 +177,22 @@ exists, and `freshSandbox` whenever the call is the first answered one in a newl
 sandbox, so no earlier file is there either. That covers a sandbox that `dispose`, the
 idle close or a session cap (below) let go, one that ended by itself (its lifetime, its disk
 budget), and a conversation resumed in another process, which this instance cannot tell
-from a first call. A call without a key (no thread, no run) always runs fresh: one sandbox
-shared across conversations would show one user another's files. A language the daemon's
+from a first call. A call without a key (no thread, no run) never shares a sandbox: one
+sandbox shared across conversations would show one user another's files. It is one cell
+the daemon runs by itself (`client.runCell(cell, { preferWarm: true })`; no `preferWarm`
+with `sessions: "never"`): on a daemon that keeps a warm pool (`describe()` states
+`sessionPool`, the operator's `SANDBOX_SESSION_POOL`) a waiting sandbox that has run only
+plimsoll's own programs answers it and is deleted after, so the call is as alone as a
+fresh one and answers without a sandbox being made for it; with no pool, or none waiting
+(a burst larger than the pool), the daemon runs it in a sandbox made for it, and a miss
+costs nothing more. Measured on one laptop on 2026-10-28 for the client-side form this
+replaced (an open, the cell, a close; plimsolld on docker under runc, a pool of 2): 38 ms
+(Python) and 43 ms (JavaScript) against 651 and 631 ms fresh (medians of 15 calls, 3 s
+apart); the daemon's form sends one request instead of two and was not measured
+separately. The answer reads as a fresh run's: `stateKept` and `filesPersist` false, and
+`runCell`'s result says `warm`. What it costs: a pool sandbox runs the cell in the session's
+image (on docker the project image, which a fresh cell uses too); the run record is a
+single run's either way and does not cover `warm`. A language the daemon's
 image cannot run is refused before anything is sent. Output past `maxOutputChars` (each of
 stdout and stderr) is cut and marked truncated, and a cut never ends on the first half of a
 surrogate pair (the two UTF-16 code units that encode one character such as an emoji): a

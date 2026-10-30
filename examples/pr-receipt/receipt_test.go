@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,7 +41,7 @@ func receiptCommand(t *testing.T, env []string, program string, args ...string) 
 	// A gate may use a temporary index to inspect new files. Fixture git calls
 	// must still use their own repository, not inherit that gate's index/objects.
 	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "GIT_") && !strings.HasPrefix(e, "TEST_COMMAND=") && !strings.HasPrefix(e, "PR_BASE_SHA=") && !strings.HasPrefix(e, "PR_NUMBER=") && !strings.HasPrefix(e, "PR_REPOSITORY=") && !strings.HasPrefix(e, "PLIMSOLL_HARNESS_KEY=") && !strings.HasPrefix(e, "JUNIT_PATH=") && !strings.HasPrefix(e, "COVERAGE_PATH=") && !strings.HasPrefix(e, "SESSION_TRAILER=") {
+		if !strings.HasPrefix(e, "GIT_") && !strings.HasPrefix(e, "TEST_COMMAND=") && !strings.HasPrefix(e, "PR_BASE_SHA=") && !strings.HasPrefix(e, "PR_HEAD_SHA=") && !strings.HasPrefix(e, "PR_NUMBER=") && !strings.HasPrefix(e, "PR_REPOSITORY=") && !strings.HasPrefix(e, "PLIMSOLL_HARNESS_KEY=") && !strings.HasPrefix(e, "PLIMSOLL_MIN_TESTS=") && !strings.HasPrefix(e, "JUNIT_PATH=") && !strings.HasPrefix(e, "COVERAGE_PATH=") && !strings.HasPrefix(e, "SESSION_TRAILER=") {
 			cmd.Env = append(cmd.Env, e)
 		}
 	}
@@ -228,6 +230,33 @@ func TestReceiptOperatorKeyRefusals(t *testing.T) {
 	}
 }
 
+// A minimum test count is refused before anything is built or run when it is not a whole
+// number of 1 or more, or when no test report is asked for, since then nothing is counted.
+func TestReceiptMinimumTestsRefusals(t *testing.T) {
+	dir := receiptScratch(t)
+	project := filepath.Join(dir, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		env  []string
+		want string
+	}{
+		{[]string{"PLIMSOLL_MIN_TESTS=0", "JUNIT_PATH=reports.xml"}, "must be a whole number from 1"},
+		{[]string{"PLIMSOLL_MIN_TESTS=02", "JUNIT_PATH=reports.xml"}, "must be a whole number from 1"},
+		{[]string{"PLIMSOLL_MIN_TESTS=many", "JUNIT_PATH=reports.xml"}, "must be a whole number from 1"},
+		{[]string{"PLIMSOLL_MIN_TESTS=2"}, "needs JUNIT_PATH"},
+	} {
+		out, err := receiptCommand(t, c.env, "bash", "receipt.sh", project, filepath.Join(dir, "out"))
+		if e, ok := err.(*exec.ExitError); !ok || e.ExitCode() != 2 || !strings.Contains(string(out), c.want) {
+			t.Errorf("%v: got %v, %q; want a refusal saying %q", c.env, err, out, c.want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "out")); !os.IsNotExist(err) {
+		t.Errorf("a refused minimum left an output directory (%v)", err)
+	}
+}
+
 // TestReceiptScriptEndToEnd runs receipt.sh as published: a real run under gVisor, the
 // bundle verified, the BOM written and checked against the run's key, and nothing in the
 // output naming a directory of the machine that made it. It needs docker with runsc and
@@ -266,8 +295,16 @@ func TestReceiptScriptEndToEnd(t *testing.T) {
 	}
 	commit := receiptCommit(t, project)
 	out := filepath.Join(dir, "out")
-	if log, err := receiptCommand(t, []string{"TEST_COMMAND=npm test", "PR_NUMBER=0", "PR_REPOSITORY=example/pr-receipt-fixture"}, "bash", "receipt.sh", project, out); err != nil {
+	log, err := receiptCommand(t, []string{"TEST_COMMAND=npm test", "PR_NUMBER=0", "PR_REPOSITORY=example/pr-receipt-fixture"}, "bash", "receipt.sh", project, out)
+	if err != nil {
 		t.Fatalf("receipt.sh: %v\n%s", err, log)
+	}
+	// Its states: a key made for the run reads as self-consistent only, and with no test
+	// report how many tests ran is unknown, so the verdict is incomplete though the job passed.
+	wantStates(t, "default key", receiptStates(t, out), map[string]string{"verdict": "incomplete", "signer": "self_consistent",
+		"covers": "known", "candidate": "current", "run": "completed", "steps": "passed", "tests": "unknown", "evidence": "complete"})
+	if !strings.Contains(string(log), "### plimsoll receipt: incomplete\n") || !strings.Contains(string(log), "- **Signer:** `self_consistent`.") {
+		t.Errorf("receipt.sh printed no summary of its states:\n%s", log)
 	}
 	read := func(name string) string {
 		b, err := os.ReadFile(filepath.Join(out, name))
@@ -369,6 +406,324 @@ func TestReceiptScriptEndToEnd(t *testing.T) {
 	}
 	verify(signed, "--command", junitCommand, "--junit-path", "reports.xml", "--coverage-path", "lcov.info",
 		"--coverage", filepath.Join(signed, "coverage.cobertura.xml"))
+	// Everything established: the operator's key, the head, the framework's report, nothing cut.
+	wantStates(t, "operator key", receiptStates(t, signed), map[string]string{"verdict": "passed", "signer": "trusted_key",
+		"candidate": "current", "run": "completed", "steps": "passed", "tests": "discovered", "evidence": "complete"})
+
+	// The test report decides too, whenever one is asked for: a report that lists no test, one
+	// that lists a failure, and one with fewer tests than PLIMSOLL_MIN_TESTS each fail the job
+	// though every step exited 0. Each still gets its signed receipt.
+	ran, _ := receiptStates(t, signed).States["tests"]["passed"].(float64)
+	if ran < 1 {
+		t.Fatalf("the operator-key run's report lists %v tests that ran", ran)
+	}
+	for _, c := range []struct {
+		name, command, minimum, tests, detail string
+	}{
+		{"zero tests", `printf '<testsuites tests="0"></testsuites>\n' > reports.xml`, "", "zero", "lists 0 tests that ran; the gate requires at least 1 test"},
+		{"a listed failure", `printf '<testsuites><testcase name="adds"><failure/></testcase></testsuites>\n' > reports.xml`, "", "discovered", "lists failures or errors"},
+		{"below the minimum", junitCommand, fmt.Sprint(int(ran) + 1), "discovered", fmt.Sprintf("requires at least %d tests", int(ran)+1)},
+	} {
+		out := filepath.Join(dir, strings.ReplaceAll(c.name, " ", "-"))
+		env := []string{"TEST_COMMAND=" + c.command, "JUNIT_PATH=reports.xml", "PR_NUMBER=0", "PR_REPOSITORY=example/pr-receipt-fixture",
+			"PLIMSOLL_HARNESS_KEY=" + filepath.Join(keys, "operator.key")}
+		if c.minimum != "" {
+			env = append(env, "PLIMSOLL_MIN_TESTS="+c.minimum)
+		}
+		log, err := receiptCommand(t, env, "bash", "receipt.sh", project, out)
+		if err == nil {
+			t.Errorf("%s: the job passed:\n%s", c.name, log)
+		}
+		r := receiptStates(t, out)
+		wantStates(t, c.name, r, map[string]string{"verdict": "failed", "signer": "trusted_key", "run": "completed", "steps": "passed", "tests": c.tests})
+		passed, detail := false, ""
+		for _, k := range r.Checks {
+			if k.Check == "tests" {
+				passed, detail = k.Passed != nil && *k.Passed, k.Detail
+			}
+		}
+		if passed || !strings.Contains(detail, c.detail) {
+			t.Errorf("%s: tests check passed %v, %q; want a refusal saying %q", c.name, passed, detail, c.detail)
+		}
+		if got, err := os.ReadFile(filepath.Join(out, "status.txt")); err != nil || string(got) != "FAIL\n" ||
+			!strings.Contains(string(log), "### plimsoll receipt: failed\n") || !strings.Contains(string(log), "its own check refused it at: tests\n  tests: ") {
+			t.Errorf("%s: status %q (%v)\n%s", c.name, got, err, log)
+		}
+	}
+
+	// A run that did not complete: the recipe's 30-second limit ends it. The receipt is made,
+	// the job fails, and the states say why.
+	slow := filepath.Join(dir, "slow")
+	log, err = receiptCommand(t, []string{"TEST_COMMAND=sleep 45", "PR_NUMBER=0", "PR_REPOSITORY=example/pr-receipt-fixture"}, "bash", "receipt.sh", project, slow)
+	if err == nil {
+		t.Fatalf("a timed-out run passed:\n%s", log)
+	}
+	wantStates(t, "timed out", receiptStates(t, slow), map[string]string{"verdict": "failed", "signer": "self_consistent", "run": "timed_out", "steps": "failed"})
+	if got, err := os.ReadFile(filepath.Join(slow, "status.txt")); err != nil || string(got) != "FAIL\n" || !strings.Contains(string(log), "### plimsoll receipt: failed\n") {
+		t.Errorf("timed out: status %q (%v)\n%s", got, err, log)
+	}
+
+	// A head other than the commit that ran (the checkout is a commit behind the event's
+	// head): the receipt is stale, and the job fails although the tests passed.
+	if err := os.WriteFile(filepath.Join(project, "README.md"), []byte("# sum\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := receiptCommand(t, nil, "git", "-C", project, "add", "README.md"); err != nil {
+		t.Fatalf("git add: %s: %v", out, err)
+	}
+	later := receiptCommit(t, project)
+	if out, err := receiptCommand(t, nil, "git", "-C", project, "checkout", "-q", "--detach", commit); err != nil {
+		t.Fatalf("git checkout: %s: %v", out, err)
+	}
+	stale := filepath.Join(dir, "stale")
+	log, err = receiptCommand(t, []string{"TEST_COMMAND=npm test", "PR_NUMBER=0", "PR_REPOSITORY=example/pr-receipt-fixture", "PR_HEAD_SHA=" + later}, "bash", "receipt.sh", project, stale)
+	if err == nil {
+		t.Fatalf("a receipt for the commit behind the head passed:\n%s", log)
+	}
+	wantStates(t, "stale", receiptStates(t, stale), map[string]string{"verdict": "refused", "candidate": "stale", "steps": "passed"})
+	if got, err := os.ReadFile(filepath.Join(stale, "status.txt")); err != nil || string(got) != "FAIL\n" || !strings.Contains(string(log), "its own check refused it at: head") {
+		t.Errorf("stale: status %q (%v)\n%s", got, err, log)
+	}
+}
+
+// receiptDaemonSockets lists every Unix socket the daemon makes in its TMPDIR, each as the
+// name prefix of the private directory os.MkdirTemp makes for it there and the socket's
+// file name. It is read from the sources, so a new socket fails the test below until it is
+// counted here and in receipt.sh's socket_room.
+func receiptDaemonSockets(t *testing.T) [][2]string {
+	t.Helper()
+	sockets := [][2]string{
+		{"plimsoll-docker-config-", "alive.sock"}, // docker_cli.go: the docker CLI's private config and its liveness socket
+		{"crsbx-broker", "host-api.sock"},         // docker_broker.go: a run's capability broker
+		{"crsbx-session-broker", "host-api.sock"}, // docker_session.go, through startUnixBroker: a session's broker
+		{"crsbx-smoke-sock", "host-api.sock"},     // docker_smoke.go: the startup smoke test's socket
+	}
+	read := func(path string) string {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	// The reaper's list names every private directory the provider makes in TMPDIR.
+	m := regexp.MustCompile(`dockerHostDirPrefixes = \[\]string\{([^}]*)\}`).FindStringSubmatch(read("../../sandbox/docker_hostdirs.go"))
+	if m == nil {
+		t.Fatal("sandbox/docker_hostdirs.go no longer lists dockerHostDirPrefixes")
+	}
+	var prefixes []string
+	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+		prefixes = append(prefixes, q[1])
+	}
+	var counted []string
+	for _, s := range sockets {
+		counted = append(counted, s[0])
+	}
+	slices.Sort(prefixes)
+	slices.Sort(counted)
+	if !slices.Equal(prefixes, counted) {
+		t.Errorf("the provider's private directories are %v; this test counts %v", prefixes, counted)
+	}
+	// Every Unix listener in what plimsolld runs is one of those: three call sites. The two
+	// fakes are programs that run inside a test's sandbox, never in plimsolld.
+	listen := regexp.MustCompile(`Listen\w*\(\s*"unix|ListenUnix`)
+	found := map[string]int{}
+	for _, root := range []string{"../../sandbox", "../../cmd", "../../internal"} {
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			if n := len(listen.FindAllString(read(path), -1)); n > 0 {
+				found[filepath.ToSlash(strings.TrimPrefix(path, "../../"))] = n
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[string]int{"sandbox/docker_cli.go": 1, "sandbox/docker_broker.go": 1, "sandbox/docker_smoke.go": 1,
+		"sandbox/internal/e2bfake/envd/main.go": 1}
+	// The Docker Cloud session fake is withheld from the public export with the session code
+	// it stands in for, so its listener is counted only where the file is (the export's dry
+	// run found the public tree failing here, 2026-10-29).
+	if _, err := os.Stat("../../sandbox/internal/dcfake/agent/main.go"); err == nil {
+		want["sandbox/internal/dcfake/agent/main.go"] = 1
+	}
+	if fmt.Sprint(found) != fmt.Sprint(want) {
+		t.Errorf("Unix listeners %v; this test counts %v", found, want)
+	}
+	for file, names := range map[string][]string{
+		"docker_cli.go":     {`os.MkdirTemp("", "plimsoll-docker-config-")`, `dockerAliveSocket = "alive.sock"`},
+		"docker_broker.go":  {`os.MkdirTemp("", prefix)`, `"host-api.sock"`, `startUnixBroker("crsbx-broker"`},
+		"docker_session.go": {`startUnixBroker("crsbx-session-broker"`},
+		"docker_smoke.go":   {`os.MkdirTemp("", "crsbx-smoke-sock")`, `"host-api.sock"`},
+	} {
+		body := read("../../sandbox/" + file)
+		for _, s := range names {
+			if !strings.Contains(body, s) {
+				t.Errorf("sandbox/%s no longer holds %s", file, s)
+			}
+		}
+	}
+	return sockets
+}
+
+// The daemon's sockets fit Linux's limit wherever the checkout is. A socket path is at most
+// 107 bytes (sun_path's 108, less the terminating zero), and the docker provider makes its
+// sockets in the daemon's TMPDIR, each in a directory os.MkdirTemp names with up to 10 random
+// digits. On a GitHub runner the tools sit under $GITHUB_WORKSPACE/tools/plimsoll, and the
+// workspace is /home/runner/work/<repository>/<repository>, so a TMPDIR under the checkout
+// grows with the repository's name. This runs receipt.sh from a checkout of that shape for a
+// 100-character name (under this test's scratch directory, so longer still) with a stand-in
+// daemon that makes every counted socket at its longest and says whether it could listen.
+func TestReceiptDaemonSocketsFitALongCheckout(t *testing.T) {
+	sockets := receiptDaemonSockets(t)
+	longest := 0
+	for _, s := range sockets {
+		longest = max(longest, len(s[0])+10+1+len(s[1]))
+	}
+	script, err := os.ReadFile("receipt.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := regexp.MustCompile(`(?m)^socket_room=(\d+)$`).FindSubmatch(script); m == nil || string(m[1]) != fmt.Sprint(longest) {
+		t.Fatalf("receipt.sh's socket_room is %q; the longest socket name the daemon makes in its TMPDIR is %d bytes", m, longest)
+	}
+
+	dir := receiptScratch(t)
+	repo := strings.Repeat("r", 100)
+	workspace := filepath.Join(dir, "home", "runner", "work", repo, repo)
+	source := filepath.Join(workspace, "tools", "plimsoll")
+	var table strings.Builder
+	for _, s := range sockets {
+		fmt.Fprintf(&table, "\t\t{%q, %q},\n", s[0], s[1])
+	}
+	fake := map[string]string{
+		"go.mod":                      "module example.invalid/fake\n\ngo 1.22\n",
+		"examples/sbom/main.go":       "package main\n\nfunc main() {}\n",
+		"cmd/plimsoll-attest/main.go": "package main\n\nfunc main() {}\n",
+		// The stand-in daemon: every counted socket at its longest, then exit, so receipt.sh
+		// stops at readiness and prints this log.
+		"cmd/plimsolld/main.go": `package main
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+)
+
+func main() {
+	tmp := os.TempDir()
+	fmt.Printf("TMPDIR %s\n", tmp)
+	for _, s := range [][2]string{
+` + table.String() + `	} {
+		dir := filepath.Join(tmp, s[0]+"4294967295")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			fmt.Printf("no directory %s: %v\n", dir, err)
+			continue
+		}
+		path := filepath.Join(dir, s[1])
+		l, err := net.Listen("unix", path)
+		if err != nil {
+			fmt.Printf("refused %d %s: %v\n", len(path), path, err)
+			continue
+		}
+		_ = l.Close()
+		fmt.Printf("listened %d %s\n", len(path), path)
+	}
+	os.Exit(1)
+}
+`,
+	}
+	for name, body := range fake {
+		path := filepath.Join(source, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := filepath.Join(dir, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A RUNNER_TEMP as short as a hosted runner's (/home/runner/work/_temp, 23 bytes): this
+	// test's own, under the system temporary directory, since the scratch path is longer.
+	short, err := os.MkdirTemp("", "rt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(short) })
+	longTemp := filepath.Join(workspace, "_temp")
+	if err := os.MkdirAll(longTemp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shortParent := short
+	if len(short)+len("/plimsoll.XXXXXX")+1+longest > 107 { // a long system TMPDIR: receipt.sh falls back
+		shortParent = "/tmp"
+	}
+	line := regexp.MustCompile(`(?m)^(TMPDIR|listened|refused|no directory) (.*)$`)
+	template := 0 // the length of the name receipt.sh gives the daemon's directory
+	for _, c := range []struct {
+		name, runnerTemp, parent string
+	}{
+		{"no RUNNER_TEMP", "", "/tmp"},
+		{"a short RUNNER_TEMP", short, shortParent},
+		{"a RUNNER_TEMP too long for the sockets", longTemp, "/tmp"},
+	} {
+		cmd := exec.Command("bash", "receipt.sh", project, filepath.Join(dir, "out-"+strings.ReplaceAll(c.name, " ", "-")))
+		for _, e := range os.Environ() {
+			keep := true
+			for _, p := range []string{"GIT_", "PLIMSOLL_", "PR_", "TEST_COMMAND=", "JUNIT_PATH=", "COVERAGE_PATH=", "SESSION_TRAILER=", "RUNNER_TEMP=", "GOFLAGS=", "GOWORK="} {
+				keep = keep && !strings.HasPrefix(e, p)
+			}
+			if keep {
+				cmd.Env = append(cmd.Env, e)
+			}
+		}
+		cmd.Env = append(cmd.Env, "PLIMSOLL_SOURCE="+source, "GOWORK=off")
+		if c.runnerTemp != "" {
+			cmd.Env = append(cmd.Env, "RUNNER_TEMP="+c.runnerTemp)
+		}
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("%s: receipt.sh passed with a daemon that exits:\n%s", c.name, out)
+		}
+		tmpdir, listened := "", 0
+		for _, m := range line.FindAllStringSubmatch(string(out), -1) {
+			switch m[1] {
+			case "TMPDIR":
+				tmpdir = m[2]
+			case "listened":
+				listened++
+				var n int
+				if _, err := fmt.Sscanf(m[2], "%d", &n); err != nil || n > 107 {
+					t.Errorf("%s: a socket path of %d bytes (%v): %s", c.name, n, err, m[2])
+				}
+			default:
+				t.Errorf("%s: %s %s", c.name, m[1], m[2])
+			}
+		}
+		if tmpdir == "" || listened != len(sockets) {
+			t.Fatalf("%s: the stand-in daemon listened on %d of %d sockets (TMPDIR %q):\n%s", c.name, listened, len(sockets), tmpdir, out)
+		}
+		if filepath.Dir(tmpdir) != c.parent || strings.HasPrefix(tmpdir, source) {
+			t.Errorf("%s: the daemon's TMPDIR is %s; want a directory of its own in %s", c.name, tmpdir, c.parent)
+		}
+		if _, err := os.Stat(tmpdir); !os.IsNotExist(err) {
+			t.Errorf("%s: the daemon's TMPDIR %s outlived the script (%v)", c.name, tmpdir, err)
+		}
+		template = len(filepath.Base(tmpdir))
+		t.Logf("%s: TMPDIR %s, longest socket path %d bytes", c.name, tmpdir, len(tmpdir)+1+longest)
+	}
+	// On a hosted runner, RUNNER_TEMP is /home/runner/work/_temp whatever the repository's
+	// name; the checkout's tmp/, where TMPDIR was before, gave 103 + twice the name's length.
+	if n := len("/home/runner/work/_temp") + 1 + template + 1 + longest; n > 107 {
+		t.Errorf("on a hosted runner the longest socket path would be %d bytes", n)
+	}
 }
 
 func glob1(t *testing.T, pattern string) string {

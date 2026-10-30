@@ -84,11 +84,11 @@ func TestDockerLockdownAppliesSeccomp(t *testing.T) {
 	t.Parallel()
 	d := DefaultDocker("")
 	d.Seccomp = "/etc/crsbx/seccomp.json"
-	if !strings.Contains(strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime), " "), "--security-opt seccomp=/etc/crsbx/seccomp.json") {
+	if !strings.Contains(strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime, d.Seccomp), " "), "--security-opt seccomp=/etc/crsbx/seccomp.json") {
 		t.Error("configured seccomp profile not applied under runc")
 	}
 	d.Runtime = "runsc"
-	if strings.Contains(strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime), " "), "seccomp=") {
+	if strings.Contains(strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime, d.Seccomp), " "), "seccomp=") {
 		t.Error("gVisor run should not also apply a host seccomp profile")
 	}
 }
@@ -96,7 +96,7 @@ func TestDockerLockdownAppliesSeccomp(t *testing.T) {
 func TestDockerLockdownDisablesDaemonLogStorage(t *testing.T) {
 	t.Parallel()
 	d := DefaultDocker("")
-	args := strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime), " ")
+	args := strings.Join(d.lockdownArgs("c", time.Now(), false, d.Runtime, d.Seccomp), " ")
 	if !strings.Contains(args, "--log-driver none") {
 		t.Fatalf("lockdown args do not disable daemon-side storage of hostile output: %s", args)
 	}
@@ -505,6 +505,9 @@ func TestDockerPreflightBoundsConcurrentCallers(t *testing.T) {
 	err := d.Preflight(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "already in progress") {
 		t.Fatalf("err = %v, want an in-progress readiness error", err)
+	}
+	if reason, marked := NotDispatchedReason(err); !marked || reason != RefusalCapacity {
+		t.Fatalf("err = %v marked %v (%v), want not dispatched for capacity: nothing ran, so a retry is safe", err, marked, reason)
 	}
 	elapsed := time.Since(started)
 	if elapsed < 100*time.Millisecond {

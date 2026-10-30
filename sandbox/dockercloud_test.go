@@ -65,6 +65,8 @@ type dcFake struct {
 	execHandler    func(w http.ResponseWriter, r *http.Request) // overrides exec entirely
 	execBlock      bool                                         // Exec blocks until the request is cancelled
 	onDelete       func()                                       // runs as the sandbox is deleted, before it is recorded
+	onList         func()                                       // runs as a page of the sandbox list is read, before it is answered
+	listRefuse     string                                       // a page token the list refuses, invalid argument
 
 	// the undocumented per-sandbox network-policy REST call
 	policyPuts      []map[string]any
@@ -405,8 +407,15 @@ func (f *dcFake) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"id": "op-del", "done": false})
 	case dcProcListSandboxes:
+		if f.onList != nil {
+			f.onList()
+		}
 		page := 0
 		if tok, _ := in["pageToken"].(string); tok != "" {
+			if tok == f.listRefuse {
+				connectError(w, http.StatusBadRequest, "invalid_argument", "invalid page token")
+				return
+			}
 			page, _ = strconv.Atoi(tok)
 		}
 		out := map[string]any{"sandboxes": []any{}}
@@ -1146,6 +1155,51 @@ func TestDockerCloudOrphanReconciliation(t *testing.T) {
 	})
 }
 
+// A reconciliation pass reads at most dcMaxListPages pages and the next goes on from
+// where it stopped, so an orphan past the bound is reached on a later pass while the first
+// pages stay full; after the last page the walk starts over, and a saved token the service
+// refuses starts the pass over at page one (found in review, 2026-10-27: every pass began
+// at page one and stopped at the bound).
+func TestDockerCloudReconciliationReachesEveryPage(t *testing.T) {
+	t.Parallel()
+	eachDCAPI(t, func(t *testing.T, api string) {
+		f := newDCFakeAPI(t, api)
+		d := f.provider()
+		d.instanceID = "inst1"
+		sb := func(id, name string) map[string]any {
+			return map[string]any{"core": map[string]any{"id": id, "name": name, "createdAt": "2026-09-24T00:00:00Z"}}
+		}
+		total := dcMaxListPages + 10
+		f.listPages = make([][]map[string]any, total)
+		for i := range f.listPages {
+			f.listPages[i] = []map[string]any{sb(fmt.Sprintf("sb-other-%d", i), fmt.Sprintf("someone-elses-%d", i))}
+		}
+		late := dcMaxListPages + 5
+		f.listPages[late] = append(f.listPages[late], sb("sb-late", dcNamePrefix+"inst1-late"))
+		pass := func(wantDeleted, wantPages int) {
+			t.Helper()
+			before := f.called(dcProcListSandboxes)
+			n, err := d.ReconcileOrphans(context.Background())
+			if pages := f.called(dcProcListSandboxes) - before; err != nil || n != wantDeleted || pages != wantPages {
+				t.Fatalf("a pass deleted %d reading %d pages, err %v; want %d deleted reading %d pages", n, pages, err, wantDeleted, wantPages)
+			}
+		}
+		pass(0, dcMaxListPages)
+		pass(1, total-dcMaxListPages)
+		if refs := f.deletedRefs(); strings.Join(refs, ",") != "id:sb-late" {
+			t.Fatalf("deleted %v; want the orphan on page %d", refs, late+1)
+		}
+		f.listPages[0] = append(f.listPages[0], sb("sb-first", dcNamePrefix+"inst1-first"))
+		pass(1, dcMaxListPages)
+		f.listPages[0] = f.listPages[0][:1] // the Connect fake lists a deleted sandbox still
+		d.mu.Lock()
+		d.reapFrom = "stale"
+		d.mu.Unlock()
+		f.listRefuse = "stale"
+		pass(0, 1+dcMaxListPages)
+	})
+}
+
 func TestBuildDockerCloudValidation(t *testing.T) {
 	t.Parallel()
 	pinned := "registry.example/plimsoll/sandbox@sha256:" + strings.Repeat("b", 64)
@@ -1282,6 +1336,8 @@ func (g *dcSmokeGuest) exec(argv []string) (int, string, string) {
 			return 0, "y\n", ""
 		}
 		return 141, strings.Repeat("y", 64<<10+1), ""
+	case "sh -c " + LanguageProbe():
+		return 0, "javascript\npython\n", ""
 	default:
 		g.t.Errorf("unexpected smoke argv %q", argv)
 		return 1, "", ""

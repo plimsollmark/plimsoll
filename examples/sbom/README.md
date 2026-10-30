@@ -28,7 +28,7 @@ From this directory:
 go run .
 go run . -check ../../docs/examples/sbom/run-6551b9626206.cdx.json \
   -trusted-pub ../../docs/examples/sbom/harness.pub
-go run . -check ../../docs/examples/sbom/run-4c69b5a38f29.cdx.json \
+go run . -check ../../docs/examples/sbom/run-51d6bc6883e3.cdx.json \
   -check-bundle ../../docs/examples/adapter/bundle.jsonl \
   -check-qualification ../../docs/examples/adapter/qualification.jsonl \
   -trusted-pub ../../docs/examples/adapter/harness.pub
@@ -97,15 +97,17 @@ saying so when it does not. Generation always has the bundle and always runs the
 
 A verdict BOM adds a second evidence item, `evidence-qualification`, with the
 platform's statement as `statement.json` (an in-toto statement, predicate type
-`https://plimsollmark.github.io/plimsoll/examples/adapter/qualification/v1`, subject
-the run's record), a fourth claim `claim-verdict` whose text names every rule with
+`https://plimsollmark.github.io/plimsoll/examples/adapter/qualification/v2`, subject
+the run's record; an adapter run's statement also pins the requirements file its run
+carried, `requirements.json`, by SHA-256, with a verdict per requirement), a fourth claim `claim-verdict` whose text names every rule with
 held or broken and the ledger's words, requirement R4 "the program met the platform's
 rules", and a conformance score of 1 when every rule held or 0 with the broken rules
 named. The file of all statements is referenced by URL and SHA-256
 (`plimsoll:qualification_sha256`). `-check` verifies the statement's seal under the
 attached key, its subject against the record, its files, step, report and exit code
-against the stored request and response, and re-evaluates the verdict from its
-evidence (`qualify.VerifyOne`); with `-check-qualification` and the bundle it also runs
+against the stored request and response, re-evaluates the verdict from its evidence,
+and rebuilds each requirement's verdict from the rules through the pinned file, read from
+the stored request (`qualify.VerifyOne`); with `-check-qualification` and the bundle it also runs
 the checks across runs (every run has one statement, no credential served two). The
 statement is the platform's own signed account of a run against a simulated vendor,
 re-evaluated here; it is not an independent audit.
@@ -179,7 +181,8 @@ When present, its root version must equal the recorded manifest digest. The run
 BOM links to the file by URL plus SHA-256 and to its root by BOM-Link. A referenced
 file that is absent, changed or joined to another image fails `-check`. No URL is
 fetched. Images without a supplied label get no ingredient claim; the Docker Cloud
-runs' public node image has none here. The pinned example was scanned by syft
-1.54.1 from the OCI layout, with 694 components; the page states the exact command
+runs' public node image has none here. The two images here were scanned by syft
+1.54.1 from their OCI layouts (694 components for the bundle's gVisor runs' image, 696 for
+the image the adapter runs used, scanned 2026-10-29); the page states the exact command
 and why the legacy-daemon scan cannot be substituted. The label's random serial stays
 pinned, so tests copy its bytes without regenerating it.

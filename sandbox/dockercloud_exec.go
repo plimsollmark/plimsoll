@@ -59,10 +59,17 @@ func (d *DockerCloud) execLimited(ctx context.Context, vm dcVM, argv []string, c
 	if err != nil {
 		return dcExecOutput{}, err
 	}
+	return dcWrapped(raw, flooded, elapsed, secs, max), nil
+}
+
+// dcWrapped reads the answer of a command run under the wrapper with an in-guest limit
+// of secs and max bytes kept of each stream; elapsed is the time around the call, which
+// stands in for the wrapper's own measure when the guest could not take it.
+func dcWrapped(raw dcExecResponse, flooded bool, elapsed time.Duration, secs, max int) dcExecOutput {
 	if flooded {
 		// The response outgrew what the in-guest caps allow, which only guest code
 		// working around them can cause: a failed user run, never infrastructure.
-		return dcExecOutput{stdoutTruncated: true, stderrTruncated: true, exitCode: exitOutputFlooded}, nil
+		return dcExecOutput{stdoutTruncated: true, stderrTruncated: true, exitCode: exitOutputFlooded}
 	}
 	out := dcExecOutput{exitCode: int(raw.ExitCode)}
 	stderr, ran, measured, streamFlooded := splitDCTrailer(raw.Stderr)
@@ -75,13 +82,13 @@ func (d *DockerCloud) execLimited(ctx context.Context, vm dcVM, argv []string, c
 		// A stream passed the transfer budget and stopped being read: a flood, as the
 		// runner and E2B report it, whatever the command's own exit.
 		out.stdoutTruncated, out.stderrTruncated, out.exitCode = true, true, exitOutputFlooded
-		return out, nil
+		return out
 	}
 	// /proc/uptime counts in centiseconds, so the limit is met within one of them.
 	if (out.exitCode == 137 || out.exitCode == 124) && ran >= time.Duration(secs)*time.Second-10*time.Millisecond {
 		out.timedOut, out.exitCode = true, 124
 	}
-	return out, nil
+	return out
 }
 
 // splitDCTrailer separates the wrapper's trailer from the guest's stderr and returns the

@@ -276,7 +276,7 @@
       "term": "hardened mode",
       "anchor": "hardened-mode",
       "variants": [],
-      "definition": "The startup setting PLIMSOLL_HARDENED=1, under which the daemon refuses to start unless every production safeguard is configured."
+      "definition": "The startup setting PLIMSOLL_HARDENED=1, under which the daemon refuses to start unless every production safeguard is configured, and refuses any run below the kernel isolation tier."
     },
     {
       "term": "hardware virtualization",

@@ -184,8 +184,9 @@ if (Object.values(out).some(v => v !== "EACCES" && v !== "EPERM")) process.exit(
 //   - a project step can open neither the runner's plan and report descriptors and memory
 //     nor sandboxd's.
 //
-// The template and namespace policy UIDs and specs it ran on are then the only ones
-// accepted; policy changes seen during either test also fail the proof.
+// The template, the namespace policy UIDs and specs, and the runtime class it ran on are
+// then the only ones accepted; policy or class changes seen during either test also fail
+// the proof.
 //
 // Each check is its own claim, as each run is: one command per pod, every request that
 // carries sandboxd's token sent before guest code starts. It claims two sandboxes and
@@ -199,7 +200,16 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 	if err := p.bindPolicies(ctx); err != nil {
 		return fmt.Errorf("agentsandbox smoke: %w", err)
 	}
-	tier := p.IsolationClass()
+	// The runtime class is bound before the behavioral tests, and the evidence they start
+	// from is read after it (Preflight's answer can be a cached one from before), so the
+	// tier tested is the bound class's.
+	if err := p.bindClass(ctx); err != nil {
+		return fmt.Errorf("agentsandbox smoke: %w", err)
+	}
+	tier, err := p.check(ctx)
+	if err != nil {
+		return fmt.Errorf("agentsandbox smoke: %w", err)
+	}
 	p.mu.Lock()
 	proving := p.templateSum
 	p.mu.Unlock()
@@ -211,6 +221,9 @@ func (p *Provider) SmokeTest(ctx context.Context) error {
 		return fmt.Errorf("agentsandbox smoke: runner: %w", err)
 	}
 	if err := p.bindPolicies(ctx); err != nil {
+		return fmt.Errorf("agentsandbox smoke: %w", err)
+	}
+	if err := p.bindClass(ctx); err != nil {
 		return fmt.Errorf("agentsandbox smoke: %w", err)
 	}
 	p.mu.Lock()
@@ -573,7 +586,7 @@ var linuxBoot = regexp.MustCompile(`^\[ *0\.000000\] Linux version \S+ `)
 
 // checkKernel holds the kernel tier to gVisor's own kernel log, and the vm tier to a
 // Linux kernel's boot line. The runtime class's handler is only a name in the node's
-// runtime configuration, which could map runsc to runc; under gVisor an unprivileged guest
+// runtime configuration, which could map runsc (or a handler declared as gVisor) to runc; under gVisor an unprivileged guest
 // reads gVisor's log, and under runc the host's is refused. The line must be gVisor's boot
 // line exactly: a host's log can name gVisor too (live on kind, a runc pod read the host's
 // "Killed process (gvisor_sentry)"). Under Kata the guest reads its VM's log, which begins
@@ -584,7 +597,7 @@ var linuxBoot = regexp.MustCompile(`^\[ *0\.000000\] Linux version \S+ `)
 func checkKernel(tier sandbox.IsolationClass, dmesg string) error {
 	switch {
 	case tier == sandbox.IsolationKernel && !gvisorBoot.MatchString(dmesg):
-		return fmt.Errorf("the runtime class's handler is runsc but the guest's kernel log begins %q, not gVisor's", truncate([]byte(dmesg), 120))
+		return fmt.Errorf("the runtime class's handler claims gVisor (the kernel tier) but the guest's kernel log begins %q, not gVisor's", truncate([]byte(dmesg), 120))
 	case tier == sandbox.IsolationVM && !linuxBoot.MatchString(dmesg):
 		return fmt.Errorf("the runtime class's handler is Kata's but the guest's kernel log begins %q, not a Linux kernel's boot", truncate([]byte(dmesg), 120))
 	}

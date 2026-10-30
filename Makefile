@@ -33,7 +33,7 @@ DOCKER_TESTS := Docker|RunProject|Broker|Smoke|OracleAttack|Installer
 
 GATE_TOOLS := gate-tools.versions
 
-.PHONY: nemotron-verifier audit build vet modules test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-suite openshell-suite agentsandbox-suite modproxy tools tools-check help
+.PHONY: nemotron-verifier audit build vet modules test race lint generate buf vuln docker-images docker-suite py-frameworks py-frameworks-lock clients-suite mcp-suite e2b-suite e2b-guard-live e2b-session-live dockercloud-guard-live dockercloud-suite openshell-suite agentsandbox-suite modproxy tools tools-check help
 
 ## audit: the full local gate (pinned-tool check, build, vet, race tests, lint, buf, govulncheck, plus the opt-in docker, e2b, dockercloud and openshell suites)
 ## audit prerequisites: node and cc on PATH, and a non-root user; runnerwire's
@@ -199,10 +199,11 @@ docker-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "docker-suite: tmp/ is not writable (created by root during a sudo install?); chown it to your user" >&2; exit 1; }
 	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     $(NO_PAID_KEYS) go test -race ./sandbox ./sandbox/openshell ./sandbox/agentsandbox ./docker -run '$(DOCKER_TESTS)' -skip 'Live$$' -count=1 -parallel $(DOCKER_PARALLEL) -v; \
+	     $(NO_PAID_KEYS) go test -race ./sandbox ./sandbox/openshell ./sandbox/agentsandbox ./docker -run '$(DOCKER_TESTS)' -skip 'Live$$' -count=1 -parallel $(DOCKER_PARALLEL) -timeout 30m -v; \
 	   echo $$? > tmp/docker-suite.status; } 2>&1 | tee tmp/docker-suite.log
-	@{ SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
-	     $(NO_PAID_KEYS) go test ./clients/python -run TestPythonWorkspaceDocker -count=1 -v; \
+	@{ $(MAKE) --no-print-directory py-frameworks PY_FRAMEWORKS=verifiers && \
+	   SANDBOX_TEST_REQUIRE_DOCKER=1 SANDBOX_DOCKER_SECCOMP="$(SECCOMP)" \
+	     $(NO_PAID_KEYS) go test ./clients/python -run '^(TestPythonWorkspaceDocker|TestVerifiersRuntimeDocker)$$' -count=1 -v; \
 	   echo $$? > tmp/docker-suite-python.status; } 2>&1 | tee -a tmp/docker-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/docker-suite.log; then \
 	   echo "docker-suite: required coverage was skipped:" >&2; \
@@ -217,12 +218,16 @@ docker-suite:
 # than quietly installing a different set. A stamp of the lock decides whether an environment is
 # current; any change rebuilds it from scratch.
 PY_FRAMEWORKS_PYTHON := 3.12
-## py-frameworks: build tmp/py-frameworks/<name> from each clients/python/frameworks/<name>/requirements.txt lock (needs the network the first time)
+# PY_FRAMEWORKS names the environments to build, every lock by default; docker-suite builds
+# only verifiers, the one its Python checks need.
+PY_FRAMEWORKS ?= $(patsubst clients/python/frameworks/%/requirements.txt,%,$(wildcard clients/python/frameworks/*/requirements.txt))
+## py-frameworks: build tmp/py-frameworks/<name> from each clients/python/frameworks/<name>/requirements.txt lock, or only those PY_FRAMEWORKS names (needs the network the first time)
 py-frameworks:
 	@python3 -c 'import sys; v = "%d.%d" % sys.version_info[:2]; sys.exit(0 if v == "$(PY_FRAMEWORKS_PYTHON)" else "py-frameworks: the locks are for Python $(PY_FRAMEWORKS_PYTHON), python3 is " + v + "; run make py-frameworks-lock under it, or use $(PY_FRAMEWORKS_PYTHON)")'
 	@mkdir -p tmp/py-frameworks
-	@for req in clients/python/frameworks/*/requirements.txt; do \
-	   name=$$(basename $$(dirname $$req)); venv=tmp/py-frameworks/$$name; \
+	@for name in $(PY_FRAMEWORKS); do \
+	   req=clients/python/frameworks/$$name/requirements.txt; venv=tmp/py-frameworks/$$name; \
+	   [ -f $$req ] || { echo "py-frameworks: no lock at $$req" >&2; exit 1; }; \
 	   stamp=$$(sha256sum $$req | cut -c1-64); \
 	   if [ "$$(cat $$venv/.requirements 2>/dev/null)" != "$$stamp" ]; then \
 	     echo "py-frameworks: building $$venv"; \
@@ -247,14 +252,19 @@ py-frameworks-lock:
 # npm ci runs with --ignore-scripts: the trigger example's lockfile holds three packages
 # with install scripts (@depot/cli's downloads a binary at install), and its tests need
 # none of them (esbuild's binary comes as an optional dependency). Checked 2026-10-24.
-## clients-suite: install both npm dependency sets and the Python framework environments, then run the Python, framework adapter, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS (TestPythonWorkspaceDocker needs the docker images and is docker-suite's, so it is excluded here rather than skipped)
+# That also skips the client's own prepare script, which compiles clients/typescript/dist
+# (gitignored), and the Trigger.dev example imports the client through dist, so the
+# client is built here, from the source under test: a fresh checkout has no dist, and a
+# stale one would test old code (found in review, 2026-10-28).
+## clients-suite: install both npm dependency sets, build the TypeScript client's dist, install the Python framework environments, then run the Python, framework adapter, TypeScript, add-on and Trigger.dev suites; missing prerequisites or a skipped Go test FAILS (TestPythonWorkspaceDocker and TestVerifiersRuntimeDocker need the docker images and are docker-suite's, so they are excluded here rather than skipped)
 clients-suite:
 	@mkdir -p tmp
 	@[ -w tmp ] || { echo "clients-suite: tmp/ is not writable" >&2; exit 1; }
-	@{ (cd clients/typescript && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null) && \
+	@{ (cd clients/typescript && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null && \
+	    rm -rf dist && $(NO_PAID_KEYS) npm run build --userconfig=/dev/null) && \
 	   (cd examples/trigger-chat && $(NO_PAID_KEYS) npm ci --ignore-scripts --userconfig=/dev/null) && \
 	   $(MAKE) --no-print-directory py-frameworks && \
-	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) go test ./clients/python/ ./clients/typescript/ -skip TestPythonWorkspaceDocker -count=1 -v; \
+	   PLIMSOLL_REQUIRE_CLIENTS=1 $(NO_PAID_KEYS) go test ./clients/python/ ./clients/typescript/ -skip '^(TestPythonWorkspaceDocker|TestVerifiersRuntimeDocker)$$' -count=1 -v; \
 	   echo $$? > tmp/clients-suite.status; } 2>&1 | tee tmp/clients-suite.log
 	@if grep -qE '^ *--- SKIP' tmp/clients-suite.log; then \
 	   echo "clients-suite: required coverage was skipped:" >&2; \
@@ -302,6 +312,16 @@ receipt-suite:
 	@if grep -qE '^ *--- SKIP' tmp/receipt-suite.log; then \
 	   echo "receipt-suite: required coverage was skipped" >&2; exit 1; fi
 	@status="$$(cat tmp/receipt-suite.status)"; [ "$$status" = 0 ] || exit "$$status"; echo "receipt-suite: OK"
+
+.PHONY: policy-suite
+## policy-suite: the receipt verifier's policy gate on the Open Policy Agent release pinned in examples/pr-receipt/policy/opa.version (downloaded into tmp/tools once, its SHA-256 checked before it runs): the example policy's own tests and every refusal; a skipped test FAILS
+policy-suite:
+	@mkdir -p tmp
+	@opa="$$(sh examples/pr-receipt/policy/opa.sh "$$PWD/tmp/tools")" || exit 1; \
+	  PLIMSOLL_OPA="$$opa" go test ./examples/pr-receipt -run ReceiptPolicyGate -count=1 -v > tmp/policy-suite.log 2>&1; status=$$?; \
+	  cat tmp/policy-suite.log; \
+	  if grep -qE '^ *--- SKIP' tmp/policy-suite.log; then echo "policy-suite: required coverage was skipped" >&2; exit 1; fi; \
+	  [ "$$status" = 0 ] || exit "$$status"; echo "policy-suite: OK"
 
 # This nested module uses its embedded schemas and published signed bundle only.
 # No sandbox is created and no hosted service or credential is used.
@@ -439,6 +459,11 @@ e2b-guard-live:
 ## e2b-session-live: prove E2B sessions against the live service, the daemon's unclaimed close included (paid; needs E2B_API_KEY)
 e2b-session-live:
 	E2B_SESSION_LIVE=1 env -u DOCKER_SBX_TOKEN go test ./sandbox -run 'TestLiveE2BSessions|TestLiveE2BDaemonClosesAnUnclaimedSession' -count=1 -v -timeout 40m
+
+## dockercloud-guard-live: prove a Docker Cloud host-API grant end to end on the Connect API (paid, well under a cent; needs a public guard route to this process, see TestDockerCloudGuardLive)
+dockercloud-guard-live:
+	DOCKERCLOUD_GUARD_LIVE_REQUIRED=1 DOCKERCLOUD_LIVE_REQUIRED=1 env -u E2B_API_KEY go test ./sandbox -run 'TestDockerCloudGuardLive' -count=1 -v -timeout 10m
+
 
 # The website targets that used to sit here drove the commercial site's local stack
 # through scripts/ , which is private and does not ship. In a public clone they were

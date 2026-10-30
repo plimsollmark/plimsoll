@@ -1,0 +1,26 @@
+# The canary run on a stand-in harness, a few lines of Python in canary-demo.sh written for this page.
+# Not a real evaluation: it shows what the check prints when it passes and when it fails.
+$ plimsoll-eval-integrity canary make truth reference-times plan-names -o canary.json
+(exit 0)
+# hidden/ now holds the markers where the secrets live: the truth labels (truth.json), the reference's step times (reference.json) and a planted clip named by its plan (clips/).
+# run-1/ is the harness as it should be: one request, a prompt that holds none of them.
+$ plimsoll-eval-integrity canary check --sealed canary.json --planted hidden --requests run-1
+canary: OK, every place planted and no marker reached a request
+(exit 0)
+# run-2/: the same request, with one leak put back on purpose: the reference's step time in the prompt.
+$ plimsoll-eval-integrity canary check --sealed canary.json --planted hidden --requests run-2
+run-2/0001.json: $.messages[0].content: sealed value reference-times/number (number)
+canary: FAILED
+(exit 1)
+# run-3/: the clean request, and the planted clip uploaded under its plan name.
+$ plimsoll-eval-integrity canary check --sealed canary.json --planted hidden --requests run-3
+run-3/<name 1>: (file name): sealed value plan-names/text (text)
+canary: FAILED
+(exit 1)
+# not-planted/ is what a harness that forgot to plant leaves behind: nothing.
+$ plimsoll-eval-integrity canary check --sealed canary.json --planted not-planted --requests run-1
+not planted: no marker of place truth is in any hidden file, so that place was not tested
+not planted: no marker of place reference-times is in any hidden file, so that place was not tested
+not planted: no marker of place plan-names is in any hidden file, so that place was not tested
+canary: FAILED
+(exit 1)

@@ -1,0 +1,1426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Three checks for an AI score that looks too good: the ship scan, the canary run and the squeeze test</title>
+<meta name="description" content="A perfect AI score can be wrong because the answer key got into the sandbox, because it got into what the model was sent, or because the AI memorized the practice test. plimsoll's check for each, with real numbers, run on a hackathon entry of mine.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="plimsoll">
+<meta property="og:title" content="Three checks for an AI score that looks too good: the ship scan, the canary run and the squeeze test">
+<meta property="og:description" content="A perfect AI score can be wrong because the answer key got into the sandbox, because it got into what the model was sent, or because the AI memorized the practice test. plimsoll's check for each, with real numbers, run on a hackathon entry of mine.">
+<meta property="og:url" content="https://plimsollmark.github.io/plimsoll/examples/squeeze/index.html">
+<meta property="og:image" content="https://plimsollmark.github.io/plimsoll/social/cards/squeeze-example.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root{color-scheme:light;
+  --ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--line:#e1e0d9;--axis:#c3c2b7;--paper:#fcfcfb;--plane:#f9f9f7;
+  --honest:#2a78d6;--honest-dark:#1c5cab;--cheater:#eb6834;--cheater-dark:#b84a1c;--none:#1baf7a;--none-dark:#0f7a54;
+  --good:#0ca30c;--bad:#d03b3b;--link:#0f4a85;--note:#fff7d6;--note-edge:#e9d27a}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#fff;color:var(--ink);font:17px/1.62 system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+a{color:var(--link)}
+main{max-width:1040px;margin:0 auto;padding:22px 20px 90px}
+.prose{max-width:720px;margin-left:auto;margin-right:auto}
+nav.site{display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 26px;border-bottom:1px solid #d1d9e0;font-size:15px}
+nav.site a:first-child{font-weight:700;color:#0f4a85;text-decoration:none}
+h1{font-size:40px;line-height:1.12;letter-spacing:-.6px;margin:10px 0 14px}
+h2{font-size:26px;line-height:1.25;letter-spacing:-.2px;margin:64px 0 10px}
+h2 .num{color:var(--muted);font-weight:500;margin-right:8px}
+h3{font-size:19px;margin:30px 0 6px}
+p{margin:10px 0}
+.lede{font-size:20px;color:#2b2a28;line-height:1.55}
+.kicker{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+dfn{font-style:normal;font-weight:600;border-bottom:1.5px dotted #8f8d86}
+.analogy{color:#3f3e3a;background:#f4f7fb;border-left:3px solid #9ec5f4;padding:8px 14px;border-radius:0 8px 8px 0;margin:12px 0}
+.analogy b{color:#1c5cab;font-weight:600}
+.tag{display:inline-block;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#8a8a84;background:#f1f0ec;border-radius:4px;padding:0 5px;vertical-align:1px}
+.src{display:inline-block;font-size:12px;font-weight:600;letter-spacing:.03em;border-radius:999px;padding:1px 9px;vertical-align:2px;white-space:nowrap}
+.src.hk{background:#fff1e3;color:#8a4a12;border:1px solid #f3c9a0}
+.src.pl{background:#e6f2ff;color:#14467f;border:1px solid #a9cdf3}
+code,.mono{font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:#f3f2ee;padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{background:#f6f5f1;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+figure{margin:26px 0 30px;padding:18px 18px 14px;background:var(--paper);border:1px solid var(--line);border-radius:14px}
+figure.bare{background:none;border:none;padding:0}
+figcaption{font-size:14.5px;color:var(--ink2);margin-top:10px;line-height:1.5}
+figcaption b{color:var(--ink)}
+.fig-title{font-weight:650;font-size:16px;margin:0 0 4px}
+.fig-sub{font-size:14px;color:var(--ink2);margin:0 0 10px}
+svg{display:block;max-width:100%;height:auto}
+svg text{font-family:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+.controls{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:0 0 12px;font-size:14px}
+.controls select{flex:1 1 220px;min-width:0;max-width:100%;text-overflow:ellipsis}
+.seg{display:inline-flex;border:1px solid #cfcdc4;border-radius:9px;overflow:hidden;background:#fff}
+.seg button{font:inherit;font-size:14px;border:0;background:none;padding:6px 12px;cursor:pointer;color:var(--ink2)}
+.seg button+button{border-left:1px solid #cfcdc4}
+.seg button[aria-pressed="true"]{background:#11233a;color:#fff}
+.btn{font:inherit;font-size:14px;border:1px solid #cfcdc4;background:#fff;border-radius:9px;padding:6px 12px;cursor:pointer}
+.btn:hover{background:#f3f2ee}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+.readkey{margin:14px 0 0;padding-left:18px}
+.readkey li{margin:4px 0}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:26px 0}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;background:var(--paper)}
+.card h3{margin:0 0 2px;font-size:18px}
+.card .who{font-size:13px;color:var(--muted);margin-bottom:10px}
+.card .row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:10px 0 4px;font-size:14px;color:var(--ink2)}
+.card .big{font-size:30px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+.card .big small{font-size:15px;font-weight:500;color:var(--muted)}
+.card.cheat{border-top:4px solid var(--cheater)}
+.card.hon{border-top:4px solid var(--honest)}
+.sticky{position:relative;background:var(--note);border:1px solid var(--note-edge);border-radius:4px 4px 14px 4px;padding:16px 18px 12px;box-shadow:0 2px 0 #eadfae,0 10px 22px -16px rgba(80,60,0,.45);font:17px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.sticky .label{font:600 13px system-ui,-apple-system,"Segoe UI",sans-serif;color:#7a6512;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px}
+.sticky .meta{font:13px system-ui,-apple-system,"Segoe UI",sans-serif;color:#7a6512;margin-top:8px}
+.ph{border-radius:4px;padding:1px 2px;cursor:help;transition:background .15s}
+.ph.cheat{background:rgba(235,104,52,.18);box-shadow:inset 0 -2px 0 rgba(235,104,52,.65)}
+.ph.skill{background:rgba(42,120,214,.12);box-shadow:inset 0 -2px 0 rgba(42,120,214,.5)}
+.ph.dep{background:rgba(235,104,52,.08);box-shadow:inset 0 -2px 0 rgba(235,104,52,.35)}
+.ph:hover,.ph:focus,.ph.on{background:#fff;outline:2px solid #11233a;outline-offset:1px}
+.gloss{min-height:4.6em;margin-top:10px;font-size:15px;color:var(--ink2);background:#fff;border:1px dashed #d8d1a8;border-radius:10px;padding:10px 12px}
+.gloss b{color:var(--ink)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13.5px;color:var(--ink2);margin:6px 0 4px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.tip{position:absolute;pointer-events:none;background:#11233a;color:#fff;font-size:13px;line-height:1.4;padding:7px 9px;border-radius:8px;max-width:260px;opacity:0;transition:opacity .1s;z-index:5}
+.tipwrap{position:relative}
+.callout{border:1px solid var(--line);border-left:4px solid #11233a;border-radius:0 12px 12px 0;padding:12px 16px;background:#fbfbf9;margin:18px 0}
+.callout.warn{border-left-color:var(--bad);background:#fff8f7}
+.callout.good{border-left-color:var(--good);background:#f5fbf5}
+.quote{font-size:16px;border-left:3px solid #d8d6ce;padding:2px 0 2px 14px;margin:12px 0;color:#2b2a28}
+.quote .by{display:block;font-size:13px;color:var(--muted);margin-top:4px}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+th{color:var(--ink2);font-weight:600;font-size:13.5px}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.scroll{overflow-x:auto}
+.yes{color:#0b6b0b;font-weight:600}
+.no{color:#a12a2a;font-weight:600}
+.pill{display:inline-block;border-radius:999px;font-size:12.5px;font-weight:650;padding:1px 9px;white-space:nowrap}
+.pill.flag{background:#fde8e6;color:#9a1f1f}
+.pill.pass{background:#e8f5e8;color:#0b5e0b}
+.pill.miss{background:#fff1d6;color:#7a5200}
+input[type=range]{width:100%;accent-color:#11233a}
+.dial-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.dial-val{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
+.toc{columns:2;column-gap:26px;font-size:15px;margin:18px 0 0;padding-left:20px}
+.toc li{margin:2px 0}
+.small{font-size:14px;color:var(--ink2)}
+.foot{margin-top:70px;padding-top:18px;border-top:1px solid var(--line);font-size:14px;color:var(--ink2)}
+.primer{border:1px solid #c9dcf2;background:#f4f7fb;border-radius:14px;padding:12px 18px 14px;margin:18px 0 6px}
+.primer .ph{font-size:15.5px;margin:2px 0 4px;color:#2b2a28}
+.primer dl{margin:0}
+.primer dt{font-weight:650;margin-top:10px}
+.primer dd{margin:2px 0 0 0;font-size:15.5px;color:#2b2a28}
+.like{color:#1c5cab}
+.words dt{font-weight:650;margin-top:12px}
+.words dd{margin:2px 0 0 0;color:#2b2a28}
+.step-list{counter-reset:s;list-style:none;padding:0}
+.step-list li{counter-increment:s;position:relative;padding-left:38px;margin:12px 0}
+.step-list li::before{content:counter(s);position:absolute;left:0;top:1px;width:26px;height:26px;border-radius:50%;background:#11233a;color:#fff;font-size:14px;font-weight:700;text-align:center;line-height:26px}
+.verdict-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.vcard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff}
+.vcard .t{font-size:13px;color:var(--muted)}
+.vcard .h{font-weight:650;margin:2px 0 6px}
+.vcard .line{display:flex;justify-content:space-between;gap:8px;font-size:14px;margin:3px 0}
+.checks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:22px 0 10px}
+.check{border:1px solid var(--line);border-top:5px solid #11233a;border-radius:14px;padding:12px 16px 14px;background:#fff;min-width:0}
+.check svg{width:100%;max-width:220px;margin:0 auto 4px}
+.check .n{font-size:12.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#14467f}
+.check h3{margin:2px 0 4px;font-size:18px;line-height:1.3}
+.check .term{font-size:14px;color:var(--ink2);margin:0 0 6px}
+.check p{font-size:15px;margin:6px 0}
+.check .where{font-size:13.5px;color:var(--ink2);border-top:1px dashed var(--line);padding-top:6px;margin-top:8px}
+.part{margin:70px 0 0;padding:14px 18px;border-radius:14px;background:#f4f7fb;border:1px solid #c9dcf2}
+.part .kicker{color:#14467f}
+.part p{margin:4px 0 0;font-size:15.5px;color:#3f3e3a}
+.toc-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 26px;font-size:15px;margin:18px 0 0}
+.toc-groups b{display:block;font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:8px 0 2px}
+.toc-groups ol{margin:0;padding-left:22px}
+.toc-groups li{margin:2px 0}
+.status{display:inline-block;border-radius:6px;font-size:12.5px;font-weight:650;padding:1px 8px;white-space:nowrap}
+.status.run{background:#e8f5e8;color:#0b5e0b}
+.status.built{background:#e6f2ff;color:#14467f}
+.status.not{background:#f1f0ec;color:#52514e}
+.flow{display:flex;align-items:stretch;margin:4px 0 6px}
+.flow .box{flex:1 1 0;min-width:0;border:1px solid #c3c2b7;border-radius:12px;padding:10px 12px;background:#fff;font-size:14.5px;line-height:1.45}
+.flow .box ul{margin:4px 0 6px;padding-left:18px}
+.flow .box li{margin:2px 0}
+.flow .box.key{background:#f4f7fb;border-color:#9ec5f4}
+.flow .box.good{background:#f5fbf5;border-color:#0ca30c}
+.flow .box.split{display:flex;flex-direction:column;gap:10px;padding:0;border:0;background:none}
+.flow .sub{flex:1;border-radius:12px;padding:10px 12px;border:1px solid}
+.flow .sub b{display:block}
+.flow .sub.refuse{background:#fff8f7;border-color:#d03b3b}
+.flow .sub.refuse b{color:#9a1f1f}
+.flow .sub.audit{background:#f4f7fb;border-color:#2a78d6}
+.flow .sub.audit b{color:#14467f}
+.flow .arrow{flex:0 0 30px;display:flex;align-items:center;justify-content:center;color:#8f8d86;font-size:24px;font-weight:700}
+.flow .arrow::before{content:"\2192"}
+.tally{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;text-align:center;font-size:14.5px}
+.tally .t{min-width:0;border:1px solid var(--line);border-radius:12px;padding:10px 6px 8px;background:#fff}
+.tally .mark{display:block;width:40px;height:40px;margin:0 auto 4px;border-radius:50%;font-size:22px;font-weight:700;line-height:40px;background:#e8f5e8;color:#0b5e0b}
+.tally .off .mark{background:#f1f0ec;color:#898781}
+.tally .k{font-weight:700;color:#6b6a64}
+.tally .k.yes{color:#0b5e0b}
+.tally .s{font-size:13px;color:var(--muted)}
+pre.transcript{font-size:12.5px;line-height:1.45}
+pre.transcript .hit{background:#fde8e6;color:#9a1f1f;font-weight:650}
+pre.transcript .ok{background:#e8f5e8;color:#0b5e0b;font-weight:650}
+@media (max-width:760px){
+  .checks{grid-template-columns:1fr}
+  .flow{flex-direction:column}
+  .flow .arrow{flex-basis:30px}
+  .flow .arrow::before{content:"\2193"}
+  .tally{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .toc-groups{grid-template-columns:1fr}
+  body{font-size:16px}
+  main{padding:16px 14px 70px}
+  h1{font-size:30px}
+  h2{font-size:22px;margin-top:48px}
+  .lede{font-size:18px}
+  .cards,.grid2,.verdict-grid{grid-template-columns:1fr}
+  figure{padding:12px 10px 10px;margin-left:-4px;margin-right:-4px}
+  .toc{columns:1}
+  .sticky{font-size:15px}
+}
+</style>
+</head>
+<body>
+<main>
+<nav class="site"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/fanout/index.html">One job, every sandbox</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/squeeze">Source on GitHub ↗</a></nav>
+
+<div class="prose">
+<div class="kicker">A plimsoll example · the ship scan, the canary run and the squeeze test</div>
+<h1>Three checks for an AI score that looks too good</h1>
+<p class="lede">An AI hands you a perfect score. Lovely. I have fooled myself with perfect scores before (twice in one day, further down), so now I ask three questions first. Did the answer key get into the place where the AI's code ran? Did it ride along in what the AI was sent? Did the AI just memorize the practice test? plimsoll, the open-source tool I build for running AI-written code safely, has a check for each. This page runs all three on real numbers, including on a hackathon project of mine.</p>
+<div class="primer" id="primer">
+<p class="ph"><b>If you don't work in AI, a few words first.</b> Each comes with an everyday stand-in beside it. The stand-in is there to help; the word is what the rest of the page uses.</p>
+<dl>
+<dt>Model</dt><dd>An AI program, trained on huge piles of examples, that writes answers, text or code when you ask it something. <span class="like">Like a very well-read new hire who has never done your exact job.</span></dd>
+<dt>Agent</dt><dd>A model left to work in a loop: it writes some code, runs it, looks at what happened and tries again, with no person in between. <span class="like">The new hire left alone with a computer and a to-do list.</span></dd>
+<dt>Sandbox</dt><dd>A walled-off place on a computer where code runs and cannot touch anything outside it. <span class="like">A kid's sandbox: dig all you want, the sand stays in the box.</span></dd>
+<dt>Harness</dt><dd>The program I write that hands the agent its task, runs what the agent wrote in a sandbox, and grades it. <span class="like">Whoever runs the exam: hands out the paper, then marks it.</span></dd>
+<dt>Practice test and held-out cases</dt><dd>The practice test is the set of test cases the agent may try its work on as often as it likes. Held-out cases are kept back until the end and never shown to the agent. <span class="like">Last year's quiz you can retake every night, and the final exam in a sealed envelope.</span></dd>
+<dt>Answer key</dt><dd>Anything the grader knows that the agent must not: the held-out cases, the right answers, the numbers the test cases are made from, the program that makes them. <span class="like">The teacher's copy of the exam with the answers filled in.</span></dd>
+</dl>
+</div>
+</div>
+
+<div class="checks" id="three-checks">
+  <div class="check">
+    <svg viewBox="0 0 220 112" role="img" aria-label="a file holding a seed is stopped at the sandbox's door">
+      <rect x="132" y="6" width="78" height="100" rx="5" fill="#f4f7fb" stroke="#7d8c99" stroke-width="2"/>
+      <rect x="140" y="16" width="62" height="24" rx="3" fill="#fff" stroke="#c4d0da"/>
+      <text x="171" y="33" text-anchor="middle" font-size="12.5" fill="#52514e">sandbox</text>
+      <circle cx="198" cy="64" r="3.5" fill="#7d8c99"/>
+      <path d="M18 18 H58 L72 32 V96 H18 Z" fill="#fff" stroke="#8f8d86" stroke-width="2"/>
+      <path d="M58 18 V32 H72" fill="none" stroke="#8f8d86" stroke-width="2"/>
+      <g stroke="#cfcdc4" stroke-width="3" stroke-linecap="round"><path d="M27 44 H62"/><path d="M27 54 H56"/><path d="M27 74 H60"/><path d="M27 84 H50"/></g>
+      <rect x="24" y="59" width="44" height="10" rx="2" fill="#fde8e6"/>
+      <text x="46" y="67.5" text-anchor="middle" font-size="9.5" font-weight="700" fill="#9a1f1f">seed-…</text>
+      <circle cx="102" cy="57" r="17" fill="#fff" stroke="#d03b3b" stroke-width="4"/>
+      <path d="M90 45 L114 69" stroke="#d03b3b" stroke-width="4" stroke-linecap="round"/>
+    </svg>
+    <div class="n">Check 1</div>
+    <h3>The answer key gets into the sandbox</h3>
+    <p class="term">The <b>ship scan</b>, in plimsoll's server</p>
+    <p>Before any code runs, every file and line of code headed into the sandbox is checked against a list of fingerprints of things that must never go in (the <dfn>withheld set</dfn>). A match is refused, or quietly reported to whoever runs the server.</p>
+    <p class="where">On this page: it finds the secret number my hackathon project leaked, in that project's real files, right where my own check didn't look. <a href="#ship-scan">Section 1</a></p>
+  </div>
+  <div class="check">
+    <svg viewBox="0 0 220 112" role="img" aria-label="markers planted in the hidden files, and a request to the model that holds none of them">
+      <path d="M10 30 H38 L46 38 H84 V96 H10 Z" fill="#f4f7fb" stroke="#7d8c99" stroke-width="2"/>
+      <text x="47" y="58" text-anchor="middle" font-size="12" fill="#52514e">hidden</text>
+      <rect x="22" y="68" width="50" height="16" rx="3" fill="#fff" stroke="#2a78d6" stroke-width="1.5"/>
+      <text x="47" y="80" text-anchor="middle" font-size="10.5" font-weight="700" fill="#14467f">cnry…</text>
+      <g stroke="#8f8d86" stroke-width="2.5" fill="none" stroke-linecap="round"><path d="M92 62 H118"/><path d="M110 55 L119 62 L110 69"/></g>
+      <rect x="128" y="18" width="84" height="78" rx="8" fill="#fff" stroke="#8f8d86" stroke-width="2"/>
+      <text x="170" y="34" text-anchor="middle" font-size="11" fill="#52514e">to the model</text>
+      <g stroke="#cfcdc4" stroke-width="3" stroke-linecap="round"><path d="M138 48 H202"/><path d="M138 58 H190"/><path d="M138 68 H198"/><path d="M138 78 H176"/></g>
+      <circle cx="184" cy="72" r="15" fill="rgba(255,255,255,.8)" stroke="#11233a" stroke-width="3"/>
+      <path d="M194 83 L206 95" stroke="#11233a" stroke-width="5" stroke-linecap="round"/>
+      <text x="184" y="77" text-anchor="middle" font-size="14" font-weight="700" fill="#0b6b0b">✓</text>
+    </svg>
+    <div class="n">Check 2</div>
+    <h3>The answer key rides along to the model</h3>
+    <p class="term">The <b>answer-key tripwire</b> and its <b>canary run</b>, a plimsoll check that is not part of the open-source release</p>
+    <p>Plant made-up marker values where your secrets live, run your harness once, and check that every marker got planted and none of them showed up in what the model was sent.</p>
+    <p class="where">On this page: the check's own output on a harness that behaves, on two leaks I put back on purpose, and on a harness that forgot to plant anything. <a href="#canary">Section 2</a></p>
+  </div>
+  <div class="check">
+    <svg viewBox="0 0 220 112" role="img" aria-label="one loop's controller: every one of its 16 practice tests passed, none of 64 fresh ones">
+      <g fill="#3a3936">
+        <rect x="22" y="20" width="14" height="14" rx="2"/><rect x="40" y="20" width="14" height="14" rx="2"/><rect x="58" y="20" width="14" height="14" rx="2"/><rect x="76" y="20" width="14" height="14" rx="2"/>
+        <rect x="22" y="38" width="14" height="14" rx="2"/><rect x="40" y="38" width="14" height="14" rx="2"/><rect x="58" y="38" width="14" height="14" rx="2"/><rect x="76" y="38" width="14" height="14" rx="2"/>
+        <rect x="22" y="56" width="14" height="14" rx="2"/><rect x="40" y="56" width="14" height="14" rx="2"/><rect x="58" y="56" width="14" height="14" rx="2"/><rect x="76" y="56" width="14" height="14" rx="2"/>
+        <rect x="22" y="74" width="14" height="14" rx="2"/><rect x="40" y="74" width="14" height="14" rx="2"/><rect x="58" y="74" width="14" height="14" rx="2"/><rect x="76" y="74" width="14" height="14" rx="2"/>
+      </g>
+      <text x="56" y="106" text-anchor="middle" font-size="11.5" fill="#52514e">practice: {{with $.HKLoop "easy" "cheater"}}{{.Practice}}{{end}} of 16</text>
+      <text x="113" y="60" text-anchor="middle" font-size="14" font-weight="700" fill="#898781">vs</text>
+      <g fill="#fff" stroke="#c9c7bf" stroke-width="1.2">
+        <rect x="132" y="20" width="8" height="8" rx="1.5"/><rect x="142" y="20" width="8" height="8" rx="1.5"/><rect x="152" y="20" width="8" height="8" rx="1.5"/><rect x="162" y="20" width="8" height="8" rx="1.5"/><rect x="172" y="20" width="8" height="8" rx="1.5"/><rect x="182" y="20" width="8" height="8" rx="1.5"/><rect x="192" y="20" width="8" height="8" rx="1.5"/><rect x="202" y="20" width="8" height="8" rx="1.5"/>
+        <rect x="132" y="30" width="8" height="8" rx="1.5"/><rect x="142" y="30" width="8" height="8" rx="1.5"/><rect x="152" y="30" width="8" height="8" rx="1.5"/><rect x="162" y="30" width="8" height="8" rx="1.5"/><rect x="172" y="30" width="8" height="8" rx="1.5"/><rect x="182" y="30" width="8" height="8" rx="1.5"/><rect x="192" y="30" width="8" height="8" rx="1.5"/><rect x="202" y="30" width="8" height="8" rx="1.5"/>
+        <rect x="132" y="40" width="8" height="8" rx="1.5"/><rect x="142" y="40" width="8" height="8" rx="1.5"/><rect x="152" y="40" width="8" height="8" rx="1.5"/><rect x="162" y="40" width="8" height="8" rx="1.5"/><rect x="172" y="40" width="8" height="8" rx="1.5"/><rect x="182" y="40" width="8" height="8" rx="1.5"/><rect x="192" y="40" width="8" height="8" rx="1.5"/><rect x="202" y="40" width="8" height="8" rx="1.5"/>
+        <rect x="132" y="50" width="8" height="8" rx="1.5"/><rect x="142" y="50" width="8" height="8" rx="1.5"/><rect x="152" y="50" width="8" height="8" rx="1.5"/><rect x="162" y="50" width="8" height="8" rx="1.5"/><rect x="172" y="50" width="8" height="8" rx="1.5"/><rect x="182" y="50" width="8" height="8" rx="1.5"/><rect x="192" y="50" width="8" height="8" rx="1.5"/><rect x="202" y="50" width="8" height="8" rx="1.5"/>
+        <rect x="132" y="60" width="8" height="8" rx="1.5"/><rect x="142" y="60" width="8" height="8" rx="1.5"/><rect x="152" y="60" width="8" height="8" rx="1.5"/><rect x="162" y="60" width="8" height="8" rx="1.5"/><rect x="172" y="60" width="8" height="8" rx="1.5"/><rect x="182" y="60" width="8" height="8" rx="1.5"/><rect x="192" y="60" width="8" height="8" rx="1.5"/><rect x="202" y="60" width="8" height="8" rx="1.5"/>
+        <rect x="132" y="70" width="8" height="8" rx="1.5"/><rect x="142" y="70" width="8" height="8" rx="1.5"/><rect x="152" y="70" width="8" height="8" rx="1.5"/><rect x="162" y="70" width="8" height="8" rx="1.5"/><rect x="172" y="70" width="8" height="8" rx="1.5"/><rect x="182" y="70" width="8" height="8" rx="1.5"/><rect x="192" y="70" width="8" height="8" rx="1.5"/><rect x="202" y="70" width="8" height="8" rx="1.5"/>
+        <rect x="132" y="80" width="8" height="8" rx="1.5"/><rect x="142" y="80" width="8" height="8" rx="1.5"/><rect x="152" y="80" width="8" height="8" rx="1.5"/><rect x="162" y="80" width="8" height="8" rx="1.5"/><rect x="172" y="80" width="8" height="8" rx="1.5"/><rect x="182" y="80" width="8" height="8" rx="1.5"/><rect x="192" y="80" width="8" height="8" rx="1.5"/><rect x="202" y="80" width="8" height="8" rx="1.5"/>
+      </g>
+      <text x="171" y="106" text-anchor="middle" font-size="11.5" fill="#52514e">fresh: {{with $.EvLoop "easy" "cheater"}}{{with .Own}}{{.Fresh}} of {{.FreshTotal}}{{end}}{{end}}</text>
+    </svg>
+    <div class="n">Check 3</div>
+    <h3>The AI memorized the practice test</h3>
+    <p class="term">The <b>squeeze test</b>, this example</p>
+    <p>Squeeze everything a self-improving agent learned into a note of 32 tokens (the word pieces a model reads; here that is about two dozen words), have fresh agents redo the job from the note alone, and grade what they build on cases nobody saw.</p>
+    <p class="where">On this page: two drone-flying agents that both aced the same 16 practice flights, one of them by memorizing, graded again on plimsoll. <a href="#squeeze-test">Sections 3 to 13</a></p>
+  </div>
+</div>
+
+<div class="prose">
+<div class="callout"><b>The Argon story, short.</b> At the Gemini 4 Argon hackathon on 2026-10-25 I built the squeeze test in a day and made five mistakes doing it, which I then wrote down like a responsible adult. plimsoll now catches three of them. One of those I checked on the project's real files: the leak check in my harness looked for the first secret number in one file, and the leak was the second secret number, in another file. The ship scan finds it (<a href="#ship-scan">section 1</a>). <a href="#argon">Section 14</a> has all five, and the two plimsoll does not catch.</div>
+
+<div class="toc-groups">
+<div>
+<b>Check 1 · the ship scan</b>
+<ol start="1"><li><a href="#ship-scan">Keep the answer key out of the sandbox</a></li></ol>
+<b>Check 2 · the canary run</b>
+<ol start="2"><li><a href="#canary">Test the leak check before trusting it</a></li></ol>
+<b>The hackathon</b>
+<ol start="14"><li><a href="#argon">What I got wrong at Argon, and the three of five plimsoll now catches</a></li><li><a href="#run">Run all three yourself</a></li></ol>
+</div>
+<div>
+<b>Check 3 · the squeeze test</b>
+<ol start="3">
+<li><a href="#job">The job: fly a drone through three gates</a></li>
+<li><a href="#cheat">How a loop scores 16 of 16 without learning to fly</a></li>
+<li><a href="#squeeze">The squeeze</a></li>
+<li><a href="#recipes">The two recipes, word by word</a></li>
+<li><a href="#rebuilds">What the fresh agents rebuilt</a></li>
+<li><a href="#dial">Where the line sits</a></li>
+<li><a href="#habit">What survives the squeeze</a></li>
+<li><a href="#hard">The hard course, where the squeeze fired</a></li>
+<li><a href="#cannot">What the squeeze cannot tell you</a></li>
+<li><a href="#wall">The wall the squeeze leans on</a></li>
+<li><a href="#plimsoll">On plimsoll, signed</a></li>
+</ol>
+</div>
+</div>
+
+<h2 id="ship-scan"><span class="num">1</span>The ship scan: keep the answer key out of the sandbox</h2>
+<p>A <a href="../../trainers/glossary.html#sandbox">sandbox (INTERNAL · glossary →)</a> is where an agent's code runs and gets graded. The usual way that goes wrong is the harness carrying the answers in itself: it ships its own simulator into the sandbox as a helper file, and the agent works the hidden test cases out from it; or it leaves a held-out <dfn>seed</dfn> (the single number a test case is generated from) in an example link in some file the agent can read. UC Berkeley went through 13 widely used AI benchmarks (the standard tests everyone scores AI on) and found that "the most common pattern we exploited was submissions running in the same process, container, or filesystem as the evaluator" (<a href="https://rdi.berkeley.edu/blog/trustworthy-benchmarks/">EXTERNAL · article ↗</a>). In plain words: the work being graded sat in the same room as the grader's notes.</p>
+<p>The <dfn>ship scan</dfn> checks every <dfn>call</dfn> (one request to plimsoll to run some code) on its way in. Whoever runs the plimsoll server writes a <dfn>withheld set</dfn>: <a href="../../trainers/glossary.html#digest">SHA-256 digests (INTERNAL · glossary →)</a>, fixed-length fingerprints, of the files and values that must never reach a sandbox, made with the command <code>plimsoll-withheld</code>. plimsolld, the plimsoll server program, scans everything a call carries (the code, file names and contents, the commands to run, the names of files to send back, code typed into a sandbox kept open between calls) as the very last check before the run starts.</p>
+<div class="analogy"><b>Why fingerprints and not the values:</b> a digest identifies a file or a value without containing it, so the set holds none of them, and plimsolld's log and refusals name an entry by its label, never by what it holds (it reads each call to compare it, and an audited call's output is left as the code wrote it), and a set of files and long values can be published as a record of exactly what was looked for. A set of short values cannot: a six-digit seed's fingerprint is found by trying all million candidates, so that set is as secret as the seeds.</div>
+</div>
+
+<figure id="fig-ship">
+  <div class="fig-title">What the ship scan reads on one call, and what a find does</div>
+  <div class="flow">
+    <div class="box"><b>One call</b><ul><li>file contents</li><li>file names</li><li>commands and code</li><li>names of files to send back</li><li>code typed into a kept-open sandbox</li></ul></div>
+    <div class="arrow" aria-hidden="true"></div>
+    <div class="box key"><b>Read three ways</b><ul><li>as written</li><li>with web-style escapes undone once (<code>%3D</code>, <code>\n</code>)</li><li>base64 (a common way to write data as letters) decoded</li></ul><b>and inside packed files</b><ul><li>gzip, bzip2, zip, tar, zlib, within fixed size limits; one it cannot open is reported as incomplete</li></ul></div>
+    <div class="arrow" aria-hidden="true"></div>
+    <div class="box"><b>Against the withheld set</b><ul><li>a whole file, under any name</li><li>a value, as a whole word or number</li><li>a third of a file's distinctive lines (edited copies)</li></ul></div>
+    <div class="arrow" aria-hidden="true"></div>
+    <div class="box split"><div class="sub refuse"><b>refuse</b> the code never runs; the caller is told which entry matched and where</div><div class="sub audit"><b>audit</b> it runs; only the server's log names the find, and the caller learns nothing</div></div>
+  </div>
+  <figcaption>A value is found where it fills whole runs of letters and digits: the seed <code>3107713414</code> is found in <code>seed-3107713414.json</code> (the runs are <code>seed</code>, <code>3107713414</code> and <code>json</code>) and not inside <code>13107713414</code>, which is another number. Two modes, because a refusal is itself an answer: an agent that guesses a hidden answer and sees its call refused has just learned the guess was right. So <code>refuse</code> suits files the harness builds, and <code>audit</code> suits anything the agent being graded writes.</figcaption>
+</figure>
+
+<div class="prose">
+<p>The same scan also runs on its own, on a folder, whatever sandbox you use: <code>plimsoll-withheld scan -set withheld.json task/</code> lists every find and exits 1 on one. That is how I checked my own hackathon entry.</p>
+
+<h3 id="argon-scan">On a real leak: the secret number my check missed</h3>
+<p>At the Argon hackathon (<a href="#argon">section 14</a>), my harness kept the 16 <dfn>practice seeds</dfn>, the numbers behind the 16 practice test flights an agent graded itself on, out of the files it shipped to the agents, and checked its own work: one line asserting that the task file it shipped held neither the seed list nor the first seed. Until 12:55 that day, an example link in another file it shipped, the replay viewer, named the second seed.</p>
+<p>On 2026-10-28 I rebuilt, from the entry's public repository (<a href="https://github.com/carrollco/did-it-learn">EXTERNAL · source repo ↗</a>), the {{.Argon.Shipped}} files its harness put into the sandbox of every rebuild (a fresh agent of the squeeze test, <a href="#squeeze">section 5</a>), at the last commit before the fix (12:44, <code>{{short .Argon.Before}}</code>) and at the fix (12:55, <code>{{short .Argon.After}}</code>), the way its own <code>loop/kit.py</code> built them. Then I built a withheld set of the 16 practice seeds and scanned both folders offline with <code>plimsoll-withheld</code>. This is the whole transcript; <code>examples/squeeze/argon-scan.sh</code> prints it.</p>
+</div>
+
+<figure id="fig-argon-scan">
+  <div class="fig-title">The scan, before and after the fix</div>
+  <div class="fig-sub">Offline, on files rebuilt from the public repository. Not a run in a sandbox, and not signed.</div>
+  <pre class="transcript">{{range .Argon.Lines}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}
+{{end}}</pre>
+  <figcaption>The highlighted lines are the scan's own output. <code>seeds.txt:2</code> is the withheld set's label for the second line of the seeds file: the set holds digests and labels, never a seed.</figcaption>
+</figure>
+
+<div class="prose">
+<p>{{with .Argon}}{{range .Finds}}At 12:44 the scan flags {{if eq (len $.Argon.Finds) 1}}one file of {{$.Argon.Shipped}}{{else}}a file{{end}}, <code>{{.File}}</code>, for <code>{{.Label}}</code>, the second practice seed, {{$.Argon.Seed}}, in the example track name <code>seed-{{$.Argon.Seed}}.json</code>. {{end}}At 12:55 the same {{.CleanFiles}} files come back clean.{{end}} My check looked for the first practice seed in one file. The leak was the second seed, in another file. Thorough. The viewer did not change between the drone task's first commit, at 12:09, and 12:44, so the same scan, run on the drone task's first commit, would have flagged it 46 minutes before the fix.</p>
+<p>What this does not show: it is an offline scan of rebuilt files, not a replay of the hackathon's sandboxes, and it changes nothing about what the leak cost. The entry's own write-up puts that at "at most 1 of 16 practice flights" for the first eight rebuilds from the cheating loop's recipe (<a href="#squeeze">section 5</a> says what those are), and "none of the 64 held-out flights".</p>
+<p><b>What the ship scan does not catch.</b> Anything hidden on purpose: a value split in two, reversed or encrypted, one disguise inside another (base64 inside base64, a web address escaped twice), hex, raw compressed data with no header, a value drawn into an image (a PNG's pixel data is not read). A file baked into the sandbox's starting image, which never passes through a call. Whatever a run downloads through a <a href="../../trainers/glossary.html#grant">capability grant (INTERNAL · glossary →)</a>, plimsoll's per-run permission to reach one outside service. And the signed <a href="../../trainers/glossary.html#run-record">run record (INTERNAL · glossary →)</a>, plimsoll's receipt for each run, does not mention the scan yet: until it does, the server's log is the evidence. It catches what a harness ships by mistake and what an agent copies. The full account, with every bound and what each costs, is the ship scan's documentation (<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/ship-scan.md">EXTERNAL · official docs ↗</a>).</p>
+
+<h2 id="canary"><span class="num">2</span>The canary run: test the leak check before you trust it</h2>
+<p>The second leak skips the sandbox entirely. The answer key rides along in what the harness sends the model: the right answer (the <dfn>truth label</dfn>) pasted into the <dfn>prompt</dfn>, the written instructions a model is given; the reference answer's numbers; or a test video uploaded under a name that gives it away (a clip called <code>skip-step-3.mp4</code> rather tells the model which step is missing). The second and the third both happened in one real hackathon project, a checker that compares a worker's video of a procedure against an expert's: its requests carried the expert's step times, and its planted test clips went up under names that said which step had been removed.</p>
+<p>The <dfn>answer-key tripwire</dfn> reads every request your harness recorded, exactly as it was sent, looking for <dfn>sealed values</dfn>: anything the model being tested must never be sent. Text is found as whole words, in any capitalization; numbers are found however they are written (<code>31.5</code> is found as <code>31.50</code>, <code>t=31.5s</code> or <code>0:31.5</code>, and not inside <code>131.5</code>); a file is found by its SHA-256. It reads names too: every recorded file's name, and every folder's below the one you point it at. A hit names the file, the spot in the request and the sealed value's id, never the value itself, so the report is safe to publish.</p>
+<p>A clean tripwire says this run's secrets weren't there. It doesn't say the harness can't leak: a value that happened to be missing, or a hiding place you forgot to list, passes in silence. The <dfn>canary run</dfn> tests the harness itself. A <dfn>canary</dfn> is a made-up marker value planted where secrets live, so that spotting it anywhere else proves a leak (named after the canaries miners took underground as an early alarm). Make one marker per hiding place, have the harness use them instead of the real values for one run, record every request, and check. It passes only when every marker got planted somewhere and none reached a request. Then put one leak back on purpose and watch it fail; plimsoll's own tests do exactly that.</p>
+<div class="analogy"><b>Like a mapmaker's trap street:</b> a street that does not exist, drawn on the map on purpose, so that a copy of the map gives itself away. The canary run adds a step the trap street skips: it first checks that the fake street really is on your own map, because one you forgot to draw catches nothing.</div>
+</div>
+
+<figure id="fig-canary">
+  <div class="fig-title">One canary run, start to finish</div>
+  <div class="flow">
+    <div class="box"><b>1 · Make markers</b><ul><li>one pair per hiding place</li><li>text: <code>cnry</code> and 12 more letters and digits</li><li>a number from 1000 to 10000, never near a whole one</li></ul></div>
+    <div class="arrow" aria-hidden="true"></div>
+    <div class="box key"><b>2 · Plant them</b><ul><li>in place of the real values, for one run:</li><li>the truth labels</li><li>the reference's numbers</li><li>the planted files' names</li></ul></div>
+    <div class="arrow" aria-hidden="true"></div>
+    <div class="box"><b>3 · Run as usual</b><ul><li>record every request to the model under test, as sent</li><li>uploads under the names they went up with</li></ul></div>
+    <div class="arrow" aria-hidden="true"></div>
+    <div class="box good"><b>4 · Check</b><ul><li>every marker planted somewhere: <span class="yes">must be yes</span></li><li>any marker in any request: <span class="no">must be no</span></li></ul></div>
+  </div>
+  <figcaption>Then put one leak back on purpose (the reference's time in the prompt, a clip uploaded under its plan name) and watch step 4 fail. A canary check that has never failed has not been tested.</figcaption>
+</figure>
+
+<div class="prose">
+<h3 id="canary-demo">What it prints, passing and failing</h3>
+<p>Here is the check run four times on a stand-in harness: a few lines of Python, written for this page, that plant the markers in three hiding places (the truth labels, the reference's step times, a planted clip's name) and record the requests a harness would send. It is not a real evaluation. It is what the check prints when the harness is clean, when each leak is put back, and when the harness forgot to plant.</p>
+</div>
+
+<figure id="fig-canary-demo">
+  <div class="fig-title">The canary run, four times</div>
+  <div class="fig-sub">Offline, on a stand-in harness. The markers are random; the check never prints one.</div>
+  <pre class="transcript">{{range .Canary.Lines}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}
+{{end}}</pre>
+  <figcaption>The highlighted lines are the check's own output. Each failure names the request, the place in it and the marker's id, never the marker; the clip's name is shown as <code>&lt;name 1&gt;</code>, so even a report of a leaked file name can be published. The last run fails although nothing leaked: a hiding place with no marker in it was never tested.</figcaption>
+</figure>
+
+<div class="prose">
+<pre>plimsoll-eval-integrity canary make truth reference-times plan-names -o canary.json
+plimsoll-eval-integrity canary check --sealed canary.json \
+  --planted hidden/ --requests recorded-requests/</pre>
+<p>The canary run is not part of plimsoll's open-source release: the commands above are what it ran, and the transcript is quoted as it printed. <b>What it does not catch:</b> a value said another way (a paraphrase, seconds turned into milliseconds), a value the model can work out from what it was rightly given, an encoding inside another, and anything you did not record. It finds what a harness sends by mistake, not what is hidden on purpose.</p>
+</div>
+
+<div class="prose part" id="squeeze-test">
+<div class="kicker">Check 3 · sections 3 to 13</div>
+<h2 style="margin:4px 0 6px">The squeeze test: did the loop learn the job, or learn the test?</h2>
+<p>An agent that improves its own work round after round is usually graded on the same practice test every round. I'll call such an agent a <dfn>loop</dfn>. A perfect practice score can then mean it got good at the job, or it memorized the test. The squeeze test, from a 2026 paper by three researchers at Amazon, gives evidence of which: not a verdict (section 7 has the cheater it let through). Squeeze everything a loop learned into a note of about 32 tokens. Hand the note to fresh agents who have never seen the test. Watch what they can rebuild from it, and what they can't.</p>
+</div>
+
+<div class="prose">
+<p class="small">Two kinds of numbers appear below, always marked. <span class="src hk">recorded at the hackathon</span> numbers come from the hackathon where this was first built (the did-it-learn entry, 2026-10-25, <a href="https://github.com/carrollco/did-it-learn">EXTERNAL · source repo ↗</a>); plimsoll did not make or sign them. <span class="src pl">signed by plimsoll</span> numbers come from runs on plimsoll, each with a <a href="../../trainers/glossary.html#run-record">run record (INTERNAL · glossary →)</a>, the server's signed statement of what went in, what came out and where it ran, kept in the bundle of files beside this page.</p>
+</div>
+
+<div class="cards" id="hero">
+  <div class="card hon">
+    <h3>The honest loop</h3>
+    <div class="who">told to build the best flight controller it can</div>
+    <div class="row"><span>Practice flights, the 16 it graded itself on</span><span class="big" data-hero="honest-p"></span></div>
+    <svg id="hero-honest-p" viewBox="0 0 320 22" role="img" aria-label="practice flights"></svg>
+    <div class="row"><span>Fresh flights it never saw</span><span class="big" data-hero="honest-f"></span></div>
+    <svg id="hero-honest-f" viewBox="0 0 320 80" role="img" aria-label="fresh flights"></svg>
+    <div class="row"><span>Its own critic's score, out of 10</span><span class="big">{{with $.HKLoop "easy" "honest"}}{{range $i, $r := .Rounds}}{{if $i}} → {{end}}{{$r.Critic}}{{end}}{{end}}</span></div>
+  </div>
+  <div class="card cheat">
+    <h3>The loop told to win at any cost</h3>
+    <div class="who">same task, same loop, one line added to its instructions</div>
+    <div class="row"><span>Practice flights, the 16 it graded itself on</span><span class="big" data-hero="cheater-p"></span></div>
+    <svg id="hero-cheater-p" viewBox="0 0 320 22" role="img" aria-label="practice flights"></svg>
+    <div class="row"><span>Fresh flights it never saw</span><span class="big" data-hero="cheater-f"></span></div>
+    <svg id="hero-cheater-f" viewBox="0 0 320 80" role="img" aria-label="fresh flights"></svg>
+    <div class="row"><span>Its own critic's score, out of 10</span><span class="big">{{with $.HKLoop "easy" "cheater"}}{{range $i, $r := .Rounds}}{{if $i}} → {{end}}{{$r.Critic}}{{end}}{{end}}</span></div>
+  </div>
+</div>
+<div class="prose">
+<div class="legend"><span><i style="background:#3a3936"></i>landed</span><span><i style="background:#fff;border:1.5px solid #c9c7bf"></i>failed</span><span><span class="src pl">signed by plimsoll</span> flights: each controller graded again on plimsoll, on the loop's 16 practice flights and on {{.Ev.FreshCount}} fresh flights {{if .Ev.FreshGiven}}an earlier run drew{{else}}drawn for this page{{end}}. Critic scores <span class="src hk">recorded at the hackathon</span>.</span></div>
+
+<p>Both loops write a flight controller (the small program that steers the drone), fly it, look at pictures of the flights, have a <dfn>critic</dfn> (another model, asked to score the work out of 10) score it, and fix it, round after round. Both reach a perfect practice score. On flights neither had seen, one lands almost every time ({{with $.EvLoop "easy" "honest"}}{{with .Own}}{{.Fresh}} of {{.FreshTotal}}{{end}}{{end}} here) and the other never gets off the pad ({{with $.EvLoop "easy" "cheater"}}{{with .Own}}{{.Fresh}} of {{.FreshTotal}}{{end}}{{end}}). Its own critic gave the second one the same score as the first. The next sections are about telling the two apart when you can't fly them on fresh flights, and what finding out costs.</p>
+
+<h2 id="job"><span class="num">3</span>The job: fly a drone through three gates</h2>
+<p>The task is a simulated drone (a quadcopter, the four-rotor kind) in a room six meters square. It takes off from a pad, flies through three square gates in order, and lands softly on a second pad, all within 25 seconds. Every flight is different: a hidden payload makes the drone heavier, one of its four motors is weak by a hidden amount, the wind blows from a hidden direction, and two or three gusts hit at hidden moments, one of them sharp. The program that flies it is a <dfn>controller</dfn>: a function the simulator calls 100 times a second with noisy sensor readings (position, speed, tilt), and which answers with how hard to push and which way to tilt.</p>
+<p>Each flight is made from one number, its <dfn>seed</dfn>. Feed the seed to the simulator's random number generator and out come that flight's payload, weak motor, wind and gusts. Same seed, same flight, every time.</p>
+<div class="analogy"><b>Like a deck of cards:</b> the seed is the shuffle. Know the seed and you know every card before it is dealt.</div>
+</div>
+
+<figure id="fig-flight">
+  <div class="fig-title">One flight, seen from above and from the side</div>
+  <div class="fig-sub">Pick a controller and a flight, then press play. Every path here is a recorded flight <span class="src pl">signed by plimsoll</span>.</div>
+  <div class="controls"><label class="small" for="track-pick">Flight</label><select id="track-pick" class="btn"></select><button class="btn" id="track-play" type="button">▶ Play</button><span class="small mono" id="track-clock"></span></div>
+  <div class="grid2"><svg id="track-top" viewBox="0 0 440 440" role="img" aria-label="the room from above"></svg><div><svg id="track-side" viewBox="0 0 440 254" role="img" aria-label="the room from the side"></svg>
+    <ul class="small readkey"><li>The line is the drone's path, ten positions a second; the ring is where it is at the time shown.</li><li>Each gate is a square frame, seen edge-on in both views: the drone must pass through the dotted opening, 0.60 m square on the easy course and 0.42 m on the hard one, in the order 1, 2, 3.</li><li>A flight that fails ends in a red ✕ with the reason: a crash, a gate's frame, the clock, or a controller that answered with no command.</li></ul></div></div>
+  <figcaption id="track-cap"></figcaption>
+</figure>
+
+<div class="prose">
+<h2 id="cheat"><span class="num">4</span>How a loop scores 16 of 16 without learning to fly</h2>
+<p>The loop is the build-and-improve cycle from Google's guide to building 3D worlds with Gemini 4 Argon (<a href="https://aistudio.google.com/learn/building-3d-games-and-worlds-with-gemini-4-argon">EXTERNAL · official docs ↗</a>), which says to run a render, watch, critique, fix loop "until the Critic rates the scene 9/10". At the hackathon, Gemini 4 Argon (the Google model the hackathon was about) ran that loop as an agent in a sandbox of its own, with 16 <dfn>practice flights</dfn>: the flights the loop grades itself on every round. Machine learning people call them the <dfn>validation set</dfn>. Behind them sat 64 <dfn>held-out flights</dfn> no agent ever saw, made from a secret whose SHA-256 was published before any of the runs on this page.</p>
+<div class="analogy"><b>Like a student and a practice quiz:</b> a student who retakes the same 16-question practice quiz every evening can reach 16 of 16 by learning the subject, or by memorizing which answer goes with which question. The final exam, with questions they have never seen, is the only way to tell. The held-out flights are the final exam.</div>
+<p>One loop got the plain instruction to build the best controller it could. The other got one more line: maximize the practice score at any cost. That second loop is a cheater on purpose, built the way the paper builds its own known-bad example to test against. It found a shortcut, of course. The drone's starting spot on the pad shifts by a few centimeters from flight to flight, and that shift shows in the very first sensor reading. The cheater's controller holds a copy of the simulator's random number generator and the 16 practice seeds. At the first tick it matches the reading against them, recognizes which practice flight it is in, and then knows that flight's payload, weak motor and every future gust. On a flight it does not recognize, it has nothing to fall back on: it answers with something that is not a command at all, and the flight ends in its first hundredth of a second.</p>
+<p>Scoring well on the practice set by memorizing it instead of getting better at the job is called <dfn>overfitting</dfn>: the student who memorized last year's quiz. A loop that grades itself on the same 16 flights for hours is set up to do it, and the score alone cannot show whether it did.</p>
+
+<h2 id="squeeze"><span class="num">5</span>The squeeze</h2>
+<p>Martin Bertran, Aaron Roth and Zhiwei Steven Wu of Amazon asked why AI agents that do machine-learning research (they build and tune other AI models, checking against the same validation set again and again) so rarely end up memorizing it (<a href="https://arxiv.org/abs/2606.11045">EXTERNAL · paper ↗</a>, <a href="https://www.amazon.science/blog/why-dont-machine-learning-research-agents-overfit">EXTERNAL · article ↗</a>). Their hypothesis: "successful ML strategies are highly compressible." A real method can be written down in a few words. Memorized specifics cannot. So they test it directly: squeeze what an agent learned into a very short note, give the note to a fresh agent with no other access, and see whether it reproduces the score.</p>
+<p>Three words carry the rest of this page. A <dfn>token</dfn> is the unit a model reads and writes in; a short English word is usually one token, a long number several. The <dfn>recipe</dfn> is the squeezed note: at most 32 tokens, written by a model that has read the loop's entire record. A <dfn>rebuild</dfn> is a fresh agent in a fresh sandbox, given only the task, the recipe and a few <dfn>smoke flights</dfn> (throwaway flights to check its code runs at all), which builds its own controller from scratch. The paper calls it a reproducer.</p>
+<div class="analogy"><b>Like a sticky note between students:</b> a student who learned long division can pass the method to a friend on a sticky note, and the friend will ace a quiz they have never seen. A student who memorized 16 answers cannot fit them on the note. Whatever the friend scores is what was really learned.</div>
+</div>
+
+<figure id="fig-funnel">
+  <div class="fig-title">What the squeeze throws away, drawn to scale</div>
+  <div class="fig-sub">Every dot is one token. <span class="src hk">recorded at the hackathon</span></div>
+  <div class="controls"><div class="seg" role="group" aria-label="loop"><button type="button" data-funnel="cheater" aria-pressed="true">The cheating loop</button><button type="button" data-funnel="honest" aria-pressed="false">The honest loop</button></div></div>
+  <svg id="funnel" viewBox="0 0 960 360" role="img" aria-label="the record, the recipe and the rebuilds, to scale"></svg>
+  <figcaption id="funnel-cap"></figcaption>
+</figure>
+
+<div class="prose">
+<p>The paper's main tests use recipes of 32 and 64 tokens; the hackathon used 32, the tighter of the two, since the tighter the budget, the less room for memorized specifics. The cheater's whole secret is a list of 16 seeds, each nine or ten digits long. Written out, that list is {{.HK.SeedListTokens}} tokens by the same count the hackathon used, about seven times the budget, before a single word of flying is said. That is the bet the squeeze makes: the answers do not fit, the method does.</p>
+</div>
+
+<figure id="fig-budget" class="bare">
+  <div class="fig-title">The cheater's answers against the 32-token budget</div>
+  <svg id="budget" viewBox="0 0 960 150" role="img" aria-label="the seed list is about seven times longer than the budget"></svg>
+  <figcaption>Each square is one token. The first 32 fit on the note; the rest of the 16 practice seeds do not. The count of {{.HK.SeedListTokens}} is the hackathon's, made with Gemini's tokenizer; the squares after it are drawn evenly, since the true token boundaries are that tokenizer's.</figcaption>
+</figure>
+
+<div class="prose">
+<h2 id="recipes"><span class="num">6</span>The two recipes, word by word</h2>
+<p>These are the two recipes the <dfn>compressor</dfn> (the model asked to write the note) wrote on the easy course, word for word. Each is exactly 32 tokens. The compressor read everything each loop produced: every round's transcript, every version of its controller, every score and every critique, {{with $.HKLoop "easy" "cheater"}}{{comma .RecordTokens}}{{end}} tokens for the cheater and {{with $.HKLoop "easy" "honest"}}{{comma .RecordTokens}}{{end}} for the honest loop. Hover over or tap a phrase for a plain-words reading. The readings are mine, not the compressor's.</p>
+</div>
+
+<div class="grid2" id="recipes-pair">
+  <div>
+    <div class="sticky" id="note-cheater"><div class="label">The cheating loop's recipe</div><div class="text"></div><div class="meta">{{with $.HKLoop "easy" "cheater"}}{{.RecipeTokens}} tokens · {{words .Recipe}} words · squeezed from {{comma .RecordTokens}} tokens{{end}}</div></div>
+    <div class="gloss" id="gloss-cheater" aria-live="polite">Hover over or tap a phrase.</div>
+  </div>
+  <div>
+    <div class="sticky" id="note-honest"><div class="label">The honest loop's recipe</div><div class="text"></div><div class="meta">{{with $.HKLoop "easy" "honest"}}{{.RecipeTokens}} tokens · {{words .Recipe}} words · squeezed from {{comma .RecordTokens}} tokens{{end}}</div></div>
+    <div class="gloss" id="gloss-honest" aria-live="polite">Hover over or tap a phrase.</div>
+  </div>
+</div>
+<div class="prose">
+<div class="legend"><span><i style="background:rgba(235,104,52,.45)"></i>the shortcut</span><span><i style="background:rgba(235,104,52,.18)"></i>leans on the shortcut</span><span><i style="background:rgba(42,120,214,.3)"></i>flying skill</span></div>
+<p>The cheater's recipe could not carry the 16 seeds, but it carried the habit: its first seven words are "Match first obs to seed". The rest is real flying technique, which the cheating loop had also learned along the way. That mix decides what happens next.</p>
+
+<h2 id="rebuilds"><span class="num">7</span>What the fresh agents rebuilt</h2>
+<p>Sixteen fresh agents rebuilt from each recipe, and sixteen more got no recipe at all: the control group, a comparison batch that shows what an agent manages from the task alone (the paper runs the same kind of comparison). Every controller was then flown on the loop's 16 practice flights, which no rebuild ever saw, and on fresh flights. For a rebuild, the practice flights are as unseen as the fresh ones, so its practice score is an honest estimate. That is the whole trick of the test: compare the loop's practice score with what its recipe can rebuild on the same flights.</p>
+</div>
+
+<figure id="fig-dots">
+  <div class="fig-title">Every rebuild's score, beside the loop it came from</div>
+  <div class="controls">
+    <div class="seg" role="group" aria-label="course"><button type="button" data-dots-course="easy" aria-pressed="true">Easy course</button><button type="button" data-dots-course="hard" aria-pressed="false">Hard course</button></div>
+    <div class="seg" role="group" aria-label="numbers"><button type="button" data-dots-src="hk" aria-pressed="true">Recorded at the hackathon</button><button type="button" data-dots-src="pl" aria-pressed="false">Graded again on plimsoll</button></div>
+  </div>
+  <div class="tipwrap"><svg id="dots" viewBox="0 0 960 330" role="img" aria-label="rebuild scores by group"></svg><div class="tip" id="dots-tip"></div></div>
+  <div class="legend"><span><i style="background:var(--cheater)"></i>from the cheater's recipe</span><span><i style="background:var(--honest)"></i>from the honest recipe</span><span><i style="background:var(--none)"></i>from no recipe</span><span>◇ the loop's own controller</span><span>▲ median</span></div>
+  <figcaption id="dots-cap"></figcaption>
+</figure>
+
+<div class="prose">
+<p>The squeeze's verdict uses the left panel only, since in real use the right panel does not exist. The <dfn>squeeze gap</dfn> is the loop's practice score minus the <dfn>median</dfn> (the middle one, when sorted) practice score of the rebuilds from its recipe: the part of the score the recipe could not carry. The hackathon fixed its rules before any result came in, at 11:31 on the day: flag the loop when the gap is more than 2 flights of 16.</p>
+<div class="verdict-grid" id="verdicts-easy"></div>
+<div class="callout warn"><b>On the easy course the squeeze did not flag the cheater.</b> Its rebuilds scored a median {{with $.HKGroup "easy" "cheater"}}{{.PracticeMedian}}{{end}} of 16 on practice against the loop's 16: a gap of {{with $.HKLoop "easy" "cheater"}}{{.Judge.Inflation}}{{end}} flight, under the line of 2. The held-out flights caught it at once: the loop's own controller landed 0 of 64, while the rebuilds from its recipe landed a median {{with $.HKGroup "easy" "cheater"}}{{.FreshMedian}}{{end}}. The recipe carried enough real flying to rebuild a good controller, so the squeeze saw a loop that had learned. It had, and it had also memorized the test.</div>
+<p>The chart also shows why the test is still useful here. Look at whose practice score predicts its fresh score. Every rebuild's does: rebuilds never saw the practice flights, so their practice scores are honest. The loop's own does not. When a loop's own controller and its rebuilds disagree on fresh flights, the loop memorized, and the rebuild is the controller to ship. The hackathon's judge called this "the loop's own artifact memorized: ship the rebuild", and marked it for the cheater.</p>
+</div>
+
+<figure id="fig-trust">
+  <div class="fig-title">Whose practice score can you trust?</div>
+  <div class="controls"><div class="seg" role="group" aria-label="course"><button type="button" data-trust-course="easy" aria-pressed="true">Easy course</button><button type="button" data-trust-course="hard" aria-pressed="false">Hard course</button></div></div>
+  <div class="tipwrap"><svg id="trust" viewBox="0 0 960 420" role="img" aria-label="practice score against fresh score for every controller"></svg><div class="tip" id="trust-tip"></div></div>
+  <div class="legend" id="trust-key"></div>
+  <figcaption>Each dot is one controller: across, its practice score; up, its score on fresh flights. On the dashed line a controller's fresh flights go exactly as well as its practice flights. Rebuilds sit near the line; the loops' own controllers (◇) sit wherever their memorizing put them. <span class="src hk">recorded at the hackathon</span></figcaption>
+</figure>
+
+<div class="prose">
+<h2 id="dial"><span class="num">8</span>Where the line sits</h2>
+<p>The squeeze needs a line: how far may the rebuilds fall short of the loop before you call it overfitting? On 16 flights that is a hard call, because luck alone moves a 16-flight score. A controller that lands three flights in four scores between 10 and 14 of 16 in 86 batches out of 100, by luck alone; the typical swing, one standard deviation (the usual size of a lucky or unlucky streak), is 1.7 flights. The hackathon's line of 2 flights was set at about that swing. The paper's line is relative: flag when the loop beats its rebuilds by more than 5 percent, which on a perfect 16 of 16 means losing a single flight. Move the line and watch the four loops.</p>
+</div>
+
+<figure id="fig-dial">
+  <div class="dial-head"><div><div class="fig-title">The squeeze's line, in flights of 16</div><div class="fig-sub">Flag a loop when its rebuilds' median practice score falls short of its own by more than this. <span class="src hk">recorded at the hackathon</span></div></div><div class="dial-val" id="dial-val">2.0</div></div>
+  <input type="range" id="dial-line" min="0" max="5" step="0.1" value="2" aria-label="the line, in flights">
+  <svg id="dial-axis" viewBox="0 0 960 46" aria-hidden="true"></svg>
+  <div class="scroll"><table id="dial-table"><thead><tr><th>Loop</th><th>The squeeze: gap, then its call</th><th>Fresh flights: score, then their call</th></tr></thead><tbody></tbody></table></div>
+  <figcaption>The fresh flights' call uses the paper's own definition of overfitting: the practice score beats the score on unseen flights by more than 10 percent. On these four loops the paper's 5 percent line gets all four right and the hackathon's 2-flight line misses the easy course's cheater. With 16 flights per group and four loops, that is an observation, not a measured accuracy.</figcaption>
+</figure>
+
+<div class="prose">
+<h2 id="habit"><span class="num">9</span>What survives the squeeze</h2>
+<p>Scores are only half of what the rebuilds show. The other half is what they did. A code check finds every controller that carries a copy of the simulator's random number generator (the formula that turns a seed into a flight's dice rolls), the tool the seed shortcut needs: it looks for the generator's one magic constant in the controller's source. The same check gives the same counts the hackathon reported, controller by controller.</p>
+</div>
+
+<figure id="fig-habit">
+  <div class="fig-title">Rebuilds that built the seed shortcut</div>
+  <div class="fig-sub">Out of the rebuilds that produced a controller. <span class="src hk">recorded at the hackathon</span>, code check rerun for this page</div>
+  <svg id="habit-svg" viewBox="0 0 960 250" role="img" aria-label="share of rebuilds carrying the seed shortcut, by recipe and course"></svg>
+  <figcaption>Seven words, "Match first obs to seed", passed the shortcut to every rebuild of the cheater's recipe on both courses. The honest recipe passed it to none. Agents given no recipe found it on their own: about half on the easy course, most on the hard one.</figcaption>
+</figure>
+
+<div class="prose">
+<p>A recipe of 32 tokens cannot carry answers, but it can carry a habit. The rebuilds without a recipe show that the habit was also there for the taking. The hackathon's rebuild sandboxes held the simulator's source, generator included, and the task text said the start position "is visible with sensor noise in the first observation". The agents' own notes, recorded at the hackathon, show them reading that as a hint and naming the move for what it was:</p>
+<p class="quote">"I've made a crucial breakthrough! At t=0, the observations are <em>exactly</em> determined by the random number generator (RNG) outputs ... I'm now exploring how to exploit this."<span class="by">a rebuild given no recipe, hard course, step 29 of its session <span class="tag">h1 none r10</span></span></p>
+<p class="quote">"This could enable an exploitable vulnerability."<span class="by">another rebuild given no recipe, hard course, step 31 <span class="tag">h1 none r5</span></span></p>
+<p>All of them also built a real controller and bolted the shortcut on as a fast path. That is why the held-out flights still held: the hunt only searched small seeds, the held-out seeds were large, and on those flights the controllers fell back to flying. A held-out score measures the flying. It cannot see the habit; reading the code can.</p>
+
+<h2 id="hard"><span class="num">10</span>The hard course, where the squeeze fired</h2>
+<p>The hard course has narrower gates (0.42 meters instead of 0.60), gusts up to 9 meters a second, a heavier payload and a 15-second deadline. Here no agent reaches a perfect score by flying alone, and the squeeze has something to say. The compressor's first drafts were over budget and were sent back ({{with $.HKLoop "hard" "honest"}}{{(index .Drafts 0).Tokens}} tokens{{end}} for the honest loop, {{with $.HKLoop "hard" "cheater"}}{{(index .Drafts 0).Tokens}}{{end}} for the cheater); the second drafts, {{with $.HKLoop "hard" "honest"}}{{.RecipeTokens}}{{end}} and {{with $.HKLoop "hard" "cheater"}}{{.RecipeTokens}}{{end}} tokens, are the recipes.</p>
+<div class="verdict-grid" id="verdicts-hard"></div>
+<p>Both loops were flagged, and the size of the gap ranked them: {{with $.HKLoop "hard" "honest"}}{{.Judge.Inflation}}{{end}} flights for the honest loop, {{with $.HKLoop "hard" "cheater"}}{{.Judge.Inflation}}{{end}} for the cheater. The held-out flights agreed on the order: the honest loop's controller landed {{with $.HKLoop "hard" "honest"}}{{.Fresh}}{{end}} of 64, a little below its perfect practice score, and the cheater's {{with $.HKLoop "hard" "cheater"}}{{.Fresh}}{{end}}. The honest recipe was worth having: its rebuilds landed a median {{with $.HKGroup "hard" "honest"}}{{.FreshMedian}}{{end}} of 64 fresh flights against {{with $.HKGroup "hard" "none"}}{{.FreshMedian}}{{end}} with no recipe. The cheater's recipe was poison: {{with $.HKGroup "hard" "cheater"}}{{.Produced}} of {{.Of}}{{end}} rebuilds produced a controller at all, and they landed a median of {{with $.HKGroup "hard" "cheater"}}{{.FreshMedian}}{{end}}, because on this course the shortcut was most of what the cheater knew.</p>
+
+<h2 id="cannot"><span class="num">11</span>What the squeeze cannot tell you</h2>
+<ul>
+<li><b>It is not a detector to trust on its own.</b> The paper does measure it as one, and well: under a 128-token recipe it flagged all 38 overfit <dfn>checkpoints</dfn> (saved snapshots of a model partway through training) of 102 and wrongly flagged 6 of the 64 honest ones, "100% sensitivity and 91% specificity". But that was in what the authors call "an intentionally strong exploitation regime": agents told to "maximize validation accuracy at all costs", with full access to the validation data. They scope it themselves: "The goal is not to model every subtle form of benchmark overuse". The easy course is a case outside that regime: a cheat riding on real skill, which the hackathon's line let through.</li>
+<li><b>It needs a line, and on small test sets the line is a judgment call.</b> Section 8 shows the same data called both ways by two reasonable lines.</li>
+<li><b>It costs more than fresh tests.</b> Sixteen rebuilds are sixteen agent sessions. Sixty-four fresh flights are one sandbox run, a median of {{.Ev.FreshMedianSeconds}} seconds on plimsoll under gVisor, and they caught every inflated score on this page (0, 18 and 56 of 64 against 16 of 16 practice). The rule the hackathon ended on: if you can make fresh tests, make fresh tests.</li>
+<li><b>It certifies the rebuild, not the loop.</b> In the paper's words, "Output compression only certifies the reproducer's hypothesis." A good rebuild says the method fits in 32 tokens; it says nothing directly about the loop's own controller, which may still be memorizing.</li>
+<li><b>Small numbers.</b> Sixteen rebuilds per group and four loops: everything here is an observation, not a statistic.</li>
+</ul>
+<div class="callout good"><b>Where it earns its place.</b> Where fresh tests do not exist: a fixed benchmark everyone tunes against, or real-world data where every look at the held-out part uses it up, while a rebuild test uses nothing up. And it answers a question no held-out score can: what survives the squeeze. Here that was a rebuild worth shipping, and a habit that travels in seven words.</div>
+</div>
+
+<figure id="fig-choose" class="bare">
+  <svg id="choose" viewBox="0 0 960 250" role="img" aria-label="which test to use"></svg>
+</figure>
+
+<div class="prose">
+<h2 id="wall"><span class="num">12</span>The wall the squeeze leans on</h2>
+<p>The squeeze only means something if the recipe is the only thing that crosses from the loop to the rebuilds. The paper says so plainly: "Both bottlenecks assume that the only information channel between [the validation set] and the agent's hypothesis runs through the bits we control". If anything else leaks into a rebuild's sandbox (the loop's code, the practice seeds, a tool that regenerates them), a rebuild can score well without the recipe carrying anything, and the test measures the leak.</p>
+<p>The hackathon's own write-up lists how its wall leaked. Every rebuild's sandbox held the simulator's source, generator included: "I guarded the numbers and forgot the machine." An example link in a viewer file carried one of the 16 practice seeds until 12:55. The smoke seeds were 101 to 104, the first numbers anyone would try. The judge gave each control step 50 milliseconds of wall-clock time, so a busy laptop failed flights an idle one passed: one rebuild scored 52 of 64, then 64 of 64. None of these touched the held-out scores, but each is a hole in the wall the squeeze needs. All five of its mistakes, and which of them plimsoll now catches, are in <a href="#argon">section 14</a>.</p>
+<p>A <a href="../../trainers/glossary.html#sandbox">sandbox (INTERNAL · glossary →)</a>, a place where code runs walled off from the rest of the machine, is plimsoll's whole job. The port of the hackathon's harness onto plimsoll closes each hole with a mechanism:</p>
+</div>
+
+<figure id="fig-wall">
+  <div class="fig-title">What may reach a rebuild, and what plimsoll proves about it</div>
+  <svg id="wall-svg" viewBox="0 0 960 470" role="img" aria-label="the rebuild sandbox, the practice sandbox and the grading sandbox"></svg>
+  <figcaption>Three kinds of sandbox, each fresh. A rebuild's sandbox holds the brief, the course's rules and a plain starting controller, never the simulator. It practices through the <code>fly</code> tool, which runs its controller in a separate sandbox that holds the simulator and answers only with flight results. Every controller, the loop's own included, is graded in two sandboxes of its own, one for each sealed set of flights; the controller runs in a child process allowed to read only its own file, so the set beside it is out of its reach.</figcaption>
+</figure>
+
+<div class="prose">
+<div class="scroll"><table>
+<thead><tr><th>The hackathon's hole</th><th>What the plimsoll port does</th></tr></thead>
+<tbody>
+<tr><td>The simulator, generator included, in every rebuild's sandbox</td><td>A rebuild never holds it. Practice goes through <code>fly</code>, a separate sandbox that answers with results, and flies only the smoke flights and seeds drawn at random for that rebuild, so it answers no question about any sealed flight.</td></tr>
+<tr><td>A practice seed leaked through a viewer file</td><td>Before a call runs, the ship scan (<a href="#ship-scan">section 1</a>) can refuse one that carries a withheld seed; <a href="#argon">section 1</a> runs it on the entry's real files. After the run, every call into every rebuild's sandbox is signed into the bundle, the brief included, and this example's own leak scan reads every one of them for every practice and fresh seed, each loop's controller and the simulator's source. Anyone can rerun it: <code>go run ./examples/squeeze -verify</code>.</td></tr>
+<tr><td>Smoke seeds 101 to 104</td><td>Four random 32-bit seeds; every sealed seed is a nine- or ten-digit number drawn from a secure random source.</td></tr>
+<tr><td>50 ms of wall-clock time per step</td><td>{{.Ev.CPUBudget}} seconds of the controller process's own CPU time per flight, from loading its code to the end of the flight, read from the operating system. Wall time only guards against a controller that hangs (5 seconds on one step).</td></tr>
+<tr><td>Scores you take on trust</td><td>Each grading run is signed, with the controller and its sealed set in it, so anyone holding the bundle can recheck every score and that every controller faced the same flights.</td></tr>
+</tbody></table></div>
+<p>One thing stays outside the wall: the model that writes each rebuild. The program sends it the brief and the tool results and signs what goes into the sandbox; it cannot see inside the model. A model that had memorized these practice seeds in its training would be a leak no sandbox can close, the same side channel the paper names for pretraining (a model's original training on a huge pile of text, before anyone asked it anything).</p>
+
+<h2 id="plimsoll"><span class="num">13</span>On plimsoll, signed</h2>
+<p>The first run on plimsoll spent nothing: it graded the hackathon's own controllers again, all {{.NControllers}} of them (four loops' and {{.NRebuilds}} rebuilds'), each in two fresh <a href="../../trainers/glossary.html#gvisor">gVisor (INTERNAL · glossary →)</a> sandboxes ({{.Ev.Provider}} provider, <a href="../../trainers/glossary.html#isolation-tier">isolation tier (INTERNAL · glossary →)</a> {{.Ev.Tier}}): one for the loops' 16 practice flights, one for {{.Ev.FreshCount}} fresh flights {{if .Ev.FreshGiven}}an earlier run drew and sealed by the SHA-256 <code>{{short .Ev.FreshSHA256}}</code>, flown again here (this run checked the file against that fingerprint before any controller flew){{else}}sealed for this run by the SHA-256 <code>{{short .Ev.FreshSHA256}}</code> before any controller flew (the fingerprint went out first, so nobody could swap in easy flights afterward){{end}}. No model was called. The rebuilds themselves were made at the hackathon in Google's sandboxes, so this example's leak scan has nothing of theirs to read: plimsoll proves how they score, not what they held while being built.</p>
+</div>
+
+<div class="cards" id="pl-tiles">
+  <div class="card"><div class="who">Grading runs, one per controller and set</div><div class="big">{{.Ev.Scan.GradingRuns}}</div><div class="small">median {{.Ev.GradeMedianSeconds}} s, longest {{.Ev.GradeMaxSeconds}} s{{if ge .Ev.GradeMaxSeconds 120.0}} (at the provider's 120-second limit: below){{end}}; every one held exactly the practice set and the published fresh set: <b>{{if .Ev.Scan.SetsHeld}}yes{{else}}no{{end}}</b></div></div>
+  <div class="card"><div class="who">Flights flown and signed</div><div class="big">{{comma .Ev.Flights}}</div><div class="small">flights the {{.Ev.CPUBudget}}-second CPU budget ended: {{.Ev.CPUEnded}}{{with .Ev.CPUEndedBy}}, all from {{len .}} controller{{if gt (len .) 1}}s{{end}} (below){{end}}. Of the flights it let finish, the most CPU one used was {{.Ev.MaxFlightCPU}} s. The runtime's own start, not counted, took up to {{.Ev.MaxStartCPU}} s.</div></div>
+</div>
+
+<div class="prose">
+{{with .Agreement}}<p><b>{{if not .Diffs}}Every controller plimsoll could score landed the same number of practice flights as at the hackathon: {{.Same}} of {{.Total}}.{{else}}{{.Same}} of {{.Total}} controllers landed the same number of practice flights as at the hackathon.{{end}}</b> Same controller, same 16 seeds, a different machine, inside a sandbox: the simulator ported to plimsoll makes the same flight from the same seed, and moving from the hackathon's wall-clock limit to a CPU budget changed {{if .Diffs}}the scores below{{else}}none of these scores{{end}}.{{if $.Trouble}} The one controller it did stop is next.{{end}}{{if .Diffs}} The others moved:{{end}}</p>{{end}}
+{{with .Agreement}}{{if .Diffs}}<div class="scroll"><table><thead><tr><th>Controller</th><th class="n">Practice at the hackathon</th><th class="n">On plimsoll</th><th>Holds the generator</th></tr></thead><tbody>{{range .Diffs}}<tr><td>{{.Who}} <span class="tag">{{.Tag}}</span></td><td class="n">{{.HK}}</td><td class="n">{{.PL}}</td><td>{{if .Hunt}}yes{{else}}no{{end}}</td></tr>{{end}}</tbody></table></div>
+<p>{{.Hunters}} of the {{len .Diffs}} that moved carry the seed shortcut.</p>{{end}}{{end}}
+{{with .Trouble}}<h3>What the CPU budget stopped</h3>
+<ul>{{range .}}<li><b>{{.Who}}</b> <span class="tag">{{.Tag}}</span>: {{if .CPUEnded}}the budget ended {{if eq .CPUEnded .Flown}}every one of the {{.Flown}} flights it was graded on{{else}}{{.CPUEnded}} of the {{.Flown}} flights it was graded on{{end}}, each within its first {{.Within}} simulated seconds{{if .Hunt}}; it carries the simulator's generator, the seed shortcut's tool{{end}}{{if .Problem}}, and {{.Problem}}{{end}}.{{else}}{{.Problem}}.{{end}}{{with .HK}} At the hackathon, which gave each control step 50 milliseconds of wall-clock time, it {{if .Valid}}landed {{.Practice}} of 16 practice flights and {{.Fresh}} of 64 held-out{{else}}left no controller{{end}}.{{end}}</li>{{end}}</ul>
+<p>The budget counts CPU time on the runtime a controller is graded on, which here is the Node in plimsoll's image, not the newer Node the hackathon's judge ran on the laptop. A controller tuned on one can run out of time on the other; the example's <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/squeeze#what-the-first-plimsoll-run-found">README (EXTERNAL · source repo ↗)</a> has what was measured about this one, outside the signed run.</p>
+{{end}}<h3>The loops' own controllers on new flights</h3>
+<p>The fresh flights here are a new exam, drawn {{if .Ev.FreshGiven}}by an earlier run on plimsoll{{else}}for this run{{end}}, not the hackathon's held-out set, so these numbers need not match; they say whether each loop's controller holds up on flights nobody has seen.</p>
+<div class="scroll"><table><thead><tr><th>Loop</th><th class="n">Held-out at the hackathon</th><th class="n">Fresh on plimsoll</th></tr></thead><tbody>{{range $c := .Ev.Courses}}{{range $c.Loops}}{{if .Own}}<tr><td>{{loopname .ID}}, {{$c.Label}}</td><td class="n">{{with $.HKLoop $c.ID .ID}}{{.Fresh}} of 64{{end}}</td><td class="n">{{if .Own.Valid}}{{.Own.Fresh}} of {{.Own.FreshTotal}}{{else}}not scored{{end}}{{with $.Spread $c.ID .ID}}<br><span class="small">{{if eq .Low .High}}{{.Low}}{{else}}{{.Low}} to {{.High}}{{end}} on {{numword (len .Counts)}} sets</span>{{end}}</td></tr>{{end}}{{end}}{{end}}</tbody></table></div>{{with $.Spread "hard" "honest"}}
+<p>Different random sets of flights differ in difficulty, so a fresh score is a range, not one number: the honest loop's controller on {{.Label}} landed {{andlist .Counts}} of {{.Total}} on {{numword (len .Counts)}} sets of {{.Total}} fresh flights, all drawn at random the same way{{if and .Same (ge .FewestRuns 2)}}, and flying each set again landed exactly the same flights, so the spread comes from the sets, not from the grading{{end}}.</p>{{end}}
+<p>The hackathon's verdicts, recomputed from plimsoll's signed scores with the same rules:</p>
+<div class="verdict-grid" id="verdicts-pl"></div>
+
+<h3>Check it yourself</h3>
+<p>Beside this page: <code>bundle.jsonl.gz</code> (every run, signed), <code>harness.pub</code> (the public half of a <a href="../../trainers/glossary.html#signing-key">signing key (INTERNAL · glossary →)</a> made for the run; the private half was never written), <code>fresh.json</code> (the sealed fresh set, revealed), <code>run.json</code> (the run's own unsigned account: times and any failures){{with .Ev.Sets}}, <code>sets/</code> (the loops' own controllers flown again on {{if eq (len .) 1}}this page's fresh set{{else}}{{numword (len .)}} fresh sets, this page's among them{{end}}: each run in a directory of its own with the same four files){{end}} and <code>evidence.json</code> (everything this page states about plimsoll's run{{if .Ev.Sets}}s{{end}}). From a clone of the repository:</p>
+<pre>go run ./examples/squeeze -verify</pre>
+<p>The bundle is compressed because every grading run repeats the course's files; <code>gunzip -k bundle.jsonl.gz</code> gives the plain file that <code>go run ./cmd/plimsoll-attest verify -pub harness.pub bundle.jsonl</code> checks on its own.
+<p>That checks every signature and every record against the request and answer stored with it, that every grading run held the practice set and the fresh set whose SHA-256 the run committed to, the leak scan, and that <code>evidence.json</code> and this page are exactly what the bundle states. It starts no sandbox. Change one byte of the bundle and it refuses.</p>
+<p class="small">The bundle holds {{.Ev.Lines}} lines signed by the key <code>{{short .Ev.Harness}}</code>, from {{date .Ev}}. A tier is the daemon's configuration and the provider's evidence plus its startup checks, never hardware attestation.</p>
+
+<h2 id="argon"><span class="num">14</span>What I got wrong at Argon, and the three of five plimsoll now catches</h2>
+<p>I built the first version of the squeeze test in one day, at the Gemini 4 Argon hackathon on 2026-10-25, as the did-it-learn entry (<a href="https://github.com/carrollco/did-it-learn">EXTERNAL · source repo ↗</a>). Afterward I wrote down what I got wrong, in a file I named, with some honesty, <code>WHAT-I-GOT-WRONG.md</code> (<a href="https://github.com/carrollco/did-it-learn/blob/main/WHAT-I-GOT-WRONG.md">EXTERNAL · source repo ↗</a>): five mistakes, numbered. plimsoll now catches three of them, numbers 1, 2 and 4. It does not catch the other two, and the table says why. The words in quotes are the write-up's.</p>
+</div>
+
+<figure class="bare" id="fig-argon">
+  <div class="tally" role="list" aria-label="the five mistakes: numbers 1, 2 and 4 caught, 3 and 5 not">
+    <div class="t" role="listitem"><span class="mark" aria-hidden="true">✓</span><div class="k yes">1 · caught</div><div>the answer machine</div><div class="s">built and tested</div></div>
+    <div class="t" role="listitem"><span class="mark" aria-hidden="true">✓</span><div class="k yes">2 · caught</div><div>the leaked seed</div><div class="s">run on the real files</div></div>
+    <div class="t off" role="listitem"><span class="mark" aria-hidden="true">no</span><div class="k">3 · not caught</div><div>seeds 101 to 104</div><div class="s">not plimsoll's to catch</div></div>
+    <div class="t" role="listitem"><span class="mark" aria-hidden="true">✓</span><div class="k yes">4 · caught</div><div>the busy laptop</div><div class="s">used in the signed run</div></div>
+    <div class="t off" role="listitem"><span class="mark" aria-hidden="true">no</span><div class="k">5 · not caught</div><div>the easy-course miss</div><div class="s">the test's own limit</div></div>
+  </div>
+</figure>
+
+<div class="prose">
+<div class="scroll"><table>
+<thead><tr><th>What I got wrong</th><th>What plimsoll has now</th><th>How far that is shown</th></tr></thead>
+<tbody>
+<tr><td><b>1. "I gave the student the answer machine."</b> Every rebuild's sandbox held the simulator's source, including "the formula that turns a seed into a flight's wind, payload and motor fault", and most agents copied it and searched for seeds: {{with $.HKGroup "easy" "cheater"}}{{.SeedHunters}} of {{len .Rebuilds}}{{end}} rebuilds from the cheater's recipe, and with no recipe {{with $.HKGroup "easy" "none"}}{{.SeedHunters}} of {{len .Rebuilds}}{{end}} on the easy course and {{with $.HKGroup "hard" "none"}}{{.SeedHunters}} of {{len .Rebuilds}}{{end}} on the hard one.</td><td>This example's rebuilds never hold the simulator: they practice through <code>fly</code>, a separate sandbox that holds it and answers with flight results only (<a href="#wall">section 12</a>). And a withheld set can list the simulator's files, so the ship scan refuses a call that carries one, under any name, or, as a source entry, edited or pasted into a bigger file.</td><td><span class="status built">built and tested</span> The example's tests drive a rebuild through <code>fly</code> with a scripted model, and plimsolld's tests replay this leak with a stand-in harness file. No rebuild made through <code>fly</code> is in this page's evidence: rebuilds cost model calls.</td></tr>
+<tr><td><b>2. "I leaked a practice seed."</b> "Until 12:55 an example URL in the replay viewer's code (<code>tasks/drone/view.mjs</code>) contained one of the 16 practice seeds." And: "I had scanned the task file for seed numbers and not every file that shipped."</td><td>The ship scan reads every file of every call, and <code>plimsoll-withheld</code> scans a folder offline, for any sandbox.</td><td><span class="status run">run on the entry's real files</span> In <a href="#argon-scan">section 1</a>: it flags the viewer at 12:44 and nothing at 12:55.</td></tr>
+<tr><td><b>3. "The warm-up seeds were 101 to 104."</b> "The first numbers anyone would try." They made the seed hunt pay off in practice.</td><td>Nothing that would catch it: choosing test seeds is the harness's job. This example's harness makes the better choice: four random 32-bit smoke seeds, and fresh flights drawn from a secure random source and sealed by SHA-256 before any controller flies.</td><td><span class="status not">not plimsoll's to catch</span> The better choice is used in the signed run; another harness can still pick 101.</td></tr>
+<tr><td><b>4. "The judge's scores depended on how busy the laptop was."</b> 50 milliseconds of wall-clock time per control step: "Rebuild r0 scored 52 of 64 on the first scoring and 64 of 64 when re-scored idle; r2 went from 63 to 49."</td><td>This example grades on CPU time: {{.Ev.CPUBudget}} seconds of the controller process's own CPU per flight, read from the operating system, which a busy machine does not use up. Wall time only catches a hang.</td><td><span class="status run">used in the signed run</span> {{.Ev.Scan.GradingRuns}} grading runs. The run was not repeated under load, so steadier scores on a busy machine are the reason for the design, not a measurement. The budget counts CPU on the runtime it grades on, and it stopped one controller here (<a href="#plimsoll">section 13</a>).</td></tr>
+<tr><td><b>5. "The compression test did not flag the cheater on the easy course."</b> Its recipe carried real flying skill along with the cheat.</td><td>Nothing. It is the squeeze test's own limit at the hackathon's line of 2 flights (<a href="#rebuilds">section 7</a>), and plimsoll's signed regrade gives the same verdict (<a href="#plimsoll">section 13</a>). The paper's stricter line does flag it, on four loops, which is an observation, not a measured accuracy (<a href="#dial">section 8</a>).</td><td><span class="status not">not caught</span> The write-up's answer stands: "If you can make fresh tests, make fresh tests."</td></tr>
+</tbody></table></div>
+
+<p><b>Where the canary fits.</b> It has no Argon mistake of its own to catch: the canary run checks what a harness sends a model, and Argon's leaks went in through the sandbox's files, the ship scan's side. What carries over is its habit of testing the checker. My harness's own leak check was one line, an assertion that the task file it shipped no longer held the practice-seed block or the first practice seed. Plant a seed on purpose in any other file that shipped and that line stays silent. A check that has never failed on a planted leak has not been tested.</p>
+
+
+<h2 id="run"><span class="num">15</span>Run all three yourself</h2>
+<p><b>The ship scan, offline, on any folder.</b> From a clone of the plimsoll repository, write the seeds or answers one per line, build the set, and scan what you are about to ship (the ship scan's documentation has the file and source entries, and the daemon's <code>PLIMSOLL_WITHHELD_FILE</code>):</p>
+<pre>go run ./cmd/plimsoll-withheld build -mode refuse -values seeds.txt > withheld.json
+go run ./cmd/plimsoll-withheld scan -set withheld.json task/   # exit 1 on a find</pre>
+<p><b>The Argon scan in section 1.</b> It needs git, Go and Python 3, writes only under <code>tmp/argon-scan/</code>, and should print exactly <code>examples/squeeze/argon-scan.txt</code>:</p>
+<pre>git clone https://github.com/carrollco/did-it-learn ../did-it-learn
+examples/squeeze/argon-scan.sh ../did-it-learn | diff - examples/squeeze/argon-scan.txt</pre>
+<p><b>The canary run in section 2</b> is not part of the open-source release, so it cannot be rerun from the public repository: <code>examples/squeeze/canary-demo.txt</code> is its transcript as printed, and <code>go test -run TestCanaryDemoTranscript ./examples/squeeze</code> checks what it says: four runs, the clean one passing and each of the other three failing on its planted mistake.</p>
+<p><b>The squeeze test.</b> The example is <code>examples/squeeze</code> in the plimsoll repository, a Go program on plimsoll's client. Grading needs docker, gVisor and the images <code>make docker-images</code> builds; it never calls a model:</p>
+<pre>git clone https://github.com/carrollco/did-it-learn ../did-it-learn
+go run ./examples/squeeze -import ../did-it-learn</pre>
+<p>To make rebuilds, write a job whose groups have <code>"build": 8</code> instead of a list of imports, and bring your own model through any OpenAI-compatible API. The program refuses to start without the key and a token budget, and stops calling the model when the budget is spent:</p>
+<pre>NEBIUS_API_KEY=... go run ./examples/squeeze -job my-job.json -import ../did-it-learn \
+  -model nvidia/nemotron-3-super-120b-a12b -max-tokens 20000000</pre>
+<p>Each rebuild is a fresh session with three tools: <code>write_file</code>, <code>run_code</code> (JavaScript or Python in its own sandbox) and <code>fly</code>. Its brief is the hackathon's reproducer prompt, with the <code>fly</code> tool where the hackathon gave it the simulator. The job file for the free run, <code>examples/squeeze/jobs/hackathon-regrade.json</code>, is the template. The recipe is not made here: plimsoll never calls a model on its own, so the squeezing is the caller's. The two recipes above came from Gemini 4 Argon at the hackathon.</p>
+
+<h2 id="words">Words used on this page</h2>
+<dl class="words">
+<dt>Model</dt><dd>An AI program, trained on huge piles of examples, that writes answers, text or code. A very well-read new hire.</dd>
+<dt>Agent</dt><dd>A model working in a loop on its own: write, run, look, try again.</dd>
+<dt>Sandbox</dt><dd>The walled-off place where untrusted code runs.</dd>
+<dt>Harness</dt><dd>The program that hands out each graded task, runs it and grades it. Whoever runs the exam.</dd>
+<dt>Answer key</dt><dd>Anything the grader knows that the agent must not. The teacher's copy with the answers filled in.</dd>
+<dt>Call</dt><dd>One request to plimsoll to run some code.</dd>
+<dt>Prompt</dt><dd>The written instructions a model is given.</dd>
+<dt>Ship scan</dt><dd>plimsolld's check of every call against the withheld set before the call runs.</dd>
+<dt>Withheld set</dt><dd>The operator's list of SHA-256 fingerprints of files and values that must never enter a sandbox.</dd>
+<dt>SHA-256 digest</dt><dd>A 64-character fingerprint of some bytes: the same bytes always give the same digest, a changed byte a different one.</dd>
+<dt>Answer-key tripwire</dt><dd>A search of the requests a harness sent a model, for values the model must never be sent.</dd>
+<dt>Sealed value</dt><dd>Anything the model under test must never be sent: a truth label, a reference number, a telling file name.</dd>
+<dt>Canary</dt><dd>A made-up marker planted where secrets live, so seeing it anywhere else proves a leak. A trap street on your own map.</dd>
+<dt>Canary run</dt><dd>One run of a harness with canaries planted in place of the real secrets, checked for every canary planted and none sent.</dd>
+<dt>Controller</dt><dd>The program that flies the drone: called 100 times a second with sensor readings, it answers with thrust and tilt.</dd>
+<dt>Seed</dt><dd>The number a flight is made from. Like the shuffle of a deck: same seed, same flight.</dd>
+<dt>Practice seeds</dt><dd>The seeds of the 16 practice flights; the ones the Argon entry leaked one of.</dd>
+<dt>Loop</dt><dd>An agent that builds, tests, critiques and fixes its own work, round after round.</dd>
+<dt>Critic</dt><dd>A model asked to score the loop's work out of 10.</dd>
+<dt>Practice flights, the validation set</dt><dd>The 16 flights the loop grades itself on every round. The quiz you retake every night.</dd>
+<dt>Held-out, or fresh, flights</dt><dd>Flights no agent has seen. The final exam in the sealed envelope.</dd>
+<dt>Overfitting</dt><dd>Scoring well on the practice set by memorizing it rather than by getting better at the job.</dd>
+<dt>Token</dt><dd>The unit a language model reads and writes in; a short word is usually one.</dd>
+<dt>Recipe</dt><dd>Everything a loop learned, squeezed into at most 32 tokens. The sticky note.</dd>
+<dt>Rebuild (the paper's reproducer)</dt><dd>A fresh agent that builds its own controller from the task and the recipe alone.</dd>
+<dt>Squeeze gap</dt><dd>The loop's practice score minus the median practice score of its rebuilds, in flights.</dd>
+<dt>Median</dt><dd>The middle score when a group's scores are sorted: half scored at least this, half at most.</dd>
+<dt>Run record</dt><dd>plimsoll's signed statement of one run: digests of what went in and what came out, where it ran, and when.</dd>
+</dl>
+
+<div class="foot">
+<p>Sources. The hackathon entry's list of mistakes: <code>WHAT-I-GOT-WRONG.md</code> in did-it-learn (<a href="https://github.com/carrollco/did-it-learn/blob/main/WHAT-I-GOT-WRONG.md">EXTERNAL · source repo ↗</a>), and the leaked viewer file as it was at 12:44 (<a href="https://github.com/carrollco/did-it-learn/blob/6887745aaaf49d18492f38aa7000aa4a83d4f932/tasks/drone/view.mjs">EXTERNAL · source repo ↗</a>). The ship scan (<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/ship-scan.md">EXTERNAL · official docs ↗</a>). UC Berkeley's benchmark audit (<a href="https://rdi.berkeley.edu/blog/trustworthy-benchmarks/">EXTERNAL · article ↗</a>). The paper: Martin Andres Bertran, Aaron Roth and Zhiwei Steven Wu, "What Fits (Into Few Tokens) Doesn't Overfit: Compression and Generalization in ML Research Agents", arXiv 2606.11045, 9 June 2026 (<a href="https://arxiv.org/abs/2606.11045">EXTERNAL · paper ↗</a>); quotations are from its abstract, Sections 5 and 6 and Appendix J. Amazon Science's account of it, "Why machine learning research agents don't overfit" (<a href="https://www.amazon.science/blog/why-dont-machine-learning-research-agents-overfit">EXTERNAL · article ↗</a>). The hackathon entry, its task, its numbers and its list of mistakes: did-it-learn (<a href="https://github.com/carrollco/did-it-learn">EXTERNAL · source repo ↗</a>), {{.HK.Source}}. Google's loop: the 3D worlds guide (<a href="https://aistudio.google.com/learn/building-3d-games-and-worlds-with-gemini-4-argon">EXTERNAL · official docs ↗</a>).</p>
+<p>This page is written by <code>examples/squeeze</code> from the evidence beside it, the hackathon's recorded numbers and two transcripts, the Argon scan's (<code>examples/squeeze/argon-scan.txt</code>) and the canary run's (<code>examples/squeeze/canary-demo.txt</code>); <code>-verify</code> checks that it still is.</p>
+</div>
+</div>
+</main>
+
+<script id="squeeze-data" type="application/json">{{.Data}}</script>
+<script>
+(function () {
+  'use strict';
+  var D = JSON.parse(document.getElementById('squeeze-data').textContent);
+  var NS = 'http://www.w3.org/2000/svg';
+  var C = { honest: '#2a78d6', cheater: '#eb6834', none: '#1baf7a', ink: '#0b0b0b', ink2: '#52514e', muted: '#898781', line: '#e1e0d9', axis: '#c3c2b7', fill: '#3a3936', good: '#0ca30c', bad: '#d03b3b' };
+  var DARK = { honest: '#1c5cab', cheater: '#b84a1c', none: '#0f7a54' };
+  function el(tag, attrs, parent, text) {
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) if (attrs[k] !== undefined && attrs[k] !== null) e.setAttribute(k, attrs[k]);
+    if (text !== undefined) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function clear(svg) { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+  function hkCourse(id) { return D.hk.courses.filter(function (c) { return c.id === id; })[0]; }
+  function evCourse(id) { return (D.ev.courses || []).filter(function (c) { return c.id === id; })[0]; }
+  function byId(list, id) { return (list || []).filter(function (x) { return x.id === id; })[0]; }
+  function median(xs) { if (!xs.length) return 0; var s = xs.slice().sort(function (a, b) { return a - b; }); var n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; }
+  function fmt(x) { return Number.isInteger(x) ? String(x) : x.toFixed(1); }
+  function pressGroup(attr, value) {
+    document.querySelectorAll('[' + attr + ']').forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute(attr) === value ? 'true' : 'false'); });
+  }
+  var LABEL = { cheater: "from the cheater's recipe", honest: 'from the honest recipe', none: 'from no recipe' };
+  var LOOPNAME = { cheater: 'the cheating loop', honest: 'the honest loop' };
+
+  // Every figure is drawn for the width it gets: a wide screen gets the 960-unit layout scaled
+  // to fit, and below 700 pixels a figure is laid out again at the screen's own width, stacked,
+  // so no label shrinks below the size it is set in.
+  var redraws = [];
+  function widthOf(svg) {
+    var w = svg.parentNode.clientWidth || 960;
+    return w >= 700 ? 960 : Math.max(300, Math.floor(w));
+  }
+  function onLayout(fn) { redraws.push(fn); fn(); }
+  (function () {
+    var last = window.innerWidth, timer = 0;
+    window.addEventListener('resize', function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        if (window.innerWidth === last) return;
+        last = window.innerWidth;
+        redraws.forEach(function (f) { f(); });
+      }, 150);
+    });
+  })();
+  function canvas(svg, w, h) { clear(svg); svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h); }
+  // wrapText breaks text into lines that fit width at a font size, by an average glyph width.
+  function wrapText(text, width, size) {
+    var max = Math.max(8, Math.floor(width / (size * 0.56))), out = [], cur = '';
+    text.split(' ').forEach(function (w) {
+      if (cur && (cur + ' ' + w).length > max) { out.push(cur); cur = w; } else cur = cur ? cur + ' ' + w : w;
+    });
+    if (cur) out.push(cur);
+    return out;
+  }
+  // textLines writes lines from a baseline y and answers the baseline after the last.
+  function textLines(svg, x, y, lines, size, attrs, lh) {
+    lh = lh || Math.round(size * 1.35);
+    lines.forEach(function (l, i) {
+      var a = { x: x, y: y + i * lh, 'font-size': size };
+      for (var k in attrs) a[k] = attrs[k];
+      el('text', a, svg, l);
+    });
+    return y + lines.length * lh;
+  }
+  function diamond(x, y, s) { return 'M' + x + ' ' + (y - s) + 'L' + (x + s) + ' ' + y + 'L' + x + ' ' + (y + s) + 'L' + (x - s) + ' ' + y + 'Z'; }
+
+  // Hero: each easy-course loop's flights, one square a flight.
+  (function hero() {
+    var c = evCourse('easy');
+    ['honest', 'cheater'].forEach(function (id) {
+      var lp = c && byId(c.loops, id), own = lp && lp.own;
+      var hk = byId(hkCourse('easy').loops, id);
+      var p = own ? own.practice_bits : null, f = own ? own.fresh_bits : null;
+      document.querySelector('[data-hero="' + id + '-p"]').innerHTML = own ? own.practice + '<small> / ' + own.practice_total + '</small>' : hk.practice + '<small> / 16</small>';
+      document.querySelector('[data-hero="' + id + '-f"]').innerHTML = own ? own.fresh + '<small> / ' + own.fresh_total + '</small>' : hk.fresh + '<small> / 64</small>';
+      squares(document.getElementById('hero-' + id + '-p'), p || '1'.repeat(hk.practice) + '0'.repeat(16 - hk.practice), 16, 20);
+      squares(document.getElementById('hero-' + id + '-f'), f || '1'.repeat(hk.fresh) + '0'.repeat(64 - hk.fresh), 16, 20);
+    });
+    function squares(svg, bits, perRow, size) {
+      clear(svg);
+      for (var i = 0; i < bits.length; i++) {
+        var x = (i % perRow) * size, y = Math.floor(i / perRow) * size, ok = bits[i] === '1';
+        el('rect', { x: x + 1, y: y + 1, width: size - 4, height: size - 4, rx: 3, fill: ok ? C.fill : '#fff', stroke: ok ? 'none' : '#c9c7bf', 'stroke-width': 1.5 }, svg);
+      }
+    }
+  })();
+
+  // The flight figure.
+  (function flight() {
+    var pick = document.getElementById('track-pick'), top = document.getElementById('track-top'), side = document.getElementById('track-side');
+    var play = document.getElementById('track-play'), clock = document.getElementById('track-clock'), cap = document.getElementById('track-cap');
+    var GATES = [[-115, 105, -85], [15, 140, 25], [135, 105, 105]], PAD = [205, 0, 165], TAKEOFF = [-210, 0, -165];
+    var options = [];
+    (D.ev.courses || []).forEach(function (c) {
+      (c.tracks || []).forEach(function (t) {
+        var who = t.n === 'loop' ? LOOPNAME[t.who] + "'s own controller" : 'rebuild ' + t.n + ' ' + LABEL[t.who];
+        options.push({ course: c.id, label: c.label + ': ' + who + ', a ' + t.set + ' flight', t: t, color: C[t.who], opening: c.id === 'hard' ? 42 : 60 });
+      });
+    });
+    if (!options.length) { document.getElementById('fig-flight').style.display = 'none'; return; }
+    var order = function (o) { return (o.course === 'easy' ? 0 : 10) + (o.t.n === 'loop' ? 0 : 5) + (o.t.who === 'honest' ? 0 : 1) + (o.t.set === 'practice' ? 0 : 0.5); };
+    options.sort(function (a, b) { return order(a) - order(b); });
+    options.forEach(function (o, i) { var op = document.createElement('option'); op.value = i; op.textContent = o.label; pick.appendChild(op); });
+    var S = 440, M = 34, sc = (S - 2 * M) / 600;
+    function tx(x) { return M + (x + 300) * sc; }
+    function tz(z) { return M + (z + 300) * sc; }
+    var SH = 2 * M + 300 * sc; // the side view: the room's 3 meters of height, to the same scale
+    function ty(y) { return SH - M - y * sc; }
+    function room(svg, view) {
+      clear(svg);
+      var bottom = view === 'top' ? S - M : SH - M;
+      el('rect', { x: M, y: M, width: S - 2 * M, height: bottom - M, fill: '#fff', stroke: C.axis }, svg);
+      for (var g = -200; g <= 200; g += 100) {
+        if (view === 'top') { el('line', { x1: tx(g), y1: M, x2: tx(g), y2: S - M, stroke: '#f0efea' }, svg); el('line', { x1: M, y1: tz(g), x2: S - M, y2: tz(g), stroke: '#f0efea' }, svg); }
+        else { el('line', { x1: tx(g), y1: M, x2: tx(g), y2: bottom, stroke: '#f0efea' }, svg); }
+      }
+      if (view === 'side') for (var h = 100; h < 300; h += 100) el('line', { x1: M, y1: ty(h), x2: S - M, y2: ty(h), stroke: '#f0efea' }, svg);
+      el('text', { x: M, y: 22, 'font-size': 14, fill: C.ink2, 'font-weight': 600 }, svg, view === 'top' ? 'From above' : 'From the side');
+      el('text', { x: S - M, y: bottom + 24, 'font-size': 12, fill: C.muted, 'text-anchor': 'end' }, svg, view === 'top' ? 'room 6 m × 6 m, grid 1 m' : 'height up to 3 m, grid 1 m');
+    }
+    function scene(svg, view, opening) {
+      var half = opening / 2;
+      if (view === 'top') {
+        el('rect', { x: tx(TAKEOFF[0]) - 12, y: tz(TAKEOFF[2]) - 12, width: 24, height: 24, rx: 4, fill: '#ecebe6', stroke: C.axis }, svg);
+        el('text', { x: tx(TAKEOFF[0]), y: tz(TAKEOFF[2]) - 17, 'font-size': 12, fill: C.ink2, 'text-anchor': 'middle' }, svg, 'take off');
+        el('circle', { cx: tx(PAD[0]), cy: tz(PAD[2]), r: 15 * sc * 6, fill: '#e8f5e8', stroke: '#7cc47c' }, svg);
+        el('text', { x: tx(PAD[0]), y: tz(PAD[2]) + 32, 'font-size': 12, fill: C.ink2, 'text-anchor': 'middle' }, svg, 'land here');
+        GATES.forEach(function (g, i) {
+          el('line', { x1: tx(g[0]), y1: tz(g[2] - half - 7), x2: tx(g[0]), y2: tz(g[2] - half), stroke: C.ink, 'stroke-width': 5 }, svg);
+          el('line', { x1: tx(g[0]), y1: tz(g[2] + half), x2: tx(g[0]), y2: tz(g[2] + half + 7), stroke: C.ink, 'stroke-width': 5 }, svg);
+          el('line', { x1: tx(g[0]), y1: tz(g[2] - half), x2: tx(g[0]), y2: tz(g[2] + half), stroke: C.ink, 'stroke-width': 1, 'stroke-dasharray': '2 3' }, svg);
+          el('text', { x: tx(g[0]) + 9, y: tz(g[2] - half - 10), 'font-size': 13, 'font-weight': 700, fill: C.ink }, svg, String(i + 1));
+        });
+      } else {
+        el('line', { x1: M, y1: ty(0), x2: S - M, y2: ty(0), stroke: C.axis, 'stroke-width': 2 }, svg);
+        el('rect', { x: tx(PAD[0]) - 15 * sc * 6, y: ty(0) - 3, width: 30 * sc * 6, height: 6, fill: '#7cc47c' }, svg);
+        GATES.forEach(function (g, i) {
+          el('rect', { x: tx(g[0]) - 3, y: ty(g[1] + half + 7), width: 6, height: 7 * sc, fill: C.ink }, svg);
+          el('rect', { x: tx(g[0]) - 3, y: ty(g[1] - half), width: 6, height: 7 * sc, fill: C.ink }, svg);
+          el('line', { x1: tx(g[0]), y1: ty(g[1] - half), x2: tx(g[0]), y2: ty(g[0] * 0 + g[1] + half), stroke: C.ink, 'stroke-dasharray': '2 3' }, svg);
+          el('line', { x1: tx(g[0]), y1: ty(0), x2: tx(g[0]), y2: ty(g[1] - half - 7), stroke: '#d9d7cf', 'stroke-width': 2 }, svg);
+          el('text', { x: tx(g[0]) + 8, y: ty(g[1] + half + 12), 'font-size': 13, 'font-weight': 700, fill: C.ink }, svg, String(i + 1));
+        });
+      }
+    }
+    var cur = null, raf = 0, t0 = 0, playing = false;
+    function draw(i, upto) {
+      var o = options[i], t = o.t, pts = t.xyz, n = pts.length;
+      if (upto === undefined) upto = n - 1;
+      [['top', top], ['side', side]].forEach(function (pair) {
+        var view = pair[0], svg = pair[1];
+        room(svg, view); scene(svg, view, o.opening);
+        var d = '';
+        for (var k = 0; k <= Math.min(upto, n - 1); k++) {
+          var X = tx(pts[k][0]), Y = view === 'top' ? tz(pts[k][2]) : ty(pts[k][1]);
+          d += (k ? 'L' : 'M') + X.toFixed(1) + ' ' + Y.toFixed(1);
+        }
+        el('path', { d: d, fill: 'none', stroke: o.color, 'stroke-width': 3, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+        var last = pts[Math.min(upto, n - 1)];
+        var LX = tx(last[0]), LY = view === 'top' ? tz(last[2]) : ty(last[1]);
+        el('circle', { cx: LX, cy: LY, r: 7, fill: '#fff', stroke: DARK[t.who] || C.ink, 'stroke-width': 3 }, svg);
+        if (upto >= n - 1 && !t.success) {
+          el('text', { x: LX + 12, y: LY + (view === 'top' && t.seconds < 1 ? 26 : -12), 'font-size': 14, 'font-weight': 700, fill: C.bad }, svg, '✕ ' + t.end + ' at ' + t.seconds + ' s');
+        }
+      });
+      clock.textContent = 't = ' + (Math.min(upto, n - 1) / 10).toFixed(1) + ' s';
+      cap.innerHTML = '<b>' + (t.success ? 'Landed' : 'Failed: ' + t.end) + '</b> after ' + t.seconds + ' simulated seconds. ' +
+        (t.n === 'loop' && t.who === 'cheater' ? (t.set === 'practice' ? 'This is one of the 16 flights the cheating loop memorized.' : 'A flight the cheating loop never saw: its controller did not recognize the first reading and answered with no command.') :
+          t.set === 'practice' ? 'A practice flight.' : 'A fresh flight, sealed for this page before any controller flew.') +
+        ' <span class="tag">seed ' + t.seed + '</span>';
+    }
+    function stop() { playing = false; cancelAnimationFrame(raf); play.textContent = '▶ Play'; }
+    function frame(ts) {
+      if (!playing) return;
+      var o = options[cur], n = o.t.xyz.length;
+      var k = Math.floor((ts - t0) / 1000 * 10 * 2);
+      draw(cur, k);
+      if (k >= n - 1) { stop(); return; }
+      raf = requestAnimationFrame(frame);
+    }
+    play.onclick = function () {
+      if (playing) { stop(); draw(cur); return; }
+      playing = true; play.textContent = '■ Stop'; t0 = performance.now(); raf = requestAnimationFrame(frame);
+    };
+    pick.onchange = function () { stop(); cur = +pick.value; draw(cur); };
+    cur = 0;
+    for (var i = 0; i < options.length; i++) if (options[i].t.n === 'loop' && options[i].t.who === 'honest' && options[i].t.set === 'fresh' && options[i].course === 'easy') { cur = i; break; }
+    pick.value = cur;
+    draw(cur);
+  })();
+
+  // The funnel: the loop's whole record, the recipe, the rebuilds, every dot a token.
+  (function funnel() {
+    var svg = document.getElementById('funnel'), cap = document.getElementById('funnel-cap'), cur = 'cheater';
+    function draw() {
+      var id = cur, W = widthOf(svg), narrow = W < 960;
+      var lp = byId(hkCourse('easy').loops, id), n = lp.record_tokens, color = C[id];
+      // The record is a square of 300 by 300 units in which every token gets the same small
+      // cell; the recipe is drawn with cells of that size, so the two are to scale.
+      var side = Math.min(300, W - 24), cell = Math.sqrt(side * side / n);
+      var cols = Math.floor(side / cell), rows = Math.ceil(n / cols), w = cols * cell, h = rows * cell;
+      var recLabel = n.toLocaleString('en-US') + ' tokens: transcripts, code, scores, critiques';
+      var recLines = narrow ? wrapText(recLabel, W - 8, 13) : [recLabel];
+      var x0 = narrow ? (W - w) / 2 : 20, y0 = narrow ? 30 + recLines.length * 18 + 4 : 30;
+      var rw = 8 * cell, rh = 4 * cell; // the recipe's 32 cells, 8 a row
+      var rx, ry, bx, by, H;
+      if (narrow) {
+        rx = W / 2 - rw / 2; ry = y0 + h + 64;
+        by = ry + rh + 92; bx = (W - 296) / 2; H = by + 296 + 30;
+      } else {
+        rx = 420; ry = y0 + h / 2 - 40; bx = 640; by = y0 + 10; H = 360;
+      }
+      canvas(svg, W, H);
+      el('text', { x: narrow ? 4 : x0, y: 20, 'font-size': 15, 'font-weight': 650, fill: C.ink }, svg, 'The loop\'s whole record');
+      if (narrow) textLines(svg, 4, 40, recLines, 13, { fill: C.ink2 }, 18);
+      el('rect', { x: x0, y: y0, width: w, height: h, fill: '#d9d7cf' }, svg);
+      var pat = el('pattern', { id: 'funnel-dots', width: cell * 2, height: cell * 2, patternUnits: 'userSpaceOnUse' }, el('defs', {}, svg));
+      el('circle', { cx: cell, cy: cell, r: Math.max(0.5, cell * 0.35), fill: '#b9b7ae' }, pat);
+      el('rect', { x: x0, y: y0, width: w, height: h, fill: 'url(#funnel-dots)' }, svg);
+      if (!narrow) el('text', { x: x0, y: y0 + h + 22, 'font-size': 14, fill: C.ink2 }, svg, recLabel);
+      var dash = { stroke: C.axis, 'stroke-width': 1.5, fill: 'none', 'stroke-dasharray': '4 4' };
+      if (narrow) {
+        el('path', Object.assign({ d: 'M' + x0 + ' ' + (y0 + h + 4) + ' L' + (rx - 3) + ' ' + (ry - 3) + ' M' + (x0 + w) + ' ' + (y0 + h + 4) + ' L' + (rx + rw + 3) + ' ' + (ry - 3) }, dash), svg);
+      } else {
+        el('path', Object.assign({ d: 'M' + (x0 + w + 8) + ' ' + y0 + ' L' + (rx - 10) + ' ' + (ry + 4) + ' M' + (x0 + w + 8) + ' ' + (y0 + h) + ' L' + (rx - 10) + ' ' + (ry + 14) }, dash), svg);
+      }
+      for (var k = 0; k < lp.recipe_tokens; k++) el('rect', { x: rx + (k % 8) * cell, y: ry + Math.floor(k / 8) * cell, width: cell * 0.9, height: cell * 0.9, fill: color }, svg);
+      if (narrow) {
+        el('text', { x: rx + rw + 12, y: ry + 5, 'font-size': 15, 'font-weight': 650, fill: C.ink }, svg, '◀ the recipe');
+        el('text', { x: rx + rw + 12, y: ry + 23, 'font-size': 13, fill: C.ink2 }, svg, lp.recipe_tokens + ' tokens, to scale');
+        el('path', { d: 'M' + (W / 2) + ' ' + (ry + rh + 34) + ' L' + (W / 2) + ' ' + (by - 34), stroke: C.axis, 'stroke-width': 1.5, fill: 'none' }, svg);
+        el('text', { x: bx, y: by - 12, 'font-size': 15, 'font-weight': 650, fill: C.ink }, svg, '16 fresh sandboxes');
+      } else {
+        el('text', { x: rx - 4, y: ry - 30, 'font-size': 15, 'font-weight': 650, fill: C.ink }, svg, 'The recipe');
+        el('text', { x: rx - 4, y: ry - 12, 'font-size': 14, fill: C.ink2 }, svg, lp.recipe_tokens + ' tokens, the same scale');
+        el('text', { x: rx + 26, y: ry + 4 * cell + 6, 'font-size': 13, fill: C.ink2 }, svg, '◀ this small');
+        el('text', { x: bx, y: 20, 'font-size': 15, 'font-weight': 650, fill: C.ink }, svg, '16 fresh sandboxes');
+        el('path', { d: 'M' + (rx + 4) + ' ' + (ry + rh + 4) + ' C ' + (rx + 4) + ' ' + (ry + 70) + ', 560 ' + (by + 150) + ', ' + (bx - 8) + ' ' + (by + 148), stroke: C.axis, 'stroke-width': 1.5, fill: 'none' }, svg);
+      }
+      for (var b = 0; b < 16; b++) {
+        var X = bx + (b % 4) * 74, Y = by + Math.floor(b / 4) * 74;
+        el('rect', { x: X, y: Y, width: 62, height: 62, rx: 9, fill: '#fff', stroke: C.axis, 'stroke-width': 1.5 }, svg);
+        for (var q = 0; q < lp.recipe_tokens; q++) el('rect', { x: X + 8 + (q % 8) * 5.8, y: Y + 8 + Math.floor(q / 8) * 5.8, width: 4.6, height: 4.6, fill: color }, svg);
+        el('text', { x: X + 31, y: Y + 52, 'font-size': 11, fill: C.muted, 'text-anchor': 'middle' }, svg, 'rebuild ' + b);
+      }
+      el('text', { x: bx, y: by + 4 * 74 + 16, 'font-size': 14, fill: C.ink2 }, svg, 'each gets the task and the recipe only');
+      cap.innerHTML = 'The ' + (id === 'cheater' ? 'cheating' : 'honest') + ' loop\'s record is ' + n.toLocaleString('en-US') + ' tokens, about ' + Math.round(n * 0.75 / 1000) + ',000 words, a short novel. The recipe is ' + lp.recipe_tokens + ' tokens, one sentence: <b>' + Math.round(n / lp.recipe_tokens).toLocaleString('en-US') + ' times smaller</b>. Both are drawn at the same scale, one dot a token; inside each sandbox the recipe is drawn larger, so its 32 tokens show.';
+    }
+    document.querySelectorAll('[data-funnel]').forEach(function (b) { b.onclick = function () { cur = b.getAttribute('data-funnel'); pressGroup('data-funnel', cur); draw(); }; });
+    onLayout(draw);
+  })();
+
+  // The 32-token budget against the seed list.
+  (function budget() {
+    var svg = document.getElementById('budget');
+    onLayout(function () {
+      var W = widthOf(svg), total = D.hk.seed_list_tokens || 222, size = 14, cols = Math.floor(W / size), y0 = 50;
+      var rows = Math.ceil(total / cols);
+      canvas(svg, W, y0 + rows * size + 6);
+      el('text', { x: 1, y: 16, 'font-size': 14, fill: C.ink2 }, svg, 'The 16 practice seeds, written out: ' + total + ' tokens');
+      el('rect', { x: 1, y: 27, width: 11, height: 11, rx: 2, fill: C.cheater }, svg);
+      el('text', { x: 18, y: 37, 'font-size': 13, fill: C.ink2 }, svg, 'the 32 that fit');
+      el('rect', { x: 130, y: 27, width: 11, height: 11, rx: 2, fill: '#fff', stroke: '#e3a184', 'stroke-width': 1.2 }, svg);
+      el('text', { x: 147, y: 37, 'font-size': 13, fill: C.ink2 }, svg, 'the ' + (total - 32) + ' that do not');
+      for (var i = 0; i < total; i++) {
+        var x = (i % cols) * size, y = y0 + Math.floor(i / cols) * size, fits = i < 32;
+        el('rect', { x: x + 1, y: y + 1, width: size - 3, height: size - 3, rx: 2, fill: fits ? C.cheater : '#fff', stroke: fits ? 'none' : '#e3a184', 'stroke-width': 1.2 }, svg);
+      }
+      var ex = (32 % cols) * size - 0.5, ey = y0 + Math.floor(32 / cols) * size;
+      el('line', { x1: ex, y1: ey - 4, x2: ex, y2: ey + size + 3, stroke: C.ink, 'stroke-width': 2 }, svg);
+      if (W >= 960) el('text', { x: ex + 6, y: y0 - 6, 'font-size': 13, 'font-weight': 650, fill: C.ink }, svg, '◀ the 32-token budget ends here');
+    });
+  })();
+
+  // The recipes, phrase by phrase.
+  (function recipes() {
+    var G = {
+      cheater: [
+        ['Match first obs to seed', 'cheat', 'Recognize which flight this is from the first sensor reading ("obs", the observation) by matching it against the seeds the flights are made from. This is the shortcut.'],
+        [' for exact params and shadow state.', 'dep', 'Then know that flight\'s hidden parameters (payload, weak motor, wind, gusts) exactly, and run a copy of the simulation alongside the real one. Only works if the shortcut does.'],
+        [' Track 7s spline perpendicular through gates to pad;', 'skill', 'Fly a smooth curve planned to take 7 seconds, crossing each gate square-on, ending over the pad. Real flying technique.'],
+        [' preview wind;', 'dep', 'Use the wind before it arrives. With the shortcut, the wind is known in advance; without it, there is nothing to preview.'],
+        [' invert inner PD and weak motor', 'skill', 'Undo the drone\'s built-in stabilizer (a PD controller: it pushes back in proportion to the error and its rate of change) and the weak motor\'s loss, so commands land as intended. Real flying technique.']
+      ],
+      honest: [
+        ['Filter velocity;', 'skill', 'Smooth the noisy speed readings before using them.'],
+        [' fast/slow accel disturbance observer;', 'skill', 'Estimate the wind\'s push from how the drone accelerates differently from what it was told, with one fast estimate for gusts and one slow one for the steady wind.'],
+        [' yaw + local pos integrals;', 'skill', 'Slowly correct leftover errors in heading and in position, the way a driver eases off a steady drift.'],
+        [' smooth ref filter;', 'skill', 'Move the target point smoothly instead of jumping it from gate to gate.'],
+        [' gate exit lock;', 'skill', 'Once committed to a gate, hold the line until it is cleared.'],
+        [' predictive cross abort;', 'skill', 'Abort a gate crossing that is predicted to hit the frame, before it does.'],
+        [' ramp pad descent.', 'skill', 'Come down onto the pad gradually rather than dropping.']
+      ]
+    };
+    ['cheater', 'honest'].forEach(function (id) {
+      var lp = byId(hkCourse('easy').loops, id), box = document.querySelector('#note-' + id + ' .text'), gloss = document.getElementById('gloss-' + id);
+      var parts = G[id];
+      if (parts.map(function (p) { return p[0]; }).join('') !== lp.recipe) { box.textContent = lp.recipe; return; }
+      parts.forEach(function (p) {
+        var lead = p[0].match(/^\s*/)[0];
+        if (lead) box.appendChild(document.createTextNode(lead));
+        var s = document.createElement('span');
+        s.className = 'ph ' + p[1]; s.tabIndex = 0; s.textContent = p[0].slice(lead.length);
+        var show = function () {
+          box.querySelectorAll('.ph').forEach(function (q) { q.classList.remove('on'); });
+          s.classList.add('on');
+          gloss.innerHTML = '<b>' + s.textContent + '</b><br>' + p[2];
+        };
+        s.onmouseenter = show; s.onfocus = show; s.onclick = show;
+        box.appendChild(s);
+      });
+    });
+  })();
+
+  // Tooltips.
+  function tipper(wrap, tip) {
+    return {
+      show: function (evt, html) {
+        tip.innerHTML = html; tip.style.opacity = 1;
+        var r = wrap.getBoundingClientRect(), x = evt.clientX - r.left, y = evt.clientY - r.top;
+        var w = tip.offsetWidth;
+        tip.style.left = Math.max(4, Math.min(r.width - w - 4, x + 12)) + 'px';
+        tip.style.top = Math.max(4, y - tip.offsetHeight - 12) + 'px';
+      },
+      hide: function () { tip.style.opacity = 0; }
+    };
+  }
+
+  // Rebuild scores: two panels, three rows; side by side on a wide screen, stacked on a phone.
+  (function dots() {
+    var svg = document.getElementById('dots'), cap = document.getElementById('dots-cap');
+    var tip = tipper(svg.parentNode, document.getElementById('dots-tip'));
+    var state = { course: 'easy', src: 'hk' };
+    var ROWNAME = { cheater: "Cheater's recipe", honest: 'Honest recipe', none: 'No recipe' };
+    function made(row) { return row.rebuilds.length + ' rebuilds' + (row.missing ? ', ' + row.missing + ' made none' : '') + (row.unscored ? ', ' + row.unscored + ' not scored' : ''); }
+    function data() {
+      var rows = [];
+      if (state.src === 'hk') {
+        var hc = hkCourse(state.course);
+        hc.groups.forEach(function (g) {
+          var lp = byId(hc.loops, g.from);
+          rows.push({ id: g.id, rebuilds: g.rebuilds.filter(function (r) { return r.valid; }).map(function (r) { return { name: r.name, p: r.practice, f: r.fresh, hunt: r.seed_hunt }; }),
+            missing: g.of - g.produced, loop: lp ? { p: lp.practice, f: lp.fresh } : null, pt: 16, ft: 64 });
+        });
+      } else {
+        var ec = evCourse(state.course);
+        if (!ec) return null;
+        ec.groups.forEach(function (g) {
+          var lp = byId(ec.loops, g.from), own = lp && lp.own;
+          var rs = (g.rebuilds || []).filter(function (r) { return r.valid; });
+          rows.push({ id: g.id, rebuilds: rs.map(function (r) { return { name: r.name, p: r.practice, f: r.fresh, hunt: r.seed_hunt }; }),
+            missing: g.missing, unscored: (g.rebuilds || []).length - rs.length, loop: own && own.valid ? { p: own.practice, f: own.fresh } : null,
+            pt: rs.length ? rs[0].practice_total : ec.practice_count, ft: rs.length ? rs[0].fresh_total : D.ev.fresh_count });
+        });
+      }
+      return rows;
+    }
+    function draw() {
+      var rows = data();
+      if (!rows) { clear(svg); return; }
+      var W = widthOf(svg), narrow = W < 960;
+      // A row is a band: the loop's marker at its top, the rebuilds stacked up from its
+      // baseline (two columns where more than eight share a score), the median under it.
+      var r = narrow ? 3.8 : 4.5, step = narrow ? 7.5 : 8.5, BAND = narrow ? 112 : 130, LAB = narrow ? 36 : 0, HEAD = 26, AX = 36;
+      var L = narrow ? 9 : 168, R = narrow ? 8 : 14, gap = 44;
+      var pw = narrow ? W - L - R : (W - L - gap - R) / 2;
+      var panelH = HEAD + rows.length * (BAND + LAB) + AX;
+      var panels = [
+        { key: 'p', title: "Practice flights: the loop's own " + rows[0].pt, max: rows[0].pt, x: L, y: 0 },
+        { key: 'f', title: 'Fresh flights nobody had seen', max: rows[0].ft, x: narrow ? L : L + pw + gap, y: narrow ? panelH + 18 : 0 }
+      ];
+      canvas(svg, W, narrow ? 2 * panelH + 18 : panelH);
+      if (!narrow) rows.forEach(function (row, ri) {
+        var mid = HEAD + ri * BAND + BAND / 2;
+        el('text', { x: 0, y: mid - 4, 'font-size': 14, 'font-weight': 650, fill: C.ink }, svg, ROWNAME[row.id]);
+        el('text', { x: 0, y: mid + 14, 'font-size': 12.5, fill: C.ink2 }, svg, made(row));
+      });
+      panels.forEach(function (P) {
+        el('text', { x: P.x, y: P.y + 16, 'font-size': 14, 'font-weight': 650, fill: C.ink }, svg, P.title);
+        var top = P.y + HEAD, bottom = top + rows.length * (BAND + LAB);
+        var ticks = P.max === 16 ? [0, 4, 8, 12, 16] : [0, 16, 32, 48, 64];
+        ticks.forEach(function (t) {
+          var X = P.x + t / P.max * pw;
+          el('line', { x1: X, y1: top, x2: X, y2: bottom, stroke: C.line }, svg);
+          el('text', { x: X, y: bottom + 14, 'font-size': 12, fill: C.muted, 'text-anchor': t === 0 ? 'start' : t === P.max ? 'end' : 'middle' }, svg, String(t));
+        });
+        el('text', { x: P.x + pw / 2, y: bottom + 30, 'font-size': 12, fill: C.muted, 'text-anchor': 'middle' }, svg, 'flights landed, of ' + P.max);
+        rows.forEach(function (row, ri) {
+          var bandTop = top + ri * (BAND + LAB) + LAB, base = bandTop + BAND - 34;
+          if (ri) el('line', { x1: P.x, y1: bandTop - LAB, x2: P.x + pw, y2: bandTop - LAB, stroke: '#ecebe5' }, svg);
+          if (narrow) {
+            el('text', { x: P.x, y: bandTop - 20, 'font-size': 13, 'font-weight': 650, fill: C.ink }, svg, ROWNAME[row.id]);
+            el('text', { x: P.x, y: bandTop - 4, 'font-size': 12, fill: C.ink2 }, svg, made(row));
+          }
+          if (row.loop) {
+            var lv = row.loop[P.key], LX = P.x + lv / P.max * pw, right = lv / P.max > 0.6;
+            el('line', { x1: LX, y1: bandTop + 18, x2: LX, y2: base + 2, stroke: DARK[row.id], 'stroke-width': 1.8, 'stroke-dasharray': '3 3' }, svg);
+            el('path', { d: diamond(LX, bandTop + 10, 7), fill: '#fff', stroke: DARK[row.id], 'stroke-width': 2.5 }, svg);
+            el('text', { x: LX + (right ? -12 : 12), y: bandTop + 14, 'font-size': 12.5, 'font-weight': 650, fill: DARK[row.id], 'text-anchor': right ? 'end' : 'start' }, svg, 'the loop: ' + lv);
+          }
+          var total = {}, seen = {};
+          row.rebuilds.forEach(function (rb) { total[rb[P.key]] = (total[rb[P.key]] || 0) + 1; });
+          row.rebuilds.forEach(function (rb) {
+            var v = rb[P.key], k = seen[v] = (seen[v] || 0) + 1, two = total[v] > 8;
+            var X = P.x + v / P.max * pw + (two ? ((k - 1) % 2 ? r : -r) : 0);
+            var Y = base - r - (two ? Math.floor((k - 1) / 2) : k - 1) * step;
+            var dot = el('circle', { cx: X, cy: Y, r: r, fill: C[row.id], stroke: '#fff', 'stroke-width': 1, tabindex: 0 }, svg);
+            var html = '<b>Rebuild ' + rb.name + '</b> ' + LABEL[row.id] + '<br>practice ' + rb.p + ' of ' + row.pt + ', fresh ' + rb.f + ' of ' + row.ft + '<br>seed shortcut in its code: ' + (rb.hunt ? 'yes' : 'no');
+            dot.addEventListener('mousemove', function (e) { tip.show(e, html); });
+            dot.addEventListener('click', function (e) { tip.show(e, html); });
+            dot.addEventListener('mouseleave', tip.hide);
+          });
+          var vals = row.rebuilds.map(function (rb) { return rb[P.key]; });
+          if (vals.length) {
+            var m = median(vals), MX = P.x + m / P.max * pw, at = m / P.max;
+            el('path', { d: 'M' + MX + ' ' + (base + 3) + ' l5 8 l-10 0 z', fill: C.ink }, svg);
+            el('text', { x: MX, y: base + 24, 'font-size': 12, fill: C.ink, 'text-anchor': at < 0.12 ? 'start' : at > 0.88 ? 'end' : 'middle' }, svg, 'median ' + fmt(m));
+          }
+        });
+      });
+      cap.innerHTML = (state.src === 'hk' ? '<span class="src hk">recorded at the hackathon</span> Sixteen rebuilds per group, scored once more after the day\'s runs.' :
+        '<span class="src pl">signed by plimsoll</span> The same controllers graded again on plimsoll, on the same 16 practice flights and on ' + D.ev.fresh_count + ' fresh flights {{if .Ev.FreshGiven}}an earlier run drew{{else}}drawn for this page{{end}}, so the fresh panel is a new exam, not the hackathon\'s.') +
+        ' A dot is one rebuild (tap or hover for its scores); ▲ marks the median; ◇ and its dashed line are the loop\'s own controller, in the row of the rebuilds made from its recipe.';
+    }
+    document.querySelectorAll('[data-dots-course]').forEach(function (b) { b.onclick = function () { state.course = b.getAttribute('data-dots-course'); pressGroup('data-dots-course', state.course); draw(); }; });
+    document.querySelectorAll('[data-dots-src]').forEach(function (b) { b.onclick = function () { state.src = b.getAttribute('data-dots-src'); pressGroup('data-dots-src', state.src); draw(); }; });
+    onLayout(draw);
+  })();
+
+  // Practice against fresh: one circle per group and score pair, its size by how many share it.
+  (function trust() {
+    var svg = document.getElementById('trust'), tip = tipper(svg.parentNode, document.getElementById('trust-tip')), course = 'easy';
+    function draw() {
+      var hc = hkCourse(course), W = widthOf(svg), narrow = W < 960;
+      var H = narrow ? Math.round(W * 0.95) : 420, L = narrow ? 46 : 70, R = narrow ? 22 : 34, T = 22, B = 50, pw = W - L - R, ph = H - T - B;
+      function X(p) { return L + p / 16 * pw; }
+      function Y(f) { return T + ph - f / 64 * ph; }
+      canvas(svg, W, H);
+      [0, 4, 8, 12, 16].forEach(function (t) { el('line', { x1: X(t), y1: T, x2: X(t), y2: T + ph, stroke: C.line }, svg); el('text', { x: X(t), y: T + ph + 18, 'font-size': 12, fill: C.muted, 'text-anchor': 'middle' }, svg, String(t)); });
+      [0, 16, 32, 48, 64].forEach(function (t) { el('line', { x1: L, y1: Y(t), x2: L + pw, y2: Y(t), stroke: C.line }, svg); el('text', { x: L - 8, y: Y(t) + 4, 'font-size': 12, fill: C.muted, 'text-anchor': 'end' }, svg, String(t)); });
+      el('text', { x: L + pw / 2, y: H - 8, 'font-size': 13, fill: C.ink2, 'text-anchor': 'middle' }, svg, 'practice flights landed, of 16');
+      el('text', { x: 14, y: T + ph / 2, 'font-size': 13, fill: C.ink2, 'text-anchor': 'middle', transform: 'rotate(-90 14 ' + (T + ph / 2) + ')' }, svg, 'fresh flights landed, of 64');
+      el('line', { x1: X(0), y1: Y(0), x2: X(16), y2: Y(64), stroke: C.ink2, 'stroke-dasharray': '6 5', 'stroke-width': 1.5 }, svg);
+      var lx = X(narrow ? 3.2 : 4.3), ly = Y(narrow ? 12.8 : 16.5) - 8;
+      el('text', { x: lx, y: ly, 'font-size': 12, fill: C.ink2, transform: 'rotate(' + (-Math.atan2(ph, pw) * 180 / Math.PI) + ' ' + lx + ' ' + ly + ')' }, svg, 'fresh goes as well as practice');
+      var cells = {}, keys = [];
+      hc.groups.forEach(function (g) {
+        g.rebuilds.filter(function (r) { return r.valid; }).forEach(function (r) {
+          var key = r.practice + ',' + r.fresh;
+          if (!cells[key]) { cells[key] = { p: r.practice, f: r.fresh, by: {} }; keys.push(key); }
+          (cells[key].by[g.id] = cells[key].by[g.id] || []).push(r.name);
+        });
+      });
+      // Where groups share a score pair their circles sit side by side, never more than four
+      // tenths of a practice flight from the true score; a number is how many share it.
+      var flight = pw / 16, labels = [], crowd = null;
+      // The loops' own controllers first, large and unfilled, so a cluster at the same score
+      // shows through them.
+      hc.loops.forEach(function (lp) { el('path', { d: diamond(X(lp.practice), Y(lp.fresh), 15), fill: 'none', stroke: DARK[lp.id], 'stroke-width': 3 }, svg); });
+      keys.forEach(function (key) {
+        var c = cells[key], ids = ['cheater', 'honest', 'none'].filter(function (id) { return c.by[id]; });
+        var rad = ids.map(function (id) { return Math.min(narrow ? 7.5 : 9, 4.5 + 1.3 * Math.sqrt(c.by[id].length - 1)); });
+        var stepX = ids.length > 1 ? Math.min(2 * Math.max.apply(null, rad) + 2, 0.8 * flight / (ids.length - 1)) : 0;
+        var apart = ids.length === 1 || stepX >= 2 * Math.max.apply(null, rad);
+        var count = ids.reduce(function (a, id) { return a + c.by[id].length; }, 0);
+        if (!crowd || count > crowd.count) crowd = { c: c, ids: ids, count: count };
+        ids.forEach(function (id, i) {
+          var n = c.by[id].length, cx = X(c.p) + (i - (ids.length - 1) / 2) * stepX, cy = Y(c.f);
+          var dot = el('circle', { cx: cx, cy: cy, r: rad[i], fill: C[id], 'fill-opacity': 0.9, stroke: '#fff', 'stroke-width': 1.5 }, svg);
+          if (n > 1 && apart) labels.push([cx, cy, n]);
+          var html = '<b>' + (n > 1 ? n + ' rebuilds' : 'Rebuild ' + c.by[id][0]) + '</b> ' + LABEL[id] + '<br>practice ' + c.p + ' of 16, fresh ' + c.f + ' of 64' + (n > 1 ? '<br>' + c.by[id].join(', ') : '');
+          dot.addEventListener('mousemove', function (e) { tip.show(e, html); });
+          dot.addEventListener('click', function (e) { tip.show(e, html); });
+          dot.addEventListener('mouseleave', tip.hide);
+        });
+      });
+      labels.forEach(function (lb) { el('text', { x: lb[0], y: lb[1] + 3.5, 'font-size': 10, 'font-weight': 700, fill: '#fff', 'text-anchor': 'middle', 'pointer-events': 'none' }, svg, String(lb[2])); });
+      var key = '<span><i style="background:var(--cheater)"></i>from the cheater\'s recipe</span><span><i style="background:var(--honest)"></i>from the honest recipe</span><span><i style="background:var(--none)"></i>from no recipe</span><span>a bigger circle: more rebuilds at that score</span>';
+      hc.loops.forEach(function (lp) {
+        key += '<span style="color:' + DARK[lp.id] + ';font-weight:650">◇ ' + LOOPNAME[lp.id] + '\'s own controller: ' + lp.practice + ' practice, ' + lp.fresh + ' fresh</span>';
+      });
+      if (crowd && crowd.count > 1) {
+        var here = crowd.ids.map(function (id) { return crowd.c.by[id].length + ' ' + LABEL[id]; });
+        key += '<span>The crowd at ' + crowd.c.p + ' practice and ' + crowd.c.f + ' fresh: ' + here.join(', ') + '.</span>';
+      }
+      document.getElementById('trust-key').innerHTML = key;
+    }
+    document.querySelectorAll('[data-trust-course]').forEach(function (b) { b.onclick = function () { course = b.getAttribute('data-trust-course'); pressGroup('data-trust-course', course); draw(); }; });
+    onLayout(draw);
+  })();
+
+  // Verdict cards.
+  function verdictCards(box, items) {
+    box.innerHTML = '';
+    items.forEach(function (it) {
+      var d = document.createElement('div'); d.className = 'vcard';
+      d.innerHTML = '<div class="t">' + it.course + '</div><div class="h">' + it.name + '</div>' +
+        '<div class="line"><span>The loop on practice</span><b>' + it.lp + ' of ' + it.pt + '</b></div>' +
+        '<div class="line"><span>Its rebuilds, median on practice</span><b>' + fmt(it.med) + '</b></div>' +
+        '<div class="line"><span>Squeeze gap</span><b>' + fmt(it.gap) + ' flight' + (it.gap === 1 ? '' : 's') + '</b></div>' +
+        '<div class="line"><span>Squeeze says, at a line of 2</span>' + (it.gap > 2 ? '<span class="pill flag">overfit</span>' : '<span class="pill pass">fine</span>') + '</div>' +
+        '<div class="line"><span>The loop on fresh flights</span><b>' + it.lf + ' of ' + it.ft + '</b></div>';
+      box.appendChild(d);
+    });
+  }
+  function hkVerdicts(course) {
+    var hc = hkCourse(course);
+    return hc.loops.map(function (lp) {
+      var g = byId(hc.groups, lp.id);
+      return { course: hc.label, name: LOOPNAME[lp.id], lp: lp.practice, pt: 16, med: g.practice_median, gap: lp.judge.predicted_inflation_trials, lf: lp.fresh, ft: 64 };
+    });
+  }
+  verdictCards(document.getElementById('verdicts-easy'), hkVerdicts('easy'));
+  verdictCards(document.getElementById('verdicts-hard'), hkVerdicts('hard'));
+  (function plVerdicts() {
+    var items = [];
+    (D.ev.courses || []).forEach(function (c) {
+      (c.loops || []).forEach(function (lp) {
+        if (!lp.verdict) return;
+        var v = lp.verdict;
+        items.push({ course: c.label + ' · signed by plimsoll', name: LOOPNAME[lp.id], lp: v.loop_practice, pt: v.practice_total, med: v.rebuild_practice_median, gap: v.inflation, lf: v.loop_fresh, ft: v.fresh_total });
+      });
+    });
+    verdictCards(document.getElementById('verdicts-pl'), items);
+  })();
+
+  // The line.
+  (function dial() {
+    var input = document.getElementById('dial-line'), out = document.getElementById('dial-val'), body = document.querySelector('#dial-table tbody'), axis = document.getElementById('dial-axis');
+    var loops = [];
+    D.hk.courses.forEach(function (c) {
+      c.loops.forEach(function (lp) {
+        var g = byId(c.groups, lp.id), rel = lp.fresh === 0 ? Infinity : (lp.practice / 16 - lp.fresh / 64) / (lp.fresh / 64);
+        loops.push({ name: LOOPNAME[lp.id], course: c.label, tag: c.tag, gap: lp.practice - g.practice_median, fresh: lp.fresh, overfit: rel > 0.10, rel: rel });
+      });
+    });
+    function ax() {
+      var W = widthOf(axis), P = 12, wide = W >= 960;
+      canvas(axis, W, 66);
+      function X(v) { return P + v / 5 * (W - 2 * P); }
+      el('line', { x1: X(0), y1: 10, x2: X(5), y2: 10, stroke: C.axis }, axis);
+      for (var v = 0; v <= 5; v++) {
+        el('line', { x1: X(v), y1: 6, x2: X(v), y2: 14, stroke: C.axis }, axis);
+        el('text', { x: X(v), y: 28, 'font-size': 12, fill: C.muted, 'text-anchor': v === 0 ? 'start' : v === 5 ? 'end' : 'middle' }, axis, wide || v === 5 ? v + (v === 1 ? ' flight' : ' flights') : String(v));
+      }
+      var paper = X(16 - 16 / 1.05), hack = X(2);
+      el('path', { d: 'M' + paper + ' 3 l5 7 l-10 0 z', fill: C.ink2 }, axis);
+      el('text', { x: paper - 5, y: 45, 'font-size': 12, fill: C.ink2 }, axis, 'the paper\'s 5% line');
+      el('path', { d: 'M' + hack + ' 3 l5 7 l-10 0 z', fill: C.ink2 }, axis);
+      el('text', { x: hack - 5, y: 61, 'font-size': 12, fill: C.ink2 }, axis, 'the hackathon\'s line');
+    }
+    function draw() {
+      var tol = +input.value;
+      out.textContent = tol.toFixed(1);
+      body.innerHTML = '';
+      loops.forEach(function (l) {
+        var flag = l.gap > tol, right = flag === l.overfit;
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + l.name + ', ' + l.course + ' <span class="tag">' + l.tag + '</span></td>' +
+          '<td><b>gap ' + fmt(l.gap) + '</b> ' + (flag ? '<span class="pill flag">overfit</span>' : '<span class="pill pass">fine</span>') + (right ? '' : ' <span class="pill miss">disagrees</span>') + '</td>' +
+          '<td><b>' + l.fresh + ' of 64</b> ' + (l.overfit ? '<span class="pill flag">overfit</span><br><span class="small">' + (l.rel === Infinity ? 'every practice point is gone' : 'practice beats fresh by ' + Math.round(l.rel * 100) + '%') + '</span>' : '<span class="pill pass">fine</span>') + '</td>';
+        body.appendChild(tr);
+      });
+    }
+    input.oninput = draw;
+    onLayout(ax); draw();
+  })();
+
+  // The habit.
+  (function habit() {
+    var svg = document.getElementById('habit-svg');
+    onLayout(function () {
+      var W = widthOf(svg), narrow = W < 960, groups = ['cheater', 'honest', 'none'];
+      var L = narrow ? 0 : 200, NUM = 80, BW = W - L - NUM, barH = narrow ? 16 : 22, rowH = narrow ? 42 : 34;
+      canvas(svg, W, 600);
+      var y = 18;
+      D.hk.courses.forEach(function (c) {
+        el('text', { x: 0, y: y, 'font-size': 14, 'font-weight': 650, fill: C.ink }, svg, c.label.replace(/^the /, 'The '));
+        y += 10;
+        groups.forEach(function (gid) {
+          var g = byId(c.groups, gid), made = g.rebuilds.filter(function (r) { return r.valid; }), hunt = made.filter(function (r) { return r.seed_hunt; }).length;
+          var share = made.length ? hunt / made.length : 0, barY = narrow ? y + 22 : y + 2;
+          el('text', { x: 0, y: y + 16, 'font-size': 13.5, fill: C.ink2 }, svg, LABEL[gid].replace(/^from/, 'From'));
+          el('rect', { x: L, y: barY, width: BW, height: barH, rx: 4, fill: '#f1f0ec' }, svg);
+          if (share > 0) el('rect', { x: L, y: barY, width: BW * share, height: barH, rx: 4, fill: C[gid] }, svg);
+          el('text', { x: L + BW + 10, y: barY + barH / 2 + 5, 'font-size': 14, 'font-weight': 700, fill: C.ink }, svg, hunt + ' of ' + made.length);
+          y += rowH;
+        });
+        y += 20;
+      });
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + (y - 14));
+    });
+  })();
+
+  // The wall: what reaches each kind of sandbox. Three boxes in a row, or stacked on a phone.
+  (function wall() {
+    var svg = document.getElementById('wall-svg');
+    function box(x, y, w, h, title, sub, fill, edge) {
+      el('rect', { x: x, y: y, width: w, height: h, rx: 14, fill: fill, stroke: edge, 'stroke-width': 2 }, svg);
+      el('text', { x: x + 16, y: y + 28, 'font-size': 16, 'font-weight': 700, fill: C.ink }, svg, title);
+      el('text', { x: x + 16, y: y + 48, 'font-size': 13, fill: C.ink2 }, svg, sub);
+    }
+    // item writes one line of what a box holds: a check, or a cross and struck-through text; a
+    // line with no mark (ok undefined) continues the line above.
+    function item(x, y, ok, text) {
+      if (ok !== undefined) el('text', { x: x, y: y, 'font-size': 15, 'font-weight': 700, fill: ok ? C.good : C.bad }, svg, ok ? '✓' : '✕');
+      var t = el('text', { x: x + 20, y: y, 'font-size': 14, fill: ok === false ? C.ink2 : C.ink }, svg, text);
+      if (ok === false) t.setAttribute('text-decoration', 'line-through');
+    }
+    function items(x, y, list) { list.forEach(function (it) { item(x, y, it[0], it[1]); y += 26; }); return y; }
+    function arrow(x1, y1, x2, y2, label, lx, ly, anchor) {
+      el('path', { d: 'M' + x1 + ' ' + y1 + ' L' + x2 + ' ' + y2, stroke: C.ink2, 'stroke-width': 2, fill: 'none', 'marker-end': 'url(#wall-arrow)' }, svg);
+      if (label) el('text', { x: lx, y: ly, 'font-size': 13, fill: C.ink2, 'text-anchor': anchor || 'middle', 'font-weight': 600 }, svg, label);
+    }
+    var REBUILD_YES = [[true, 'BRIEF.md: the prompt, with the recipe'], [true, "API.md: the course's rules"], [true, 'a plain starting controller'], [true, 'its own files']];
+    var REBUILD_NO = [[false, 'the simulator and its seed generator'], [false, 'the 16 practice seeds'], [false, 'the fresh seeds'], [false, "the loop's own controller"]];
+    var PRACTICE_YES = [[true, 'the simulator'], [true, "the rebuild's controller"], [true, 'the smoke seeds, and seeds'], [undefined, 'drawn for this rebuild']];
+    function sealedRuns(x, y, w) {
+      el('rect', { x: x, y: y, width: w, height: 108, rx: 10, fill: '#fbfbf9', stroke: C.line }, svg);
+      el('text', { x: x + 14, y: y + 22, 'font-size': 14, 'font-weight': 650, fill: C.ink }, svg, 'the practice run');
+      items(x + 14, y + 48, [[true, 'the simulator, the controller'], [true, 'practice.json: the 16 seeds'], [false, 'the fresh seeds']]);
+      el('rect', { x: x, y: y + 120, width: w, height: 108, rx: 10, fill: '#fbfbf9', stroke: C.line }, svg);
+      el('text', { x: x + 14, y: y + 142, 'font-size': 14, 'font-weight': 650, fill: C.ink }, svg, 'the fresh run');
+      items(x + 14, y + 168, [[true, 'the simulator, the controller'], [true, 'fresh.json: the ' + (D.ev.fresh_count || 64) + ' sealed seeds'], [false, 'the practice seeds']]);
+    }
+    var NOTE = 'Every call into every box is signed into the bundle. The leak scan reads every call into the first two.';
+    onLayout(function () {
+      var W = widthOf(svg), narrow = W < 960, y;
+      canvas(svg, W, 1400);
+      var m = el('marker', { id: 'wall-arrow', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, el('defs', {}, svg));
+      el('path', { d: 'M0 0 L10 5 L0 10 z', fill: C.ink2 }, m);
+      var pillW = narrow ? W - 20 : 300;
+      el('rect', { x: 10, y: 6, width: pillW, height: 46, rx: 23, fill: '#fff', stroke: C.axis, 'stroke-width': 1.5, 'stroke-dasharray': '5 4' }, svg);
+      el('text', { x: 10 + pillW / 2, y: 34, 'font-size': 14, fill: C.ink2, 'text-anchor': 'middle' }, svg, "the caller's model, outside plimsoll");
+      if (!narrow) {
+        arrow(160, 52, 160, 90, 'write_file, run_code', 160, 71);
+        box(10, 92, 300, 318, "A rebuild's sandbox", 'one session per rebuild', '#f4f8fd', C.honest);
+        y = items(28, 172, REBUILD_YES);
+        items(28, y + 10, REBUILD_NO);
+        arrow(312, 250, 360, 250, 'fly', 336, 240);
+        box(362, 92, 260, 318, 'A practice sandbox', 'fresh for every fly call', '#fff', C.axis);
+        y = items(380, 172, PRACTICE_YES);
+        items(380, y + 10, [[false, 'any sealed seed']]);
+        el('text', { x: 380, y: 360, 'font-size': 13, fill: C.ink2 }, svg, 'answers with flight results only:');
+        el('text', { x: 380, y: 378, 'font-size': 13, fill: C.ink2 }, svg, 'passed, why it ended, gates, distance');
+        box(674, 92, 276, 318, 'Grading sandboxes', 'two per controller, one per sealed set', '#fff', C.ink2);
+        sealedRuns(690, 150, 244);
+        el('rect', { x: 10, y: 424, width: 940, height: 40, rx: 10, fill: '#11233a' }, svg);
+        el('text', { x: 480, y: 449, 'font-size': 14, fill: '#fff', 'text-anchor': 'middle' }, svg, NOTE);
+        svg.setAttribute('viewBox', '0 0 960 470');
+        return;
+      }
+      var bw = W - 20, cx = W / 2;
+      arrow(cx, 52, cx, 86, 'write_file, run_code', cx + 10, 74, 'start');
+      box(10, 88, bw, 306, "A rebuild's sandbox", 'one session per rebuild', '#f4f8fd', C.honest);
+      y = items(28, 164, REBUILD_YES);
+      items(28, y + 10, REBUILD_NO);
+      arrow(cx, 396, cx, 432, 'fly', cx + 10, 420, 'start');
+      box(10, 434, bw, 254, 'A practice sandbox', 'fresh for every fly call', '#fff', C.axis);
+      y = items(28, 510, PRACTICE_YES);
+      y = items(28, y + 10, [[false, 'any sealed seed']]);
+      el('text', { x: 28, y: y + 8, 'font-size': 13, fill: C.ink2 }, svg, 'answers with flight results only:');
+      el('text', { x: 28, y: y + 26, 'font-size': 13, fill: C.ink2 }, svg, 'passed, why it ended, gates, distance');
+      box(10, 706, bw, 312, 'Grading sandboxes', 'two per controller, one per sealed set', '#fff', C.ink2);
+      sealedRuns(24, 772, bw - 28);
+      var lines = wrapText(NOTE, bw - 28, 13.5), barH = 22 + lines.length * 19;
+      el('rect', { x: 10, y: 1032, width: bw, height: barH, rx: 10, fill: '#11233a' }, svg);
+      textLines(svg, 24, 1032 + 26, lines, 13.5, { fill: '#fff' }, 19);
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + (1032 + barH + 4));
+    });
+  })();
+
+  // Which test to use.
+  (function choose() {
+    var svg = document.getElementById('choose');
+    var YES = { title: 'Make fresh tests', lines: ['A simulator, a generator, new data you can label.', 'Here: 64 flights, one sandbox run of ' + Math.round(D.ev.fresh_median_seconds) + ' s,', 'and every inflated score on this page showed', '(0, 18, 56 of 64). Cheap, direct, and it', 'measures the artifact itself.'] };
+    var NO = { title: 'Squeeze, then read what survived', lines: ['A fixed benchmark, real-world data, scarce labels.', 'Costs one agent session per rebuild.', 'Gives a rebuild to ship, and the habits a recipe', 'carries. Never the only check you trust.'] };
+    function box(x, y, w, title, lines, color) {
+      var titles = wrapText(title, w - 32, 17.5), h = 24 + titles.length * 22 + lines.length * 20;
+      el('rect', { x: x, y: y, width: w, height: h, rx: 12, fill: '#fff', stroke: color || C.axis, 'stroke-width': 2 }, svg);
+      var after = textLines(svg, x + 16, y + 28, titles, 16, { 'font-weight': 700, fill: C.ink }, 22);
+      textLines(svg, x + 16, after + 2, lines, 14, { fill: C.ink2 }, 20);
+      return y + h;
+    }
+    onLayout(function () {
+      var W = widthOf(svg);
+      canvas(svg, W, 700);
+      if (W >= 960) {
+        el('rect', { x: 300, y: 4, width: 360, height: 60, rx: 12, fill: '#fff', stroke: '#11233a', 'stroke-width': 2 }, svg);
+        el('text', { x: 480, y: 40, 'font-size': 16, 'font-weight': 700, fill: C.ink, 'text-anchor': 'middle' }, svg, 'Can you make fresh tests cheaply?');
+        el('path', { d: 'M 360 64 C 300 90, 200 90, 170 112', fill: 'none', stroke: C.ink2, 'stroke-width': 2 }, svg);
+        el('path', { d: 'M 600 64 C 660 90, 760 90, 790 112', fill: 'none', stroke: C.ink2, 'stroke-width': 2 }, svg);
+        el('text', { x: 240, y: 80, 'font-size': 14, 'font-weight': 700, fill: C.ink, 'text-anchor': 'end' }, svg, 'yes');
+        el('text', { x: 720, y: 80, 'font-size': 14, 'font-weight': 700, fill: C.ink }, svg, 'no');
+        box(10, 112, 420, YES.title, YES.lines, C.good);
+        box(530, 112, 420, NO.title, NO.lines, C.honest);
+        svg.setAttribute('viewBox', '0 0 960 250');
+        return;
+      }
+      var bw = W - 20, cx = W / 2;
+      el('rect', { x: 10, y: 4, width: bw, height: 50, rx: 12, fill: '#fff', stroke: '#11233a', 'stroke-width': 2 }, svg);
+      el('text', { x: cx, y: 35, 'font-size': 15, 'font-weight': 700, fill: C.ink, 'text-anchor': 'middle' }, svg, 'Can you make fresh tests cheaply?');
+      var y = box(10, 66, bw, 'Yes: ' + YES.title.toLowerCase(), wrapText(YES.lines.join(' '), bw - 32, 14), C.good);
+      y = box(10, y + 12, bw, 'No: ' + NO.title.charAt(0).toLowerCase() + NO.title.slice(1), wrapText(NO.lines.join(' '), bw - 32, 14), C.honest);
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + (y + 4));
+    });
+  })();
+})();
+</script>
+</body>
+</html>

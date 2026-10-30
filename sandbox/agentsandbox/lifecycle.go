@@ -2,6 +2,9 @@ package agentsandbox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -188,7 +191,9 @@ func (p *Provider) readBack(ctx context.Context, b box, c claim) (box, error) {
 // Hypervisor over Hyper-V; run on AKS, 2026-10-18). kata is a generic name another cluster
 // may map to another Kata shim; the per-pod check holds that one to the vm tier the same
 // way. Any other handler is refused until plimsoll has tested it: Kata's QEMU shims never
-// started a pod on kind (the agent in the VM did not answer within the shim's 10 s).
+// started a pod on kind (the agent in the VM did not answer within the shim's 10 s). An
+// operator may declare further gVisor handlers (Config.RunscHandlers), which each provider
+// adds to its own copy of this table at the kernel tier; this table is never written.
 var handlerTiers = map[string]sandbox.IsolationClass{
 	"runsc":               sandbox.IsolationKernel,
 	"runc":                sandbox.IsolationContainer,
@@ -197,16 +202,73 @@ var handlerTiers = map[string]sandbox.IsolationClass{
 	"kata-clh-runtime-rs": sandbox.IsolationVM,
 }
 
-// runtimeTier reads the runtime class's handler and returns the tier handlerTiers gives it.
+// runtimeTier reads the runtime class, holds it to the one bound to the startup smoke test
+// (checkClass), and returns the tier the provider's table gives its handler. Every check and every
+// pod's read-back calls it, so a class replaced after startup is refused before a claim,
+// and before any code if it changes between the check and the pod.
 func (p *Provider) runtimeTier(ctx context.Context) (sandbox.IsolationClass, error) {
-	var rc runtimeClass
-	if err := p.kube.get(ctx, runtimeClassPath(p.cfg.RuntimeClass), &rc); err != nil {
-		return sandbox.IsolationUnknown, fmt.Errorf("agentsandbox: read runtime class: %w", err)
+	rc, sum, err := p.readClass(ctx)
+	if err != nil {
+		return sandbox.IsolationUnknown, err
 	}
-	if tier, ok := handlerTiers[rc.Handler]; ok {
+	if err := p.checkClass(sum); err != nil {
+		return sandbox.IsolationUnknown, err
+	}
+	if tier, ok := p.handlers[rc.Handler]; ok {
 		return tier, nil
 	}
-	return sandbox.IsolationUnknown, fmt.Errorf("agentsandbox: runtime class %s has handler %q, which plimsoll has not tested", p.cfg.RuntimeClass, rc.Handler)
+	return sandbox.IsolationUnknown, fmt.Errorf("agentsandbox: runtime class %s has handler %q, which plimsoll has not tested and this daemon does not declare as gVisor (SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS)", p.cfg.RuntimeClass, truncate(rc.Handler, 80))
+}
+
+// readClass reads the runtime class and digests what the smoke test's proof depends on:
+// its UID (a class deleted and made again under the same name is another object; the
+// handler is immutable, so that is how a class's handler changes), the handler, and the
+// overhead and scheduling, which decide where its pods run. Metadata such as labels is
+// left out.
+func (p *Provider) readClass(ctx context.Context) (runtimeClass, string, error) {
+	var rc runtimeClass
+	if err := p.kube.get(ctx, runtimeClassPath(p.cfg.RuntimeClass), &rc); err != nil {
+		return rc, "", fmt.Errorf("agentsandbox: read runtime class: %w", err)
+	}
+	raw, err := json.Marshal(struct {
+		UID        string          `json:"uid"`
+		Handler    string          `json:"handler"`
+		Overhead   json.RawMessage `json:"overhead,omitempty"`
+		Scheduling json.RawMessage `json:"scheduling,omitempty"`
+	}{rc.Meta.UID, rc.Handler, rc.Overhead, rc.Scheduling})
+	if err != nil {
+		return rc, "", fmt.Errorf("agentsandbox: runtime class %s: %w", p.cfg.RuntimeClass, err)
+	}
+	sum := sha256.Sum256(raw)
+	return rc, hex.EncodeToString(sum[:]), nil
+}
+
+// checkClass refuses a runtime class other than the one bound to the startup smoke test.
+// Once a difference is seen it stays a refusal until a restart, as a changed policy set
+// does: pods the warm pool made from the other class may still be waiting.
+func (p *Provider) checkClass(sum string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.classChanged || p.classSum != "" && sum != p.classSum {
+		p.classChanged = true
+		return fmt.Errorf("agentsandbox: runtime class %s changed from the one bound to the startup smoke test (its UID, handler, overhead or scheduling); restart plimsolld to prove it", p.cfg.RuntimeClass)
+	}
+	return nil
+}
+
+// bindClass fixes the runtime class before the smoke test's behavioral tests, and checks
+// it again after them. It never replaces a class already bound to this provider instance.
+func (p *Provider) bindClass(ctx context.Context) error {
+	_, sum, err := p.readClass(ctx)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	if p.classSum == "" {
+		p.classSum = sum
+	}
+	p.mu.Unlock()
+	return p.checkClass(sum)
 }
 
 // tierCheck is the first command plimsoll sends to a claimed pod, before any of the run's

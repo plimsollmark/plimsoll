@@ -20,6 +20,93 @@ func writeGrants(t *testing.T, body string) string {
 	return p
 }
 
+// TestLoadProfilePassHeadersAndSDKEnv: the two fields a standard client library needs
+// load into the grant, and a name the broker owns fails at load, not at first call.
+func TestLoadProfilePassHeadersAndSDKEnv(t *testing.T) {
+	t.Setenv("CLAUDE_TOKEN", "tok-123")
+	p := writeGrants(t, `{
+	  "profiles": {
+	    "claude": {
+	      "base_url": "https://api.anthropic.com",
+	      "allow": ["POST /v1/messages"],
+	      "allowed_callers": ["agent-a"],
+	      "token": {"type": "static", "env": "CLAUDE_TOKEN"},
+	      "pass_headers": ["anthropic-version"],
+	      "set_headers": {"anthropic-workspace-id": "wrkspc_operator"},
+	      "sdk_env": {"ANTHROPIC_BASE_URL": "{origin}", "ANTHROPIC_API_KEY": "plimsoll-grant"}
+	    }
+	  }
+	}`)
+	r, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	profile, _ := r.Get("claude")
+	g := profile.Grant()
+	if len(g.PassHeaders) != 1 || g.PassHeaders[0] != "anthropic-version" || len(g.SetHeaders) != 1 || g.SetHeaders["anthropic-workspace-id"] != "wrkspc_operator" ||
+		g.SDKEnv["ANTHROPIC_BASE_URL"] != "{origin}" || g.SDKEnv["ANTHROPIC_API_KEY"] != "plimsoll-grant" {
+		t.Fatalf("grant = %+v", g)
+	}
+	for _, bad := range []string{`"pass_headers": ["Authorization"]`, `"pass_headers": ["Content-Type"]`, `"pass_headers": ["X-Plimsoll-Guard"]`, `"pass_headers": ["x-api-key"]`,
+		`"set_headers": {"x-api-key": "sk-ant-on-disk"}`, `"set_headers": {"Authorization": "Bearer x"}`, `"set_headers": {"anthropic-workspace-id": "a\nb"}`,
+		`"pass_headers": ["OpenAI-Project"], "set_headers": {"openai-project": "proj_1"}`,
+		`"sdk_env": {"PATH": "/x"}`, `"sdk_env": {"NODE_OPTIONS": "--require x"}`, `"sdk_env": {"HOST_API_SOCKET": "/x"}`, `"sdk_env": {"OPENAI_API_KEY": "a\nb"}`} {
+		p := writeGrants(t, `{"profiles": {"claude": {"base_url": "https://api.anthropic.com", "allow": ["POST /v1/messages"],
+		  "allowed_callers": ["agent-a"], "token": {"type": "static", "env": "CLAUDE_TOKEN"}, `+bad+`}}}`)
+		if _, err := Load(p); err == nil {
+			t.Errorf("Load accepted %s", bad)
+		}
+	}
+}
+
+// TestLoadProfileUploadFields: route_max_request_bytes, route_content_types and
+// max_request_bytes load into the grant keyed by allow entry, and a key that is not a
+// route, a limit over the ceiling or a type the broker does not forward fails the load.
+func TestLoadProfileUploadFields(t *testing.T) {
+	t.Setenv("MODEL_TOKEN", "tok-123")
+	p := writeGrants(t, `{
+	  "profiles": {
+	    "checker": {
+	      "base_url": "https://api.example",
+	      "allow": ["POST /v1/files", "POST /v1/responses", "POST /v1/asr/transcribe"],
+	      "allowed_callers": ["agent-a"],
+	      "token": {"type": "static", "env": "MODEL_TOKEN"},
+	      "route_max_request_bytes": {"POST /v1/files": 16777216, "post /v1/asr/transcribe": 8388608},
+	      "route_content_types": {"POST /v1/files": ["multipart/form-data"], "POST /v1/asr/transcribe": ["multipart/form-data"]},
+	      "max_request_bytes": 50331648
+	    }
+	  }
+	}`)
+	r, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	profile, _ := r.Get("checker")
+	g := profile.Grant()
+	files := sandbox.HostRoute{Method: "POST", Path: "/v1/files"}
+	transcribe := sandbox.HostRoute{Method: "POST", Path: "/v1/asr/transcribe"}
+	if g.RouteMaxRequestBytes[files] != 16<<20 || g.RouteMaxRequestBytes[transcribe] != 8<<20 || g.MaxRequestBytes != 48<<20 ||
+		len(g.RouteContentTypes[files]) != 1 || g.RouteContentTypes[files][0] != "multipart/form-data" || len(g.RouteContentTypes[transcribe]) != 1 {
+		t.Fatalf("grant = %+v", g)
+	}
+	for _, bad := range []string{
+		`"route_max_request_bytes": {"/v1/files": 1}`,
+		`"route_max_request_bytes": {"POST /v1/other": 1}`,
+		`"route_max_request_bytes": {"POST /v1/files": 536870913}, "max_request_bytes": 1073741824`,
+		`"route_max_request_bytes": {"POST /v1/files": 2097152}, "max_request_bytes": 1048576`,
+		`"max_request_bytes": 1073741825`,
+		`"route_content_types": {"POST /v1/files": ["multipart/*"]}`,
+		`"route_content_types": {"POST /v1/files": []}`,
+		`"route_content_types": {"POST /v1/responses": ["application/json"]}`,
+	} {
+		p := writeGrants(t, `{"profiles": {"checker": {"base_url": "https://api.example", "allow": ["POST /v1/files", "POST /v1/responses"],
+		  "allowed_callers": ["agent-a"], "token": {"type": "static", "env": "MODEL_TOKEN"}, `+bad+`}}}`)
+		if _, err := Load(p); err == nil {
+			t.Errorf("Load accepted %s", bad)
+		}
+	}
+}
+
 func TestLoadProfile(t *testing.T) {
 	t.Setenv("HUE_TOKEN", "tok-123")
 	p := writeGrants(t, `{

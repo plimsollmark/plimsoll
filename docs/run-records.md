@@ -55,7 +55,8 @@ executes depends on the record, so adding it did not change the <dfn>*protocol
 number*</dfn>: the version every request states, which goes up when a new request field
 changes what a daemon may execute, or when clients start requiring something new of
 answers. Protocol 4 (2026-10-23) came with record version 4, which every client now
-requires.
+requires. Protocol 5 came with `RunRequest.prefer_warm` and `OpenSessionRequest.warm_only`,
+which an older daemon would have ignored, making a sandbox the caller asked it not to.
 
 ## Fields
 
@@ -69,7 +70,7 @@ requires.
 | `environment` | The exact outer image artifact or embedded interpreter selected for the run. For Docker this is the image index ID (the ID of the list that points to the image for each platform), which may include fresh build metadata even when the executable image is unchanged. Empty when none is stated. |
 | `software_identity` | The <dfn>*manifest*</dfn> (the file listing one image's configuration and layers) of the executable image selected, with its platform, for example `oci-manifest:linux/amd64@sha256:<digest>`. Empty when the provider cannot establish which image it selected. |
 | `software_rule_id` | The software rule the caller required, which the daemon checks before the run starts: `exact:<identity>` or `approved:sha256:<digest of approved identities>`. Empty when the caller set no rule. The request digest covers the complete approved list. |
-| `policy` | The sandbox policy the provider verified before the run, by digest. For <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, it is the policy that sets the sandbox's network and filesystem rules, and `openshell-policy:sha256:...` is the hash its gateway itself reports. Empty for providers without one. |
+| `policy` | The sandbox policy the provider verified for the run, by digest. For <dfn>*OpenShell*</dfn>, NVIDIA's agent sandbox runtime, it is the policy that sets the sandbox's network and filesystem rules, and `openshell-policy:sha256:...` is the hash its gateway itself reports. For docker it is the <dfn>*seccomp*</dfn> profile (the kernel's list of the operations a program may ask it for) this run applied: `seccomp:sha256:...` names the file by the SHA-256 of its bytes (the default, or the variant a run gets when its API permission asked for the local address for client libraries, `sdk_env`, [seccomp.md](seccomp.md)), `seccomp:docker-default` and `seccomp:unconfined` the two docker keywords, and `seccomp:skipped:runsc` a run under the `runsc` runtime, where no host profile is applied. A call in a session carries the provider's statement instead (the default and, when configured, the variant), since a session never applies the variant. Empty for providers without one. |
 | `instance` | The sandbox instance that ran the call, as the response states it: a typed reference, a kind of lowercase letters, digits and `-`, a colon, and an ID of letters, digits and `. _ : -`, at most 160 bytes in all, such as `k8s-pod-uid:` and the UID the Kubernetes API server gave the pod. Empty when the provider names none (so far every provider but the [agent-sandbox (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#agent-sandbox) one). It is an opaque join key, never a name or a path: it lets evidence kept outside plimsoll, such as a log of everything the pod's code asked its kernel to do, be tied to this run. |
 | `started_unix_ms`, `ended_unix_ms` | When the daemon received the request and when it finished the result. |
 | `session`, `sequence`, `previous_sha256` | A call's place in its session and its chain: the SHA-256 of the session ID (the ID works like a password for the session, so it is never recorded), the call's number counting from 1, and the previous call's `record_sha256`. Empty or zero for a single run. |
@@ -79,7 +80,13 @@ requires.
 Left out on purpose: the **trace id** (the caller's own ID for matching this run to
 its logs; it changes nothing that runs, and leaving it out keeps one request's digest the
 same on every attempt), **durations** (they differ on every run, so a replay could never match),
-and **advice** (analysis of the run's host-API calls, not its output).
+**advice** (analysis of the run's host-API calls, not its output), and for a
+[cell (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#cell)
+`Run` runs by itself (code for a Python or JavaScript interpreter, its last value printed), **`prefer_warm`** on the request and **`warm`** on the answer (whether a
+waiting pool sandbox ran it, [sessions.md](sessions.md), "A cell for one call"). The
+first chooses which sandbox runs the cell, not what runs. The second states which did,
+and is not signed: record version 4 has no field for it, and adding one is a new record
+version. Such a cell's record is a single run's on either path, with no session fields.
 
 ## The encoding
 
@@ -403,7 +410,7 @@ not that the predicate is true: the harness signs what it is given, so a reader 
 predicate from the evidence it names and compares, as `examples/pr-receipt/verify.py` does.
 
 `request.json` is a `plimsoll.v1.RunRequest` in protobuf JSON, such as
-`{"protocol": 4, "javascript": {"code": "console.log(1)"}}`. The token comes from the
+`{"protocol": 5, "javascript": {"code": "console.log(1)"}}`. The token comes from the
 environment and the key from a file or `PLIMSOLL_ATTEST_KEY`, so neither appears in a
 process listing. A bundle holds every run's request and response in full, the submitted
 code and its output included, so on Unix `run` creates it readable by its owner only

@@ -18,6 +18,18 @@ type exchangeJSON struct {
 	Response json.RawMessage `json:"response"`
 }
 
+// laterFields are the fields the protocol gained after the exchange format the published
+// bills of materials were written in, by their place in the exchange. Every other field is
+// written whatever its value (EmitUnpopulated); one of these only when it carries a value,
+// so a run that never set it keeps the exchange, and the bill, its bundle reproduced
+// before the field existed. TestExchangeFieldsAreTheFormatsOrLater fails when the
+// protocol gains a field without a line here (or a decision to make every published
+// bill again).
+var laterFields = [][]string{
+	{"request", "prefer_warm"}, // protocol 5: a Run cell may ask for a waiting pool member
+	{"response", "warm"},       // protocol 5: whether one ran it
+}
+
 func exchangeBytes(s source) ([]byte, error) {
 	m := protojson.MarshalOptions{UseProtoNames: true, EmitUnpopulated: true}
 	req, err := m.Marshal(s.Request)
@@ -37,7 +49,51 @@ func exchangeBytes(s source) ([]byte, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
 	}
+	for _, path := range laterFields {
+		dropUnset(fields, path)
+	}
 	return json.Marshal(fields)
+}
+
+// dropUnset deletes the member at path when it holds its field's zero value as
+// EmitUnpopulated writes it (false, 0, "0", "", an empty list or object, null).
+func dropUnset(v any, path []string) {
+	for _, key := range path[:len(path)-1] {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return
+		}
+		v = m[key]
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return
+	}
+	last := path[len(path)-1]
+	switch x := m[last].(type) {
+	case nil:
+		delete(m, last)
+	case bool:
+		if !x {
+			delete(m, last)
+		}
+	case float64:
+		if x == 0 {
+			delete(m, last)
+		}
+	case string:
+		if x == "" || x == "0" {
+			delete(m, last)
+		}
+	case []any:
+		if len(x) == 0 {
+			delete(m, last)
+		}
+	case map[string]any:
+		if len(x) == 0 {
+			delete(m, last)
+		}
+	}
 }
 
 func checkExchangeJSON(raw []byte, s source) error {

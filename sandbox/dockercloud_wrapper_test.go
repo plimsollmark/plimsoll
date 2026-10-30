@@ -115,6 +115,22 @@ func TestDockerCloudExecWrapperOnHostShell(t *testing.T) {
 			t.Fatalf("rc=%d elapsed=%v, want 137 after about 1s", rc, elapsed)
 		}
 	})
+	t.Run("a child left holding the streams does not keep the answer past the limit", func(t *testing.T) {
+		// coreutils timeout kills its whole process group, so the child leaves it (setsid),
+		// as one busybox timeout leaves behind does without trying: busybox kills only the
+		// command it started. The child holds both streams for 8 s; the answer must come
+		// about a second after the 1 s limit, with what the command wrote.
+		if _, err := exec.LookPath("setsid"); err != nil {
+			t.Skip("setsid not on PATH")
+		}
+		out, errb, rc, elapsed, flooded := runWrapperOnHost(t, 1, 64, "sh", "-c", "echo two; echo err >&2; setsid sleep 8 & sleep 30")
+		// dash reports the command's kill on the guest's stderr ("Killed"), as it always
+		// has; the readers' kills are not reported.
+		if string(out) != "two\n" || strings.ReplaceAll(string(errb), "Killed\n", "") != "err\n" || strings.Count(string(errb), "Killed") > 1 ||
+			rc != 137 || flooded || elapsed > 5*time.Second {
+			t.Fatalf("stdout=%q stderr=%q rc=%d flooded=%v elapsed=%v; want the output, 137, about 2s", out, errb, rc, flooded, elapsed)
+		}
+	})
 	t.Run("a guest line in the trailer's shape is the guest's, not the trailer", func(t *testing.T) {
 		// The wrapper writes its trailer last whatever the guest wrote, so a guest that
 		// ends its stderr with a line in the trailer's shape (a flood flag of 1, a time
@@ -183,6 +199,7 @@ sh wrapper.sh 5 11 yes >o2 2>e2; r=$?; t=$(tail -n1 e2); echo "case2 rc=$r outle
 sh wrapper.sh 5 11 sh -c 'yes >&2' >o3 2>e3; r=$?; t=$(tail -n1 e3); echo "case3 rc=$r errlen=$(( $(wc -c <e3) - ${#t} - 2 ))"
 sh wrapper.sh 1 11 sleep 30 >o4 2>e4; r=$?; set -- $(tail -n1 e4); echo "case4 rc=$r $1 cs=$2 fl=$3"
 sh wrapper.sh 5 11 sh -c 'yes x | head -c 2097152; echo done >&2; exit 7' >o5 2>e5; r=$?; t=$(tail -n1 e5); echo "case5 rc=$r outlen=$(wc -c <o5 | tr -d ' ') err=$(head -n1 e5) fl=${t##* }"
+b=$(date +%s); sh wrapper.sh 1 11 sh -c 'echo two; sleep 8' >o6 2>e6; r=$?; echo "case6 rc=$r out=$(cat o6) secs=$(( $(date +%s) - b ))"
 `
 	res, err := d.RunProject(context.Background(), ProjectRequest{
 		Files:   []File{{Path: "wrapper.sh", Content: wrapper}, {Path: "cases.sh", Content: script}},
@@ -202,6 +219,9 @@ sh wrapper.sh 5 11 sh -c 'yes x | head -c 2097152; echo done >&2; exit 7' >o5 2>
 		regexp.MustCompile(`(?m)^case3 rc=[1-9][0-9]* errlen=11$`),
 		regexp.MustCompile(`(?m)^case4 rc=137 ` + dcTrailer + ` cs=(1[0-9][0-9]|[2-9][0-9][0-9]) fl=0$`),
 		regexp.MustCompile(`(?m)^case5 rc=7 outlen=11 err=done fl=0$`),
+		// busybox timeout kills the sh it started, not its sleep, which holds both streams
+		// for 8 s: the answer comes about a second after the 1 s limit, with the output.
+		regexp.MustCompile(`(?m)^case6 rc=137 out=two secs=[1-4]$`),
 	} {
 		if !want.MatchString(out) {
 			t.Errorf("busybox wrapper output does not match %s:\n%s\nstderr: %s", want, out, res.Steps[0].Stderr)

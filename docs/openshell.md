@@ -314,6 +314,38 @@ of leftover sandboxes removes it only after the lifetime plus 5 minutes.
 Measured costs: a session call took 61 to 87 ms end to end (the read-back, the call and
 the sweep) against 550 ms for a snippet that creates its own sandbox.
 
+**A warm pool, when `SANDBOX_SESSION_POOL` is set.** The daemon keeps that many session
+sandboxes ready, each made as an open makes one (the run policy, `sleep` as the main
+process, read back, its processes recorded) with an interpreter started and its relay
+attached for a set of the languages the image runs, and an open hands one over instead
+of creating a sandbox. It is the docker provider's pool ([sessions.md](sessions.md#docker),
+"A warm pool"), with the same rules: a waiting sandbox has run only plimsoll's programs
+and the gateway's supervisor, goes to one session (or to one `Run` cell that asks for
+one, [sessions.md](sessions.md), "A cell for one call"), and is deleted when that ends;
+the same language hints and split; a waiting sandbox is replaced after 30 minutes. What
+differs here:
+
+- A waiting sandbox is handed over only under the tier and gateway version the last
+  driver check read. The image, policy and resources are the provider's configuration,
+  and the read-back before every call, the first one included, compares them.
+- Its relays are exec streams held open to the gateway, as a session's are; one whose
+  stream ended is not handed over and is replaced.
+- It declares 30 minutes plus `SANDBOX_SESSION_LIFETIME` as its lifetime, so another
+  instance's cleanup removes a crashed daemon's waiting sandboxes within that bound; the
+  instance that made them never reaps them while they wait.
+- As for any session here, another client of the same gateway can change a waiting
+  sandbox, and the read-back catches only what it compares: give plimsoll a gateway of its
+  own.
+
+On a laptop (measured 2026-10-28, gateway v0.1.2, docker driver), opening a session and
+running its first cell took 15 ms (JavaScript) and 11 ms (Python) with a pool, against 716
+and 763 ms without one, of which the open alone was about 610 to 660 ms. A waiting sandbox
+held 65 MiB with both interpreters running, against 21 MiB bare (the sandbox's container
+and the gateway's supervisor container beside it); that memory counts inside the
+session's limit, the language a session never uses included
+([warm pool page](https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html),
+"OpenShell", with the data and the program).
+
 What code in a session's sandbox can see of the supervisor (PID 1, which runs as the
 same user): its status, but not its file descriptors, memory or environment (permission
 denied), and it cannot signal it at all.

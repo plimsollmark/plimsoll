@@ -225,6 +225,26 @@ type Daemon struct {
 	Provider *Provider
 	Service  *rpc.SandboxService
 	stop     func()
+	calls    *callCount
+}
+
+// callCount counts the procedures the daemon was asked for, by name.
+type callCount struct {
+	mu sync.Mutex
+	n  map[string]int
+}
+
+func (c *callCount) add(name string) {
+	c.mu.Lock()
+	c.n[name]++
+	c.mu.Unlock()
+}
+
+// Calls is how many times the daemon was asked for a procedure ("Run", "OpenSession").
+func (d *Daemon) Calls(name string) int {
+	d.calls.mu.Lock()
+	defer d.calls.mu.Unlock()
+	return d.calls.n[name]
 }
 
 // Stop takes the daemon away, as a crash or a lost network would.
@@ -244,39 +264,41 @@ type Options struct {
 	// StripRequestID removes the daemon's echo of the request ID from every Run and
 	// SessionRun answer, as an intermediary serving another request's answer would.
 	StripRequestID bool
+	// Pool is the session pool the daemon states (SANDBOX_SESSION_POOL); Warm is how
+	// many warm-only opens the provider hands a session before it refuses them.
+	Pool, Warm int
 }
 
 // Serve starts a daemon over a Provider.
 func Serve(t testing.TB, o Options) *Daemon {
 	t.Helper()
-	p := &Provider{Sessions: &sandboxtest.Sessions{}, Tier: o.Tier, ResultTier: o.ResultTier, SessionLanguages: o.SessionLanguages, OpenDelay: o.OpenDelay, CloseDelay: o.CloseDelay}
+	p := &Provider{Sessions: &sandboxtest.Sessions{Warm: o.Warm}, Tier: o.Tier, ResultTier: o.ResultTier, SessionLanguages: o.SessionLanguages, OpenDelay: o.OpenDelay, CloseDelay: o.CloseDelay}
 	svc := rpc.NewSandboxService(p)
-	svc.Sessions = rpc.SessionConfig{MaxSessions: o.Sessions, MaxPerOwner: o.PerOwner, Lifetime: time.Hour, IdleTimeout: time.Hour}
-	url, stop := serve(t, svc, o.StripRequestID)
-	return &Daemon{URL: url, Provider: p, Service: svc, stop: stop}
+	svc.Sessions = rpc.SessionConfig{MaxSessions: o.Sessions, MaxPerOwner: o.PerOwner, Pool: o.Pool, Lifetime: time.Hour, IdleTimeout: time.Hour}
+	calls := &callCount{n: map[string]int{}}
+	url, stop := serve(t, svc, o.StripRequestID, calls)
+	return &Daemon{URL: url, Provider: p, Service: svc, stop: stop, calls: calls}
 }
 
 // ServeWasm starts a daemon over the wasm provider: snippets only, no sessions.
 func ServeWasm(t testing.TB) string {
 	t.Helper()
-	url, _ := serve(t, rpc.NewSandboxService(sandboxtest.Wasm()), false)
+	url, _ := serve(t, rpc.NewSandboxService(sandboxtest.Wasm()), false, &callCount{n: map[string]int{}})
 	return url
 }
 
-func serve(t testing.TB, svc *rpc.SandboxService, strip bool) (string, func()) {
+func serve(t testing.TB, svc *rpc.SandboxService, strip bool, calls *callCount) (string, func()) {
 	svc.Logger = slog.New(slog.DiscardHandler)
 	mux := http.NewServeMux()
 	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
 	mux.Handle(path, h)
-	var handler http.Handler = mux
-	if strip {
-		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasSuffix(r.URL.Path, "/Run") || strings.HasSuffix(r.URL.Path, "/SessionRun") {
-				w = stripping{w}
-			}
-			mux.ServeHTTP(w, r)
-		})
-	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.add(r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+		if strip && (strings.HasSuffix(r.URL.Path, "/Run") || strings.HasSuffix(r.URL.Path, "/SessionRun")) {
+			w = stripping{w}
+		}
+		mux.ServeHTTP(w, r)
+	})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return srv.URL, func() { srv.CloseClientConnections(); srv.Close() }

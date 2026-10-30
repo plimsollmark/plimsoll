@@ -1,0 +1,40 @@
+{
+ "job": "hackathon-regrade",
+ "started": "2026-10-27T22:07:13Z",
+ "sealed": "2026-10-27T22:07:13Z",
+ "ended": "2026-10-27T22:32:10Z",
+ "fresh_sha256": "a2b286ab8622c0a461fd0939a40a7f9e0512fbf762c0df590bf2b3b4e0354812",
+ "usage": {
+  "prompt": 0,
+  "completion": 0,
+  "calls": 0
+ },
+ "built": [],
+ "missing": [
+  {
+   "course": "hard",
+   "group": "cheater",
+   "n": 2,
+   "why": "no controller at runs/h1/repro/gamed/r2/controller.js"
+  },
+  {
+   "course": "hard",
+   "group": "cheater",
+   "n": 7,
+   "why": "no controller at runs/h1/repro/gamed/r7/controller.js"
+  },
+  {
+   "course": "hard",
+   "group": "cheater",
+   "n": 10,
+   "why": "no controller at runs/h1/repro/gamed/r10/controller.js"
+  },
+  {
+   "course": "hard",
+   "group": "cheater",
+   "n": 12,
+   "why": "no controller at runs/h1/repro/gamed/r12/controller.js"
+  }
+ ],
+ "failures": []
+}

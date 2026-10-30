@@ -422,6 +422,10 @@ func fakeRunner(t *testing.T, report func(wirePlan) (stdout, stderr string, exit
 
 func TestRunProject(t *testing.T) {
 	f, p := newFake(t)
+	// Pinned by digest, so the result names the image: a completed run's result is the
+	// runner's report, and it once came back without the provider's image (2026-10-29),
+	// so the signed record of every completed project run named no environment.
+	p.cfg.Image = "plimsoll/sandbox@sha256:" + strings.Repeat("ab", 32)
 	var seen wirePlan
 	f.run = fakeRunner(t, func(plan wirePlan) (string, string, int32) {
 		seen = plan
@@ -448,6 +452,7 @@ func TestRunProject(t *testing.T) {
 	}
 	want := sandbox.ProjectResult{
 		Sandbox: Name, Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted,
+		EnvironmentIdentity: "openshell-image:sha256:" + strings.Repeat("ab", 32),
 		Steps: []sandbox.StepResult{
 			{Command: "node main.js", Stdout: "hi\n", Duration: 12 * time.Millisecond},
 			{Command: "exit 2", Stderr: "boom", StderrTruncated: true, ExitCode: 2, Duration: time.Millisecond},

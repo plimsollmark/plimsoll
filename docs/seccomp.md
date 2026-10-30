@@ -72,7 +72,8 @@ SCMP_ACT_ERRNO`, `defaultErrnoRet: 1`).
   for a run's code, is reached over a bind-mounted Unix socket, and libuv (node's I/O
   library) uses Unix socketpairs internally. Other socket families, notably `AF_ALG`,
   are denied: `--network none` alone does not remove the kernel's socket families
-  that never route over a network.
+  that never route over a network. The one kind of run that needs IPv4 sockets gets a
+  second profile, never a wider default (the section below).
 - **`memfd_create`, `inotify_*`, `timerfd_*`, `signalfd*`** are allowed: node/libuv
   use them for normal operation.
 - **`kill` is allowed.** Each run has its own PID namespace, so `kill(2)` reaches
@@ -100,6 +101,113 @@ SCMP_ACT_ERRNO`, `defaultErrnoRet: 1`).
   them by omission, and a program built on Ubuntu 20.04's C library failed with `EPERM`
   while setting the modification time of files it had just written to `/work`.
   `TestDockerLegacyTimestampSyscalls` makes each call from inside a run.
+
+## The second profile: runs whose grant sets `sdk_env`
+
+A second profile exists for one kind of run: a run whose <dfn>*grant*</dfn> (the
+permission, attached to one run, for its code to call listed routes of one API) comes from
+a profile that sets `sdk_env`, the local address a standard client library reaches the
+broker through
+([capability-grants.md](capability-grants.md#standard-client-libraries-in-any-language)).
+That address is a forwarder listening on IPv4 loopback inside the container, which the
+default profile's `AF_UNIX`-only rule denies. The variant is not a second file to copy:
+with `SANDBOX_DOCKER_SECCOMP_SDK=derived` the daemon makes it from the configured default
+at startup, so the two can never drift apart, and the derived bytes are what docker
+applies (a copy named by their SHA-256, beside the default, see below). It is the default plus
+exactly these rules, and `TestShippedSeccompSDKVariantDiffersFromDefaultByExactlyItsRules`
+fails if the derivation changes anything else:
+
+- **`socket(AF_INET, type, protocol)` is allowed only for TCP streams.** `type` is masked
+  so that only `SOCK_NONBLOCK` and `SOCK_CLOEXEC` may be added to `SOCK_STREAM` (mask
+  `0xfff7f7ff`, expected `1`), and `protocol` must be `0` or `IPPROTO_TCP` (`6`). UDP
+  (`SOCK_DGRAM`), raw sockets, SCTP (protocol 132) and Multipath TCP (protocol 262) fail
+  the type or protocol check; `AF_INET6` and every other family stay denied, and
+  `socketpair` stays `AF_UNIX`-only.
+- **`setsockopt` and `getsockopt` are no longer allowed whole.** The default allows them
+  unfiltered; the variant takes them out of that list, because allow rules combine as a
+  union, and allows only the options the forwarder and the client transports set, by
+  level and name: `setsockopt` for `SO_REUSEADDR` (libuv sets it on every TCP listener),
+  `SO_KEEPALIVE`, `TCP_NODELAY`, `TCP_KEEPIDLE`, `TCP_KEEPINTVL` and `TCP_KEEPCNT` (node's
+  HTTP agents and the client libraries keep connections alive without Nagle's delay);
+  `getsockopt` for `SO_ERROR` (libuv reads a connect's result) and `SO_TYPE` (libuv
+  classifies a child's standard input and output when they are a socketpair; measured:
+  without it the project runner's own isolation check failed, since the check is a node
+  child started by node). `TCP_ULP` (the
+  option that attached the kernel TLS code behind CVE-2023-0461), the `SOL_TLS` options
+  and the socket-filter options (`SO_ATTACH_FILTER`, `SO_ATTACH_BPF`,
+  `SO_ATTACH_REUSEPORT_CBPF`, `SO_ATTACH_REUSEPORT_EBPF`) are refused, and
+  `TestShippedSeccompSDKVariant` checks each of these allowances and refusals against the
+  file itself.
+
+What the variant adds, said plainly: hostile code in such a run gains IPv4 TCP socket
+creation and the kernel code behind it (connection state, send and receive queues, timers,
+loopback packet processing, the allowed options, the socket `ioctl` handlers that no
+seccomp rule can tell apart from other `ioctl`s), all in the shared host kernel. Under
+`--network none` the container has only its loopback interface and no capabilities, so
+those sockets reach nothing outside the container and cannot be raw; but "only loopback"
+describes connectivity, not kernel safety, and seccomp cannot read the address a connect
+or bind points at, so it cannot hold the run's code to the forwarder's port. That is why the
+variant exists at all instead of widening the default: a caller selects a
+<dfn>*grant profile*</dfn> (a grant stored on the server under a name) it is authorized
+for, and a profile that sets `sdk_env` authorizes this exposure for that run alone.
+
+### Configuring the two, and how a run is matched to one
+
+`SANDBOX_DOCKER_SECCOMP` is the profile every run gets. `SANDBOX_DOCKER_SECCOMP_SDK` is
+the one a run gets instead when its grant sets `sdk_env`: `derived` makes it from the
+default; a path names a variant of your own (for a default that is not the shipped
+profile's shape, which the derivation refuses):
+
+```sh
+SANDBOX_PROVIDER=docker \
+SANDBOX_DOCKER_SECCOMP=/etc/plimsoll/seccomp.json \
+SANDBOX_DOCKER_SECCOMP_SDK=derived \
+plimsolld
+```
+
+The rules, in the order they are applied (`dockerSeccomp.seccompFor` in
+`sandbox/docker_seccomp.go`):
+
+- Under gVisor (`runsc`) no host profile is applied to any run, and the run's record says
+  `seccomp:skipped:runsc` rather than naming a profile that was not in force.
+- A run whose grant does not set `sdk_env` (a plain grant, or none) gets
+  `SANDBOX_DOCKER_SECCOMP`, always. It also gets no forwarder and no loopback address.
+- A run whose grant sets `sdk_env` gets `SANDBOX_DOCKER_SECCOMP_SDK` when it is set. With
+  docker's built-in profile or `unconfined` as the default (both already allow these
+  sockets) it gets that default. With a profile file as the default and no variant named,
+  it is **refused before anything starts**, marked as a run in which nothing ran, with
+  reason `environment`: an operator's own profile is never replaced or widened on
+  plimsoll's initiative.
+- `SANDBOX_DOCKER_SECCOMP_SDK` needs `SANDBOX_DOCKER_SECCOMP` to be a file, and must be a
+  file itself; <dfn>*Preflight*</dfn>, the check the docker backend makes of its own
+  configuration before it serves anything, refuses the other combinations. A variant file of
+  the operator's own must keep what the derived variant guarantees, or Preflight refuses it: deny by
+  default, `socket` allowed only where a rule compares its address family, and `socketcall`
+  (the 32-bit entry point that hides `socket`'s arguments from a filter) not allowed at all.
+  A rule is read under both spellings docker accepts, `names` and the older `name`, and one that
+  sets both is refused, as docker refuses it.
+  <dfn>*Hardened mode*</dfn>,
+  the daemon setting that refuses to serve unless every production property is in force
+  ([hardened-mode.md](hardened-mode.md)), forbids `unconfined` for either.
+
+The choice is made for each run as it starts, from its grant, with nothing shared between
+runs: two runs at once apply different profiles (`TestDockerSeccompProfileIsSelectedPerRun`). A grant with
+`sdk_env` in a session (one sandbox kept for many calls) is refused as unsupported before
+anything runs: a session's container applies one profile for its life,
+and a later call could not change the profile of processes already running.
+
+### What Describe and the run record say
+
+Preflight reads each configured profile, computes the SHA-256 of its bytes and writes a copy
+named by that hash into plimsoll's private directory; runs apply the copy, so what docker
+enforced is exactly what the hash names, whatever happens to the operator's file afterwards.
+`Describe` states the <dfn>*provider*</dfn>'s (the backend that runs the code) `policy` as
+`seccomp:sha256:<hash of the default>`,
+followed by ` sdk_env:seccomp:sha256:<hash of the variant>` when one is configured;
+`seccomp:docker-default`, `seccomp:unconfined` and `seccomp:skipped:runsc` name the other
+cases. Each run's record names the one profile that run applied in its `policy` field
+([run-records.md](run-records.md)), so a record of an `sdk_env` run is told apart from any
+other by its hash.
 
 ## Architectures
 

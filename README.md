@@ -75,12 +75,13 @@ the hashes before accepting an answer.
 | Job | What Plimsoll supplies | Go deeper |
 |---|---|---|
 | Run code | JavaScript snippets, projects containing files and ordered build/test/run steps, and compiled simulation modules on Docker. | [INTERNAL · payloads and examples →](docs/example-programs.md) |
-| Keep a workspace | <dfn>*Sessions*</dfn> keep one sandbox for many calls and retain its files between them. Supported Python and JavaScript interpreters retain variables too; warm pools keep sandboxes ready to claim. | [INTERNAL · sessions and pools →](docs/sessions.md) |
-| Limit API access | A per-run <dfn>*grant*</dfn> permits listed routes through a <dfn>*broker*</dfn>, a proxy outside the sandbox. The broker attaches the upstream credential; guest code never holds it. Generate routes, an injected client and the description of a <dfn>*tool*</dfn>, a named action an agent can call, from one OpenAPI document, a machine-readable API specification. | [INTERNAL · capability grants →](docs/capability-grants.md) |
+| Keep a workspace | <dfn>*Sessions*</dfn> keep one sandbox for many calls and retain its files between them. Supported Python and JavaScript interpreters retain variables too; warm pools keep sandboxes ready to claim, and a single call that asks for one (`prefer_warm`) runs in a waiting sandbox that is deleted after it. | [INTERNAL · sessions and pools →](docs/sessions.md), [INTERNAL · one call timed, warm and fresh →](https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html) |
+| Limit API access | A per-run <dfn>*grant*</dfn> permits listed routes through a <dfn>*broker*</dfn>, a proxy outside the sandbox. The broker attaches the upstream credential; guest code never holds it. Generate routes, an injected client and the description of a <dfn>*tool*</dfn>, a named action an agent can call, from one OpenAPI document, a machine-readable API specification. Standard client libraries, such as the OpenAI and Anthropic SDKs, reach a granted API at a local address inside the sandbox, with streamed answers and uploads of up to 512 MiB a route. A grant to a chat API also reaches whatever that API's own server-side tools fetch from the internet; the guide says how to turn them off. | [INTERNAL · capability grants →](docs/capability-grants.md), [INTERNAL · both SDKs under a grant →](https://plimsollmark.github.io/plimsoll/examples/sdk-grants/index.html) |
+| Keep answer keys out of a run | The ship scan checks every file a call carries, and the archives it can read inside them, against the files, source lines and values the operator withholds, such as an evaluation's answer keys and sealed tests. Each entry either refuses a match before any of the call's code runs or only logs it, as the operator sets it. The scan does not see files already in the image, what a grant fetches, or material hidden on purpose, such as an archive encoded twice; the guide lists its limits. | [INTERNAL · ship scan →](docs/ship-scan.md), [INTERNAL · five calls, refused and logged →](https://plimsollmark.github.io/plimsoll/examples/ship-scan/index.html) |
 | Choose where code runs | Require an isolation tier on each request. A placement library selects among servers and retries elsewhere only on a request-bound refusal that says execution was not <dfn>*dispatched*</dfn>, never handed to the provider to run. | [INTERNAL · placement and retries →](docs/placement.md) |
 | Check, sign and replay | Checked run records, linked session records, signed bundles and separately signed statements. The signing tool runs outside the server; the server holds no <dfn>*signing key*</dfn>, the private key that makes signatures. | [INTERNAL · records and signing →](docs/run-records.md) |
 | Find wasted API calls | The efficiency advisor reports repeated or avoidable calls using route templates, counts and timings. It runs after execution, calls no model and never changes the result. | [INTERNAL · efficiency advisor →](docs/efficiency-advisor.md) |
-| Operate the service | Caller authentication, per-caller limits and budgets, audit logs and metrics. <dfn>*Hardened mode*</dfn>, a startup setting, refuses startup unless its required safeguards are configured. | [INTERNAL · hardened mode →](docs/hardened-mode.md) |
+| Operate the service | Caller authentication, per-caller limits and budgets, audit logs and metrics. An operator's minimum isolation tier holds on every request, not only at startup. <dfn>*Hardened mode*</dfn>, a startup setting, refuses startup unless its required safeguards are configured. | [INTERNAL · hardened mode →](docs/hardened-mode.md) |
 
 Payload, session and grant support vary by provider. The server's `Describe` call
 reports what its configured backend supports.
@@ -92,13 +93,15 @@ what the signer said about them. It does not independently repeat the inspection
 
 - **Match a run to its sandbox.** Record version 4 includes sandbox instance
   identity; Kubernetes supplies the pod's unique ID, so an outside observation log
-  can be joined to the run. New live calls use protocol 4. Upgrade server and
+  can be joined to the run. New live calls use protocol 5. Upgrade server and
   clients together; stored-record verifiers also read published versions 1 through 4.
 - **Check test results against the code revision they tested.** The pull-request
   recipe produces signed <dfn>*in-toto*</dfn> statements, a standard layout for signed claims;
   JUnit test reports; and Cobertura coverage reports showing which code the tests
-  exercised. Its challenge includes an
-  honest receipt and deliberately wrong evidence the checker must reject.
+  exercised. Its challenge holds six receipts the checker must sort (honest, failing,
+  altered, signed by another key, skipped and timed out), and a policy gate runs the
+  repository's own rules, written in Rego, the policy language of Open Policy Agent, on a
+  pinned release.
   [INTERNAL · test receipt and challenge →](examples/pr-receipt/README.md).
 - **Check timestamps and signing roles offline.** Supply trusted keys, expected
   artifact hashes and timestamp roots separately from the receipt. The generic
@@ -109,10 +112,14 @@ what the signer said about them. It does not independently repeat the inspection
   agent runs elsewhere or proof of who originated them.
   [INTERNAL · coding-session recipe →](examples/agent-session/README.md).
 
-Also included is an **experimental dependency-log reader** for gVisor's host-side
-system-call logs. It has explicit observation gaps. The signed dependency-behaviour
-receipt remains a separate unfinished step.
-[INTERNAL · reader, fixtures and coverage limits →](examples/dependency-receipt/README.md).
+**See what a package did when it was installed.** The dependency behavior receipt is a
+signed statement of what the programs in one gVisor sandbox did while a package was
+installed and imported: the programs started, the files written and the network calls with
+their destinations, read from gVisor's own system-call log outside the sandbox. A checker
+rebuilds the statement from the log, and the statement names the run's record by its pod.
+The log has stated observation gaps.
+[INTERNAL · reader, receipt and coverage limits →](examples/dependency-receipt/README.md),
+[INTERNAL · receipts of three installs →](https://plimsollmark.github.io/plimsoll/examples/dependency-receipt/index.html).
 
 ## Choose a provider
 
@@ -175,6 +182,19 @@ hand-authored controllers compared across providers. The fixed batch is not mode
 training. Recorded timings describe those runs, not controlled provider benchmarks.
 [INTERNAL · all examples and reproduction commands →](docs/example-programs.md).
 
+The squeeze test asks whether an AI loop that graded itself on the same practice tests
+learned the job or memorized the test: fresh agents rebuild its work from a recipe of 32
+tokens (the word pieces a model reads, about two dozen words), every controller is graded on
+sealed flights in sandboxes of its own, and every run is signed. Its page puts it beside two
+other checks for a score that looks too good, on one real hackathon entry: the ship scan,
+which is in this release, and the canary run, which is not part of the open-source release.
+[INTERNAL · three checks for an AI score that looks too good →](https://plimsollmark.github.io/plimsoll/examples/squeeze/index.html)
+
+Prime Intellect's verifiers library is a common format for reinforcement-learning
+environments, programs that set a model tasks and grade its answers. Its environments run with
+plimsoll as their sandbox: the page runs one on Docker's default runtime and under gVisor, and
+rechecks every record. [INTERNAL · verifiers on plimsoll →](https://plimsollmark.github.io/plimsoll/examples/verifiers/index.html)
+
 ## Connect an agent
 
 Use the clients directly, add a framework tool, or connect through **<dfn>*MCP*</dfn> (Model
@@ -190,6 +210,7 @@ SDK means software development kit; ADK means Google's Agent Development Kit.
 | Python shell-and-files workspace | [INTERNAL · workspace interface →](clients/python/README.md#agent-workspace) |
 | Claude Managed Agents | [INTERNAL · self-hosted worker adapter →](clients/python/README.md#claude-managed-agents-self-hosted-worker) |
 | OpenAI Agents SDK | [INTERNAL · sandbox provider adapter →](clients/python/README.md#openai-agents-sdk-sandbox-provider) |
+| Prime Intellect verifiers environments | [INTERNAL · verifiers runtime →](clients/python/README.md#verifiers-runtime) |
 
 These framework adapters give an agent a code-execution tool or executor. The guides
 explain provider requirements and whether files and interpreter state persist.

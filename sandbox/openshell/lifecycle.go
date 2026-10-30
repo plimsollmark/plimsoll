@@ -650,27 +650,30 @@ func (p *Provider) deleteAndWait(ctx context.Context, name string) error {
 	}
 }
 
-// Drain ends every open session, then waits until no sandbox this provider created is
-// left undeleted (every run has ended and every background delete has finished or
-// given up), or ctx ends. A daemon calls it on shutdown, after it stops accepting runs.
+// Drain stops the session pool and deletes its members, ends every open session, then
+// waits until no sandbox this provider created is left undeleted (every run has ended
+// and every background delete has finished or given up), or ctx ends. A daemon calls
+// it on shutdown, after it stops accepting runs.
 func (p *Provider) Drain(ctx context.Context) error {
 	// From here no sandbox is created and no session handed over: an open that already
 	// has its sandbox deletes it, which the wait below covers, since a name stays
-	// tracked until its delete.
+	// tracked until its delete. The pool's filler can then make no member, and one it
+	// was making it deletes once it sees the pool stopped.
 	p.sessions.Drain()
+	poolErr := p.sessionPool.Load().Close(ctx)
 	p.sessions.EndAll(sandbox.SessionShutdown)
 	// A create already past its check is waited for until its name is tracked.
 	select {
 	case <-p.sessions.Opened():
 	case <-ctx.Done():
-		return fmt.Errorf("openshell: sandboxes still being created: %w", ctx.Err())
+		return errors.Join(poolErr, fmt.Errorf("openshell: sandboxes still being created: %w", ctx.Err()))
 	}
 	for p.leases.Len() > 0 {
 		if err := providerkit.Sleep(ctx, 50*time.Millisecond); err != nil {
-			return fmt.Errorf("openshell: %d sandboxes still undeleted: %w", p.leases.Len(), err)
+			return errors.Join(poolErr, fmt.Errorf("openshell: %d sandboxes still undeleted: %w", p.leases.Len(), err))
 		}
 	}
-	return nil
+	return poolErr
 }
 
 // ReconcileOrphans deletes the plimsoll sandboxes no live run can be using:

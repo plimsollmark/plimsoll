@@ -136,7 +136,7 @@ func TestE2BGuardKeepsCustomerCredentialInBroker(t *testing.T) {
 	if strings.Contains(hostGuardSDKModule(grant, cfg.Endpoint.URL, ""), "customer-secret") || strings.Contains(hostGuardSDKModule(grant, cfg.Endpoint.URL, ""), cfg.Token) {
 		t.Fatal("E2B guest module contains a customer or guard credential")
 	}
-	resp := e.EgressGuardCall(context.Background(), cfg.Token, http.MethodGet, "/v1/items", nil)
+	resp := e.EgressGuardCall(context.Background(), cfg.Token, GuardRequest{Method: http.MethodGet, RawTarget: "/v1/items"})
 	if resp.Status != http.StatusOK || string(resp.Body) != `{"ok":true}` {
 		t.Fatalf("guard response = %+v, want upstream response", resp)
 	}
@@ -144,7 +144,7 @@ func TestE2BGuardKeepsCustomerCredentialInBroker(t *testing.T) {
 		t.Fatalf("upstream Authorization = %q, want broker-injected customer credential", gotAuth)
 	}
 	cleanup()
-	if resp := e.EgressGuardCall(context.Background(), cfg.Token, http.MethodGet, "/v1/items", nil); resp.Status != http.StatusUnauthorized {
+	if resp := e.EgressGuardCall(context.Background(), cfg.Token, GuardRequest{Method: http.MethodGet, RawTarget: "/v1/items"}); resp.Status != http.StatusUnauthorized {
 		t.Fatalf("expired guard status = %d, want 401", resp.Status)
 	}
 }

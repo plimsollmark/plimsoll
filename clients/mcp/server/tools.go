@@ -60,6 +60,9 @@ type runOutput struct {
 	PictureLinks     []string `json:"pictureLinks,omitempty" jsonschema:"Where the user can open each picture, in the order of pictures."`
 
 	pics []Picture
+	// warm says a call without a handle ran in a sandbox the daemon kept ready (the
+	// answer's warm), which the summary states.
+	warm bool
 }
 
 func (o runOutput) attached() []Picture { return o.pics }
@@ -436,6 +439,9 @@ func summarize(out *runOutput, sandboxHandle string) {
 		how = fmt.Sprintf("timed out (exit %d)", out.ExitCode)
 	}
 	where := "It ran in a fresh sandbox; nothing is kept."
+	if out.warm {
+		where = "It ran in a sandbox of its own that the daemon had ready before the call and deleted after it; nothing is kept."
+	}
 	if sandboxHandle != "" {
 		where = "It ran in sandbox " + sandboxHandle
 		if out.FreshSandbox {
@@ -475,9 +481,10 @@ func summarize(out *runOutput, sandboxHandle string) {
 		out.Language, how, out.Isolation, tierNote, where, cutNote, out.RecordSHA256)
 }
 
-// runFresh runs the code once as a project: the files, the code and a runner that
-// prints its last expression, as a session cell does. On a daemon that runs only
-// snippets (wasm), JavaScript runs as a snippet instead.
+// runFresh runs the code once, by itself, as a Run cell: the daemon runs it in a
+// sandbox it keeps ready when one is waiting (prefer_warm), else in one made for it, as
+// a project whose runner prints the last expression as a session cell does, or on a
+// daemon that runs only snippets (wasm) as a JavaScript snippet.
 func (s *Server) runFresh(ctx context.Context, lang sandbox.Language, code string, files []sandbox.File) (runOutput, *failure) {
 	info, err := s.describe(ctx)
 	if err != nil {
@@ -493,51 +500,19 @@ func (s *Server) runFresh(ctx context.Context, lang sandbox.Language, code strin
 		if lang != sandbox.LanguageJavaScript || len(files) > 0 {
 			return runOutput{}, refused(sandbox.RefusalUnsupported, "the daemon (%s) runs JavaScript snippets only, without files", clipRunes(info.Sandbox, 100))
 		}
-		r, err := s.remote.RunJavaScript(ctx, sandbox.Request{Code: snippetRunner(code), Timeout: s.cfg.RunTimeout, MinimumIsolation: s.cfg.MinimumIsolation, Software: s.cfg.Software})
-		if !answered(err, r.Record) {
-			s.forgetDescribeOn(err)
-			return runOutput{}, s.failed(ctx, err)
-		}
-		out := s.output(ctx, lang, r.ExitCode, r.TimedOut, r.Stdout, r.Stderr, r.StdoutTruncated || r.StderrTruncated, r.Isolation, r.SoftwareIdentity, r.Record)
-		out.Receipt = s.receiptFor(r.Record, err)
-		summarize(&out, "")
-		return out, nil
-	}
-	if langs := s.offered(info.Environments.Project); !slices.Contains(langs, lang) {
+	} else if langs := s.offered(info.Environments.Project); !slices.Contains(langs, lang) {
 		return runOutput{}, refused(sandbox.RefusalUnsupported, "the daemon's image has no %s interpreter (it runs %s)", lang, clipRunes(fmt.Sprint(info.Environments.Project.Languages), 200))
 	}
-	runner := runners[lang]
-	req := sandbox.ProjectRequest{
-		Files:            append(slices.Clone(files), sandbox.File{Path: runner.file, Content: code}, sandbox.File{Path: runner.path, Content: runner.source}),
-		Steps:            []string{runner.step},
-		Timeout:          s.cfg.RunTimeout,
-		MinimumIsolation: s.cfg.MinimumIsolation,
-		Software:         s.cfg.Software,
-	}
-	r, err := s.remote.RunProject(ctx, req)
+	r, err := s.remote.RunCell(ctx, sandbox.CellRequest{Language: lang, Code: code, Files: files,
+		Timeout: s.cfg.RunTimeout, MinimumIsolation: s.cfg.MinimumIsolation, Software: s.cfg.Software}, client.CellOptions{PreferWarm: true})
 	if !answered(err, r.Record) {
 		s.forgetDescribeOn(err)
 		return runOutput{}, s.failed(ctx, err)
 	}
 	// From here the result checked; only keeping its record can have failed (err).
-	if len(r.Steps) == 0 {
-		// No step report: the outcome says what ended the run, not whether the code
-		// started, so there is no exit code to give; the checked record is kept.
-		f := &failure{Ran: "maybe", Summary: fmt.Sprintf("The run ended %s without a step report (%s); the code may have run. It was not retried.", r.Outcome, r.Detail)}
-		if r.Outcome == sandbox.ProjectOutcomeSetupFailed {
-			// The daemon's own classification: no step began (docs/run-results.md), so
-			// nothing of the code ran; it used to read as "may have run" (review, 2026-10-26).
-			f.Ran, f.Summary = "no", fmt.Sprintf("Nothing ran: the run's setup failed before any step began (%s).", r.Detail)
-		}
-		if r.Record != nil {
-			s.keep(ctx, r.Record)
-			f.RecordSHA256 = r.Record.SHA256
-		}
-		return runOutput{}, f
-	}
-	st := r.Steps[0]
-	out := s.output(ctx, lang, st.ExitCode, st.TimedOut || r.Outcome == sandbox.ProjectOutcomeTimedOut, st.Stdout, st.Stderr, st.StdoutTruncated || st.StderrTruncated, r.Isolation, r.SoftwareIdentity, r.Record)
+	out := s.output(ctx, lang, r.ExitCode, r.TimedOut, r.Stdout, r.Stderr, r.StdoutTruncated || r.StderrTruncated, r.Isolation, r.SoftwareIdentity, r.Record)
 	out.Receipt = s.receiptFor(r.Record, err)
+	out.warm = r.Warm
 	summarize(&out, "")
 	return out, nil
 }

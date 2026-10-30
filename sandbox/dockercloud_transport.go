@@ -60,6 +60,9 @@ type dcCreateSpec struct {
 	ttl       time.Duration
 	cpus      uint32
 	memoryMiB int
+	// labels are recorded on the sandbox at create and never change (REST only; a
+	// session declares its expiry with them).
+	labels map[string]string
 }
 
 // dcCreateStage is how far a failed create got.
@@ -143,6 +146,8 @@ type dcListed struct {
 	name      string
 	id        string
 	createdAt time.Time
+	// labels are the sandbox's labels, where the API reports them (REST).
+	labels map[string]string
 }
 
 // dcPolicy is the network policy in force on a sandbox.

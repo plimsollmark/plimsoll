@@ -69,6 +69,9 @@ type ModuleResult struct {
 	Isolation           IsolationClass
 	SoftwareIdentity    string // selected module image manifest, if established
 	EnvironmentIdentity string // outer image artifact selected for this run
+	// Policy is the sandbox policy the run was dispatched under, when the provider
+	// selects one per run (see ProjectResult.Policy); "" means the provider's one policy.
+	Policy string
 	// Instance is the sandbox instance that ran it, as a typed reference ("k8s-pod-uid:" and
 	// the pod's UID), or "" when the provider names none (sandbox.ValidInstance).
 	Instance string

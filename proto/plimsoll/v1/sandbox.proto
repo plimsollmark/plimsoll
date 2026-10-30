@@ -24,7 +24,7 @@ service SandboxService {
   // daemon serves exactly one: a request that omits it is InvalidArgument and a
   // request on any other number is Unimplemented, in both cases before the
   // payload is read. The number is bumped when such a field is added; an
-  // informational field does not bump it. Current number: 4 (the Go constant
+  // informational field does not bump it. Current number: 5 (the Go constant
   // protocol.Number, which Describe reports).
   rpc Run(RunRequest) returns (RunResponse);
   // Describe reports the protocol number, the active provider, current isolation
@@ -102,6 +102,11 @@ message DescribeResponse {
   // Stated with supports_sessions; informational.
   uint32 max_sessions_per_caller = 19;
   uint32 max_sessions_per_owner = 20;
+  // How many sandboxes the daemon keeps ready for sessions (SANDBOX_SESSION_POOL), 0
+  // when it keeps none: never used, interpreters already running, each handed to one
+  // session, or to one Run cell that asked for it (RunRequest.prefer_warm), and deleted
+  // after. Stated with supports_sessions; informational.
+  uint32 session_pool = 21;
 }
 
 // PayloadEnvironment is one payload kind's environment as the daemon states it.
@@ -204,15 +209,30 @@ message RunRequest {
   // Checked by the daemon before dispatch. Older daemons would drop this field,
   // so its addition raises the protocol number.
   SoftwareRule software_rule = 5;
+  // prefer_warm lets the daemon run a cell in a sandbox it keeps ready for sessions
+  // (DescribeResponse.session_pool): one that has run nothing, with the cell's
+  // interpreter already running, claimed for this call alone and deleted after it.
+  // When none fits (no pool, none waiting, the session image does not run the
+  // language or meet the software rule) the cell runs in a sandbox made for it, as
+  // without the flag: a miss is never a refusal. RunResponse.warm says which ran.
+  // Only a cell takes it; on any other payload it is InvalidArgument, not dispatched.
+  // Older daemons would drop it, so its addition raised the protocol number (5). The
+  // request digest does not cover it: it chooses where the cell runs, not what runs.
+  bool prefer_warm = 6;
   // Exactly one payload. An empty oneof is InvalidArgument.
   oneof payload {
     JavaScriptRun javascript = 10;
     ProjectRun project = 11;
     ModuleRun module = 12;
-    // A cell runs only in a session, so Run refuses it, marked not dispatched. It
-    // is here as the stored form of a session's cell call (the call without its
-    // session ID, with the same request digest), which a harness signs and replays
-    // into a fresh session in order.
+    // A cell run by itself keeps nothing: it runs in a sandbox of its own (made for
+    // it, or with prefer_warm a waiting pool member), whose interpreter starts with
+    // the call and is gone after it, so its result states interpreter_started and
+    // interpreter_ended. In a sandbox made for it, the cell runs as a project of one
+    // step: its files, the code, and a runner that runs it as a session's interpreter
+    // does (its final expression printed); a provider that runs no projects runs a
+    // JavaScript cell without files as a snippet. It is also the stored form of a
+    // session's cell call (the call without its session ID, with the same request
+    // digest), which a harness replays into a fresh session in order.
     CellRun cell = 13;
   }
 }
@@ -256,6 +276,12 @@ message RunResponse {
   // evidence kept outside plimsoll (a runtime's log of the pod) be tied to this
   // run. The record repeats it so the client checks both statements.
   string instance = 7;
+  // warm is true when a cell run with prefer_warm ran in a waiting pool member: a
+  // sandbox made before the call, which had run only plimsoll's own programs (its
+  // interpreters), handed to this call alone and deleted after it. False when the
+  // call ran in a sandbox made for it. Informational, like duration_ms: the record
+  // does not cover it.
+  bool warm = 8;
   // Exactly one result, of the payload's kind.
   oneof result {
     JavaScriptResult javascript = 10;
@@ -488,6 +514,16 @@ message OpenSessionRequest {
   // Informational, so it did not move the protocol number: a daemon that predates it
   // has no per-owner cap, as one with the cap unset.
   string owner = 8;
+  // Hand over a waiting pool member or make nothing: an open that finds no member the
+  // daemon may hand over is refused, not dispatched, reason capacity, and no sandbox
+  // is made (a daemon without a pool refuses every such open). It never closes another
+  // session of the owner to make room: at the owner's cap it is refused the same way.
+  // For a caller that would rather run fresh than wait for a session's sandbox to be
+  // made. A daemon that predates it would ignore it and make the sandbox (on e2b and
+  // dockercloud one billed by the second), so it came with protocol 5, which such a
+  // daemon refuses before reading the request. A cell for one call needs no session:
+  // RunRequest.prefer_warm.
+  bool warm_only = 9;
 }
 
 message OpenSessionResponse {

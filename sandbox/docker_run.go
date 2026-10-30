@@ -91,12 +91,19 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 	// guarantees the workload is torn down even when the client was killed.
 	name := "crsbx-" + randID()
 
+	// The seccomp profile this run applies, selected from its grant (a run whose grant
+	// asks for the local address gets the sdk_env variant), and refused before anything
+	// starts when the configuration has none for it.
+	seccomp, policy, err := execState.seccomp.seccompFor(req.Grant, execState.runtime)
+	if err != nil {
+		return Result{Sandbox: d.Name(), Isolation: isolation}, err
+	}
 	broker, mountArgs, grantEnv, err := d.brokerForRun(runCtx, req.Grant, timeout)
 	if err != nil {
 		return Result{Sandbox: d.Name()}, err
 	}
 	defer broker.Close()
-	args := append(d.lockdownArgs(name, d.containerExpiry(runCtx), false, execState.runtime), mountArgs...)
+	args := append(d.lockdownArgs(name, d.containerExpiry(runCtx), false, execState.runtime, seccomp), mountArgs...)
 	if execState.platform != "" {
 		args = append(args, "--platform", execState.platform)
 	}
@@ -109,7 +116,14 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 	// this way (smokeSnippet): an image whose PATH lacks node fails there, not as every
 	// guest's exit 127.
 	started := startMarker()
-	argv, err := guestArgv(started, execState.guestEnv(execState.imageID, grantEnv...), "node", "-")
+	// A snippet whose grant asks for the local address starts behind the forwarder,
+	// which listens before `node -` reads the code; every other snippet is `node -`.
+	var argv []string
+	if req.Grant.WantsLoopback() {
+		argv, err = dockerForwardingSnippetArgv(started, d.hostAPIListenAddr(), execState.guestEnv(execState.imageID, grantEnv...))
+	} else {
+		argv, err = guestArgv(started, execState.guestEnv(execState.imageID, grantEnv...), "node", "-")
+	}
 	if err != nil {
 		return Result{Sandbox: d.Name(), Isolation: isolation}, err
 	}
@@ -161,6 +175,7 @@ func (d *DockerSandbox) runSnippet(ctx context.Context, execState dockerExecutio
 		Isolation:           isolation,
 		SoftwareIdentity:    execState.imageManifest,
 		EnvironmentIdentity: dockerImageIdentity(execState.imageID),
+		Policy:              policy,
 		// Metadata-only evidence of the run's brokered host.* calls. Nil unless the
 		// run carried a grant that made calls; it never affects execution below.
 		CallTrace: trace,
@@ -234,6 +249,11 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	runCtx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
 	defer cancel()
 
+	// The seccomp profile this run applies, selected from its grant as in runSnippet.
+	seccomp, policy, err := execState.seccomp.seccompFor(req.Grant, execState.runtime)
+	if err != nil {
+		return ProjectResult{Sandbox: d.Name(), Isolation: isolation}, err
+	}
 	// A grant mounts the same per-run broker socket the snippet path uses; the runner
 	// preloads hostSDKModule(grant) into every step so project files reach host.* over
 	// the shared brokerSession. Nil grant → nil broker, no socket, empty HostSDK.
@@ -262,7 +282,16 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 		return ProjectResult{Sandbox: d.Name()}, err
 	}
 	started := startMarker()
-	runner, err := dockerRunnerArgv(started)
+	// A run whose grant asks for the local address (sdk_env) starts its runner behind
+	// the loopback forwarder, so a step's standard HTTP client reaches the broker at
+	// the base URL the profile's sdk_env names; every other run, granted or not, keeps
+	// the bare runner.
+	var runner []string
+	if req.Grant.WantsLoopback() {
+		runner, err = dockerForwardingRunnerArgv(started, d.hostAPIListenAddr())
+	} else {
+		runner, err = dockerRunnerArgv(started)
+	}
 	if err != nil {
 		return ProjectResult{Sandbox: d.Name()}, err
 	}
@@ -272,7 +301,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	// The runner reads the plan from stdin. Launch the Preflight-verified content ID,
 	// not the mutable tag. mountArgs (the broker socket bind) are docker options, so
 	// they precede the image; they are empty for a no-grant run.
-	args := d.lockdownArgs(name, d.containerExpiry(runCtx), true, execState.runtime)
+	args := d.lockdownArgs(name, d.containerExpiry(runCtx), true, execState.runtime, seccomp)
 	args = append(args, mountArgs...)
 	if execState.platform != "" {
 		args = append(args, "--platform", execState.platform)
@@ -308,7 +337,7 @@ func (d *DockerSandbox) runPlan(ctx context.Context, execState dockerExecutionSt
 	// backstop (the budget plus a short grace, counted from before the container
 	// started) can fire while a report is already in stdout, which used to be thrown
 	// away as timed out with no steps (review, 2026-10-26).
-	res, reported := RunnerReport(d.Name(), isolation, stdout.String(), reportKey)
+	res, reported := RunnerReport(ProjectResult{Sandbox: d.Name(), Isolation: isolation, Policy: policy}, stdout.String(), reportKey)
 	if !reported && ended != nil {
 		if _, ran := afterMarker(stderr.String(), started); !ran {
 			// Nothing shows the runner, so any step, started: not reported as a timeout.
@@ -394,7 +423,7 @@ func (d *DockerSandbox) RunModule(ctx context.Context, req ModuleRequest) (Modul
 		Artifacts: []string{moduleResultsArtifact},
 	})
 	res := ModuleResult{Sandbox: d.Name(), Isolation: isolation, SoftwareIdentity: execState.moduleManifest,
-		EnvironmentIdentity: dockerImageIdentity(execState.moduleImageID), Duration: time.Since(started)}
+		EnvironmentIdentity: dockerImageIdentity(execState.moduleImageID), Duration: time.Since(started), Policy: pr.Policy}
 	if err != nil {
 		return res, err
 	}

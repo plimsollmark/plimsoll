@@ -1,0 +1,51 @@
+{
+  "profiles": {
+    "anthropic": {
+      "allow": [
+        "POST /v1/messages"
+      ],
+      "allowed_callers": [
+        "sdk-grants-example"
+      ],
+      "base_url": "http://127.0.0.1:43323",
+      "pass_headers": [
+        "anthropic-version"
+      ],
+      "sdk_env": {
+        "ANTHROPIC_API_KEY": "dummy-anthropic-key-in-the-sandbox",
+        "ANTHROPIC_BASE_URL": "{origin}"
+      },
+      "token": {
+        "env": "STUB_ANTHROPIC_KEY",
+        "type": "static"
+      }
+    },
+    "openai": {
+      "allow": [
+        "POST /v1/chat/completions",
+        "POST /v1/files"
+      ],
+      "allowed_callers": [
+        "sdk-grants-example"
+      ],
+      "base_url": "http://127.0.0.1:45519",
+      "max_request_bytes": 67108864,
+      "route_content_types": {
+        "POST /v1/files": [
+          "multipart/form-data"
+        ]
+      },
+      "route_max_request_bytes": {
+        "POST /v1/files": 16777216
+      },
+      "sdk_env": {
+        "OPENAI_API_KEY": "dummy-openai-key-in-the-sandbox",
+        "OPENAI_BASE_URL": "{origin}/v1"
+      },
+      "token": {
+        "env": "STUB_OPENAI_KEY",
+        "type": "static"
+      }
+    }
+  }
+}

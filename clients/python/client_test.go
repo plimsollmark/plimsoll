@@ -97,6 +97,10 @@ func TestPython(t *testing.T) {
 		"PLIMSOLL_BREAKING_URL="+serve(t, breakingSvc(), nil, nil),
 		"PLIMSOLL_LOSSY_URL="+lossyProxy(t, serve(t, plainSessionSvc(), nil, nil)),
 		"PLIMSOLL_QUICK_IDLE_URL="+quickIdleURL(t),
+		"PLIMSOLL_POOLED_URL="+serve(t, pooledSessionSvc(), nil, nil),
+		"PLIMSOLL_ONE_CALL_URL="+countedCells(t, 2, 1<<20),
+		"PLIMSOLL_NO_POOL_URL="+countedCells(t, 0, 5),
+		"PLIMSOLL_CLAIM_MISS_URL="+countedCells(t, 2, 0),
 	)
 	env = append(env, bindingDaemons(t)...)
 	env = append(env,
@@ -508,6 +512,47 @@ func TestLicenseMatchesRepository(t *testing.T) {
 	if string(own) != string(root) {
 		t.Fatal("LICENSE differs from the repository's LICENSE; copy it again")
 	}
+}
+
+// countingRuns counts the Run requests that reach the daemon, and those that asked for
+// a pool member (prefer_warm).
+type countingRuns struct {
+	*rpc.SandboxService
+	runs, preferWarm atomic.Int32
+}
+
+func (c *countingRuns) Run(ctx context.Context, req *connect.Request[plimsollv1.RunRequest]) (*connect.Response[plimsollv1.RunResponse], error) {
+	c.runs.Add(1)
+	if req.Msg.GetPreferWarm() {
+		c.preferWarm.Add(1)
+	}
+	return c.SandboxService.Run(ctx, req)
+}
+
+// countedCells serves a daemon that states a pool of pool, whose provider hands warm
+// warm-only opens a pool member and runs fresh projects (sandboxtest.Pooled), and that
+// answers POST /test/counts with the Runs that reached it, those that asked for a
+// member, the members claimed and the fresh runs made.
+func countedCells(t *testing.T, pool, warm int) string {
+	t.Helper()
+	p := sandboxtest.NewPooled(warm)
+	svc := quiet(rpc.NewSandboxService(p))
+	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Pool: pool, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	c := &countingRuns{SandboxService: svc}
+	return serve(t, c, nil, func(mux *http.ServeMux) {
+		mux.HandleFunc("POST /test/counts", func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]int{"runs": int(c.runs.Load()), "preferWarm": int(c.preferWarm.Load()),
+				"claimed": len(p.Opened()), "fresh": len(p.FreshRuns())})
+		})
+	})
+}
+
+// pooledSessionSvc states a pool of 2 and has one member waiting: one warm-only open
+// is handed a session, the next is refused.
+func pooledSessionSvc() *rpc.SandboxService {
+	svc := quiet(rpc.NewSandboxService(&sandboxtest.Sessions{Warm: 1}))
+	svc.Sessions = rpc.SessionConfig{MaxSessions: 16, Pool: 2, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	return svc
 }
 
 func plainSessionSvc() *rpc.SandboxService {

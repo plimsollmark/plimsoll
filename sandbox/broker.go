@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -30,8 +31,20 @@ const (
 // upstream holds one of the run's 16 call slots (and, on E2B and Docker Cloud, a
 // shared guard slot) until the run's own deadline; a JSON API call that has not
 // finished in a minute is treated as failed, and the run's deadline still bounds the
-// run. A variable so a test can shorten it.
+// run. A streamed answer keeps this limit for its headers and then moves to
+// hostStreamIdleTimeout. A variable so a test can shorten it.
 var hostCallTimeout = 60 * time.Second
+
+// hostStreamIdleTimeout bounds the gap between two pieces of a streamed answer: a
+// stream that sends nothing for this long is cut. The single call limit becomes a
+// per-gap limit for a stream, since a chat answer can take minutes to finish while
+// never pausing this long (the Claude API sends ping events while it works). The
+// run's own deadline still bounds the whole. A variable so a test can shorten it.
+var hostStreamIdleTimeout = 60 * time.Second
+
+// streamPiece is how much of a streamed answer the broker moves at a time; memory per
+// streamed call is this, never the answer.
+const streamPiece = 32 << 10
 
 // Per-run backpressure. When the upstream signals overload (HTTP 429/503), the broker's
 // circuit breaker opens and SHEDS further calls (fails fast) rather than piling more
@@ -48,22 +61,51 @@ const (
 
 // brokerCall is the complete guest-controlled input to one host-API call. The
 // target is deliberately raw: a transport must not URL-decode or clean it before
-// the shared core checks approve==wire. Guest headers and a guest-selected origin
-// are not part of the protocol.
+// the shared core checks approve==wire. A guest-selected origin is not part of the
+// protocol. Headers are the guest's request headers as they arrived, when the
+// transport carries them (the socket and the guard's raw route; the JSON envelope
+// clients send none): the core forwards only the names the grant's PassHeaders lists
+// and drops the rest, so a standard client's telemetry, user agent and dummy
+// credential never reach the API.
 type brokerCall struct {
 	Method    string
 	RawTarget string
+	Headers   map[string][]string
 	Body      io.Reader
+	// ContentLength is the body's declared length: 0 for no body, -1 when the guest
+	// declared none (a chunked request). On a route whose request limit the profile
+	// raised, a declared length over the limit or over the run's remaining total is
+	// refused before a byte is read, and the length is what the API is told.
+	ContentLength int64
+	// Stream, when set, receives a text/event-stream answer piece by piece as it
+	// arrives (stream); every other answer is buffered and capped as always, and a nil
+	// Stream buffers always.
+	Stream StreamSink
 }
 
 // brokerResponse is the bounded reply a provider adapter returns to its guest.
 // Headers are intentionally not generic: only Content-Type is exposed, so an
 // upstream cannot smuggle cookies, redirects, or transport metadata into a guest.
+// FromBroker marks an answer the broker made itself (a refusal, a shed, an upstream
+// it could not reach) as against one the upstream gave; adapters tell a standard
+// client not to retry it (brokerNoRetryHeader), since the budget counts each attempt.
 type brokerResponse struct {
 	Status      int
 	ContentType string
 	Body        []byte
+	FromBroker  bool
+	// Streamed marks an answer that already went to the call's Stream piece by
+	// piece; Body is empty and the adapter writes nothing more.
+	Streamed bool
 }
+
+// brokerNoRetryHeader, with the value "false", is the header the OpenAI and
+// Anthropic client libraries read to skip their retry loop (two retries by default on
+// 408, 409, 429 and 5xx). Every adapter sets it on an answer the broker made itself,
+// so a client does not retry a budget refusal twice, spending the budget each time,
+// or a shed against a breaker whose cooldown has not ended. An upstream's own answer
+// never carries it: the client's retry policy toward the API is the client's.
+const brokerNoRetryHeader = "X-Should-Retry"
 
 // brokerSession is the provider-neutral, per-run enforcement core. The grant,
 // credential, budgets, upstream transport, and metadata-only trace are private to
@@ -75,6 +117,9 @@ type brokerSession struct {
 	transport http.RoundTripper
 	requests  chan struct{}
 	callsMade atomic.Int64
+	// sent is the request body bytes the run has sent, or holds reserved while a body
+	// is in flight, against the grant's MaxRequestBytes (reserveRequestBytes).
+	sent atomic.Int64
 	// routes counts the calls charged to each route the grant's RouteMaxCalls caps:
 	// the run's own, or the session's, shared by all its granted calls.
 	routes  *RouteBudget
@@ -353,6 +398,7 @@ func brokerError(status int, msg string) brokerResponse {
 		Status:      status,
 		ContentType: "text/plain; charset=utf-8",
 		Body:        []byte(msg + "\n"),
+		FromBroker:  true,
 	}
 }
 
@@ -413,10 +459,60 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 		}
 	}
 
-	body, err := readBrokerBody(call.Body)
-	if err != nil {
+	// The body. Its type is the route's rule (requestContentType), its limit the
+	// route's (the default, or the one the profile raised for an upload route), and its
+	// bytes are charged to the run's total before anything is sent. Within the default
+	// limit the body is buffered as it always was. Above it the body is passed through
+	// to the API as it arrives, behind a reader that cuts it at the limit, so memory per
+	// call stays at the piece size and a body over the limit never finishes at the API;
+	// a declared length over the limit is refused before a byte is read.
+	contentType := "application/json"
+	if call.ContentLength != 0 { // a body, declared or not; a request without one has no type to check
+		var ok bool
+		if contentType, ok = b.grant.requestContentType(route, headerFirst(call.Headers, "Content-Type")); !ok {
+			b.trace.recordDenied()
+			return brokerError(http.StatusUnsupportedMediaType, "host api request content type is not allowed on this route")
+		}
+	}
+	limit := b.grant.requestLimit(route)
+	if call.ContentLength > limit {
 		b.trace.recordDenied()
-		return brokerError(http.StatusRequestEntityTooLarge, "host api request body too large")
+		return brokerError(http.StatusRequestEntityTooLarge, "host api request body exceeds the route's limit")
+	}
+	var (
+		body     []byte
+		upload   *capReader
+		reserved int64
+	)
+	if limit <= maxHostRequestBytes {
+		var err error
+		if body, err = readBrokerBody(call.Body, limit); err != nil {
+			b.trace.recordDenied()
+			return brokerError(http.StatusRequestEntityTooLarge, "host api request body exceeds the route's limit")
+		}
+		reserved = int64(len(body))
+	} else if call.Body != nil && call.ContentLength != 0 {
+		reserved = call.ContentLength
+		if reserved < 0 {
+			reserved = limit // undeclared: the route's whole limit is held until the call settles
+		}
+		held := reserved
+		upload = &capReader{r: call.Body, remaining: reserved, settle: func(sent int64) {
+			b.sent.Add(sent - held) // what was held less what went
+		}}
+	}
+	if !b.reserveRequestBytes(reserved) {
+		b.trace.recordDenied()
+		return brokerError(http.StatusRequestEntityTooLarge, "host api request bytes for this run are exhausted")
+	}
+	if upload != nil {
+		defer upload.Close() // settles the hold; the transport is handed nothing after it
+	}
+	sentBytes := func() int {
+		if upload != nil {
+			return int(upload.progress())
+		}
+		return len(body)
 	}
 
 	requestURL := *b.origin
@@ -440,18 +536,44 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 		return brokerError(http.StatusTooManyRequests, "host api call budget for this route is exhausted")
 	}
 
-	// The deadline covers the response body too, which is read under the same context.
-	ctx, cancelCall := context.WithTimeout(ctx, hostCallTimeout)
+	// The call's deadline. A buffered answer has hostCallTimeout for headers and body
+	// together, read under the same context. A streamed answer keeps that limit for its
+	// headers (the transport's ResponseHeaderTimeout is the same value) and then moves
+	// to a per-gap limit, so the timer is one the stream path stops and replaces.
+	ctx, cancelCall := context.WithCancel(ctx)
 	defer cancelCall()
-	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), bytes.NewReader(body))
+	callTimer := time.AfterFunc(hostCallTimeout, cancelCall)
+	defer callTimer.Stop()
+	var requestBody io.Reader
+	switch {
+	case upload != nil:
+		requestBody = upload
+	case len(body) > 0:
+		requestBody = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), requestBody)
 	if err != nil || req.URL.RequestURI() != call.RawTarget {
 		b.trace.recordDenied()
 		return brokerError(http.StatusForbidden, "forbidden by sandbox capability allowlist")
 	}
+	if upload != nil {
+		req.ContentLength = call.ContentLength // the declared length, or -1: sent chunked
+	}
+	// The upstream request's headers are the broker's, never the guest's: a default
+	// Accept, then the few names the grant lets through from the guest (first value,
+	// checked; Validate refused every name the broker or the transport owns), then the
+	// names the grant sets with its own values (never also passed), then the body's type
+	// and the credential, set last so nothing passed or set can stand in for them.
 	req.Header = make(http.Header)
 	req.Header.Set("Accept", "application/json")
-	if len(body) > 0 {
-		req.Header.Set("Content-Type", "application/json")
+	for name, value := range b.grant.passedHeaders(call.Headers) {
+		req.Header.Set(name, value)
+	}
+	for name, value := range b.grant.SetHeaders {
+		req.Header.Set(name, value)
+	}
+	if requestBody != nil {
+		req.Header.Set("Content-Type", contentType)
 	}
 	if b.token != "" {
 		req.Header.Set("Authorization", "Bearer "+b.token)
@@ -475,18 +597,26 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 		b.trace.record(CallRow{
 			Method:   strings.ToUpper(route.Method),
 			Route:    route.Path,
-			ReqBytes: len(body),
+			ReqBytes: sentBytes(),
 			Latency:  time.Since(started),
 		})
+		if upload != nil && upload.over() {
+			// The guest's body ran past the route's limit: the upstream request was
+			// broken off at the limit, so the API never got a complete body.
+			return brokerError(http.StatusRequestEntityTooLarge, "host api request body exceeds the route's limit")
+		}
 		return brokerError(http.StatusBadGateway, "host api unavailable")
 	}
 	defer resp.Body.Close()
+	if call.Stream != nil && resp.StatusCode >= 100 && resp.StatusCode <= 599 && isEventStream(resp.Header.Get("Content-Type")) {
+		return b.stream(call.Stream, resp, route, sentBytes(), started, cancelCall, callTimer)
+	}
 	if resp.ContentLength > maxHostResponseBytes {
 		b.trace.record(CallRow{
 			Method:   strings.ToUpper(route.Method),
 			Route:    route.Path,
 			Status:   resp.StatusCode,
-			ReqBytes: len(body),
+			ReqBytes: sentBytes(),
 			Latency:  time.Since(started),
 		})
 		return brokerError(http.StatusBadGateway, "host api unavailable")
@@ -499,7 +629,7 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 			Method:   strings.ToUpper(route.Method),
 			Route:    route.Path,
 			Status:   resp.StatusCode,
-			ReqBytes: len(body),
+			ReqBytes: sentBytes(),
 			Latency:  latency,
 		})
 		return brokerError(http.StatusBadGateway, "host api unavailable")
@@ -510,7 +640,7 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 		Route:     route.Path,
 		Status:    resp.StatusCode,
 		Delivered: true,
-		ReqBytes:  len(body),
+		ReqBytes:  sentBytes(),
 		RespBytes: len(responseBody),
 		Latency:   latency,
 	})
@@ -522,11 +652,75 @@ func (b *brokerSession) Call(ctx context.Context, call brokerCall) brokerRespons
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
 		b.breaker.open(time.Now(), retryAfterCooldown(resp.Header.Get("Retry-After")), resp.StatusCode == http.StatusTooManyRequests)
 	}
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" || strings.IndexFunc(contentType, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		contentType = "application/octet-stream"
+	answerType := resp.Header.Get("Content-Type")
+	if answerType == "" || strings.IndexFunc(answerType, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		answerType = "application/octet-stream"
 	}
-	return brokerResponse{Status: resp.StatusCode, ContentType: contentType, Body: responseBody}
+	return brokerResponse{Status: resp.StatusCode, ContentType: answerType, Body: responseBody}
+}
+
+// stream passes resp's body to sink piece by piece: at most maxHostResponseBytes in
+// all, never a gap longer than hostStreamIdleTimeout between pieces, and never past
+// the run's own deadline (the request's context). The status and content type go out
+// first, so a cut cannot become a 502: the stream ends early, and a client sees an
+// answer without its final event ([DONE], message_stop) and raises. Memory is one
+// piece, never the answer. The row records the bytes delivered; Delivered is true only
+// when the upstream ended the stream itself within the caps. The breaker reads the
+// status as for a buffered answer.
+func (b *brokerSession) stream(sink StreamSink, resp *http.Response, route HostRoute, reqBytes int, started time.Time, cancel context.CancelFunc, callTimer *time.Timer) brokerResponse {
+	callTimer.Stop()
+	idle := time.AfterFunc(hostStreamIdleTimeout, cancel)
+	defer idle.Stop()
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		b.breaker.open(time.Now(), retryAfterCooldown(resp.Header.Get("Retry-After")), resp.StatusCode == http.StatusTooManyRequests)
+	}
+	contentType := resp.Header.Get("Content-Type")
+	w := sink.Begin(resp.StatusCode, contentType)
+	buf := make([]byte, streamPiece)
+	written := 0
+	delivered := false
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if written+n > maxHostResponseBytes {
+				n = maxHostResponseBytes - written
+			}
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					break // the guest stopped reading
+				}
+				written += n
+			}
+			if written >= maxHostResponseBytes {
+				cancel() // the cap: cut, and let the upstream know
+				break
+			}
+			idle.Reset(hostStreamIdleTimeout)
+		}
+		if err == io.EOF {
+			delivered = true
+			break
+		}
+		if err != nil {
+			break // an idle cut, the run's deadline, or the upstream broke off
+		}
+	}
+	b.trace.record(CallRow{
+		Method:    strings.ToUpper(route.Method),
+		Route:     route.Path,
+		Status:    resp.StatusCode,
+		Delivered: delivered,
+		ReqBytes:  reqBytes,
+		RespBytes: written,
+		Latency:   time.Since(started),
+	})
+	return brokerResponse{Status: resp.StatusCode, ContentType: contentType, Streamed: true}
+}
+
+// isEventStream reports whether a Content-Type names server-sent events.
+func isEventStream(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && mediaType == "text/event-stream"
 }
 
 // matchRawTarget rejects any target that an HTTP stack would decode, clean, or
@@ -596,16 +790,149 @@ func (b *brokerSession) probeHealth(ctx context.Context) (healthy bool, cooldown
 	return false, retryAfterCooldown(resp.Header.Get("Retry-After"))
 }
 
-func readBrokerBody(r io.Reader) ([]byte, error) {
+// readBrokerBody buffers a body of at most limit bytes; one byte more is an error.
+func readBrokerBody(r io.Reader, limit int64) ([]byte, error) {
 	if r == nil {
 		return nil, nil
 	}
-	body, err := io.ReadAll(io.LimitReader(r, maxHostRequestBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(body) > maxHostRequestBytes {
+	if int64(len(body)) > limit {
 		return nil, errors.New("host api request body exceeds limit")
 	}
 	return body, nil
+}
+
+// headerFirst is the first value of name among the guest's headers, matched without
+// regard to case, or "" when the guest sent none.
+func headerFirst(h map[string][]string, name string) string {
+	for k, vals := range h {
+		if strings.EqualFold(k, name) && len(vals) > 0 {
+			return vals[0]
+		}
+	}
+	return ""
+}
+
+// reserveRequestBytes charges n request body bytes to the run's total (the grant's
+// MaxRequestBytes), or reports false when they would take it past the budget, so a
+// body that cannot fit is refused before anything is sent and two bodies in flight
+// cannot both fit the same remainder.
+func (b *brokerSession) reserveRequestBytes(n int64) bool {
+	budget := b.grant.requestBudget()
+	for {
+		cur := b.sent.Load()
+		if cur+n > budget {
+			return false
+		}
+		if b.sent.CompareAndSwap(cur, cur+n) {
+			return true
+		}
+	}
+}
+
+// errRequestOverCap is the error a passed-through upload fails with past its limit; the
+// transport then breaks the upstream request off, which the API sees as incomplete.
+var errRequestOverCap = errors.New("host api request body exceeds the route's limit")
+
+// errUploadClosed is what a passed-through upload's reader answers once it is closed.
+var errUploadClosed = errors.New("host api request body was closed")
+
+// capReader is the request body of a passed-through upload: it hands the transport at
+// most remaining bytes and, if the guest's body has more, fails the request with
+// errRequestOverCap, so a body over its limit never finishes at the API. A body of
+// exactly the limit ends normally: the reader looks one byte past the limit before it
+// decides.
+//
+// The transport reads it on a goroutine of its own and may go on reading after
+// RoundTrip has returned (an API may answer before the body is in). So the bytes held
+// from the run's total are settled on Close, which Call makes as it returns (the
+// transport may make it first), and from then on the reader hands the transport
+// nothing: a read that was waiting on the guest has its bytes dropped. The bytes the
+// API can receive are therefore exactly the bytes charged. Settling at the call's
+// return while the reader stayed open let a second upload start on the refund while
+// the first was still being read, so the bytes sent could pass the run's total
+// (release review, 2026-10-29).
+type capReader struct {
+	r      io.Reader
+	settle func(sent int64) // called once, by the first Close, with the bytes handed over
+
+	mu        sync.Mutex
+	remaining int64
+	sent      int64
+	pastCap   bool
+	closed    bool
+}
+
+func (c *capReader) Read(p []byte) (int, error) {
+	c.mu.Lock()
+	closed, remaining := c.closed, c.remaining
+	c.mu.Unlock()
+	if closed {
+		return 0, errUploadClosed
+	}
+	var n int
+	var err error
+	if remaining <= 0 {
+		err = c.pastLimit()
+	} else {
+		if int64(len(p)) > remaining {
+			p = p[:remaining]
+		}
+		n, err = c.r.Read(p)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed { // closed while this read waited on the guest: these bytes never go
+		return 0, errUploadClosed
+	}
+	c.remaining -= int64(n)
+	c.sent += int64(n)
+	if err == errRequestOverCap {
+		c.pastCap = true
+	}
+	return n, err
+}
+
+// pastLimit reads one byte past the limit: the body's own end (io.EOF) if it stops
+// there, errRequestOverCap if it goes on.
+func (c *capReader) pastLimit() error {
+	var one [1]byte
+	for attempt := 0; attempt < 8; attempt++ {
+		n, err := c.r.Read(one[:])
+		if n > 0 {
+			return errRequestOverCap
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return io.ErrNoProgress
+}
+
+// Close ends the body and settles the hold; only the first call does anything.
+func (c *capReader) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.closed {
+		c.closed = true
+		c.settle(c.sent)
+	}
+	return nil
+}
+
+// progress is the bytes the transport has been handed so far.
+func (c *capReader) progress() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sent
+}
+
+// over reports whether the guest's body ran past the limit.
+func (c *capReader) over() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.pastCap
 }

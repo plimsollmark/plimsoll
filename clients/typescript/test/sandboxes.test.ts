@@ -4,15 +4,11 @@
 // projectEcho, which answers a fresh call's project with the plan it received.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
 
 import { CodeSandboxes, PlimsollClient, PlimsollError } from "../src/index.ts";
 import { ownerDigest } from "../src/client.ts";
-import { RUNNERS, keyDigest, snippetRunner } from "../src/sandboxes.ts";
+import { keyDigest } from "../src/sandboxes.ts";
 
 // The rewritten answer keeps the daemon's echo of the request ID, as a proxy that edits
 // a body would; without it the client refuses the answer as another request's.
@@ -28,19 +24,24 @@ const sessionsUrl = process.env.PLIMSOLL_SESSIONS_URL;
 const echoUrl = process.env.PLIMSOLL_ECHO_URL;
 const ownerCapUrl = process.env.PLIMSOLL_OWNER_CAP_URL;
 const quickIdleUrl = process.env.PLIMSOLL_QUICK_IDLE_URL;
+const pooledUrl = process.env.PLIMSOLL_POOLED_URL;
+const drainedUrl = process.env.PLIMSOLL_DRAINED_URL;
 const skip = !wasmUrl || !sessionsUrl || !echoUrl ? "run through `go test ./clients/typescript`" : false;
 
-// A client that counts the procedures it calls.
-function counting(url: string): { client: PlimsollClient; calls: string[] } {
+// A client that counts the procedures it calls, and keeps the bodies of its Run requests.
+function counting(url: string): { client: PlimsollClient; calls: string[]; runs: Record<string, unknown>[] } {
   const calls: string[] = [];
+  const runs: Record<string, unknown>[] = [];
   const client = new PlimsollClient({
     baseUrl: url,
     fetch: (input, init) => {
-      calls.push(String(input).split("/").pop()!);
+      const name = String(input).split("/").pop()!;
+      calls.push(name);
+      if (name === "Run" && typeof init?.body === "string") runs.push(JSON.parse(init.body));
       return fetch(input, init);
     },
   });
-  return { client, calls };
+  return { client, calls, runs };
 }
 
 test("on a daemon with sessions, a key keeps one interpreter", { skip }, async () => {
@@ -99,6 +100,79 @@ test("without a key, or with sessions off, a call runs fresh with its files and 
   const never = new CodeSandboxes({ minimumIsolation: "container", client: new PlimsollClient({ baseUrl: sessionsUrl! }), sessions: "never" });
   // The fake provider refuses single runs, which proves no session was used.
   await assert.rejects(never.run("k", { code: "1" }), { notDispatched: "unsupported" });
+});
+
+// What the pooled daemon's provider saw: warm-only claims, fresh runs, members ended.
+async function pooledSeen(): Promise<{ warmOnly: number; fresh: number; ended: number }> {
+  return (await fetch(`${pooledUrl}/test/opened`, { method: "POST" })).json();
+}
+
+async function until(what: string, cond: () => boolean | Promise<boolean>): Promise<void> {
+  for (const deadline = Date.now() + 10_000; !(await cond()); await new Promise((r) => setTimeout(r, 10))) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+  }
+}
+
+test("on a daemon with a warm pool, a call without a key is one Run cell a waiting sandbox answers", { skip: skip || (!pooledUrl && "run through `go test ./clients/typescript`") }, async () => {
+  const { client, calls, runs } = counting(pooledUrl!);
+  const s = new CodeSandboxes({ minimumIsolation: "container", client });
+  assert.equal((await client.describe()).sessionPool, 2);
+  const before = await pooledSeen();
+  const r = await s.run(undefined, { code: "6 * 7", files: [{ path: "in/data.csv", content: "a" }] });
+  assert.equal(r.stdout, "python 1: 6 * 7", "a waiting sandbox's interpreter answered, not a fresh run");
+  assert.equal(r.stderr, "in/data.csv\n", "the cell carried the call's files");
+  assert.equal(r.stateKept, false, "nothing outlives the call");
+  assert.equal(r.filesPersist, false);
+  assert.equal(r.freshSandbox, undefined);
+  assert.equal(r.freshInterpreter, undefined);
+  assert.equal(r.isolation, "container");
+  assert.match(r.recordSha256, /^[0-9a-f]{64}$/);
+  assert.deepEqual(calls.filter((c) => c !== "Describe"), ["Run"], "one Run; the daemon claimed the sandbox itself");
+  assert.equal(runs[0]!.preferWarm, true);
+  assert.deepEqual(runs[0]!.cell, { language: "python", code: "6 * 7", files: [{ path: "in/data.csv", content: "a" }] });
+  const js = await s.run(undefined, { code: "1", language: "javascript" });
+  assert.equal(js.stdout, "javascript 1: 1", "each call gets a sandbox of its own");
+  await until("both members to be claimed and deleted", async () => {
+    const now = await pooledSeen();
+    return now.warmOnly - before.warmOnly === 2 && now.ended - before.ended === 2 && now.fresh === before.fresh;
+  });
+  const keyed = await s.run("k", { code: "1" });
+  assert.equal(keyed.stateKept, true, "a key still keeps its sandbox");
+  await s.disposeAll();
+});
+
+test("runCell answers say which sandbox ran, and their records check as single runs'", { skip: skip || (!pooledUrl && "run through `go test ./clients/typescript`") }, async () => {
+  const pooled = new PlimsollClient({ baseUrl: pooledUrl! });
+  const warm = await pooled.runCell({ language: "python", code: "1" }, { preferWarm: true });
+  assert.equal(warm.warm, true);
+  assert.equal(warm.interpreterStarted && warm.interpreterEnded, true, "a Run's cell keeps nothing");
+  assert.equal(warm.record.session, "");
+  const fresh = await pooled.runCell({ language: "python", code: "1" });
+  assert.equal(fresh.warm, false, "without preferWarm the daemon makes a sandbox for it");
+  assert.equal(JSON.parse(fresh.stdout).cell, "1");
+  await assert.rejects(pooled.runCell({ language: "python", code: "1" }, { preferWarm: "yes" as unknown as boolean }), { notDispatched: "request" });
+});
+
+test("a warm-only open on a daemon without a pool is refused there, before anything is made", { skip }, async () => {
+  const { client, calls } = counting(sessionsUrl!);
+  await assert.rejects(client.openSession({ warmOnly: true }), (e: unknown) => e instanceof PlimsollError && e.notDispatched === "capacity");
+  assert.deepEqual(calls, ["OpenSession"], "the client asks nothing first: protocol 5 is the guard");
+});
+
+test("with no warm sandbox waiting, or sessions: never, a call without a key runs fresh", { skip: skip || (!drainedUrl && "run through `go test ./clients/typescript`") }, async () => {
+  const drained = counting(drainedUrl!);
+  const s = new CodeSandboxes({ minimumIsolation: "container", client: drained.client });
+  const r = await s.run(undefined, { code: "print(1)" });
+  assert.equal(JSON.parse(r.stdout).cell, "print(1)", "the daemon's fresh runner ran it");
+  assert.deepEqual(drained.calls.filter((c) => c !== "Describe"), ["Run"], "a miss is no refusal and costs no round trip");
+  assert.equal(drained.runs[0]!.preferWarm, true);
+
+  const pooled = counting(pooledUrl!);
+  const before = await pooledSeen();
+  const never = new CodeSandboxes({ minimumIsolation: "container", client: pooled.client, sessions: "never" });
+  assert.equal(JSON.parse((await never.run(undefined, { code: "1" })).stdout).cell, "1");
+  assert.equal(pooled.runs[0]!.preferWarm, undefined, "sessions: never asks for no kept sandbox");
+  assert.equal((await pooledSeen()).warmOnly, before.warmOnly);
 });
 
 test("a language the tool does not offer, or the daemon cannot run, is refused before dispatch", { skip }, async () => {
@@ -331,10 +405,10 @@ test("an error that is not a PlimsollError gets the lead its stage implies", { s
     },
   });
   await assert.rejects(factory.run(undefined, { code: "1" }), (e: unknown) => e instanceof PlimsollError && e.notDispatched === "environment" && e.cause instanceof TypeError);
-  // Once the project was sent, an error of any class may follow execution.
+  // Once the cell was sent, an error of any class may follow execution.
   const client = new PlimsollClient({ baseUrl: echoUrl! });
-  const sent = client.runProject.bind(client);
-  client.runProject = async (...args) => {
+  const sent = client.runCell.bind(client);
+  client.runCell = async (...args) => {
     await sent(...args);
     throw new TypeError("a bug after the answer");
   };
@@ -555,90 +629,6 @@ test("a close that finds calls this client did not make is reported, not swallow
   assert.equal(errors.length, 1);
   assert.equal((errors[0] as PlimsollError).code, "data_loss");
 });
-
-test("the snippet runner prints the last value on node too", () => {
-  const out = execFileSync(process.execPath, ["-e", snippetRunner("const rows = [1, 2, 3];\nconsole.log('printed');\nrows.reduce((a, b) => a + b, 0)")], {
-    encoding: "utf8",
-  });
-  assert.equal(out, "printed\n6\n");
-});
-
-// The runners a fresh call sends print the last expression as a cell does. They are
-// fixed programs of this package, run here on this machine's node and python3.
-for (const language of ["javascript", "python"] as const) {
-  const runner = RUNNERS[language];
-  const bin = language === "python" ? "python3" : process.execPath;
-  let available = true;
-  try {
-    execFileSync(bin, ["--version"], { stdio: "ignore" });
-  } catch {
-    available = false;
-  }
-  test(`the ${language} runner prints the last expression`, { skip: available ? false : `${bin} is not installed` }, () => {
-    const dir = mkdtempSync(join(tmpdir(), "plimsoll-runner-"));
-    mkdirSync(join(dir, ".plimsoll"));
-    writeFileSync(join(dir, runner.path), runner.source);
-    const code = language === "python" ? "rows = [1, 2, 3]\nprint('printed')\nsum(rows)" : "const rows = [1, 2, 3];\nconsole.log('printed');\nrows.reduce((a, b) => a + b, 0)";
-    writeFileSync(join(dir, runner.file), code);
-    const [cmd, ...args] = runner.step.split(" ");
-    const out = execFileSync(cmd === "node" ? process.execPath : cmd!, args, { cwd: dir, encoding: "utf8" });
-    assert.equal(out, "printed\n6\n");
-  });
-
-  // What a session cell takes, a fresh run takes too: a module from the work
-  // directory (and, in Node, require at all), and top-level await.
-  test(`the ${language} runner imports from the work directory and awaits at the top level`, { skip: available ? false : `${bin} is not installed` }, () => {
-    const dir = mkdtempSync(join(tmpdir(), "plimsoll-runner-"));
-    mkdirSync(join(dir, ".plimsoll"));
-    writeFileSync(join(dir, runner.path), runner.source);
-    if (language === "python") {
-      writeFileSync(join(dir, "helper.py"), "x = 5\n");
-      writeFileSync(join(dir, "json.py"), "raise SystemExit('a work-directory json.py ran')\n");
-      writeFileSync(join(dir, runner.file), "import asyncio, helper\nawait asyncio.sleep(0)\nhelper.x + 1");
-    } else {
-      writeFileSync(join(dir, "helper.js"), "module.exports = { x: 5 };\n");
-      writeFileSync(join(dir, runner.file), "const helper = require('./helper.js');\nawait new Promise((r) => setTimeout(r, 1));\nhelper.x + 1");
-    }
-    const [cmd, ...args] = runner.step.split(" ");
-    const out = execFileSync(cmd === "node" ? process.execPath : cmd!, args, { cwd: dir, encoding: "utf8" });
-    assert.equal(out, "6\n");
-  });
-
-  // A guest gets the image's environment, so the runner must read the cell as the UTF-8
-  // the client wrote, whatever the image's locale. LC_ALL=C with UTF-8 mode off (which
-  // Python turns on by itself in the C locale) stands in for such an image: there the
-  // locale's encoding is ASCII.
-  if (language === "python") {
-    test("the python runner reads non-ASCII code under a locale that is not UTF-8", { skip: available ? false : `${bin} is not installed` }, () => {
-      const dir = mkdtempSync(join(tmpdir(), "plimsoll-runner-"));
-      mkdirSync(join(dir, ".plimsoll"));
-      writeFileSync(join(dir, runner.path), runner.source);
-      writeFileSync(join(dir, runner.file), `s = "h${String.fromCodePoint(0xe9)}llo"\nlen(s)`); // e with an acute accent: two bytes in UTF-8
-      const [cmd, ...args] = runner.step.split(" ");
-      const out = execFileSync(cmd!, ["-X", "utf8=0", ...args], { cwd: dir, encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
-      assert.equal(out, "5\n");
-    });
-  }
-
-  // Code a session cell runs, a fresh run runs too: Python's asyncio.run (a fresh run
-  // used to run the whole cell inside a running loop, where it raises), and Node's
-  // CommonJS names, which a cell in the session's node -e interpreter sees as globals
-  // (v0.15.0 review, M8).
-  test(`the ${language} runner runs what a session cell runs`, { skip: available ? false : `${bin} is not installed` }, () => {
-    const dir = mkdtempSync(join(tmpdir(), "plimsoll-runner-"));
-    mkdirSync(join(dir, ".plimsoll"));
-    writeFileSync(join(dir, runner.path), runner.source);
-    writeFileSync(
-      join(dir, runner.file),
-      language === "python"
-        ? "import asyncio\nasync def f():\n    return 41\nif __name__ == '__main__':\n    x = asyncio.run(f())\nx + 1"
-        : "[typeof module, typeof exports, typeof require, __dirname, __filename].join(' ')",
-    );
-    const [cmd, ...args] = runner.step.split(" ");
-    const out = execFileSync(cmd === "node" ? process.execPath : cmd!, args, { cwd: dir, encoding: "utf8" });
-    assert.equal(out, language === "python" ? "42\n" : "'object object function . [eval]'\n");
-  });
-}
 
 // A call whose answer is lost after it ran: the conversation's next call opens a new
 // sandbox, says so, and answers, where a client that kept the session would have
@@ -931,9 +921,8 @@ test("a fresh run with no step report says the code may have run, with no invent
   );
   assert.ok(err instanceof PlimsollError);
   assert.equal(err.notDispatched, undefined, "unmarked: it may have run");
-  assert.match(err.message, /^The code may have run, and there is no checked answer for it: plimsoll: the run ended protocol_error without a step report/);
-  assert.equal((err.result as { outcome: string }).outcome, "protocol_error");
-  assert.deepEqual(seen, [(err.result as { record: { sha256: string } }).record.sha256], "the checked record of a run with no step report is still kept");
+  assert.match(err.message, /^The code may have run, and there is no checked answer for it: /);
+  assert.deepEqual(seen, [], "the daemon answered an error, which carries no record");
 });
 
 test("onRecord gets every answered call's checked record, and its failure changes no result", { skip }, async () => {
@@ -1004,10 +993,3 @@ test("the default close warning names the key by a digest, never its IDs", { ski
   assert.match(warned[0], new RegExp(keyDigest(key)));
 });
 
-// The Go MCP server (clients/mcp) embeds these runners as files for its fresh calls;
-// this keeps the two copies one.
-test("the MCP server's runner files are these runners, byte for byte", () => {
-  for (const [language, file] of [["python", "run.py"], ["javascript", "run.cjs"]] as const) {
-    assert.equal(readFileSync(new URL(`../../mcp/server/runners/${file}`, import.meta.url), "utf8"), RUNNERS[language].source, file);
-  }
-});

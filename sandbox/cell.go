@@ -117,6 +117,15 @@ type CellResult struct {
 	// Instance is the sandbox instance that ran it, as a typed reference ("k8s-pod-uid:" and
 	// the pod's UID), or "" when the provider names none (sandbox.ValidInstance).
 	Instance string
+	// Policy is the sandbox policy the cell ran under, when the provider states one per run
+	// (docker names the seccomp profile its container applies); "" means the provider's one
+	// policy.
+	Policy string
+	// Warm: a waiting pool member ran the cell, a sandbox made before the call that had
+	// run only plimsoll's own programs, handed to this call alone and deleted after it
+	// (a Run cell that asked for one, RunResponse.warm). False for a session's cell and
+	// for a cell run in a sandbox made for it (RunCellFresh).
+	Warm bool
 	// Record is the run record the daemon returned, filled in by the client.
 	Record *RunRecord
 }

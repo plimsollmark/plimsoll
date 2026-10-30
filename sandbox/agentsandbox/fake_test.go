@@ -55,7 +55,12 @@ type fakeAPI struct {
 	deleteRequests []string
 	deleteMode     string // "reject" fails DELETE; "pending" accepts but never removes
 	handler        string
-	policies       []networkPolicy
+	// classUID is the runtime class's UID; classHook edits the class served on its nth
+	// read (1 is the first), under the fake's lock.
+	classUID   string
+	classReads int
+	classHook  func(read int, rc *runtimeClass)
+	policies   []networkPolicy
 	// nodeBoot is the boot ID fakeNode reports; nodeReads counts the node's reads.
 	nodeBoot  string
 	nodeReads int
@@ -113,7 +118,7 @@ func templatePolicy() networkPolicy {
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
-	f := &fakeAPI{t: t, claims: map[string]*claim{}, handler: "runsc", policies: []networkPolicy{templatePolicy()}, nodeBoot: fakeNodeBoot}
+	f := &fakeAPI{t: t, claims: map[string]*claim{}, handler: "runsc", classUID: "runtime-class-uid", policies: []networkPolicy{templatePolicy()}, nodeBoot: fakeNodeBoot}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -181,7 +186,12 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.writeSpec(w, t, f.tmplJSONHook, true)
 	case path == runtimeClassPath("gvisor"):
-		f.write(w, runtimeClass{Handler: f.handler})
+		f.classReads++
+		rc := runtimeClass{Meta: objectMeta{Name: "gvisor", UID: f.classUID}, Handler: f.handler}
+		if f.classHook != nil {
+			f.classHook(f.classReads, &rc)
+		}
+		f.write(w, rc)
 	case path == nodePath(fakeNode):
 		f.nodeReads++
 		var n node
@@ -448,6 +458,12 @@ func runnerReport(t *testing.T, stdin []byte) string {
 // testProvider is a provider over a fake API and a fake sandboxd.
 func testProvider(t *testing.T) (*Provider, *fakeAPI, *fakeSandboxd) {
 	t.Helper()
+	return testProviderWith(t, nil)
+}
+
+// testProviderWith is testProvider with edit applied to the configuration before New.
+func testProviderWith(t *testing.T, edit func(*Config)) (*Provider, *fakeAPI, *fakeSandboxd) {
+	t.Helper()
 	api, sd := newFakeAPI(t), newFakeSandboxd(t)
 	dir := t.TempDir()
 	ca := filepath.Join(dir, "ca.crt")
@@ -458,8 +474,12 @@ func testProvider(t *testing.T) (*Provider, *fakeAPI, *fakeSandboxd) {
 	if err := os.WriteFile(tok, []byte(fakeAPIKey+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, err := New(Config{APIServer: api.srv.URL, CAFile: ca, TokenFile: tok, Namespace: "default", WarmPool: "pool",
-		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken})
+	cfg := Config{APIServer: api.srv.URL, CAFile: ca, TokenFile: tok, Namespace: "default", WarmPool: "pool",
+		RuntimeClass: "gvisor", Image: fakeImage, RequirePinnedImage: true, SandboxdToken: fakeToken}
+	if edit != nil {
+		edit(&cfg)
+	}
+	p, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

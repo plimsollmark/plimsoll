@@ -35,6 +35,7 @@ Read the document for the subsystem you touch, not all of them.
 | Run records and signing | [docs/run-records.md](docs/run-records.md) |
 | Results, outcomes and the not-dispatched mark | [docs/run-results.md](docs/run-results.md) |
 | Capability grants (the per-run host-API broker) | [docs/capability-grants.md](docs/capability-grants.md) |
+| The ship scan (each call's payload against the operator's withheld set; `internal/withheld`, `cmd/plimsoll-withheld`) | [docs/ship-scan.md](docs/ship-scan.md) |
 | Hardened mode | [docs/hardened-mode.md](docs/hardened-mode.md) |
 | Callers and tokens | [docs/callers.md](docs/callers.md) |
 | Docker Cloud, OpenShell, Kubernetes agent-sandbox operator guides | [docs/dockercloud.md](docs/dockercloud.md), [docs/openshell.md](docs/openshell.md), [docs/agentsandbox.md](docs/agentsandbox.md) |
@@ -85,7 +86,7 @@ Read the document for the subsystem you touch, not all of them.
   the simulation worker [sim/](docker/sim/), the audited seccomp allowlist `seccomp.json`.
 - [examples/](examples/): runnable examples (`minimal`, `grant`, `daemon`, `advisor`, `oracle`, `fanout`, `fanout-cartpole`,
   `wasm-controller`, `wasm-buck`, `providers`, `sessions`, `capsule`, `sbom`, `agentsandbox`,
-  `adapter`, `trigger-chat`, `agent-session`); their pages are under `docs/examples/`.
+  `adapter`, `trigger-chat`, `agent-session`, `squeeze`, `ship-scan`); their pages are under `docs/examples/`.
   [docs/example-programs.md](docs/example-programs.md) says what each proves.
 - [measurements/](measurements/): timing programs; the gate builds them and never runs them.
 - [proto/](proto/) and `gen/go`: the service definition and generated code (`make generate`,

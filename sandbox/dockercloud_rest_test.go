@@ -438,8 +438,15 @@ func (f *dcFake) restCreate(w http.ResponseWriter, r *http.Request, in map[strin
 }
 
 func (f *dcFake) restList(w http.ResponseWriter, r *http.Request) {
+	if f.onList != nil {
+		f.onList()
+	}
 	page := 0
 	if tok := r.URL.Query().Get("pageToken"); tok != "" {
+		if tok == f.listRefuse {
+			restError(w, http.StatusBadRequest, "invalidArgument", "invalid page token")
+			return
+		}
 		page, _ = strconv.Atoi(tok)
 	}
 	rs := f.restState()

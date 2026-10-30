@@ -202,6 +202,11 @@ class CellResult(RunEvidence):
     """This call started a fresh interpreter: nothing an earlier cell defined exists."""
     interpreter_ended: bool
     """The interpreter ended during this call; the next cell starts a fresh one."""
+    warm: bool = False
+    """A waiting pool member ran the cell: a sandbox made before the call that had run
+    only plimsoll's own programs, handed to this call alone and deleted after it
+    (``Client.run_cell(prefer_warm=True)``). False for a session's cell and for a cell
+    run in a sandbox made for it. The record does not cover it."""
 
     @property
     def stdout_text(self) -> str:
@@ -340,6 +345,11 @@ class Info:
     max_sessions_per_owner: int = 0
     """The daemon's caps on this caller's sessions and on one owner's of them
     (``open_session(owner=...)``), 0 when there is none."""
+    session_pool: int = 0
+    """How many sandboxes the daemon keeps ready for sessions, 0 when it keeps none:
+    with one, a cell run with ``run_cell(prefer_warm=True)``, or a session opened with
+    ``open_session(warm_only=True)``, can answer without a sandbox being made for it.
+    Stated with ``supports_sessions``."""
 
 
 @dataclass(frozen=True)

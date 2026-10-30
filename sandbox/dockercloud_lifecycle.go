@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	pathpkg "path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,11 @@ func (d *DockerCloud) namePrefix() string { return dcNamePrefix + d.instance() +
 // the next reconciliation or its TTL. So unless the delete removed the sandbox, the
 // run is charged as one whose delete gave up (TeardownGaveUp).
 func (d *DockerCloud) create(ctx context.Context, budget time.Duration) (dcVM, error) {
+	return d.createLabeled(ctx, budget, nil)
+}
+
+// createLabeled is create with labels recorded on the sandbox (REST only).
+func (d *DockerCloud) createLabeled(ctx context.Context, budget time.Duration, labels map[string]string) (dcVM, error) {
 	vm := dcVM{name: d.namePrefix() + randID()}
 	d.leases.Track(vm.name) // before the request, so the reconciler never races this create
 	ok, unknown, unsent := false, false, false
@@ -82,6 +88,7 @@ func (d *DockerCloud) create(ctx context.Context, budget time.Duration) (dcVM, e
 		ttl:       budget + dcTTLSlack,
 		cpus:      cpus,
 		memoryMiB: memMiB,
+		labels:    labels,
 	}
 	if s := strings.TrimSpace(d.StoreImage); s != "" {
 		id, _, err := parseStoreImage(s)
@@ -253,26 +260,74 @@ func (d *DockerCloud) destroy(ctx context.Context, vm dcVM) (removed bool) {
 	return false
 }
 
+const (
+	// The labels every session sandbox carries: that it is one, and its expiry in Unix
+	// seconds.
+	dcSessionLabel = "plimsoll-session"
+	dcExpiresLabel = "plimsoll-expires"
+	// dcSessionReap is how far past its declared expiry a session sandbox is deleted by
+	// any instance.
+	dcSessionReap = 5 * time.Minute
+)
+
+// sessionPastExpiry reports whether a listed sandbox is a session's whose declared expiry
+// passed more than dcSessionReap ago: any instance reaps it, since a stopped sandbox has
+// no deadline of its own.
+func sessionPastExpiry(labels map[string]string, now time.Time) bool {
+	if labels[dcSessionLabel] != "1" {
+		return false
+	}
+	secs, err := strconv.ParseInt(labels[dcExpiresLabel], 10, 64)
+	return err == nil && now.After(time.Unix(secs, 0).Add(dcSessionReap))
+}
+
 // ReconcileOrphans deletes every sandbox named with this instance's prefix that no
 // run is tracking: a create whose answer never arrived and whose delete-by-name
 // also failed, or a teardown whose retries all failed. Names are tracked before a
 // create is sent, so an in-flight run is never touched, and sandboxes of other
-// instances (even under the same token) never match the prefix.
+// instances (even under the same token) never match the prefix. It also deletes,
+// whichever instance made it, a session sandbox more than dcSessionReap past the expiry
+// its labels declare: a stopped sandbox has no deadline of its own, so one a crashed
+// daemon left would otherwise stay.
+//
+// One pass reads at most dcMaxListPages pages, from where the last pass stopped, and the
+// next pass goes on from where this one stops, back to the first page after the last:
+// starting every pass at page one would never reach a sandbox past the bound while the
+// first pages stay full (found in review, 2026-10-27). A pass whose context ends reads
+// its unfinished page again next time. A saved token the service refuses (the API states
+// no lifetime for one; an assumption that it outlives the minute between passes) starts
+// the pass over at page one; any other list error sends the next pass to page one.
 func (d *DockerCloud) ReconcileOrphans(ctx context.Context) (int, error) {
 	if strings.TrimSpace(d.Token) == "" {
 		return 0, errors.New("DOCKER_SBX_TOKEN is not set")
 	}
 	prefix := d.namePrefix()
 	deleted := 0
-	token := ""
+	d.mu.Lock()
+	token := d.reapFrom
+	d.mu.Unlock()
+	resume := func(from string) {
+		d.mu.Lock()
+		d.reapFrom = from
+		d.mu.Unlock()
+	}
 	for page := 0; page < dcMaxListPages; page++ {
 		sandboxes, next, err := d.wire().listSandboxes(ctx, token)
+		if err != nil && page == 0 && token != "" && ctx.Err() == nil {
+			token = ""
+			sandboxes, next, err = d.wire().listSandboxes(ctx, token)
+		}
 		if err != nil {
+			if ctx.Err() == nil {
+				token = ""
+			}
+			resume(token)
 			return deleted, fmt.Errorf("dockercloud list sandboxes: %w", err)
 		}
 		for _, sb := range sandboxes {
 			name := sb.name
-			if !strings.HasPrefix(name, prefix) || d.leases.Tracked(name) {
+			mine := strings.HasPrefix(name, prefix)
+			if d.leases.Tracked(name) || (!mine && (!strings.HasPrefix(name, dcNamePrefix) || !sessionPastExpiry(sb.labels, time.Now()))) {
 				continue
 			}
 			if _, err := d.wire().deleteSandbox(ctx, dcVM{name: name, id: sb.id}, "reap-"+name); err != nil {
@@ -282,12 +337,18 @@ func (d *DockerCloud) ReconcileOrphans(ctx context.Context) (int, error) {
 			slog.Warn("dockercloud: deleted orphaned sandbox", "sandbox", name, "created_at", sb.createdAt)
 			deleted++
 		}
+		if err := ctx.Err(); err != nil {
+			resume(token)
+			return deleted, fmt.Errorf("dockercloud reconcile: %w", err)
+		}
+		token = next
+		resume(token)
 		if next == "" {
 			return deleted, nil
 		}
-		token = next
 	}
-	return deleted, fmt.Errorf("dockercloud list sandboxes: more than %d pages", dcMaxListPages)
+	slog.Debug("dockercloud: orphan reconciliation read its pages for this pass; the next pass goes on from here", "pages", dcMaxListPages)
+	return deleted, nil
 }
 
 // ---- startup smoke test ----
@@ -383,5 +444,25 @@ func (d *DockerCloud) SmokeTest(ctx context.Context) error {
 		return fmt.Errorf("dockercloud smoke: the in-guest output cap is not in force (exit %d, %d bytes, truncated=%v)",
 			flood.exitCode, len(flood.stdout), flood.stdoutTruncated)
 	}
+	// The languages a project step or a session's cell can use: JavaScript, proved above,
+	// and each other language whose check answers (LanguageSpecs).
+	langs := []Language{LanguageJavaScript}
+	if probed, err := d.execLimited(ctx, vm, []string{"sh", "-c", LanguageProbe()}, "", 30, 4096); err == nil && probed.exitCode == 0 {
+		for _, l := range ProbedLanguages(probed.stdout) {
+			if !slices.Contains(langs, l) {
+				langs = append(langs, l)
+			}
+		}
+	}
+	d.mu.Lock()
+	d.langs = langs
+	d.mu.Unlock()
 	return nil
+}
+
+// languages are the languages the smoke test proved, none before it has run.
+func (d *DockerCloud) languages() []Language {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.langs)
 }

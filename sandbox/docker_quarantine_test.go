@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -94,23 +95,19 @@ func TestTheSessionReadBackComparesValuesNotBytes(t *testing.T) {
 	}
 }
 
-// A pool member whose removal is not confirmed keeps its place in the pool until the
-// orphan pass confirms it gone, so failing removals cannot let the filler make
-// containers past the pool's size (review, 2026-10-24). Before, the place came back at
-// once, the container still quarantined.
-func TestPoolHoldsAMemberPlaceUntilItsRemovalIsConfirmed(t *testing.T) {
+// A pool member whose removal is not confirmed reports it gone only once the orphan
+// pass confirms it, so its place in the pool (which poolkit gives back on that report)
+// cannot let the filler make containers past the pool's size (review, 2026-10-24).
+// Before, the place came back at once, the container still quarantined.
+func TestPoolDiscardReportsAMemberGoneOnlyOnceItsRemovalIsConfirmed(t *testing.T) {
 	d := &DockerSandbox{}
 	broker, err := startDockerSessionBroker()
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := &dockerSession{d: d, life: testLife(), name: "plsm-pool-unconfirmed", broker: broker}
-	p := &dockerPool{d: d, size: 1, wake: make(chan struct{}, 1)}
-	p.discard = p.remove
-	p.mu.Lock()
-	p.retiring = 1
-	p.mu.Unlock()
-	p.drop(s)
+	var gone atomic.Bool
+	d.discardPoolMember(s, func() { gone.Store(true) })
 	waitRemovals := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -119,43 +116,40 @@ func TestPoolHoldsAMemberPlaceUntilItsRemovalIsConfirmed(t *testing.T) {
 		}
 	}
 	waitRemovals()
-	if !d.quarantine.Held("plsm-pool-unconfirmed") || p.short() {
-		t.Fatalf("held %v, short %v: the member's place came back before its container was confirmed gone", d.quarantine.Held("plsm-pool-unconfirmed"), p.short())
+	if !d.quarantine.Held("plsm-pool-unconfirmed") || gone.Load() {
+		t.Fatalf("held %v, gone %v: the member was reported gone before its container was confirmed gone", d.quarantine.Held("plsm-pool-unconfirmed"), gone.Load())
 	}
 	if n, err := d.quarantine.Retry(func(string) error { return nil }); n != 1 || err != nil {
 		t.Fatalf("a confirmed retry: %d, %v", n, err)
 	}
-	for deadline := time.Now().Add(5 * time.Second); !p.short(); time.Sleep(10 * time.Millisecond) {
+	for deadline := time.Now().Add(5 * time.Second); !gone.Load(); time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
-			t.Fatal("the place did not come back once the container was confirmed gone")
+			t.Fatal("the member was not reported gone once its container was confirmed gone")
 		}
 	}
 }
 
-// A member that failed to start holds its place the same way: add abandons it under a
-// hold of the pool's, so the place comes back only once its container is confirmed gone
-// (review, 2026-10-24).
-func TestPoolHoldsAFailedMemberPlaceUntilItsRemovalIsConfirmed(t *testing.T) {
+// A member that failed to start is removed under the hold the pool took for its place
+// (makePoolMember abandons it under ctx), so the place comes back only once its
+// container is confirmed gone (review, 2026-10-24).
+func TestPoolFailedMemberRemovalHoldsThePlaceUntilConfirmed(t *testing.T) {
 	d := &DockerSandbox{}
 	broker, err := startDockerSessionBroker()
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := &dockerSession{d: d, life: testLife(), name: "plsm-pool-failed-start", broker: broker}
-	p := &dockerPool{d: d, size: 1, wake: make(chan struct{}, 1)}
-	p.mu.Lock()
-	p.making = 1
-	p.mu.Unlock()
-	ctx, made := WithCapacity(context.Background(), p.made)
-	s.abandon(ctx) // as add does when an interpreter will not start
+	released := false
+	ctx, made := WithCapacity(context.Background(), func() { released = true })
+	s.abandon(ctx) // as makePoolMember does when an interpreter will not start
 	made()
-	if !d.quarantine.Held("plsm-pool-failed-start") || p.short() {
-		t.Fatalf("held %v, short %v: the failed member's place came back before its container was confirmed gone", d.quarantine.Held("plsm-pool-failed-start"), p.short())
+	if !d.quarantine.Held("plsm-pool-failed-start") || released {
+		t.Fatalf("held %v, released %v: the failed member's place came back before its container was confirmed gone", d.quarantine.Held("plsm-pool-failed-start"), released)
 	}
 	if n, err := d.quarantine.Retry(func(string) error { return nil }); n != 1 || err != nil {
 		t.Fatalf("a confirmed retry: %d, %v", n, err)
 	}
-	if !p.short() {
+	if !released {
 		t.Fatal("the place did not come back once the container was confirmed gone")
 	}
 }

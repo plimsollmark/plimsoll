@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plimsoll: the OpenAI and Anthropic libraries in a sandbox that never holds the API key</title>
+<meta name="description" content="Agent-style code used the OpenAI and Anthropic Python libraries, unmodified, in a plimsoll docker sandbox. The libraries held a dummy key; the broker outside the sandbox checked every request, passed one header, put the real key on it, streamed answers piece by piece and passed an 8 MiB upload through. A stub API stood in for both vendors and wrote down everything it received.">
+<style>
+:root{color-scheme:light;--ink:#0b0b0b;--ink2:#3d3c39;--muted:#6b6a65;--line:#e4e3de;--paper:#fcfcfb;--soft:#f4f3ef;--teal:#0f766e;--bad:#b42318;--good:#106b54}
+*{box-sizing:border-box}
+body{margin:0;background:#fff;color:var(--ink);font:17px/1.6 Inter,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:28px 22px 90px}
+a{color:var(--teal);overflow-wrap:anywhere}
+nav.site{display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px}
+nav.site a:first-child{font-weight:700;color:#1f2328;text-decoration:none}
+h1{font-size:42px;line-height:1.1;margin:18px 0 10px;letter-spacing:-1px}
+h2{font-size:29px;line-height:1.15;margin:70px 0 10px;letter-spacing:-.4px}
+h3{font-size:19px;margin:26px 0 6px}
+p{margin:10px 0}
+dfn{font-style:normal;font-weight:600;border-bottom:1.5px dotted #8f8d86}
+.kicker{font-size:14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);margin:0}
+.lede{font-size:20px;color:var(--ink2);max-width:780px}
+.small{font-size:14px;color:var(--muted)}
+code,pre{font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:var(--soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:8px 0}
+.hero{display:grid;grid-template-columns:1.25fr 1fr;gap:28px;align-items:center}
+.hero > *{min-width:0}
+.hero svg{width:100%;height:auto;display:block}
+.caption{font-size:14px;color:var(--muted);margin-top:4px}
+.script{border:2px solid #e8a317;background:#fff8e6;border-radius:14px;padding:14px 18px;margin:24px 0 0;max-width:820px}
+.script b{color:#8a5a00}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:26px 0 0}
+.tile{border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--paper);min-width:0}
+.tile b{display:block;font-size:30px;line-height:1.1;letter-spacing:-.5px}
+.tile span{font-size:14px;color:var(--muted)}
+.tile .good{color:var(--good)}.tile .bad{color:var(--bad)}
+.strip{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:18px 0}
+.panel{border:1px solid var(--line);border-radius:16px;padding:16px;background:var(--paper);min-width:0}
+.panel .n{font-weight:800;color:var(--teal);font-size:14px;letter-spacing:.06em}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:15px;margin:10px 0}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+th{font-size:13px;color:var(--muted);font-weight:600}
+td.num{text-align:right;white-space:nowrap}
+td code{font-size:13px}
+table.hdr{min-width:720px;table-layout:fixed}
+table.hdr td{overflow-wrap:anywhere;font-size:13.5px}
+table.hdr col.n{width:24%}table.hdr col.v{width:28%}table.hdr col.f{width:20%}
+tr.f-pass td:first-child{border-left:4px solid var(--good)}
+tr.f-broker td:first-child{border-left:4px solid #6a6fc0}
+tr.f-drop td:first-child{border-left:4px solid #c9c7bf}
+tr.f-drop td{color:var(--muted)}
+tr.f-bad td:first-child{border-left:4px solid var(--bad)}
+tr.f-bad td{color:var(--bad)}
+tr.r-ok td:first-child{border-left:4px solid var(--good)}
+tr.r-bad td:first-child{border-left:4px solid var(--bad)}
+td.nowrap{white-space:nowrap}
+table.wide{min-width:640px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:6px 0 10px;font-size:14px}
+.legend i{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:6px}
+.fp{font:12.5px ui-monospace,Menlo,Consolas,monospace;color:var(--muted);overflow-wrap:anywhere}
+svg.stream{width:100%;height:auto;display:block;margin:10px 0 4px;max-width:760px;min-width:520px}
+.aside{border-left:4px solid #e8a317;background:#fff8e6;padding:10px 14px;border-radius:0 10px 10px 0;max-width:780px;font-size:16px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+.two > *{min-width:0}
+.yes,.no{border-radius:14px;padding:14px 18px}
+.yes{background:#eaf6f1;border:1px solid #b6dfcc}
+.no{background:#fbf3e3;border:1px solid #efd9a8}
+.yes ul,.no ul{margin:6px 0 0;padding-left:20px}
+.yes li,.no li{margin:0 0 8px}
+details{margin:8px 0}
+summary{cursor:pointer;color:var(--teal)}
+blockquote{margin:10px 0;padding:8px 14px;border-left:4px solid var(--line);color:var(--ink2)}
+footer{margin-top:80px;border-top:1px solid var(--line);padding-top:16px;font-size:14px;color:var(--muted)}
+@media (max-width:760px){
+ h1{font-size:32px}h2{font-size:25px}
+ .hero,.two,.strip{grid-template-columns:1fr}
+ .hero figure{max-width:440px}
+ table{font-size:13px}th,td{padding:6px 4px}
+}
+</style>
+</head>
+<body>
+<main>
+<nav class="site"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/verifiers/">verifiers on plimsoll</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/sdk-grants">Source (EXTERNAL · source repo ↗)</a></nav>
+
+<section class="hero">
+<div>
+<p class="kicker">Grants for standard client libraries</p>
+<h1>The agent's code calls the OpenAI and Anthropic libraries as they ship, and never holds the key</h1>
+<p class="lede">Agent-written code reaches for the client library it knows: the OpenAI or Anthropic <dfn>SDK</dfn> (software development kit, the vendor's own package for calling its API). That library wants an API key, and you do not want to hand your key to an agent's code. In plimsoll, a <a href="../../trainers/glossary.html#grant">grant (INTERNAL · glossary →)</a>, one run's permission to call listed routes of one API, can now carry what the library needs: the run's <a href="../../trainers/glossary.html#sandbox">sandbox (INTERNAL · glossary →)</a> gets a local address, the library is told to use it and is handed a dummy key, and the <a href="../../trainers/glossary.html#broker">broker (INTERNAL · glossary →)</a>, the part of <code>plimsolld</code> (the plimsoll server, or daemon) outside the sandbox that makes every API call, checks each request and puts the real key on it. Below, both libraries ran unmodified that way, and the API they called wrote down everything it received.</p>
+</div>
+<figure style="margin:0">
+<svg viewBox="0 0 420 540" role="img" aria-labelledby="flowT flowD">
+<title id="flowT">How a library's request leaves the sandbox</title>
+<desc id="flowD">Inside the docker sandbox, which has no network, the agent's code calls the OpenAI or Anthropic library. The library reads its base URL and a dummy key from the environment and sends to plimsoll's forwarder at 127.0.0.1 port 8471, which passes each connection over a Unix socket to the broker in plimsolld. The broker checks the route against the allow list, copies only the headers the profile passes, sets the real key, and sends the request to the API, which on this page is a stub.</desc>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0f766e"/></marker></defs>
+<rect x="0" y="0" width="420" height="540" rx="20" fill="#f4f8f7"/>
+<rect x="14" y="14" width="392" height="246" rx="14" fill="#fff" stroke="#0f766e" stroke-width="3" stroke-dasharray="7 4"/>
+<text x="210" y="40" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="800" fill="#0b0b0b">docker sandbox</text>
+<text x="210" y="58" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" fill="#6b6a65">no network: only its own loopback</text>
+<rect x="34" y="70" width="352" height="44" rx="8" fill="#eef2ff" stroke="#6a6fc0"/>
+<text x="50" y="97" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="700" fill="#0b0b0b">agent's code + SDK</text>
+<text x="372" y="97" text-anchor="end" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" fill="#3d3c39">openai or anthropic, as shipped</text>
+<rect x="34" y="122" width="352" height="64" rx="8" fill="#fff8e6" stroke="#e8a317"/>
+<text x="50" y="146" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12.5" fill="#0b0b0b">OPENAI_BASE_URL=…127.0.0.1:8471/v1</text>
+<text x="50" y="170" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12.5" fill="#0b0b0b">OPENAI_API_KEY=a dummy</text>
+<rect x="34" y="194" width="352" height="48" rx="8" fill="#e6f4f2" stroke="#0f766e"/>
+<text x="50" y="223" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="700" fill="#0b0b0b">forwarder, 127.0.0.1:8471</text>
+<text x="372" y="223" text-anchor="end" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" fill="#3d3c39">plimsoll's, checks nothing</text>
+<path d="M210 262 V300" stroke="#0f766e" stroke-width="3" marker-end="url(#ah)"/>
+<text x="222" y="286" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" fill="#0f766e">Unix socket</text>
+<rect x="34" y="306" width="352" height="112" rx="12" fill="#33415c"/>
+<text x="210" y="332" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="800" fill="#fff">the broker, in plimsolld</text>
+<text x="56" y="358" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" fill="#d7dce5">1. the route on the allow list? else 403</text>
+<text x="56" y="380" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" fill="#d7dce5">2. copy only the headers the profile passes</text>
+<text x="56" y="402" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" fill="#d7dce5">3. set the real key, held here only</text>
+<path d="M210 420 V458" stroke="#0f766e" stroke-width="3" marker-end="url(#ah)"/>
+<text x="222" y="444" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" fill="#0f766e">the profile's base URL</text>
+<rect x="34" y="464" width="352" height="60" rx="12" fill="#fff" stroke="#c9c7bf" stroke-width="2"/>
+<text x="210" y="490" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="800" fill="#0b0b0b">the API</text>
+<text x="210" y="510" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" fill="#8a5a00">on this page: a stub on loopback</text>
+</svg>
+<figcaption class="caption">The library is unchanged, and the container still has no network. What changed: two environment variables, a listener of plimsoll's inside the sandbox, and the seccomp profile that lets it listen.</figcaption>
+</figure>
+</section>
+
+<div class="script"><b>No real model API is called on this page, and nothing is spent.</b> The API is a <dfn>stub</dfn>: a small program of the example's (<a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/sdk-grants/stub.go">stub.go (EXTERNAL · source repo ↗)</a>) listening on the host's loopback, which answers like a small part of the two APIs (a chat or messages call, the same call streamed, a file upload) and writes down every request it receives, headers and timings included. That record is what makes the key, the headers and the stream below checkable from outside the sandbox. It says nothing about how OpenAI's or Anthropic's own servers behave; the last section says what that leaves out.</div>
+
+<p>The headline numbers, each a check computed from the files beside this page (13 of 13 hold):</p>
+<div class="tiles">
+<div class="tile"><b class="good">0 of 5</b><span>requests that reached the API carried the dummy key the libraries held</span></div>
+<div class="tile"><b class="good">5 of 5</b><span>carried the key the daemon holds, which never entered the sandbox</span></div>
+<div class="tile"><b class="good">8 of 8</b><span>streamed pieces (OpenAI) reached the library before the stub wrote the next</span></div>
+<div class="tile"><b class="good">12 of 12</b><span>streamed events (Anthropic), the same</span></div>
+<div class="tile"><b class="good">8 MiB</b><span>uploaded through the broker; the stub's SHA-256 fingerprint of it is the guest's</span></div>
+<div class="tile"><b class="good">0</b><span>requests reached the API on the route the profile does not allow; the broker answered 403</span></div>
+</div>
+<p class="small">Run on 2026-10-29, with openai 3.41.0 and anthropic 2.3.0 on Python 3.14.8, on one development machine. Every run's <a href="../../trainers/glossary.html#run-record">run record (INTERNAL · glossary →)</a>, plimsoll's statement of what was sent, what came back and where it ran, is signed into <a href="bundle.jsonl">bundle.jsonl</a>.</p>
+
+<h2>The 30-second version</h2>
+<div class="strip">
+<div class="panel"><span class="n">1</span><p>The operator writes a <a href="../../trainers/glossary.html#grant-profile">grant profile (INTERNAL · glossary →)</a>, a grant stored on the server under a name: the routes it allows, the real key (named by an environment variable of the daemon's), and two new fields. <code>sdk_env</code> is the environment the library reads; <code>pass_headers</code> names the headers the broker may copy from the library's request.</p></div>
+<div class="panel"><span class="n">2</span><p>A run that selects the profile gets plimsoll's <dfn>forwarder</dfn> listening on <code>127.0.0.1:8471</code> inside the sandbox, and those variables in its environment. The container still has no network: <code>127.0.0.1</code> is its own <dfn>loopback</dfn>, the address a machine uses to reach itself, and the forwarder hands each connection, byte for byte, to the broker's <dfn>Unix socket</dfn>, a local connection through a file rather than a network.</p></div>
+<div class="panel"><span class="n">3</span><p>The broker checks the route, rebuilds the request with only the passed headers and the real key, sends it to the API, and passes the answer back: a streamed one piece by piece, as it arrives.</p></div>
+</div>
+
+<p>The two profiles this run used, as the daemon read them from its grants file (<a href="grants.json">grants.json</a>; the base URLs are the stub's two loopback ports):</p>
+<div class="two">
+<div><pre>{
+  &#34;openai&#34;: {
+    &#34;base_url&#34;: &#34;http://127.0.0.1:45519&#34;,
+    &#34;allow&#34;: [
+      &#34;POST /v1/chat/completions&#34;,
+      &#34;POST /v1/files&#34;
+    ],
+    &#34;sdk_env&#34;: {
+      &#34;OPENAI_API_KEY&#34;: &#34;dummy-openai-key-in-the-sandbox&#34;,
+      &#34;OPENAI_BASE_URL&#34;: &#34;{origin}/v1&#34;
+    },
+    &#34;route_max_request_bytes&#34;: {
+      &#34;POST /v1/files&#34;: 16777216
+    },
+    &#34;route_content_types&#34;: {
+      &#34;POST /v1/files&#34;: [
+        &#34;multipart/form-data&#34;
+      ]
+    },
+    &#34;max_request_bytes&#34;: 67108864,
+    &#34;allowed_callers&#34;: [
+      &#34;sdk-grants-example&#34;
+    ],
+    &#34;token&#34;: {
+      &#34;type&#34;: &#34;static&#34;,
+      &#34;env&#34;: &#34;STUB_OPENAI_KEY&#34;
+    }
+  }
+}</pre></div>
+<div><pre>{
+  &#34;anthropic&#34;: {
+    &#34;base_url&#34;: &#34;http://127.0.0.1:43323&#34;,
+    &#34;allow&#34;: [
+      &#34;POST /v1/messages&#34;
+    ],
+    &#34;pass_headers&#34;: [
+      &#34;anthropic-version&#34;
+    ],
+    &#34;sdk_env&#34;: {
+      &#34;ANTHROPIC_API_KEY&#34;: &#34;dummy-anthropic-key-in-the-sandbox&#34;,
+      &#34;ANTHROPIC_BASE_URL&#34;: &#34;{origin}&#34;
+    },
+    &#34;allowed_callers&#34;: [
+      &#34;sdk-grants-example&#34;
+    ],
+    &#34;token&#34;: {
+      &#34;type&#34;: &#34;static&#34;,
+      &#34;env&#34;: &#34;STUB_ANTHROPIC_KEY&#34;
+    }
+  }
+}</pre>
+<p class="small">The values in <code>sdk_env</code> are what the guest sees. <code>{origin}</code> stands for the local address. The <code>token</code> names the daemon's environment variable that holds the real key; the key itself is never in the file.</p></div>
+</div>
+
+<h2>What the guest's environment held</h2>
+<p>The <a href="../../trainers/glossary.html#guest">guest (INTERNAL · glossary →)</a>, the code running in the sandbox, printed its whole environment, and the environment of every process it could see. These are the variables the profile's <code>sdk_env</code> set, as each run's guest saw them:</p>
+<div class="scroll"><table>
+<tr><th>Run</th><th>Variable</th><th>Value in the sandbox</th></tr>
+<tr><td>The OpenAI library</td><td><code>OPENAI_API_KEY</code></td><td><code>dummy-openai-key-in-the-sandbox</code></td></tr>
+<tr><td>The OpenAI library</td><td><code>OPENAI_BASE_URL</code></td><td><code>http://127.0.0.1:8471/v1</code></td></tr>
+<tr><td>The Anthropic library</td><td><code>ANTHROPIC_API_KEY</code></td><td><code>dummy-anthropic-key-in-the-sandbox</code></td></tr>
+<tr><td>The Anthropic library</td><td><code>ANTHROPIC_BASE_URL</code></td><td><code>http://127.0.0.1:8471</code></td></tr>
+</table></div>
+<p>The key is a placeholder: both libraries refuse to start without one, and the broker replaces whatever the library sends. The keys the daemon held appear nowhere in what any run was sent or answered: not in the guest's environment, not in its output. The program searched the stored requests and answers in the signed bundle for each key, byte for byte. Each guest could read the environment of its own process and of no other: in the OpenAI run, <code>pid 1, node --eval (PermissionError errno 13)</code> and <code>pid 13, node /runner.mjs (PermissionError errno 13)</code> refused it (errno 13 is permission denied). Those two are plimsoll's own: the forwarder and the project runner. The Anthropic run's guest saw the same 2 refusals.</p>
+<details><summary>The OpenAI run's whole environment (15 variables)</summary>
+<div class="scroll"><table><tr><td><code>HOME</code></td><td><code>/</code></td></tr><tr><td><code>HOSTNAME</code></td><td><code>41b808e93688</code></td></tr><tr><td><code>HOST_API_LISTEN</code></td><td><code>127.0.0.1:8471</code></td></tr><tr><td><code>HOST_API_SOCKET</code></td><td><code>/run/host-api.sock</code></td></tr><tr><td><code>NODE_OPTIONS</code></td><td><code>--import=file:///tmp/plimsoll-host.mjs</code></td></tr><tr><td><code>NODE_VERSION</code></td><td><code>22.23.4</code></td></tr><tr><td><code>OMP_NUM_THREADS</code></td><td><code>1</code></td></tr><tr><td><code>OPENAI_API_KEY</code></td><td><code>dummy-openai-key-in-the-sandbox</code></td></tr><tr><td><code>OPENAI_BASE_URL</code></td><td><code>http://127.0.0.1:8471/v1</code></td></tr><tr><td><code>OPENBLAS_NUM_THREADS</code></td><td><code>1</code></td></tr><tr><td><code>PATH</code></td><td><code>/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin</code></td></tr><tr><td><code>PLIMSOLL_RUNNER_PID</code></td><td><code>13</code></td></tr><tr><td><code>PWD</code></td><td><code>/work</code></td></tr><tr><td><code>SHLVL</code></td><td><code>1</code></td></tr><tr><td><code>YARN_VERSION</code></td><td><code>1.22.22</code></td></tr></table></div></details>
+
+<h2>What the library sent, and what the API received</h2>
+<p>For one call of each library: every header as the library sent it to the local address (read back through the library's own <code>with_raw_response</code>, which adds its <code>x-stainless-raw-response</code> header), beside the same header as the stub received it from the broker.</p>
+<div class="legend"><span><i style="background:#106b54"></i>passed: the profile lists it</span><span><i style="background:#6a6fc0"></i>set by the broker</span><span><i style="background:#c9c7bf"></i>dropped by the broker</span><span><i style="background:#b42318"></i>a finding</span></div>
+
+<h3>OpenAI: <code>client.chat.completions.create(...)</code></h3>
+<p class="small">Sent to <code>http://127.0.0.1:8471/v1/chat/completions</code>; the stub received <code>POST /v1/chat/completions</code> and answered 200: “Hello from the stub API.”</p>
+<div class="scroll"><table class="hdr"><colgroup><col class="n"><col class="v"><col class="v"><col class="f"></colgroup>
+<tr><th>Header</th><th>The library sent</th><th>The API received</th><th>What happened</th></tr>
+<tr class="f-broker"><td><code>Host</code></td><td><code>127.0.0.1:8471</code></td><td><code>127.0.0.1:45519</code></td><td>set by the broker, in place of the library&#39;s</td></tr>
+<tr class="f-broker"><td><code>Accept-Encoding</code></td><td><code>gzip, deflate</code></td><td><code>gzip</code></td><td>set by the broker, in place of the library&#39;s</td></tr>
+<tr class="f-drop"><td><code>Connection</code></td><td><code>keep-alive</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-broker"><td><code>authorization</code></td><td><code>Bearer dummy-openai-key-in-the-sandbox</code></td><td><code>Bearer stub-openai-key-held-by-the-daemon-bc8e8a1ea6ba1cda1c7a4124</code></td><td>set by the broker, in place of the library&#39;s</td></tr>
+<tr class="f-broker"><td><code>accept</code></td><td><code>application/json</code></td><td><code>application/json</code></td><td>set by the broker (the same value)</td></tr>
+<tr class="f-broker"><td><code>content-type</code></td><td><code>application/json</code></td><td><code>application/json</code></td><td>set by the broker (the same value)</td></tr>
+<tr class="f-broker"><td><code>user-agent</code></td><td><code>OpenAI/Python 3.41.0</code></td><td><code>Go-http-client/1.1</code></td><td>set by the broker, in place of the library&#39;s</td></tr>
+<tr class="f-drop"><td><code>x-stainless-lang</code></td><td><code>python</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-package-version</code></td><td><code>3.41.0</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-os</code></td><td><code>Linux</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-arch</code></td><td><code>x64</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-runtime</code></td><td><code>CPython</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-runtime-version</code></td><td><code>3.14.8</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-async</code></td><td><code>false</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>openai-organization</code></td><td><code>org-chosen-by-the-guest</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-raw-response</code></td><td><code>true</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-retry-count</code></td><td><code>0</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-read-timeout</code></td><td><code>600</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-broker"><td><code>Content-Length</code></td><td><code>74</code></td><td><code>74</code></td><td>set by the broker (the same value)</td></tr>
+</table></div>
+
+<h3>Anthropic: <code>client.messages.create(...)</code></h3>
+<p class="small">Sent to <code>http://127.0.0.1:8471/v1/messages</code>; the stub received <code>POST /v1/messages</code> and answered 200: “Hello from the stub API.”</p>
+<div class="scroll"><table class="hdr"><colgroup><col class="n"><col class="v"><col class="v"><col class="f"></colgroup>
+<tr><th>Header</th><th>The library sent</th><th>The API received</th><th>What happened</th></tr>
+<tr class="f-broker"><td><code>Host</code></td><td><code>127.0.0.1:8471</code></td><td><code>127.0.0.1:43323</code></td><td>set by the broker, in place of the library&#39;s</td></tr>
+<tr class="f-broker"><td><code>Accept-Encoding</code></td><td><code>gzip, deflate</code></td><td><code>gzip</code></td><td>set by the broker, in place of the library&#39;s</td></tr>
+<tr class="f-drop"><td><code>Connection</code></td><td><code>keep-alive</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-timeout</code></td><td><code>600</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-retry-count</code></td><td><code>0</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>x-stainless-read-timeout</code></td><td><code>600</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-broker"><td><code>Accept</code></td><td><code>application/json</code></td><td><code>application/json</code></td><td>set by the broker (the same value)</td></tr>
+<tr class="f-broker"><td><code>Content-Type</code></td><td><code>application/json</code></td><td><code>application/json</code></td><td>set by the broker (the same value)</td></tr>
+<tr class="f-broker"><td><code>User-Agent</code></td><td><code>Anthropic/Python 2.3.0</code></td><td><code>Go-http-client/1.1</code></td><td>set by the broker, in place of the library&#39;s</td></tr>
+<tr class="f-drop"><td><code>X-Stainless-Lang</code></td><td><code>python</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>X-Stainless-Package-Version</code></td><td><code>2.3.0</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>X-Stainless-OS</code></td><td><code>Linux</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>X-Stainless-Arch</code></td><td><code>x64</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>X-Stainless-Runtime</code></td><td><code>CPython</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>X-Stainless-Runtime-Version</code></td><td><code>3.14.8</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-broker"><td><code>Authorization</code></td><td><code>Bearer dummy-anthropic-key-in-the-sandbox</code></td><td><code>Bearer stub-anthropic-key-held-by-the-daemon-29dc33e2fa88addcb933ca5f</code></td><td>set by the broker, in place of the library&#39;s</td></tr>
+<tr class="f-drop"><td><code>X-Stainless-Async</code></td><td><code>false</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-pass"><td><code>anthropic-version</code></td><td><code>2026-10-21</code></td><td><code>2026-10-21</code></td><td>passed: the profile lists it</td></tr>
+<tr class="f-drop"><td><code>anthropic-beta</code></td><td><code>plimsoll-example-not-passed</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-drop"><td><code>X-Stainless-Raw-Response</code></td><td><code>raw</code></td><td>none</td><td>dropped by the broker</td></tr>
+<tr class="f-broker"><td><code>Content-Length</code></td><td><code>90</code></td><td><code>90</code></td><td>set by the broker (the same value)</td></tr>
+</table></div>
+
+<p>In the two tables: the library's key (<code>Authorization: Bearer dummy-…</code>) never left the broker: the API got the daemon's key in its place. The library's <code>User-Agent</code> gave way to the broker's own, and the <code>x-stainless-*</code> headers both libraries send (their telemetry: language, version, operating system, retry count) were dropped. So were the two headers the guest added on purpose: <code>OpenAI-Organization</code>, which would let the guest choose which organization a call is billed to, and <code>anthropic-beta</code>, the header that switches on a beta feature, server-side tools among them. The transport headers (<code>Accept</code>, <code>Content-Type</code>, <code>Host</code> and the like) are the broker's, set on every request it makes. Of the headers the library chose, only <code>anthropic-version</code>, which the Claude API requires and the profile lists in <code>pass_headers</code>, was copied through. The broker sends every key as <code>Authorization: Bearer</code>, which is how the Claude API documents sending an API key (<a href="https://platform.claude.com/docs/en/manage-claude/authentication">authentication (EXTERNAL · official docs ↗)</a>, read 2026-10-29; <code>x-api-key</code> is its older header).</p>
+
+<h2>The stream, piece by piece</h2>
+<p>A streamed answer comes back as <dfn>server-sent events</dfn> (<a href="https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events">EXTERNAL · official docs ↗</a>): one HTTP response whose body is a series of small events, written as the model produces them. The stub waited 400 ms between pieces. Had anything on the way held the answer until it ended (the broker, the forwarder or the library), every piece would have reached the library after the stub wrote the last one. Instead, each piece reached the library before the stub had written the next. The times are from one clock: the stub and the sandbox run on the same Linux kernel, and a container reads the host's wall clock.</p>
+<h3>OpenAI: <code>stream=True</code>, 8 chunks</h3>
+<div class="scroll"><svg viewBox="0 0 560 168" role="img" aria-labelledby="oaT" class="stream"><title id="oaT">The OpenAI stream: when the stub wrote each piece and when the library handed it over</title><rect x="0" y="0" width="560" height="168" rx="12" fill="#f4f8f7"/><text x="12" y="48" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="700" fill="#33415c">stub wrote</text><text x="12" y="108" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="700" fill="#0f766e">library got</text><line x1="96.0" y1="44" x2="544.0" y2="44" stroke="#c9c7bf"/><line x1="96.0" y1="104" x2="544.0" y2="104" stroke="#c9c7bf"/><line x1="96.0" y1="128" x2="96.0" y2="134" stroke="#8f8d86"/><text x="96.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="start" fill="#6b6a65">0 ms</text><line x1="160.0" y1="128" x2="160.0" y2="134" stroke="#8f8d86"/><text x="160.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">0.5 s</text><line x1="224.0" y1="128" x2="224.0" y2="134" stroke="#8f8d86"/><text x="224.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">1 s</text><line x1="288.0" y1="128" x2="288.0" y2="134" stroke="#8f8d86"/><text x="288.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">1.5 s</text><line x1="352.0" y1="128" x2="352.0" y2="134" stroke="#8f8d86"/><text x="352.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">2 s</text><line x1="416.0" y1="128" x2="416.0" y2="134" stroke="#8f8d86"/><text x="416.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">2.5 s</text><line x1="480.0" y1="128" x2="480.0" y2="134" stroke="#8f8d86"/><text x="480.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">3 s</text><line x1="544.0" y1="128" x2="544.0" y2="134" stroke="#8f8d86"/><text x="544.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="end" fill="#6b6a65">3.5 s</text><line x1="96.0" y1="128" x2="544.0" y2="128" stroke="#8f8d86"/><line x1="96.0" y1="49" x2="96.3" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="96.0" cy="44" r="5" fill="#33415c"><title>piece 1 written at 0 ms</title></circle><circle cx="96.3" cy="104" r="5" fill="#0f766e"><title>piece 1 handed over at 2 ms</title></circle><line x1="147.2" y1="49" x2="147.3" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="147.2" cy="44" r="5" fill="#33415c"><title>piece 2 written at 400 ms</title></circle><circle cx="147.3" cy="104" r="5" fill="#0f766e"><title>piece 2 handed over at 401 ms</title></circle><line x1="198.5" y1="49" x2="198.6" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="198.5" cy="44" r="5" fill="#33415c"><title>piece 3 written at 801 ms</title></circle><circle cx="198.6" cy="104" r="5" fill="#0f766e"><title>piece 3 handed over at 802 ms</title></circle><line x1="249.8" y1="49" x2="249.9" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="249.8" cy="44" r="5" fill="#33415c"><title>piece 4 written at 1202 ms</title></circle><circle cx="249.9" cy="104" r="5" fill="#0f766e"><title>piece 4 handed over at 1202 ms</title></circle><line x1="301.1" y1="49" x2="301.2" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="301.1" cy="44" r="5" fill="#33415c"><title>piece 5 written at 1602 ms</title></circle><circle cx="301.2" cy="104" r="5" fill="#0f766e"><title>piece 5 handed over at 1603 ms</title></circle><line x1="352.4" y1="49" x2="352.5" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="352.4" cy="44" r="5" fill="#33415c"><title>piece 6 written at 2003 ms</title></circle><circle cx="352.5" cy="104" r="5" fill="#0f766e"><title>piece 6 handed over at 2004 ms</title></circle><line x1="403.9" y1="49" x2="404.0" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="403.9" cy="44" r="5" fill="#33415c"><title>piece 7 written at 2405 ms</title></circle><circle cx="404.0" cy="104" r="5" fill="#0f766e"><title>piece 7 handed over at 2406 ms</title></circle><line x1="455.1" y1="49" x2="455.2" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="455.1" cy="44" r="5" fill="#33415c"><title>piece 8 written at 2806 ms</title></circle><circle cx="455.2" cy="104" r="5" fill="#0f766e"><title>piece 8 handed over at 2806 ms</title></circle><circle cx="507.9" cy="44" r="4.5" fill="#fff" stroke="#33415c" stroke-width="2"><title>write 9, [DONE], at 3218 ms: no piece for the library to hand over</title></circle></svg></div>
+<p class="caption">Each dark mark is the stub writing a piece; the teal mark below it is the library handing that piece to the guest's loop. The longest wait from a write to its arrival: 2 ms. First to last arrival: 2804 ms. The hollow mark is the stub's last write, <code>data: [DONE]</code>, which ends an OpenAI stream: the library reads it and hands no piece over. Each piece's text is the one the stub wrote (8 of 8).</p>
+<details><summary>Every piece, in milliseconds from the stub's first write</summary>
+<div class="scroll"><table><tr><th>Piece</th><th>Text</th><th class="num">Stub wrote</th><th class="num">Library got</th><th class="num">Stub wrote the next</th></tr>
+<tr class="r-ok"><td>1</td><td><code>Pieces </code></td><td class="num">0</td><td class="num">2</td><td class="num">400</td></tr>
+<tr class="r-ok"><td>2</td><td><code>of </code></td><td class="num">400</td><td class="num">401</td><td class="num">801</td></tr>
+<tr class="r-ok"><td>3</td><td><code>an </code></td><td class="num">801</td><td class="num">802</td><td class="num">1202</td></tr>
+<tr class="r-ok"><td>4</td><td><code>answer, </code></td><td class="num">1202</td><td class="num">1202</td><td class="num">1602</td></tr>
+<tr class="r-ok"><td>5</td><td><code>one </code></td><td class="num">1602</td><td class="num">1603</td><td class="num">2003</td></tr>
+<tr class="r-ok"><td>6</td><td><code>at </code></td><td class="num">2003</td><td class="num">2004</td><td class="num">2405</td></tr>
+<tr class="r-ok"><td>7</td><td><code>a </code></td><td class="num">2405</td><td class="num">2406</td><td class="num">2806</td></tr>
+<tr class="r-ok"><td>8</td><td><code>time.</code></td><td class="num">2806</td><td class="num">2806</td><td class="num">3218</td></tr>
+</table></div></details>
+<h3>Anthropic: <code>stream=True</code>, 13 events</h3>
+<div class="scroll"><svg viewBox="0 0 560 168" role="img" aria-labelledby="anT" class="stream"><title id="anT">The Anthropic stream: when the stub wrote each event and when the library handed it over</title><rect x="0" y="0" width="560" height="168" rx="12" fill="#f4f8f7"/><text x="12" y="48" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="700" fill="#33415c">stub wrote</text><text x="12" y="108" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="700" fill="#0f766e">library got</text><line x1="96.0" y1="44" x2="544.0" y2="44" stroke="#c9c7bf"/><line x1="96.0" y1="104" x2="544.0" y2="104" stroke="#c9c7bf"/><line x1="96.0" y1="128" x2="96.0" y2="134" stroke="#8f8d86"/><text x="96.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="start" fill="#6b6a65">0 ms</text><line x1="185.6" y1="128" x2="185.6" y2="134" stroke="#8f8d86"/><text x="185.6" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">1 s</text><line x1="275.2" y1="128" x2="275.2" y2="134" stroke="#8f8d86"/><text x="275.2" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">2 s</text><line x1="364.8" y1="128" x2="364.8" y2="134" stroke="#8f8d86"/><text x="364.8" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">3 s</text><line x1="454.4" y1="128" x2="454.4" y2="134" stroke="#8f8d86"/><text x="454.4" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="middle" fill="#6b6a65">4 s</text><line x1="544.0" y1="128" x2="544.0" y2="134" stroke="#8f8d86"/><text x="544.0" y="150" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" text-anchor="end" fill="#6b6a65">5 s</text><line x1="96.0" y1="128" x2="544.0" y2="128" stroke="#8f8d86"/><line x1="96.0" y1="49" x2="96.4" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="96.0" cy="44" r="5" fill="#33415c"><title>piece 1 written at 0 ms</title></circle><circle cx="96.4" cy="104" r="5" fill="#0f766e"><title>piece 1 handed over at 4 ms</title></circle><line x1="132.0" y1="49" x2="132.0" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="132.0" cy="44" r="5" fill="#33415c"><title>piece 2 written at 401 ms</title></circle><circle cx="132.0" cy="104" r="5" fill="#0f766e"><title>piece 2 handed over at 402 ms</title></circle><line x1="167.9" y1="49" x2="167.9" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="167.9" cy="44" r="5" fill="#33415c"><title>piece 3 written at 802 ms</title></circle><circle cx="167.9" cy="104" r="5" fill="#0f766e"><title>piece 3 handed over at 803 ms</title></circle><line x1="203.9" y1="49" x2="203.9" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="203.9" cy="44" r="5" fill="#33415c"><title>piece 4 written at 1204 ms</title></circle><circle cx="203.9" cy="104" r="5" fill="#0f766e"><title>piece 4 handed over at 1204 ms</title></circle><line x1="239.7" y1="49" x2="239.8" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="239.7" cy="44" r="5" fill="#33415c"><title>piece 5 written at 1604 ms</title></circle><circle cx="239.8" cy="104" r="5" fill="#0f766e"><title>piece 5 handed over at 1605 ms</title></circle><line x1="275.6" y1="49" x2="275.7" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="275.6" cy="44" r="5" fill="#33415c"><title>piece 6 written at 2005 ms</title></circle><circle cx="275.7" cy="104" r="5" fill="#0f766e"><title>piece 6 handed over at 2005 ms</title></circle><line x1="311.5" y1="49" x2="311.6" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="311.5" cy="44" r="5" fill="#33415c"><title>piece 7 written at 2406 ms</title></circle><circle cx="311.6" cy="104" r="5" fill="#0f766e"><title>piece 7 handed over at 2407 ms</title></circle><line x1="347.5" y1="49" x2="347.6" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="347.5" cy="44" r="5" fill="#33415c"><title>piece 8 written at 2807 ms</title></circle><circle cx="347.6" cy="104" r="5" fill="#0f766e"><title>piece 8 handed over at 2807 ms</title></circle><line x1="383.4" y1="49" x2="383.5" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="383.4" cy="44" r="5" fill="#33415c"><title>piece 9 written at 3208 ms</title></circle><circle cx="383.5" cy="104" r="5" fill="#0f766e"><title>piece 9 handed over at 3209 ms</title></circle><line x1="419.3" y1="49" x2="419.4" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="419.3" cy="44" r="5" fill="#33415c"><title>piece 10 written at 3609 ms</title></circle><circle cx="419.4" cy="104" r="5" fill="#0f766e"><title>piece 10 handed over at 3609 ms</title></circle><line x1="455.2" y1="49" x2="455.3" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="455.2" cy="44" r="5" fill="#33415c"><title>piece 11 written at 4009 ms</title></circle><circle cx="455.3" cy="104" r="5" fill="#0f766e"><title>piece 11 handed over at 4010 ms</title></circle><line x1="491.1" y1="49" x2="491.2" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="491.1" cy="44" r="5" fill="#33415c"><title>piece 12 written at 4410 ms</title></circle><circle cx="491.2" cy="104" r="5" fill="#0f766e"><title>piece 12 handed over at 4411 ms</title></circle><line x1="527.1" y1="49" x2="527.1" y2="99" stroke="#9aa7b8" stroke-width="1.5"/><circle cx="527.1" cy="44" r="5" fill="#33415c"><title>piece 13 written at 4811 ms</title></circle><circle cx="527.1" cy="104" r="5" fill="#0f766e"><title>piece 13 handed over at 4812 ms</title></circle></svg></div>
+<p class="caption">The Claude stream sends named events: a start, the text deltas, a stop. The longest wait from a write to its arrival: 4 ms. First to last arrival: 4807 ms. Each event's type and text are the ones the stub wrote (13 of 13).</p>
+<details><summary>Every event, in milliseconds from the stub's first write</summary>
+<div class="scroll"><table><tr><th>Event</th><th>Name</th><th class="num">Stub wrote</th><th class="num">Library got</th><th class="num">Stub wrote the next</th></tr>
+<tr class="r-ok"><td>1</td><td><code>message_start</code></td><td class="num">0</td><td class="num">4</td><td class="num">401</td></tr>
+<tr class="r-ok"><td>2</td><td><code>content_block_start</code></td><td class="num">401</td><td class="num">402</td><td class="num">802</td></tr>
+<tr class="r-ok"><td>3</td><td><code>content_block_delta: Pieces </code></td><td class="num">802</td><td class="num">803</td><td class="num">1204</td></tr>
+<tr class="r-ok"><td>4</td><td><code>content_block_delta: of </code></td><td class="num">1204</td><td class="num">1204</td><td class="num">1604</td></tr>
+<tr class="r-ok"><td>5</td><td><code>content_block_delta: an </code></td><td class="num">1604</td><td class="num">1605</td><td class="num">2005</td></tr>
+<tr class="r-ok"><td>6</td><td><code>content_block_delta: answer, </code></td><td class="num">2005</td><td class="num">2005</td><td class="num">2406</td></tr>
+<tr class="r-ok"><td>7</td><td><code>content_block_delta: one </code></td><td class="num">2406</td><td class="num">2407</td><td class="num">2807</td></tr>
+<tr class="r-ok"><td>8</td><td><code>content_block_delta: at </code></td><td class="num">2807</td><td class="num">2807</td><td class="num">3208</td></tr>
+<tr class="r-ok"><td>9</td><td><code>content_block_delta: a </code></td><td class="num">3208</td><td class="num">3209</td><td class="num">3609</td></tr>
+<tr class="r-ok"><td>10</td><td><code>content_block_delta: time.</code></td><td class="num">3609</td><td class="num">3609</td><td class="num">4009</td></tr>
+<tr class="r-ok"><td>11</td><td><code>content_block_stop</code></td><td class="num">4009</td><td class="num">4010</td><td class="num">4410</td></tr>
+<tr class="r-ok"><td>12</td><td><code>message_delta</code></td><td class="num">4410</td><td class="num">4411</td><td class="num">4811</td></tr>
+<tr class="r-ok"><td>13</td><td><code>message_stop</code></td><td class="num">4811</td><td class="num">4812</td><td class="num"></td></tr>
+</table></div></details>
+
+
+<h2>The upload</h2>
+<p>The guest uploaded 8 MiB with <code>client.files.create(file=("sample.bin", data, "application/octet-stream"), purpose="user_data")</code>. The library sends that as <dfn>multipart/form-data</dfn> (<a href="https://www.rfc-editor.org/rfc/rfc7578.html">EXTERNAL · official docs ↗</a>), one request body in named parts. A route takes a body over 1 MiB only when its profile raises the route's limit and names the type: here <code>POST /v1/files</code> is raised to 16 MiB and takes <code>multipart/form-data</code>, and the run may send 64 MiB in all.</p>
+<div class="scroll"><table class="wide">
+<tr><th>Part</th><th>File name</th><th>Type</th><th class="num">Bytes</th><th>SHA-256 at the stub</th></tr>
+<tr><td><code>purpose</code></td><td></td><td><code></code></td><td class="num">9</td><td class="fp">3279da18bfd0f199ae711d946059b48b901df03b584d4c51f14db38b15144137</td></tr>
+<tr><td><code>file</code></td><td>sample.bin</td><td><code>application/octet-stream</code></td><td class="num">8388608</td><td class="fp">fa16e68dc6e4ff55d4eaf64f51a79ea3d3444b4b128c6856137e74b008605a06</td></tr>
+</table></div>
+<p>The guest computed SHA-256 <span class="fp">fa16e68dc6e4ff55d4eaf64f51a79ea3d3444b4b128c6856137e74b008605a06</span> over the bytes it sent; the stub computed <span class="fp">fa16e68dc6e4ff55d4eaf64f51a79ea3d3444b4b128c6856137e74b008605a06</span> over the <code>file</code> part it received, the same. The whole request body the stub received was 8388891 bytes, and the library got back the stub's file object, <code>file-stub-1</code>.</p>
+
+
+
+<h2>The refusal</h2>
+<p>The guest called <code>client.embeddings.create(model="stub-embedding", input="hello")</code>, which is <code>POST /v1/embeddings</code>. The OpenAI profile allows <code>POST /v1/chat/completions</code> and <code>POST /v1/files</code> and nothing else. The library raised <code>PermissionDeniedError</code>, status 403, with the broker's own answer:</p>
+<pre>forbidden by sandbox capability allowlist
+</pre>
+<p>Three things show that the broker refused it and the API never saw it. The stub serves <code>/v1/embeddings</code> and would have answered 200, yet it received 0 requests there. The answer carries <code>X-Should-Retry: false</code>, which every answer the broker makes itself carries, and the library honors it: the attempt that raised was its first (<code>x-stainless-retry-count: 0</code>), so the refusal spent no further calls. And the daemon's audit line for the run counts 1 call denied by policy.</p>
+
+
+<h2>The call trace, as the daemon reports it</h2>
+<p>The broker keeps a metadata-only list of each run's calls: the route pattern each matched, its status, its sizes and its time, never a path, a body or a key. The daemon does not send that list back with the answer; it reports it as counts on the run's <dfn>audit line</dfn> (the line the daemon logs for every run) and per route in <code>/metrics</code> (the counters it serves to monitoring), both read after the runs:</p>
+<div class="scroll"><table class="wide">
+<tr><th>Run</th><th>Profile</th><th class="num">Calls brokered</th><th class="num">Denied</th><th>Per route, from /metrics</th><th class="num">Requests the stub got</th></tr>
+<tr><td>The OpenAI library</td><td><code>openai</code></td><td class="num">3</td><td class="num">1</td><td><code>POST /v1/chat/completions</code>: 2 in 3.219 s<br><code>POST /v1/files</code>: 1 in 0.023 s<br></td><td class="num">3</td></tr>
+<tr><td>The Anthropic library</td><td><code>anthropic</code></td><td class="num">2</td><td class="num">0</td><td><code>POST /v1/messages</code>: 2 in 4.812 s<br></td><td class="num">2</td></tr>
+<tr><td>The control run: no grant</td><td>none</td><td class="num">0</td><td class="num">0</td><td>none</td><td class="num">0</td></tr>
+</table></div>
+<p class="small">The latency is the broker's round trip to the stub and back for the calls of that route, summed; for the streamed calls it includes the stub's 400 ms waits.</p>
+
+<h2>The run records, and the second seccomp profile</h2>
+<p>Each record states where its run ran: the <a href="../../trainers/glossary.html#isolation-tier">isolation tier (INTERNAL · glossary →)</a>, how strong the wall around it was; the <dfn>image</dfn>, the packaged file system the sandbox started from, by its content identity; and the policy. The <code>policy</code> field names the <a href="../../trainers/glossary.html#seccomp">seccomp (INTERNAL · glossary →)</a> profile docker applied to the run, the kernel's list of the operations a program may ask it for, by the SHA-256 of its bytes. The shipped default allows Unix sockets only, so under it no forwarder could listen. A run whose grant sets <code>sdk_env</code> gets a second profile, which the daemon derives from the default at startup (<code>SANDBOX_DOCKER_SECCOMP_SDK=derived</code>) and pins by its digest, so the two records below name different profiles:</p>
+<div class="scroll"><table class="wide">
+<tr><th>Run</th><th>Tier</th><th>Image</th><th>Policy</th><th>Profile</th><th>Record</th></tr>
+<tr><td>The OpenAI library</td><td><code>container</code></td><td class="fp">bf5af9606ed3</td><td class="fp">c5b32b1a17c3</td><td>the sdk_env variant</td><td class="fp">fda8ba7ada2c</td></tr>
+<tr><td>The Anthropic library</td><td><code>container</code></td><td class="fp">bf5af9606ed3</td><td class="fp">c5b32b1a17c3</td><td>the sdk_env variant</td><td class="fp">f4f25aa46924</td></tr>
+<tr><td>The control run: no grant</td><td><code>container</code></td><td class="fp">bf5af9606ed3</td><td class="fp">a39bc7bf6cf7</td><td>the default</td><td class="fp">372262671761</td></tr>
+</table></div>
+<p>Both profiles are published beside this page: <a href="seccomp-default.json">seccomp-default.json</a> (8.2 KiB, the repository's <code>docker/seccomp.json</code>, SHA-256 <span class="fp">a39bc7bf6cf7…</span>) and <a href="seccomp-sdk.json">seccomp-sdk.json</a> (13.0 KiB, the bytes the daemon pinned, <span class="fp">c5b32b1a17c3…</span>). The daemon's own description of the pair, as it stated it: <code>seccomp:sha256:a39bc7bf6cf712f4d65d108f615aeae5785d8def8bc0e658fbd4e36a6305b089 sdk_env:seccomp:sha256:c5b32b1a17c39da0438800a99bd0607700877ac8d01b72b839394023f0d64376</code>. Compared one syscall rule at a time, the variant keeps 243 of the default's rules as they are, takes out 2 and adds 10:</p>
+<div class="scroll"><table class="wide">
+<tr><th></th><th>Syscall</th><th>When the arguments are</th><th>The rule's own comment</th></tr>
+<tr class="r-bad"><td>removed</td><td class="nowrap"><code>getsockopt</code></td><td>any</td><td></td></tr>
+<tr class="r-bad"><td>removed</td><td class="nowrap"><code>setsockopt</code></td><td>any</td><td></td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>getsockopt</code></td><td><code>arg1 == 1, arg2 == 3</code></td><td class="small">getsockopt allowed for one option libuv reads (docs/seccomp.md).</td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>getsockopt</code></td><td><code>arg1 == 1, arg2 == 4</code></td><td class="small">getsockopt allowed for one option libuv reads (docs/seccomp.md).</td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>setsockopt</code></td><td><code>arg1 == 1, arg2 == 2</code></td><td class="small">setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md).</td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>setsockopt</code></td><td><code>arg1 == 1, arg2 == 9</code></td><td class="small">setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md).</td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>setsockopt</code></td><td><code>arg1 == 6, arg2 == 1</code></td><td class="small">setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md).</td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>setsockopt</code></td><td><code>arg1 == 6, arg2 == 4</code></td><td class="small">setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md).</td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>setsockopt</code></td><td><code>arg1 == 6, arg2 == 5</code></td><td class="small">setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md).</td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>setsockopt</code></td><td><code>arg1 == 6, arg2 == 6</code></td><td class="small">setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md).</td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>socket</code></td><td><code>arg0 == 2, arg1 &amp; 0xfff7f7ff == 1, arg2 == 0</code></td><td class="small">AF_INET (2) stream sockets, protocol 0: the type is masked so only SOCK_NONBLOCK and SOCK_CLOEXEC may join SOCK_STREAM; UDP, raw, SCTP (132) and MPTCP (262) fail the type or protocol check.</td></tr>
+<tr class="r-ok"><td>added</td><td class="nowrap"><code>socket</code></td><td><code>arg0 == 2, arg1 &amp; 0xfff7f7ff == 1, arg2 == 6</code></td><td class="small">AF_INET (2) stream sockets, IPPROTO_TCP (6).</td></tr>
+</table></div>
+<p>In words: <code>socket</code> may now make an IPv4 (<code>AF_INET</code>, 2) TCP stream socket, and nothing else new; <code>setsockopt</code> and <code>getsockopt</code>, which the default allows with any arguments, are allowed only for the few options the forwarder and the libraries set. What each run's guest tried, and got:</p>
+<div class="scroll"><table class="wide">
+<tr><th>Run</th><th>IPv4 TCP socket</th><th>UDP socket</th><th>IPv6 socket</th><th>Connect to 192.0.2.1:443</th></tr>
+<tr><td>The OpenAI library</td><td>opens</td><td>refused: PermissionError: errno 1, Operation not permitted</td><td>refused: PermissionError: errno 1, Operation not permitted</td><td>refused: OSError: errno 101, Network unreachable</td></tr>
+<tr><td>The Anthropic library</td><td>opens</td><td>refused: PermissionError: errno 1, Operation not permitted</td><td>refused: PermissionError: errno 1, Operation not permitted</td><td>refused: OSError: errno 101, Network unreachable</td></tr>
+<tr><td>The control run: no grant</td><td>refused: PermissionError: errno 1, Operation not permitted</td><td>refused: PermissionError: errno 1, Operation not permitted</td><td>refused: PermissionError: errno 1, Operation not permitted</td><td>refused: PermissionError: errno 1, Operation not permitted</td></tr>
+</table></div>
+<p class="small"><code>192.0.2.1</code> is set aside for documentation (<a href="https://www.rfc-editor.org/rfc/rfc5737.html">RFC 5737 (EXTERNAL · official docs ↗)</a>): the address only shows whether the sandbox has a route out, and under <code>--network none</code> it has none. The added sockets reach only the container's loopback, but they are kernel code the default withholds, which is why the variant is a profile of its own and applies only to runs whose grant sets <code>sdk_env</code>; <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/seccomp.md">docs/seccomp.md (EXTERNAL · official docs ↗)</a> says what it adds in full.</p>
+
+<h2>What this proves, and what it doesn't</h2>
+<div class="two">
+<div class="yes"><b>Proves</b><ul>
+<li>Every run&#39;s record is signed by the harness and checks against the request and answer stored with it. <span class="small">(3 single runs verified, 0 sessions)</span></li>
+<li>No request the API received carried the guest&#39;s dummy key, in a header or in a body. <span class="small">(0 occurrences in 5 requests)</span></li>
+<li>Every request the API received carried the key the daemon holds for that API. <span class="small">(5 of 5 requests)</span></li>
+<li>The keys the daemon holds appear nowhere in what each run was sent or answered: not in its environment, not in any process environment the guest could read, not in its output. <span class="small">(0 occurrences; 3 process environments read)</span></li>
+<li>Of the guest&#39;s headers, only the one the profile passes reached the API; the broker set its own credential and transport headers. <span class="small">(OpenAI-Organization dropped, anthropic-beta dropped, anthropic-version passed; 0 headers leaked, altered or lost)</span></li>
+<li>Each piece of both streamed answers reached the guest&#39;s library before the stub wrote the next one. <span class="small">(openai: 8 of 8 pieces before the next was written, 8 of 8 matching the stub&#39;s, first to last 2804 ms; anthropic: 12 of 12 pieces before the next was written, 13 of 13 matching the stub&#39;s, first to last 4807 ms)</span></li>
+<li>The 8 MiB upload reached the API byte for byte, on a route raised above the 1 MiB default. <span class="small">(guest fa16e68dc6e4ff55, stub fa16e68dc6e4ff55)</span></li>
+<li>The call to a route the profile does not allow was refused by the broker, marked not to retry, made once, and never reached the API. <span class="small">(status 403, X-Should-Retry &#34;false&#34;, retry count &#34;0&#34;, 0 requests at the route, 1 denied on the audit line)</span></li>
+<li>The two runs whose grant sets sdk_env ran under the derived variant, the control run under the default, each named by digest in its record. <span class="small">(openai variant, anthropic variant, plain default)</span></li>
+<li>Under the variant an IPv4 TCP socket opens and a UDP or IPv6 socket does not, and an outside address is unreachable; under the default no IPv4 socket opens. <span class="small">(openai IPv4 TCP allowed, UDP errno 1, IPv6 errno 1, outside address errno 101; anthropic IPv4 TCP allowed, UDP errno 1, IPv6 errno 1, outside address errno 101; control IPv4 TCP errno 1, UDP errno 1, IPv6 errno 1, outside address errno 1)</span></li>
+<li>The guest imported the pinned versions of both libraries. <span class="small">(openai 3.41.0 (pinned 3.41.0), anthropic 2.3.0 (pinned 2.3.0))</span></li>
+<li>The stub received only calls on routes the profiles allow: three from the OpenAI run, two from the Anthropic run, none from the control run. <span class="small">(0 off the allow lists; 3, 2 and 0)</span></li>
+<li>The daemon&#39;s audit line for each run counts the calls the stub received, and the one refusal. <span class="small">(openai 3 calls 1 denied; anthropic 2 and 0; plain 0)</span></li>
+</ul></div>
+<div class="no"><b>Doesn't prove</b><ul>
+<li><b>How OpenAI's or Anthropic's servers answer.</b> The stub stands in for them, shaped like the requests the two libraries send and the answers they parse; neither vendor's API was called.</li>
+<li><b>E2B and Docker Cloud.</b> On those providers the sandbox is a virtual machine that reaches the broker through the <a href="../../trainers/glossary.html#guard">guard (INTERNAL · glossary →)</a>, an HTTPS address outside it, and the guard's raw route takes a standard client's request; the documentation describes the live tests (<code>TestE2BGuardLive</code>, <code>TestDockerCloudGuardLive</code>) that send one through it with Node's <code>fetch</code>. <code>sdk_env</code> itself is not built on those providers, and none of that ran for this page.</li>
+<li><b>That a chat API's own tools are safe to grant.</b> The documentation's warning, quoted: “The broker checks the route and never reads the body, so everything the body can ask the API to do is granted along with the route.” A guest allowed <code>POST /v1/messages</code> can ask the Claude API to fetch a web page, and one allowed the Responses API can name a remote <a href="../../trainers/glossary.html#mcp">MCP (INTERNAL · glossary →)</a> server, a program serving tools to a model; turning those tools off is done on the API's side (<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/capability-grants.md#a-grant-to-a-chat-api-is-a-grant-to-the-internet-through-the-apis-own-tools">the warning and what to do about it (EXTERNAL · official docs ↗)</a>).</li>
+<li><b>Sessions, snippets, or another language's library.</b> These were three project runs of Python code. A grant with <code>sdk_env</code> in a <a href="../../trainers/glossary.html#session">session (INTERNAL · glossary →)</a> is refused before anything runs.</li>
+<li><b>That the stub is honest.</b> Its log is its own statement. The <a href="../../trainers/glossary.html#harness">harness (INTERNAL · glossary →)</a>, the program outside the daemon that signs records, signed the log's digest beside the runs' records, which shows the log was not changed afterwards, not that it is true. The guest's side (the headers the library sent, when each piece arrived) is in each run's own output, which its record covers.</li>
+<li><b>That the hardware is honest.</b> The isolation tier in a record is the server's configuration, the provider's evidence and its startup checks, not a hardware attestation.</li>
+</ul></div>
+</div>
+
+<h2>Run it yourself</h2>
+<p>From a clone of the <a href="https://github.com/plimsollmark/plimsoll">repository (EXTERNAL · source repo ↗)</a>, with docker:</p>
+<pre>make docker-images                    # plimsoll's sandbox images, plimsoll/sandbox-python among them
+go run ./examples/sdk-grants          # builds the example's image and plimsolld, runs everything, rewrites this page
+go run ./examples/sdk-grants -verify  # rechecks the files beside this page; starts nothing
+go run ./cmd/plimsoll-attest verify -pub docs/examples/sdk-grants/harness.pub docs/examples/sdk-grants/bundle.jsonl</pre>
+<p>The example's image is plimsoll's Python image with the two libraries installed from <dfn>wheels</dfn> (Python's package files) pinned by version and SHA-256 (<a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/sdk-grants/requirements.txt">requirements.txt (EXTERNAL · source repo ↗)</a>, 17 packages): openai 3.41.0 (<a href="https://pypi.org/project/openai/3.41.0/">EXTERNAL · package index ↗</a>, wheel <span class="fp">7060a74b2396…</span>) and anthropic 2.3.0 (<a href="https://pypi.org/project/anthropic/2.3.0/">EXTERNAL · package index ↗</a>, wheel <span class="fp">aa6a3984f927…</span>). Building it fetches those wheels; the runs have no network. Image <code>plimsoll-wip/sdk-grants:dev</code>, <span class="fp">bf5af9606ed3</span>, built on <code>plimsoll/sandbox-python:latest</code>, <span class="fp">48666c14b387</span>. The program spends nothing: no model, no paid sandbox. Everything on this page comes from <a href="evidence.json">evidence.json</a>, which <code>-verify</code> rebuilds from these files:</p>
+<ul><li><a href="bundle.jsonl">bundle.jsonl</a>, 45237 bytes</li><li><a href="harness.pub">harness.pub</a>, 113 bytes</li><li><a href="observations.dsse.json">observations.dsse.json</a>, 6687 bytes</li><li><a href="stub.jsonl">stub.jsonl</a>, 6144 bytes</li><li><a href="grants.json">grants.json</a>, 1156 bytes</li><li><a href="seccomp-default.json">seccomp-default.json</a>, 8388 bytes</li><li><a href="seccomp-sdk.json">seccomp-sdk.json</a>, 13327 bytes</li></ul>
+<p class="small"><code>observations.dsse.json</code> is the harness's signed statement (a <a href="../../trainers/glossary.html#dsse">DSSE (INTERNAL · glossary →)</a> envelope, the signing format the run records use) of what it saw outside the runs (the daemon's description of itself, its audit lines and <code>/metrics</code>, the image, the keys it handed the daemon, and the SHA-256 of the stub's log, the grants file and both profiles), naming the three run records. The keys are random values made for this run; they open nothing but the stub, which no longer runs. Harness key ID <span class="fp">9264f8cf24ee225014c4359279b8b3513ffca1e771b2f4719b148404ce21d7c7</span>.</p>
+
+<footer>plimsoll is open source under the Apache-2.0 license. <a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a> · <a href="https://plimsollmark.github.io/plimsoll/trainers/">lessons</a> · <a href="https://github.com/plimsollmark/plimsoll">source (EXTERNAL · source repo ↗)</a></footer>
+</main>
+</body>
+</html>

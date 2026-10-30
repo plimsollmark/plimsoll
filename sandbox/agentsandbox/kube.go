@@ -486,9 +486,14 @@ type labelSelector struct {
 	} `json:"matchExpressions,omitempty"`
 }
 
+// runtimeClass is a RuntimeClass as the provider reads it: the handler decides the tier,
+// and overhead and scheduling (kept raw) are bound with the UID and the handler to the
+// startup smoke test (classSum).
 type runtimeClass struct {
-	Meta    objectMeta `json:"metadata"`
-	Handler string     `json:"handler"`
+	Meta       objectMeta      `json:"metadata"`
+	Handler    string          `json:"handler"`
+	Overhead   json.RawMessage `json:"overhead,omitempty"`
+	Scheduling json.RawMessage `json:"scheduling,omitempty"`
 }
 
 // node is a node as the vm tier's per-pod check reads it: the boot ID its kubelet

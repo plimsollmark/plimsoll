@@ -66,7 +66,7 @@ from .types import (
 
 __all__ = ["PROTOCOL", "Client", "Session"]
 
-PROTOCOL = 4
+PROTOCOL = 5
 """The wire protocol number this client speaks (Go: protocol.Number). It is stated
 on every request; a daemon serving another number refuses the request before
 reading its payload."""
@@ -172,6 +172,7 @@ def _cell_result(resp: Msg, c: Msg) -> CellResult:
         stderr_truncated=c.get_bool("stderrTruncated"),
         interpreter_started=c.get_bool("interpreterStarted"),
         interpreter_ended=c.get_bool("interpreterEnded"),
+        warm=resp.get_bool("warm"),
         **_evidence(resp),
     )
 
@@ -356,6 +357,7 @@ class Client:
             session_environment=_payload_environment(m.get_msg("sessionEnvironment")),
             max_sessions_per_caller=m.get_int("maxSessionsPerCaller", UINT32),
             max_sessions_per_owner=m.get_int("maxSessionsPerOwner", UINT32),
+            session_pool=m.get_int("sessionPool", UINT32),
             javascript_environment=_payload_environment(m.get_msg("javascriptEnvironment")),
             project_environment=_payload_environment(m.get_msg("projectEnvironment")),
             module_environment=_payload_environment(m.get_msg("moduleEnvironment")),
@@ -455,6 +457,46 @@ class Client:
         floor = req.get("minimumIsolation", "")
         return _finish(kind, resp, lambda: check_single(digest, kind, rule, resp), floor)
 
+    def run_cell(
+        self,
+        code: str,
+        language: str = "python",
+        *,
+        files: v.FilesArg = None,
+        prefer_warm: bool = False,
+        timeout: Optional[float] = None,
+        minimum_isolation: Optional[str] = None,
+        software: Optional[SoftwareRule] = None,
+        trace_id: Optional[str] = None,
+        cancel: Optional[CancelHandle] = None,
+    ) -> CellResult:
+        """Runs ``code`` by itself as a cell for an interpreter of ``language``
+        (``"python"`` or ``"javascript"``): ``files`` are written into its work
+        directory first and its final expression's value is printed, in a sandbox of
+        its own that keeps nothing after the call (``interpreter_started`` and
+        ``interpreter_ended`` are both true). Files under ``.plimsoll/``, where the
+        code and its runner go, are refused.
+
+        ``prefer_warm`` lets the daemon run it in a sandbox it keeps ready for
+        sessions (``Info.session_pool``): one that has run only plimsoll's own
+        programs, with the interpreter already running, claimed for this call alone
+        and deleted after it, so the call answers without a sandbox being made for
+        it. When none fits it runs in a sandbox made for it, as without the flag, so
+        a miss is never a refusal; the result's ``warm`` says which ran. What it
+        costs: a pool member runs the cell in the session image (on docker the
+        project image, which a fresh cell uses too), in a sandbox that waited with
+        plimsoll's interpreters in it. The record is a single run's either way, and
+        does not cover ``warm``. The other arguments are as for
+        :meth:`run_javascript`."""
+        if not isinstance(prefer_warm, bool):
+            raise TypeError("prefer_warm must be a bool")
+        rule = v.software_rule(software)
+        req = _envelope(timeout, minimum_isolation, rule, trace_id)
+        if prefer_warm:
+            req["preferWarm"] = True
+        req["cell"] = v.cell(language, code, files)
+        return self._run("cell", req, rule, cancel)
+
     def open_session(
         self,
         *,
@@ -465,6 +507,7 @@ class Client:
         trace_id: Optional[str] = None,
         languages: Optional[Sequence[str]] = None,
         owner: Optional[str] = None,
+        warm_only: bool = False,
     ) -> "Session":
         """Opens a session: one sandbox kept for many calls, in which the files a
         call writes persist for later calls and no process a call starts outlives
@@ -481,13 +524,24 @@ class Client:
         keeps each user to it across every process of the app: at the cap it
         closes that user's least recently used session with no call in progress.
         It never leaves this process: the daemon gets a digest keyed by this
-        client's token (:func:`_owner_digest`). Use it as a context manager, or
-        call :meth:`Session.close`."""
+        client's token (:func:`_owner_digest`). ``warm_only`` asks for a waiting
+        pool member or nothing: with none to hand over the open is refused, not
+        dispatched, reason ``capacity``, and no sandbox is made, so the caller can run
+        fresh instead; it never closes another session of the owner to make room.
+        A daemon that predates ``warm_only`` would have ignored it and made a
+        sandbox, so it came with protocol 5, which such a daemon refuses before
+        reading the open. A cell for one call needs no session of its own:
+        :meth:`run_cell` with ``prefer_warm``.
+        Use it as a context manager, or call :meth:`Session.close`."""
         rule = v.software_rule(software)
         hint = v.languages(languages)
         req: Dict[str, Any] = {"protocol": PROTOCOL}
         if hint:
             req["languages"] = hint
+        if not isinstance(warm_only, bool):
+            raise TypeError("warm_only must be a bool")
+        if warm_only:
+            req["warmOnly"] = True
         if owner is not None:
             if not isinstance(owner, str):
                 raise TypeError("owner must be a string")

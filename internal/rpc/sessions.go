@@ -39,6 +39,10 @@ type SessionConfig struct {
 	Lifetime    time.Duration // absolute, from open; a request may ask for less
 	IdleTimeout time.Duration // a session idle this long is suspended; a request may ask for less
 	DiskBytes   int64         // what a session's calls may leave behind; 0 = no bound
+	// Pool is how many sandboxes the provider keeps ready for sessions
+	// (SANDBOX_SESSION_POOL), 0 = none: Describe states it, and a warm-only open is
+	// refused at once without one.
+	Pool int
 }
 
 // tombstoneTTL is how long a session that ended by itself stays collectable: its
@@ -169,7 +173,7 @@ func (r *sessionRegistry) tick() uint64 { return r.clock.Add(1) }
 // cap counts them, and returned for the caller to close. Only when too few of them
 // are idle is the open refused. A replaced session's place passes to the open, so
 // the daemon-wide and per-caller caps cannot refuse an open that replaced one.
-func (r *sessionRegistry) reserve(c SessionConfig, principal, owner string) ([]*sessionEntry, error) {
+func (r *sessionRegistry) reserve(c SessionConfig, principal, owner string, evict bool) ([]*sessionEntry, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var victims []*sessionEntry
@@ -185,6 +189,12 @@ func (r *sessionRegistry) reserve(c SessionConfig, principal, owner string) ([]*
 			e.mu.Unlock()
 		}
 		need := len(held) + r.openingBy[key] + 1 - c.MaxPerOwner
+		// A warm-only open closes nothing to make room: it may yet be refused for want
+		// of a warm sandbox, and the session it closed would be gone for nothing.
+		if need > 0 && !evict {
+			return nil, refuse(connect.CodeResourceExhausted, sandbox.RefusalCapacity,
+				fmt.Errorf("%w: this owner has %d sessions open, the most one owner keeps, and a warm-only open closes none", sandbox.ErrAtCapacity, c.MaxPerOwner))
+		}
 		if need > 0 {
 			sort.Slice(held, func(i, j int) bool { return held[i].lastUsed() < held[j].lastUsed() })
 			for _, e := range held {
@@ -400,7 +410,7 @@ func shorter(configured time.Duration, requestedMs uint32) time.Duration {
 // OpenSession opens a session for the calling principal.
 func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[plimsollv1.OpenSessionRequest]) (*connect.Response[plimsollv1.OpenSessionResponse], error) {
 	m := req.Msg
-	env, err := parseEnvelope(m.GetProtocol(), m.GetMinimumIsolation(), 0, m.GetTraceId(), m.GetSoftwareRule())
+	env, err := s.parseEnvelope(m.GetProtocol(), m.GetMinimumIsolation(), 0, m.GetTraceId(), m.GetSoftwareRule())
 	if err != nil {
 		return nil, err
 	}
@@ -434,8 +444,14 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest,
 			fmt.Errorf("%w: owner must be 1 to 64 of A-Z, a-z, 0-9 and . _ : -", sandbox.ErrInvalidRequest))
 	}
+	// A warm-only open on a daemon that keeps no pool can only be refused: refused
+	// here, before it takes a place.
+	warmOnly := m.GetWarmOnly()
+	if warmOnly && s.Sessions.Pool <= 0 {
+		return nil, mapSandboxErr(sandbox.RefuseNoWarmSandbox())
+	}
 	principal := auditCaller(ctx)
-	replaced, err := s.sessions.reserve(s.Sessions, principal, owner)
+	replaced, err := s.sessions.reserve(s.Sessions, principal, owner, !warmOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +525,7 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 				sess, err = nil, errors.New("the provider failed while opening the session")
 			}
 		}()
-		return sp.OpenSession(openCtx, sandbox.SessionOptions{MinimumIsolation: env.minimum, Lifetime: lifetime, DiskBytes: s.Sessions.DiskBytes, Languages: languages})
+		return sp.OpenSession(openCtx, sandbox.SessionOptions{MinimumIsolation: env.minimum, Lifetime: lifetime, DiskBytes: s.Sessions.DiskBytes, Languages: languages, WarmOnly: warmOnly})
 	}()
 	if err != nil {
 		openFailed()
@@ -525,7 +541,13 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
 			errAttr(err),
 		}
-		s.logger().LogAttrs(ctx, slog.LevelError, "session open failed", append(attrs, traceAttrs(env.traceID)...)...)
+		// A warm-only open that found no member is routine (its caller runs fresh), not a
+		// failure.
+		level, msg := slog.LevelError, "session open failed"
+		if errors.Is(err, sandbox.ErrNoWarmSandbox) {
+			level, msg = slog.LevelInfo, "session open refused: no warm sandbox waiting"
+		}
+		s.logger().LogAttrs(ctx, level, msg, append(attrs, traceAttrs(env.traceID)...)...)
 		return nil, mapSandboxErr(err)
 	}
 	// A caller that gave up while the sandbox opened never learns the session's ID,
@@ -602,6 +624,11 @@ func (s *SandboxService) OpenSession(ctx context.Context, req *connect.Request[p
 			names[i] = string(l)
 		}
 		attrs = append(attrs, slog.String("languages", strings.Join(names, ",")))
+	}
+	// A session whose open checked the listeners inside its machine: how many it could
+	// not read (a count; the check's lines stay with the provider).
+	if lc, ok := sess.(sandbox.ListenerCounter); ok {
+		attrs = append(attrs, slog.Int("unread_listeners", lc.UnreadListeners()))
 	}
 	s.logger().LogAttrs(ctx, slog.LevelInfo, "session opened", append(attrs, traceAttrs(env.traceID)...)...)
 	return connect.NewResponse(&plimsollv1.OpenSessionResponse{
@@ -949,7 +976,7 @@ func (s *SandboxService) closeUnclaimed(e *sessionEntry) {
 func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[plimsollv1.SessionRunRequest]) (*connect.Response[plimsollv1.SessionRunResponse], error) {
 	received := time.Now()
 	m := req.Msg
-	env, err := parseEnvelope(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(), m.GetTraceId(), m.GetSoftwareRule())
+	env, err := s.parseEnvelope(m.GetProtocol(), m.GetMinimumIsolation(), m.GetTimeoutMs(), m.GetTraceId(), m.GetSoftwareRule())
 	if err != nil {
 		return nil, err
 	}
@@ -967,7 +994,7 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	case *plimsollv1.SessionRunRequest_Project:
 		k = &projectKind{p: p.Project}
 	case *plimsollv1.SessionRunRequest_Cell:
-		k = &cellKind{p: p.Cell, runner: e.sess}
+		k = &cellKind{p: p.Cell}
 	default:
 		return nil, refuse(connect.CodeInvalidArgument, sandbox.RefusalRequest, errors.New("payload must be exactly one of javascript, project or cell"))
 	}
@@ -988,8 +1015,12 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 		admit:    func(ctx context.Context) (func(), error) { return s.admitCall(ctx, e, callTimeout) },
 		js:       e.sess.RunJavaScript,
 		project:  e.sess.RunProject,
+		cell:     e.sess.RunCell,
 		software: e.software,
 		session:  true,
+		// The session, for a line written before the call has a number (a ship-scan
+		// find); the call's own number joins it once it has its turn.
+		attrs: []slog.Attr{slog.String("session", e.fingerprint)},
 	}
 	// Checked before the turn: a call that can never run is refused as what it is, at
 	// once, not after waiting behind the call in progress (and never as busy, which
@@ -1055,7 +1086,7 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 	e.mu.Lock()
 	link := sandbox.RunRecord{Session: e.fingerprint, Sequence: seq, PreviousSHA256: e.last}
 	e.mu.Unlock()
-	resp.Record = s.runRecord(record.SessionRunRequestDigest(m), resp, received, time.Now(), link, env.software)
+	resp.Record = s.runRecord(record.SessionRunRequestDigest(m), resp, received, time.Now(), link, env.software, s.recordPolicy(k))
 	e.mu.Lock()
 	e.calls, e.last = seq, resp.Record.GetRecordSha256()
 	e.mu.Unlock()
@@ -1072,9 +1103,10 @@ func (s *SandboxService) SessionRun(ctx context.Context, req *connect.Request[pl
 // admitCall is a session call's admission: a slot first when the session is
 // suspended (a capacity refusal there ran nothing and is safe to retry), then, on a
 // provider billed by the second, its paid time (the call's timeout, the idle time
-// after it, the teardown), then one run charged to the caller's rate. The slot stays
-// held until the session is suspended again or ends.
-func (s *SandboxService) admitCall(_ context.Context, e *sessionEntry, timeout time.Duration) (func(), error) {
+// after it, the teardown), then one run charged to the caller's rate, unless the ship
+// scan charged it already. The slot stays held until the session is suspended again or
+// ends.
+func (s *SandboxService) admitCall(ctx context.Context, e *sessionEntry, timeout time.Duration) (func(), error) {
 	took := false
 	giveBack := func() {
 		if took {
@@ -1115,7 +1147,7 @@ func (s *SandboxService) admitCall(_ context.Context, e *sessionEntry, timeout t
 			return nil, err
 		}
 	}
-	if s.Limiter != nil {
+	if s.Limiter != nil && !shipScanFrom(ctx).rateCharged() {
 		if err := s.Limiter.Charge(e.principal); err != nil {
 			giveBack()
 			if resuming {

@@ -6,14 +6,15 @@
 // agent-sandbox reports no isolation: a sandbox's boundary is whatever runtime class its
 // template names, and nothing in a Sandbox's status says which. So the tier is evidence
 // the provider reads, never configuration it trusts. Before any code is sent, every run
-// reads its pod back (the runtime class, and that class's handler: runsc is the kernel
-// tier, runc the container tier, the tested Kata handlers the VM tier, anything else
-// refused; the image by digest; no API token
+// reads its pod back (the runtime class, and that class's handler: runsc and any handler
+// the operator declares as gVisor are the kernel tier, runc the container tier, the tested
+// Kata handlers the VM tier, anything else refused; the image by digest; no API token
 // in the pod, no host namespaces, fixed DNS, emptyDir volumes only; sandboxd started with
 // plimsoll's token digest; capabilities limited to the two the uid drop needs) and every
 // network policy in the namespace that selects the pod (egress denied by one and allowed
 // by none; ingress only to sandboxd's port). Unknown pod/container fields and exec handlers
-// in probes or lifecycle hooks are refused; the smoke test binds policy UIDs and full specs.
+// in probes or lifecycle hooks are refused; the smoke test binds policy UIDs and full specs,
+// and the runtime class.
 // The read-back is configuration and provider
 // evidence, not attestation; the behavioural boundary test is the smoke test's.
 //
@@ -43,6 +44,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -115,6 +117,15 @@ type Config struct {
 	WarmPool string
 	// RuntimeClass is the RuntimeClass the template's pods must name.
 	RuntimeClass string
+	// RunscHandlers are runtime class handler names, beyond runsc, that the operator
+	// declares as gVisor: a containerd runtime of its own for the same shim, as one with
+	// gVisor's debug log set per handler is. Each claims the kernel tier only, and the
+	// startup smoke test and every pod's tier check hold it to gVisor's boot line exactly
+	// as they hold runsc, so a name that maps to another runtime is refused before code
+	// runs. Each must be a DNS label (the form Kubernetes requires of a handler), and
+	// none may be empty, repeated, or a name handlerTiers already maps. New copies it;
+	// the provider's table never changes after.
+	RunscHandlers []string
 	// Image is the image the template's one container must run, as the template writes
 	// it. RequirePinnedImage refuses one not pinned by an @sha256: digest; a pinned image's
 	// digest is checked against the pod's image ID on every run.
@@ -191,6 +202,30 @@ func (c Config) validate() error {
 	case c.MemoryMB < 0 || c.CPUs < 0 || c.DiskMB < 0:
 		return errors.New("agentsandbox: negative limits")
 	}
+	if err := checkRunscHandlers(c.RunscHandlers); err != nil {
+		return fmt.Errorf("agentsandbox: declared gVisor handlers: %w", err)
+	}
+	return nil
+}
+
+// checkRunscHandlers refuses a declared gVisor handler list with an empty entry, a name
+// that is not a DNS label, a name given twice, or a name the built-in table maps (runsc
+// itself, and runc or a Kata handler, which must never be read as gVisor).
+func checkRunscHandlers(names []string) error {
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		switch tier, builtIn := handlerTiers[name]; {
+		case name == "":
+			return errors.New("an empty entry")
+		case !labelRE.MatchString(name):
+			return fmt.Errorf("%q is not a DNS label (lowercase letters, digits and '-', 1 to 63 characters, a letter or digit at each end)", truncate(name, 80))
+		case seen[name]:
+			return fmt.Errorf("%q is named twice", name)
+		case builtIn:
+			return fmt.Errorf("%q is a handler plimsoll already knows (the %s tier), so it cannot be declared", name, tier)
+		}
+		seen[name] = true
+	}
 	return nil
 }
 
@@ -207,7 +242,11 @@ func pinnedDigest(image string) (string, bool) {
 
 // Provider runs payloads on agent-sandbox.
 type Provider struct {
-	cfg         Config
+	cfg Config
+	// handlers is the tier each runtime class handler claims: handlerTiers, plus each of
+	// cfg.RunscHandlers at the kernel tier. New builds it; nothing writes it after, so it
+	// is read without the lock, and no provider's declarations reach another's.
+	handlers    map[string]sandbox.IsolationClass
 	kube        *kube
 	h2c         *http.Client
 	tokenDigest string
@@ -229,6 +268,8 @@ type Provider struct {
 	podImage            string           // image digest of the first accepted pod; every later pod must match
 	policySum           string           // namespace policy UIDs and complete specs bound to the smoke test
 	policyChanged       bool             // an observed difference requires a restart, even if restored
+	classSum            string           // the runtime class's UID, handler, overhead and scheduling bound to the smoke test
+	classChanged        bool             // as policyChanged, for the runtime class
 	volumes             map[string]int64 // its container's volume mount paths and their size limits, from the last check
 	smoke               *smokeEvidence   // what the last passing SmokeTest measured
 
@@ -260,8 +301,15 @@ func New(cfg Config) (*Provider, error) {
 		return nil, err
 	}
 	sum := sha256.Sum256([]byte(cfg.SandboxdToken))
+	// The caller's slice is not kept: Preflight validates cfg again, and an edit to it
+	// after New must change neither that nor the table.
+	cfg.RunscHandlers = slices.Clone(cfg.RunscHandlers)
+	handlers := maps.Clone(handlerTiers)
+	for _, name := range cfg.RunscHandlers {
+		handlers[name] = sandbox.IsolationKernel
+	}
 	return &Provider{
-		cfg: cfg, kube: k, h2c: h2cClient(), tokenDigest: hex.EncodeToString(sum[:]),
+		cfg: cfg, handlers: handlers, kube: k, h2c: h2cClient(), tokenDigest: hex.EncodeToString(sum[:]),
 		instance: randHex(8), pf: providerkit.Check{TTL: preflightTTL, Err: errors.New("agentsandbox: no check has completed yet")},
 		deleteTimeout: deleteBudget,
 	}, nil
@@ -578,8 +626,7 @@ func (p *Provider) runPlan(ctx context.Context, b box, planJSON, key []byte) (sa
 		}
 		return res, err
 	}
-	parsed, reported := sandbox.RunnerReport(Name, b.tier, string(out.stdout), key)
-	parsed.Instance = b.instance
+	parsed, reported := sandbox.RunnerReport(res, string(out.stdout), key)
 	if !reported {
 		// The runner never reported: killed in the sandbox (an OOM kill), or the image
 		// cannot run it. The detail is plimsoll's own words, never the runner's stderr,

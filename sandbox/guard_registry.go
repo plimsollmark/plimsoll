@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -178,14 +177,14 @@ func (g *guardRegistry) lookup(token string) *brokerSession {
 }
 
 // call is EgressGuardCall for any provider that uses the registry.
-func (g *guardRegistry) call(ctx context.Context, token, method, rawTarget string, body []byte) EgressGuardResponse {
+func (g *guardRegistry) call(ctx context.Context, token string, call GuardRequest) EgressGuardResponse {
 	if strings.TrimSpace(token) == "" {
-		return EgressGuardResponse{Status: http.StatusUnauthorized, ContentType: "application/json", Body: []byte(`{"error":"missing egress guard credential"}`)}
+		return EgressGuardResponse{Status: http.StatusUnauthorized, ContentType: "application/json", Body: []byte(`{"error":"missing egress guard credential"}`), FromBroker: true}
 	}
 	core := g.lookup(token)
 	if core == nil {
-		return EgressGuardResponse{Status: http.StatusUnauthorized, ContentType: "application/json", Body: []byte(`{"error":"unknown or expired egress guard credential"}`)}
+		return EgressGuardResponse{Status: http.StatusUnauthorized, ContentType: "application/json", Body: []byte(`{"error":"unknown or expired egress guard credential"}`), FromBroker: true}
 	}
-	resp := core.Call(ctx, brokerCall{Method: method, RawTarget: rawTarget, Body: bytes.NewReader(body)})
-	return EgressGuardResponse{Status: resp.Status, ContentType: resp.ContentType, Body: resp.Body}
+	resp := core.Call(ctx, brokerCall{Method: call.Method, RawTarget: call.RawTarget, Headers: call.Headers, Body: call.Body, ContentLength: call.ContentLength, Stream: call.Stream})
+	return EgressGuardResponse{Status: resp.Status, ContentType: resp.ContentType, Body: resp.Body, FromBroker: resp.FromBroker, Streamed: resp.Streamed}
 }

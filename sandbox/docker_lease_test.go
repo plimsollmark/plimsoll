@@ -18,7 +18,7 @@ func TestDockerRunContainersDeclareTheirLifetime(t *testing.T) {
 	t.Parallel()
 	d := testDocker()
 	at := time.Unix(1_000_000, 500_000_000)
-	args := strings.Join(d.lockdownArgs("c", at, false, d.Runtime), " ")
+	args := strings.Join(d.lockdownArgs("c", at, false, d.Runtime, d.Seccomp), " ")
 	if !strings.Contains(args, "--label "+dockerExpiresLabel+"=1000001 ") {
 		t.Fatalf("lockdown args %q do not declare the lifetime 1000001", args)
 	}

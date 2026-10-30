@@ -446,3 +446,95 @@ func TestHandlerTracesTheSpecs(t *testing.T) {
 		t.Errorf("runsc-receipt.toml does not hold %s and the JSON format", want)
 	}
 }
+
+// The boot facts: runsc's configuration lines, and each container spec's pod. Every fixture
+// has two specs (the pod's pause container and the package's), naming one pod.
+func TestBoot(t *testing.T) {
+	for name, uid := range map[string]string{"quiet": "865e17cd-82c3-426e-ada8-9ba93016cf9d", "child": "7bae59e4-294f-4742-950a-57ac816de652"} {
+		tr := read(t, fixture(t, name))
+		if len(tr.Boot.Pods) != 2 || tr.Boot.Pods[0] != uid || tr.Boot.Pods[1] != uid {
+			t.Errorf("%s: pods %v", name, tr.Boot.Pods)
+		}
+		if len(tr.Boot.Config) != 107 || !slices.Contains(tr.Boot.Config, "Config.Strace (--strace): true") {
+			t.Errorf("%s: %d configuration lines", name, len(tr.Boot.Config))
+		}
+	}
+	// A spec that does not parse refuses the log: the reader would otherwise name no pod for it.
+	b := bytes.Replace(fixture(t, "quiet"), []byte(`specutils.go:134] Spec:\n{`), []byte(`specutils.go:134] Spec:\n{{`), 1)
+	if _, err := Read(bytes.NewReader(b)); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("a spec that does not parse: %v", err)
+	}
+}
+
+// TestReadRefusesOversize: a log or an entry larger than the reader takes is refused whole,
+// and refused before the reader holds it, so a small compressed file cannot make a checker
+// allocate without bound. Without the limits, a 204 KB gzip file holding one 200 MiB entry
+// took the checker to 685 MB resident (2026-10-28).
+func TestReadRefusesOversize(t *testing.T) {
+	good := fixture(t, "quiet")
+	// An entry is measured with the space before it: for runsc's log, the newline ending the
+	// entry before.
+	longest := 0
+	for _, line := range bytes.Split(good, []byte("\n")) {
+		longest = max(longest, len(line)+1)
+	}
+	// The limits sit far above what the fixtures need.
+	if int64(len(good))*100 > MaxLogBytes || int64(longest)*100 > MaxEntryBytes {
+		t.Fatalf("a fixture's %d bytes, or its longest entry's %d, is within 100 times the limits", len(good), longest)
+	}
+	if _, err := readLimited(bytes.NewReader(good), int64(len(good)), int64(longest)); err != nil {
+		t.Fatalf("a log exactly at both limits: %v", err)
+	}
+	for _, tc := range []struct {
+		name            string
+		log             []byte
+		maxLog, maxLine int64
+	}{
+		{"a log one byte over", good, int64(len(good)) - 1, MaxEntryBytes},
+		{"an entry one byte over", good, MaxLogBytes, int64(longest) - 1},
+		{"one entry over the default, first in the log", slices.Concat([]byte(`{"msg":"`), bytes.Repeat([]byte("A"), MaxEntryBytes), []byte("\"}\n")), MaxLogBytes, MaxEntryBytes},
+		{"one entry over the default, spread over short lines", slices.Concat([]byte(`{"msg":"x"`), bytes.Repeat([]byte(",\n\"a\":1"), MaxEntryBytes/6), []byte("}\n")), MaxLogBytes, MaxEntryBytes},
+		{"a log over the default made of short entries", nil, MaxLogBytes, MaxEntryBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var r io.Reader = bytes.NewReader(tc.log)
+			var src *repeat
+			if tc.log == nil {
+				src = &repeat{line: []byte(`{"msg":"strace.go:1] x"}` + "\n"), n: MaxLogBytes + 1}
+				r = src
+			}
+			tr, err := readLimited(r, tc.maxLog, tc.maxLine)
+			if !errors.Is(err, ErrTooLarge) || tr != nil {
+				t.Fatalf("got a trace: %v, error %v; want ErrTooLarge and no trace", tr != nil, err)
+			}
+			if src != nil && src.read > MaxLogBytes+1<<20 {
+				t.Fatalf("read %d bytes of a log refused at %d", src.read, MaxLogBytes)
+			}
+		})
+	}
+	// Read applies the defaults.
+	big := slices.Concat([]byte(`{"msg":"`), bytes.Repeat([]byte("A"), MaxEntryBytes), []byte("\"}\n"))
+	if _, err := Read(bytes.NewReader(big)); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("Read of an entry over the default: %v, want ErrTooLarge", err)
+	}
+}
+
+// repeat yields line over and over, n bytes in all, without holding them.
+type repeat struct {
+	line    []byte
+	n, read int64
+}
+
+func (r *repeat) Read(p []byte) (int, error) {
+	if r.read >= r.n {
+		return 0, io.EOF
+	}
+	k := 0
+	for k < len(p) && r.read < r.n {
+		c := copy(p[k:], r.line[r.read%int64(len(r.line)):])
+		c = int(min(int64(c), r.n-r.read))
+		k += c
+		r.read += int64(c)
+	}
+	return k, nil
+}

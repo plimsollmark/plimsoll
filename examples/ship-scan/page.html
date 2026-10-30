@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plimsoll: the ship scan keeps the answer key out of the sandbox</title>
+<meta name="description" content="A plimsoll daemon with a withheld set took five calls: a clean controller ran, the harness's simulator shipped three ways was refused before any code ran, and a hidden seed in an agent's code ran and was logged for the operator, never told to the agent. No withheld value appears in any answer or log line.">
+<style>
+:root{color-scheme:light;--ink:#0b0b0b;--ink2:#3d3c39;--muted:#6b6a65;--line:#e4e3de;--paper:#fcfcfb;--soft:#f4f3ef;--teal:#0f766e;--bad:#b42318;--good:#106b54;--amber:#8a5a00}
+*{box-sizing:border-box}
+body{margin:0;background:#fff;color:var(--ink);font:17px/1.6 Inter,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:28px 22px 90px}
+a{color:var(--teal);overflow-wrap:anywhere}
+nav.site{display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px}
+nav.site a:first-child{font-weight:700;color:#1f2328;text-decoration:none}
+h1{font-size:42px;line-height:1.1;margin:18px 0 10px;letter-spacing:-1px}
+h2{font-size:29px;line-height:1.15;margin:70px 0 10px;letter-spacing:-.4px}
+h3{font-size:19px;margin:26px 0 6px}
+p{margin:10px 0}
+dfn{font-style:normal;font-weight:600;border-bottom:1.5px dotted #8f8d86}
+.kicker{font-size:14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);margin:0}
+.lede{font-size:20px;color:var(--ink2);max-width:780px}
+.small{font-size:14px;color:var(--muted)}
+code,pre{font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:var(--soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:8px 0}
+.hero{display:grid;grid-template-columns:1.2fr 1fr;gap:28px;align-items:center}
+.hero > *{min-width:0}
+.hero svg{width:100%;height:auto;display:block;max-width:440px}
+.caption{font-size:14px;color:var(--muted);margin-top:4px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:26px 0 0}
+.tile{border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--paper);min-width:0}
+.tile b{display:block;font-size:30px;line-height:1.1;letter-spacing:-.5px}
+.tile span{font-size:14px;color:var(--muted)}
+.tile .good{color:var(--good)}.tile .bad{color:var(--bad)}.tile .amber{color:var(--amber)}
+.aside{border-left:4px solid #e8a317;background:#fff8e6;padding:10px 14px;border-radius:0 10px 10px 0;max-width:820px;font-size:16px;margin:16px 0}
+.call{border:1px solid var(--line);border-radius:16px;padding:6px 18px 12px;background:var(--paper);margin:18px 0;min-width:0}
+.call.runs{border-left:6px solid var(--good)}
+.call.refused{border-left:6px solid var(--bad)}
+.call.logged{border-left:6px solid #e8a317}
+.call h3{margin-top:12px}
+.verdict{font-weight:700}
+.verdict.runs{color:var(--good)}.verdict.refused{color:var(--bad)}.verdict.logged{color:var(--amber)}
+.label{font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:12px 0 2px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:15px;margin:10px 0}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+th{font-size:13px;color:var(--muted);font-weight:600}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+.two > *{min-width:0}
+.yes,.no{border-radius:14px;padding:14px 18px}
+.yes{background:#eaf6f1;border:1px solid #b6dfcc}
+.no{background:#fbf3e3;border:1px solid #efd9a8}
+.yes ul,.no ul{margin:6px 0 0;padding-left:20px}
+.yes li,.no li{margin:0 0 8px}
+.fp{font:12.5px ui-monospace,Menlo,Consolas,monospace;color:var(--muted);overflow-wrap:anywhere}
+blockquote{margin:10px 0;padding:8px 14px;border-left:4px solid var(--line);color:var(--ink2)}
+footer{margin-top:80px;border-top:1px solid var(--line);padding-top:16px;font-size:14px;color:var(--muted)}
+@media (max-width:760px){
+ h1{font-size:32px}h2{font-size:25px}
+ .hero,.two{grid-template-columns:1fr}
+ table{font-size:13px}th,td{padding:6px 4px}
+}
+</style>
+</head>
+<body>
+<main>
+<nav class="site"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/examples/squeeze/">three checks for a score that looks too good</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/ship-scan">Source (EXTERNAL · source repo ↗)</a></nav>
+
+<section class="hero">
+<div>
+<p class="kicker">The ship scan</p>
+<h1>Keep the answer key out of the sandbox</h1>
+<p class="lede">When an AI agent's code is graded, the grader's own files must never reach the agent: its simulator, its hidden test cases, the <dfn>seeds</dfn> (single numbers each hidden case is generated from). The usual leak is not a break-in. It is a <a href="../../trainers/glossary.html#harness">harness (INTERNAL · glossary →)</a>, the program that sets up each run and grades it, packing one of its own files into what it sends. plimsoll's ship scan checks every call on its way in, against a list of what must never get through, and stops the harness's mistake before any code runs.</p>
+</div>
+<figure style="margin:0">
+<svg viewBox="0 0 420 540" role="img" aria-label="Where the ship scan sits: a call passes the request checks, then the ship scan compares everything it carries with the withheld set. A refuse-mode match is refused before dispatch and the caller sees the entry's label; an audit-mode match runs and only the operator's log names it; no match runs. Every match gets a line in the operator's log.">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b6a65"/></marker></defs>
+<g font-family="Inter,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" fill="#0b0b0b">
+<rect x="70" y="6" width="280" height="44" rx="10" fill="#fcfcfb" stroke="#c9c7bf"/>
+<text x="210" y="25" text-anchor="middle" font-weight="700">A call arrives</text>
+<text x="210" y="42" text-anchor="middle" font-size="11.5" fill="#3d3c39">code, files, file names, steps</text>
+<line x1="210" y1="50" x2="210" y2="72" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<rect x="70" y="74" width="280" height="50" rx="10" fill="#fcfcfb" stroke="#c9c7bf"/>
+<text x="210" y="95" text-anchor="middle" font-weight="700">The request checks</text>
+<text x="210" y="113" text-anchor="middle" font-size="11.5" fill="#3d3c39">valid · grant · isolation floor · software rule</text>
+<line x1="210" y1="124" x2="210" y2="146" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<rect x="40" y="148" width="340" height="58" rx="10" fill="#e6f3f1" stroke="#0f766e" stroke-width="2"/>
+<text x="210" y="168" text-anchor="middle" font-weight="700" fill="#0f766e">The ship scan</text>
+<text x="210" y="185" text-anchor="middle" font-size="11.5" fill="#3d3c39">everything the call carries, archives opened,</text>
+<text x="210" y="198" text-anchor="middle" font-size="11.5" fill="#3d3c39">against the withheld set</text>
+<line x1="110" y1="206" x2="72" y2="246" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<line x1="210" y1="206" x2="210" y2="246" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<line x1="310" y1="206" x2="348" y2="246" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<rect x="6" y="248" width="128" height="96" rx="10" fill="#fdecea" stroke="#b42318"/>
+<text x="70" y="268" text-anchor="middle" font-weight="700" fill="#b42318">Refuse entry</text>
+<text x="70" y="284" text-anchor="middle" font-weight="700" fill="#b42318">matched</text>
+<text x="70" y="303" text-anchor="middle" font-size="11.5">refused, never</text>
+<text x="70" y="318" text-anchor="middle" font-size="11.5">dispatched; the caller</text>
+<text x="70" y="333" text-anchor="middle" font-size="11.5">sees the label</text>
+<rect x="146" y="248" width="128" height="96" rx="10" fill="#fff8e6" stroke="#e8a317"/>
+<text x="210" y="268" text-anchor="middle" font-weight="700" fill="#8a5a00">Audit entry</text>
+<text x="210" y="284" text-anchor="middle" font-weight="700" fill="#8a5a00">matched</text>
+<text x="210" y="303" text-anchor="middle" font-size="11.5">runs; the caller</text>
+<text x="210" y="318" text-anchor="middle" font-size="11.5">is told nothing</text>
+<rect x="286" y="248" width="128" height="96" rx="10" fill="#eaf6f1" stroke="#106b54"/>
+<text x="350" y="268" text-anchor="middle" font-weight="700" fill="#106b54">Nothing</text>
+<text x="350" y="284" text-anchor="middle" font-weight="700" fill="#106b54">matched</text>
+<text x="350" y="303" text-anchor="middle" font-size="11.5">runs</text>
+<line x1="210" y1="344" x2="250" y2="384" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<line x1="350" y1="344" x2="320" y2="384" stroke="#6b6a65" stroke-width="1.5" marker-end="url(#ar)"/>
+<rect x="160" y="386" width="254" height="50" rx="10" fill="#fcfcfb" stroke="#c9c7bf"/>
+<text x="287" y="407" text-anchor="middle" font-weight="700">Admission, then dispatch</text>
+<text x="287" y="425" text-anchor="middle" font-size="11.5" fill="#3d3c39">a slot, then the sandbox runs the code</text>
+<line x1="70" y1="344" x2="70" y2="474" stroke="#b42318" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+<line x1="190" y1="344" x2="150" y2="474" stroke="#8a5a00" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+<rect x="6" y="476" width="408" height="56" rx="10" fill="#f4f3ef" stroke="#c9c7bf"/>
+<text x="210" y="498" text-anchor="middle" font-weight="700">The operator's log</text>
+<text x="210" y="517" text-anchor="middle" font-size="11.5" fill="#3d3c39">a line for every match: labels and the set's digest, never the content</text>
+</g>
+</svg>
+<figcaption class="caption">Where the scan sits among plimsolld's checks. A call it refuses spends the caller's rate allowance but never takes a slot or reaches a sandbox.</figcaption>
+</figure>
+</section>
+
+<div class="tiles">
+<div class="tile"><b class="bad">{{count .Calls "refused"}} of {{len .Calls}}</b><span>calls refused before any code ran: the harness's simulator, shipped as it is, edited, and packed in an archive</span></div>
+<div class="tile"><b class="amber">{{count .Calls "runs, logged"}}</b><span>call ran with a hidden seed in its code: the agent was told nothing, the operator's log named the seed's label</span></div>
+<div class="tile"><b class="good">0</b><span>withheld values or lines of the simulator in any answer, log line or file on this page (the program checks, and refuses to publish otherwise; an audited call's output is the code's own, unchanged)</span></div>
+</div>
+
+<h2 id="problem">The grader's notes in the same room as the work</h2>
+<p>UC Berkeley audited 13 widely used AI benchmarks and reported: “the most common pattern we exploited was submissions running in the same process, container, or filesystem as the evaluator” (<a href="https://rdi.berkeley.edu/blog/trustworthy-benchmarks/">EXTERNAL · article ↗</a>). In plain words: the work being graded sat next to the grader's notes. A <a href="../../trainers/glossary.html#sandbox">sandbox (INTERNAL · glossary →)</a> keeps code from breaking out; it does nothing about what was put inside it.</p>
+<p>So the operator of a plimsoll server, <code>plimsolld</code>, writes a <dfn>withheld set</dfn>: a file of <a href="../../trainers/glossary.html#digest">digests (INTERNAL · glossary →)</a>, short fingerprints computed with SHA-256, of everything that must never reach a sandbox. A digest identifies a file or a value without containing it, so the set holds none of what it protects, and the daemon's log lines and refusals name an entry by its label, never by what it holds. The daemon does read each call's content, to compare it; and an audit-mode find leaves the run as it is, so code that prints a seed it was given returns that seed. The set can hold three kinds of entry:</p>
+<ul>
+<li>a <b>file</b>, matched whole, under any name;</li>
+<li>a file's <b>source lines</b>, so an edited or reformatted copy is still found once a third of its distinctive lines are there (and at least eight);</li>
+<li>a <b>value</b>, such as a seed or a hidden answer, found as a whole run of letters and digits anywhere in the call.</li>
+</ul>
+<p>The scan is the last check before a call is admitted, after the request is validated, its <a href="../../trainers/glossary.html#grant">grant (INTERNAL · glossary →)</a> is resolved and its <a href="../../trainers/glossary.html#isolation-tier">isolation tier (INTERNAL · glossary →)</a> and its software rule (the caller's requirement on which software the sandbox runs, if it set one) are met, so it only reads calls that would otherwise run.</p>
+
+<h2 id="modes">Refuse or audit: why a hidden seed is not refused</h2>
+<p>Each entry has a <dfn>mode</dfn>. In <b>refuse</b> mode a match stops the call before it is <a href="../../trainers/glossary.html#dispatch">dispatched (INTERNAL · glossary →)</a> and tells the caller which entry matched. In <b>audit</b> mode the call runs, the caller is told nothing, and the operator's log names the entry.</p>
+<div class="aside"><b>A refusal is an answer.</b> If an agent could guess a hidden seed, put it in its code and see the call refused, it would learn its guess was right, and it would have found the answer key by asking. So the harness's own files are set to refuse (shipping them is the harness developer's mistake, and stopping it at once is the point), and hidden answers and seeds are set to audit: a match then means the answer reached the agent, the operator voids the score, and the agent learns nothing.</div>
+<p>This page's set is built that way, with one command, from a toy harness of one simulator file and three seeds the program makes up for the run:</p>
+<pre>{{.Build.Line}}</pre>
+<div class="scroll"><table>
+<tr><th>Entry</th><th>Label</th><th>Mode</th></tr>
+{{range .Entries}}<tr><td>{{.Kind}}</td><td><code>{{.Label}}</code></td><td>{{.Mode}}</td></tr>
+{{end}}</table></div>
+<p class="small">A label is the operator's own name for an entry: a file's path from the folder it was read from, a value's file and line. A refusal shows it to the caller, so a label should say which entry, never what it holds: <code>seeds.txt:2</code>, not the seed.</p>
+
+<h2 id="calls">Five calls to a daemon with that set</h2>
+<p>The daemon ran with <code>SANDBOX_PROVIDER={{.Provider}}</code>: plimsoll's in-process JavaScript engine, {{.Isolation}} tier, chosen so this page needs no docker. It runs snippets only, and that changes nothing below: the three refused calls are projects (files plus steps), and the scan refuses them before the provider is asked. Sent clean, a project would have been refused here as unsupported, and would have run on the docker provider. Each call carried a trace id, the caller's own join key, which the daemon copies onto its log lines, so each call's lines are found below.</p>
+{{range $i, $c := .Calls}}
+<div class="call {{if eq .Expect "runs"}}runs{{else if eq .Expect "refused"}}refused{{else}}logged{{end}}" id="call-{{.Name}}">
+<h3>{{.Title}}</h3>
+<p class="label">What was sent</p>
+<p>{{.Sent}}</p>
+<p class="label">What the caller was told</p>
+{{if .Answer.Ran}}<p><span class="verdict {{if eq .Expect "runs"}}runs{{else}}logged{{end}}">It ran.</span> Exit code {{.Answer.ExitCode}}{{if .Answer.Stdout}}, output:{{end}}</p>
+{{if .Answer.Stdout}}<pre>{{.Answer.Stdout}}</pre>{{end}}
+{{if eq .Expect "runs, logged"}}<p>Nothing in the answer says a withheld value was found: the agent cannot tell this call from any other.</p>{{end}}
+{{else}}<p><span class="verdict refused">Refused, never dispatched.</span> Code <code>{{.Answer.Code}}</code>, marked not dispatched for reason <code>{{.Answer.Mark}}</code>, so the caller knows no code ran and can fix the call and send it again:</p>
+<pre>{{.Answer.Message}}</pre>
+<p>The refusal names the entry by its label and the place in the request (<code>files[0].content</code>, the first file's content), never the caller's text{{if eq .Name "harness-archive"}} and never the name of the file inside the archive{{end}}.</p>
+{{end}}
+<p class="label">What the operator's log says</p>
+<pre>{{range .Log}}{{logline .}}
+{{end}}</pre>
+{{if .Record}}<p class="small">Its <a href="../../trainers/glossary.html#run-record">run record (INTERNAL · glossary →)</a>, plimsoll's statement of what was sent, what came back and where it ran, checked by the client when the answer arrived: request <span class="fp">{{short .Record.RequestSHA256}}</span>, result <span class="fp">{{short .Record.ResultSHA256}}</span>. {{if .Record.Published}}The exchange is published beside this page (<a href="clean-call.request.json">request</a>, <a href="clean-call.response.json">response</a>): <code>-verify</code> recomputes the record from it and checks the answer shown here is the one in it.{{else}}{{.Record.Why}} (<a href="seed-call.response.json">response</a>){{end}}</p>{{else}}<p class="small">A refused call has no run record: nothing ran.</p>{{end}}
+</div>
+{{end}}
+<p class="small">The log lines are shown with only the fields this page is about; the daemon writes more (timings, the sandbox, the request's sizes), and none of them carries a request's content. The program checks the whole log, not only these fields, for every seed and every distinctive line of the simulator, and publishes nothing if it finds one.</p>
+
+<h2 id="offline">The same set, before anything is sent</h2>
+<p><code>plimsoll-withheld scan</code> runs the same scan over a folder, offline, with no daemon. A harness can run it over what it is about to ship. Here it scanned a folder holding the edited simulator and the agent's snippet, then a folder holding only the clean controller:</p>
+{{range .Offline}}<pre>$ {{.Line}}
+{{range .Output}}{{.}}
+{{end}}(exit {{.Exit}})</pre>
+{{end}}
+
+<h2 id="hackathon">A real case: a hackathon's leaked seed</h2>
+<p>At a hackathon on October 25, 2026, the did-it-learn entry (<a href="https://github.com/carrollco/did-it-learn">EXTERNAL · source repo ↗</a>) shipped a replay viewer into every agent's sandbox whose example link named one of the 16 practice seeds, which the harness meant to keep from the agents, until a fix at 12:55. <code>examples/squeeze/argon-scan.sh</code> rebuilds the 13 files the harness shipped, from the entry's public repository at the last commit before the fix and at the fix, and scans both against a set of the 16 seeds. This is an offline reconstruction of what was shipped, not a replay of the hackathon's sandboxes. Before the fix:</p>
+<pre>{{.ArgonFind}}</pre>
+<p>After it:</p>
+<pre>{{.ArgonClean}}</pre>
+<p>The whole transcript, and how to rerun it, is on the squeeze page (<a href="../squeeze/index.html#ship-scan">INTERNAL · the hackathon scan →</a>).</p>
+
+<h2 id="build">Build a set for your harness</h2>
+<pre>plimsoll-withheld build -mode refuse -file harness/ -source harness/ -source-mode refuse \
+  -values seeds.txt -values answers.txt -values-mode audit -exempt grader > withheld.json
+plimsoll-withheld scan -set withheld.json outbox/      # offline: exit 1 on a find
+PLIMSOLL_WITHHELD_FILE=withheld.json plimsolld        # with your provider's settings</pre>
+<ul>
+<li><b>The grader's own calls</b> must carry the harness, so its caller is named with <code>-exempt</code>: calls from that caller are not scanned, and their log line says so.</li>
+<li><b>A short value's digest is as secret as the value.</b> A ten-digit seed's digest is found by trying every ten-digit number. Publish a set of files and long values if you like, as a statement of exactly what was looked for; keep a set of seeds as private as the seeds. This page publishes its set (<a href="withheld.json">withheld.json</a>) only because its seeds were made up for this run, used nowhere else, and deleted when the run ended.</li>
+<li><b>The daemon refuses to start on a malformed set</b>, since a set that loads with a typo scans for less than its author believes.</li>
+</ul>
+
+<h2 id="limits">What it catches, and what it does not</h2>
+<div class="two">
+<div class="yes"><b>Found</b><ul>
+<li>A withheld file under any name, and an edited, reformatted or bundled copy once a third of its distinctive lines are there.</li>
+<li>A withheld value in code, file contents, file names, steps and artifact names, as written, with escapes decoded, or base64-decoded once.</li>
+<li>Either one inside the archives it reads: gzip, bzip2, zlib, zip (stored, deflate, bzip2, zip64) and tar, nested.</li>
+<li>Archives it recognizes and cannot read (an encrypted zip member, xz, zstd, 7z, rar): a set with a refuse entry refuses the call; otherwise it runs and its log line says the scan was incomplete.</li>
+</ul></div>
+<div class="no"><b>Not found</b><ul>
+<li>Forms it does not recognize at all (raw deflate, lz4, an archive encoded twice, hex): they pass unseen, so material packed that way on purpose passes even a refuse entry.</li>
+<li>A value drawn into an image or packed into its pixels.</li>
+<li>Files baked into the sandbox's image, and whatever a run fetches through a grant: neither passes through a request.</li>
+<li>Code rewritten line by line, a few lines copied, or a model that has memorized the answer.</li>
+<li>Neither the answer nor the run record states the scan yet: a record shows what ran, not that it was scanned; the operator's log is the evidence.</li>
+</ul></div>
+</div>
+<p>The reference, with every bound and format: <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/ship-scan.md">the ship scan (EXTERNAL · official docs ↗)</a>.</p>
+
+<h2 id="reproduce">Reproduce</h2>
+<pre>go run ./examples/ship-scan            # build the tools, run the five calls, write this page
+go run ./examples/ship-scan -verify    # check the published files offline</pre>
+<p>Run from the root of a plimsoll checkout; it builds <code>plimsolld</code> and <code>plimsoll-withheld</code> from source and needs no docker, no network and no credentials. <code>-verify</code> checks every claim above against <a href="evidence.json">evidence.json</a>, the set's digest against <a href="withheld.json">withheld.json</a>, recomputes the clean call's run record, and checks this page is what the evidence renders. The seeds differ on every run, so a rerun gives new digests and the same outcomes.</p>
+<p class="small">Made at plimsoll commit <span class="fp">{{.Commit}}</span>, provider {{.Provider}} ({{.Isolation}} tier: plimsoll's engine runs inside the daemon's own process, with no operating-system isolation boundary, so it is not for hostile code in production), set SHA-256 <span class="fp">{{.SetSHA256}}</span>.</p>
+
+<footer>plimsoll is open source under the Apache-2.0 license. <a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a> · <a href="https://plimsollmark.github.io/plimsoll/trainers/">lessons</a> · <a href="https://github.com/plimsollmark/plimsoll">source (EXTERNAL · source repo ↗)</a></footer>
+</main>
+</body>
+</html>

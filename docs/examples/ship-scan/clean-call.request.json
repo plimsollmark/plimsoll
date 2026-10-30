@@ -1,0 +1,8 @@
+{
+  "protocol":  5,
+  "traceId":  "ship-scan-clean",
+  "timeoutMs":  10000,
+  "javascript":  {
+    "code":  "// A PD controller on the agent's own toy plant, 200 steps.\nlet altitude = 0, climb = 0;\nconst target = 10, kp = 0.8, kd = 1.6, dt = 0.05;\nfor (let i = 0; i < 200; i++) {\n  const thrust = kp * (target - altitude) - kd * climb;\n  climb += dt * (thrust - 0.3 * climb);\n  altitude += dt * climb;\n}\nconsole.log(\"final altitude \" + altitude.toFixed(3) + \" (target 10)\");\n"
+  }
+}

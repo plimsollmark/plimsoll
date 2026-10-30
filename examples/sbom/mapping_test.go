@@ -67,14 +67,17 @@ func have(s source) sharedFiles {
 	return sharedFiles{Bundle: s.Shared.bundle, Qualification: s.Shared.qualification}
 }
 
-// imageFor is the example's one image label when run executed in that image, else nil:
-// the Docker Cloud runs booted a public node image that has no label here.
+// imageFor is the label published beside the example for the image run executed in,
+// found as the generator finds it (image-<first 12 manifest hex>.cdx.json), else nil: the
+// Docker Cloud runs booted a public node image that has no label here.
 func imageFor(t *testing.T, run source) *imageBOM {
 	t.Helper()
-	if d, _, _ := cdxutil.ImageDigest(run.Record); d == "a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c" {
-		return fixtureImage(t)
+	d, _, _ := cdxutil.ImageDigest(run.Record)
+	image, err := readImageBOM("", "../../docs/examples/sbom", "sha256:"+d)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return nil
+	return image
 }
 
 func emitted(t *testing.T, s source) []byte {
@@ -463,7 +466,7 @@ func TestVerdictClaimIsBoundToTheStatement(t *testing.T) {
 	v := verdictFixtures(t)
 	pass, fail := v[0], v[1]
 	raw := emitted(t, pass)
-	if _, err := checkBOM(raw, pass.PEM, fixtureImage(t), have(pass)); err != nil {
+	if _, err := checkBOM(raw, pass.PEM, imageFor(t, pass), have(pass)); err != nil {
 		t.Fatal(err)
 	}
 	statement := func(d object) object {
@@ -506,7 +509,7 @@ func TestVerdictClaimIsBoundToTheStatement(t *testing.T) {
 			if err := cdxutil.ValidateSchema(changed); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := checkBOM(changed, pass.PEM, fixtureImage(t), have(pass)); err == nil {
+			if _, err := checkBOM(changed, pass.PEM, imageFor(t, pass), have(pass)); err == nil {
 				t.Fatal("accepted")
 			}
 		})

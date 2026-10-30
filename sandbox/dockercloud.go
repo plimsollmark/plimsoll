@@ -121,6 +121,11 @@ type DockerCloud struct {
 	mu         sync.Mutex
 	instanceID string
 	leases     lease.Set
+	langs      []Language // the languages the smoke test proved
+	// reapFrom is the page token where the last reconciliation pass stopped, "" for the
+	// first page: each pass walks at most dcMaxListPages pages, so the next one goes on
+	// from there and every page is eventually visited.
+	reapFrom string
 }
 
 func (*DockerCloud) Name() string { return "dockercloud" }
@@ -164,7 +169,8 @@ const (
 	dcSmokeTimeout = 120 * time.Second
 	// dcMaxUnaryResponse caps a management response body.
 	dcMaxUnaryResponse = 1 << 20
-	// dcMaxListPages bounds reconciliation's walk over ListSandboxes pages.
+	// dcMaxListPages bounds one walk over ListSandboxes pages: a lookup by name, or one
+	// reconciliation pass (which carries on from there at the next pass).
 	dcMaxListPages = 50
 )
 
@@ -187,6 +193,24 @@ var dcStartCmd = []string{"tail", "-f", "/dev/null"}
 //     command that keeps writing then gets SIGPIPE: the trailer reports the flood,
 //     and the host reports exit 153 with both streams cut (review, 2026-10-24). A
 //     missing wc fails closed: the stream reads as flooded.
+//   - One reader per stream takes the command's pipe: `cat`, under `timeout -s KILL`
+//     one second past the command's limit, in front of keep. A process the command
+//     left behind (busybox `timeout` kills only the command it started, not its
+//     children) can hold the pipe open after the command is gone; without the bound
+//     keep waited for it, so the answer came after the host's deadline and the step
+//     lost everything it wrote (found by the session stand-in's project suite,
+//     2026-10-27). keep reads only the reader's pipe, so once the reader is killed the
+//     answer comes back, at most a second after the limit and inside dcGuestMargin,
+//     with what the command wrote. The second is there so a command still writing at
+//     its limit is killed before its reader goes, never ended by SIGPIPE instead. The
+//     reader is cat because cat copies with plain reads and writes: coreutils `head`
+//     holds what it read in a stdio buffer, which a kill throws away. A flood still
+//     stops the command: past the budget keep stops reading, the reader dies of
+//     SIGPIPE, and so does a command that keeps writing. The reader runs in a group
+//     with stderr to /dev/null and a command after it, so the shell that waits for it
+//     is that group's, and a shell's report of its kill ("Killed", from dash) goes
+//     nowhere instead of into the guest's stderr. (The report of the command's own
+//     kill does reach it, as it always has.)
 //   - The exit status travels through a file because POSIX sh has no pipefail.
 //   - The command's time inside the VM, in centiseconds from /proc/uptime (a "-" when
 //     the guest has no readable /proc/uptime), and 1 if a stream flooded (else 0), are
@@ -211,7 +235,7 @@ m=` + dcStreamBudget + `
 rc=/tmp/.plimsoll-rc.$$; fl=/tmp/.plimsoll-fl.$$
 rm -f "$rc" "$fl"
 up() { read -r u _ 2>/dev/null </proc/uptime || return; u=${u%.*}${u#*.}; u=${u#"${u%%[!0]*}"}; echo "${u:-0}"; }
-keep() { head -c "$c"; n=$(head -c "$m" | wc -c); [ $n -lt "$m" ] 2>/dev/null || : >"$fl"; }
+keep() { { timeout -s KILL "$((t + 1))" cat; :; } 2>/dev/null | { head -c "$c"; n=$(head -c "$m" | wc -c); [ $n -lt "$m" ] 2>/dev/null || : >"$fl"; }; }
 b=$(up)
 { { timeout -s KILL "$t" "$@"; echo "$?" >"$rc"; } 2>&1 1>&3 3>&- | keep 1>&2; } 3>&1 | keep
 e=$(up)

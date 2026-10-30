@@ -84,6 +84,24 @@ func TestBuildReturnsResourcesMetadata(t *testing.T) {
 	}
 }
 
+// The docker provider reads both seccomp settings: the profile every run gets and
+// the one a run whose grant sets sdk_env gets instead. Neither is checked here;
+// Preflight does that against the files (verifySeccomp).
+func TestBuildReadsBothSeccompSettings(t *testing.T) {
+	p, err := Build(mapEnv(map[string]string{
+		"SANDBOX_PROVIDER":           "docker",
+		"SANDBOX_DOCKER_SECCOMP":     "/etc/plimsoll/seccomp.json",
+		"SANDBOX_DOCKER_SECCOMP_SDK": "/etc/plimsoll/seccomp-sdk.json",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := p.Sandbox.(*DockerSandbox)
+	if !ok || d.Seccomp != "/etc/plimsoll/seccomp.json" || d.SeccompSDK != "/etc/plimsoll/seccomp-sdk.json" {
+		t.Fatalf("docker provider = %+v", p.Sandbox)
+	}
+}
+
 func TestProviderEnsureReadySurfacesPreflightFailure(t *testing.T) {
 	p, err := Build(mapEnv(map[string]string{"SANDBOX_PROVIDER": "e2b"})) // no API key
 	if err != nil {

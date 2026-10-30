@@ -138,6 +138,11 @@ func TestReceiptStandardFormats(t *testing.T) {
 		"negative summary":   `<testsuite errors="-1"/>`,
 		"unsupported XML":    `<report/>`,
 		"namespaced failure": `<testsuite xmlns="urn:junit"><testcase name="x"><failure/></testcase></testsuite>`,
+		// Not read at all, though each would pass: a DOCTYPE declaring an entity (the shape
+		// of a nested-entity report, which xml.etree would expand), and a report past the
+		// 8 MiB a run returns.
+		"declared entity": `<!DOCTYPE testsuite [<!ENTITY n "a">]><testsuite tests="1"><testcase name="&n;"/></testsuite>`,
+		"past the bound":  `<testsuite tests="1"><testcase name="a"/>` + strings.Repeat(" ", 8<<20) + `</testsuite>`,
 	} {
 		st, _, _ = run(strings.ReplaceAll(name, " ", "-"), formatsExchange([]string{command}, []map[string]any{{"exit_code": 0}}, artifacts,
 			[]map[string]any{returned("reports.xml", report)}))
@@ -146,9 +151,20 @@ func TestReceiptStandardFormats(t *testing.T) {
 		}
 	}
 	st, _, _ = run("valid-summary", formatsExchange([]string{command}, []map[string]any{{"exit_code": 0}}, artifacts,
-		[]map[string]any{returned("reports.xml", `<testsuite tests="0" failures="0" errors="00"/>`)}))
+		[]map[string]any{returned("reports.xml", `<testsuite tests="1" failures="0" errors="00"><testcase name="a"/></testsuite>`)}))
 	if result := st["predicate"].(map[string]any)["result"]; result != "PASSED" {
 		t.Errorf("valid summary: got %v, want PASSED", result)
+	}
+	// A report in which no test ran shows nothing passed: never PASSED, whatever its counters say.
+	for name, report := range map[string]string{
+		"zero tests":   `<testsuite tests="0" failures="0" errors="00"/>`,
+		"only skipped": `<testsuites><testcase name="a"><skipped/></testcase></testsuites>`,
+	} {
+		st, _, _ = run(strings.ReplaceAll(name, " ", "-"), formatsExchange([]string{command}, []map[string]any{{"exit_code": 0}}, artifacts,
+			[]map[string]any{returned("reports.xml", report)}))
+		if result := st["predicate"].(map[string]any)["result"]; result != "FAILED" {
+			t.Errorf("%s: got %v, want FAILED", name, result)
+		}
 	}
 	st, _, _ = run("missing-with-zero-exit", formatsExchange([]string{command}, []map[string]any{{"exit_code": 0}}, artifacts, nil))
 	if result := st["predicate"].(map[string]any)["result"]; result != "FAILED" {

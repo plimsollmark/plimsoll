@@ -10,6 +10,7 @@ import (
 	plimsollv1 "github.com/plimsollmark/plimsoll/gen/go/plimsoll/v1"
 	"github.com/plimsollmark/plimsoll/internal/quantise"
 	"github.com/plimsollmark/plimsoll/internal/wireenum"
+	"github.com/plimsollmark/plimsoll/internal/withheld"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -17,7 +18,10 @@ import (
 // pipeline: check (validate, grant, the floor, the software rule), then run (admit,
 // dispatch, audit, answer). The order is the security order, the same for every
 // kind: nothing is admitted, so no rate token is spent and no slot taken, before
-// every check has passed. A session call checks before it takes the session's turn,
+// every check has passed. The one exception is a call the ship scan reads, the last
+// check: the scan is work the rate must bound, so it takes the call's rate token
+// before it runs, and admission then takes the slot alone (withheld.go). A session
+// call checks before it takes the session's turn,
 // so a call that can never run is refused as what it is, never as busy. What differs
 // between kinds is a kind's.
 
@@ -52,6 +56,9 @@ type kind interface {
 	resultAttrs() []slog.Attr
 	// answer puts the result, with the caller's advice, on the response.
 	answer(resp *plimsollv1.RunResponse, advice []*plimsollv1.AdviceFinding)
+	// shipped is what the call carries into its sandbox, for the ship scan (withheld.go):
+	// a function that copies it out, or nil for a kind the scan does not read.
+	shipped() func() []withheld.Part
 }
 
 // pipeline checks and runs one call.
@@ -91,7 +98,9 @@ func (s *SandboxService) check(ctx context.Context, env envelope, k kind, t targ
 	if err := env.software.Check(k.environment(t).SoftwareIdentity); err != nil {
 		return ctx, mapSandboxErr(err)
 	}
-	return ctx, nil
+	// Last, so only a call that would otherwise run is scanned; the result rides on the
+	// context to run's audit line and answer.
+	return s.shipScan(ctx, env, k, t)
 }
 
 // run admits a checked call, dispatches it, writes its audit line and answers. The
@@ -152,6 +161,8 @@ func (s *SandboxService) run(ctx context.Context, env envelope, k kind, t target
 	if leaked {
 		attrs = append(attrs, slog.Bool("teardown_gave_up", true))
 	}
+	scan := shipScanFrom(ctx)
+	attrs = append(attrs, scan.attrs()...)
 	// A run can fail after it brokered calls; they happened, so they are counted.
 	s.hostCalls.observe(k.profile(), k.trace())
 	if err != nil {
@@ -225,6 +236,10 @@ type evidence struct {
 	software    string
 	environment string
 	instance    string
+	// policy is the sandbox policy this run was dispatched under, when the provider
+	// states one per run (docker names the seccomp profile a run applied); "" means
+	// the provider's one policy, which the daemon states (SandboxService.policy).
+	policy string
 }
 
 // trailer is a kind whose audit line carries more after the duration.
@@ -297,7 +312,7 @@ func (k *javascriptKind) dispatch(ctx context.Context, t target) (err error) {
 }
 func (k *javascriptKind) trace() *sandbox.CallTrace { return k.res.CallTrace }
 func (k *javascriptKind) ran() evidence {
-	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance}
+	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance, k.res.Policy}
 }
 func (k *javascriptKind) took(time.Time) time.Duration { return k.res.Duration }
 func (k *javascriptKind) resultAttrs() []slog.Attr {
@@ -357,7 +372,7 @@ func (k *projectKind) dispatch(ctx context.Context, t target) (err error) {
 }
 func (k *projectKind) trace() *sandbox.CallTrace { return k.res.CallTrace }
 func (k *projectKind) ran() evidence {
-	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance}
+	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance, k.res.Policy}
 }
 
 // took is the handler's clock: a project result states its steps' durations, not
@@ -451,7 +466,7 @@ func (k *moduleKind) dispatch(ctx context.Context, t target) (err error) {
 }
 func (*moduleKind) trace() *sandbox.CallTrace { return nil }
 func (k *moduleKind) ran() evidence {
-	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance}
+	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance, k.res.Policy}
 }
 func (k *moduleKind) took(time.Time) time.Duration { return k.res.Duration }
 
@@ -496,27 +511,34 @@ func (k *moduleKind) answer(resp *plimsollv1.RunResponse, _ []*plimsollv1.Advice
 	resp.Result = &plimsollv1.RunResponse_Module{Module: result}
 }
 
-// cellKind is code handed to a session's interpreter for its language, after the
-// cell's files are written. A cell carries no grant.
+// cellKind is code handed to an interpreter for its language, after the cell's files
+// are written: a session's, or for a cell Run runs by itself (run), one in a sandbox of
+// its own (onecall.go). A cell carries no grant.
 type cellKind struct {
 	grantHolder
-	p      *plimsollv1.CellRun
-	req    sandbox.CellRequest
-	res    sandbox.CellResult
-	runner sandbox.CellRunner
+	p   *plimsollv1.CellRun
+	req sandbox.CellRequest
+	res sandbox.CellResult
+	run bool
 }
 
 func (*cellKind) op() string  { return "cell" }
 func (*cellKind) msg() string { return "code run" }
-func (k *cellKind) check(env envelope) error {
+
+// request is the cell as the provider takes it.
+func (k *cellKind) request(env envelope) sandbox.CellRequest {
 	files := make([]sandbox.File, 0, len(k.p.GetFiles()))
 	for _, f := range k.p.GetFiles() {
 		files = append(files, sandbox.File{Path: f.GetPath(), Content: f.GetContent()})
 	}
-	k.req = sandbox.CellRequest{
+	return sandbox.CellRequest{
 		Language: sandbox.Language(k.p.GetLanguage()), Code: k.p.GetCode(), Files: files,
 		Timeout: env.timeout, MinimumIsolation: env.minimum, Software: env.software,
 	}
+}
+
+func (k *cellKind) check(env envelope) error {
+	k.req = k.request(env)
 	return sandbox.ValidateCellRequest(k.req)
 }
 func (*cellKind) profile() string { return "" }
@@ -530,24 +552,31 @@ func (k *cellKind) requestAttrs() []slog.Attr {
 	return []slog.Attr{slog.String("language", string(k.req.Language)), slog.Int("code_bytes", len(k.req.Code)),
 		slog.Int("files", len(k.req.Files))}
 }
-func (k *cellKind) dispatch(ctx context.Context, _ target) (err error) {
-	k.res, err = k.runner.RunCell(ctx, k.req)
+func (k *cellKind) dispatch(ctx context.Context, t target) (err error) {
+	k.res, err = t.cell(ctx, k.req)
 	return err
 }
 func (*cellKind) trace() *sandbox.CallTrace { return nil }
 func (k *cellKind) ran() evidence {
-	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance}
+	return evidence{k.res.Sandbox, k.res.Isolation, k.res.SoftwareIdentity, k.res.EnvironmentIdentity, k.res.Instance, k.res.Policy}
 }
 func (k *cellKind) took(time.Time) time.Duration { return k.res.Duration }
 func (k *cellKind) resultAttrs() []slog.Attr {
-	return []slog.Attr{
+	attrs := []slog.Attr{
 		slog.Int("exit_code", k.res.ExitCode),
 		slog.Bool("timed_out", k.res.TimedOut),
 		slog.Bool("interpreter_started", k.res.InterpreterStarted),
 		slog.Bool("interpreter_ended", k.res.InterpreterEnded),
 	}
+	if k.run {
+		// Which sandbox a cell Run ran by itself was in: a waiting pool member, or one
+		// made for it.
+		attrs = append(attrs, slog.Bool("warm", k.res.Warm))
+	}
+	return attrs
 }
 func (k *cellKind) answer(resp *plimsollv1.RunResponse, _ []*plimsollv1.AdviceFinding) {
+	resp.Warm = k.res.Warm
 	resp.Result = &plimsollv1.RunResponse_Cell{Cell: &plimsollv1.CellResult{
 		Stdout:             []byte(k.res.Stdout),
 		Stderr:             []byte(k.res.Stderr),

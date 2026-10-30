@@ -29,6 +29,15 @@ type SessionProvider interface {
 	OpenSession(ctx context.Context, opts SessionOptions) (Session, error)
 }
 
+// ListenerCounter is a Session whose open checked the listeners inside its machine:
+// UnreadListeners is how many of the addresses it asked it could not read, as of its
+// latest check. Zero for any session a daemon opens, since an open refuses over one; only
+// a provider's diagnostic setting, under which it offers no sessions to a daemon, lets
+// an open made directly past them.
+type ListenerCounter interface {
+	UnreadListeners() int
+}
+
 // SessionPool is a SessionProvider that can keep sandboxes ready for OpenSession:
 // never-used, with their interpreters already running, each handed to one session and
 // removed when it closes, never reused. StartSessionPool keeps size of them, for
@@ -55,7 +64,21 @@ type SessionOptions struct {
 	// hands over a sandbox whose interpreters for them are already running, and a cell
 	// in any stated language runs whatever the hint said. Empty means no hint.
 	Languages []Language
+	// WarmOnly hands over a waiting pool member or makes nothing: with no member the
+	// provider may hand over (no pool, none waiting, or none that may live until the
+	// session's lifetime), the open is refused with RefuseNoWarmSandbox and no sandbox
+	// is made. A provider without a pool refuses every such open, so it never creates a
+	// sandbox, billed or not, for a caller that would rather run fresh.
+	WarmOnly bool
 }
+
+// ErrNoWarmSandbox is a warm-only open (SessionOptions.WarmOnly) that found no pool
+// member to hand over.
+var ErrNoWarmSandbox = fmt.Errorf("%w: no warm sandbox is waiting, and a warm-only open makes none", ErrAtCapacity)
+
+// RefuseNoWarmSandbox is the refusal of a warm-only open that found no member: not
+// dispatched, reason capacity, nothing made.
+func RefuseNoWarmSandbox() error { return NotDispatched(RefusalCapacity, ErrNoWarmSandbox) }
 
 // SessionLanguages checks a session's language hint and returns the languages in it
 // that its environment states, without repeats, in the stated order. A language
@@ -204,6 +227,14 @@ func sessionRefusals() sessionkit.Refusals {
 	return sessionkit.Refusals{Ended: RefuseEndedSession, GaveUp: RefuseGaveUp, Unreadable: RefuseUnreadable}
 }
 
+// nodeScriptArgv is node running script, one of plimsoll's own programs carried in argv,
+// with args: how a hosted provider's session starts its helpers in the sandbox. It lives
+// here, not beside a provider, because a "-e" written in a file named docker* reads as a
+// hand-built docker env flag to TestDockerCLIIsStartedOnlyThroughDockerCommand.
+func nodeScriptArgv(script string, args ...string) []string {
+	return append([]string{"node", "-e", script}, args...)
+}
+
 // RefuseGaveUp is the error a session call returns when its context ends before any
 // of it ran: while it waited for the session's turn (held by a call in flight, or by
 // the sweep after the previous one), or while the sandbox was made ready for it. It
@@ -281,6 +312,7 @@ func SessionCellResult(ctx context.Context, fail CellResult, out sessionkit.Cell
 		Isolation:           fail.Isolation,
 		SoftwareIdentity:    software,
 		EnvironmentIdentity: environment,
+		Policy:              fail.Policy,
 	}
 	switch {
 	case out.TimedOut:

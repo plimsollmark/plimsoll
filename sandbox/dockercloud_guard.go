@@ -48,8 +48,8 @@ func (d *DockerCloud) EgressGuardPath() string {
 
 func (d *DockerCloud) EgressGuardKnownToken(token string) bool { return d.guards.lookup(token) != nil }
 
-func (d *DockerCloud) EgressGuardCall(ctx context.Context, token, method, rawTarget string, body []byte) EgressGuardResponse {
-	return d.guards.call(ctx, token, method, rawTarget, body)
+func (d *DockerCloud) EgressGuardCall(ctx context.Context, token string, call GuardRequest) EgressGuardResponse {
+	return d.guards.call(ctx, token, call)
 }
 
 // dcGuard is one grant run's guard: the endpoint the guest calls, the per-run

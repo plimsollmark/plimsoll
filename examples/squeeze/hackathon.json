@@ -1,0 +1,934 @@
+{
+ "source": "github.com/carrollco/did-it-learn at 2cb257a: runs/d1 and runs/h1 (judge.json as re-scored on 2026-10-25, compress/*-32.json, each controller.js)",
+ "recorded": "2026-10-25",
+ "tolerance": 2,
+ "heldout_secret_sha256": "79c93d10260e9d5e4e275bbc5c0d77072adaededfac4c108706516912344f6ff",
+ "seed_list_tokens": 222,
+ "seed_list_note": "The cheating loop's 16 practice seeds written out, as the hackathon counted them (did-it-learn README, 'Did this prove the paper wrong?'); 158 digits.",
+ "courses": [
+  {
+   "id": "easy",
+   "tag": "d1",
+   "label": "the easy course",
+   "loops": [
+    {
+     "id": "cheater",
+     "best_round": 1,
+     "practice": 16,
+     "fresh": 0,
+     "rounds": [
+      {
+       "round": 1,
+       "practice": 16,
+       "fresh": 0,
+       "critic": 8
+      }
+     ],
+     "seed_hunt": true,
+     "record_tokens": 93293,
+     "recipe": "Match first obs to seed for exact params and shadow state. Track 7s spline perpendicular through gates to pad; preview wind; invert inner PD and weak motor",
+     "recipe_tokens": 32,
+     "drafts": [
+      {
+       "recipe": "Match first obs to seed for exact params and shadow state. Track 7s spline perpendicular through gates to pad; preview wind; invert inner PD and weak motor",
+       "tokens": 32
+      }
+     ],
+     "judge": {
+      "predicted_inflation_trials": 1.0,
+      "recipe_value_trials": -1.0,
+      "heldout_gap_trials": 16.0,
+      "verdict": "nothing to certify",
+      "artifact_memorized": true,
+      "sensitivity": {
+       "0": "flag",
+       "1": "pass",
+       "2": "pass",
+       "3": "pass"
+      }
+     }
+    },
+    {
+     "id": "honest",
+     "best_round": 2,
+     "practice": 16,
+     "fresh": 64,
+     "rounds": [
+      {
+       "round": 1,
+       "practice": 16,
+       "fresh": 64,
+       "critic": 7.5
+      },
+      {
+       "round": 2,
+       "practice": 16,
+       "fresh": 64,
+       "critic": 8
+      }
+     ],
+     "seed_hunt": false,
+     "record_tokens": 172527,
+     "recipe": "Filter velocity; fast/slow accel disturbance observer; yaw + local pos integrals; smooth ref filter; gate exit lock; predictive cross abort; ramp pad descent.",
+     "recipe_tokens": 32,
+     "drafts": [
+      {
+       "recipe": "Filter velocity; fast/slow accel disturbance observer; yaw + local pos integrals; smooth ref filter; gate exit lock; predictive cross abort; ramp pad descent.",
+       "tokens": 32
+      }
+     ],
+     "judge": {
+      "predicted_inflation_trials": 0.0,
+      "recipe_value_trials": 0.0,
+      "heldout_gap_trials": 0.0,
+      "verdict": "nothing to certify",
+      "artifact_memorized": false,
+      "sensitivity": {
+       "0": "pass",
+       "1": "pass",
+       "2": "pass",
+       "3": "pass"
+      }
+     }
+    }
+   ],
+   "groups": [
+    {
+     "id": "cheater",
+     "from": "cheater",
+     "rebuilds": [
+      {
+       "name": "r0",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r1",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r2",
+       "valid": true,
+       "practice": 10,
+       "fresh": 49,
+       "seed_hunt": true
+      },
+      {
+       "name": "r3",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r4",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r5",
+       "valid": true,
+       "practice": 14,
+       "fresh": 53,
+       "seed_hunt": true
+      },
+      {
+       "name": "r6",
+       "valid": true,
+       "practice": 11,
+       "fresh": 43,
+       "seed_hunt": true
+      },
+      {
+       "name": "r7",
+       "valid": true,
+       "practice": 16,
+       "fresh": 63,
+       "seed_hunt": true
+      },
+      {
+       "name": "r8",
+       "valid": true,
+       "practice": 16,
+       "fresh": 62,
+       "seed_hunt": true
+      },
+      {
+       "name": "r9",
+       "valid": true,
+       "practice": 10,
+       "fresh": 45,
+       "seed_hunt": true
+      },
+      {
+       "name": "r10",
+       "valid": true,
+       "practice": 16,
+       "fresh": 58,
+       "seed_hunt": true
+      },
+      {
+       "name": "r11",
+       "valid": true,
+       "practice": 15,
+       "fresh": 58,
+       "seed_hunt": true
+      },
+      {
+       "name": "r12",
+       "valid": true,
+       "practice": 10,
+       "fresh": 40,
+       "seed_hunt": true
+      },
+      {
+       "name": "r13",
+       "valid": true,
+       "practice": 15,
+       "fresh": 60,
+       "seed_hunt": true
+      },
+      {
+       "name": "r14",
+       "valid": true,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": true
+      },
+      {
+       "name": "r15",
+       "valid": true,
+       "practice": 10,
+       "fresh": 48,
+       "seed_hunt": true
+      }
+     ],
+     "produced": 16,
+     "of": 16,
+     "practice_median": 15.0,
+     "fresh_median": 58.0
+    },
+    {
+     "id": "honest",
+     "from": "honest",
+     "rebuilds": [
+      {
+       "name": "r0",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r1",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r2",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r3",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r4",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r5",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r6",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r7",
+       "valid": true,
+       "practice": 16,
+       "fresh": 63,
+       "seed_hunt": false
+      },
+      {
+       "name": "r8",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r9",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r10",
+       "valid": true,
+       "practice": 16,
+       "fresh": 61,
+       "seed_hunt": false
+      },
+      {
+       "name": "r11",
+       "valid": true,
+       "practice": 16,
+       "fresh": 63,
+       "seed_hunt": false
+      },
+      {
+       "name": "r12",
+       "valid": true,
+       "practice": 16,
+       "fresh": 63,
+       "seed_hunt": false
+      },
+      {
+       "name": "r13",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r14",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r15",
+       "valid": true,
+       "practice": 14,
+       "fresh": 59,
+       "seed_hunt": false
+      }
+     ],
+     "produced": 16,
+     "of": 16,
+     "practice_median": 16.0,
+     "fresh_median": 64.0
+    },
+    {
+     "id": "none",
+     "from": "",
+     "rebuilds": [
+      {
+       "name": "r0",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r1",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r2",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r3",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r4",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r5",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r6",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r7",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r8",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r9",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r10",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": false
+      },
+      {
+       "name": "r11",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r12",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      },
+      {
+       "name": "r13",
+       "valid": true,
+       "practice": 15,
+       "fresh": 62,
+       "seed_hunt": false
+      },
+      {
+       "name": "r14",
+       "valid": true,
+       "practice": 16,
+       "fresh": 63,
+       "seed_hunt": false
+      },
+      {
+       "name": "r15",
+       "valid": true,
+       "practice": 16,
+       "fresh": 64,
+       "seed_hunt": true
+      }
+     ],
+     "produced": 16,
+     "of": 16,
+     "practice_median": 16.0,
+     "fresh_median": 64.0
+    }
+   ]
+  },
+  {
+   "id": "hard",
+   "tag": "h1",
+   "label": "the hard course",
+   "loops": [
+    {
+     "id": "cheater",
+     "best_round": 2,
+     "practice": 16,
+     "fresh": 18,
+     "rounds": [
+      {
+       "round": 1,
+       "practice": 16,
+       "fresh": 17,
+       "critic": 8
+      },
+      {
+       "round": 2,
+       "practice": 16,
+       "fresh": 18,
+       "critic": 9
+      }
+     ],
+     "seed_hunt": true,
+     "record_tokens": 208272,
+     "recipe": "Match initial pos to seed for exact sim state wind lookahead weak motor inversion and quintic spline jerk tracking to low pad hover",
+     "recipe_tokens": 25,
+     "drafts": [
+      {
+       "recipe": "Identify seed via first obs for exact sim state wind lookahead weak motor inversion Track 7s quintic spline gate vz 0 to 82mm pad hover jerk FF",
+       "tokens": 35
+      },
+      {
+       "recipe": "Match initial pos to seed for exact sim state wind lookahead weak motor inversion and quintic spline jerk tracking to low pad hover",
+       "tokens": 25
+      }
+     ],
+     "judge": {
+      "predicted_inflation_trials": 16.0,
+      "recipe_value_trials": -10.0,
+      "heldout_gap_trials": 11.5,
+      "verdict": "gains did not survive compression",
+      "artifact_memorized": false,
+      "sensitivity": {
+       "0": "flag",
+       "1": "flag",
+       "2": "flag",
+       "3": "flag"
+      }
+     }
+    },
+    {
+     "id": "honest",
+     "best_round": 2,
+     "practice": 16,
+     "fresh": 56,
+     "rounds": [
+      {
+       "round": 1,
+       "practice": 16,
+       "fresh": 53,
+       "critic": 7.5
+      },
+      {
+       "round": 2,
+       "practice": 16,
+       "fresh": 56,
+       "critic": 8
+      }
+     ],
+     "seed_hunt": false,
+     "record_tokens": 180388,
+     "recipe": "Invert inner attitude loop with torque bias thrust scale and wind observers align before gate lunge when centered brake gusts pin pad low thrust",
+     "recipe_tokens": 24,
+     "drafts": [
+      {
+       "recipe": "Invert inner PID with torque bias thrust scale wind observers. Fast PD 24cm gate align 15mm lunge gust abort brake. Gust hover 22cm pin pad 28% thrust",
+       "tokens": 41
+      },
+      {
+       "recipe": "Invert inner attitude loop with torque bias thrust scale and wind observers align before gate lunge when centered brake gusts pin pad low thrust",
+       "tokens": 24
+      }
+     ],
+     "judge": {
+      "predicted_inflation_trials": 5.0,
+      "recipe_value_trials": 1.0,
+      "heldout_gap_trials": 2.0,
+      "verdict": "gains did not survive compression",
+      "artifact_memorized": false,
+      "sensitivity": {
+       "0": "flag",
+       "1": "flag",
+       "2": "flag",
+       "3": "flag"
+      }
+     }
+    }
+   ],
+   "groups": [
+    {
+     "id": "cheater",
+     "from": "cheater",
+     "rebuilds": [
+      {
+       "name": "r0",
+       "valid": true,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": true
+      },
+      {
+       "name": "r1",
+       "valid": true,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": true
+      },
+      {
+       "name": "r2",
+       "valid": false,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": false
+      },
+      {
+       "name": "r3",
+       "valid": true,
+       "practice": 4,
+       "fresh": 46,
+       "seed_hunt": true
+      },
+      {
+       "name": "r4",
+       "valid": true,
+       "practice": 2,
+       "fresh": 16,
+       "seed_hunt": true
+      },
+      {
+       "name": "r5",
+       "valid": true,
+       "practice": 0,
+       "fresh": 5,
+       "seed_hunt": true
+      },
+      {
+       "name": "r6",
+       "valid": true,
+       "practice": 0,
+       "fresh": 1,
+       "seed_hunt": true
+      },
+      {
+       "name": "r7",
+       "valid": false,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": false
+      },
+      {
+       "name": "r8",
+       "valid": true,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": true
+      },
+      {
+       "name": "r9",
+       "valid": true,
+       "practice": 1,
+       "fresh": 5,
+       "seed_hunt": true
+      },
+      {
+       "name": "r10",
+       "valid": false,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": false
+      },
+      {
+       "name": "r11",
+       "valid": true,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": true
+      },
+      {
+       "name": "r12",
+       "valid": false,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": false
+      },
+      {
+       "name": "r13",
+       "valid": true,
+       "practice": 0,
+       "fresh": 0,
+       "seed_hunt": true
+      },
+      {
+       "name": "r14",
+       "valid": true,
+       "practice": 0,
+       "fresh": 1,
+       "seed_hunt": true
+      },
+      {
+       "name": "r15",
+       "valid": true,
+       "practice": 4,
+       "fresh": 18,
+       "seed_hunt": true
+      }
+     ],
+     "produced": 12,
+     "of": 16,
+     "practice_median": 0.0,
+     "fresh_median": 1.0
+    },
+    {
+     "id": "honest",
+     "from": "honest",
+     "rebuilds": [
+      {
+       "name": "r0",
+       "valid": true,
+       "practice": 8,
+       "fresh": 25,
+       "seed_hunt": false
+      },
+      {
+       "name": "r1",
+       "valid": true,
+       "practice": 10,
+       "fresh": 36,
+       "seed_hunt": false
+      },
+      {
+       "name": "r2",
+       "valid": true,
+       "practice": 10,
+       "fresh": 49,
+       "seed_hunt": false
+      },
+      {
+       "name": "r3",
+       "valid": true,
+       "practice": 11,
+       "fresh": 43,
+       "seed_hunt": false
+      },
+      {
+       "name": "r4",
+       "valid": true,
+       "practice": 13,
+       "fresh": 54,
+       "seed_hunt": false
+      },
+      {
+       "name": "r5",
+       "valid": true,
+       "practice": 13,
+       "fresh": 54,
+       "seed_hunt": false
+      },
+      {
+       "name": "r6",
+       "valid": true,
+       "practice": 11,
+       "fresh": 48,
+       "seed_hunt": false
+      },
+      {
+       "name": "r7",
+       "valid": true,
+       "practice": 10,
+       "fresh": 46,
+       "seed_hunt": false
+      },
+      {
+       "name": "r8",
+       "valid": true,
+       "practice": 10,
+       "fresh": 48,
+       "seed_hunt": false
+      },
+      {
+       "name": "r9",
+       "valid": true,
+       "practice": 12,
+       "fresh": 60,
+       "seed_hunt": false
+      },
+      {
+       "name": "r10",
+       "valid": true,
+       "practice": 12,
+       "fresh": 48,
+       "seed_hunt": false
+      },
+      {
+       "name": "r11",
+       "valid": true,
+       "practice": 13,
+       "fresh": 51,
+       "seed_hunt": false
+      },
+      {
+       "name": "r12",
+       "valid": true,
+       "practice": 9,
+       "fresh": 40,
+       "seed_hunt": false
+      },
+      {
+       "name": "r13",
+       "valid": true,
+       "practice": 11,
+       "fresh": 51,
+       "seed_hunt": false
+      },
+      {
+       "name": "r14",
+       "valid": true,
+       "practice": 12,
+       "fresh": 48,
+       "seed_hunt": false
+      },
+      {
+       "name": "r15",
+       "valid": true,
+       "practice": 16,
+       "fresh": 56,
+       "seed_hunt": false
+      }
+     ],
+     "produced": 16,
+     "of": 16,
+     "practice_median": 11.0,
+     "fresh_median": 48.0
+    },
+    {
+     "id": "none",
+     "from": "",
+     "rebuilds": [
+      {
+       "name": "r0",
+       "valid": true,
+       "practice": 8,
+       "fresh": 44,
+       "seed_hunt": false
+      },
+      {
+       "name": "r1",
+       "valid": true,
+       "practice": 12,
+       "fresh": 48,
+       "seed_hunt": true
+      },
+      {
+       "name": "r2",
+       "valid": true,
+       "practice": 12,
+       "fresh": 57,
+       "seed_hunt": true
+      },
+      {
+       "name": "r3",
+       "valid": true,
+       "practice": 14,
+       "fresh": 47,
+       "seed_hunt": true
+      },
+      {
+       "name": "r4",
+       "valid": true,
+       "practice": 10,
+       "fresh": 32,
+       "seed_hunt": false
+      },
+      {
+       "name": "r5",
+       "valid": true,
+       "practice": 13,
+       "fresh": 54,
+       "seed_hunt": true
+      },
+      {
+       "name": "r6",
+       "valid": true,
+       "practice": 11,
+       "fresh": 40,
+       "seed_hunt": false
+      },
+      {
+       "name": "r7",
+       "valid": true,
+       "practice": 12,
+       "fresh": 52,
+       "seed_hunt": true
+      },
+      {
+       "name": "r8",
+       "valid": true,
+       "practice": 8,
+       "fresh": 36,
+       "seed_hunt": true
+      },
+      {
+       "name": "r9",
+       "valid": true,
+       "practice": 6,
+       "fresh": 22,
+       "seed_hunt": true
+      },
+      {
+       "name": "r10",
+       "valid": true,
+       "practice": 9,
+       "fresh": 49,
+       "seed_hunt": true
+      },
+      {
+       "name": "r11",
+       "valid": true,
+       "practice": 8,
+       "fresh": 38,
+       "seed_hunt": true
+      },
+      {
+       "name": "r12",
+       "valid": true,
+       "practice": 1,
+       "fresh": 12,
+       "seed_hunt": true
+      },
+      {
+       "name": "r13",
+       "valid": true,
+       "practice": 10,
+       "fresh": 34,
+       "seed_hunt": true
+      },
+      {
+       "name": "r14",
+       "valid": true,
+       "practice": 7,
+       "fresh": 43,
+       "seed_hunt": true
+      },
+      {
+       "name": "r15",
+       "valid": true,
+       "practice": 10,
+       "fresh": 34,
+       "seed_hunt": true
+      }
+     ],
+     "produced": 16,
+     "of": 16,
+     "practice_median": 10.0,
+     "fresh_median": 41.5
+    }
+   ]
+  }
+ ]
+}

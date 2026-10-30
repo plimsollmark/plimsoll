@@ -5,8 +5,11 @@
 
 Build the checker first: go -C examples/sbom build -o /tmp/sbom . (any path). Each case names
 a receipt, the commit a gate would be checking it for, and what a correct gate decides: accept,
-or refuse at a named check. A gate of your own can run the same cases from cases.json; this
-script is the reference answer. Exit 0 when every case comes out as cases.json says.
+or refuse at a named check. It also names the receipt's states (states.py: the verdict, the
+signer, which commit it covers and whether that is the head, the run, the steps, the tests and
+the evidence), so a summary of your own can be compared too. A gate of your own can run the
+same cases from cases.json; this script is the reference answer. Exit 0 when every case comes
+out as cases.json says, decision and states.
 """
 import argparse, json, pathlib, subprocess, sys, tempfile
 
@@ -25,22 +28,28 @@ def main():
         repo = pathlib.Path(scratch) / 'project'
         subprocess.run(['git', '-c', 'advice.detachedHead=false', 'clone', '-q', str(here / 'project.bundle'), str(repo)], check=True)
         subprocess.run(['git', '-C', str(repo), 'fetch', '-q', str(here / 'project.bundle'), '+refs/heads/*:refs/remotes/bundle/*'], check=True)
-        print(f'{"case":<38}{"decided":<26}expected')
+        print(f'{"case":<38}{"decided":<26}{"expected":<22}verdict')
         for c in spec['cases']:
             d = here / 'receipts' / c['receipt']
             cmd = [sys.executable, '-I', str(verify), '--sbom', args.sbom, '--receipt', str(d / 'receipt.cdx.json'),
                    '--trusted-pub', str(here / 'operator.pub'), '--repo', str(repo),
                    '--repository', c.get('repository', spec['repository']), '--head', commits[c['head']],
-                   '--pr', spec['pull_request'], '--command', spec['command'], '--junit-path', spec['junit_path'],
-                   '--junit', str(d / 'junit.xml')]
+                   '--pr', spec['pull_request'], '--command', spec['command'], '--junit-path', spec['junit_path']]
+            if (d / 'junit.xml').exists():  # a run that did not return its report has none
+                cmd += ['--junit', str(d / 'junit.xml')]
             out = subprocess.run(cmd, capture_output=True, text=True)
             report = json.loads(out.stdout)
             failed = [k['check'] for k in report['checks'] if k.get('passed') is False]
             decided = 'accept' if report['verified'] else 'refuse at ' + (failed[0] if failed else '?')
             expected = 'accept' if c.get('accept') else 'refuse at ' + c['refused_at']
             ok = report['verified'] if c.get('accept') else (not report['verified'] and c['refused_at'] in failed)
-            wrong += not ok
-            print(f'{c["name"]:<38}{decided:<26}{expected}{"" if ok else "   <- differs"}')
+            got = {name: s['value'] for name, s in report['states'].items()}
+            states_off = sorted(f'{name} {got.get(name)}, expected {value}' for name, value in c['states'].items() if got.get(name) != value)
+            wrong += not ok or bool(states_off)
+            note = '' if ok else '   <- differs'
+            if states_off:
+                note += '   <- states differ: ' + '; '.join(states_off)
+            print(f'{c["name"]:<38}{decided:<26}{expected:<22}{got["verdict"]}{note}')
     print('every case as expected' if not wrong else f'{wrong} case(s) differ')
     return 1 if wrong else 0
 

@@ -34,7 +34,9 @@ more than 199 (the subject is the 200th file, plimsoll's limit) and a tracked fi
 `.pr-receipt/` are refused rather than silently omitted or misnamed. The test command can read the subject file like any other. Deleted files are absent from the tested
 head. The unsigned context file lists changed surviving files; the signed request
 contains the exact files that ran. A test failure still creates and uploads its
-receipt, then leaves the workflow red.
+receipt, then leaves the workflow red. Every output also holds `states.json`, which says
+plainly what the receipt covers, and the job summary shows it one line per state
+([INTERNAL · receipt states →](#receipt-states-what-a-receipt-covers-said-plainly)).
 
 The template pins Docker 29.9.0 and turns on its containerd image store while
 keeping the runtime configuration produced by the gVisor installer. The runner
@@ -55,6 +57,17 @@ To exercise the script locally, provide a new output directory outside the targe
 project. The daemon and signing key belong to the script; it stops its own daemon
 and deletes the key at exit. The key lives under the user's cache, never in a
 web-served directory. Ordinary logs stay in the source checkout's ignored `tmp/`.
+The daemon's own temporary directory, where the docker provider makes its Unix sockets, is
+never under the checkout: Linux refuses a socket path over 107 bytes, and a GitHub runner's
+checkout path (`/home/runner/work/<repository>/<repository>/tools/plimsoll`) holds the
+repository's name twice. The script makes a new private directory (a random name, mode
+0700) under `$RUNNER_TEMP`, the runner's temporary directory that it empties at each job's
+start and end, or under `/tmp` when that is unset or too long, and removes it at exit. On a
+hosted Linux runner, whose `RUNNER_TEMP` is `/home/runner/work/_temp`
+([EXTERNAL · official docs ↗](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)),
+the longest socket path is then 84 bytes whatever the repository is called
+([INTERNAL · receipt_test.go →](receipt_test.go) runs the script from a checkout under a
+100-character repository name and fails if a socket would not fit).
 
 ```sh
 TEST_COMMAND='npm test' PR_NUMBER=0 PR_REPOSITORY=example/project \
@@ -63,6 +76,9 @@ TEST_COMMAND='npm test' PR_NUMBER=0 PR_REPOSITORY=example/project \
 
 `PR_REPOSITORY` is the CI platform's name for the repository (the workflow passes
 GitHub's `owner/name`); a verifier compares it with the name its own platform gives.
+`PR_HEAD_SHA`, when set, is the commit the run is for (the workflow passes the pull
+request's head from the event); the receipt's states compare the commit that ran with it,
+and a different one fails the job. Unset, the project's own `HEAD` stands in.
 
 By default the run is signed with a throwaway key made for it, which shows that the
 receipt is consistent with itself, not who made it: anyone can make a key and sign a
@@ -87,8 +103,18 @@ without failing the run record. The path must be plain relative names, and not a
 file: the report has to be one the run wrote. Without `JUNIT_PATH`, `junit.xml` is built
 from the signed result alone, one test case per step, so anyone can rebuild it
 ([INTERNAL · junit.py →](junit.py)). Either way the report is only as honest as the tests,
-which belong to the pull request; pass or fail is decided from the signed exit codes,
-never from the report.
+which belong to the pull request.
+
+The job fails when a step exits nonzero or times out, from the signed exit codes. With
+`JUNIT_PATH` set it also fails, though every step exited 0, when the report the run
+returned is missing or not JUnit, lists a failure or error, or lists fewer tests that ran
+than the minimum: 1 by default, so a report of zero tests, or of skipped tests only, fails.
+A test command can exit 0 with every test skipped, or with a failure its runner did not
+turn into an exit code; a green check over either says the tests passed when none did. Set
+`PLIMSOLL_MIN_TESTS` to raise the minimum (the workflow reads the repository variable
+`PLIMSOLL_MIN_TESTS`); it needs `JUNIT_PATH`, since without a report there is nothing to
+count. These are read from the report as the run returned it inside the signed result,
+never from a `junit.xml` beside the receipt or from printed text.
 
 ## Standard formats: a signed test-result statement and Cobertura coverage
 
@@ -98,12 +124,14 @@ Evidence stores and policy engines read a few standard formats. Every output als
 in the standard signed envelope, signed with the same key as the run
 (`plimsoll-attest sign-statement`). Its subject is the repository and commit the signed
 request names; its result is `PASSED` only when every step exited 0 without timing out
-and a readable JUnit report lists no case failures, errors or nonzero failure/error
-summary counters; its test names come from `junit.xml`. A missing requested report,
-malformed XML, an unsupported root element or invalid failure/error counters produces
-`FAILED`: the evidence could not establish a passing test report. Without `JUNIT_PATH`,
-the report is constructed from the signed command results. A valid report with zero
-tests can pass, which does not prove any tests were run. The predicate has
+and a readable JUnit report lists at least one test that ran and passed, and no case
+failures, errors or nonzero failure/error summary counters; its test names come from
+`junit.xml`. A missing requested report, malformed XML, an unsupported root element,
+invalid failure/error counters, or a report in which no test ran (none listed, or only
+skipped ones) produces `FAILED`: the evidence could not establish a passing test report.
+Without `JUNIT_PATH`, the report is constructed from the signed command results. A
+minimum above one (`PLIMSOLL_MIN_TESTS`) is the job's setting, not the signed result's,
+so the statement does not carry it; it lists the passed tests, which a policy can count. The predicate has
 no field for where the tests ran, so the run record's entry in `configuration` carries the
 isolation tier, provider and environment as annotations, the specification's own extension
 point. Set `COVERAGE_PATH` beside `JUNIT_PATH` to the lcov file the test command writes and
@@ -129,6 +157,44 @@ names, so the list adds nothing a commit could change afterwards; a trailer hold
 anything but session IDs is refused. The list says which sessions the commits name, not
 that those sessions wrote them: anyone can type a trailer.
 
+## Beside an AI reviewer's required check
+
+An AI reviewer's own merge check can pass with no review behind it: CodeRabbit's
+`CodeRabbit` check counts as passing for a required check when the review was skipped or
+rate limited ([EXTERNAL · official docs ↗](https://docs.coderabbit.ai/pr-reviews/status-check)).
+The receipt job answers a different question, whether these tests ran on this exact commit
+and passed, and it does not pass by being skipped. GitHub turns a skip into a pass in two
+cases ([EXTERNAL · official docs ↗](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks)):
+a job skipped by its own `if:` reports Success, and a job that needs a failed job may not
+block merging. A workflow skipped by a path, branch or commit-message filter leaves its
+required check pending, which blocks the merge. This workflow has one job, with no job-level
+condition, no `needs` and no event filter, and
+[INTERNAL · workflow_test.go →](workflow_test.go) fails if one is added. Require both
+checks: the receipt shows the tests ran on the head commit even when the reviewer skipped
+it, and it does not show that anyone reviewed the change.
+
+What it does not cover: the pull request's head commit is what runs, not the later merge
+commit; the workflow handles `pull_request` only, so in a merge queue its required check
+never reports and the queued merge fails (add `merge_group` once you have decided what a
+queued commit must prove); and without `JUNIT_PATH` the job knows the exit codes, not how
+many tests ran, so a test command that runs no test and exits 0 passes it (set
+`JUNIT_PATH`, above).
+
+One limit stands. On `pull_request`, GitHub runs the workflow file as the pull request has
+it, so a pull request can rewrite the receipt job to pass, and sign with any key the job can
+read. Three ways to keep the check out of its author's hands:
+
+- Require a code owner's review for `.github/workflows/` (a `CODEOWNERS` entry and "Require
+  review from Code Owners"), so a rewritten job is seen before it merges. Every plan has it.
+- Have an operator outside the pull request's control make the receipt with a key the author
+  cannot read, and report it as a status from a GitHub App chosen as the required check's
+  expected source, which a ruleset can name
+  ([EXTERNAL · official docs ↗](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)).
+  `verify.py` checks such a receipt (next section).
+- On GitHub Enterprise Cloud, require the workflow through an organization ruleset, "Require
+  workflows to pass before merging", pinned to a commit in another repository
+  ([EXTERNAL · official docs ↗](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)).
+
 ## Checking a receipt someone else made
 
 When the same job runs `receipt.sh` and is required to pass, that is already a merge gate:
@@ -142,8 +208,10 @@ request number, base (`--base`), test command, JUnit path and session trailer
 (`--session-trailer`), so a receipt for another commit or repository is refused; with `--junit`, that the JUnit file equals the signed result's; with
 `--test-result` (and `--attest`, the built `plimsoll-attest`), that the statement is signed with
 the operator's key and equals the one the signed result gives; with `--coverage` (and
-`--coverage-path`), that the Cobertura file equals the one converted from the signed lcov file; and that the run
-completed behind the kernel tier or stronger with every step exiting 0. Nothing after a
+`--coverage-path`), that the Cobertura file equals the one converted from the signed lcov file; that the run
+completed behind the kernel tier or stronger with every step exiting 0; and, when the
+receipt asks for a test report (or with `--min-tests N`), that the report the run returned
+lists no failure or error and at least N tests that ran (1 by default). Nothing after a
 failed signature is judged.
 
 ```sh
@@ -157,18 +225,129 @@ python3 -I examples/pr-receipt/verify.py --sbom tmp/sbom \
 
 Build the attest tool first with `go build -o "$PWD/tmp/plimsoll-attest" ./cmd/plimsoll-attest`.
 
+With `--self-consistent` instead of `--trusted-pub`, it reads a receipt signed with a key
+made for the run (the template's default): every check runs against the key the receipt
+carries, and the result is never verified, since anyone can make a key and sign a receipt.
+For the same reason the JUnit report inside a receipt is read only when it is at most 8 MiB
+(the most a run returns in artifacts) and declares no DOCTYPE or entity: Python's
+`xml.etree` expands the entities a DOCTYPE declares, and nested ones take any amount of
+memory ([EXTERNAL · official docs ↗](https://docs.python.org/3/library/xml.html#xml-vulnerabilities)).
+A test framework's report needs neither, and one that has either reads as not JUnit XML.
+
 It prints a JSON report naming the SHA-256 of the receipt it checked (hand that file, and no
-other, to whatever reads the receipt next) and exits 0 when every check passes, 1 when the
-receipt is refused or its tests failed, 2 on a usage error and 3 when the check could not
-run (an unusable key is never a pass). Its own git calls use git's defaults, never the
+other, to whatever reads the receipt next), with the receipt's states (next section), and
+exits 0 when every check passes against the operator's key, 1 when the receipt is refused,
+its tests failed or it was read as self-consistent only, 2 on a usage error and 3 when the
+check could not run (an unusable key is never a pass). Its own git calls use git's defaults, never the
 machine's settings; the clone it reads must be checked out with git's defaults too.
+
+## Receipt states: what a receipt covers, said plainly
+
+A receipt that checks is not the same as tests that passed. A run can end at its time
+limit, a test report can list no tests, a receipt can be for the commit before a later push,
+and a receipt signed with a key made for the run shows only that it agrees with itself. So
+every reading of a receipt says where it stands, each state in one word from a fixed list.
+`verify.py` puts them in its report as `states`, each an object with a `value` and a
+one-sentence `detail` built from signed values and the verifier's own words, never from text
+the tests printed. `receipt.sh` writes that report on the receipt it just made to
+`states.json` and prints one line per state; the workflow writes the same lines to the job
+summary (`$GITHUB_STEP_SUMMARY`, the page GitHub shows for the run) after the upload step.
+[INTERNAL · states.py →](states.py) derives them. What cannot be established is `unknown`,
+and an unknown never counts toward a pass.
+
+| State | Its values, in plain words |
+|---|---|
+| `signer` | `trusted_key`: the signature checks against a public key given to the checker separately (`--trusted-pub`). `self_consistent`: it checks only against the key the receipt carries (`--self-consistent`), which shows the receipt agrees with itself, not who made it. `refused`: it does not check, and nothing in the receipt is read. `unknown`: the check could not run. |
+| `covers` | `known`: the repository, commit, pull request and base that the signed subject file names, given as fields. `unknown`: the signed request names none. |
+| `candidate` | Whether the receipt is evidence for the head the checker was given (`--head`, read when the check runs). `current`: that commit, and the signed request is exactly what the recipe builds there. `stale`: another commit of the same repository and pull request, such as the one before a later push. `mismatch`: the head's commit, but other files, command, base or sessions than this configuration gives. `other`: another repository or pull request, or no subject. `unknown`: the request for the head could not be rebuilt (the clone lacks the commit), or no head was given. |
+| `run` | The signed outcome: `completed` (the run reached its end, a failing step included), `setup_failed` (no step began), `timed_out` (the time limit ended it), `protocol_error` (the sandbox gave no readable result), `runner_failed` (the runner failed after a step began), or `unknown` (an outcome this reader does not know, or a call that got no answer). Its fields give the isolation tier and how many of the requested steps ran. |
+| `steps` | `passed`: every requested step ran and exited 0 without timing out. `failed`: one exited nonzero or timed out. `not_run`: not every step ran, and none failed. `unknown`: the result does not say. |
+| `tests` | Read only from the JUnit report the run returned inside the signed result (`JUNIT_PATH`), so it is the test framework's own count, written by the project's code. `discovered`: the report lists at least one test that ran (fields: cases, passed, failed, skipped). `zero`: it lists none, or only skipped ones. `unknown`: no report was requested, none came back, or it is not JUnit XML this reads (over 8 MiB, or declaring a DOCTYPE). Never counted from the steps or from printed text. Its field `minimum` is the fewest tests that ran the job requires: 1 whenever a report was requested, unless `PLIMSOLL_MIN_TESTS` (`--min-tests`) says more, and none when no report was requested. |
+| `evidence` | `complete`: every file the run was asked to return came back, and no output was cut. `partial`: a requested file is missing, or the returned files or a step's output went over its budget (fields: `missing`, `cut`). `unknown`: the run gave no readable result. |
+| `verdict` | One reading of the rest, by the first rule that matches: `unknown` when the signature check could not run; `refused` when the signature does not check, the candidate is `stale`, `mismatch` or `other`, or a file given beside the receipt differs from it; `failed` when the run did not complete, a step failed or did not run, it ran below the kernel tier, the returned report lists failures, or a run that completed was asked for a report and that report did not come back readable or lists fewer tests that ran than the minimum (zero tests included), or the repository's own policy (`--policy`, next section) refused it; `unknown` when the candidate, run or steps are unknown; `incomplete` when every check that ran passed but the signer is only self-consistent, no report was requested so how many tests ran is unknown, or part of the evidence did not come back; `passed` otherwise. |
+| `stored` | The job summary only, from GitHub's outcome of the upload step: `uploaded` (kept as the workflow artifact), `not_uploaded` (the upload failed or did not run, and the runner holding the receipt is discarded with the job), or `unknown`. A verifier holding a receipt has it, so its report has no such state. |
+
+Beside the states, `unverified` lists by code what the receipt does not show: always
+`merge_result` (the commit a merge would make), `authorship` (who wrote the files) and
+`test_quality` (whether the tests check the change); when they apply, `signer_identity`,
+`test_count`, and `junit_file`, `test_result_statement` or `coverage_file` for a file beside
+the receipt the verifier was not given; or `everything` alone when the signature was not
+established.
+
+The verdict is stricter than `verified` and does not replace it. `verified` and the exit
+codes decide from the signature, the head, the signed exit codes and, when the receipt asks
+for a test report, that report's failures and count (the `tests` check). So a receipt with
+no test report verifies (exit 0) while its verdict says `incomplete`, and one whose report
+lists zero tests is refused (exit 1) and its verdict says `failed`. The template's default
+key is made for the run, so its job
+summary reads `self_consistent` and at best `incomplete`. The job fails when the signed
+result fails, and also when its own check of the receipt refuses it: a head other than the
+event's (`PR_HEAD_SHA`), a file beside the receipt that differs from it, or a returned test
+report that is missing, lists a failure or error, or lists fewer tests that ran than the
+minimum. The job writes the summary, so the summary is out of the pull request's hands only
+as far as the job is (above).
+
+## A policy of your own
+
+`--policy FILE` (repeatable) adds the repository's own rules, written in Rego, the policy
+language of Open Policy Agent ([EXTERNAL · official docs ↗](https://www.openpolicyagent.org/docs/policy-language)).
+`--opa` names the `opa` binary that evaluates them. The verifier hashes that binary before it
+runs it and runs a private copy of exactly the bytes it hashed, so a binary that is not the
+release [INTERNAL · policy/opa.version →](policy/opa.version) pins (or the SHA-256 given with
+`--opa-sha256`) is never run, however it was found. The policy runs only after the signature
+and head checks pass, as the last check, over facts from the signed run: the subject
+(repository, commit, pull request, agent sessions), the request (isolation floor, steps), the
+result (tier, provider, outcome, each step's exit code and timeout, the returned files by
+digest), the record's own fields, every check before it (the tests check included) and
+`signer`, which says whether the signature checked against the operator's key or only against
+the one the receipt carries (`--self-consistent`). [INTERNAL · policy/input.schema.json →](policy/input.schema.json)
+lists every field. No step's output reaches it: what a step printed is the tested code's to
+write.
+
+It evaluates `data.plimsoll.receipt.deny`, a set of strings; each string is a refusal, listed
+in the report's `policy` check (`refusals`), and an empty set adds none. A refusal makes the
+receipt's `verdict` state `failed`, which names how many refusals there were but not their
+text, so the states and the exit code agree. [INTERNAL · policy/receipt.rego →](policy/receipt.rego) is
+an example to copy: tier at or above the floor and at least kernel, every verifier check
+passed, the runner did not fail, the run completed and every step exited 0.
+
+```sh
+python3 -I examples/pr-receipt/verify.py ... --opa "$(sh examples/pr-receipt/policy/opa.sh "$PWD/tmp/tools")" \
+  --policy /path/to/a-checkout-of-the-base-branch/receipt.rego
+```
+
+What it guarantees, and what it does not:
+
+- **A policy can only refuse.** The verifier's own checks still decide, so a mistaken policy
+  cannot accept a receipt they refuse.
+- **A policy that is wrong stops the check (exit 3), never passes.** OPA is handed the input
+  schema, and OPA's type checker treats a field the schema does not name as an error
+  ([EXTERNAL · official docs ↗](https://www.openpolicyagent.org/docs/policy-language#translating-schemas-to-rego-types-and-dynamicity)),
+  so a misspelled field stops the check rather than becoming a rule that never fires; a
+  policy in another package, a deny set that is not strings, and a built-in function that
+  errors stop it too.
+- **The decision repeats offline.** The policy runs with no built-in that reaches the network
+  (`http.send`, or the JSON schema matchers, which fetch remote references), reads the
+  environment (`opa.runtime`, which would hand it the CI job's secrets) or reads the clock or
+  a random source (certificate verification against today's date included), and with no host
+  OPA may reach; a policy that calls one does not compile. The same receipt, policy and OPA
+  release give the same answer later, anywhere.
+- **Where the policy comes from is yours to decide.** Read it from the base branch or another
+  repository, never from the pull request's own checkout, whose author could rewrite it.
+- `--policy-input FILE` writes the input your policy reads, for writing and testing one with
+  `opa eval` or `opa test`.
+
+The gate is pinned to Open Policy Agent v1.21.4, its SHA-256 in
+[INTERNAL · policy/opa.version →](policy/opa.version); `make policy-suite` downloads that
+release once into `tmp/tools`, checks the digest before it runs, and runs the example
+policy's own tests and every refusal above on it.
 
 ## The receipt challenge: does your gate refuse these?
 
 A merge gate that only checks that a receipt exists, or only that it is signed, or only reads
 the JUnit file beside it, waves through things it should not. [INTERNAL · challenge/ →](challenge/)
-holds one honest receipt and six that a correct gate refuses, all made by this recipe under
-gVisor ([INTERNAL · generate.sh →](challenge/generate.sh)), with a three-commit project to check
+holds one honest receipt and eight that a correct gate refuses, all made by this recipe under
+gVisor ([INTERNAL · generate.sh →](challenge/generate.sh)), with a five-commit project to check
 them against ([INTERNAL · cases.json →](challenge/cases.json) names each case, the commit a gate
 would be checking it for, and the right answer):
 
@@ -181,6 +360,8 @@ would be checking it for, and the right answer):
 | passing report beside a failing run | the failing run's receipt with a passing JUnit file put next to it | refuses at the JUnit check |
 | wrong commit | the honest receipt presented for a later commit it never tested | refuses at the head |
 | wrong repository | the honest receipt presented for another repository | refuses at the head |
+| every test skipped | a genuine, correctly signed receipt for a run in which every step exited 0 and the returned report lists only skipped tests | refuses at the test count |
+| timed out | a genuine, correctly signed receipt for a run the 30-second limit ended, its report cut off mid-write | refuses at the result |
 
 ```sh
 go -C examples/sbom build -o "$PWD/tmp/sbom" .
@@ -188,7 +369,8 @@ python3 -I examples/pr-receipt/challenge/check.py --sbom "$PWD/tmp/sbom"
 ```
 
 `check.py` runs every case through `verify.py` and prints what it decided beside what
-`cases.json` expects; run your own gate on the same files and compare. The operator's
+`cases.json` expects, which also names each case's states (the verdict reads `passed` for
+the honest receipt alone); run your own gate on the same files and compare. The operator's
 public key is [INTERNAL · operator.pub →](challenge/operator.pub); its private key was made
 for the run and deleted.
 
@@ -199,7 +381,7 @@ right for the committed artifact and wrong for anyone else's run, so set it.
 
 Local execution leaves `PLIMSOLL_REF` unset when testing an unpublished working
 copy. The workflow always supplies and verifies the pin. The output contains the
-signed bundle, public key, request, BOM, `junit.xml`, page and check logs. The signing key is
+signed bundle, public key, request, BOM, `junit.xml`, `states.json`, page and check logs. The signing key is
 not an artifact. Each workflow artifact is labelled `plimsoll-pr-<number>`.
 The program limit is 30 seconds, enough for the small demonstration while keeping
 a slow command bounded; longer suites need an explicit timeout extension.

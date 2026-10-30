@@ -21,7 +21,8 @@
 //
 // A log is refused whole (Read returns an error) when it is not JSON, ends inside an entry,
 // lacks runsc's closing line, carries anything between entries (gVisor's lost-lines marker
-// is written there), or names a runsc release this reader has not been checked against.
+// is written there), names a runsc release this reader has not been checked against, or is
+// larger than the reader takes (MaxLogBytes, MaxEntryBytes).
 package runsclog
 
 import (
@@ -47,6 +48,21 @@ var (
 	ErrNotJSON     = errors.New("not runsc's JSON log (start runsc with --debug-log-format=json)")
 	ErrIncomplete  = errors.New("the log is incomplete")
 	ErrUnsupported = errors.New("the log names a runsc release this reader has not been checked against")
+	ErrTooLarge    = errors.New("the log is larger than this reader takes")
+)
+
+// The most a log may hold, uncompressed, and the longest entry (one line of runsc's JSON log).
+// The reader holds a whole entry in memory, and whoever checks a receipt reads the log its
+// signer hands over, so a small compressed file must not make it allocate without bound
+// (measured 2026-10-28: a 204 KB gzip file of one 200 MiB entry took a checker to 685 MB).
+// The longest entry in the five fixtures is 8,316 bytes, runsc's dump of a container's spec:
+// MaxEntryBytes is over 100 times it. An offline install of express and esbuild logged about
+// 50 MB with every call traced, and a fixture logs about 1.8 MB under the receipt's options:
+// MaxLogBytes is five times the first and about 140 times the second. A larger log is refused
+// whole, never cut.
+const (
+	MaxLogBytes   = 256 << 20
+	MaxEntryBytes = 1 << 20
 )
 
 // Trace is what a log shows the programs in the sandbox attempted.
@@ -72,6 +88,20 @@ type Trace struct {
 	// Entries counts the log's entries; Calls counts the syscall entries among them.
 	Entries int `json:"entries"`
 	Calls   int `json:"calls"`
+	// Boot is what runsc logged about itself and the sandbox's containers.
+	Boot Boot `json:"boot"`
+}
+
+// Boot is what runsc logs as it starts the sandbox and each container in it: its
+// configuration, and each container's OCI spec. runsc writes both itself; the programs inside
+// choose none of it (on the fixtures, every spec comes before the first traced call).
+type Boot struct {
+	// Config lists runsc's configuration lines, "Config.Name (--flag): value", in order.
+	Config []string `json:"config"`
+	// Pods lists, for each container spec runsc logged, the pod UID its
+	// io.kubernetes.cri.sandbox-uid annotation names ("" when it names none), in order. The
+	// spec's other contents, the container's environment among them, are not kept.
+	Pods []string `json:"pods"`
 }
 
 // Process is one process seen in the log.
@@ -164,8 +194,14 @@ type Unclear struct {
 }
 
 // Read reads one runsc boot log in its JSON form.
-func Read(r io.Reader) (*Trace, error) {
-	dec := json.NewDecoder(bufio.NewReaderSize(r, 1<<20))
+func Read(r io.Reader) (*Trace, error) { return readLimited(r, MaxLogBytes, MaxEntryBytes) }
+
+// readLimited is Read with the limits as arguments, so tests can reach them.
+func readLimited(r io.Reader, maxLog, maxEntry int64) (*Trace, error) {
+	lim := &limited{r: bufio.NewReaderSize(r, 1<<20), maxLog: maxLog, maxEntry: maxEntry}
+	dec := json.NewDecoder(lim)
+	lim.consumed = dec.InputOffset
+	var end int64 // where the last entry ended
 	st := newState()
 	closed := false
 	for {
@@ -173,8 +209,19 @@ func Read(r io.Reader) (*Trace, error) {
 			Msg *string `json:"msg"`
 		}
 		err := dec.Decode(&e)
+		if lim.err != nil {
+			return nil, lim.err
+		}
 		if errors.Is(err, io.EOF) {
 			break
+		}
+		// Exact, whatever the chunks the log arrived in: limited only stops an entry still
+		// being read.
+		if err == nil {
+			if n := dec.InputOffset() - end; n > maxEntry {
+				return nil, fmt.Errorf("%w: entry %d takes %d bytes with the space before it, more than %d", ErrTooLarge, st.t.Entries+1, n, maxEntry)
+			}
+			end = dec.InputOffset()
 		}
 		if err != nil {
 			var syn *json.SyntaxError
@@ -211,6 +258,39 @@ func Read(r io.Reader) (*Trace, error) {
 	return st.t, nil
 }
 
+// limited passes a log through and fails, for good, once it has passed more than maxLog bytes,
+// or when the decoder asks for more while already holding more than maxEntry bytes of one
+// entry. The decoder asks for more only to finish the entry it is reading, and everything it
+// holds unread then belongs to that entry, so its memory stays within maxEntry and one read.
+type limited struct {
+	r                io.Reader
+	maxLog, maxEntry int64
+	n                int64        // bytes passed
+	consumed         func() int64 // bytes the decoder has finished with
+	err              error
+}
+
+func (l *limited) Read(p []byte) (int, error) {
+	if l.err != nil {
+		return 0, l.err
+	}
+	if held := l.n - l.consumed(); held > l.maxEntry {
+		l.err = fmt.Errorf("%w: an entry longer than %d bytes", ErrTooLarge, l.maxEntry)
+		return 0, l.err
+	}
+	// One byte past the limit is enough to know the log is longer than it.
+	if room := l.maxLog + 1 - l.n; int64(len(p)) > room {
+		p = p[:room]
+	}
+	k, err := l.r.Read(p)
+	l.n += int64(k)
+	if l.n > l.maxLog {
+		l.err = fmt.Errorf("%w: more than %d bytes uncompressed", ErrTooLarge, l.maxLog)
+		return 0, l.err
+	}
+	return k, err
+}
+
 var (
 	locRE     = regexp.MustCompile(`(?s)^([A-Za-z0-9_]+\.go):\d+\] (.*)$`)
 	versionRE = regexp.MustCompile(`^Version (\S+), `)
@@ -219,6 +299,10 @@ var (
 	callRE    = regexp.MustCompile(` ([EX]) ([a-z0-9_]+)\(`)
 	retRE     = regexp.MustCompile(`\) = (?:(-?\d+) \(0x[0-9a-f]+\)|-1 errno=(\d+) \(([^()]*)\)) \([^()]*\)$`)
 )
+
+// podUIDAnnotation is the annotation containerd's CRI plugin puts on every container's spec,
+// naming the UID of the pod the container belongs to.
+const podUIDAnnotation = "io.kubernetes.cri.sandbox-uid"
 
 // maxComm is the most runes a process name can take: Linux keeps 15 bytes, and JSON shows an
 // invalid byte as one replacement rune.
@@ -265,7 +349,7 @@ type state struct {
 func newState() *state {
 	return &state{
 		t: &Trace{Processes: []*Process{}, Written: []*Written{}, Opened: []*Opened{}, Changes: []Change{},
-			Network: []Net{}, Unclear: []Unclear{}},
+			Network: []Net{}, Unclear: []Unclear{}, Boot: Boot{Config: []string{}, Pods: []string{}}},
 		procs:    map[int]*Process{},
 		children: map[int][]int{},
 		exec:     map[int]*Program{},
@@ -295,6 +379,24 @@ func (st *state) entry(msg string) (bool, error) {
 			st.t.Runsc = v[1]
 		}
 		return strings.HasPrefix(body, "Exiting with status: "), nil
+	}
+	switch file {
+	case "config.go":
+		if strings.HasPrefix(body, "Config.") {
+			st.t.Boot.Config = append(st.t.Boot.Config, body)
+		}
+		return false, nil
+	case "specutils.go":
+		if spec, ok := strings.CutPrefix(body, "Spec:"); ok {
+			var s struct {
+				Annotations map[string]string `json:"annotations"`
+			}
+			if err := json.Unmarshal([]byte(spec), &s); err != nil {
+				return false, fmt.Errorf("%w: a container spec in the log does not parse: %v", ErrUnsupported, err)
+			}
+			st.t.Boot.Pods = append(st.t.Boot.Pods, s.Annotations[podUIDAnnotation])
+		}
+		return false, nil
 	}
 	im := idsRE.FindStringSubmatch(body)
 	if im == nil {

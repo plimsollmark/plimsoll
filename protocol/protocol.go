@@ -14,14 +14,18 @@
 // of running it and giving an answer the client must reject. An informational field
 // does not bump it. 3: clients accept only an answer that carries their request's
 // Plimsoll-Request-Id back (internal/rpc.BindAnswers). 4: clients accept only record
-// version 4, which names the sandbox instance that ran the call.
+// version 4, which names the sandbox instance that ran the call. 5: a Run cell may ask
+// for a waiting pool member (RunRequest.prefer_warm) and an open for one
+// (OpenSessionRequest.warm_only); a daemon that predated them would ignore either and
+// make a sandbox, billed by the second on e2b and dockercloud, so it refuses them
+// instead, before reading the request.
 package protocol
 
 import "fmt"
 
 // Number is the protocol number this module speaks: the daemon in cmd/plimsolld
 // serves exactly it and the client in package client stamps it on every request.
-const Number uint32 = 4
+const Number uint32 = 5
 
 // Mismatch is the text a daemon puts on its refusal of a request that states
 // another number. A client recognises the refusal by its NotDispatched detail

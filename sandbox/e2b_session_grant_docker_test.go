@@ -89,7 +89,7 @@ func grantedCall(t *testing.T, f *e2bFake, e *sandbox.E2B, s sandbox.Session, gr
 		case <-time.After(100 * time.Millisecond):
 		}
 		if token = f.guardToken(t, id); token != "" {
-			status = e.EgressGuardCall(context.Background(), token, "GET", "/v1/items", nil).Status
+			status = e.EgressGuardCall(context.Background(), token, sandbox.GuardRequest{Method: "GET", RawTarget: "/v1/items"}).Status
 		}
 	}
 	o := <-done

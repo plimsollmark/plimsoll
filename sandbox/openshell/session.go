@@ -84,28 +84,62 @@ var _ sandbox.Session = (*session)(nil)
 // OpenSession creates a session's sandbox (the run policy, sleep as the main process,
 // the session's lifetime declared on it), verifies it as a run's sandbox is verified,
 // checks that the host's ptrace_scope lets the sweep's verdict stand, and records the
-// sandbox's own processes, which every sweep spares.
+// sandbox's own processes, which every sweep spares. With a session pool
+// (StartSessionPool) it hands over a waiting member made the same way instead,
+// whenever one may be handed over.
 func (p *Provider) OpenSession(ctx context.Context, opts sandbox.SessionOptions) (sandbox.Session, error) {
 	if opts.Lifetime <= 0 {
 		return nil, sandbox.NotDispatched(sandbox.RefusalRequest, fmt.Errorf("%w: a session needs a positive lifetime", sandbox.ErrInvalidRequest))
 	}
+	// The floor first: an open refused here counts for nothing in the pool's demand,
+	// so a caller whose opens are refused cannot move the pool toward its languages.
 	tier, err := p.ready(ctx, nil, opts.MinimumIsolation)
 	if err != nil {
 		return nil, err
 	}
-	// OpenShell has no pool, so a language hint changes nothing here; it is still
-	// checked, so a hint is refused alike on every provider.
-	if _, err := sandbox.SessionLanguages(opts.Languages, p.SessionEnvironments().Project.Languages); err != nil {
+	stated := p.SessionEnvironments().Project.Languages
+	want, err := sandbox.SessionLanguages(opts.Languages, stated)
+	if err != nil {
 		return nil, err
+	}
+	if len(want) == 0 {
+		want = stated
 	}
 	// The lifetime runs from the open's start, as on docker: the sandbox declares it
 	// from its create, so the reaper never finds a live session past its declaration.
 	expires := time.Now().Add(opts.Lifetime)
+	// A pool member was made and read back as the sandbox below is, and is read back
+	// before every call, its first included.
+	s := p.claimPoolMember(tier, expires, want, opts.WarmOnly)
+	if s == nil {
+		// Nothing is made for a warm-only open: no pool, or no member that may be
+		// handed over.
+		if opts.WarmOnly {
+			return nil, sandbox.RefuseNoWarmSandbox()
+		}
+		if s, err = p.newSession(ctx, tier, opts.Lifetime); err != nil {
+			return nil, err
+		}
+	}
+	// Once Drain has begun the session is refused and its sandbox deleted, which Drain
+	// waits for (the sandbox stays tracked until then).
+	if !s.life.Activate(&p.sessions, expires, opts.DiskBytes) {
+		s.life.Abandon()
+		p.deleteLater(ctx, s.b)
+		return nil, sandbox.NotDispatched(sandbox.RefusalCapacity, errDraining)
+	}
+	return s, nil
+}
+
+// newSession creates a session's sandbox declaring lifetime, and records its own
+// processes, which every sweep spares; no caller holds it until Activate. On failure
+// the sandbox is deleted under ctx.
+func (p *Provider) newSession(ctx context.Context, tier sandbox.IsolationClass, lifetime time.Duration) (*session, error) {
 	// No sized /tmp, whatever DiskMB says: docker discards a tmpfs when its container
 	// stops, and a session is stopped to suspend it and to recover from a failed sweep,
 	// so its files would vanish (measured on v0.1.2, 2026-09-29). Its disk budget is
 	// measured after each call instead.
-	b, labels, err := p.createBox(ctx, opts.Lifetime, sessionCommand, map[string]string{sessionLabel: "1"}, nil)
+	b, labels, err := p.createBox(ctx, lifetime, sessionCommand, map[string]string{sessionLabel: "1"}, nil)
 	if err != nil {
 		return nil, providerkit.DeadlineAware(ctx, err)
 	}
@@ -115,13 +149,6 @@ func (p *Provider) OpenSession(ctx context.Context, opts sandbox.SessionOptions)
 		s.life.Abandon()
 		p.deleteLater(ctx, b)
 		return nil, providerkit.DeadlineAware(ctx, err)
-	}
-	// Once Drain has begun the session is refused and its sandbox deleted, which Drain
-	// waits for (the sandbox stays tracked until then).
-	if !s.life.Activate(&p.sessions, expires, opts.DiskBytes) {
-		s.life.Abandon()
-		p.deleteLater(ctx, b)
-		return nil, sandbox.NotDispatched(sandbox.RefusalCapacity, errDraining)
 	}
 	return s, nil
 }

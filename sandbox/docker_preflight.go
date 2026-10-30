@@ -77,7 +77,9 @@ func (d *DockerSandbox) waitForPreflight(ctx context.Context) (ready bool, err e
 		case <-ctx.Done():
 			return false, ctx.Err()
 		case <-giveUp.C:
-			return false, errors.New("docker preflight is already in progress")
+			// Nothing was dispatched and the daemon is busy, not broken: capacity, so a
+			// caller knows asking again is safe.
+			return false, NotDispatched(RefusalCapacity, errors.New("docker preflight is already in progress"))
 		case <-tick.C:
 			// Cache first: the holder publishes its result before releasing, so a
 			// successful refresh is visible without taking the lock at all.
@@ -145,6 +147,7 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 	pinnedHost := d.daemonHost
 	cacheAge := now.Sub(d.lastVerified)
 	recentlyReady := d.ready && pinnedHost != "" && d.verifiedRuntime == d.Runtime && d.verifiedGuestUID == d.guestUID() &&
+		d.verifiedSeccompSettings == [2]string{d.Seccomp, d.SeccompSDK} &&
 		!d.lastVerified.IsZero() && cacheAge >= 0 && cacheAge < dockerPreflightCacheTTL
 	d.stateMu.RUnlock()
 	if recentlyReady {
@@ -209,12 +212,13 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 			}
 		}
 	}
-	// A custom seccomp profile must exist before we promise to enforce it; "default"
-	// and "unconfined" are docker keywords, not files.
-	if p := d.Seccomp; p != "" && p != "unconfined" && p != "default" {
-		if _, err := os.Stat(p); err != nil {
-			return fmt.Errorf("seccomp profile %q is not readable: %w", p, err)
-		}
+	// The seccomp profiles must exist and agree with each other before we promise to
+	// enforce them; each file is pinned by its digest (docker_seccomp.go), so what a run
+	// applies is what its record names. "default" and "unconfined" are docker keywords,
+	// not files.
+	seccomp, err := verifySeccomp(d.Seccomp, d.SeccompSDK, files.seccomp)
+	if err != nil {
+		return err
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("docker CLI not found on PATH: %w", err)
@@ -309,6 +313,8 @@ func (d *DockerSandbox) preflight(ctx context.Context) (retErr error) {
 	d.verifiedImageEnvs = verifiedEnvs
 	d.verifiedManifestIDs = verifiedManifests
 	d.verifiedPlatform = platform
+	d.verifiedSeccomp = seccomp
+	d.verifiedSeccompSettings = [2]string{d.Seccomp, d.SeccompSDK}
 	d.lastVerified = d.preflightTime()
 	d.stateMu.Unlock()
 	return nil
@@ -666,6 +672,8 @@ type dockerExecutionState struct {
 	// env is each launched image's environment, by content ID: what its guest
 	// processes start with. Shared and read-only.
 	env map[string][]string
+	// seccomp is the pinned profiles a run selects from (dockerSeccomp.seccompFor).
+	seccomp dockerSeccomp
 }
 
 // executionState is the verified state runs launch under (verifiedState), refused
@@ -699,7 +707,8 @@ func (d *DockerSandbox) verifiedState() (dockerExecutionState, error) {
 	defer d.stateMu.RUnlock()
 	// A guest uid changed since Preflight was never checked against this host's
 	// accounts.
-	if !d.ready || d.daemonHost == "" || d.verifiedRuntime != d.Runtime || d.verifiedGuestUID != d.guestUID() {
+	if !d.ready || d.daemonHost == "" || d.verifiedRuntime != d.Runtime || d.verifiedGuestUID != d.guestUID() ||
+		d.verifiedSeccompSettings != [2]string{d.Seccomp, d.SeccompSDK} {
 		return dockerExecutionState{}, errors.New("docker provider is not ready for its current configuration")
 	}
 	imageID, projectImageID := d.verifiedImageIDs[d.Image], d.verifiedImageIDs[d.ProjectImage]
@@ -727,6 +736,7 @@ func (d *DockerSandbox) verifiedState() (dockerExecutionState, error) {
 		imageManifest:   d.verifiedManifestIDs[d.Image],
 		projectManifest: d.verifiedManifestIDs[d.ProjectImage],
 		moduleManifest:  d.verifiedManifestIDs[d.ModuleImage],
+		seccomp:         d.verifiedSeccomp,
 		env: map[string][]string{
 			imageID:        d.verifiedImageEnvs[d.Image],
 			projectImageID: d.verifiedImageEnvs[d.ProjectImage],

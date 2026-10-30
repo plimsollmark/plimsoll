@@ -11,9 +11,10 @@
 //
 // The harness only reports. The verdict is made here, on the host, by package qualify,
 // from the plan the run was sent and the vendor's ledger, and signed as a
-// qualification statement bound to the run's record; the attest harness signs the
-// records themselves. The page it writes shows all of it with the numbers from this
-// run.
+// qualification statement bound to the run's record, with a verdict per requirement of
+// contract/requirements.json, which every run carries and every adapter statement pins
+// by digest; the attest harness signs the records themselves. The page it writes shows
+// all of it with the numbers from this run.
 //
 //	make docker-images && go run ./examples/adapter
 //
@@ -24,7 +25,17 @@
 //	go run ./examples/adapter -verify docs/examples/adapter
 //
 // checks published files offline: the bundle, then every statement against it, each
-// verdict rebuilt from its evidence. It starts nothing.
+// verdict rebuilt from its evidence, and every adapter statement pinning the requirements
+// file (-requirements, contract/requirements.json by default): a requirements file
+// reworded after the runs is refused by digest. It starts nothing.
+//
+//	go run ./examples/adapter -verify docs/examples/adapter -adapter examples/adapter/adapter/adapter-v2.js
+//
+// then answers for that exact file, by its SHA-256, against that requirements file:
+// each requirement held in how many of its runs, the scenarios no run covered, and
+// whether it is qualified. A file no
+// verified statement names has no qualification and needs its runs. Exit status 0 is
+// qualified, 3 not qualified, 4 no qualification for the file's digest, 1 an error.
 package main
 
 import (
@@ -83,14 +94,30 @@ var pageTemplate string
 func main() {
 	out := flag.String("out", filepath.Join("docs", "examples", "adapter", "index.html"), "where to write the page; the bundle and key go beside it")
 	check := flag.String("verify", "", "verify the published bundle.jsonl, qualification.jsonl and harness.pub in this directory, and run nothing")
+	adapterFile := flag.String("adapter", "", "with -verify: answer for this adapter file, by its digest, against the requirements file")
+	requirementsFile := flag.String("requirements", filepath.Join("examples", "adapter", "contract", "requirements.json"), "with -verify: the requirements file every adapter statement must pin")
 	flag.Parse()
+	given := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if (*adapterFile != "" || given["requirements"]) && *check == "" {
+		fmt.Fprintln(os.Stderr, "adapter: -adapter and -requirements need -verify")
+		os.Exit(1)
+	}
 	if *check != "" {
-		n, err := verifyDir(*check)
+		verified, reqs, err := verifyDir(*check, *requirementsFile)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "adapter: verify:", err)
 			os.Exit(1)
 		}
-		fmt.Printf("verified: %d run records and %d qualification statements, every verdict rebuilt from its evidence\n", n, n)
+		fmt.Printf("verified: %d run records and %d qualification statements, every verdict rebuilt from its evidence, every adapter statement pinning %s (sha256 %s)\n",
+			len(verified), len(verified), *requirementsFile, reqs.SHA256())
+		if *adapterFile != "" {
+			status, err := lookup(os.Stdout, verified, reqs, *requirementsFile, *adapterFile)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "adapter:", err)
+			}
+			os.Exit(status)
+		}
 		return
 	}
 	if err := run(context.Background(), *out); err != nil {
@@ -195,10 +222,98 @@ type pageData struct {
 	Trial                                                        []trialView
 	FloorJSON                                                    template.JS
 	PageURL, SourceURL, HomeURL, RepoURL                         string
+	// The requirements table: the pinned file's digest and its requirements, each
+	// adapter's digest and qualification, and the answer for the second adapter with one
+	// byte added.
+	ReqSHA, V1SHA, V2SHA, QualV1, QualV2 string
+	ReqRows                              []reqRow
+	ChangedSHA, ChangedAnswer            string
 }
 
 // scenarioChoice is one scenario button on the floor, in fleetsim.ScenarioOrder.
 type scenarioChoice struct{ Name, Title string }
+
+// reqRow is one requirement on the page: its ID, sentence and the rules that decide it,
+// and a cell for each adapter shown (the first, then the second).
+type reqRow struct {
+	ID, Text, Rules string
+	Cells           []reqCell
+}
+
+// reqCell is one requirement's tally for one adapter: held in how many of its runs, and
+// the runs it did not hold in.
+type reqCell struct{ Label, Badge, Failed string }
+
+// requirementsView fills the page's requirements table from the verified statements,
+// as qualify.Lookup answers for the first and second adapters by their digests, and the
+// answer for the second adapter with one byte added, which no statement names. The page
+// says the second adapter qualifies and the first does not, so both are checked here.
+func requirementsView(data *pageData, reqs qualify.Requirements, verified []qualify.Verified, files []sandbox.File) error {
+	names := map[string]string{}
+	for _, r := range qualify.AdapterRules {
+		names[r.ID] = r.Name
+	}
+	var quals []qualify.Qualification
+	for _, path := range []string{"adapter-v1.js", "adapter-v2.js"} {
+		q, err := qualify.Lookup(reqs, verified, qualify.Digest(contentOf(files, path)))
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		quals = append(quals, q)
+	}
+	if quals[0].Qualified || !quals[1].Qualified {
+		return fmt.Errorf("adapter-v1.js qualified: %v, adapter-v2.js qualified: %v; the page says only the second is", quals[0].Qualified, quals[1].Qualified)
+	}
+	for i, req := range reqs.Requirements {
+		var rules []string
+		for _, id := range req.Rules {
+			rules = append(rules, names[id])
+		}
+		row := reqRow{ID: req.ID, Text: req.Text, Rules: strings.Join(rules, ", ")}
+		if len(rules) == 0 {
+			row.Rules = "no rule, so not tested"
+		}
+		for _, q := range quals {
+			t := q.Tallies[i]
+			c := reqCell{Label: fmt.Sprintf("%d of %d", t.Held, t.Runs), Badge: "ok"}
+			var missed []string
+			for _, run := range q.Runs {
+				if run.Verdicts[i].Status == qualify.NotHeld {
+					missed = append(missed, fmt.Sprintf("%s (run %d)", scenarioTitles[run.Scenario], run.Run))
+				}
+			}
+			switch {
+			case t.NotTested:
+				c.Label, c.Badge = "not tested", "no"
+			case len(missed) > 0:
+				c.Badge, c.Failed = "no", "not held in "+strings.Join(missed, ", ")
+			}
+			row.Cells = append(row.Cells, c)
+		}
+		data.ReqRows = append(data.ReqRows, row)
+	}
+	qualText := func(q qualify.Qualification) string {
+		if q.Qualified {
+			return fmt.Sprintf("qualified: every requirement held in every run, all %d scenarios run", len(fleetsim.ScenarioOrder))
+		}
+		missed := 0
+		for _, t := range q.Tallies {
+			if t.NotTested || t.Held < t.Runs {
+				missed++
+			}
+		}
+		return fmt.Sprintf("not qualified: %d of %d requirements did not hold in every run", missed, len(q.Tallies))
+	}
+	data.ReqSHA, data.V1SHA, data.V2SHA = reqs.SHA256(), quals[0].Adapter, quals[1].Adapter
+	data.QualV1, data.QualV2 = qualText(quals[0]), qualText(quals[1])
+	data.ChangedSHA = qualify.Digest(contentOf(files, "adapter-v2.js") + "\n")
+	_, err := qualify.Lookup(reqs, verified, data.ChangedSHA)
+	if !errors.Is(err, qualify.ErrNoQualification) {
+		return fmt.Errorf("adapter-v2.js with one byte added: %v, want no qualification", err)
+	}
+	data.ChangedAnswer = err.Error()
+	return nil
+}
 
 func run(ctx context.Context, out string) error {
 	workDir, err := os.MkdirTemp("", "plimsoll-adapter-*")
@@ -231,6 +346,12 @@ func run(ctx context.Context, out string) error {
 	}
 
 	files, texts, err := readInputs(runPlan())
+	if err != nil {
+		return err
+	}
+	// The requirements file every adapter statement pins: the bytes the runs carry.
+	reqData := contentOf(files, qualify.RequirementsPath)
+	reqs, err := qualify.ReadRequirements([]byte(reqData))
 	if err != nil {
 		return err
 	}
@@ -442,6 +563,10 @@ func run(ctx context.Context, out string) error {
 		}
 		if ev.Kind == qualify.KindAdapter {
 			pred.Harness = qualify.Digest(contentOf(runFiles, "harness.js"))
+			pred.Requirements = &qualify.FileDigest{Path: qualify.RequirementsPath, SHA256: qualify.Digest(contentOf(runFiles, qualify.RequirementsPath))}
+			if pred.RequirementVerdicts, err = qualify.Judge(reqs, outcomes); err != nil {
+				return fmt.Errorf("run %d: %w", r.N, err)
+			}
 		}
 		if r.statement, err = qualify.Sign(key, res.Record.SHA256, pred); err != nil {
 			return err
@@ -570,12 +695,22 @@ func run(ctx context.Context, out string) error {
 	for _, r := range plan {
 		statements = append(statements, r.statement)
 	}
-	checks, err := evidenceChecks(pub, key, entries, statements, plan)
+	checks, err := evidenceChecks(pub, key, reqs, []byte(reqData), entries, statements, plan)
 	if err != nil {
 		return err
 	}
 	data.Checks = checks
 	fmt.Printf("records   | %d signed, plus the checkpoint; %d qualification statements; %d checks as expected\n", len(entries)-1, len(statements), len(checks))
+
+	// The requirements table, read from the signed statements as -verify -adapter reads them.
+	verified, err := qualify.Verify(pub, reqs, statements, entries)
+	if err != nil {
+		return err
+	}
+	if err := requirementsView(&data, reqs, verified, files); err != nil {
+		return err
+	}
+	fmt.Printf("requirements | %d, pinned as %s; adapter-v1.js %s; adapter-v2.js %s\n", len(reqs.Requirements), short(reqs.SHA256()), data.QualV1, data.QualV2)
 
 	// 7. The page, the bundle and the key.
 	dir := filepath.Dir(out)
@@ -765,11 +900,13 @@ func contentOf(files []sandbox.File, path string) string {
 	return ""
 }
 
-// evidenceChecks verifies the bundle and the statements as written, then refuses
-// four changed copies: an edited run output, an edited ledger with the signature kept,
-// a verdict re-signed that does not follow from its ledger, and a verdict re-signed
-// onto another run's record. Any check that does not come out as expected is an error.
-func evidenceChecks(pub ed25519.PublicKey, key ed25519.PrivateKey, entries []attest.Entry, statements []attest.Envelope, plan []scenarioRun) ([]check, error) {
+// evidenceChecks verifies the bundle and the statements as written against requirements
+// reqs (read from reqData), then refuses six changed copies: an edited run output, an
+// edited ledger with the signature kept, a verdict re-signed that does not follow from
+// its ledger, a verdict re-signed onto another run's record, the statements against a
+// requirements file with one word changed, and a requirement verdict re-signed that does
+// not follow from its rules. Any check that does not come out as expected is an error.
+func evidenceChecks(pub ed25519.PublicKey, key ed25519.PrivateKey, reqs qualify.Requirements, reqData []byte, entries []attest.Entry, statements []attest.Envelope, plan []scenarioRun) ([]check, error) {
 	v := attest.NewVerifier(pub)
 	var checks []check
 	add := func(short, what string, wantOK bool, err error, okDetail string) {
@@ -802,9 +939,9 @@ func evidenceChecks(pub ed25519.PublicKey, key ed25519.PrivateKey, entries []att
 	_, err = attest.VerifyBundle(edited, v)
 	add("a run's output changed", "The run records with run 1's output changed from completed:true to completed:false", false, err, "")
 
-	_, err = qualify.Verify(pub, statements, entries)
+	_, err = qualify.Verify(pub, reqs, statements, entries)
 	add("verdicts as written", "The qualification statements as written", true, err,
-		fmt.Sprintf("%d statements: each bound to its run's record; its adapter, plan and report matched to that run's signed request and output; its verdict rebuilt from its evidence", len(statements)))
+		fmt.Sprintf("%d statements: each bound to its run's record; its adapter, plan and report matched to that run's signed request and output; its verdict rebuilt from its evidence; each adapter statement's requirements file (sha256 %s) matched to the one its run carried, and its %d requirement verdicts rebuilt from its rules", len(statements), short(reqs.SHA256()), len(reqs.Requirements)))
 
 	tampered := func(i int, env attest.Envelope) []attest.Envelope {
 		out := append([]attest.Envelope(nil), statements...)
@@ -830,7 +967,7 @@ func evidenceChecks(pub ed25519.PublicKey, key ed25519.PrivateKey, entries []att
 	if err != nil {
 		return nil, err
 	}
-	_, err = qualify.Verify(pub, tampered(lost1, oneOrder), entries)
+	_, err = qualify.Verify(pub, reqs, tampered(lost1, oneOrder), entries)
 	add("a ledger edited", fmt.Sprintf("Run %d's statement with its ledger edited to one order for r2 and its verdict to pass, signature kept", lost1+1), false, err, "")
 
 	subject, pred, err := qualify.Subject(statements[lost1])
@@ -845,7 +982,7 @@ func evidenceChecks(pub ed25519.PublicKey, key ed25519.PrivateKey, entries []att
 	if err != nil {
 		return nil, err
 	}
-	_, err = qualify.Verify(pub, tampered(lost1, forged), entries)
+	_, err = qualify.Verify(pub, reqs, tampered(lost1, forged), entries)
 	add("a verdict re-signed", fmt.Sprintf("Run %d's statement re-signed with the right key, its verdict changed to pass over the same ledger", lost1+1), false, err, "")
 
 	_, pred, _ = qualify.Subject(statements[lost1])
@@ -854,8 +991,34 @@ func evidenceChecks(pub ed25519.PublicKey, key ed25519.PrivateKey, entries []att
 	if err != nil {
 		return nil, err
 	}
-	_, err = qualify.Verify(pub, tampered(lost2, moved), entries)
+	_, err = qualify.Verify(pub, reqs, tampered(lost2, moved), entries)
 	add("a verdict moved", fmt.Sprintf("Run %d's failing verdict re-signed onto run %d's record, the second adapter's", lost1+1, lost2+1), false, err, "")
+
+	// The pin: the statements against the requirements file with one word of REQ-004
+	// changed, as a holder of a reworded copy would check them.
+	reworded := bytes.Replace(reqData, []byte("exactly one order"), []byte("at most one order"), 1)
+	if bytes.Equal(reworded, reqData) {
+		return nil, errors.New("the requirements file no longer says \"exactly one order\"; the reworded check needs another word")
+	}
+	rewordedReqs, err := qualify.ReadRequirements(reworded)
+	if err != nil {
+		return nil, err
+	}
+	_, err = qualify.Verify(pub, rewordedReqs, statements, entries)
+	add("requirements reworded", fmt.Sprintf("The qualification statements against %s with REQ-004's \"exactly one order\" changed to \"at most one order\"", qualify.RequirementsPath), false, err, "")
+
+	_, pred, _ = qualify.Subject(statements[lost1])
+	for i := range pred.RequirementVerdicts {
+		if pred.RequirementVerdicts[i].ID == "REQ-004" {
+			pred.RequirementVerdicts[i].Status, pred.RequirementVerdicts[i].Failed = qualify.Held, nil
+		}
+	}
+	flipped, err := qualify.Sign(key, subject, pred)
+	if err != nil {
+		return nil, err
+	}
+	_, err = qualify.Verify(pub, reqs, tampered(lost1, flipped), entries)
+	add("a requirement verdict re-signed", fmt.Sprintf("Run %d's statement re-signed with the right key, REQ-004 changed to held over the vendor's two orders for one command", lost1+1), false, err, "")
 
 	for _, c := range checks {
 		if strings.HasPrefix(c.Detail, "UNEXPECTED") {
@@ -865,42 +1028,137 @@ func evidenceChecks(pub ed25519.PublicKey, key ed25519.PrivateKey, entries []att
 	return checks, nil
 }
 
-// verifyDir checks a published directory offline and returns how many runs it holds.
-func verifyDir(dir string) (int, error) {
+// verifyDir checks a published directory offline against the requirements file at
+// requirementsPath, which every adapter statement must pin, and returns its statements,
+// one per run, each verified against the run it names, with the requirements read.
+func verifyDir(dir, requirementsPath string) ([]qualify.Verified, qualify.Requirements, error) {
+	data, err := os.ReadFile(requirementsPath)
+	if err != nil {
+		return nil, qualify.Requirements{}, err
+	}
+	reqs, err := qualify.ReadRequirements(data)
+	if err != nil {
+		return nil, qualify.Requirements{}, err
+	}
 	pubPEM, err := os.ReadFile(filepath.Join(dir, "harness.pub"))
 	if err != nil {
-		return 0, err
+		return nil, reqs, err
 	}
 	pub, err := attest.ParsePublicKey(pubPEM)
 	if err != nil {
-		return 0, err
+		return nil, reqs, err
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "bundle.jsonl"))
 	if err != nil {
-		return 0, err
+		return nil, reqs, err
 	}
 	entries, err := attest.ReadBundle(bytes.NewReader(raw))
 	if err != nil {
-		return 0, err
+		return nil, reqs, err
 	}
 	if _, err := attest.VerifyBundle(entries, attest.NewVerifier(pub)); err != nil {
-		return 0, err
+		return nil, reqs, err
 	}
 	qual, err := os.ReadFile(filepath.Join(dir, "qualification.jsonl"))
 	if err != nil {
-		return 0, err
+		return nil, reqs, err
 	}
 	statements, err := qualify.ReadStatements(qual)
 	if err != nil {
-		return 0, err
+		return nil, reqs, err
 	}
-	verified, err := qualify.Verify(pub, statements, entries)
-	return len(verified), err
+	verified, err := qualify.Verify(pub, reqs, statements, entries)
+	return verified, reqs, err
+}
+
+// The exit statuses of -verify with -adapter.
+const (
+	exitQualified       = 0
+	exitError           = 1
+	exitNotQualified    = 3
+	exitNoQualification = 4
+)
+
+// lookup writes what the verified statements say of the adapter file at adapterPath, by
+// its digest, against reqs, the requirements file (at requirementsPath) every adapter
+// statement was verified to pin, and returns the exit status. The verdicts per
+// requirement are the signed ones, which Verify rebuilt from each run's rules.
+func lookup(w io.Writer, verified []qualify.Verified, reqs qualify.Requirements, requirementsPath, adapterPath string) (int, error) {
+	src, err := os.ReadFile(adapterPath)
+	if err != nil {
+		return exitError, err
+	}
+	sum := qualify.Digest(string(src))
+	q, err := qualify.Lookup(reqs, verified, sum)
+	if errors.Is(err, qualify.ErrNoQualification) {
+		fmt.Fprintf(w, "%s: %v\n", adapterPath, err)
+		return exitNoQualification, nil
+	}
+	if err != nil {
+		return exitError, err
+	}
+	var harnesses []string
+	for _, h := range q.Harnesses {
+		harnesses = append(harnesses, short(h))
+	}
+	fmt.Fprintf(w, "%s (sha256 %s): %s, named %s in the statements, harness.js %s\n",
+		adapterPath, sum, runs(len(q.Runs)), strings.Join(q.Paths, ", "), strings.Join(harnesses, ", "))
+	fmt.Fprintf(w, "requirements %s (sha256 %s), pinned by every statement of this adapter, each verdict signed and rebuilt from its run's rules\n",
+		requirementsPath, reqs.SHA256())
+	for _, t := range q.Tallies {
+		line := fmt.Sprintf("%s held in %d of %s: %s", t.ID, t.Held, runs(t.Runs), t.Text)
+		if t.NotTested {
+			line = fmt.Sprintf("%s not tested, no rule decides it: %s", t.ID, t.Text)
+		}
+		if len(t.FailedIn) > 0 {
+			line += " Not held in: " + strings.Join(t.FailedIn, ", ") + "."
+		}
+		fmt.Fprintln(w, line)
+	}
+	if len(q.Unmapped) > 0 {
+		fmt.Fprintf(w, "rules no requirement names, outside this qualification: %s\n", strings.Join(q.Unmapped, ", "))
+	}
+	if len(q.Missing) > 0 {
+		fmt.Fprintf(w, "scenarios of %s no run covered: %s\n", fleetsim.Version, strings.Join(q.Missing, ", "))
+	}
+	if q.Qualified {
+		fmt.Fprintf(w, "qualified: every requirement held in every run, over all %d scenarios of %s\n", len(fleetsim.ScenarioOrder), fleetsim.Version)
+		return exitQualified, nil
+	}
+	var why []string
+	for _, t := range q.Tallies {
+		switch {
+		case t.NotTested:
+			why = append(why, t.ID+" is not tested")
+		case t.Held < t.Runs:
+			why = append(why, fmt.Sprintf("%s held in %d of %s", t.ID, t.Held, runs(t.Runs)))
+		}
+	}
+	if len(q.Missing) > 0 {
+		why = append(why, fmt.Sprintf("%d of %d scenarios not run", len(q.Missing), len(fleetsim.ScenarioOrder)))
+	}
+	fmt.Fprintf(w, "not qualified: %s\n", strings.Join(why, "; "))
+	return exitNotQualified, nil
+}
+
+func runs(n int) string {
+	if n == 1 {
+		return "1 run"
+	}
+	return fmt.Sprintf("%d runs", n)
+}
+
+func short(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
 
 // readInputs loads the files every run carries (plan.json is added per run) and the two
-// texts the page quotes. What is carried is declared by the runs themselves: the harness, each
-// run's adapter, and the second adapter, which the adapters broken on purpose build on. Each
+// texts the page quotes. What is carried is declared by the runs themselves: the harness, the
+// requirements file every adapter statement pins, each run's adapter, and the second adapter,
+// which the adapters broken on purpose build on. Each
 // is opened through a handle confined to the example's directory (os.Root refuses a path or a
 // link, a parent directory's included, that leads out of it) and must be a regular file, so
 // nothing beside the declared files can enter a published bundle.
@@ -910,7 +1168,7 @@ func readInputs(runs []scenarioRun) ([]sandbox.File, map[string]string, error) {
 		return nil, nil, err
 	}
 	defer root.Close()
-	names := map[string]bool{"harness.js": true, "adapter-v2.js": true}
+	names := map[string]bool{"harness.js": true, qualify.RequirementsPath: true, "adapter-v2.js": true}
 	for _, r := range runs {
 		names[r.Adapter] = true
 	}
@@ -971,10 +1229,11 @@ func readInputs(runs []scenarioRun) ([]sandbox.File, map[string]string, error) {
 const maxInputBytes = 1 << 20
 
 // sourceOf is the source path, within examples/adapter, of a carried file's name: the harness,
-// the two adapters and the probe, one adapter broken on purpose, or a trial agent's final adapter.
+// the requirements file, the two adapters and the probe, one adapter broken on purpose, or a
+// trial agent's final adapter.
 func sourceOf(name string) (string, bool) {
 	switch {
-	case name == "harness.js":
+	case name == "harness.js" || name == qualify.RequirementsPath:
 		return filepath.Join("contract", name), true
 	case name == "adapter-v1.js" || name == "adapter-v2.js" || name == "probe.js":
 		return filepath.Join("adapter", name), true

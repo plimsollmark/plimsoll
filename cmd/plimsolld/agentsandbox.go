@@ -47,9 +47,13 @@ const agentsandboxUsage = `
                              run on a warm pool, deleted after. plimsolld runs in the
                              cluster, since it reaches each pod's sandboxd at the
                              pod's address. The tier is read from the runtime class's
-                             handler (runsc: kernel, runc: container, kata, kata-clh
-                             and kata-clh-runtime-rs: vm; anything else refused), proven by
-                             the startup smoke test and checked again in every pod.
+                             handler (runsc and any declared below: kernel, runc:
+                             container, kata, kata-clh and kata-clh-runtime-rs: vm;
+                             anything else refused), proven by the startup smoke
+                             test and checked again in every pod.
+                             The class the smoke test ran on (its UID, handler,
+                             overhead and scheduling) is the only one accepted after;
+                             a class changed since is refused until a restart.
   SANDBOX_AGENTSANDBOX_API_SERVER
                              the API server (default https://kubernetes.default.svc)
   SANDBOX_AGENTSANDBOX_CA_FILE / SANDBOX_AGENTSANDBOX_TOKEN_FILE
@@ -62,6 +66,16 @@ const agentsandboxUsage = `
                              the SandboxWarmPool each run claims from
   SANDBOX_AGENTSANDBOX_RUNTIME_CLASS
                              the RuntimeClass the template's pods must name
+  SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS
+                             a comma list of further handler names this operator
+                             declares as gVisor (a containerd runtime of its own for
+                             the runsc shim, such as one with a debug log). Each is
+                             the kernel tier only, held to gVisor's boot line by the
+                             smoke test and in every pod exactly as runsc is, so a
+                             name that maps to another runtime is refused before
+                             code runs. Each must be a DNS label; an empty entry, a
+                             repeat, or a handler named above fails startup.
+                             Hardened mode accepts it
   SANDBOX_AGENTSANDBOX_IMAGE the image the template's one container must run, as the
                              template writes it (@sha256: when
                              SANDBOX_REQUIRE_PINNED_IMAGES=1)

@@ -46,6 +46,7 @@
   .wide { overflow-x: auto; }
   ol.loop li { margin: 6px 0; }
   .small { font-size: 13px; }
+  .reqid { white-space: nowrap; }
   .diagram { width: 100%; height: auto; display: block; background: #f7fafc; border-radius: 12px; margin: 10px 0; }
   .diagram text { font-family: system-ui, sans-serif; font-size: 13px; fill: var(--ink); }
   .diagram text.sub { font-size: 11.5px; fill: var(--ink2); }
@@ -100,7 +101,7 @@
 <body>
 <main>
 <h1>An AI-written vendor adapter, judged by the vendor's own ledger: two orders for one command caught, the rewrite passes, every verdict signed</h1>
-<p class="sub">Run on 2026-10-23 through plimsolld on the <b>docker</b> provider at the <b>kernel</b> tier (runsc); project image docker-image:sha256:32da77b1be24de4c152667c28ab63531425cd69000acf30a328985cb857377f7; software identity oci-manifest:linux/amd64@sha256:a6ef2ea1c8f1de5c885e1a18ba7ee4d962e3a859877f6f46c2fb7ebac1f6cc5c; policy none. <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/adapter">Source</a> · <a href="https://plimsollmark.github.io/plimsoll/">plimsoll</a></p>
+<p class="sub">Run on 2026-10-28 through plimsolld on the <b>docker</b> provider at the <b>kernel</b> tier (runsc); project image docker-image:sha256:fcb1eaedd3bf5ca06406b1ccbf5091acd0ebf0a2150d3561edf9d11a0bad084c; software identity oci-manifest:linux/amd64@sha256:998aa69b33ad52bb6f44b34b8d347c62e3185c5439674322a21bbcff685a79a2; policy none. <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/adapter">Source</a> · <a href="https://plimsollmark.github.io/plimsoll/">plimsoll</a></p>
 
 <div class="tiles">
   <div class="tile"><div class="k">Runs</div><div class="v">34 of 51</div><div class="n">passed; the first adapter failed 5 scenarios, the independent agents' adapters passed 22 of 24, and all 10 adapters broken on purpose were caught</div></div>
@@ -451,6 +452,24 @@ error (a 503) with a short pause, a bounded number of times.</pre>
 <tr><td><b>51</b> Broken on purpose: an order the vendor never answered, reported as refused</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="held" title="">✓</td><td class="broke" title="run51-c2: the adapter reported an error coded &#34;refused&#34; (command run51-c2 was not placed: host api 504: {&#34;error&#34;:&#34;gateway timeout: the fleet service did not answer&#34;}) and the vendor holds the order as m2">✗</td><td><span class="badge no">caught</span></td></tr>
 </table></div>
 <div class="panel"><b>Runs 4, 5 and 6 are the ones that matter.</b> In run 4 the vendor accepted r2's order, started the robot, and answered with a 503 instead of the mission id. The first adapter treated the 503 as transient and sent the create again; the vendor, which queues orders for a busy robot, accepted it as a second order. The adapter's report says every mission done, and from where it stood that was true; the ledger shows two accepted orders for one command. In this simulation the second order starts where the first ended, so the robot does not move again; on a real fleet a duplicated command can be a second pick, or a second trip into space another robot was promised. In runs 5 and 6 the vendor accepted the order and then closed the connection, or answered 500; the first adapter reported the command failed, with an error the contract does not allow, while r2 was already running it. The second adapter's runs 13, 14 and 15 are the same scenarios, with one order per command.</div>
+<h2 id="requirements">The requirements: every rule traced to a "shall"</h2>
+<p>A buyer's quality team reads requirements, not rules. The platform's requirements file, <code>requirements.json</code>, gives each of the eight rules an ID and one "shall" sentence, the form regulated software (cars, medical devices, aircraft) uses so that every test result traces back to the requirement it proves. Each sentence says no more than its rule checks, and a requirement holds in a run only when every rule it names held, so a requirement's verdict is exactly as good as the rules behind it. <a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/adapter/contract/requirements.json">EXTERNAL · source repo ↗ requirements.json</a></p>
+<p>Every run carried the file, and every adapter run's signed statement pins it by its SHA-256, <span class="mono">d0ec428ed165ed3d609c3ad34d3a0dd590a90af343f29229b6b9e69b3d9c5779</span>, a fingerprint that changes if one byte of the file does, with a verdict per requirement. Each adapter cell below counts the runs, of that adapter's eight, in which the requirement held. So a requirement cannot be reworded after the runs to fit the results: the verifier refuses the statements against a reworded copy (step 6 shows it refusing one word changed).</p>
+<div class="wide"><table>
+<tr><th>ID</th><th>Requirement, and the rule that decides it</th><th>First adapter</th><th>Second adapter</th></tr>
+<tr><td class="reqid"><code>REQ-001</code></td><td class="small">The adapter shall load, export the contract&#39;s four functions, and let the harness run every step to the end, with no call hanging.<br><span class="note">Decided by: ran to the end</span></td><td><span class="badge ok">8 of 8</span></td><td><span class="badge ok">8 of 8</span></td></tr>
+<tr><td class="reqid"><code>REQ-002</code></td><td class="small">Every value the adapter returns shall have the shape the contract defines, and no more status reads of a mission shall reach the vendor than the contract&#39;s read budget.<br><span class="note">Decided by: kept the contract&#39;s shapes</span></td><td><span class="badge no">4 of 8</span><br><span class="small">not held in a dropped connection (run 5), a server error after accepting (run 6), a refused order (run 7), a vendor that never answers (run 8)</span></td><td><span class="badge ok">8 of 8</span></td></tr>
+<tr><td class="reqid"><code>REQ-003</code></td><td class="small">Each inventory the adapter returns shall list exactly the vendor&#39;s robots, and the last shall match the vendor&#39;s own status and battery for each robot.<br><span class="note">Decided by: the inventory is the vendor&#39;s</span></td><td><span class="badge no">7 of 8</span><br><span class="small">not held in a vendor that never answers (run 8)</span></td><td><span class="badge ok">8 of 8</span></td></tr>
+<tr><td class="reqid"><code>REQ-004</code></td><td class="small">Each movement command shall become exactly one order on the vendor&#39;s ledger, or no order where the vendor refuses its robot.<br><span class="note">Decided by: one order per command</span></td><td><span class="badge no">7 of 8</span><br><span class="small">not held in a lost answer (run 4)</span></td><td><span class="badge ok">8 of 8</span></td></tr>
+<tr><td class="reqid"><code>REQ-005</code></td><td class="small">Every order on the vendor&#39;s ledger shall carry its command&#39;s robot and target.<br><span class="note">Decided by: the right robot and target</span></td><td><span class="badge ok">8 of 8</span></td><td><span class="badge ok">8 of 8</span></td></tr>
+<tr><td class="reqid"><code>REQ-006</code></td><td class="small">Each order shall end done, or failed where its robot faults, or cancelled where the platform cancelled its command; an order the vendor answers nothing about is not judged.<br><span class="note">Decided by: ended as it should</span></td><td><span class="badge no">6 of 8</span><br><span class="small">not held in a dropped connection (run 5), a server error after accepting (run 6)</span></td><td><span class="badge ok">8 of 8</span></td></tr>
+<tr><td class="reqid"><code>REQ-007</code></td><td class="small">Every order the vendor marks done shall leave its robot at the command&#39;s target.<br><span class="note">Decided by: robot at the target</span></td><td><span class="badge ok">8 of 8</span></td><td><span class="badge ok">8 of 8</span></td></tr>
+<tr><td class="reqid"><code>REQ-008</code></td><td class="small">The mission and state the adapter reports for each command shall be the vendor&#39;s, the read count it reports shall be no lower than the reads the vendor served, a command the vendor refused shall be reported as an error coded refused, and a command the vendor holds shall be reported only as its mission or as an error coded unresolved.<br><span class="note">Decided by: the report is true</span></td><td><span class="badge no">4 of 8</span><br><span class="small">not held in a dropped connection (run 5), a server error after accepting (run 6), a refused order (run 7), a vendor that never answers (run 8)</span></td><td><span class="badge ok">8 of 8</span></td></tr>
+</table></div>
+<p>The first adapter, <code>adapter-v1.js</code> (SHA-256 <span class="mono">1f11531d8bdfeed9480d67122e0e82d208940dd4c0cddc762155981604013c14</span>): not qualified: 5 of 8 requirements did not hold in every run. The second, <code>adapter-v2.js</code> (SHA-256 <span class="mono">4085bb2e4900ee3becc6c308de1a927d073f0a9746923183ce839a6429921330</span>): qualified: every requirement held in every run, all 8 scenarios run. A reader holding the adapter file, the requirements file and the two signed files beside this page gets the same answer offline:</p>
+<pre>go run ./examples/adapter -verify docs/examples/adapter -adapter examples/adapter/adapter/adapter-v2.js</pre>
+<div class="panel"><b>One byte loses the qualification.</b> A qualification belongs to a file's exact bytes, not to its name. The second adapter with one newline added has SHA-256 <span class="mono">aadc3645c24f0ca038430e77930f1ce5a3997b2ed04dd74b7737a51c98d6a9e9</span>, which no statement names, and the same command answers: <code>no qualification for adapter digest aadc3645c24f0ca038430e77930f1ce5a3997b2ed04dd74b7737a51c98d6a9e9: no verified adapter statement names it; rerun required</code>. It exits with status 4, so a pipeline can tell "rerun required" (4) from "ran and did not qualify" (3) and from "qualified" (0). The answer speaks for the statements beside this page, not for every statement anyone signed.</div>
+
 <p class="kicker">The independent trial</p>
 <h2>The exam: three fresh AIs write the adapter cold</h2>
 <p>In plain words: the first adapter on this page was written by the same AI that built the page, which is a bit like marking your own homework. So we set an exam. Three fresh agents, Claude Haiku, Claude Sonnet and Claude Opus, got the same <a href="https://github.com/plimsollmark/plimsoll/blob/main/examples/adapter/trial/PROMPT.md">exam paper</a> (EXTERNAL · source repo ↗): the contract, the rules they would be judged by (six at the time; the shape and inventory rules came later and check things the contract already asked for), how the platform's client reports errors, and the vendor's API description. Open book on that, closed book on everything else. Each ran as a one-shot Claude Code session in an empty folder with every customization switched off and no tools at all, so the exam paper was the only thing in the room (well, that and the folder's name, which had "plimsoll" in it). Their transcripts were checked afterwards: no tool calls, and none of this repository's text.</p>
@@ -515,111 +534,111 @@ error (a 503) with a short pause, a bounded number of times.</pre>
 <div class="cards">
 <div class="card ok-card">
   <div class="head"><b>Run 1 · The first adapter, nominal</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js nominal adapter-v1.js · 945 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal adapter-v1.js · 851 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>26 served; 1 finding, agent-fixable</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">53c13dad</dd>
-    <dt>Record</dt><dd class="mono small">9d65449ef371123b6d571a15c0d3e13c8236a6496fa0d5df165980df2e041a6f</dd>
+    <dt>Credential</dt><dd class="mono small">8192d3f8</dd>
+    <dt>Record</dt><dd class="mono small">3269953c2b144f5176491b9e690bb9d5ae817333d6e3f9280bfad3812b007637</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 2 · The first adapter, a fault</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js fault adapter-v1.js · 905 ms · kernel tier</div>
+  <div class="step mono">node harness.js fault adapter-v1.js · 881 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
     <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
     <dt>Brokered calls</dt><dd>24 served; 1 finding, agent-fixable</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">98b4b592</dd>
-    <dt>Record</dt><dd class="mono small">d3623d3b36a4db23f9b8d14b784bb65fd491cd7c18fab5c52b827d4e40947946</dd>
+    <dt>Credential</dt><dd class="mono small">a1412c88</dd>
+    <dt>Record</dt><dd class="mono small">c19976118bef8a13c8cb11b8601256d539f421ecfbf8f4c27bb5c49afdca6500</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 3 · The first adapter, an overloaded vendor</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js overload adapter-v1.js · 3469 ms · kernel tier</div>
+  <div class="step mono">node harness.js overload adapter-v1.js · 3423 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>28 served, 8 shed; 1 finding, agent-fixable</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 2</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 6</li><li>503 answered: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">9d888492</dd>
-    <dt>Record</dt><dd class="mono small">5ff68529559251d383783b584c17c00fe4d00c24adbf16b92ae5691c4c98524d</dd>
+    <dt>Credential</dt><dd class="mono small">926c54b4</dd>
+    <dt>Record</dt><dd class="mono small">bb42ceb2a1239546a96d9c6e0edf43b45c65a20aa1d40d9296518717374dbf92</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 4 · The first adapter, a lost answer</b><span class="badge no">failed</span></div>
-  <div class="step mono">node harness.js lost_ack adapter-v1.js · 1549 ms · kernel tier</div>
+  <div class="step mono">node harness.js lost_ack adapter-v1.js · 1546 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
     <dt>Rules</dt><dd>one order per command: run04-c2 became 2 orders (m2, m3); 14 status reads</dd>
     <dt>Brokered calls</dt><dd>28 served; 1 finding, agent-fixable</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 14</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip bad">r2 ×2</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">c5ba624f</dd>
-    <dt>Record</dt><dd class="mono small">c33ed688acefe4ff8f614b4b443859c2da4a459e0578ded210cc220433526aa1</dd>
+    <dt>Credential</dt><dd class="mono small">b1ee86fc</dd>
+    <dt>Record</dt><dd class="mono small">abe10735616d535ca7b3348b589197aeeffafacab24100d101004c5c14198c24</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 5 · The first adapter, a dropped connection</b><span class="badge no">failed</span></div>
-  <div class="step mono">node harness.js dropped adapter-v1.js · 885 ms · kernel tier</div>
+  <div class="step mono">node harness.js dropped adapter-v1.js · 859 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
     <dt>Rules</dt><dd>kept the contract&#39;s shapes: run05-c2: dispatch threw an error coded &#34;&#34;, not refused or unresolved; ended as it should: m2 (run05-c2) is running, want done; the report is true: run05-c2: the adapter reported an error coded &#34;&#34; (host api 502: host api unavailable) and the vendor holds the order as m2; 9 status reads</dd>
     <dt>Brokered calls</dt><dd>22 served; 1 finding, agent-fixable</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">c1b5440b</dd>
-    <dt>Record</dt><dd class="mono small">c66345404c8d6c2aeb82cdcb8675fd7d54fbd5d62b9f87be7756bd855aa6269c</dd>
+    <dt>Credential</dt><dd class="mono small">caf8961a</dd>
+    <dt>Record</dt><dd class="mono small">c94e3b4f126e8d7b52a6130f43a3865e154a45e12dce3db58037f351b7c52164</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 6 · The first adapter, a server error after accepting</b><span class="badge no">failed</span></div>
-  <div class="step mono">node harness.js server_error adapter-v1.js · 916 ms · kernel tier</div>
+  <div class="step mono">node harness.js server_error adapter-v1.js · 897 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
     <dt>Rules</dt><dd>kept the contract&#39;s shapes: run06-c2: dispatch threw an error coded &#34;&#34;, not refused or unresolved; ended as it should: m2 (run06-c2) is running, want done; the report is true: run06-c2: the adapter reported an error coded &#34;&#34; (host api 500: {&#34;error&#34;:&#34;acknowledgement lost&#34;}) and the vendor holds the order as m2; 9 status reads</dd>
     <dt>Brokered calls</dt><dd>22 served; 1 finding, agent-fixable</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">7bc58618</dd>
-    <dt>Record</dt><dd class="mono small">6e0939d9b19bbd7526ba2c5fdd95b1c1aa34542359652d2d8ad1f69be4f1aad6</dd>
+    <dt>Credential</dt><dd class="mono small">4f761fa6</dd>
+    <dt>Record</dt><dd class="mono small">bf67e8755c18b7070dc434073af2ae4ee22d66a2c5a894ca8531a8a706d866e8</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 7 · The first adapter, a refused order</b><span class="badge no">failed</span></div>
-  <div class="step mono">node harness.js refused adapter-v1.js · 827 ms · kernel tier</div>
+  <div class="step mono">node harness.js refused adapter-v1.js · 875 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r3 is in fault before the run starts, and the vendor refuses every order for it with a 409</dd>
     <dt>Rules</dt><dd>kept the contract&#39;s shapes: run07-c3: dispatch threw an error coded &#34;&#34;, not refused or unresolved; the report is true: run07-c3: the vendor refused the order (409, r3 in fault) and the adapter reported mission &#34;&#34;, code &#34;&#34;; the contract&#39;s answer is an error coded refused; 8 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; 1 finding, agent-fixable</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 8</li><li>GET /robots: 2</li><li>GET /robots/*: 6</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×0</span></dd>
-    <dt>Credential</dt><dd class="mono small">3d21ff99</dd>
-    <dt>Record</dt><dd class="mono small">9c93d22f70e87a9d20a7dcdb09a2028a6625c4841b8cc7ca725cdd966c8d5bb6</dd>
+    <dt>Credential</dt><dd class="mono small">7a5804f3</dd>
+    <dt>Record</dt><dd class="mono small">e5b60165f0aa554777523085c3900d62017cef7b34b338b42232de0d64b7fcc7</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 8 · The first adapter, a vendor that never answers</b><span class="badge no">failed</span></div>
-  <div class="step mono">node harness.js silent adapter-v1.js · 862 ms · kernel tier</div>
+  <div class="step mono">node harness.js silent adapter-v1.js · 871 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the vendor&#39;s gateway answers 504 to every request about r2 and does nothing; the fleet list is still answered</dd>
     <dt>Rules</dt><dd>kept the contract&#39;s shapes: inventory 2 threw: host api 504: {&#34;error&#34;:&#34;gateway timeout: the fleet service did not answer&#34;}; run08-c2: dispatch threw an error coded &#34;&#34;, not refused or unresolved; the inventory is the vendor&#39;s: inventory 2 listed no robots; the vendor has 3; the report is true: run08-c2: the adapter reported an error coded &#34;&#34; (host api 504: {&#34;error&#34;:&#34;gateway timeout: the fleet service did not answer&#34;}) and the vendor holds the order as m2; 9 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>GET /robots/*: 5</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">ccd45365</dd>
-    <dt>Record</dt><dd class="mono small">9321447fb609ad17b149109bd2fec25382654b2a2aae79f0ec4264d8f4be1b6f</dd>
+    <dt>Credential</dt><dd class="mono small">cc5ff404</dd>
+    <dt>Record</dt><dd class="mono small">cc64a78be9ee80b376283e9bd883605c250e93f945c1e71fb78144c2447e48fd</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 9 · The boundary probe</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node probe.js http://127.0.0.1:33539 · 721 ms · kernel tier</div>
+  <div class="step mono">node probe.js http://127.0.0.1:44651 · 716 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>nothing special: the probe is what tries things</dd>
     <dt>Rules</dt><dd>every rule held; no missions</dd>
@@ -627,553 +646,553 @@ error (a 503) with a short pause, a bounded number of times.</pre>
     <dt>Vendor counted</dt><dd><ul class="counts"></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×0</span><span class="chip">r2 ×0</span><span class="chip">r3 ×0</span></dd>
     <dt>Credential</dt><dd class="mono small"></dd>
-    <dt>Record</dt><dd class="mono small">02fd0a54f54c45515525fe81efe6f85e014d8b3e87fc6099beebabc9e9d474f6</dd>
+    <dt>Record</dt><dd class="mono small">e73fab85ed2838348dbc84060147f148c611008b2f80cf8f774b81c382ec3ead</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 10 · The second adapter, nominal</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js nominal adapter-v2.js · 1265 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal adapter-v2.js · 1202 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>20 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">a5ac009f</dd>
-    <dt>Record</dt><dd class="mono small">4c69b5a38f290b24b82c4a2cb3c010e71a88f2e0c474e55d83cdd7ea54ff8b6d</dd>
+    <dt>Credential</dt><dd class="mono small">2a9dca9b</dd>
+    <dt>Record</dt><dd class="mono small">51d6bc6883e38fc3e4ed3949f7a0eec3586f8affe770d88a5b9e00ca632e5184</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 11 · The second adapter, a fault</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js fault adapter-v2.js · 901 ms · kernel tier</div>
+  <div class="step mono">node harness.js fault adapter-v2.js · 835 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
     <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
     <dt>Brokered calls</dt><dd>18 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">42e5a86d</dd>
-    <dt>Record</dt><dd class="mono small">1d4faf77558ea8304278bf0c1bee6f30c3686e39fb9db755535f8ef7f54a6800</dd>
+    <dt>Credential</dt><dd class="mono small">0c7ad437</dd>
+    <dt>Record</dt><dd class="mono small">e81dc5f4c992cf8484ebcf33e73ddfc3ecc7ccaee2fb1c16b48150bb2fb39e86</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 12 · The second adapter, an overloaded vendor</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js overload adapter-v2.js · 3446 ms · kernel tier</div>
+  <div class="step mono">node harness.js overload adapter-v2.js · 3465 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>22 served, 8 shed; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 2</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 6</li><li>503 answered: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">4cebc5f9</dd>
-    <dt>Record</dt><dd class="mono small">7fce235c955b9907716625d32e406731acb503f497921898456a3c74c134db55</dd>
+    <dt>Credential</dt><dd class="mono small">24cf5855</dd>
+    <dt>Record</dt><dd class="mono small">5137295e159b1586825de1cf4ae0d2a2574e82e755cdd96830cc081129f50cb9</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 13 · The second adapter, a lost answer</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js lost_ack adapter-v2.js · 1553 ms · kernel tier</div>
+  <div class="step mono">node harness.js lost_ack adapter-v2.js · 1482 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">ac8c1d3e</dd>
-    <dt>Record</dt><dd class="mono small">d834eb70e62451e295bc453939f7a8d4111802841132ba03a9aacc7f67372070</dd>
+    <dt>Credential</dt><dd class="mono small">ccfd2c5d</dd>
+    <dt>Record</dt><dd class="mono small">3536c1be1a8729c38eb8cc210151fecd27b716b1d97d038e6e83a5c08c18107c</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 14 · The second adapter, a dropped connection</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js dropped adapter-v2.js · 1214 ms · kernel tier</div>
+  <div class="step mono">node harness.js dropped adapter-v2.js · 1125 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">b90ae4b7</dd>
-    <dt>Record</dt><dd class="mono small">a199ce719f8d3d8eff3828f9e26ccd486b3781957b03cbc3db156baffff25a7b</dd>
+    <dt>Credential</dt><dd class="mono small">a276bde8</dd>
+    <dt>Record</dt><dd class="mono small">619307238c68191d206b655d4f3568e66090e4b2e1ccda8f99386c97464fd298</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 15 · The second adapter, a server error after accepting</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js server_error adapter-v2.js · 1324 ms · kernel tier</div>
+  <div class="step mono">node harness.js server_error adapter-v2.js · 1180 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">736fee57</dd>
-    <dt>Record</dt><dd class="mono small">d03e61c1cb55d1d3de0037ea3d4c75c003ae1d4493bb873d316e17074fd539dd</dd>
+    <dt>Credential</dt><dd class="mono small">b48cf277</dd>
+    <dt>Record</dt><dd class="mono small">760d7b425406be1c07a3ce039c6f67268e5c2c9dfe55ae3a68beb7ad3f8fa11d</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 16 · The second adapter, a refused order</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js refused adapter-v2.js · 814 ms · kernel tier</div>
+  <div class="step mono">node harness.js refused adapter-v2.js · 817 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r3 is in fault before the run starts, and the vendor refuses every order for it with a 409</dd>
     <dt>Rules</dt><dd>every rule held; 8 status reads</dd>
     <dt>Brokered calls</dt><dd>15 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 8</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×0</span></dd>
-    <dt>Credential</dt><dd class="mono small">5a2bf99a</dd>
-    <dt>Record</dt><dd class="mono small">f027f2650a0cb7051fca6b300295b88454498a60aeebc6686688e3c72cd3688e</dd>
+    <dt>Credential</dt><dd class="mono small">431ef56c</dd>
+    <dt>Record</dt><dd class="mono small">6c1038e2714cd39470a7adf65b897179a90129ecfdeda3d95f1cd1526c950828</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 17 · The second adapter, a vendor that never answers</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js silent adapter-v2.js · 10708 ms · kernel tier</div>
+  <div class="step mono">node harness.js silent adapter-v2.js · 10744 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the vendor&#39;s gateway answers 504 to every request about r2 and does nothing; the fleet list is still answered</dd>
     <dt>Rules</dt><dd>every rule held; 9 status reads</dd>
     <dt>Brokered calls</dt><dd>55 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 43</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">70a0501a</dd>
-    <dt>Record</dt><dd class="mono small">56dbdac7963614084c837a5bec1e70e11a23ba2f10a4c07e4588a475f3efaa70</dd>
+    <dt>Credential</dt><dd class="mono small">64611a77</dd>
+    <dt>Record</dt><dd class="mono small">ffd67d10a78932a3d989e8b3516cffd828835082ecd68c591586a3eae3e58b80</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 18 · Claude Haiku&#39;s adapter, nominal</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js nominal trial/haiku.js · 3358 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal trial/haiku.js · 3327 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>20 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">301206f7</dd>
-    <dt>Record</dt><dd class="mono small">e237faaed503c41b176a191e937af7064bf1a5d8cb1976d57b0f0f4f33855441</dd>
+    <dt>Credential</dt><dd class="mono small">735700f5</dd>
+    <dt>Record</dt><dd class="mono small">4799ba8bb458cf14f5399de9249d69033abb4aea4f78f78e71d214ea3ed8188a</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 19 · Claude Haiku&#39;s adapter, a fault</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js fault trial/haiku.js · 2506 ms · kernel tier</div>
+  <div class="step mono">node harness.js fault trial/haiku.js · 2493 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
     <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
     <dt>Brokered calls</dt><dd>18 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">8b92271a</dd>
-    <dt>Record</dt><dd class="mono small">c4b719fae658fdeb1e7cb27db8b754a024cb0bf237d3eb3abd9f639b2019af2b</dd>
+    <dt>Credential</dt><dd class="mono small">fbacbf8d</dd>
+    <dt>Record</dt><dd class="mono small">763137da41bc142521330a0f11232c557be03400817c9fea07c453bc5cd7d8f3</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 20 · Claude Haiku&#39;s adapter, an overloaded vendor</b><span class="badge no">failed</span></div>
-  <div class="step mono">node harness.js overload trial/haiku.js · 5893 ms · kernel tier</div>
+  <div class="step mono">node harness.js overload trial/haiku.js · 5720 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
     <dt>Rules</dt><dd>one order per command: run20-c2 became no order; 9 status reads</dd>
     <dt>Brokered calls</dt><dd>17 served, 5 shed; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 2</li><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li><li>503 answered: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×0</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">a5fe53f7</dd>
-    <dt>Record</dt><dd class="mono small">64de728df577d22985d15aa0fc2b914bfd7218f3d73e5f24e878ecf997272fa3</dd>
+    <dt>Credential</dt><dd class="mono small">8d65c99a</dd>
+    <dt>Record</dt><dd class="mono small">fce3b0363bad7d17c32572ad0aa78e2c547d2544ed51bb668b428b0553de0e34</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 21 · Claude Haiku&#39;s adapter, a lost answer</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js lost_ack trial/haiku.js · 3580 ms · kernel tier</div>
+  <div class="step mono">node harness.js lost_ack trial/haiku.js · 3588 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">015c24c4</dd>
-    <dt>Record</dt><dd class="mono small">844d88749af8a959aea692cf2d31e800360d86b6488c32e1bc42b954c0642d3a</dd>
+    <dt>Credential</dt><dd class="mono small">c1ae963e</dd>
+    <dt>Record</dt><dd class="mono small">48d69db592742b45cf46763bdcba0f826c2ec47839a018893a2cfb446b5b6d79</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 22 · Claude Haiku&#39;s adapter, a dropped connection</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js dropped trial/haiku.js · 3170 ms · kernel tier</div>
+  <div class="step mono">node harness.js dropped trial/haiku.js · 3175 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">a602fa35</dd>
-    <dt>Record</dt><dd class="mono small">a51d2fd73f0ab42197bca9dfbc8453ee1d7939988559bdda88ac3ab832de0b02</dd>
+    <dt>Credential</dt><dd class="mono small">cee78983</dd>
+    <dt>Record</dt><dd class="mono small">47697b58891682e2b5f64286490cd417add1b4b0f124277533ce4a0ea3ee276e</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 23 · Claude Haiku&#39;s adapter, a server error after accepting</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js server_error trial/haiku.js · 3561 ms · kernel tier</div>
+  <div class="step mono">node harness.js server_error trial/haiku.js · 3524 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">64276e25</dd>
-    <dt>Record</dt><dd class="mono small">fd1b18df13b759e4372f653022c9402fb9006cb6c5d9190039b32506a815a3ef</dd>
+    <dt>Credential</dt><dd class="mono small">a36d3be8</dd>
+    <dt>Record</dt><dd class="mono small">c4b35d8e528e53b5117ad8ee21bb409e25f44b58bb54127fa06a621dcf197ede</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 24 · Claude Haiku&#39;s adapter, a refused order</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js refused trial/haiku.js · 1964 ms · kernel tier</div>
+  <div class="step mono">node harness.js refused trial/haiku.js · 2013 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r3 is in fault before the run starts, and the vendor refuses every order for it with a 409</dd>
     <dt>Rules</dt><dd>every rule held; 8 status reads</dd>
     <dt>Brokered calls</dt><dd>15 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 8</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×0</span></dd>
-    <dt>Credential</dt><dd class="mono small">92f343c1</dd>
-    <dt>Record</dt><dd class="mono small">8a239fa5a86855efcdf2b1a72b2f66c4553f9fed53c870efee603b11334d8f57</dd>
+    <dt>Credential</dt><dd class="mono small">21cfa3be</dd>
+    <dt>Record</dt><dd class="mono small">76c3198675929d2ce9376fdc0277a0683b3e958ad880d9f91d46eea8ebccab99</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 25 · Claude Haiku&#39;s adapter, a vendor that never answers</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js silent trial/haiku.js · 4544 ms · kernel tier</div>
+  <div class="step mono">node harness.js silent trial/haiku.js · 4536 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the vendor&#39;s gateway answers 504 to every request about r2 and does nothing; the fleet list is still answered</dd>
     <dt>Rules</dt><dd>every rule held; 9 status reads</dd>
     <dt>Brokered calls</dt><dd>19 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 7</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">d23a556a</dd>
-    <dt>Record</dt><dd class="mono small">5af12097b7929372151d6ced37da34443dd05e8427545116622686c16eb2b0a0</dd>
+    <dt>Credential</dt><dd class="mono small">52a000f0</dd>
+    <dt>Record</dt><dd class="mono small">c22fca0f50dbfec0296a6ff21357fa3999bb391a5a2d72e2630dedb011cc8ef6</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 26 · Claude Sonnet&#39;s adapter, nominal</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js nominal trial/sonnet.js · 1190 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal trial/sonnet.js · 1212 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>20 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">dde25179</dd>
-    <dt>Record</dt><dd class="mono small">7daee53748b937324c057ce03d6f13acc3cae7e1d00c5c716a0cf82c130c15d8</dd>
+    <dt>Credential</dt><dd class="mono small">5a5aed42</dd>
+    <dt>Record</dt><dd class="mono small">2239177e0446a362fb2b55a16967cc8fd6c1012a44c007a37b54a17727ba5267</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 27 · Claude Sonnet&#39;s adapter, a fault</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js fault trial/sonnet.js · 1454 ms · kernel tier</div>
+  <div class="step mono">node harness.js fault trial/sonnet.js · 1388 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
     <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
     <dt>Brokered calls</dt><dd>18 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">5a8b0991</dd>
-    <dt>Record</dt><dd class="mono small">68d287f13f1e054470066fdc38a014cab973840f5e272c123f9315a7908d5c73</dd>
+    <dt>Credential</dt><dd class="mono small">227fd60c</dd>
+    <dt>Record</dt><dd class="mono small">6678d24afe116fc0d1fa7c277a565c037f15d6550fafcbd55f719d20c1022313</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 28 · Claude Sonnet&#39;s adapter, an overloaded vendor</b><span class="badge no">failed</span></div>
-  <div class="step mono">node harness.js overload trial/sonnet.js · 3823 ms · kernel tier</div>
+  <div class="step mono">node harness.js overload trial/sonnet.js · 3806 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
     <dt>Rules</dt><dd>one order per command: run28-c2 became no order; run28-c3 became no order; 4 status reads</dd>
     <dt>Brokered calls</dt><dd>11 served, 8 shed; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 2</li><li>GET /missions/*: 4</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li><li>503 answered: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×0</span><span class="chip">r3 ×0</span></dd>
-    <dt>Credential</dt><dd class="mono small">4d0e84c1</dd>
-    <dt>Record</dt><dd class="mono small">e6cca3230bc70caff137e09786ac928f564ce356bc94c269f58ceaa7281af8fb</dd>
+    <dt>Credential</dt><dd class="mono small">964d4f27</dd>
+    <dt>Record</dt><dd class="mono small">7ac505b752fd16bca55e20fea685614969931a53a8f844f1cff62c519cc89d4b</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 29 · Claude Sonnet&#39;s adapter, a lost answer</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js lost_ack trial/sonnet.js · 1267 ms · kernel tier</div>
+  <div class="step mono">node harness.js lost_ack trial/sonnet.js · 1304 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">10ddea7c</dd>
-    <dt>Record</dt><dd class="mono small">4788eec54e2c924e329fca0fc240aba3ee1b4948e050c46df8d5bcceac56e2e4</dd>
+    <dt>Credential</dt><dd class="mono small">48be0323</dd>
+    <dt>Record</dt><dd class="mono small">baeba56edafd83c52727959d8343c13383d3e9d81b55cab914ef291bff66b3de</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 30 · Claude Sonnet&#39;s adapter, a dropped connection</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js dropped trial/sonnet.js · 1611 ms · kernel tier</div>
+  <div class="step mono">node harness.js dropped trial/sonnet.js · 1634 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">f0888ecb</dd>
-    <dt>Record</dt><dd class="mono small">91fafd487d013734baef36c071a69e77f3c5df14d91d065b5fb1bce5f15b7f09</dd>
+    <dt>Credential</dt><dd class="mono small">3bf1f74c</dd>
+    <dt>Record</dt><dd class="mono small">9cfcf4e075a06868ec155b0f8745647d71111ddf8e630255108a3ab442e86fe8</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 31 · Claude Sonnet&#39;s adapter, a server error after accepting</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js server_error trial/sonnet.js · 1283 ms · kernel tier</div>
+  <div class="step mono">node harness.js server_error trial/sonnet.js · 1302 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">15c47a80</dd>
-    <dt>Record</dt><dd class="mono small">7fefa7123ea3582f17acb79c3df08afd6bb8dad4d4beb0651e7a05ed8197f658</dd>
+    <dt>Credential</dt><dd class="mono small">8fb8dbbc</dd>
+    <dt>Record</dt><dd class="mono small">e3455d566affb9c0a0c9cb3d2a7a56a9191506d76e6d7b78c4db14a25e427c65</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 32 · Claude Sonnet&#39;s adapter, a refused order</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js refused trial/sonnet.js · 1000 ms · kernel tier</div>
+  <div class="step mono">node harness.js refused trial/sonnet.js · 1026 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r3 is in fault before the run starts, and the vendor refuses every order for it with a 409</dd>
     <dt>Rules</dt><dd>every rule held; 8 status reads</dd>
     <dt>Brokered calls</dt><dd>15 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 8</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×0</span></dd>
-    <dt>Credential</dt><dd class="mono small">65e7408e</dd>
-    <dt>Record</dt><dd class="mono small">ad900e3d8d94c3958d2bb3ff72ebb1b30eb3cb852589c14ec74dadb9aad38b8d</dd>
+    <dt>Credential</dt><dd class="mono small">98d404d9</dd>
+    <dt>Record</dt><dd class="mono small">1150248ea1f1ee5cf2ad4eebd7c277147fcb8d89766d8db6e6e59fec6f85fbc8</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 33 · Claude Sonnet&#39;s adapter, a vendor that never answers</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js silent trial/sonnet.js · 2545 ms · kernel tier</div>
+  <div class="step mono">node harness.js silent trial/sonnet.js · 2490 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the vendor&#39;s gateway answers 504 to every request about r2 and does nothing; the fleet list is still answered</dd>
     <dt>Rules</dt><dd>every rule held; 9 status reads</dd>
     <dt>Brokered calls</dt><dd>20 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 8</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">381300f6</dd>
-    <dt>Record</dt><dd class="mono small">d19830fbcf1d931f99cb67f48f6947301aed3f2cc8f10c3cea6285ef8037ad77</dd>
+    <dt>Credential</dt><dd class="mono small">d5ed591c</dd>
+    <dt>Record</dt><dd class="mono small">21cf591e240912d82b5623386625909cf58026a159d99fdc4cd031da0e92ae3e</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 34 · Claude Opus&#39;s adapter, nominal</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js nominal trial/opus.js · 2678 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal trial/opus.js · 2649 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>20 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">bd1c65ec</dd>
-    <dt>Record</dt><dd class="mono small">42ff838e49d61ce51a12a3075bda7227280818503208cbf6cc8690053d6f6a48</dd>
+    <dt>Credential</dt><dd class="mono small">3aba5f15</dd>
+    <dt>Record</dt><dd class="mono small">d2c635fc3530c04571ebac4b4d04902f0b5f70f1a1a77e48fb26d4ffd801ec26</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 35 · Claude Opus&#39;s adapter, a fault</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js fault trial/opus.js · 1883 ms · kernel tier</div>
+  <div class="step mono">node harness.js fault trial/opus.js · 1871 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
     <dt>Rules</dt><dd>every rule held; 11 status reads</dd>
     <dt>Brokered calls</dt><dd>18 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">981bf9ac</dd>
-    <dt>Record</dt><dd class="mono small">56bd9c05de4fe3d30ab333642d3f4e8daf3467f9e27eb737533d89f265521b74</dd>
+    <dt>Credential</dt><dd class="mono small">94f91a0e</dd>
+    <dt>Record</dt><dd class="mono small">69272648d6ffb1f446b5a393f4e9bb550b53b2f0f54cf14d149dd5e0476397df</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 36 · Claude Opus&#39;s adapter, an overloaded vendor</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js overload trial/opus.js · 7305 ms · kernel tier</div>
+  <div class="step mono">node harness.js overload trial/opus.js · 7430 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>the next 4 requests after the first order answer 503, health probes included</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>23 served, 2 shed; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 7</li><li>503 answered: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">9eefd700</dd>
-    <dt>Record</dt><dd class="mono small">5590ac940684407c8a16afb8d90b8e2bfb66c4610cde77e1be9f4c54bc31ce6f</dd>
+    <dt>Credential</dt><dd class="mono small">66181276</dd>
+    <dt>Record</dt><dd class="mono small">21abc473e8bddf6b6406a63743631d814e1ceaa0e5d59809eeedee33b8773bcb</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 37 · Claude Opus&#39;s adapter, a lost answer</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js lost_ack trial/opus.js · 2791 ms · kernel tier</div>
+  <div class="step mono">node harness.js lost_ack trial/opus.js · 3018 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 503</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /health: 1</li><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">acdbaaab</dd>
-    <dt>Record</dt><dd class="mono small">b2d025e9a007cb1a32067481c16e9b0c44c9b33a80e0437b0cf68bef6d7e29ef</dd>
+    <dt>Credential</dt><dd class="mono small">21d634f6</dd>
+    <dt>Record</dt><dd class="mono small">7af657ae396bb1f12d062b942eced44f9b788ada2cda4e52eea72e3b7a64d291</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 38 · Claude Opus&#39;s adapter, a dropped connection</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js dropped trial/opus.js · 2485 ms · kernel tier</div>
+  <div class="step mono">node harness.js dropped trial/opus.js · 2597 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the connection closes with no answer</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">e50293f1</dd>
-    <dt>Record</dt><dd class="mono small">4f162e4726098faa49c8bf91ff3c90b0403d88c5c39f1a99fd08ff87826ac29f</dd>
+    <dt>Credential</dt><dd class="mono small">897978a2</dd>
+    <dt>Record</dt><dd class="mono small">78af85c035ac377b9fbd3f92a8db5540c16a6d9bd282453898b09be658363768</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 39 · Claude Opus&#39;s adapter, a server error after accepting</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js server_error trial/opus.js · 2444 ms · kernel tier</div>
+  <div class="step mono">node harness.js server_error trial/opus.js · 2991 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, but its answer is a 500</dd>
     <dt>Rules</dt><dd>every rule held; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>21 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 5</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">67405a49</dd>
-    <dt>Record</dt><dd class="mono small">fdf69834df07afd330f66d9b70a99f9172516bb96ea034df201695c4a1072c4c</dd>
+    <dt>Credential</dt><dd class="mono small">4344d43f</dd>
+    <dt>Record</dt><dd class="mono small">0f5be18f08eeddd117c9323f71bce266775a23a10a1321108e8728f1bc0ad59e</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 40 · Claude Opus&#39;s adapter, a refused order</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js refused trial/opus.js · 2045 ms · kernel tier</div>
+  <div class="step mono">node harness.js refused trial/opus.js · 1586 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r3 is in fault before the run starts, and the vendor refuses every order for it with a 409</dd>
     <dt>Rules</dt><dd>every rule held; 8 status reads</dd>
     <dt>Brokered calls</dt><dd>15 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 8</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×0</span></dd>
-    <dt>Credential</dt><dd class="mono small">1f53d756</dd>
-    <dt>Record</dt><dd class="mono small">79ec39fd50ed6b7f99c0ba7424e5c243fadcd1b07c7ab43d7e7596137e424723</dd>
+    <dt>Credential</dt><dd class="mono small">aa24b3ab</dd>
+    <dt>Record</dt><dd class="mono small">57f1625cac202c459da7f378c27f78e89f6750450955fe763c5d1554401ddf3a</dd>
   </dl>
 </div>
 <div class="card ok-card">
   <div class="head"><b>Run 41 · Claude Opus&#39;s adapter, a vendor that never answers</b><span class="badge ok">passed</span></div>
-  <div class="step mono">node harness.js silent trial/opus.js · 11040 ms · kernel tier</div>
+  <div class="step mono">node harness.js silent trial/opus.js · 11094 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the vendor&#39;s gateway answers 504 to every request about r2 and does nothing; the fleet list is still answered</dd>
     <dt>Rules</dt><dd>every rule held; 9 status reads</dd>
     <dt>Brokered calls</dt><dd>25 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>GET /robots/*: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 11</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">cf11c0ca</dd>
-    <dt>Record</dt><dd class="mono small">608bac7066ca32f8bbe45ad30f0f5687c56a29adfa68a0144ac654cd15b3a3a6</dd>
+    <dt>Credential</dt><dd class="mono small">45311bec</dd>
+    <dt>Record</dt><dd class="mono small">539984a08150243aba7afb3ba9cafa26f27a5b71dd973fa070c98db1531c5e09</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 42 · Broken on purpose: every order sent to (0, 0)</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js nominal broken/wrong-target.js · 1512 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal broken/wrong-target.js · 1509 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>the right robot and target: m1 (run42-c1) went to (0, 0), not (3, 0); m2 (run42-c2) went to (0, 0), not (10, 4); m3 (run42-c3) went to (0, 0), not (0, 15); m4 (run42-c4) went to (0, 0), not (50, 50); robot at the target: m1 (run42-c1) ended done with r1 at (0, 0); the target is (3, 0); m2 (run42-c2) ended done with r2 at (0, 0); the target is (10, 4); m3 (run42-c3) ended done with r3 at (0, 0); the target is (0, 15); 22 status reads</dd>
     <dt>Brokered calls</dt><dd>29 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 22</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">a2c636ec</dd>
-    <dt>Record</dt><dd class="mono small">539b824a7c1ace0eababd1a936e715c0ee1ef7ec78d3312db886032582f636b4</dd>
+    <dt>Credential</dt><dd class="mono small">8aedeca3</dd>
+    <dt>Record</dt><dd class="mono small">e0f1c98c350ce8478c9520bc77cf13764646129154456d3e5e00d6be0e1908af</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 43 · Broken on purpose: r1&#39;s orders sent to r3</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js nominal broken/wrong-robot.js · 1346 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal broken/wrong-robot.js · 1379 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>the right robot and target: m1 (run43-c1) went to r3, not r1; m4 (run43-c4) went to r3, not r1; 32 status reads</dd>
     <dt>Brokered calls</dt><dd>39 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 32</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×0</span><span class="chip">r2 ×1</span><span class="chip">r3 ×3</span></dd>
-    <dt>Credential</dt><dd class="mono small">e0de3b70</dd>
-    <dt>Record</dt><dd class="mono small">47b4a837122a6261e08739a0d667379e5a47b0227450940fb452f9ea472b1a82</dd>
+    <dt>Credential</dt><dd class="mono small">335dec03</dd>
+    <dt>Record</dt><dd class="mono small">2f92e4e6ece5d5e789e60dab82ee543e11ca958bc7fadac35c5ef6226150a257</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 44 · Broken on purpose: a failure reported as done</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js fault broken/false-success.js · 861 ms · kernel tier</div>
+  <div class="step mono">node harness.js fault broken/false-success.js · 877 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>robot r2 faults 2 steps into its order</dd>
     <dt>Rules</dt><dd>the report is true: run44-c2: the adapter reported m2 done, the vendor says failed; 11 status reads</dd>
     <dt>Brokered calls</dt><dd>18 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 11</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">56adbd06</dd>
-    <dt>Record</dt><dd class="mono small">5c1299c9c43612b3109d58850534c091c90a9358b935479642c7d2ae3aa53441</dd>
+    <dt>Credential</dt><dd class="mono small">93182aa6</dd>
+    <dt>Record</dt><dd class="mono small">7eedbd6c9ea1f585fee83c748e6b5063a8dba9583ddcfb18a2583d065463b166</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 45 · Broken on purpose: a cancel that sends nothing</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js nominal broken/no-cancel.js · 973 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal broken/no-cancel.js · 1004 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>ended as it should: m4 (run45-c4) is running, want cancelled; 17 status reads</dd>
     <dt>Brokered calls</dt><dd>23 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 17</li><li>GET /robots: 2</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">dbc8bfcf</dd>
-    <dt>Record</dt><dd class="mono small">2d8ccfc4e68b7700034563f9a0f3d06df174fcc3d81ba8a51954170f28657712</dd>
+    <dt>Credential</dt><dd class="mono small">021855a3</dd>
+    <dt>Record</dt><dd class="mono small">c42722d412b20c61908f0d109effca5cba1f384cb51ea6d1d0af38a218cafa9f</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 46 · Broken on purpose: a wait that reports no state</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js nominal broken/no-state.js · 928 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal broken/no-state.js · 926 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>kept the contract&#39;s shapes: run46-c1: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:3}; run46-c2: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:4}; run46-c3: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:5}; run46-c4: wait returned no state of done, failed, cancelled or timeout: {&#34;polls&#34;:1}; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>20 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">a158d666</dd>
-    <dt>Record</dt><dd class="mono small">cf4b7013e1e98d6d1f738049799c8c5cc5e7fa17a8689e771560af070f8c7225</dd>
+    <dt>Credential</dt><dd class="mono small">8d4adf57</dd>
+    <dt>Record</dt><dd class="mono small">fb944aac85fd09cd947635b10a1c10690b8e4ca8186d346fb3336ec4fd7f5c6b</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 47 · Broken on purpose: an empty inventory</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js nominal broken/empty-inventory.js · 1305 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal broken/empty-inventory.js · 1253 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>the inventory is the vendor&#39;s: inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>18 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">bdefbb9e</dd>
-    <dt>Record</dt><dd class="mono small">08aa126fc512098d3df7f2cb3d915220ba0f16c3193e740f8c3ade2b52953085</dd>
+    <dt>Credential</dt><dd class="mono small">a7587708</dd>
+    <dt>Record</dt><dd class="mono small">2fe89dabad6efa43bf42a1b07d9e8329cf4c09e479ef494273273b1c917be548</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 48 · Broken on purpose: an invented robot</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js nominal broken/invented-robot.js · 946 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal broken/invented-robot.js · 934 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>kept the contract&#39;s shapes: inventory 1: robot imaginary has status &#34;banana&#34;, not idle, moving or fault; inventory 2: robot imaginary has status &#34;banana&#34;, not idle, moving or fault; the inventory is the vendor&#39;s: inventory 1 lists imaginary, a robot the vendor does not have; inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 lists imaginary, a robot the vendor does not have; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3; 13 status reads</dd>
     <dt>Brokered calls</dt><dd>18 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">4fbba9a4</dd>
-    <dt>Record</dt><dd class="mono small">9e5ec22291e6eaf6e44e494763a395430ef301fc1c396a2825385fec0d4ea98e</dd>
+    <dt>Credential</dt><dd class="mono small">5fa7aeb1</dd>
+    <dt>Record</dt><dd class="mono small">47fe1cab62eb4675ba92e48e5e9126b23f626b6d5daad69b36930cff57666e2c</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 49 · Broken on purpose: a wait that throws after the mission ends</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js nominal broken/throwing-wait.js · 970 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal broken/throwing-wait.js · 1002 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>kept the contract&#39;s shapes: run49-c1: dispatch returned mission m1, then wait or cancel threw (wait failed after the mission ended) instead of returning its state; run49-c2: dispatch returned mission m2, then wait or cancel threw (wait failed after the mission ended) instead of returning its state; run49-c3: dispatch returned mission m3, then wait or cancel threw (wait failed after the mission ended) instead of returning its state; run49-c4: dispatch returned mission m4, then wait or cancel threw (wait failed after the mission ended) instead of returning its state; 0 status reads</dd>
     <dt>Brokered calls</dt><dd>20 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 13</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">584e4cb2</dd>
-    <dt>Record</dt><dd class="mono small">ea969986de65af8391c82e7bf61b053e52cc1fa99355d038ff516bbecef82ed4</dd>
+    <dt>Credential</dt><dd class="mono small">91b1c033</dd>
+    <dt>Record</dt><dd class="mono small">a98d10787b0b087743358fafb64a4af1b2efbe19b92a51e5ae6079129b51e2ae</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 50 · Broken on purpose: reads past the budget, one read reported</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js nominal broken/undercounted-reads.js · 1061 ms · kernel tier</div>
+  <div class="step mono">node harness.js nominal broken/undercounted-reads.js · 1022 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>three idle robots; every order can complete</dd>
     <dt>Rules</dt><dd>kept the contract&#39;s shapes: run50-c1: the vendor served 41 status reads of m1 against a budget of 40; run50-c2: the vendor served 41 status reads of m2 against a budget of 40; run50-c3: the vendor served 41 status reads of m3 against a budget of 40; run50-c4: the vendor served 6 status reads of m4 against a budget of 5; the report is true: run50-c1: the adapter reported 1 status reads of m1; the vendor served 41; run50-c2: the adapter reported 1 status reads of m2; the vendor served 41; run50-c3: the adapter reported 1 status reads of m3; the vendor served 41; run50-c4: the adapter reported 1 status reads of m4; the vendor served 6; 4 status reads</dd>
     <dt>Brokered calls</dt><dd>136 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 129</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 4</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">0441db40</dd>
-    <dt>Record</dt><dd class="mono small">053338850e7387d1e9a97f75669ceb100bf6c1bf85d25cbd8b94ffaa526edcb0</dd>
+    <dt>Credential</dt><dd class="mono small">56aeef8d</dd>
+    <dt>Record</dt><dd class="mono small">1e417c6b56bf54db8d09a4e33c89983a8dfb2d97450abfb8ca1f6056a26d7cd3</dd>
   </dl>
 </div>
 <div class="card no-card">
   <div class="head"><b>Run 51 · Broken on purpose: an order the vendor never answered, reported as refused</b><span class="badge no">caught</span></div>
-  <div class="step mono">node harness.js silent broken/unanswered-as-refused.js · 892 ms · kernel tier</div>
+  <div class="step mono">node harness.js silent broken/unanswered-as-refused.js · 862 ms · kernel tier</div>
   <dl>
     <dt>The vendor</dt><dd>r2&#39;s first order is accepted and started, then the vendor&#39;s gateway answers 504 to every request about r2 and does nothing; the fleet list is still answered</dd>
     <dt>Rules</dt><dd>the report is true: run51-c2: the adapter reported an error coded &#34;refused&#34; (command run51-c2 was not placed: host api 504: {&#34;error&#34;:&#34;gateway timeout: the fleet service did not answer&#34;}) and the vendor holds the order as m2; 9 status reads</dd>
     <dt>Brokered calls</dt><dd>18 served; no finding</dd>
     <dt>Vendor counted</dt><dd><ul class="counts"><li>GET /missions/*: 9</li><li>GET /robots: 2</li><li>POST /missions/*/cancel: 1</li><li>POST /robots/*/missions: 6</li></ul></dd>
     <dt>Orders per robot</dt><dd class="chips"><span class="chip">r1 ×2</span><span class="chip">r2 ×1</span><span class="chip">r3 ×1</span></dd>
-    <dt>Credential</dt><dd class="mono small">e5fa08ee</dd>
-    <dt>Record</dt><dd class="mono small">e52336e902808350334eb4d8696d666e6027adab2435f4caf29beb8286552904</dd>
+    <dt>Credential</dt><dd class="mono small">56b43826</dd>
+    <dt>Record</dt><dd class="mono small">71a9f8f8359a105b9d1f137dd46651c3161b05ece6ffbe1f8f3e3b91ea47e6a9</dd>
   </dl>
 </div>
 </div>
@@ -1216,10 +1235,10 @@ error (a 503) with a short pause, a bounded number of times.</pre>
 
 <p class="kicker">Step 6</p>
 <h2>The evidence: trust nobody on this page, check the signatures</h2>
-<p>Two signed files sit beside this page, both signed by the <code>attest</code> signer's key (Ed25519, key id <span class="mono">2368e6af86fb7984c52ea36b04298aafc498a7461f116e0e998efed702974567</span>, in <a href="harness.pub">harness.pub</a>), a process outside the daemon:</p>
+<p>Two signed files sit beside this page, both signed by the <code>attest</code> signer's key (Ed25519, key id <span class="mono">2ff9cd646e8e1854978597b3a9aaa265ef46c7f482f79e011d42cc4256cc1079</span>, in <a href="harness.pub">harness.pub</a>), a process outside the daemon:</p>
 <ul>
   <li><a href="bundle.jsonl">bundle.jsonl</a>, the run records. Every run answered with a record: SHA-256 digests of the request as sent and the result as returned, the provider, the tier, the environment identity and the daemon's clock. The daemon only hashes; the harness recomputed both digests before signing each.</li>
-  <li><a href="qualification.jsonl">qualification.jsonl</a>, the verdicts. One statement per run, bound to that run's record by its digest: the scenario, the plan, the vendor's ledger, the credential the vendor saw, each rule's outcome and the verdict. The verifier checks each statement's adapter, plan and report against the run's signed request and output, and rebuilds the verdict from the ledger: it does not take the signer's word for the verdict, only for the ledger.</li>
+  <li><a href="qualification.jsonl">qualification.jsonl</a>, the verdicts. One statement per run, bound to that run's record by its digest: the scenario, the plan, the vendor's ledger, the credential the vendor saw, each rule's outcome and the verdict. An adapter run's statement also pins <code>requirements.json</code>, the platform's requirements file (one "shall" sentence per requirement ID, each naming the rules that decide it), by its SHA-256, and gives a verdict per requirement. The verifier checks each statement's adapter, plan, report and requirements file against the run's signed request and output, rebuilds the verdict from the ledger and each requirement's verdict from the rules: it does not take the signer's word for any verdict, only for the ledger. A requirements file changed after the runs, by one word, no longer matches the pin and is refused.</li>
 </ul>
 <pre>go run ./examples/adapter -verify docs/examples/adapter</pre>
 <div class="two">
@@ -1233,10 +1252,12 @@ error (a 503) with a short pause, a bounded number of times.</pre>
 <tr><th>Check</th><th>Verdict</th><th>Detail</th></tr>
 <tr><td>The run records as the harness wrote them</td><td><span class="badge ok">verified</span></td><td class="small">52 entries: 51 run records, each signed with both digests recomputed, and the closing checkpoint</td></tr>
 <tr><td>The run records with run 1&#39;s output changed from completed:true to completed:false</td><td><span class="badge no">refused</span></td><td class="small">entry 1: attest: broken bundle chain: the line&#39;s link signs other content</td></tr>
-<tr><td>The qualification statements as written</td><td><span class="badge ok">verified</span></td><td class="small">51 statements: each bound to its run&#39;s record; its adapter, plan and report matched to that run&#39;s signed request and output; its verdict rebuilt from its evidence</td></tr>
+<tr><td>The qualification statements as written</td><td><span class="badge ok">verified</span></td><td class="small">51 statements: each bound to its run&#39;s record; its adapter, plan and report matched to that run&#39;s signed request and output; its verdict rebuilt from its evidence; each adapter statement&#39;s requirements file (sha256 d0ec428ed165) matched to the one its run carried, and its 8 requirement verdicts rebuilt from its rules</td></tr>
 <tr><td>Run 4&#39;s statement with its ledger edited to one order for r2 and its verdict to pass, signature kept</td><td><span class="badge no">refused</span></td><td class="small">statement 4: attest: no valid signature from this key</td></tr>
 <tr><td>Run 4&#39;s statement re-signed with the right key, its verdict changed to pass over the same ledger</td><td><span class="badge no">refused</span></td><td class="small">statement 4 (run 4): its verdict &#34;pass&#34; does not follow from its evidence, which gives &#34;fail&#34;</td></tr>
 <tr><td>Run 4&#39;s failing verdict re-signed onto run 13&#39;s record, the second adapter&#39;s</td><td><span class="badge no">refused</span></td><td class="small">statement 13 (run 13): the request&#39;s plan.json is not the statement&#39;s plan</td></tr>
+<tr><td>The qualification statements against requirements.json with REQ-004&#39;s &#34;exactly one order&#34; changed to &#34;at most one order&#34;</td><td><span class="badge no">refused</span></td><td class="small">statement 1 (run 1): it was judged against requirements d0ec428ed165, and this requirements file is 08c272994920</td></tr>
+<tr><td>Run 4&#39;s statement re-signed with the right key, REQ-004 changed to held over the vendor&#39;s two orders for one command</td><td><span class="badge no">refused</span></td><td class="small">statement 4 (run 4): its requirement verdicts do not follow from its rules through requirements d0ec428ed165</td></tr>
 </table></div>
 </div>
 <p class="note">A record states the daemon's evidence, not hardware attestation. What a signature proves is that these bytes were seen by whoever holds this key; what the tier proves is in <a href="https://github.com/plimsollmark/plimsoll/blob/main/README.md">the README's provider table</a>. A ledger is the vendor's account as the signer read it from the simulated vendor after the run: the verifier can rebuild a verdict from it, but cannot check it against the vendor, and nothing on this page vouches for the key.</p>
@@ -1252,7 +1273,7 @@ error (a 503) with a short pause, a bounded number of times.</pre>
 <script>
 (function () {
   var FLOOR = {"degraded":4,"faultAt":2,"planned":{"r1":2,"r2":1,"r3":1},"runs":[{"n":1,"group":"first","scenario":"nominal","adapter":"adapter-v1.js","title":"The first adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"26 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":2,"group":"first","scenario":"fault","adapter":"adapter-v1.js","title":"The first adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"24 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":3,"group":"first","scenario":"overload","adapter":"adapter-v1.js","title":"The first adapter, an overloaded vendor","label":"passed","badge":"ok","verdict":"every rule held","calls":"28 served, 8 shed","polls":13,"retries":10,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":4,"group":"first","scenario":"lost_ack","adapter":"adapter-v1.js","title":"The first adapter, a lost answer","label":"failed","badge":"no","verdict":"one order per command: run04-c2 became 2 orders (m2, m3)","calls":"28 served","polls":14,"retries":1,"orders":{"r1":2,"r2":2,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"order","robot":"r2","mission":"m3"},{"kind":"order","robot":"r3","mission":"m4"},{"kind":"start","robot":"r3","mission":"m4"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"start","robot":"r2","mission":"m3"},{"kind":"done","robot":"r2","mission":"m3","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m4","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m4","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m4","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m4","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m4","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m5"},{"kind":"start","robot":"r1","mission":"m5"},{"kind":"cancelled","robot":"r1","mission":"m5","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":10,"y":4},"m4":{"x":0,"y":15},"m5":{"x":3,"y":0}}},{"n":5,"group":"first","scenario":"dropped","adapter":"adapter-v1.js","title":"The first adapter, a dropped connection","label":"failed","badge":"no","verdict":"kept the contract's shapes: run05-c2: dispatch threw an error coded \"\", not refused or unresolved; ended as it should: m2 (run05-c2) is running, want done; the report is true: run05-c2: the adapter reported an error coded \"\" (host api 502: host api unavailable) and the vendor holds the order as m2","calls":"22 served","polls":9,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}}],"stopped":{"m1":{"x":3,"y":0},"m2":null,"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":6,"group":"first","scenario":"server_error","adapter":"adapter-v1.js","title":"The first adapter, a server error after accepting","label":"failed","badge":"no","verdict":"kept the contract's shapes: run06-c2: dispatch threw an error coded \"\", not refused or unresolved; ended as it should: m2 (run06-c2) is running, want done; the report is true: run06-c2: the adapter reported an error coded \"\" (host api 500: {\"error\":\"acknowledgement lost\"}) and the vendor holds the order as m2","calls":"22 served","polls":9,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}}],"stopped":{"m1":{"x":3,"y":0},"m2":null,"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":7,"group":"first","scenario":"refused","adapter":"adapter-v1.js","title":"The first adapter, a refused order","label":"failed","badge":"no","verdict":"kept the contract's shapes: run07-c3: dispatch threw an error coded \"\", not refused or unresolved; the report is true: run07-c3: the vendor refused the order (409, r3 in fault) and the adapter reported mission \"\", code \"\"; the contract's answer is an error coded refused","calls":"21 served","polls":8,"retries":0,"orders":{"r1":2,"r2":1,"r3":0},"events":[{"kind":"out_of_service","robot":"r3","pose":{"x":0,"y":10}},{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"rejected","robot":"r3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"order","robot":"r1","mission":"m3"},{"kind":"start","robot":"r1","mission":"m3"},{"kind":"cancelled","robot":"r1","mission":"m3","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":3,"y":0}}},{"n":8,"group":"first","scenario":"silent","adapter":"adapter-v1.js","title":"The first adapter, a vendor that never answers","label":"failed","badge":"no","verdict":"kept the contract's shapes: inventory 2 threw: host api 504: {\"error\":\"gateway timeout: the fleet service did not answer\"}; run08-c2: dispatch threw an error coded \"\", not refused or unresolved; the inventory is the vendor's: inventory 2 listed no robots; the vendor has 3; the report is true: run08-c2: the adapter reported an error coded \"\" (host api 504: {\"error\":\"gateway timeout: the fleet service did not answer\"}) and the vendor holds the order as m2","calls":"21 served","polls":9,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"silenced","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"unanswered","robot":"r2","status":"GET /robots/*"}],"stopped":{"m1":{"x":3,"y":0},"m2":null,"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":9,"group":"probe","scenario":"nominal","adapter":"probe.js","title":"The boundary probe","label":"passed","badge":"ok","verdict":"every rule held","calls":"0 served, 1 denied","polls":0,"retries":0,"orders":{"r1":0,"r2":0,"r3":0}},{"n":10,"group":"second","scenario":"nominal","adapter":"adapter-v2.js","title":"The second adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run10-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run10-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run10-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run10-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":11,"group":"second","scenario":"fault","adapter":"adapter-v2.js","title":"The second adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run11-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run11-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run11-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run11-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":12,"group":"second","scenario":"overload","adapter":"adapter-v2.js","title":"The second adapter, an overloaded vendor","label":"passed","badge":"ok","verdict":"every rule held","calls":"22 served, 8 shed","polls":13,"retries":10,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run12-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"order","robot":"r2","mission":"m2","command":"run12-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run12-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run12-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":13,"group":"second","scenario":"lost_ack","adapter":"adapter-v2.js","title":"The second adapter, a lost answer","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":1,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run13-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run13-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run13-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run13-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run13-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":14,"group":"second","scenario":"dropped","adapter":"adapter-v2.js","title":"The second adapter, a dropped connection","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":1,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run14-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run14-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run14-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run14-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run14-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":15,"group":"second","scenario":"server_error","adapter":"adapter-v2.js","title":"The second adapter, a server error after accepting","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":1,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run15-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run15-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run15-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run15-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run15-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":16,"group":"second","scenario":"refused","adapter":"adapter-v2.js","title":"The second adapter, a refused order","label":"passed","badge":"ok","verdict":"every rule held","calls":"15 served","polls":8,"retries":0,"orders":{"r1":2,"r2":1,"r3":0},"events":[{"kind":"out_of_service","robot":"r3","pose":{"x":0,"y":10}},{"kind":"order","robot":"r1","mission":"m1","command":"run16-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run16-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"rejected","robot":"r3","command":"run16-c3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"order","robot":"r1","mission":"m3","command":"run16-c4"},{"kind":"start","robot":"r1","mission":"m3"},{"kind":"cancelled","robot":"r1","mission":"m3","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":3,"y":0}}},{"n":17,"group":"second","scenario":"silent","adapter":"adapter-v2.js","title":"The second adapter, a vendor that never answers","label":"passed","badge":"ok","verdict":"every rule held","calls":"55 served","polls":9,"retries":39,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run17-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run17-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"silenced","robot":"r2","mission":"m2"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"order","robot":"r3","mission":"m3","command":"run17-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run17-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}}],"stopped":{"m1":{"x":3,"y":0},"m2":null,"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":18,"group":"trial","scenario":"nominal","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run18-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run18-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run18-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run18-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":19,"group":"trial","scenario":"fault","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run19-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run19-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run19-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run19-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":20,"group":"trial","scenario":"overload","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, an overloaded vendor","label":"failed","badge":"no","verdict":"one order per command: run20-c2 became no order","calls":"17 served, 5 shed","polls":9,"retries":0,"orders":{"r1":2,"r2":0,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run20-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"order","robot":"r3","mission":"m2","command":"run20-c3"},{"kind":"start","robot":"r3","mission":"m2"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m2","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m2","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m2","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m2","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m2","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m3","command":"run20-c4"},{"kind":"start","robot":"r1","mission":"m3"},{"kind":"cancelled","robot":"r1","mission":"m3","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":0,"y":15},"m3":{"x":3,"y":0}}},{"n":21,"group":"trial","scenario":"lost_ack","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a lost answer","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run21-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run21-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run21-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run21-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run21-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":22,"group":"trial","scenario":"dropped","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a dropped connection","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run22-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run22-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run22-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run22-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run22-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":23,"group":"trial","scenario":"server_error","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a server error after accepting","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run23-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run23-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run23-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run23-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run23-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":24,"group":"trial","scenario":"refused","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a refused order","label":"passed","badge":"ok","verdict":"every rule held","calls":"15 served","polls":8,"retries":0,"orders":{"r1":2,"r2":1,"r3":0},"events":[{"kind":"out_of_service","robot":"r3","pose":{"x":0,"y":10}},{"kind":"order","robot":"r1","mission":"m1","command":"run24-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run24-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"rejected","robot":"r3","command":"run24-c3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"order","robot":"r1","mission":"m3","command":"run24-c4"},{"kind":"start","robot":"r1","mission":"m3"},{"kind":"cancelled","robot":"r1","mission":"m3","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":3,"y":0}}},{"n":25,"group":"trial","scenario":"silent","adapter":"trial/haiku.js","title":"Claude Haiku's adapter, a vendor that never answers","label":"passed","badge":"ok","verdict":"every rule held","calls":"19 served","polls":9,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run25-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run25-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"silenced","robot":"r2","mission":"m2"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"order","robot":"r3","mission":"m3","command":"run25-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run25-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}}],"stopped":{"m1":{"x":3,"y":0},"m2":null,"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":26,"group":"trial","scenario":"nominal","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run26-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run26-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run26-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run26-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":27,"group":"trial","scenario":"fault","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run27-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run27-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run27-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run27-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":28,"group":"trial","scenario":"overload","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, an overloaded vendor","label":"failed","badge":"no","verdict":"one order per command: run28-c2 became no order; run28-c3 became no order","calls":"11 served, 8 shed","polls":4,"retries":0,"orders":{"r1":2,"r2":0,"r3":0},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run28-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"order","robot":"r1","mission":"m2","command":"run28-c4"},{"kind":"start","robot":"r1","mission":"m2"},{"kind":"cancelled","robot":"r1","mission":"m2","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":3,"y":0}}},{"n":29,"group":"trial","scenario":"lost_ack","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a lost answer","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run29-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run29-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run29-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run29-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run29-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":30,"group":"trial","scenario":"dropped","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a dropped connection","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run30-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run30-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run30-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run30-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run30-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":31,"group":"trial","scenario":"server_error","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a server error after accepting","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run31-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run31-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run31-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run31-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run31-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":32,"group":"trial","scenario":"refused","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a refused order","label":"passed","badge":"ok","verdict":"every rule held","calls":"15 served","polls":8,"retries":0,"orders":{"r1":2,"r2":1,"r3":0},"events":[{"kind":"out_of_service","robot":"r3","pose":{"x":0,"y":10}},{"kind":"order","robot":"r1","mission":"m1","command":"run32-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run32-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"rejected","robot":"r3","command":"run32-c3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"order","robot":"r1","mission":"m3","command":"run32-c4"},{"kind":"start","robot":"r1","mission":"m3"},{"kind":"cancelled","robot":"r1","mission":"m3","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":3,"y":0}}},{"n":33,"group":"trial","scenario":"silent","adapter":"trial/sonnet.js","title":"Claude Sonnet's adapter, a vendor that never answers","label":"passed","badge":"ok","verdict":"every rule held","calls":"20 served","polls":9,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run33-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run33-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"silenced","robot":"r2","mission":"m2"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"order","robot":"r3","mission":"m3","command":"run33-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run33-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}}],"stopped":{"m1":{"x":3,"y":0},"m2":null,"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":34,"group":"trial","scenario":"nominal","adapter":"trial/opus.js","title":"Claude Opus's adapter, nominal","label":"passed","badge":"ok","verdict":"every rule held","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run34-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run34-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run34-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run34-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":35,"group":"trial","scenario":"fault","adapter":"trial/opus.js","title":"Claude Opus's adapter, a fault","label":"passed","badge":"ok","verdict":"every rule held","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run35-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run35-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run35-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"fault","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run35-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":1},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":36,"group":"trial","scenario":"overload","adapter":"trial/opus.js","title":"Claude Opus's adapter, an overloaded vendor","label":"passed","badge":"ok","verdict":"every rule held","calls":"23 served, 2 shed","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run36-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"degraded","status":"4"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"refused"},{"kind":"recovered"},{"kind":"order","robot":"r2","mission":"m2","command":"run36-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"order","robot":"r3","mission":"m3","command":"run36-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run36-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":37,"group":"trial","scenario":"lost_ack","adapter":"trial/opus.js","title":"Claude Opus's adapter, a lost answer","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run37-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run37-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"503"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run37-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run37-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run37-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":38,"group":"trial","scenario":"dropped","adapter":"trial/opus.js","title":"Claude Opus's adapter, a dropped connection","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run38-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run38-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"dropped","robot":"r2","mission":"m2"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run38-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run38-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run38-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":39,"group":"trial","scenario":"server_error","adapter":"trial/opus.js","title":"Claude Opus's adapter, a server error after accepting","label":"passed","badge":"ok","verdict":"every rule held","calls":"21 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run39-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run39-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"answer_lost","robot":"r2","mission":"m2","status":"500"},{"kind":"repeat","robot":"r2","mission":"m2","command":"run39-c2"},{"kind":"order","robot":"r3","mission":"m3","command":"run39-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run39-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":40,"group":"trial","scenario":"refused","adapter":"trial/opus.js","title":"Claude Opus's adapter, a refused order","label":"passed","badge":"ok","verdict":"every rule held","calls":"15 served","polls":8,"retries":0,"orders":{"r1":2,"r2":1,"r3":0},"events":[{"kind":"out_of_service","robot":"r3","pose":{"x":0,"y":10}},{"kind":"order","robot":"r1","mission":"m1","command":"run40-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run40-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"rejected","robot":"r3","command":"run40-c3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":2}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":3}},{"kind":"done","robot":"r2","mission":"m2","pose":{"x":10,"y":4}},{"kind":"order","robot":"r1","mission":"m3","command":"run40-c4"},{"kind":"start","robot":"r1","mission":"m3"},{"kind":"cancelled","robot":"r1","mission":"m3","pose":{"x":3,"y":0}}],"stopped":{"m1":{"x":3,"y":0},"m2":{"x":10,"y":4},"m3":{"x":3,"y":0}}},{"n":41,"group":"trial","scenario":"silent","adapter":"trial/opus.js","title":"Claude Opus's adapter, a vendor that never answers","label":"passed","badge":"ok","verdict":"every rule held","calls":"25 served","polls":9,"retries":0,"orders":{"r1":2,"r2":1,"r3":1},"events":[{"kind":"order","robot":"r1","mission":"m1","command":"run41-c1"},{"kind":"start","robot":"r1","mission":"m1"},{"kind":"order","robot":"r2","mission":"m2","command":"run41-c2"},{"kind":"start","robot":"r2","mission":"m2"},{"kind":"silenced","robot":"r2","mission":"m2"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"POST /robots/*/missions"},{"kind":"unanswered","robot":"r2","status":"GET /robots/*"},{"kind":"unanswered","robot":"r2","status":"GET /robots/*"},{"kind":"order","robot":"r3","mission":"m3","command":"run41-c3"},{"kind":"start","robot":"r3","mission":"m3"},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":1,"y":0}},{"kind":"move","robot":"r1","mission":"m1","pose":{"x":2,"y":0}},{"kind":"done","robot":"r1","mission":"m1","pose":{"x":3,"y":0}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":11}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":12}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":13}},{"kind":"move","robot":"r3","mission":"m3","pose":{"x":0,"y":14}},{"kind":"done","robot":"r3","mission":"m3","pose":{"x":0,"y":15}},{"kind":"order","robot":"r1","mission":"m4","command":"run41-c4"},{"kind":"start","robot":"r1","mission":"m4"},{"kind":"cancelled","robot":"r1","mission":"m4","pose":{"x":3,"y":0}},{"kind":"move","robot":"r2","mission":"m2","pose":{"x":10,"y":1}}],"stopped":{"m1":{"x":3,"y":0},"m2":null,"m3":{"x":0,"y":15},"m4":{"x":3,"y":0}}},{"n":42,"group":"broken","scenario":"nominal","adapter":"broken/wrong-target.js","title":"Broken on purpose: every order sent to (0, 0)","label":"caught","badge":"no","verdict":"the right robot and target: m1 (run42-c1) went to (0, 0), not (3, 0); m2 (run42-c2) went to (0, 0), not (10, 4); m3 (run42-c3) went to (0, 0), not (0, 15); m4 (run42-c4) went to (0, 0), not (50, 50); robot at the target: m1 (run42-c1) ended done with r1 at (0, 0); the target is (3, 0); m2 (run42-c2) ended done with r2 at (0, 0); the target is (10, 4); m3 (run42-c3) ended done with r3 at (0, 0); the target is (0, 15)","calls":"29 served","polls":22,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":43,"group":"broken","scenario":"nominal","adapter":"broken/wrong-robot.js","title":"Broken on purpose: r1's orders sent to r3","label":"caught","badge":"no","verdict":"the right robot and target: m1 (run43-c1) went to r3, not r1; m4 (run43-c4) went to r3, not r1","calls":"39 served","polls":32,"retries":0,"orders":{"r1":0,"r2":1,"r3":3}},{"n":44,"group":"broken","scenario":"fault","adapter":"broken/false-success.js","title":"Broken on purpose: a failure reported as done","label":"caught","badge":"no","verdict":"the report is true: run44-c2: the adapter reported m2 done, the vendor says failed","calls":"18 served","polls":11,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":45,"group":"broken","scenario":"nominal","adapter":"broken/no-cancel.js","title":"Broken on purpose: a cancel that sends nothing","label":"caught","badge":"no","verdict":"ended as it should: m4 (run45-c4) is running, want cancelled","calls":"23 served","polls":17,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":46,"group":"broken","scenario":"nominal","adapter":"broken/no-state.js","title":"Broken on purpose: a wait that reports no state","label":"caught","badge":"no","verdict":"kept the contract's shapes: run46-c1: wait returned no state of done, failed, cancelled or timeout: {\"polls\":3}; run46-c2: wait returned no state of done, failed, cancelled or timeout: {\"polls\":4}; run46-c3: wait returned no state of done, failed, cancelled or timeout: {\"polls\":5}; run46-c4: wait returned no state of done, failed, cancelled or timeout: {\"polls\":1}","calls":"20 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":47,"group":"broken","scenario":"nominal","adapter":"broken/empty-inventory.js","title":"Broken on purpose: an empty inventory","label":"caught","badge":"no","verdict":"the inventory is the vendor's: inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3","calls":"18 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":48,"group":"broken","scenario":"nominal","adapter":"broken/invented-robot.js","title":"Broken on purpose: an invented robot","label":"caught","badge":"no","verdict":"kept the contract's shapes: inventory 1: robot imaginary has status \"banana\", not idle, moving or fault; inventory 2: robot imaginary has status \"banana\", not idle, moving or fault; the inventory is the vendor's: inventory 1 lists imaginary, a robot the vendor does not have; inventory 1 is missing r1; inventory 1 is missing r2; inventory 1 is missing r3; inventory 2 lists imaginary, a robot the vendor does not have; inventory 2 is missing r1; inventory 2 is missing r2; inventory 2 is missing r3","calls":"18 served","polls":13,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":49,"group":"broken","scenario":"nominal","adapter":"broken/throwing-wait.js","title":"Broken on purpose: a wait that throws after the mission ends","label":"caught","badge":"no","verdict":"kept the contract's shapes: run49-c1: dispatch returned mission m1, then wait or cancel threw (wait failed after the mission ended) instead of returning its state; run49-c2: dispatch returned mission m2, then wait or cancel threw (wait failed after the mission ended) instead of returning its state; run49-c3: dispatch returned mission m3, then wait or cancel threw (wait failed after the mission ended) instead of returning its state; run49-c4: dispatch returned mission m4, then wait or cancel threw (wait failed after the mission ended) instead of returning its state","calls":"20 served","polls":0,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":50,"group":"broken","scenario":"nominal","adapter":"broken/undercounted-reads.js","title":"Broken on purpose: reads past the budget, one read reported","label":"caught","badge":"no","verdict":"kept the contract's shapes: run50-c1: the vendor served 41 status reads of m1 against a budget of 40; run50-c2: the vendor served 41 status reads of m2 against a budget of 40; run50-c3: the vendor served 41 status reads of m3 against a budget of 40; run50-c4: the vendor served 6 status reads of m4 against a budget of 5; the report is true: run50-c1: the adapter reported 1 status reads of m1; the vendor served 41; run50-c2: the adapter reported 1 status reads of m2; the vendor served 41; run50-c3: the adapter reported 1 status reads of m3; the vendor served 41; run50-c4: the adapter reported 1 status reads of m4; the vendor served 6","calls":"136 served","polls":4,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}},{"n":51,"group":"broken","scenario":"silent","adapter":"broken/unanswered-as-refused.js","title":"Broken on purpose: an order the vendor never answered, reported as refused","label":"caught","badge":"no","verdict":"the report is true: run51-c2: the adapter reported an error coded \"refused\" (command run51-c2 was not placed: host api 504: {\"error\":\"gateway timeout: the fleet service did not answer\"}) and the vendor holds the order as m2","calls":"18 served","polls":9,"retries":0,"orders":{"r1":2,"r2":1,"r3":1}}],"start":{"r1":{"x":0,"y":0},"r2":{"x":10,"y":0},"r3":{"x":0,"y":10}},"targets":{"r1":{"x":3,"y":0},"r2":{"x":10,"y":4},"r3":{"x":0,"y":15}},"titles":{"dropped":"a dropped connection","fault":"a fault","lost_ack":"a lost answer","nominal":"nominal","overload":"an overloaded vendor","refused":"a refused order","server_error":"a server error after accepting","silent":"a vendor that never answers"}};
-  var CHECKS = [{what: "The run records as the harness wrote them", short: "records as written", verdict: "verified", badge: "ok", detail: "52 entries: 51 run records, each signed with both digests recomputed, and the closing checkpoint"},{what: "The run records with run 1\u0027s output changed from completed:true to completed:false", short: "a run\u0027s output changed", verdict: "refused", badge: "no", detail: "entry 1: attest: broken bundle chain: the line\u0027s link signs other content"},{what: "The qualification statements as written", short: "verdicts as written", verdict: "verified", badge: "ok", detail: "51 statements: each bound to its run\u0027s record; its adapter, plan and report matched to that run\u0027s signed request and output; its verdict rebuilt from its evidence"},{what: "Run 4\u0027s statement with its ledger edited to one order for r2 and its verdict to pass, signature kept", short: "a ledger edited", verdict: "refused", badge: "no", detail: "statement 4: attest: no valid signature from this key"},{what: "Run 4\u0027s statement re-signed with the right key, its verdict changed to pass over the same ledger", short: "a verdict re-signed", verdict: "refused", badge: "no", detail: "statement 4 (run 4): its verdict \u0022pass\u0022 does not follow from its evidence, which gives \u0022fail\u0022"},{what: "Run 4\u0027s failing verdict re-signed onto run 13\u0027s record, the second adapter\u0027s", short: "a verdict moved", verdict: "refused", badge: "no", detail: "statement 13 (run 13): the request\u0027s plan.json is not the statement\u0027s plan"},];
+  var CHECKS = [{what: "The run records as the harness wrote them", short: "records as written", verdict: "verified", badge: "ok", detail: "52 entries: 51 run records, each signed with both digests recomputed, and the closing checkpoint"},{what: "The run records with run 1\u0027s output changed from completed:true to completed:false", short: "a run\u0027s output changed", verdict: "refused", badge: "no", detail: "entry 1: attest: broken bundle chain: the line\u0027s link signs other content"},{what: "The qualification statements as written", short: "verdicts as written", verdict: "verified", badge: "ok", detail: "51 statements: each bound to its run\u0027s record; its adapter, plan and report matched to that run\u0027s signed request and output; its verdict rebuilt from its evidence; each adapter statement\u0027s requirements file (sha256 d0ec428ed165) matched to the one its run carried, and its 8 requirement verdicts rebuilt from its rules"},{what: "Run 4\u0027s statement with its ledger edited to one order for r2 and its verdict to pass, signature kept", short: "a ledger edited", verdict: "refused", badge: "no", detail: "statement 4: attest: no valid signature from this key"},{what: "Run 4\u0027s statement re-signed with the right key, its verdict changed to pass over the same ledger", short: "a verdict re-signed", verdict: "refused", badge: "no", detail: "statement 4 (run 4): its verdict \u0022pass\u0022 does not follow from its evidence, which gives \u0022fail\u0022"},{what: "Run 4\u0027s failing verdict re-signed onto run 13\u0027s record, the second adapter\u0027s", short: "a verdict moved", verdict: "refused", badge: "no", detail: "statement 13 (run 13): the request\u0027s plan.json is not the statement\u0027s plan"},{what: "The qualification statements against requirements.json with REQ-004\u0027s \u0022exactly one order\u0022 changed to \u0022at most one order\u0022", short: "requirements reworded", verdict: "refused", badge: "no", detail: "statement 1 (run 1): it was judged against requirements d0ec428ed165, and this requirements file is 08c272994920"},{what: "Run 4\u0027s statement re-signed with the right key, REQ-004 changed to held over the vendor\u0027s two orders for one command", short: "a requirement verdict re-signed", verdict: "refused", badge: "no", detail: "statement 4 (run 4): its requirement verdicts do not follow from its rules through requirements d0ec428ed165"},];
   var svg = document.getElementById("floorsvg");
   var NS = "http://www.w3.org/2000/svg";
   var colors = { r1: "#2a78d6", r2: "#c2410c", r3: "#0f766e" };

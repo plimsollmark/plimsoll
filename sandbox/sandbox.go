@@ -18,6 +18,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -286,6 +287,11 @@ type ProjectResult struct {
 	Isolation           IsolationClass // boundary tier this run executed behind
 	SoftwareIdentity    string         // selected image manifest, if the provider established it
 	EnvironmentIdentity string         // outer image artifact selected for this run
+	// Policy is the sandbox policy this run was dispatched under, when the provider
+	// selects one per run (docker: the seccomp profile applied, by digest, or that it
+	// was skipped under runsc); "" means the provider's one policy, which Describe
+	// states. The run's record names it.
+	Policy string
 	// Instance is the sandbox instance that ran it, as a typed reference ("k8s-pod-uid:" and
 	// the pod's UID), or "" when the provider names none (sandbox.ValidInstance).
 	Instance           string
@@ -354,6 +360,9 @@ type Result struct {
 	Isolation           IsolationClass // boundary tier this run executed behind
 	SoftwareIdentity    string         // selected image manifest or interpreter, if established
 	EnvironmentIdentity string         // outer image artifact selected for this run
+	// Policy is the sandbox policy this run was dispatched under, when the provider
+	// selects one per run (see ProjectResult.Policy); "" means the provider's one policy.
+	Policy string
 	// Instance is the sandbox instance that ran it, as a typed reference ("k8s-pod-uid:" and
 	// the pod's UID), or "" when the provider names none (sandbox.ValidInstance).
 	Instance string
@@ -451,11 +460,17 @@ type GrantCapable interface {
 // EgressGuardResponse is the bounded result returned by a provider's remote
 // egress guard. It deliberately contains only the upstream status, content type,
 // and body; transport headers, redirects, cookies, and credentials never cross
-// into the guest.
+// into the guest. FromBroker marks an answer the guard or the broker made itself (a
+// refused credential, a refused route, a spent budget, a shed) rather than the
+// upstream's; the HTTP adapter then tells a standard client not to retry it.
+// Streamed marks an answer that already went to the request's StreamSink piece by
+// piece; Body is then empty and the adapter writes nothing more.
 type EgressGuardResponse struct {
 	Status      int
 	ContentType string
 	Body        []byte
+	FromBroker  bool
+	Streamed    bool
 }
 
 // EgressGuardHeader carries the per-run guard credential on every call to a VM
@@ -483,7 +498,34 @@ type EgressGuardCapable interface {
 	// run may end between this call and the next, so EgressGuardCall re-checks and
 	// remains the only thing that can authorize a call.
 	EgressGuardKnownToken(token string) bool
-	EgressGuardCall(ctx context.Context, token, method, rawTarget string, body []byte) EgressGuardResponse
+	EgressGuardCall(ctx context.Context, token string, call GuardRequest) EgressGuardResponse
+}
+
+// GuardRequest is one brokered call as it arrived at a provider's guard: the method,
+// the raw target (never decoded or cleaned by the adapter; the broker core checks it
+// byte for byte), the guest's request headers when the framing carries them (the raw
+// route does; the JSON envelope sends none, so Headers is nil there), the body as a
+// reader with its declared length (0 for none, -1 for undeclared; the core reads the
+// body under the route's limit, passing an upload through as it arrives), and the sink
+// a streamed answer goes to (nil: every answer is returned whole). The core forwards
+// only the headers the grant's PassHeaders lists.
+type GuardRequest struct {
+	Method        string
+	RawTarget     string
+	Headers       map[string][]string
+	Body          io.Reader
+	ContentLength int64
+	Stream        StreamSink
+}
+
+// StreamSink receives an upstream answer the broker passes through piece by piece
+// instead of buffering: Begin is called once with the status and content type, and the
+// returned writer takes each piece as it arrives. The broker uses a sink only for a
+// text/event-stream answer, the format the chat APIs stream in; every other answer is
+// buffered and capped as before, and the adapter writes it whole. A nil sink means
+// buffered always (the WASM host function, the JSON envelope clients).
+type StreamSink interface {
+	Begin(status int, contentType string) io.Writer
 }
 
 // Preflighter is an optional interface a provider implements to report whether its

@@ -1,0 +1,214 @@
+{
+  "commit": "c9f4e98d03276b1bf518291e400c2da19532b608",
+  "provider": "wasm",
+  "isolation": "process",
+  "set_sha256": "8300d5453293b7c9cc00c8da32ef33ea7dd9c36d95651aaa2d6f4ce7ed0d0916",
+  "build": {
+    "line": "plimsoll-withheld build -mode refuse -file harness/ -source harness/ -source-mode refuse -values seeds.txt -values-mode audit \u003e withheld.json",
+    "exit": 0
+  },
+  "entries": [
+    {
+      "kind": "file",
+      "label": "harness/sim.py",
+      "mode": "refuse"
+    },
+    {
+      "kind": "source",
+      "label": "harness/sim.py",
+      "mode": "refuse"
+    },
+    {
+      "kind": "value",
+      "label": "seeds.txt:1",
+      "mode": "audit"
+    },
+    {
+      "kind": "value",
+      "label": "seeds.txt:2",
+      "mode": "audit"
+    },
+    {
+      "kind": "value",
+      "label": "seeds.txt:3",
+      "mode": "audit"
+    }
+  ],
+  "calls": [
+    {
+      "name": "clean",
+      "title": "A clean controller",
+      "sent": "An agent's controller as a JavaScript snippet (a PD loop: it steers by how far it is from the target and how fast it is moving): nothing in it is withheld.",
+      "kind": "javascript",
+      "expect": "runs",
+      "trace_id": "ship-scan-clean",
+      "answer": {
+        "ran": true,
+        "stdout": "final altitude 9.958 (target 10)\n"
+      },
+      "record": {
+        "version": 4,
+        "request_sha256": "b384c4af6f60fa5fcb0a4b24a8617ef7a52d26bd500fd33743705f49d1136de6",
+        "result_sha256": "a86f5be384180f2e167455e644b3474e267e47c600e87984da5b5fbaa915498e",
+        "published": true
+      },
+      "log": [
+        {
+          "msg": "code run",
+          "op": "javascript",
+          "caller": "agent",
+          "trace_id": "ship-scan-clean",
+          "exit_code": 0,
+          "withheld_scan": "scanned",
+          "withheld_set": "8300d5453293b7c9cc00c8da32ef33ea7dd9c36d95651aaa2d6f4ce7ed0d0916"
+        }
+      ]
+    },
+    {
+      "name": "harness-file",
+      "title": "The harness's simulator, shipped as a helper file",
+      "sent": "A project whose one file, helpers/sim.py, is the harness's simulator byte for byte: the harness developer's mistake.",
+      "kind": "project",
+      "expect": "refused",
+      "trace_id": "ship-scan-harness-file",
+      "answer": {
+        "ran": false,
+        "code": "permission_denied",
+        "mark": "permission",
+        "message": "the request carries material this daemon's operator withholds from sandboxes: harness/sim.py (files[0].content)"
+      },
+      "log": [
+        {
+          "msg": "withheld material refused",
+          "op": "project",
+          "caller": "agent",
+          "trace_id": "ship-scan-harness-file",
+          "withheld_scan": "scanned",
+          "withheld_set": "8300d5453293b7c9cc00c8da32ef33ea7dd9c36d95651aaa2d6f4ce7ed0d0916",
+          "withheld_found": [
+            "harness/sim.py"
+          ],
+          "withheld_refused": true
+        }
+      ]
+    },
+    {
+      "name": "harness-edited",
+      "title": "The simulator, edited",
+      "sent": "The same simulator with its step function renamed and every indent turned into a tab, so its file entry no longer matches; its source entry does.",
+      "kind": "project",
+      "expect": "refused",
+      "trace_id": "ship-scan-harness-edited",
+      "answer": {
+        "ran": false,
+        "code": "permission_denied",
+        "mark": "permission",
+        "message": "the request carries material this daemon's operator withholds from sandboxes: harness/sim.py (files[0].content)"
+      },
+      "log": [
+        {
+          "msg": "withheld material refused",
+          "op": "project",
+          "caller": "agent",
+          "trace_id": "ship-scan-harness-edited",
+          "withheld_scan": "scanned",
+          "withheld_set": "8300d5453293b7c9cc00c8da32ef33ea7dd9c36d95651aaa2d6f4ce7ed0d0916",
+          "withheld_found": [
+            "harness/sim.py"
+          ],
+          "withheld_refused": true
+        }
+      ]
+    },
+    {
+      "name": "harness-archive",
+      "title": "The simulator, packed in an archive",
+      "sent": "The simulator inside a .tar.gz, sent as base64 text in deps.tar.gz.b64, as a step that runs base64 -d would unpack it.",
+      "kind": "project",
+      "expect": "refused",
+      "trace_id": "ship-scan-harness-archive",
+      "answer": {
+        "ran": false,
+        "code": "permission_denied",
+        "mark": "permission",
+        "message": "the request carries material this daemon's operator withholds from sandboxes: harness/sim.py (files[0].content)"
+      },
+      "log": [
+        {
+          "msg": "withheld material refused",
+          "op": "project",
+          "caller": "agent",
+          "trace_id": "ship-scan-harness-archive",
+          "withheld_scan": "scanned",
+          "withheld_set": "8300d5453293b7c9cc00c8da32ef33ea7dd9c36d95651aaa2d6f4ce7ed0d0916",
+          "withheld_found": [
+            "harness/sim.py"
+          ],
+          "withheld_refused": true
+        }
+      ]
+    },
+    {
+      "name": "seed-in-code",
+      "title": "A hidden seed in the agent's own code",
+      "sent": "An agent's snippet with a hidden seed written into it as a constant: the seed reached the agent somehow, and its code carries it.",
+      "kind": "javascript",
+      "expect": "runs, logged",
+      "trace_id": "ship-scan-seed-in-code",
+      "answer": {
+        "ran": true,
+        "stdout": "gain 0.84\n"
+      },
+      "record": {
+        "version": 4,
+        "request_sha256": "bb322cab71e0cab77e346ef98eecc39b023179e5df20e1a15d3b0bf77674448e",
+        "result_sha256": "5ac83f882ac104d28df268a0c62afc11d2379c96d4c65ddd029b9ced3fad3311",
+        "published": false,
+        "why": "Its request holds a hidden seed, so it is not published; its response is, and -verify recomputes the result digest from it and checks the answer shown here."
+      },
+      "log": [
+        {
+          "msg": "withheld material found",
+          "op": "javascript",
+          "caller": "agent",
+          "trace_id": "ship-scan-seed-in-code",
+          "withheld_scan": "scanned",
+          "withheld_set": "8300d5453293b7c9cc00c8da32ef33ea7dd9c36d95651aaa2d6f4ce7ed0d0916",
+          "withheld_found": [
+            "seeds.txt:2"
+          ],
+          "withheld_refused": false
+        },
+        {
+          "msg": "code run",
+          "op": "javascript",
+          "caller": "agent",
+          "trace_id": "ship-scan-seed-in-code",
+          "exit_code": 0,
+          "withheld_scan": "scanned",
+          "withheld_set": "8300d5453293b7c9cc00c8da32ef33ea7dd9c36d95651aaa2d6f4ce7ed0d0916",
+          "withheld_found": [
+            "seeds.txt:2"
+          ]
+        }
+      ]
+    }
+  ],
+  "offline": [
+    {
+      "line": "plimsoll-withheld scan -set withheld.json outbox/",
+      "exit": 1,
+      "output": [
+        "harness/sim.py (refuse): outbox/helpers/plant.py",
+        "seeds.txt:2 (audit): outbox/agent.js"
+      ]
+    },
+    {
+      "line": "plimsoll-withheld scan -set withheld.json clean/",
+      "exit": 0,
+      "output": [
+        "clean: 1 files against set 8300d5453293b7c9cc00c8da32ef33ea7dd9c36d95651aaa2d6f4ce7ed0d0916"
+      ]
+    }
+  ]
+}

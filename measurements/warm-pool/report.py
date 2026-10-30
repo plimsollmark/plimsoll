@@ -1,7 +1,9 @@
 """Renders docs/measurements/warm-pool/index.html from the data beside it: pass-2.json (the probe's second full pass), pass-3.json,
 exec-split.json, pooled-runc.json and pooled-runsc.json (pooled/main.go, the pool as
-built), and hints-runc.json (hints/main.go, the language hints) when it exists. Light
-theme, inline SVG, no dependencies.
+built), hints-runc.json (hints/main.go, the language hints), openshell.json
+(openshell/main.go, the pool on the openshell provider) and onecall-<runtime>.json
+(onecall/main.go, a Run of one cell through plimsolld with and without prefer_warm)
+when they exist. Light theme, inline SVG, no dependencies.
 
     python3 measurements/warm-pool/report.py
     python3 measurements/warm-pool/report.py --check
@@ -20,6 +22,16 @@ split = json.load(open(os.path.join(HERE, "exec-split.json")))
 pooled = {rt: json.load(open(os.path.join(HERE, f"pooled-{rt}.json"))) for rt in ("runc", "runsc")}
 hints_path = os.path.join(HERE, "hints-runc.json")
 hints = json.load(open(hints_path)) if os.path.exists(hints_path) else None
+openshell_path = os.path.join(HERE, "openshell.json")
+openshell = json.load(open(openshell_path)) if os.path.exists(openshell_path) else None
+# onecall/main.go: a Run of one cell through plimsolld, by runtime; a "-repeat" file is the
+# same runtime measured again.
+ONECALL_RUNTIMES = [("runc", "runc (container)"), ("runsc", "gVisor (kernel tier)"), ("openshell", "OpenShell (container)")]
+onecall = {}
+for _rt, _ in ONECALL_RUNTIMES + [("runc-repeat", "")]:
+    _p = os.path.join(HERE, f"onecall-{_rt}.json")
+    if os.path.exists(_p):
+        onecall[_rt] = json.load(open(_p))
 
 RUNTIMES = [("runc", "runc (container)"), ("runsc", "gVisor (kernel tier)")]
 BARS = [
@@ -58,12 +70,16 @@ def bars_svg(rt, label):
     return "".join(out)
 
 
-def pmed(rt, name):
-    for smp in pooled[rt]["samples"]:
+def smed(data, name):
+    for smp in data["samples"]:
         if smp["name"] == name:
             xs = sorted(smp["ms"])
             return xs[len(xs) // 2], xs
     raise KeyError(name)
+
+
+def pmed(rt, name):
+    return smed(pooled[rt], name)
 
 
 POOL_BARS = [
@@ -75,6 +91,10 @@ POOL_BARS = [
 
 
 def pooled_svg(rt, label):
+    return pool_svg(pooled[rt], label)
+
+
+def pool_svg(data, label):
     w, row, top, left = 520, 34, 30, 150
     scale = (w - left - 70) / 1000.0  # 1000 ms spans the plot
     h = top + row * len(POOL_BARS) + 30
@@ -85,7 +105,7 @@ def pooled_svg(rt, label):
         out.append(f'<line x1="{x:.1f}" y1="{top - 6}" x2="{x:.1f}" y2="{h - 22}" class="grid"/>')
         out.append(f'<text x="{x:.1f}" y="{h - 6}" class="tick" text-anchor="middle">{ms} ms</text>')
     for i, (key, name, color) in enumerate(POOL_BARS):
-        v, xs = pmed(rt, key)
+        v, xs = smed(data, key)
         y = top + i * row
         bw = max(v * scale, 2)
         tip = f"{name}, {label}: median {v:.0f} ms, range {xs[0]:.0f} to {xs[-1]:.0f} ms (n={len(xs)})"
@@ -172,6 +192,307 @@ sets and never add any, so <code>SANDBOX_SESSION_POOL</code> still bounds the me
 """
 
 
+def openshell_section():
+    if not openshell:
+        return ""
+    d = openshell
+    v = lambda name: smed(d, name)[0]
+    avg = lambda xs: sum(xs) / len(xs)
+    tiles = "".join(
+        f'<div class="tile"><div class="sub">OpenShell, {lang}</div><div class="big">{v(f"pool: claim + first {key} cell"):.0f} ms</div>'
+        f'<div class="sub">claim + first cell, against {v(f"no pool: open + first {key} cell"):.0f} ms without a pool</div></div>'
+        for key, lang in (("javascript", "JavaScript"), ("python", "Python")))
+    tiles += (f'<div class="tile"><div class="sub">OpenShell, a waiting sandbox</div><div class="big">{avg(d["warmMiB"]):.0f} MiB</div>'
+              f'<div class="sub">both interpreters running, against {avg(d["bareMiB"]):.0f} MiB bare: the sandbox\'s container and the '
+              f'gateway\'s supervisor container beside it</div></div>')
+    return f"""
+<h2>OpenShell (2026-10-28)</h2>
+<p>The same pool on the <code>openshell</code> provider, which runs each sandbox through an OpenShell gateway: one
+mechanism, with OpenShell's own way of making, checking and deleting a member. Measured {html.escape(d['when'][:10])}
+with <code>openshell/main.go</code> against a local gateway (OpenShell v0.1.2, its docker driver, runc), image
+<code>{html.escape(d['image'])}</code>, {d['reps']} samples per bar, {d['pauseMs'] / 1000:.0f} s between samples.
+Before the pool was built, the same program timed the first call in a session opened ahead of time, as a waiting
+member would be: {v("opened ahead: first javascript cell, interpreter not started"):.0f} ms for a JavaScript cell with its
+interpreter not yet started and {v("opened ahead: first javascript cell, interpreter started"):.0f} ms with it running,
+against {v("no pool: open + first javascript cell"):.0f} ms to open a session and run that cell. That was the reason to
+build it.</p>
+<div class="tiles">{tiles}</div>
+<div class="legend"><span><i style="background:var(--s1)"></i>No pool (open creates the sandbox)</span><span><i style="background:var(--s2)"></i>Pool (open claims a waiting sandbox)</span></div>
+<div class="charts">{pool_svg(d, 'openshell (container)')}</div>
+<p>Without a pool, the open alone takes {v("no pool: open + first javascript cell (open)"):.0f} ms: the gateway creates the
+sandbox and its supervisor and reports it ready, and plimsoll reads it back and records its processes. A snippet in a
+claimed sandbox took {v("pool: claim + first snippet"):.0f} ms against {v("no pool: open + first snippet"):.0f} ms, most
+of it the read-back and the sweep every session call makes here.</p>
+"""
+
+
+def quant(xs, q):
+    """The nearest-rank q-quantile, as onecall/main.go prints it."""
+    s = sorted(xs)
+    return s[max(0, min(len(s) - 1, -(-int(len(s) * q * 1000000) // 1000000) - 1))]
+
+
+def ocs(data, name):
+    """One call's samples in a onecall run: (median, p10, p90, sorted samples)."""
+    for smp in data["samples"]:
+        if smp["name"] == name:
+            xs = sorted(smp["ms"])
+            return quant(xs, 0.5), quant(xs, 0.1), quant(xs, 0.9), xs
+    raise KeyError(name)
+
+
+LANGS = [("python", "Python"), ("javascript", "JavaScript")]
+# (sample name, label, color, opacity): Preflight cached is the same call's color, lighter.
+ONECALL_BARS = [
+    ("warm", "One call, warm", "var(--s2)", 1),
+    ("session", "Session: open + cell", "var(--s3)", 1),
+    ("fresh, Preflight cached", "Fresh, Preflight cached", "var(--s1)", 0.5),
+    ("fresh", "Fresh, Preflight due", "var(--s1)", 1),
+    ("miss, Preflight cached", "Miss, Preflight cached", "var(--s4)", 0.5),
+    ("miss", "Miss, Preflight due", "var(--s4)", 1),
+]
+
+
+def nice_max(v):
+    for step in (100, 250, 500, 1000):
+        if v <= step * 6:
+            return step, step * (int(v // step) + 1)
+    return 2000, 2000 * (int(v // 2000) + 1)
+
+
+def onecall_svg(rt, label):
+    """One bar per call and language: the median, with a line from the 10th to the 90th percentile."""
+    d = onecall[rt]
+    w, row, head, top, left = 560, 24, 22, 30, 170
+    # One scale for every runtime, so the charts side by side compare by length.
+    step, top_ms = nice_max(max(ocs(onecall[r], f"{k} {lang}")[2] for r, _ in ONECALL_RUNTIMES if r in onecall
+                                for k, *_ in ONECALL_BARS for lang, _ in LANGS))
+    scale = (w - left - 64) / top_ms
+    h = top + len(LANGS) * (head + row * len(ONECALL_BARS)) + 24
+    out = [f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="{html.escape(label)}: one Run of a cell through plimsolld, median and 10th to 90th percentile">']
+    out.append(f'<text x="0" y="16" class="ttl">{html.escape(label)}: one cell, end to end</text>')
+    y = top
+    for ms in range(0, top_ms + 1, step):
+        x = left + ms * scale
+        out.append(f'<line x1="{x:.1f}" y1="{top - 4}" x2="{x:.1f}" y2="{h - 22}" class="grid"/>')
+        out.append(f'<text x="{x:.1f}" y="{h - 6}" class="tick" text-anchor="middle">{ms} ms</text>')
+    for lang, lname in LANGS:
+        out.append(f'<text x="4" y="{y + 15}" class="grp">{lname}</text>')
+        y += head
+        for key, name, color, alpha in ONECALL_BARS:
+            v, p10, p90, xs = ocs(d, f"{key} {lang}")
+            bw = max(v * scale, 2)
+            tip = (f"{name}, {lname}, {label}: median {v:.0f} ms, 10th to 90th percentile {p10:.0f} to {p90:.0f} ms, "
+                   f"range {xs[0]:.0f} to {xs[-1]:.0f} ms (n={len(xs)})")
+            out.append(f'<text x="{left - 10}" y="{y + 12}" class="lab" text-anchor="end">{html.escape(name)}</text>')
+            out.append(f'<g class="mark"><title>{html.escape(tip)}</title>'
+                       f'<rect x="{left}" y="{y}" width="{bw:.1f}" height="16" rx="4" fill="{color}" fill-opacity="{alpha}"/>'
+                       f'<line x1="{left + p10 * scale:.1f}" y1="{y + 8}" x2="{left + p90 * scale:.1f}" y2="{y + 8}" class="whisk"/>'
+                       f'<line x1="{left + p10 * scale:.1f}" y1="{y + 4}" x2="{left + p10 * scale:.1f}" y2="{y + 12}" class="whisk"/>'
+                       f'<line x1="{left + p90 * scale:.1f}" y1="{y + 4}" x2="{left + p90 * scale:.1f}" y2="{y + 12}" class="whisk"/>'
+                       f'<rect x="{left}" y="{y - 4}" width="{w - left:.1f}" height="{row}" fill="transparent"/></g>')
+            out.append(f'<text x="{left + max(bw, p90 * scale) + 6:.1f}" y="{y + 12}" class="val">{v:.0f} ms</text>')
+            y += row
+    out.append("</svg>")
+    return "".join(out)
+
+
+HEAVY_LOAD = 4  # on this 24-CPU laptop, a 1-minute load above this means other work was competing
+
+
+def load_text(d):
+    peak = max(d["repLoad1"])
+    heavy = sum(1 for x in d["repLoad1"] if x > HEAVY_LOAD)
+    text = (f'1-minute load average {d["loadStart"][0]:.1f} at the start and {d["loadEnd"][0]:.1f} at the end, at most '
+            f'{peak:.1f} as a repetition began')
+    if heavy:
+        text += (f'; <b>{heavy} of its {len(d["repLoad1"])} repetitions began under heavy load</b>, above {HEAVY_LOAD}, '
+                 f'from other programs on the machine')
+    return text
+
+
+def pct(x):
+    return "0%" if round(x) == 0 else f"{x:+.0f}%"
+
+
+def onecall_reading(present, pf):
+    """What the bars say, each number read from the data."""
+    m = lambda rt, name: ocs(onecall[rt], name)[0]
+    pair = lambda rt, key: f'{m(rt, f"{key} python"):.0f} ms (Python) and {m(rt, f"{key} javascript"):.0f} ms (JavaScript)'
+
+    def span(rt, a, b):
+        ds = [m(rt, f"{a} {lang}") - m(rt, f"{b} {lang}") for lang, _ in LANGS]
+        sg = lambda x: "0" if round(x) == 0 else f"{x:+.0f}"
+        return f"{sg(min(ds))} to {sg(max(ds))} ms" if round(min(ds)) != round(max(ds)) else f"{sg(ds[0])} ms"
+    out = []
+    for rt, label in present:
+        out.append(
+            f'<li><b>{html.escape(label)}.</b> A warm call answered in {pair(rt, "warm")}; a fresh one took '
+            f'{pair(rt, "fresh")} with Preflight due and {pair(rt, "fresh, Preflight cached")} with it cached. '
+            + (f'Most of that difference is Preflight itself: <code>GET /readyz</code> took {pf[rt]:.0f} ms (median) when it '
+               f'ran it. ' if pf[rt] > 50 else
+               f'This provider\'s Preflight costs nothing a caller would notice (<code>GET /readyz</code> took {pf[rt]:.0f} ms), '
+               f'so the due and cached bars are the same call measured twice. ')
+            + f'A session claimed from the pool reached its answer in {pair(rt, "session")}, its warm-only open about '
+            f'{m(rt, "session python (open)"):.0f} ms of it, but its close took a further '
+            f'{m(rt, "session python (close)"):.0f} ms (Python) and {m(rt, "session javascript (close)"):.0f} ms (JavaScript, '
+            f'anywhere from {ocs(onecall[rt], "session javascript (close)")[3][0]:.0f} to '
+            f'{ocs(onecall[rt], "session javascript (close)")[3][-1]:.0f} ms) before the caller was done; the one call deletes '
+            f'its member after answering, off the caller\'s path. '
+            f'A miss runs fresh: it took {pair(rt, "miss")} with Preflight due and {pair(rt, "miss, Preflight cached")} '
+            f'with it cached, {span(rt, "miss", "fresh")} and {span(rt, "miss, Preflight cached", "fresh, Preflight cached")} '
+            f'against the fresh call in the same Preflight state, while the pool was making its next member beside it.</li>')
+    pooled_warm = f'{pmed("runc", POOL_BARS[3][0])[0]:.0f} and {pmed("runc", POOL_BARS[1][0])[0]:.0f} ms'
+    return f"""<p>What the bars say, median for median:</p>
+<ul>{''.join(out)}</ul>
+<p>A warm call here takes longer than a claimed session's first cell in the pool section below ({pooled_warm} under
+runc for Python and JavaScript, measured 2026-10-02 against the provider directly, with older code). The extra time is
+somewhere in the request through the daemon, its checks, the run record each side computes and the code changed since;
+this page does not break it down.</p>"""
+
+
+def onecall_section():
+    if "runc" not in onecall:
+        return ""
+    present = [(rt, label) for rt, label in ONECALL_RUNTIMES if rt in onecall]
+    base = onecall["runc"]
+    m = lambda rt, name: ocs(onecall[rt], name)[0]
+    tiles = ""
+    for rt, label in present:
+        for lang, lname in LANGS:
+            tiles += (f'<div class="tile"><div class="sub">{html.escape(label)}, {lname}</div>'
+                      f'<div class="big">{m(rt, f"warm {lang}"):.0f} ms</div>'
+                      f'<div class="sub">one call from a waiting member, against {m(rt, f"fresh {lang}"):.0f} ms fresh '
+                      f'({m(rt, f"fresh, Preflight cached {lang}"):.0f} ms with Preflight cached)</div></div>')
+    legend = "".join(
+        f'<span><i style="background:{c};opacity:{a}"></i>{html.escape(n)}</span>' for _, n, c, a in ONECALL_BARS)
+    legend += '<span><i class="whisk-key"></i>10th to 90th percentile</span>'
+    charts = "".join(onecall_svg(rt, label) for rt, label in present)
+
+    rows = ""
+    for rt, label in present:
+        d = onecall[rt]
+        for lang, lname in LANGS:
+            for key, name, *_ in ONECALL_BARS + [("readyz before fresh, Preflight cached", "GET /readyz with Preflight due", "", 1),
+                                                 ("session", "", "", 1)]:
+                if key == "session" and name == "":
+                    for part in ("open", "cell", "close"):
+                        v, p10, p90, xs = ocs(d, f"session {lang} ({part})")
+                        rows += (f"<tr><td>{html.escape(label)}</td><td>{lname}</td><td>Session: the {part}</td><td>{v:.0f}</td>"
+                                 f"<td>{p10:.0f} to {p90:.0f}</td><td>{xs[0]:.0f} to {xs[-1]:.0f}</td><td>{len(xs)}</td></tr>")
+                    continue
+                v, p10, p90, xs = ocs(d, f"{key} {lang}")
+                rows += (f"<tr><td>{html.escape(label)}</td><td>{lname}</td><td>{html.escape(name)}</td><td>{v:.0f}</td>"
+                         f"<td>{p10:.0f} to {p90:.0f}</td><td>{xs[0]:.0f} to {xs[-1]:.0f}</td><td>{len(xs)}</td></tr>")
+    loads = "".join(
+        f'<li>{html.escape(label)}: measured {html.escape(onecall[rt]["when"][:16].replace("T", " "))} UTC; {load_text(onecall[rt])}.</li>'
+        for rt, label in present)
+
+    repeat = ""
+    if "runc-repeat" in onecall:
+        r = onecall["runc-repeat"]
+        reprows, changes = "", []
+        for lang, lname in LANGS:
+            for key, name, *_ in ONECALL_BARS:
+                a, b = m("runc", f"{key} {lang}"), ocs(r, f"{key} {lang}")[0]
+                changes.append((b - a) / a * 100)
+                reprows += f"<tr><td>{lname}</td><td>{html.escape(name)}</td><td>{a:.0f}</td><td>{b:.0f}</td><td>{pct((b - a) / a * 100)}</td></tr>"
+        big = max(changes, key=abs)
+        repeat = f"""
+<p>The runc set measured a second time, {html.escape(r['when'][:16].replace('T', ' '))} UTC, with a daemon of its own and the
+same settings; {load_text(r)}. Every median landed within {abs(big):.0f}% of the first set's, medians in ms:</p>
+<div style="overflow-x:auto"><table><thead><tr><th>Language</th><th>Call</th><th>First set</th><th>Second set</th><th>Change</th></tr></thead>
+<tbody>{reprows}</tbody></table></div>"""
+
+    checks = []
+    for rt, label in present + ([("runc-repeat", "runc, second set")] if "runc-repeat" in onecall else []):
+        d = onecall[rt]
+        timed = [s for s in d["samples"] if s["warm"] and "(" not in s["name"]]
+        member = [w for s in timed if s["name"].split(" ")[0] in ("warm", "session") for w in s["warm"]]
+        made = [w for s in timed if s["name"].split(" ")[0] in ("fresh,", "fresh", "miss,", "miss") for w in s["warm"]]
+        aw = d["auditWarm"]
+        line = (f'{html.escape(label)}: {sum(member)} of {len(member)} warm and session samples answered by a waiting member, '
+                f'{len(made) - sum(made)} of {len(made)} fresh and miss samples by a sandbox made for it; the daemon\'s audit '
+                f'log recorded {aw.get("true", 0)} cell Runs warm and {aw.get("false", 0)} fresh, the warm-up and the untimed '
+                f'calls that took the member included')
+        if d["provider"] == "docker":
+            counted = sum(len(x["freshCreates"]) for x in timed)
+            jumps = {j.split(":")[0] for j in d["clockJumps"]}
+            off = [u.split(":")[0] for u in d["unexpected"]]
+            line += (f'; docker\'s event log showed the run containers each call should make (one for a fresh or miss call, '
+                     f'none for a warm call or a session) in {counted - len(off)} of {counted} samples')
+            stepped = [u for u in off if u in jumps]
+            other = [u for u in off if u not in jumps]
+            if stepped:
+                line += (f' (not in {html.escape("; ".join(stepped))}, which ran while the machine\'s clock stepped back '
+                         f'about a second: that moves the time stamps docker\'s events are found by, and the answer and the '
+                         f'audit line say where {"it" if len(stepped) == 1 else "each"} ran)')
+            if other:
+                line += f' (not explained: {html.escape("; ".join(other))})'
+            line += (f'; {"no" if not d["leftover"] else len(d["leftover"])} plimsoll container'
+                     f'{"s" if len(d["leftover"]) != 1 else ""} remained after the daemon stopped')
+        checks.append(f"<li>{line}.</li>")
+
+    pf = {rt: ocs(onecall[rt], "readyz before fresh, Preflight cached python")[0] for rt, _ in present}
+    return f"""
+<h2>The one-call path through the daemon (2026-10-29)</h2>
+<p>A <code>Run</code>, the daemon's call that runs code once in a sandbox of its own, may now carry a
+<a href="https://plimsollmark.github.io/plimsoll/trainers/glossary.html#cell">cell (INTERNAL · glossary →)</a>, code for
+a Python or JavaScript interpreter whose final value is printed, and ask for
+<code>prefer_warm</code>: the daemon then runs it in a pool member that is already waiting, a sandbox no code has
+touched with both interpreters running, and deletes the member after the one call. With no member free it runs the
+cell in a sandbox made for it, as it does without the flag (a <dfn>miss</dfn>: the call still runs, only slower).
+The answer's <code>warm</code> says which path ran. This section times that call end to end, as a caller sees it:
+<code>onecall/main.go</code> builds plimsolld from the checkout, starts it with the docker provider{
+' (or, for the OpenShell set, the openshell provider and a local OpenShell gateway, v0.1.2, with its docker driver)' if 'openshell' in onecall else ''}, image
+<code>{html.escape(base['image'])}</code> and a pool of {base['pool']} (<code>SANDBOX_SESSION_POOL</code>), and calls it
+over loopback (the machine's own network interface) with the Go client, which checks every answer's
+<a href="https://plimsollmark.github.io/plimsoll/trainers/glossary.html#run-record">run record (INTERNAL · glossary →)</a>.
+The cell is <code>{html.escape(base['code'])}</code>; {base['reps']} samples per bar, each call preceded by an untimed
+{base['pauseMs'] / 1000:.1f} s pause so the pool has made its next member; the calls of a repetition run in the same
+order, so a change in the machine's load reaches every bar alike.</p>
+<p>Six calls per language. <b>One call, warm</b>: a Run with <code>prefer_warm</code>, served by the waiting member.
+<b>Session: open + cell</b>: the same work as three calls, what the clients did before the daemon took the path over: a
+session opened warm-only (it is handed the waiting member or refused), one cell, then the close, which is not in the bar
+(the table has it). <b>Fresh</b>: the Run without <code>prefer_warm</code>, in a sandbox made for it. <b>Miss</b>: a Run
+with <code>prefer_warm</code> sent as soon as another such Run has taken the only member, while the pool is still making
+the next one, so it runs fresh. Fresh and miss are each measured twice, because a fresh run on docker first re-runs the
+provider's <a href="https://plimsollmark.github.io/plimsoll/trainers/glossary.html#preflight">Preflight (INTERNAL ·
+glossary →)</a>, its checks of the docker daemon, the runtime and the images, whenever the last one is 5 s old or more,
+and a warm call never does: <b>Preflight due</b> is the call as it comes after the pause, <b>Preflight cached</b> the
+same call sent right after a <code>GET /readyz</code> (untimed), which re-runs it. A caller whose calls are seconds apart
+on a quiet daemon sees the first; a busy daemon, where some fresh run or readiness check ran in the last 5 s, the
+second.</p>
+<div class="tiles">{tiles}</div>
+<div class="legend">{legend}</div>
+<div class="charts">{charts}</div>
+{onecall_reading(present, pf)}
+<h3>All one-call numbers (ms)</h3>
+<div style="overflow-x:auto"><table><thead><tr><th>Runtime</th><th>Language</th><th>Call</th><th>Median</th><th>10th to 90th percentile</th><th>Min to max</th><th>n</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<p>The machine while each set ran. The load average is the number of processes running or waiting for a CPU, averaged
+over the last minute; this laptop has {html.escape(base['machine'].split(', ')[1])}, and other programs ran beside these
+sets.</p>
+<ul>{loads}</ul>
+{repeat}
+<p>Checked on every sample, not assumed:</p>
+<ul>{''.join(checks)}</ul>
+<p>What these numbers do not show:</p>
+<ul>
+<li>Another machine or a network. One laptop ({html.escape(base['machine'])}), docker {html.escape(base.get('docker', ''))}
+on the same machine as the daemon and the client, so no network lies between them.</li>
+<li>A workload. The cell does almost nothing, so the bars are the path's own cost, not a program's run time.</li>
+<li>Bursts. The pool held {base['pool']} member{'s' if base['pool'] != 1 else ''} and the calls came {base['pauseMs'] / 1000:.1f} s apart; more calls at
+once than the pool holds, or calls faster than it refills, turn warm calls into misses. The miss was measured only as
+the second of two calls in a row.</li>
+<li>The machine's work. A warm call still costs a sandbox's start and removal; the pool makes them off the caller's
+path. What a waiting member holds in memory is measured in the sections below, not here.</li>
+<li>The wall clock. This laptop's clock stepped back about a second several times during the sets; the samples are
+timed on the monotonic clock, which such a step does not move.</li>
+</ul>
+"""
+
+
 def split_svg():
     w, row, top, left = 520, 34, 30, 170
     scale = (w - left - 70) / 100.0
@@ -217,12 +538,17 @@ table = "".join(row(rt, label, k, "MiB" if k == "idle_member_mib" else "ms")
                 for rt, label in RUNTIMES
                 for k in ("cold_run", "claim_exec", "claim_inspect_exec", "pool_member_start", "member_remove", "idle_member_mib"))
 
+onecall_links = ""
+if onecall:
+    files = [f'<a href="onecall-{rt}.json">onecall-{rt}.json</a>' for rt in [r for r, _ in ONECALL_RUNTIMES] + ["runc-repeat"] if rt in onecall]
+    onecall_links = ", " + ", ".join(files) + " (one call through the daemon)"
+
 page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Warm pool: never-used containers against a cold start</title>
 <style>
 :root {{ color-scheme: light; --bg: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --grid: #e4e3df;
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; }}
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; }}
 body {{ margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }}
 main {{ max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }}
 h1 {{ font-size: 24px; margin: 0 0 6px; }} h2 {{ font-size: 18px; margin: 32px 0 8px; }}
@@ -238,6 +564,9 @@ svg {{ width: 100%; height: auto; background: #fff; border: 1px solid var(--grid
 .val {{ font-size: 13px; fill: var(--ink); font-weight: 600; }} .tick {{ font-size: 11px; fill: var(--ink2); }}
 .inbar {{ font-size: 12px; fill: #fff; font-weight: 600; }} .grid {{ stroke: var(--grid); stroke-width: 1; }}
 .mark:hover rect:first-of-type {{ opacity: .8; }}
+.grp {{ font-size: 13px; font-weight: 600; fill: var(--ink2); }} .whisk {{ stroke: var(--ink); stroke-width: 1.5; }}
+.legend i.whisk-key {{ width: 16px; height: 0; border-radius: 0; border-top: 1.5px solid var(--ink); vertical-align: 3px; }}
+h3 {{ font-size: 15px; margin: 22px 0 6px; }}
 .legend {{ display: flex; gap: 18px; font-size: 13px; color: var(--ink2); margin: 8px 0; flex-wrap: wrap; }}
 .legend i {{ display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }}
 table {{ border-collapse: collapse; width: 100%; font-size: 13px; background: #fff; }}
@@ -247,13 +576,15 @@ code {{ font-size: 13px; }} pre {{ overflow-x: auto; background: #f4f6f9; paddin
 <nav style="display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px"><a href="https://plimsollmark.github.io/plimsoll/" style="font-weight:700;color:#0f4a85;text-decoration:none">plimsoll home</a><a href="https://plimsollmark.github.io/plimsoll/measurements/session-latency/index.html">Session latency</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll">Source on GitHub ↗</a></nav>
 <h1>Warm pool: never-used containers against a cold start</h1>
 <p>Whether a pool of locked-down containers that no code has touched, each claimed once and removed after, takes the
-container start off the path of a session's first call (<code>SANDBOX_SESSION_POOL</code>; the terms session, cell
-and relay are defined in <a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md">the sessions
-guide (EXTERNAL · source repo ↗)</a>). The page has three parts: the pool as built, the language hints that steer it,
-and the probe that came first. The probe was measured {html.escape(p2['measured'])} on a laptop, docker {html.escape(p2['docker_version'])},
+container start off the path of a session's first call, and of a single call that asks for one
+(<code>SANDBOX_SESSION_POOL</code>; the terms session, cell and relay are defined in
+<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md">the sessions guide (EXTERNAL · source
+repo ↗)</a>). The page has {"five" if onecall else "four"} parts: {"one call through the daemon (<code>prefer_warm</code>), the newest; " if onecall else ""}the pool as built, the language hints that steer it,
+the same pool on OpenShell, and the probe that came first. The probe was measured {html.escape(p2['measured'])} on a laptop, docker {html.escape(p2['docker_version'])},
 image <code>{html.escape(p2['image'])}</code>, the docker provider's lockdown flags, {p2['n']} samples per bar, a
 <code>node -e</code> snippet as the call. A laptop number, not a product number: what carries over is the ratio and the
 breakdown, not the milliseconds.</p>
+{onecall_section()}
 <h2>Built: the pool with interpreters attached (2026-10-02)</h2>
 <p>Each never-used member gets an interpreter started and its relay attached
 for every language the image runs, and <code>OpenSession</code> hands one over. Measured
@@ -270,6 +601,7 @@ back before every call, and it must match the execution state the last Preflight
 under a millisecond and the time is the first cell's. The cost is memory: the interpreters a waiting member holds count
 inside its session's memory limit, including the language a session never uses.</p>
 {hints_section()}
+{openshell_section()}
 <h2>The probe before the build: a plain pool</h2>
 <div class="tiles">{tiles}</div>
 <h2>Time to first output</h2>
@@ -301,7 +633,8 @@ a pool member could be prepared the same way, which is what the pool as built (a
 <h2>The data and how to rerun it</h2>
 <p>Raw samples beside this page: <a href="pass-2.json">pass-2.json</a> and <a href="pass-3.json">pass-3.json</a> (the
 probe), <a href="pooled-runc.json">pooled-runc.json</a> and <a href="pooled-runsc.json">pooled-runsc.json</a> (the pool
-as built), <a href="hints-runc.json">hints-runc.json</a> (language hints). <a href="exec-split.json">exec-split.json</a>
+as built), <a href="hints-runc.json">hints-runc.json</a> (language hints), <a href="openshell.json">openshell.json</a> (the pool
+on OpenShell){onecall_links}. <a href="exec-split.json">exec-split.json</a>
 holds two medians per runtime timed by hand (<code>docker exec</code> of <code>true</code>, and of the snippet); no
 program reproduces it. The programs are in
 <a href="https://github.com/plimsollmark/plimsoll/tree/main/measurements/warm-pool">measurements/warm-pool
@@ -311,6 +644,11 @@ gVisor installed for the runsc runs):</p>
 go run ./measurements/warm-pool/pooled                  # runc
 go run ./measurements/warm-pool/pooled -runtime runsc   # gVisor
 go run ./measurements/warm-pool/hints
+go run ./measurements/warm-pool/openshell                # SANDBOX_OPENSHELL_* naming a gateway
+go run ./measurements/warm-pool/onecall                  # runc, through plimsolld
+go run ./measurements/warm-pool/onecall -runtime runsc   # gVisor
+go run ./measurements/warm-pool/onecall -tag repeat      # runc again, a second file
+go run ./measurements/warm-pool/onecall -provider openshell  # SANDBOX_OPENSHELL_* naming a gateway
 python3 measurements/warm-pool/report.py</code></pre>
 <p>Your numbers will differ from these: they are one laptop's. What should carry over is the ratio between a pool and
 a cold start, and where the time goes.</p>

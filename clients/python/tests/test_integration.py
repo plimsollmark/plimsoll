@@ -6,19 +6,21 @@ for sessions."""
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import re
 import ssl
 import threading
 import unittest
 import urllib.request
-from typing import List
+from typing import Dict, List
 
 from plimsoll_client import (
     PROTOCOL,
     RECORD_VERSION,
     AsyncClient,
     AsyncSession,
+    AtCapacityError,
     ChainError,
     Client,
     InsufficientIsolationError,
@@ -326,6 +328,56 @@ class Sessions(unittest.TestCase):
         with self.assertRaises(InvalidRequestError) as cm:
             self.c.open_session(languages=["cobol"])
         self.assertEqual(cm.exception.not_dispatched, "request")
+
+    def test_a_warm_only_open_takes_a_waiting_sandbox_or_none(self) -> None:
+        # The pooled daemon states a pool of 2 and has one member waiting.
+        c = Client(setting("PLIMSOLL_POOLED_URL"))
+        self.assertEqual(c.describe().session_pool, 2)
+        self.assertEqual(self.c.describe().session_pool, 0)
+        with c.open_session(warm_only=True) as s:
+            self.assertEqual(s.run_cell("1").stdout, b"python 1: 1")
+        with self.assertRaises(AtCapacityError) as cm:
+            c.open_session(warm_only=True)
+        self.assertEqual(cm.exception.not_dispatched, "capacity")
+        with self.assertRaises(TypeError):
+            c.open_session(warm_only="yes")  # type: ignore[arg-type]
+
+    def test_a_warm_only_open_on_a_daemon_without_a_pool_is_refused_there(self) -> None:
+        # This daemon states no pool and refuses the open itself; an older daemon, which
+        # would have ignored warm_only, refuses the protocol instead.
+        self.assertEqual(self.c.describe().session_pool, 0)
+        with self.assertRaises(AtCapacityError) as cm:
+            self.c.open_session(warm_only=True)
+        self.assertEqual(cm.exception.not_dispatched, "capacity")
+
+    def _counts(self, url: str) -> Dict[str, int]:
+        with urllib.request.urlopen(urllib.request.Request(url + "/test/counts", method="POST")) as r:
+            return json.loads(r.read())
+
+    def test_run_cell_prefer_warm_runs_in_a_waiting_member(self) -> None:
+        url = setting("PLIMSOLL_ONE_CALL_URL")
+        r = Client(url).run_cell("6 * 7", files={"in/a.csv": "a"}, prefer_warm=True, minimum_isolation="container")
+        self.assertEqual((r.stdout, r.stderr, r.exit_code, r.warm), (b"python 1: 6 * 7", b"in/a.csv\n", 0, True))
+        self.assertTrue(r.interpreter_started and r.interpreter_ended)
+        assert r.record is not None
+        self.assertEqual((r.record.session, r.record.sequence), ("", 0))  # a single run's record, checked
+        self.assertEqual(self._counts(url), {"runs": 1, "preferWarm": 1, "claimed": 1, "fresh": 0})
+        js = asyncio.run(AsyncClient(url).run_cell("1", "javascript", prefer_warm=True))
+        self.assertEqual((js.stdout, js.warm), (b"javascript 1: 1", True))
+        with self.assertRaises(TypeError):
+            Client(url).run_cell("1", prefer_warm="yes")  # type: ignore[arg-type]
+
+    def test_run_cell_runs_fresh_without_a_pool(self) -> None:
+        url = setting("PLIMSOLL_NO_POOL_URL")
+        r = Client(url).run_cell("1", prefer_warm=True)
+        self.assertEqual((r.stdout, r.warm), (b"fresh python: 1", False))
+        self.assertEqual(self._counts(url), {"runs": 1, "preferWarm": 1, "claimed": 0, "fresh": 1})
+
+    def test_run_cell_claim_miss_runs_fresh_not_a_refusal(self) -> None:
+        url = setting("PLIMSOLL_CLAIM_MISS_URL")
+        r = Client(url).run_cell("1", prefer_warm=True)
+        self.assertEqual((r.stdout, r.warm), (b"fresh python: 1", False))
+        self.assertEqual(self._counts(url), {"runs": 1, "preferWarm": 1, "claimed": 0, "fresh": 1})
 
     def test_cells_chain_with_the_other_calls(self) -> None:
         with self.c.open_session() as s:

@@ -63,6 +63,18 @@ the code ran, 1 when it raised (the error is on `stderr`) and 124 at the deadlin
 earlier exists. Python cells need `python3` in the daemon's image: `describe()` lists the
 languages a session's cells run in on `session_environment.languages`.
 
+A call that keeps nothing for a later one is a cell the daemon runs by itself:
+`c.run_cell(code, language="python", files=..., prefer_warm=True)`. With `prefer_warm` a
+daemon that keeps a warm pool (`describe()` states `session_pool`) runs it in a waiting
+sandbox that has run only plimsoll's own programs, claimed for this call and deleted after
+it, so it answers without a sandbox being made; with no pool or none waiting it runs in a
+sandbox made for it, and a miss is never an error. `result.warm` says which ran. What it
+costs: a pool sandbox runs the cell in the session's image (on docker the project image,
+which a fresh cell uses too); the run record is a single run's either way and does not
+cover `warm` ([docs/sessions.md](https://github.com/plimsollmark/plimsoll/blob/main/docs/sessions.md), "A cell for one call").
+`AsyncClient.run_cell` is the same in a worker thread. `CodeExecutor` does not use it: its
+fresh run is a script, not a cell.
+
 An app that serves many users on one token passes `open_session(owner=user_id)`. A daemon
 with `SANDBOX_MAX_SESSIONS_PER_OWNER` then holds each user to that many open sessions across
 every process of the app, closing the user's least recently used idle session to open a new
@@ -378,6 +390,71 @@ does not survive a command. Tested in `frameworks/openai_agents/` with the SDK's
 classes, state round trip and exec path against an in-memory workspace and the in-memory
 session daemon, with no model call; the sandbox-side behaviour of the SDK's own file helpers
 on a real session is not yet checked on docker.
+
+## verifiers runtime
+
+`plimsoll_client.verifiers_runtime` (extra `verifiers`, `pip install "plimsoll-client[verifiers]"`)
+is a runtime plugin for verifiers, Prime Intellect's library of reinforcement-learning
+environments ([runtimes: EXTERNAL · official docs ↗](https://github.com/PrimeIntellect-ai/verifiers/blob/main/docs/runtimes.md)).
+A verifiers environment runs a task's setup, commands, files and grading through a
+*runtime*; with this one each of those is a call of one plimsoll session, and every call's
+run record goes to a log that `check_record_log` rechecks with nothing but the file.
+verifiers loads a runtime from outside its own tree by import path (0.4.1.dev97 and later):
+
+```toml
+[env.agent.runtime]
+type = "custom"
+import_path = "plimsoll_client.verifiers_runtime.PlimsollBackend"
+url = "https://plimsoll.internal"
+minimum_isolation = "kernel"
+record_log = "runs/plimsoll-records.jsonl"
+```
+
+The bearer token comes from the variable `token_env` names (`PLIMSOLL_TOKEN` by default),
+never from the config, because verifiers saves configs into its traces. The trace's runtime
+`id` is the session's fingerprint, which every record in the log names.
+
+Every harness verifiers ships installs its agent program inside the runtime from the network
+and calls the model from there, so none of them runs in a plimsoll sandbox (measured: the
+`bash` harness fails in its own setup, `wget: bad address 'astral.sh'`). The harness
+`plimsoll-bash` (`plimsoll_client.verifiers_harness`, id resolved through the top-level
+module `plimsoll_bash`) is verifiers' own `bash` harness with its chat loop on the
+evaluator, which verifiers' harness contract allows: the loop is the shipped program's
+`run_chat_loop`, unedited, every model call goes through verifiers' interception server,
+and each `bash` or `edit` call is one session call with a checked record. Select it with
+`--env.agent.harness.id plimsoll-bash`; the session image needs `bash`, and `python3` for
+`edit`. Driven by the same scripted policy, it and the shipped harness on verifiers' docker
+runtime gave the same transcript and reward, message for message, except the network notice
+verifiers adds to the system prompt on a runtime with no egress.
+
+Limits, stated in the module docstrings, measured 2026-10-27 with verifiers 0.4.1.dev97:
+
+- **No network in any phase.** A task that allows a host is refused before anything runs;
+  a setup or grading script that downloads fails with its own exit code. Every one of
+  Terminal-Bench 2's 89 tasks installs its test runner from the network when grading.
+- **One image.** The sandbox runs the daemon's image; a task naming another is refused at
+  start, naming both (all 89 Terminal-Bench 2 tasks name one).
+- **One work directory**, the daemon's (`/work` on docker), or a path the image links to
+  it, which the runtime checks inside the sandbox at start. The root file system is
+  read-only, so a task that writes `/tests`, `/logs` or `/app` needs an image that provides
+  them.
+- **No background process**: `run_background` is refused, and with it task tool servers,
+  compose and setup daemons. `exec` is buffered: the command runs when its output or exit
+  status is first asked for.
+- **A phase timeout that cuts a call ends the session's use**, since the call may have run:
+  the attempt ends as an error rather than graded (verifiers' docker runtime grades it), and
+  `check_record_log` lists that session under `incomplete`.
+- **Per-call cost**: about 290 ms a command under runc and 400 ms under gVisor, against
+  about 36 ms for verifiers' docker runtime (medians on one development machine, 100 calls
+  each; nearly all of it is the daemon's project call). The daemon's default rate limit, 30
+  runs a minute per caller, stops an evaluation after about two attempts: raise
+  `SANDBOX_RATE_PER_MIN` for evaluation traffic.
+
+Tested in `frameworks/verifiers/` through verifiers' own config loading, provisioning and
+network rules against an in-memory session, and on docker by `TestVerifiersRuntimeDocker`
+in `make docker-suite`: a small environment with isolated grading validates through
+`vf-validate`, and its record log checks. `frameworks/verifiers/attempt/` runs a complete
+attempt through `vf-eval` with a scripted model (no model is called) and measures it.
 
 ## What the client checks
 

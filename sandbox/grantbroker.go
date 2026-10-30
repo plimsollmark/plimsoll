@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -66,6 +67,57 @@ func HostClientSnippet(code string, grant *HostAPIGrant) string { return withHos
 // into every step (the plan's hostSDK); "" for a nil grant.
 func HostClientModule(grant *HostAPIGrant) string { return hostSDKModule(grant) }
 
+// httpSink streams a brokered answer to an HTTP response: the status and content type
+// once, then each piece flushed as it arrives, with the connection's write deadline
+// moved out by the stream's idle limit at every piece, so the server's write timeout
+// bounds a stall and never a long answer. The no-retry mark never goes on a streamed
+// answer: it is the upstream's.
+type httpSink struct{ w http.ResponseWriter }
+
+func (s httpSink) Begin(status int, contentType string) io.Writer {
+	if contentType != "" {
+		s.w.Header().Set("Content-Type", contentType)
+	}
+	s.w.Header().Del(brokerNoRetryHeader)
+	if status < 100 || status > 599 {
+		status = http.StatusBadGateway
+	}
+	_ = http.NewResponseController(s.w).SetWriteDeadline(time.Now().Add(hostStreamIdleTimeout))
+	s.w.WriteHeader(status)
+	return streamWriter{s.w}
+}
+
+// streamWriter is the writer httpSink.Begin returns: each piece is written, flushed to
+// the client at once, and the write deadline moved out again.
+type streamWriter struct{ w http.ResponseWriter }
+
+func (s streamWriter) Write(p []byte) (int, error) {
+	rc := http.NewResponseController(s.w)
+	_ = rc.SetWriteDeadline(time.Now().Add(hostStreamIdleTimeout))
+	n, err := s.w.Write(p)
+	if err == nil {
+		err = rc.Flush()
+	}
+	return n, err
+}
+
+// writeBrokerResponse writes resp as the HTTP answer: the status, the one exposed
+// header (Content-Type), and brokerNoRetryHeader when the answer is the broker's own.
+func writeBrokerResponse(w http.ResponseWriter, resp brokerResponse) {
+	if resp.ContentType != "" {
+		w.Header().Set("Content-Type", resp.ContentType)
+	}
+	if resp.FromBroker {
+		w.Header().Set(brokerNoRetryHeader, "false")
+	}
+	status := resp.Status
+	if status < 100 || status > 599 {
+		status = http.StatusBadGateway
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(resp.Body)
+}
+
 // newBrokerServer is the HTTP server every socket-framed broker adapter runs: the
 // target is taken from RequestURI, exactly as it arrived, because r.URL.Path has
 // already lost percent-encoding and cannot prove approve==wire.
@@ -78,10 +130,18 @@ func newBrokerServer(core *brokerSession) *http.Server {
 // call without a grant) current returns nil, which the broker answers 503.
 func newBrokerServerFor(current func() *brokerSession) *http.Server {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := current().Call(r.Context(), brokerCall{Method: r.Method, RawTarget: r.RequestURI, Body: r.Body})
-		w.Header().Set("Content-Type", resp.ContentType)
-		w.WriteHeader(resp.Status)
-		_, _ = w.Write(resp.Body)
+		// RequestURI as it arrived: an absolute-form target ("http://host/x") or a
+		// CONNECT authority ("host:443") reaches the core whole and fails its
+		// leading-slash check, so a client that names an origin of its own is refused.
+		// The body goes to the core as a reader: a JSON body is buffered there under the
+		// route's limit, an upload on a route the profile raised is passed through as it
+		// arrives, with the connection's read deadline moved out at each piece so the
+		// server's read timeout bounds a stall, never a long upload.
+		body := readDeadlineReader{r: r.Body, rc: http.NewResponseController(w), idle: hostRequestIdleTimeout}
+		resp := current().Call(r.Context(), brokerCall{Method: r.Method, RawTarget: r.RequestURI, Headers: r.Header, Body: body, ContentLength: r.ContentLength, Stream: httpSink{w}})
+		if !resp.Streamed {
+			writeBrokerResponse(w, resp)
+		}
 	})
 	return &http.Server{
 		Handler:           handler,
@@ -91,4 +151,24 @@ func newBrokerServerFor(current func() *brokerSession) *http.Server {
 		IdleTimeout:       15 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}
+}
+
+// hostRequestIdleTimeout bounds the gap between two pieces of a request body on the
+// broker's socket: a guest that sends nothing for this long is cut. The server's 10 s
+// read timeout, set once per request, would cut a long upload that is still moving.
+var hostRequestIdleTimeout = 10 * time.Second
+
+// readDeadlineReader reads a request body with the connection's read deadline moved
+// out by idle before each read, so the deadline bounds a stall between pieces rather
+// than the whole body. A connection that takes no deadline (a test's recorder) is read
+// under the server's own timeout.
+type readDeadlineReader struct {
+	r    io.Reader
+	rc   *http.ResponseController
+	idle time.Duration
+}
+
+func (d readDeadlineReader) Read(p []byte) (int, error) {
+	_ = d.rc.SetReadDeadline(time.Now().Add(d.idle))
+	return d.r.Read(p)
 }

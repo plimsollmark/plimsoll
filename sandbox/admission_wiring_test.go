@@ -38,7 +38,7 @@ func (f *fullProvider) ReconcileOrphans(context.Context) (int, error) {
 	f.mark("OrphanReconciler")
 	return 0, nil
 }
-func (f *fullProvider) EgressGuardCall(context.Context, string, string, string, []byte) EgressGuardResponse {
+func (f *fullProvider) EgressGuardCall(context.Context, string, GuardRequest) EgressGuardResponse {
 	return EgressGuardResponse{}
 }
 func (f *fullProvider) StartSessionPool(context.Context, int, time.Duration) error {
@@ -74,8 +74,10 @@ func (s *endingSession) Err() error                  { return nil }
 // package's source, so a new optional interface fails here until it is classified.
 func TestAdmissionForwardsEveryOptionalInterface(t *testing.T) {
 	// Interfaces of the package that are not optional provider capabilities. A
-	// BillsUntiler is a session's, not a provider's, and admission does not wrap sessions.
-	notOptional := map[string]bool{"Sandbox": true, "Session": true, "CellRunner": true, "TokenMinter": true, "SubjectBoundMinter": true, "BillsUntiler": true}
+	// BillsUntiler is a session's, not a provider's, and admission does not wrap sessions;
+	// a StreamSink is an HTTP adapter's, handed to the broker inside a call. A
+	// ListenerCounter is a session's too.
+	notOptional := map[string]bool{"Sandbox": true, "Session": true, "CellRunner": true, "TokenMinter": true, "SubjectBoundMinter": true, "BillsUntiler": true, "StreamSink": true, "ListenerCounter": true}
 	ctx := context.Background()
 	calls := map[string]func(Sandbox) bool{
 		"ProjectCapable": func(s Sandbox) bool { c, ok := s.(ProjectCapable); return ok && c.SupportsProjects() },
@@ -272,5 +274,44 @@ func TestAdmissionChargesTheSessionPoolAgainstTheMemoryBudget(t *testing.T) {
 			t.Fatalf("after Drain and the sessions' ends the whole budget is free again, but a pool of 4 was refused: %v", err)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// floorProvider reports the container tier until a Preflight would prove more, as docker
+// does after its evidence expires, and its Preflight fails with err.
+type floorProvider struct {
+	Disabled
+	err error
+}
+
+func (f *floorProvider) IsolationClass() IsolationClass  { return IsolationContainer }
+func (f *floorProvider) Preflight(context.Context) error { return f.err }
+
+// TestAdmissionMarksAFailedPreflightAsNotDispatched: a request whose isolation floor sends
+// admission to Preflight before dispatch gets a marked refusal when it fails, never a bare
+// error a caller must treat as "may have run". A mark the provider set stays.
+func TestAdmissionMarksAFailedPreflightAsNotDispatched(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want Refusal
+	}{
+		{"unmarked failure", errors.New("docker daemon is not ready"), RefusalEnvironment},
+		{"busy daemon keeps capacity", NotDispatched(RefusalCapacity, errors.New("docker preflight is already in progress")), RefusalCapacity},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			wrapped, err := WithAdmission(&floorProvider{err: c.err}, AdmissionConfig{MaxConcurrent: 1})
+			if err != nil {
+				t.Fatalf("WithAdmission: %v", err)
+			}
+			_, err = wrapped.RunJavaScript(context.Background(), Request{Code: "1", MinimumIsolation: IsolationKernel})
+			if reason, marked := NotDispatchedReason(err); !marked || reason != c.want {
+				t.Fatalf("err = %v marked %v (%v), want not dispatched (%v)", err, marked, reason, c.want)
+			}
+			if !strings.Contains(err.Error(), c.err.Error()) {
+				t.Fatalf("err = %v, want the provider's reason %q kept", err, c.err)
+			}
+		})
 	}
 }

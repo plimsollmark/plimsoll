@@ -14,6 +14,9 @@ const DockerRemoveBudget = dockerRemoveBudget
 // HeavyDockerTest admits one of the docker suite's heaviest tests (heavyDockerTest).
 var HeavyDockerTest = heavyDockerTest
 
+// DockerPoolReady names the pool members of d ready to be handed over now.
+func DockerPoolReady(d *DockerSandbox) []string { return d.pool.Load().Members() }
+
 // E2BTeardown is the longest E2B's delete of a sandbox takes, retries included.
 const E2BTeardown = meteredTeardown
 

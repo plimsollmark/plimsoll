@@ -191,8 +191,12 @@ func (a *admissionSandbox) checkMinimumIsolation(ctx context.Context, minimum Is
 	// is configured for runsc. Let a provider establish fresh evidence before
 	// deciding that the requested floor is impossible.
 	if pf, ok := a.Sandbox.(Preflighter); ok {
+		// Before dispatch: a Preflight that fails here ran nothing, so the refusal is
+		// marked like the run paths mark it (notReady). Unmarked, a busy daemon's
+		// "already in progress" reached callers as an internal error no client could
+		// safely retry (found by the squeeze example's grading run, 2026-10-27).
 		if err := pf.Preflight(ctx); err != nil {
-			return err
+			return notReady(ctx, err)
 		}
 		actual = a.Sandbox.IsolationClass()
 		if actual == IsolationUnknown {
@@ -408,6 +412,6 @@ func (a *admissionGuardSandbox) EgressGuardKnownToken(token string) bool {
 	return a.guard.EgressGuardKnownToken(token)
 }
 
-func (a *admissionGuardSandbox) EgressGuardCall(ctx context.Context, token, method, rawTarget string, body []byte) EgressGuardResponse {
-	return a.guard.EgressGuardCall(ctx, token, method, rawTarget, body)
+func (a *admissionGuardSandbox) EgressGuardCall(ctx context.Context, token string, call GuardRequest) EgressGuardResponse {
+	return a.guard.EgressGuardCall(ctx, token, call)
 }

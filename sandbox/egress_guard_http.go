@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -43,11 +44,22 @@ type egressGuardEnvelope struct {
 	Body   json.RawMessage `json:"body"`
 }
 
-// EgressGuardHTTPHandler is the canonical HTTP framing over EgressGuardCall:
-// one POST per brokered call, the per-run credential in EgressGuardHeader, and a
-// JSON envelope of {method, path, body}. Guard credentials only exist in the
-// process that opened the run, so whatever serves the public guard URL must
-// host the same provider instance that launches runs — the daemon does exactly
+// EgressGuardRawPath is the route segment under a provider's guard path that carries a
+// standard client's request as it is: a target of guardPath + "/raw" + <target> reaches
+// the broker core as <target>. A provider hands guardEndpoint.URL + EgressGuardRawPath
+// to a guest as a client library's base URL.
+const EgressGuardRawPath = "/raw"
+
+// EgressGuardHTTPHandler is the canonical HTTP framing over EgressGuardCall. It serves
+// two framings over one credential (EgressGuardHeader) and one set of limits. The JSON
+// envelope at guardPath, one POST per call carrying {method, path, body}, is what the
+// injected host.* client sends. The raw route under guardPath + "/raw/" carries a
+// standard client's request as it is: the method, the target that follows the prefix
+// (cut from RequestURI as it arrived, so an encoded or non-canonical target reaches the
+// core whole and is refused there), the headers (of which the grant's pass list
+// decides), and the body, capped at the broker's own request limit. Guard credentials
+// only exist in the process that opened the run, so whatever serves the public guard URL
+// must host the same provider instance that launches runs — the daemon does exactly
 // this, and the live verification harness serves the same handler.
 //
 // The guard URL is reachable by anyone who can route to it, so the order of the
@@ -71,12 +83,27 @@ func EgressGuardHTTPHandler(guard EgressGuardCapable, guardPath string, maxInFli
 	}
 	slots := make(chan struct{}, maxInFlight)
 	runs := &guardRuns{perRun: perRun, byToken: map[string]*guardRun{}}
+	rawPrefix := guardPath + EgressGuardRawPath + "/"
 	// Every refusal below answers without reading the body. On HTTP/1.x Go's server
 	// would read a small unread body before writing that answer, so a caller with no
 	// credential could hold each refusal until the read timeout by sending its body
 	// slowly; unreadbody closes the connection instead.
 	return unreadbody.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != guardPath || r.URL.RawQuery != "" {
+		// Every answer written here is the guard's own, so each carries the no-retry
+		// mark a standard client reads (brokerNoRetryHeader); an upstream's answer,
+		// written by writeBrokerResponse below, never does.
+		w.Header().Set(brokerNoRetryHeader, "false")
+		var call GuardRequest
+		raw := false
+		target := requestTarget(r.RequestURI)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == guardPath && r.URL.RawQuery == "":
+		case strings.HasPrefix(target, rawPrefix):
+			// The target as sent, not URL.Path: the core's approve-equals-wire check
+			// needs the bytes the client wrote, and r.URL has already decoded them.
+			raw = true
+			call = GuardRequest{Method: r.Method, RawTarget: target[len(guardPath)+len(EgressGuardRawPath):], Headers: r.Header}
+		default:
 			http.NotFound(w, r)
 			return
 		}
@@ -89,7 +116,15 @@ func EgressGuardHTTPHandler(guard EgressGuardCapable, guardPath string, maxInFli
 			_, _ = w.Write([]byte(`{"error":"unknown or expired egress guard credential"}` + "\n"))
 			return
 		}
-		if r.ContentLength > maxEgressGuardEnvelopeBytes {
+		// The raw route's body is the request body itself: the broker reads it under the
+		// matched route's limit (the default, or the profile's raised one for an upload
+		// route), so here it is bounded only by the most any profile may allow; the
+		// envelope's cap covers the JSON around a body of the default size.
+		bodyCap := int64(maxEgressGuardEnvelopeBytes)
+		if raw {
+			bodyCap = MaxRouteRequestBytes
+		}
+		if r.ContentLength > bodyCap {
 			// Refused at constant cost, like the credential: the MaxBytesReader below
 			// trips only once the bytes arrive, so a declared 100 MB held a slot until
 			// the body deadline.
@@ -127,28 +162,59 @@ func EgressGuardHTTPHandler(guard EgressGuardCapable, guardPath string, maxInFli
 		}
 		// Not every connection supports a deadline (a test's recorder does not); the
 		// server's read timeout still bounds those.
-		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(egressGuardBodyDeadline))
-		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxEgressGuardEnvelopeBytes))
-		if err != nil {
-			http.Error(w, "egress guard request too large or too slow", http.StatusRequestEntityTooLarge)
-			return
+		rc := http.NewResponseController(w)
+		_ = rc.SetReadDeadline(time.Now().Add(egressGuardBodyDeadline))
+		if raw {
+			// The body is not read here: the broker reads it under the route's limit and
+			// passes an upload through as it arrives, with the deadline moved out by
+			// egressGuardBodyDeadline at each piece, so a stalled upload is cut and a long
+			// one is not. One byte past the ceiling lets the broker see that a body at the
+			// ceiling has more.
+			call.Body = readDeadlineReader{r: http.MaxBytesReader(w, r.Body, bodyCap+1), rc: rc, idle: egressGuardBodyDeadline}
+			call.ContentLength = r.ContentLength
+		} else {
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, bodyCap))
+			if err != nil {
+				http.Error(w, "egress guard request too large or too slow", http.StatusRequestEntityTooLarge)
+				return
+			}
+			var in egressGuardEnvelope
+			if err := json.Unmarshal(body, &in); err != nil || strings.TrimSpace(in.Method) == "" || in.Path == "" {
+				http.Error(w, "invalid egress guard request", http.StatusBadRequest)
+				return
+			}
+			call = GuardRequest{Method: in.Method, RawTarget: in.Path, Body: bytes.NewReader(in.Body), ContentLength: int64(len(in.Body))}
 		}
-		var in egressGuardEnvelope
-		if err := json.Unmarshal(raw, &in); err != nil || strings.TrimSpace(in.Method) == "" || in.Path == "" {
-			http.Error(w, "invalid egress guard request", http.StatusBadRequest)
-			return
+		call.Stream = httpSink{w}
+		resp := guard.EgressGuardCall(r.Context(), token, call)
+		if resp.Streamed {
+			return // the sink wrote it piece by piece
 		}
-		resp := guard.EgressGuardCall(r.Context(), token, in.Method, in.Path, append([]byte(nil), in.Body...))
-		if resp.ContentType != "" {
-			w.Header().Set("Content-Type", resp.ContentType)
+		if !resp.FromBroker {
+			w.Header().Del(brokerNoRetryHeader)
 		}
-		status := resp.Status
-		if status < 100 || status > 599 {
-			status = http.StatusBadGateway
-		}
-		w.WriteHeader(status)
-		_, _ = w.Write(resp.Body)
+		writeBrokerResponse(w, brokerResponse{Status: resp.Status, ContentType: resp.ContentType, Body: resp.Body, FromBroker: resp.FromBroker})
 	}))
+}
+
+// requestTarget is the path-and-query part of a request target as the client wrote it:
+// an origin-form target ("/v1/x") unchanged, and for an absolute-form target
+// ("https://guard.example/v1/x", which a proxy in front of the guard may send) the part
+// from the first "/" after the authority. Anything else (a CONNECT authority, "*") is
+// returned as is and matches no route.
+func requestTarget(requestURI string) string {
+	if strings.HasPrefix(requestURI, "/") {
+		return requestURI
+	}
+	scheme := strings.Index(requestURI, "://")
+	if scheme < 0 {
+		return requestURI
+	}
+	rest := requestURI[scheme+3:]
+	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
+		return rest[slash:]
+	}
+	return requestURI
 }
 
 // guardRuns tracks each live credential's requests in the handler: how many there

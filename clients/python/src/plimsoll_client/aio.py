@@ -63,6 +63,24 @@ class AsyncClient:
     async def describe(self) -> Info:
         return await in_thread(self.sync.describe)
 
+    async def run_cell(
+        self,
+        code: str,
+        language: str = "python",
+        *,
+        files: v.FilesArg = None,
+        prefer_warm: bool = False,
+        timeout: Optional[float] = None,
+        minimum_isolation: Optional[str] = None,
+        software: Optional[SoftwareRule] = None,
+        trace_id: Optional[str] = None,
+    ) -> CellResult:
+        """:meth:`Client.run_cell` in a worker thread."""
+        return await in_thread(
+            self.sync.run_cell, code, language, files=files, prefer_warm=prefer_warm, timeout=timeout,
+            minimum_isolation=minimum_isolation, software=software, trace_id=trace_id,
+        )
+
     async def run_javascript(
         self,
         code: str,
@@ -141,6 +159,7 @@ class AsyncClient:
         trace_id: Optional[str] = None,
         languages: Optional[Sequence[str]] = None,
         owner: Optional[str] = None,
+        warm_only: bool = False,
     ) -> "AsyncSession":
         # Cancelling the await does not stop the open in its thread, and a session
         # the daemon opens after the cancel would reach nobody and hold its slot
@@ -159,6 +178,7 @@ class AsyncClient:
                 trace_id=trace_id,
                 languages=languages,
                 owner=owner,
+                warm_only=warm_only,
             )
             with lock:
                 if not abandoned:

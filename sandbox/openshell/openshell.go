@@ -44,6 +44,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -244,8 +245,8 @@ func (c Config) httpClient() (*http.Client, error) {
 
 // Provider runs plimsoll payloads in OpenShell sandboxes. It implements
 // sandbox.Sandbox and the optional Preflighter, SmokeTester, OrphanReconciler,
-// ProjectCapable, ModuleCapable, GrantCapable, Describer, Drainer and
-// SessionProvider interfaces.
+// ProjectCapable, ModuleCapable, GrantCapable, Describer, Drainer, SessionProvider
+// and SessionPool interfaces.
 type Provider struct {
 	cfg        Config
 	client     openshellv1connect.OpenShellClient
@@ -282,6 +283,8 @@ type Provider struct {
 	quarantine providerkit.Quarantine
 	smoke      *smokeEvidence      // the last passing SmokeTest's measurements
 	sessions   sessionkit.Registry // open sessions and the sandbox creations in flight, which Drain ends and waits for
+	// sessionPool is the session pool, when StartSessionPool started one (pool.go).
+	sessionPool atomic.Pointer[openshellPool]
 }
 
 var (
@@ -606,7 +609,7 @@ func (p *Provider) runPlan(ctx context.Context, b box, tier sandbox.IsolationCla
 		}
 		return res, err
 	}
-	parsed, reported := sandbox.RunnerReport(Name, tier, string(out.stdout), key)
+	parsed, reported := sandbox.RunnerReport(res, string(out.stdout), key)
 	if !reported {
 		// The sandbox started the command but the runner never reported: it may have
 		// been killed inside the sandbox (an OOM kill), or the image cannot run it.

@@ -1,0 +1,101 @@
+# The agent-sandbox objects the live run makes on the kind cluster, in a namespace of its own,
+# and deletes when it ends: plimsolld's service account with only the access the provider
+# uses (docs/agentsandbox.md), a gVisor template under the runtime class whose runsc logs every
+# call the receipt reads, and a warm pool of two. The program fills in the fields in braces
+# (Go's text/template).
+apiVersion: v1
+kind: Namespace
+metadata: {name: {{.Namespace}}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: plimsoll, namespace: {{.Namespace}}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: plimsoll, namespace: {{.Namespace}}}
+rules:
+- apiGroups: [extensions.agents.x-k8s.io]
+  resources: [sandboxclaims]
+  verbs: [create, get, list, delete]
+- apiGroups: [extensions.agents.x-k8s.io]
+  resources: [sandboxwarmpools, sandboxtemplates]
+  verbs: [get]
+- apiGroups: [agents.x-k8s.io]
+  resources: [sandboxes]
+  verbs: [get]
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [get]
+- apiGroups: [networking.k8s.io]
+  resources: [networkpolicies]
+  verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: plimsoll, namespace: {{.Namespace}}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: plimsoll}
+subjects: [{kind: ServiceAccount, name: plimsoll, namespace: {{.Namespace}}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: {{.Namespace}}-runtimeclasses}
+rules:
+- apiGroups: [node.k8s.io]
+  resources: [runtimeclasses]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: {{.Namespace}}-runtimeclasses}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{.Namespace}}-runtimeclasses}
+subjects: [{kind: ServiceAccount, name: plimsoll, namespace: {{.Namespace}}}]
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata: {name: {{.Pool}}, namespace: {{.Namespace}}}
+spec:
+  networkPolicy:
+    ingress:
+    - from:
+      - ipBlock: {cidr: {{.Ingress}}}
+      ports:
+      - {port: 9090, protocol: TCP}
+  podTemplate:
+    spec:
+      runtimeClassName: {{.RuntimeClass}}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      dnsPolicy: None
+      dnsConfig: {nameservers: [127.0.0.1]}
+      containers:
+      - name: sandboxd
+        image: {{.Image}}
+        imagePullPolicy: Never
+        command: ["/usr/local/bin/sandboxd", "--root-dir=/work", "--rest-port=8080", "--grpc-port=9090", "--auth-token-sha256={{.TokenSHA256}}"]
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL], add: [SETUID, SETGID]}
+        resources:
+          limits: {memory: {{.MemoryMB}}Mi, cpu: "1"}
+        ports: [{containerPort: 9090}]
+        terminationMessagePath: /root/termination-log
+        readinessProbe:
+          tcpSocket: {port: 9090}
+          periodSeconds: 2
+        volumeMounts:
+        - {name: work, mountPath: /work}
+        - {name: tmp, mountPath: /tmp}
+      volumes:
+      - {name: work, emptyDir: {medium: Memory, sizeLimit: 128Mi}}
+      - {name: tmp, emptyDir: {medium: Memory, sizeLimit: 32Mi}}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata: {name: {{.Pool}}, namespace: {{.Namespace}}}
+spec:
+  replicas: 2
+  sandboxTemplateRef: {name: {{.Pool}}}

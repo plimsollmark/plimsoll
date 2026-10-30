@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plimsoll-client"
-version = "0.24.0"
+version = "0.25.0"
 description = "Client for plimsolld, the plimsoll sandbox daemon, that checks every run record it receives"
 readme = "README.md"
 license = "Apache-2.0"
@@ -25,6 +25,7 @@ agno = ["agno>=3.1.1,<4"]
 crewai = ["crewai>=1.15.23,<2"]
 anthropic = ["anthropic>=1.13.0,<2"]
 openai-agents = ["openai-agents>=0.23.1,<1"]
+verifiers = ["verifiers>=0.4.1.dev97,<0.5"]
 
 [project.urls]
 Homepage = "https://github.com/plimsollmark/plimsoll/tree/main/clients/python"

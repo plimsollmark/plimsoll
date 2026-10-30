@@ -126,10 +126,14 @@ func run(ctx context.Context, out string) error {
 		return err
 	}
 	token := hex.EncodeToString(tok)
-	d, err := daemonproc.Start(ctx, binary, daemonproc.Options{Env: []string{
+	env := []string{
 		"SANDBOX_PROVIDER=openshell", "PLIMSOLL_TOKEN=" + token,
 		"SANDBOX_MAX_SESSIONS=1", "SANDBOX_SESSION_LIFETIME=10m", "SANDBOX_SESSION_IDLE=5m", "SANDBOX_SESSION_DISK_MB=64",
-	}, Ready: 2 * time.Minute})
+	}
+	for _, name := range gatewaySettings { // the daemon gets no other variable of this shell's
+		env = append(env, name+"="+os.Getenv(name))
+	}
+	d, err := daemonproc.Start(ctx, binary, daemonproc.Options{Env: env, Ready: 2 * time.Minute})
 	if err != nil {
 		return err
 	}

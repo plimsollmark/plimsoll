@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -71,6 +72,29 @@ func (projectEcho) RunProject(_ context.Context, req sandbox.ProjectRequest) (sa
 		Sandbox: "project-echo", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted,
 		Steps: []sandbox.StepResult{{Command: req.Steps[0], Stdout: string(out)}},
 	}, nil
+}
+
+// pooledEcho is a provider with a warm pool: sessions as sandboxtest.Sessions keeps
+// them (its Warm members serve warm-only opens), fresh projects answered as
+// projectEcho answers them and counted, so a test tells a pool member's answer to a
+// Run cell ("<language> <n>: <code>") from a fresh run's (the plan).
+type pooledEcho struct {
+	projectEcho
+	*sandboxtest.Sessions
+	fresh *atomic.Int32
+}
+
+func (pooledEcho) Name() string                           { return "pooled-echo" }
+func (pooledEcho) IsolationClass() sandbox.IsolationClass { return sandbox.IsolationContainer }
+func (p pooledEcho) RunJavaScript(ctx context.Context, req sandbox.Request) (sandbox.Result, error) {
+	return p.projectEcho.RunJavaScript(ctx, req)
+}
+func (p pooledEcho) RunProject(ctx context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
+	p.fresh.Add(1)
+	return p.projectEcho.RunProject(ctx, req)
+}
+func (p pooledEcho) RunModule(ctx context.Context, req sandbox.ModuleRequest) (sandbox.ModuleResult, error) {
+	return p.projectEcho.RunModule(ctx, req)
 }
 
 func serve(t *testing.T, svc *rpc.SandboxService, extra func(*http.ServeMux)) string {
@@ -178,6 +202,31 @@ func TestTypeScript(t *testing.T) {
 			}
 		})
 	})
+	// pooled states a pool of 2 and always has a member waiting; drained states the
+	// same pool with none waiting, so a Run cell that prefers one runs fresh there. POST
+	// /test/opened answers with how many members pooled handed over (warm-only opens),
+	// how many it deleted, and the fresh runs it made.
+	pooledSessions := &sandboxtest.Sessions{Warm: 1 << 20}
+	var pooledFresh atomic.Int32
+	pooled := rpc.NewSandboxService(pooledEcho{Sessions: pooledSessions, fresh: &pooledFresh})
+	pooled.Sessions = rpc.SessionConfig{MaxSessions: 16, Pool: 2, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	pooledURL := serve(t, pooled, func(mux *http.ServeMux) {
+		mux.HandleFunc("POST /test/opened", func(w http.ResponseWriter, _ *http.Request) {
+			warmOnly, ended := 0, 0
+			for _, s := range pooledSessions.Opened() {
+				if s.Options.WarmOnly {
+					warmOnly++
+				}
+				if s.Err() != nil {
+					ended++
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]int{"warmOnly": warmOnly, "fresh": int(pooledFresh.Load()), "ended": ended})
+		})
+	})
+	drained := rpc.NewSandboxService(pooledEcho{Sessions: &sandboxtest.Sessions{}, fresh: &atomic.Int32{}})
+	drained.Sessions = rpc.SessionConfig{MaxSessions: 16, Pool: 2, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	drainedURL := serve(t, drained, nil)
 	liarMux := http.NewServeMux()
 	liarPath, liarHandler := rpc.NewHandler(unansweredLiar{})
 	liarMux.Handle(liarPath, liarHandler)
@@ -185,7 +234,7 @@ func TestTypeScript(t *testing.T) {
 	t.Cleanup(liarSrv.Close)
 	env := append(os.Environ(), "PLIMSOLL_WASM_URL="+wasmURL, "PLIMSOLL_SESSIONS_URL="+sessionsURL, "PLIMSOLL_URL="+sessionsURL,
 		"PLIMSOLL_ECHO_URL="+echoURL, "PLIMSOLL_BREAKING_URL="+breakingURL, "PLIMSOLL_LIAR_URL="+liarSrv.URL, "PLIMSOLL_OWNER_CAP_URL="+ownerCapURL,
-		"PLIMSOLL_QUICK_IDLE_URL="+quickIdleURL)
+		"PLIMSOLL_QUICK_IDLE_URL="+quickIdleURL, "PLIMSOLL_POOLED_URL="+pooledURL, "PLIMSOLL_DRAINED_URL="+drainedURL)
 	env = append(env, bindingDaemons(t)...)
 	env = append(env, "PLIMSOLL_TLS_URL="+tlsSrv.URL)
 

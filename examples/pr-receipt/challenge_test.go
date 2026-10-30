@@ -20,7 +20,7 @@ func TestReceiptChallengeCasesComeOutAsStated(t *testing.T) {
 	if err != nil || !strings.Contains(string(out), "every case as expected") {
 		t.Fatalf("check.py: %v\n%s", err, out)
 	}
-	for _, s := range []string{"honest", "refuse at signature", "refuse at result", "refuse at junit", "refuse at head"} {
+	for _, s := range []string{"honest", "refuse at signature", "refuse at result", "refuse at junit", "refuse at head", "refuse at tests"} {
 		if !strings.Contains(string(out), s) {
 			t.Errorf("check.py printed no %q:\n%s", s, out)
 		}

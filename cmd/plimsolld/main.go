@@ -38,6 +38,7 @@ import (
 	"github.com/plimsollmark/plimsoll/internal/grants"
 	"github.com/plimsollmark/plimsoll/internal/rpc"
 	"github.com/plimsollmark/plimsoll/internal/unreadbody"
+	"github.com/plimsollmark/plimsoll/internal/withheld"
 	"github.com/plimsollmark/plimsoll/sandbox"
 )
 
@@ -101,13 +102,28 @@ The daemon takes no arguments. Configuration is by environment variable:
                              with sessions on, and paid_seconds_per_day on every
                              caller of e2b or dockercloud. Every rule but isolation
                              is checked before the billed smoke test. Any violation
-                             refuses to serve.
+                             refuses to serve. Isolation is also held on every run:
+                             kernel is a floor joined to each request's minimum, so
+                             a provider that finds a weaker boundary later refuses
+                             the run before code runs, and /readyz says not ready
+                             while the provider's tier is below it.
   PLIMSOLL_GRANTS_FILE       JSON file of named host-API capability profiles a
                              caller may select via grant_profile
+  PLIMSOLL_WITHHELD_FILE     JSON withheld set (built by plimsoll-withheld): digests
+                             of what must never enter a sandbox, such as a
+                             harness's source, hidden answers and held-out seeds.
+                             Every call's payload, and the archives in it, is
+                             scanned for it before admission; a find refuses the
+                             call (not dispatched) or is named on the audit line
+                             alone, by the entry's mode, and a set with a refuse
+                             entry refuses a call whose archives pass the scan's
+                             bounds. A malformed set refuses to start. See
+                             docs/ship-scan.md
 
 `
 
-const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the provider meets this tier
+const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the provider meets this tier,
+                             and refuse any run below it, not dispatched
                              (vm | kernel | container | process); unset = no floor
   SANDBOX_DOCKER_IMAGE       snippet image (default node:22-alpine)
   SANDBOX_DOCKER_PROJECT_IMAGE
@@ -121,6 +137,16 @@ const usageProviders = `  SANDBOX_MIN_ISOLATION      refuse to start unless the 
                              keeps docker's built-in default. Set it to the shipped
                              audited profile (docker/seccomp.json) to also deny
                              ptrace, io_uring, keyctl and similar; see docs/seccomp.md
+  SANDBOX_DOCKER_SECCOMP_SDK the profile a run gets instead of SANDBOX_DOCKER_SECCOMP
+                             when its grant profile sets sdk_env (the local address a
+                             standard client library reaches the broker through, which
+                             needs IPv4 TCP sockets the default denies). "derived" makes
+                             it from the default at startup (IPv4 TCP sockets and a few
+                             socket options added, nothing else); a path names your own.
+                             "" refuses such runs before dispatch when
+                             SANDBOX_DOCKER_SECCOMP is a file. It needs
+                             SANDBOX_DOCKER_SECCOMP, and never replaces it for any other
+                             run; see docs/seccomp.md
   SANDBOX_GUEST_UID          the uid (and gid) docker runs every guest as, default
                              61000, which no account uses; 1 to 65532, with
                              neither it nor it + 1 in a band systemd assigns
@@ -243,9 +269,11 @@ const usageLimits = `
                              its later calls are refused as replaced. Refused,
                              not dispatched, when every one is running a call.
   SANDBOX_SESSION_POOL       sandboxes kept ready for sessions (default 0: none;
-                             at most SANDBOX_MAX_SESSIONS; docker only). Each is
+                             at most SANDBOX_MAX_SESSIONS; docker and openshell;
+                             startup fails for another provider). Each is
                              never used, has its interpreters already running,
-                             goes to one session and is removed when it closes,
+                             goes to one session (or to one Run cell that asks
+                             for one, prefer_warm) and is removed when it ends,
                              never reused; an idle one is replaced after 30m.
                              Each counts as one run against
                              SANDBOX_TOTAL_MEMORY_MB.
@@ -351,6 +379,7 @@ func main() {
 	sc, err := loadSessionConfig(os.Getenv)
 	if err == nil {
 		poolSize, err = loadSessionPool(os.Getenv, sc)
+		sc.Pool = poolSize
 	}
 	if err != nil {
 		slog.Error("invalid session configuration", "error", err)
@@ -569,6 +598,12 @@ func main() {
 
 	svc := rpc.NewSandboxService(sb)
 	svc.Resources = res
+	// Hardened mode's isolation rule, held on every run as well as at startup: a
+	// provider can find a weaker boundary on a later dispatch than the one startup
+	// proved (agentsandbox reads its runtime class again on each), so the daemon's
+	// floor joins every request's minimum and the provider refuses such a sandbox
+	// before code runs. None outside hardened mode.
+	svc.Floor = isolationFloor(hardened, want)
 	svc.Limiter = rpc.NewCodeLimiter(maxConcurrent, perKey, ratePerMin, burst)
 	// A provider billed by the second draws each run on the caller's daily allowance
 	// (paid_seconds_per_day in PLIMSOLL_CLIENTS_FILE) and on the daemon's.
@@ -613,6 +648,16 @@ func main() {
 	}
 	svc.Sessions = sc
 	svc.Grants = gr
+	if path := strings.TrimSpace(os.Getenv("PLIMSOLL_WITHHELD_FILE")); path != "" {
+		set, err := withheld.Load(path)
+		if err != nil {
+			slog.Error("failed to load the withheld set", "error", err)
+			os.Exit(1)
+		}
+		svc.Withheld = set
+		slog.Info("withheld set loaded: every call's payload is scanned for it", "set", set.Digest(), "entries", set.Len(),
+			"exempt_callers", set.ExemptCount())
+	}
 
 	if hardened {
 		facts.Isolation, facts.IsolationPending = sb.IsolationClass(), false
@@ -620,7 +665,7 @@ func main() {
 			slog.Error("hardened-mode policy violation; refusing to serve", "error", err)
 			os.Exit(1)
 		}
-		slog.Info("hardened mode: production policy verified and enforced")
+		slog.Info("hardened mode: production policy verified and enforced", "isolation_floor", svc.Floor.String())
 	}
 
 	srv := newHTTPServer(addr, rpcMux(svc, verifier, maxConcurrent, sb), tlsConf)
@@ -824,25 +869,34 @@ func newMetricsServer(addr string, handler http.Handler, tlsConf *tls.Config) *h
 	return srv
 }
 
-// readyzHandler re-runs the provider's bounded Preflight. Anyone can poll it, so it
-// answers with a fixed body: a Preflight error can name DOCKER_HOST, image references
-// or a gateway's own error text. The detail goes to the log, at most once per
-// readyzLogEvery, so a poller cannot flood the log either.
-func readyzHandler(sb sandbox.Sandbox) http.HandlerFunc {
+// readyzHandler re-runs the provider's bounded Preflight, and with a daemon floor
+// (hardened mode) also says not ready while the provider's tier is below it, since every
+// run would then be refused. Anyone can poll it, so it answers with a fixed body: a
+// Preflight error can name DOCKER_HOST, image references or a gateway's own error text.
+// The detail goes to the log, at most once per readyzLogEvery, so a poller cannot flood
+// the log either.
+func readyzHandler(sb sandbox.Sandbox, floor sandbox.IsolationClass) http.HandlerFunc {
 	var mu sync.Mutex
 	var logged time.Time
+	notReady := func(w http.ResponseWriter, err error) {
+		mu.Lock()
+		if time.Since(logged) >= readyzLogEvery {
+			logged = time.Now()
+			slog.Warn("readiness check failed", "provider", sb.Name(), "error", err)
+		}
+		mu.Unlock()
+		http.Error(w, "not ready", http.StatusServiceUnavailable)
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if pf, ok := sb.(sandbox.Preflighter); ok {
 			if err := pf.Preflight(r.Context()); err != nil {
-				mu.Lock()
-				if time.Since(logged) >= readyzLogEvery {
-					logged = time.Now()
-					slog.Warn("readiness check failed", "provider", sb.Name(), "error", err)
-				}
-				mu.Unlock()
-				http.Error(w, "not ready", http.StatusServiceUnavailable)
+				notReady(w, err)
 				return
 			}
+		}
+		if err := sandbox.CheckMinimumIsolation(sb.IsolationClass(), floor); err != nil {
+			notReady(w, fmt.Errorf("below the daemon's isolation floor: %w", err))
+			return
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready\n"))
@@ -919,7 +973,7 @@ func rpcMux(svc *rpc.SandboxService, verifier rpc.TokenVerifier, maxConcurrent i
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
-	mux.HandleFunc("/readyz", readyzHandler(sb))
+	mux.HandleFunc("/readyz", readyzHandler(sb, svc.Floor))
 	return rpc.BindAnswers(mux)
 }
 

@@ -4,12 +4,23 @@
   "command": "node --test --test-reporter=junit --test-reporter-destination=reports.xml test.mjs",
   "junit_path": "reports.xml",
   "cases": [
-    {"name": "honest", "says": "the receipt for the commit under review, signed by the operator, tests passed", "receipt": "honest", "head": "tested", "accept": true},
-    {"name": "another signer", "says": "a genuine receipt for the same commit, signed by a key that is not the operator's", "receipt": "other-signer", "head": "tested", "refused_at": "signature"},
-    {"name": "edited result", "says": "the honest receipt with one exit code changed inside it", "receipt": "altered-result", "head": "tested", "refused_at": "signature"},
-    {"name": "failing tests", "says": "a genuine receipt, correctly signed, for a run whose tests failed", "receipt": "failing", "head": "broken", "refused_at": "result"},
-    {"name": "passing report beside a failing run", "says": "the failing run's genuine receipt with a passing JUnit file put next to it", "receipt": "altered-junit", "head": "broken", "refused_at": "junit"},
-    {"name": "wrong commit", "says": "the honest receipt presented for a later commit it never tested", "receipt": "honest", "head": "later", "refused_at": "head"},
-    {"name": "wrong repository", "says": "the honest receipt presented for another repository", "receipt": "honest", "head": "tested", "repository": "example/another-project", "refused_at": "head"}
+    {"name": "honest", "says": "the receipt for the commit under review, signed by the operator, tests passed", "receipt": "honest", "head": "tested", "accept": true,
+     "states": {"verdict": "passed", "signer": "trusted_key", "covers": "known", "candidate": "current", "run": "completed", "steps": "passed", "tests": "discovered", "evidence": "complete"}},
+    {"name": "another signer", "says": "a genuine receipt for the same commit, signed by a key that is not the operator's", "receipt": "other-signer", "head": "tested", "refused_at": "signature",
+     "states": {"verdict": "refused", "signer": "refused", "covers": "unknown", "candidate": "unknown", "run": "unknown", "steps": "unknown", "tests": "unknown", "evidence": "unknown"}},
+    {"name": "edited result", "says": "the honest receipt with one exit code changed inside it", "receipt": "altered-result", "head": "tested", "refused_at": "signature",
+     "states": {"verdict": "refused", "signer": "refused", "covers": "unknown", "candidate": "unknown", "run": "unknown", "steps": "unknown", "tests": "unknown", "evidence": "unknown"}},
+    {"name": "failing tests", "says": "a genuine receipt, correctly signed, for a run whose tests failed", "receipt": "failing", "head": "broken", "refused_at": "result",
+     "states": {"verdict": "failed", "signer": "trusted_key", "covers": "known", "candidate": "current", "run": "completed", "steps": "failed", "tests": "discovered", "evidence": "complete"}},
+    {"name": "passing report beside a failing run", "says": "the failing run's genuine receipt with a passing JUnit file put next to it", "receipt": "altered-junit", "head": "broken", "refused_at": "junit",
+     "states": {"verdict": "refused", "signer": "trusted_key", "covers": "known", "candidate": "current", "run": "completed", "steps": "failed", "tests": "discovered", "evidence": "complete"}},
+    {"name": "wrong commit", "says": "the honest receipt presented for a later commit it never tested", "receipt": "honest", "head": "later", "refused_at": "head",
+     "states": {"verdict": "refused", "signer": "trusted_key", "covers": "known", "candidate": "stale", "run": "completed", "steps": "passed", "tests": "discovered", "evidence": "complete"}},
+    {"name": "wrong repository", "says": "the honest receipt presented for another repository", "receipt": "honest", "head": "tested", "repository": "example/another-project", "refused_at": "head",
+     "states": {"verdict": "refused", "signer": "trusted_key", "covers": "known", "candidate": "other", "run": "completed", "steps": "passed", "tests": "discovered", "evidence": "complete"}},
+    {"name": "every test skipped", "says": "a genuine, correctly signed receipt for a run in which every step exited 0 and the returned report lists only skipped tests", "receipt": "skipped", "head": "skipped", "refused_at": "tests",
+     "states": {"verdict": "failed", "signer": "trusted_key", "covers": "known", "candidate": "current", "run": "completed", "steps": "passed", "tests": "zero", "evidence": "complete"}},
+    {"name": "timed out", "says": "a genuine, correctly signed receipt for a run the 30-second limit ended, its report cut off mid-write", "receipt": "timed-out", "head": "hangs", "refused_at": "result",
+     "states": {"verdict": "failed", "signer": "trusted_key", "covers": "known", "candidate": "current", "run": "timed_out", "steps": "failed", "tests": "unknown", "evidence": "complete"}}
   ]
 }

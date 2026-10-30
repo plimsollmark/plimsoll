@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "What a policy over a pull request's receipt reads: version 1 of the input verify.py gives data.plimsoll.receipt.deny, built from the signed run only, after the signature and head checks passed. verify.py hands this schema to OPA with --schema, so a policy that reads a field not listed here fails to compile instead of never firing.",
+  "type": "object",
+  "required": ["plimsoll_policy_input", "receipt_sha256", "signer", "checks", "subject", "request", "result", "record"],
+  "properties": {
+    "plimsoll_policy_input": {"type": "integer", "description": "The input's version, 1. A field is never renamed or removed under the same version."},
+    "receipt_sha256": {"type": "string", "description": "SHA-256 of the receipt bytes verified, lowercase hex."},
+    "signer": {"type": "string", "description": "The key the signature checked against: trusted_key (the operator's, given to the verifier separately) or self_consistent (only the key the receipt carries, which anyone can make; such a reading is never verified)."},
+    "checks": {
+      "type": "object",
+      "description": "The verifier's own checks, true when passed. signature, head and result are always present; tests whenever the signed request asks for a test report or a minimum was given; the others when the verifier was given the file they compare.",
+      "properties": {
+        "signature": {"type": "boolean"},
+        "head": {"type": "boolean"},
+        "junit": {"type": "boolean"},
+        "test_result": {"type": "boolean"},
+        "coverage": {"type": "boolean"},
+        "result": {"type": "boolean"},
+        "tests": {"type": "boolean", "description": "The returned test report lists no failure or error and at least the minimum of tests that ran."}
+      }
+    },
+    "subject": {
+      "type": "object",
+      "description": "What the signed request says it tested, equal to what the CI configuration names (the head check).",
+      "properties": {
+        "repository": {"type": "string"},
+        "commit": {"type": "string"},
+        "pull_request": {"type": "string", "description": "Digits, as the CI platform numbers it; 0 for a run outside a pull request."},
+        "base": {"type": "string", "description": "The base commit, empty when the receipt was made without one."},
+        "agent_sessions": {"type": "array", "items": {"type": "string"}, "description": "Coding-agent session IDs named by the pull request's commit trailers; empty when none."}
+      }
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "protocol": {"type": "integer"},
+        "minimum_isolation": {"type": "string", "description": "The isolation floor the run asked for: none, process, container, kernel or vm."},
+        "minimum_isolation_rank": {"type": "integer", "description": "The floor as a number: none 0, process 1, container 2, kernel 3, vm 4, anything else -1."},
+        "timeout_ms": {"type": "integer"},
+        "steps": {"type": "array", "items": {"type": "string"}, "description": "The commands the run was asked to execute, in order."},
+        "artifacts": {"type": "array", "items": {"type": "string"}, "description": "The paths the run was asked to return."},
+        "trace_id": {"type": "string"}
+      }
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "provider": {"type": "string", "description": "The sandbox provider that ran it, such as docker or e2b."},
+        "isolation": {"type": "string", "description": "The tier the run reports: configuration and provider evidence plus a startup check, never runtime attestation."},
+        "isolation_rank": {"type": "integer", "description": "The tier as a number, ranked as minimum_isolation_rank; an unknown tier is -1 and meets nothing."},
+        "outcome": {"type": "string", "description": "completed, setup_failed, timed_out, protocol_error or runner_failed."},
+        "environment": {"type": "string"},
+        "software_identity": {"type": "string"},
+        "duration_ms": {"type": "integer"},
+        "steps": {
+          "type": "array",
+          "description": "The steps that ran, in order. No output: what a step printed is the tested code's to write.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "command": {"type": "string"},
+              "exit_code": {"type": "integer"},
+              "timed_out": {"type": "boolean"},
+              "duration_ms": {"type": "integer"}
+            }
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "description": "The files the run returned, by digest and size, never by content.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {"type": "string"},
+              "sha256": {"type": "string"},
+              "bytes": {"type": "integer"}
+            }
+          }
+        },
+        "artifacts_truncated": {"type": "boolean"}
+      }
+    },
+    "record": {
+      "type": "object",
+      "description": "The signed run record's own fields.",
+      "properties": {
+        "version": {"type": "integer"},
+        "record_sha256": {"type": "string"},
+        "request_sha256": {"type": "string"},
+        "result_sha256": {"type": "string"},
+        "started_unix_ms": {"type": "integer"},
+        "ended_unix_ms": {"type": "integer"},
+        "session": {"type": "string"},
+        "instance": {"type": "string"}
+      }
+    }
+  }
+}

@@ -302,7 +302,7 @@ func wasmBrokerHostCall(ctx context.Context, mod api.Module, broker *brokerSessi
 	if envelope.Body != nil {
 		body = bytes.NewReader(envelope.Body)
 	}
-	response := broker.Call(ctx, brokerCall{Method: envelope.Method, RawTarget: envelope.Path, Body: body})
+	response := broker.Call(ctx, brokerCall{Method: envelope.Method, RawTarget: envelope.Path, Body: body, ContentLength: int64(len(envelope.Body))})
 	return writeWasmBrokerReply(mod, responsePtr, responseCap, response)
 }
 

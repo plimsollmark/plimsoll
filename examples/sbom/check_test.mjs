@@ -6,8 +6,10 @@ if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node 22 o
 globalThis.crypto ??= webcrypto;
 vm.runInThisContext(readFileSync(new URL('./check.js', import.meta.url), 'utf8'));
 const dir = new URL('../../docs/examples/sbom/', import.meta.url);
-const imageName = 'image-a6ef2ea1c8f1.cdx.json';
-const imageFiles = {[imageName]: readFileSync(new URL(imageName, dir)).toString('base64')};
+// Every image label published beside the example, as the page hands them to the checker.
+const imageFiles = Object.fromEntries(readdirSync(dir).filter(n => /^image-[a-f0-9]{12}\.cdx\.json$/.test(n))
+  .map(n => [n, readFileSync(new URL(n, dir)).toString('base64')]));
+assert.ok(Object.keys(imageFiles).length >= 2, 'the published image labels');
 const {changeOneCharacter} = globalThis.PlimsollReceipt;
 const check = bom => globalThis.PlimsollReceipt.check(bom, imageFiles);
 const flip = h => (h[0] === '0' ? '1' : '0') + h.slice(1);
@@ -72,6 +74,18 @@ for (const name of names) {
     env.payload = Buffer.from(JSON.stringify(body)).toString('base64');
     sa.content = Buffer.from(JSON.stringify(env)).toString('base64');
     assert.equal((await check(st)).find(c => c.id === 'statement')?.ok, false, 'the statement subject');
+    // The requirements pin and the verdicts per requirement: a flipped REQ-004, or a pin
+    // that is not the stored requirements file, fails the verdict line as well as the seal.
+    for (const [what, edit] of [['a flipped requirement verdict', q => { const v = q.requirement_verdicts.find(r => r.id === 'REQ-004'); v.status = v.status === 'held' ? 'not_held' : 'held'; }],
+      ['a pin that is not the stored file', q => { q.requirements.sha256 = flip(q.requirements.sha256); }],
+      ['no pin', q => { delete q.requirements; }]]) {
+      const t = structuredClone(bom), ta = t.declarations.evidence[1].data[0].contents.attachment;
+      const e = JSON.parse(Buffer.from(ta.content, 'base64')), b = JSON.parse(Buffer.from(e.payload, 'base64'));
+      edit(b.predicate);
+      e.payload = Buffer.from(JSON.stringify(b)).toString('base64');
+      ta.content = Buffer.from(JSON.stringify(e)).toString('base64');
+      assert.equal((await check(t)).find(c => c.id === 'verdict')?.ok, false, what);
+    }
     const other = names.find(n => n !== name && JSON.parse(readFileSync(new URL(n, dir))).declarations.evidence.length === 2);
     const swapped = structuredClone(bom);
     swapped.declarations.evidence[1] = JSON.parse(readFileSync(new URL(other, dir))).declarations.evidence[1];

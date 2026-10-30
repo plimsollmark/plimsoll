@@ -5,6 +5,7 @@ docker_workspace_check.py, which client_test.go runs when docker is there."""
 from __future__ import annotations
 
 import base64
+import shlex
 import unittest
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -63,12 +64,14 @@ class FakeSession:
 
     def __init__(self) -> None:
         self.calls: List[Tuple[Dict[str, str], List[str], List[str], Optional[float]]] = []
+        self.kwargs: List[Dict[str, Any]] = []
         self.replies: List[ProjectResult] = []
         self.fs: Dict[str, bytes] = {ws.STATE_DIR + "/root": (ROOT + "\n").encode(), ws.STATE_DIR + "/cwd": (ROOT + "\n").encode()}
         self.closed = False
 
     def run_project(self, files: Any, steps: List[str], artifacts: List[str] = (), *, timeout: Optional[float] = None, **kw: Any) -> ProjectResult:
         self.calls.append((dict(files or {}), list(steps), list(artifacts), timeout))
+        self.kwargs.append(kw)
         if self.replies:
             return self.replies.pop(0)
         return result(artifacts={a: self.fs[a] for a in artifacts if a in self.fs})
@@ -295,7 +298,124 @@ class TreeTests(unittest.TestCase):
             Workspace(s).hydrate("TAR")  # type: ignore[arg-type]
 
 
+def _script_words(script: str) -> List[str]:
+    """The words sh reads from a run script, quoting undone."""
+    return shlex.split(script, posix=True)
+
+
+class RunTests(unittest.TestCase):
+    def test_argv_env_and_stdin_travel_as_files_and_the_step_is_fixed(self) -> None:
+        s = FakeSession()
+        s.replies.append(result(stdout=b"out", exit_code=3))
+        argv = ["printf", "%s\n", "a b", "it's", "$(id)", "`id`", "line\nbreak", "ünï", "*"]
+        out = Workspace(s).run(argv, env={"GREETING": "hi 'there'\n", "PATH": "/bin"}, stdin=b"\x00\xffin")
+        files, steps, artifacts, timeout = s.last
+        self.assertEqual(steps, [ws._RUN_STEP])
+        self.assertEqual(set(files), {ws.STATE_DIR + "/run", ws.STATE_DIR + "/in.b64"})
+        self.assertEqual(base64.b64decode(files[ws.STATE_DIR + "/in.b64"]), b"\x00\xffin")
+        words = _script_words(files[ws.STATE_DIR + "/run"])
+        self.assertEqual(words, ["export", "GREETING=hi 'there'\n", "export", "PATH=/bin", "exec", *argv])
+        self.assertEqual(artifacts, [ws.STATE_DIR + "/root"])
+        self.assertEqual(timeout, 120.0)
+        self.assertEqual((out.exit_code, out.stdout, out.cwd), (3, b"out", ""))
+
+    def test_no_stdin_is_an_empty_one_and_the_shell_state_is_untouched(self) -> None:
+        s = FakeSession()
+        w = Workspace(s)
+        w.run(["cat"])
+        files = s.last[0]
+        self.assertEqual(files[ws.STATE_DIR + "/in.b64"], "")
+        self.assertNotIn(ws.STATE_DIR + "/cmd", files)
+        self.assertNotIn(ws.STATE_DIR + "/env", ws._RUN_STEP)
+        self.assertNotIn(ws.STATE_DIR + "/cwd", ws._RUN_STEP)
+        self.assertIn('exec < "$__plimsoll_s/in"', ws._RUN_STEP)
+        # The script (the environment's values) and the stdin copy are gone before the
+        # program starts, so nothing a later call runs can read them.
+        self.assertLess(ws._RUN_STEP.index("rm -f"), ws._RUN_STEP.index('eval "$__plimsoll_r"'))
+        for name in ("in", "in.b64", "run"):
+            self.assertIn(f'"$__plimsoll_s/{name}"', ws._RUN_STEP.split("rm -f", 1)[1])
+
+    def test_a_timeout_is_an_outcome(self) -> None:
+        s = FakeSession()
+        s.replies.append(result(exit_code=124, timed_out=True, outcome="timed_out"))
+        out = Workspace(s).run(["sleep", "99"], timeout=1)
+        self.assertTrue(out.timed_out)
+        self.assertEqual(s.last[3], 1.0)
+
+    def test_refusals(self) -> None:
+        s = FakeSession()
+        w = Workspace(s)
+        for argv in ([], "ls", b"ls", ["a\x00b"], [1], ["-c", "id"], ["--", "id"]):
+            with self.assertRaises((ValueError, TypeError), msg=repr(argv)):
+                w.run(argv)  # type: ignore[arg-type]
+        for name in ("", "1A", "A B", "A=B", "A-B", "é"):
+            with self.assertRaises(ValueError, msg=name):
+                w.run(["true"], env={name: "x"})
+        with self.assertRaises(ValueError):
+            w.run(["true"], env={"A": "x\x00"})
+        with self.assertRaises(TypeError):
+            w.run(["true"], stdin=3)  # type: ignore[arg-type]
+        with self.assertRaises(WorkspaceTooLargeError):
+            w.run(["cat"], stdin=b"x" * (4 << 20))
+        self.assertEqual(s.calls, [])
+
+    def test_a_cancel_handle_reaches_every_call(self) -> None:
+        s = FakeSession()
+        w = Workspace(s, confined=False)
+        handle = object()
+        w.run(["true"], cancel=handle)  # type: ignore[arg-type]
+        s.replies.append(result(artifacts={ws.STATE_DIR + "/out": b"x"}))
+        w.read("a", cancel=handle)  # type: ignore[arg-type]
+        w.write("a", "text", cancel=handle)  # type: ignore[arg-type]
+        w.write("/tmp/b", b"x" * (3 << 20), cancel=handle)  # type: ignore[arg-type]
+        # run (which also reports the root), read, write, and the two chunks of the bytes
+        self.assertEqual([k.get("cancel") for k in s.kwargs], [handle] * 5)
+        Workspace(s).exec("true")
+        self.assertIsNone(s.kwargs[-1].get("cancel"))
+
+
+class UnconfinedTests(unittest.TestCase):
+    def test_absolute_paths_outside_the_work_directory(self) -> None:
+        s = FakeSession()
+        w = Workspace(s, confined=False)
+        self.assertEqual(w.root, ROOT)  # an absolute path needs the root: one call
+        s.replies.append(result(artifacts={ws.STATE_DIR + "/out": b"T"}))
+        self.assertEqual(w.read("/tmp/vf-artifact-1.tar"), b"T")
+        self.assertEqual(s.last[0], {ws.STATE_DIR + "/a1": "/tmp/vf-artifact-1.tar", ws.STATE_DIR + "/a2": str(1 << 20)})
+        w.write("/tmp//x/../y.txt", "text")
+        files, steps, _, _ = s.last
+        self.assertEqual(steps, [ws._WRITE_B64_STEP])
+        self.assertEqual(files[ws.STATE_DIR + "/a1"], "/tmp/y.txt")
+        self.assertEqual(base64.b64decode(files[ws.STATE_DIR + "/in.b64"]), b"text")
+
+    def test_paths_inside_the_work_directory_stay_relative_and_the_state_is_refused(self) -> None:
+        s = FakeSession()
+        w = Workspace(s, confined=False)
+        w.write(ROOT + "/src/x.py", "print(1)\n")
+        self.assertEqual(s.last[:3], ({"src/x.py": "print(1)\n"}, [ws._TRUE_STEP], []))
+        w.write("rel.txt", "r")
+        self.assertEqual(s.last[0], {"rel.txt": "r"})
+        for bad in ("/", "//", ROOT + "/" + ws.STATE_DIR + "/run", ws.STATE_DIR + "/cmd", "../x", "/tmp/a\nb", "/tmp/a\\b", ""):
+            with self.assertRaises(WorkspacePathError, msg=bad):
+                w.write(bad, b"x")
+
+    def test_a_confined_workspace_still_refuses_them(self) -> None:
+        s = FakeSession()
+        with self.assertRaises(WorkspacePathError):
+            Workspace(s).write("/tmp/x", b"x")
+        with self.assertRaises(WorkspacePathError):
+            Workspace(s).read("/etc/passwd")
+        # glob and grep stay inside the work directory either way.
+        with self.assertRaises(WorkspacePathError):
+            Workspace(s, confined=False).grep("x", "/etc")
+
+
 class InvariantTests(unittest.TestCase):
+    def test_every_fixed_step_has_a_kind(self) -> None:
+        self.assertEqual(set(ws.STEP_KINDS), set(ws.FIXED_STEPS))
+        self.assertEqual(ws.STEP_KINDS[ws._RUN_STEP], "run")
+        self.assertEqual(len(set(ws.STEP_KINDS)), len(ws.STEP_KINDS))
+
     def test_every_step_sent_is_a_fixed_script(self) -> None:
         s = FakeSession()
         w = Workspace(s)

@@ -146,6 +146,37 @@ func TestClientOpenSessionSendsTheLanguageHint(t *testing.T) {
 	}
 }
 
+// The client reads the daemon's pool from Describe and sends WarmOnly; a warm-only
+// open the daemon refuses for want of a waiting member is a capacity refusal, not
+// dispatched, so the caller can run fresh.
+func TestClientWarmOnlyOpen(t *testing.T) {
+	p := &sandboxtest.Sessions{Warm: 1}
+	svc := rpc.NewSandboxService(p)
+	svc.Sessions = rpc.SessionConfig{MaxSessions: 4, Pool: 2, Lifetime: time.Minute, IdleTimeout: time.Minute}
+	mux := http.NewServeMux()
+	path, h := rpc.NewHandler(svc, connect.WithInterceptors(rpc.AuthInterceptor(nil)))
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	r := newRemote(t, srv.URL)
+	info, err := r.Describe(context.Background())
+	if err != nil || info.SessionPool != 2 {
+		t.Fatalf("Describe: pool %d, %v; want 2", info.SessionPool, err)
+	}
+	s, err := r.OpenSession(context.Background(), SessionOptions{WarmOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	if !p.Opened()[0].Options.WarmOnly {
+		t.Fatal("the provider was not asked for a warm-only open")
+	}
+	_, err = r.OpenSession(context.Background(), SessionOptions{WarmOnly: true})
+	if reason, ok := sandbox.NotDispatchedReason(err); !errors.Is(err, sandbox.ErrAtCapacity) || !ok || reason != sandbox.RefusalCapacity {
+		t.Fatalf("a warm-only open with none waiting: %v; want a capacity refusal, not dispatched", err)
+	}
+}
+
 // A call made by another holder of the session ID shows as a gap in the chain at
 // this client's next call, and in the close's count.
 func TestSessionClientCatchesACallItDidNotMake(t *testing.T) {

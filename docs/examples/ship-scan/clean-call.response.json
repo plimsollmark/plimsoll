@@ -1,0 +1,20 @@
+{
+  "sandbox":  "wasm",
+  "isolation":  "process",
+  "durationMs":  "314",
+  "record":  {
+    "version":  4,
+    "requestSha256":  "b384c4af6f60fa5fcb0a4b24a8617ef7a52d26bd500fd33743705f49d1136de6",
+    "resultSha256":  "a86f5be384180f2e167455e644b3474e267e47c600e87984da5b5fbaa915498e",
+    "provider":  "wasm",
+    "isolation":  "process",
+    "environment":  "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+    "startedUnixMs":  "1793367973220",
+    "endedUnixMs":  "1793367973536",
+    "recordSha256":  "1a84a69e3bcd1778ac9180aa5c4cff978a4d17fd27a427f016c8e0848837fa10"
+  },
+  "environment":  "quickjs-wasm:sha256:f9258d318b05404d49f635191d2056c30d24ad75f2cb7f1190fdb98a76cd679e",
+  "javascript":  {
+    "stdout":  "ZmluYWwgYWx0aXR1ZGUgOS45NTggKHRhcmdldCAxMCkK"
+  }
+}

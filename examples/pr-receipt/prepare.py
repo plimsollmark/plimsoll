@@ -120,7 +120,7 @@ if coverage and (not junit or coverage == junit):
 project_request = {'files': files, 'steps': [command]}
 if junit:
     project_request['artifacts'] = [junit] + ([coverage] if coverage else [])
-request = {'protocol': 4, 'minimumIsolation': 'kernel', 'traceId': 'pr-receipt-' + number,
+request = {'protocol': 5, 'minimumIsolation': 'kernel', 'traceId': 'pr-receipt-' + number,
            'timeoutMs': 30000, 'project': project_request}
 out.mkdir(parents=True, exist_ok=True)
 (out / 'request.json').write_text(json.dumps(request, indent=2) + '\n')

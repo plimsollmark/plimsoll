@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plimsoll: what an npm package's code did when you installed it, signed and tied to its run</title>
+<meta name="description" content="Three npm packages installed and imported through plimsoll, each in its own gVisor pod on Kubernetes. From runsc's syscall log on the node, a signed receipt of what the programs in each pod did, joined to the run's signed record by the pod's UID. Two tampered copies fail the check.">
+<style>
+:root{color-scheme:light;--ink:#0b0b0b;--ink2:#3d3c39;--muted:#6b6a65;--line:#e4e3de;--paper:#fcfcfb;--soft:#f4f3ef;--teal:#0f766e;--bad:#b42318;--good:#106b54;--amber:#8a5a00;--slate:#33415c}
+*{box-sizing:border-box}
+body{margin:0;background:#fff;color:var(--ink);font:17px/1.6 Inter,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:28px 22px 90px}
+a{color:var(--teal);overflow-wrap:anywhere}
+nav.site{display:flex;flex-wrap:wrap;gap:6px 20px;align-items:baseline;padding:0 0 12px;margin:0 0 20px;border-bottom:1px solid #d1d9e0;font-size:15px}
+nav.site a:first-child{font-weight:700;color:#1f2328;text-decoration:none}
+h1{font-size:42px;line-height:1.1;margin:18px 0 10px;letter-spacing:-1px}
+h2{font-size:29px;line-height:1.15;margin:70px 0 10px;letter-spacing:-.4px}
+h3{font-size:19px;margin:22px 0 6px}
+p{margin:10px 0}
+dfn{font-style:normal;font-weight:600;border-bottom:1.5px dotted #8f8d86}
+.kicker{font-size:14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);margin:0}
+.lede{font-size:20px;color:var(--ink2);max-width:780px}
+.small{font-size:14px;color:var(--muted)}
+code,pre{font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:var(--soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:8px 0}
+.hero{display:grid;grid-template-columns:1.2fr 1fr;gap:28px;align-items:center}
+.hero > *{min-width:0}
+.hero svg{width:100%;height:auto;display:block}
+.caption{font-size:14px;color:var(--muted);margin-top:4px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:26px 0 0}
+.tile{border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--paper);min-width:0}
+.tile b{display:block;font-size:30px;line-height:1.1;letter-spacing:-.5px}
+.tile span{font-size:14px;color:var(--muted)}
+.tile .good{color:var(--good)}.tile .bad{color:var(--bad)}.tile .amber{color:var(--amber)}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:15px;margin:10px 0}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+th{font-size:13px;color:var(--muted);font-weight:600}
+td.num{text-align:right;white-space:nowrap}
+.fp{font:12.5px ui-monospace,Menlo,Consolas,monospace;color:var(--muted);overflow-wrap:anywhere}
+.aside{border-left:4px solid #e8a317;background:#fff8e6;padding:10px 14px;border-radius:0 10px 10px 0;max-width:820px;font-size:16px}
+.sides{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:16px 0}
+.sides > div{border-radius:14px;padding:14px 16px;min-width:0}
+.eff{background:#eaf6f1;border:1px solid #b6dfcc}
+.att{background:#fbf3e3;border:1px solid #efd9a8}
+.und{background:#eef0f7;border:1px solid #c6cbe0}
+.sides h3{margin:0 0 6px}
+.chip{display:inline-block;border-radius:99px;padding:1px 9px;font-size:13px;font-weight:600;white-space:nowrap;margin:2px 4px 2px 0}
+.chip.eff{color:#0d5a43}.chip.att{color:#7a4f00}.chip.und{color:#38407a}.chip.wr{background:#f4f3ef;border:1px solid #dcdad3;color:#3d3c39}
+.run{border:1px solid var(--line);border-radius:16px;padding:16px 18px;margin:22px 0;background:#fff}
+.run h3{margin:0 0 4px}
+.groups{display:grid;gap:10px;margin-top:12px}
+.group{border:1px solid var(--line);border-left:5px solid #a8a8a2;border-radius:10px;padding:10px 14px;background:var(--paper);min-width:0}
+.group.plimsoll{border-left-color:var(--slate)}
+.group.npm{border-left-color:#6a6fc0}
+.group.package{border-left-color:#e8a317;background:#fffbf0}
+.group b{font-size:16px}
+.group .who{font-size:14px;color:var(--ink2);margin:2px 0 6px}
+.procs{font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--ink2);margin:6px 0 0;padding:0;list-style:none}
+.procs li{overflow-wrap:anywhere}
+.calls{font-size:13.5px}
+.calls td{padding:4px 6px}
+.nw{white-space:nowrap}
+details{margin:8px 0}
+summary{cursor:pointer;color:var(--teal);font-size:14px;font-weight:600}
+tr.effected td:first-child{border-left:4px solid var(--good)}
+tr.attempted td:first-child{border-left:4px solid #e8a317}
+tr.undetermined td:first-child{border-left:4px solid #6a6fc0}
+.join{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:stretch;margin:14px 0}
+.join > div{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--paper);min-width:0}
+.join .eq{border:none;background:none;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:var(--teal);padding:0}
+.case{border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:16px 0;background:var(--paper)}
+.case .verdict{font-weight:700;color:var(--bad)}
+.edit{font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.edit mark{background:#fde2e1;color:var(--bad);font-weight:800;padding:0 2px;border-radius:3px}
+ul.limits li{margin:0 0 8px}
+footer{margin-top:80px;border-top:1px solid var(--line);padding-top:16px;font-size:14px;color:var(--muted)}
+@media (max-width:760px){
+ h1{font-size:32px}h2{font-size:25px}
+ .hero,.sides,.join{grid-template-columns:1fr}
+ .hero figure{max-width:440px}
+ .join .eq{transform:rotate(90deg)}
+ table{font-size:13px}th,td{padding:6px 4px}
+}
+</style>
+</head>
+<body>
+<main>
+<nav class="site"><a href="https://plimsollmark.github.io/plimsoll/">plimsoll home</a><a href="../agentsandbox/index.html">The agent-sandbox evidence (INTERNAL · example page →)</a><a href="https://plimsollmark.github.io/plimsoll/trainers/">Lessons</a><a href="https://github.com/plimsollmark/plimsoll/tree/main/examples/dependency-receipt">Source (EXTERNAL · source repo ↗)</a></nav>
+
+<section class="hero">
+<div>
+<p class="kicker">Dependency behavior receipt, live through plimsoll</p>
+<h1>You installed a package. Here is what its code did, signed and tied to the run that installed it.</h1>
+<p class="lede">Installing a package with npm, the package manager for Node.js (a JavaScript runtime), runs the package's <dfn>install script</dfn>, a command its <code>package.json</code> names (such as <code>postinstall</code>) that npm runs on the machine doing the install (<a href="https://docs.npmjs.com/cli/v10/using-npm/scripts">npm's scripts guide (EXTERNAL · official docs ↗)</a>). Importing the package runs its code again. Nothing in the install's output says what that code did. On this page plimsoll ran three installs, each in its own fresh <a href="../../trainers/glossary.html#sandbox">sandbox (INTERNAL · glossary →)</a> under <a href="../../trainers/glossary.html#gvisor">gVisor (INTERNAL · glossary →)</a>, and for each one signed a <dfn>receipt</dfn>: what the programs in that sandbox did, read from outside it, and which run it was.</p>
+</div>
+<figure style="margin:0">
+<svg viewBox="0 0 420 560" role="img" aria-labelledby="flowT flowD">
+<title id="flowT">How a receipt is made for a run plimsoll dispatched</title>
+<desc id="flowD">The harness asks plimsolld for a run and signs its run record into a bundle. plimsolld claims a pod from a warm pool and sends the install into it. Inside the pod, gVisor answers every system call, and runsc writes each one to a log on the node, outside the pod. The receipt is built from that log, joined to the run record by the pod's UID, and signed.</desc>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0f766e"/></marker><marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b6a65"/></marker></defs>
+<rect x="0" y="0" width="420" height="560" rx="20" fill="#f4f8f7"/>
+<g data-box="harness"><rect x="14" y="14" width="392" height="66" rx="14" fill="#fff" stroke="#33415c" stroke-width="2"/>
+<text x="210" y="40" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="800" fill="#0b0b0b">The harness</text>
+<text x="210" y="62" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" fill="#3d3c39">asks for each install; signs each run record</text></g>
+<path d="M150 82 V112" stroke="#0f766e" stroke-width="3" marker-end="url(#ah)"/>
+<text x="140" y="102" text-anchor="end" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" fill="#0f766e">one run</text>
+<path d="M270 112 V86" fill="none" stroke="#6b6a65" stroke-width="2.5" marker-end="url(#ag)"/>
+<text x="280" y="102" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" fill="#3d3c39">result + run record</text>
+<g data-box="plimsolld"><rect x="110" y="116" width="200" height="50" rx="10" fill="#33415c"/>
+<text x="210" y="138" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="15" font-weight="800" fill="#fff">plimsolld</text>
+<text x="210" y="156" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" fill="#d7dce5">claims a pod, sends the steps</text></g>
+<path d="M210 168 V196" stroke="#0f766e" stroke-width="3" marker-end="url(#ah)"/>
+<g data-box="node"><rect x="14" y="200" width="392" height="232" rx="14" fill="#fff" stroke="#c9c7bf" stroke-width="2"/>
+<text x="30" y="222" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="800" fill="#3d3c39">Kubernetes node</text></g>
+<g data-box="pod"><rect x="30" y="232" width="360" height="118" rx="12" fill="#fff" stroke="#0f766e" stroke-width="3" stroke-dasharray="7 4"/>
+<text x="210" y="254" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#0b0b0b">one pod, under gVisor</text>
+<text x="46" y="280" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12.5" fill="#0f766e">npm install ./packages/network</text>
+<text x="46" y="302" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12.5" fill="#8a5a00">  postinstall: node install.js</text>
+<text x="46" y="324" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12.5" fill="#0f766e">node -e require(…)</text>
+<text x="46" y="342" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="11.5" fill="#6b6a65">every system call goes to gVisor, not the host</text></g>
+<path d="M210 352 V374" stroke="#6b6a65" stroke-width="2.5" marker-end="url(#ag)"/>
+<g data-box="runsc"><rect x="30" y="378" width="360" height="44" rx="8" fill="#eef0f7" stroke="#6a6fc0"/>
+<text x="210" y="397" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="13" font-weight="700" fill="#0b0b0b">runsc writes each call to a log on the node</text>
+<text x="210" y="414" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="11.5" fill="#3d3c39">outside the pod: the code cannot reach it</text></g>
+<path d="M210 434 V458" stroke="#6b6a65" stroke-width="2.5" marker-end="url(#ag)"/>
+<g data-box="receipt"><rect x="14" y="462" width="392" height="84" rx="14" fill="#fff" stroke="#33415c" stroke-width="2"/>
+<text x="30" y="486" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="14" font-weight="800" fill="#0b0b0b">The receipt, signed</text>
+<text x="390" y="486" text-anchor="end" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12" fill="#3d3c39">joined by the pod's UID</text>
+<rect x="30" y="498" width="112" height="34" rx="8" fill="#eaf6f1" stroke="#b6dfcc"/>
+<text x="86" y="520" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#0d5a43">effected</text>
+<rect x="154" y="498" width="112" height="34" rx="8" fill="#fbf3e3" stroke="#efd9a8"/>
+<text x="210" y="520" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#7a4f00">attempted</text>
+<rect x="278" y="498" width="112" height="34" rx="8" fill="#eef0f7" stroke="#c6cbe0"/>
+<text x="334" y="520" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#38407a">undetermined</text></g>
+</svg>
+<figcaption class="caption">The package's code runs in the pod. The record of what it asked for is written by gVisor's runsc on the node, outside the pod.</figcaption>
+</figure>
+</section>
+
+<div class="tiles">
+<div class="tile"><b class="good">3 of 3</b><span>installs dispatched by plimsoll, each to its own pod, with a receipt joined to the run's signed record by that pod's UID</span></div>
+<div class="tile"><b class="amber">203.0.113.7 port 443</b><span>where the network package's install script started a connection; its outcome is not in the log, so the receipt says <i>undetermined</i></span></div>
+<div class="tile"><b class="amber">/root/.canary</b><span>the file the canary package's install script tried to write; refused with errno=13 (permission denied), so the receipt says <i>attempted</i></span></div>
+<div class="tile"><b class="good">3 refused</b><span>the three changed or mismatched inputs: a connection deleted from a receipt, one byte of a log changed, a log joined to another run's record</span></div>
+</div>
+
+<h2 id="what">What a receipt is, and what made it</h2>
+<p>gVisor is a kernel written as an ordinary program: the code in the pod talks to it instead of to the machine's own kernel. Every <a href="../../trainers/glossary.html#syscall">system call (INTERNAL · glossary →)</a> the code makes, such as opening a file, starting a program or opening a connection, is answered by gVisor. Started with its <code>--strace</code> option, gVisor's <a href="../../trainers/glossary.html#runsc">runsc (INTERNAL · glossary →)</a> also writes every such call to a log file on the node (<a href="https://gvisor.dev/docs/user_guide/debugging/">gVisor's debugging guide (EXTERNAL · official docs ↗)</a>). The node is the machine that runs the pod, and the log file is outside the pod, where the code inside cannot write. Reading package behavior from that log is also the approach of package-analysis, the Open Source Security Foundation's tool for watching what published packages do (<a href="https://github.com/ossf/package-analysis">EXTERNAL · source repo ↗</a>).</p>
+<p>The <dfn>receipt</dfn> is what <code>examples/dependency-receipt</code> reads from one such log: the processes and the programs started in them, every file written, and every open for writing, file change and network call, each with its outcome. It is signed as an <a href="../../trainers/glossary.html#in-toto">in-toto (INTERNAL · glossary →)</a> statement (<a href="https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md">the Statement specification (EXTERNAL · source repo ↗)</a>) in a <a href="../../trainers/glossary.html#dsse">DSSE (INTERNAL · glossary →)</a> envelope, the same envelope plimsoll signs its <a href="../../trainers/glossary.html#run-record">run records (INTERNAL · glossary →)</a> in. A run record is plimsoll's statement of one run: what was sent, what came back, and which sandbox ran it. The receipt names the log by its <a href="../../trainers/glossary.html#digest">digest (INTERNAL · glossary →)</a> and the run record by its digest, so it is about exactly one log and one run.</p>
+<p>These runs used plimsoll's <a href="../../trainers/glossary.html#agent-sandbox">agent-sandbox (INTERNAL · glossary →)</a> provider: Kubernetes, a system that runs containers across machines, keeps a <dfn>warm pool</dfn> of ready <dfn>pods</dfn> (a pod is Kubernetes' unit of one or more containers run together; <a href="https://kubernetes.io/docs/concepts/workloads/pods/">Kubernetes' pods page (EXTERNAL · official docs ↗)</a>), and each run claims one, uses it once, and deletes it. The pods ran under the <a href="../../trainers/glossary.html#runtimeclass">RuntimeClass (INTERNAL · glossary →)</a> <code>gvisor-receipt</code>, whose handler <code>runsc-receipt</code> is gVisor with the system-call log turned on; plimsolld, the plimsoll server, was told that handler is gVisor and held every pod to gVisor's boot line before sending it any code. All of it ran on a local <a href="https://kind.sigs.k8s.io/">kind (EXTERNAL · official docs ↗)</a> cluster on 2026-10-29; nothing was paid for.</p>
+
+<h2 id="runs">The three installs</h2>
+<p>Each run sent one package's files as a project and ran two steps in its pod: an offline <code>npm install</code> of the package from its directory (<code>--install-links</code> copies it into <code>node_modules</code> as an install from a tarball would, and runs its install script), then a <code>node</code> command that imports it. The packages are the fixtures beside the receipt code; none comes from the public registry, and plimsoll sends no run to a pod unless a network policy denies the pod's traffic out.</p>
+<div class="scroll"><table>
+<thead><tr><th>Package</th><th>Its install script</th><th>Steps (exit code, time)</th><th>Pod UID</th><th>Tier</th><th>Run record (bundle line)</th><th>runsc log</th><th>Receipt</th></tr></thead>
+<tbody>
+<tr>
+<td><b>quiet</b></td>
+<td>none</td>
+<td>1: exit 0, 5.5 s<br>2: exit 0, 0.1 s</td>
+<td class="fp">fcbbc735…</td>
+<td>kernel</td>
+<td class="fp">b69b8960903c (1)</td>
+<td class="num">3.5 MB<br><span class="small">11,264 calls</span></td>
+<td class="num">379 KB</td>
+</tr>
+<tr>
+<td><b>network</b></td>
+<td><code>postinstall: node install.js</code> </td>
+<td>1: exit 0, 6.8 s<br>2: exit 0, 0.1 s</td>
+<td class="fp">6ff9c6f1…</td>
+<td>kernel</td>
+<td class="fp">bf86e832588e (2)</td>
+<td class="num">3.6 MB<br><span class="small">11,518 calls</span></td>
+<td class="num">381 KB</td>
+</tr>
+<tr>
+<td><b>canary</b></td>
+<td><code>postinstall: node install.js</code> </td>
+<td>1: exit 1, 6.4 s<br>2: not run (a step that fails stops the run)</td>
+<td class="fp">7f4001ae…</td>
+<td>kernel</td>
+<td class="fp">3400f04835e2 (3)</td>
+<td class="num">3.5 MB<br><span class="small">11,308 calls</span></td>
+<td class="num">380 KB</td>
+</tr>
+</tbody></table></div>
+<p class="small">Tier is the <a href="../../trainers/glossary.html#isolation-tier">isolation tier (INTERNAL · glossary →)</a> the run record states: <code>kernel</code> means gVisor stood between the code and the node's kernel. Every request asked for at least <code>kernel</code>, and the daemon was set to refuse any run below it. Each run record's start and end are 6.9 s (quiet), 7.2 s (network) and 6.8 s (canary) apart. The log sizes are as runsc wrote them; the published copies are gzip-compressed.</p>
+<p>What each package's install script does, from its source in <code>examples/dependency-receipt/fixtures/packages</code>: <b>quiet</b> has none. <b>network</b> starts a TCP connection (the kind a web request uses) to 203.0.113.7 port 443, looks up the name <code>canary.example</code> (a DNS lookup, which turns a name into an address), and sends a UDP datagram (one packet, sent with no connection) to 198.51.100.9 port 53. Both addresses are reserved for documentation, so no real host has them (<a href="https://www.rfc-editor.org/rfc/rfc5737">RFC 5737 (EXTERNAL · standard ↗)</a>). <b>canary</b> first writes <code>/root/.canary</code>; if that works it goes on to write through a symlink into <code>/etc</code>, rename and remove a file, and write to <code>/proc</code>. Here its first write was refused, so its script stopped and npm failed:</p>
+<details><summary>What npm printed for the canary install (exit 1)</summary><pre>$ npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/canary
+
+&gt; plimsoll-fixture-canary@1.0.0 postinstall
+&gt; node install.js
+
+node:fs:2430
+    return binding.writeFileUtf8(
+                   ^
+
+Error: EACCES: permission denied, open &#39;/root/.canary&#39;
+    at Object.writeFileSync (node:fs:2430:20)
+    at Object.&lt;anonymous&gt; (/work/project/node_modules/plimsoll-fixture-canary/install.js:4:4)
+    at Module._compile (node:internal/modules/cjs/loader:1781:14)
+    at Object..js (node:internal/modules/cjs/loader:1913:10)
+    at Module.load (node:internal/modules/cjs/loader:1505:32)
+    at Function._load (node:internal/modules/cjs/loader:1309:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:254:19)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+    at node:internal/main/run_main_module:36:49 {
+  errno: -13,
+  code: &#39;EACCES&#39;,
+  syscall: &#39;open&#39;,
+  path: &#39;/root/.canary&#39;
+}
+
+Node.js v22.23.4
+npm error code 1
+npm error path /work/project/node_modules/plimsoll-fixture-canary
+npm error command failed
+npm error command sh -c node install.js
+npm error A complete log of this run can be found in: /work/.npm/_logs/2026-10-29T18_14_18_523Z-debug-0.log
+</pre></details>
+
+<h2 id="who">Who did what in each pod</h2>
+<p>A receipt covers the pod's whole life, not only the package: sandboxd (agent-sandbox's daemon in the pod, which starts each command plimsoll sends), plimsoll's own check of the pod, plimsoll's runner, npm, and the package. The receipt lists every process by its PID (process ID), the programs started in it, and which process made each call. This page groups the processes by the command that started them: a step's shell is matched to the step's exact text in the signed request, and an install script's shell to the script's exact text in the <code>package.json</code> the run sent. The grouping is the page's reading; the receipt itself lists every process and call ungrouped.</p>
+<p><span class="chip eff">effected</span> the call returned success, <span class="chip att">attempted</span> it returned an error, <span class="chip und">undetermined</span> the log does not show its outcome (the next section says more), <span class="chip wr">written</span> files written. For the package's own groups (amber) every call is listed; for the others, every call that did not succeed and every network call other than opening a new socket.</p>
+
+<div class="run" id="run-quiet">
+<h3>The quiet package: 13 processes, 19 programs started, 563 files written</h3>
+<p class="small">Receipt <code>receipts/quiet.intoto.json.gz</code>: <span class="chip eff">1164 effected</span><span class="chip att">24 attempted</span><span class="chip und">0 undetermined</span> and no entry the reader could not read as one event.</p>
+<div class="groups">
+<div class="group ">
+<b>The pod&#39;s start and sandboxd</b>
+<div class="who">The pod&#39;s first process, which runsc starts from the container spec, so the log shows no program load for it, and what it forked without loading a program. The first process bound ports 9090 and 8080, sandboxd&#39;s two ports in the template: it is sandboxd, agent-sandbox&#39;s daemon in the pod.</div>
+<span class="chip eff">11 effected</span><span class="chip att">1 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 1, exit 0: no program load in the log</li><li>PID 8 (from 1), exit 0: no program load in the log</li></ul>
+<details><summary>7 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="effected"><td>effected</td><td>bind</td><td class="fp">::1 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">::ffff:7f00:1 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">port 9090 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>listen</td><td class="fp">socket:[4]</td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">port 8080 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>listen</td><td class="fp">socket:[5]</td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="attempted"><td>attempted</td><td>socket</td><td class="fp">AF_INET SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK</td><td class="fp">errno=22 (invalid argument)</td><td class="fp nw">PID 1</td></tr></tbody></table></div></details>
+</div>
+<div class="group plimsoll">
+<b>plimsoll&#39;s check of the pod</b>
+<div class="who">The command plimsoll sends before any of the run&#39;s code: it reads the kernel&#39;s first log line (gVisor&#39;s boot line), the boot ID, the seccomp mode (the kernel&#39;s filter on which calls a process may make) and the mount table.</div>
+<span class="chip eff">4 effected</span><span class="chip att">3 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 9 (from 1), exit 0: cat /proc/mounts</li><li>PID 11 (from 9), exit 0: no program load in the log</li><li>PID 12 (from 11), exit 0: dmesg</li><li>PID 13 (from 11), exit 0: head -n 1</li><li>PID 14 (from 9), exit 0: cat /proc/sys/kernel/random/boot_id</li><li>PID 15 (from 9), exit 0: grep ^Seccomp: /proc/self/status</li></ul>
+<details><summary>3 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 9</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 9</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 9</td></tr></tbody></table></div></details>
+</div>
+<div class="group plimsoll">
+<b>plimsoll&#39;s runner</b>
+<div class="who">plimsoll&#39;s in-sandbox runner, node /runner.mjs: it writes the run&#39;s files, checks that a step cannot open its descriptors, then starts each step in its own shell.</div>
+<span class="chip eff">9 effected</span><span class="chip att">9 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">3 written</span>
+<ul class="procs"><li>PID 16 (from 1), exit 0: node /runner.mjs</li><li>PID 17 (from 16), exit 0: mkdir -p /work/project</li><li>PID 24 (from 16), exit 0: /usr/local/bin/node -e const fs=require(&#34;node:fs&#34;); const p=&#34;/proc/&#34;&#43;process.ppid; const checks=[[p&#43;&#34;/fd/0&#34;,fs.constants.O_RDONLY],[p&#43;&#34;/fd/1&#34;,fs.const …</li></ul>
+<details><summary>9 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="attempted"><td>attempted</td><td>open for writing</td><td class="fp">/proc/16/fd/1</td><td class="fp">errno=13 (permission denied)</td><td class="fp nw">PID 24</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 17</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 17</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/packages/quiet</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/packages/quiet</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr></tbody></table></div></details>
+</div>
+<div class="group npm">
+<b>Step 1: npm install</b>
+<div class="who">npm itself, installing the package from its directory, offline. Its install script, if it has one, is the next group.</div>
+<span class="chip eff">1140 effected</span><span class="chip att">11 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">560 written, 552 of them node's compile cache</span>
+<ul class="procs"><li>PID 31 (from 16), exit 0: node /usr/local/bin/npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/quiet</li></ul>
+<details><summary>18 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="effected"><td>effected</td><td>connect</td><td class="fp">127.0.0.1 port 65535 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>connect</td><td class="fp">::1 port 65535 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">no address stated <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/tmp/node-compile-cache/v22.23.4-x64-9ac5647c-61000</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/node_modules/plimsoll-fixture-quiet</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/node_modules/plimsoll-fixture-quiet</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/tmp</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512/ad/89</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512/ad</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512/ad/89</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/index-v5/fe/d1</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/index-v5/fe</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr></tbody></table></div></details>
+</div>
+<div class="group package">
+<b>Step 2: the import</b>
+<div class="who">node loading the installed package: this is the package&#39;s own code running at import time.</div>
+<span class="chip eff">0 effected</span><span class="chip att">0 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 43 (from 16), exit 0: node -e require(&#34;plimsoll-fixture-quiet&#34;)</li></ul>
+
+</div>
+</div>
+</div>
+
+<div class="run" id="run-network">
+<h3>The network package: 14 processes, 21 programs started, 565 files written</h3>
+<p class="small">Receipt <code>receipts/network.intoto.json.gz</code>: <span class="chip eff">1176 effected</span><span class="chip att">25 attempted</span><span class="chip und">1 undetermined</span> and no entry the reader could not read as one event.</p>
+<div class="groups">
+<div class="group ">
+<b>The pod&#39;s start and sandboxd</b>
+<div class="who">The pod&#39;s first process, which runsc starts from the container spec, so the log shows no program load for it, and what it forked without loading a program. The first process bound ports 9090 and 8080, sandboxd&#39;s two ports in the template: it is sandboxd, agent-sandbox&#39;s daemon in the pod.</div>
+<span class="chip eff">11 effected</span><span class="chip att">1 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 1, exit 0: no program load in the log</li><li>PID 8 (from 1), exit 0: no program load in the log</li></ul>
+<details><summary>7 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="effected"><td>effected</td><td>bind</td><td class="fp">::1 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">::ffff:7f00:1 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">port 9090 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>listen</td><td class="fp">socket:[4]</td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">port 8080 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>listen</td><td class="fp">socket:[5]</td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="attempted"><td>attempted</td><td>socket</td><td class="fp">AF_INET SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK</td><td class="fp">errno=22 (invalid argument)</td><td class="fp nw">PID 1</td></tr></tbody></table></div></details>
+</div>
+<div class="group plimsoll">
+<b>plimsoll&#39;s check of the pod</b>
+<div class="who">The command plimsoll sends before any of the run&#39;s code: it reads the kernel&#39;s first log line (gVisor&#39;s boot line), the boot ID, the seccomp mode (the kernel&#39;s filter on which calls a process may make) and the mount table.</div>
+<span class="chip eff">4 effected</span><span class="chip att">3 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 9 (from 1), exit 0: cat /proc/mounts</li><li>PID 11 (from 9), exit 0: no program load in the log</li><li>PID 12 (from 11), exit 0: dmesg</li><li>PID 13 (from 11), exit 0: head -n 1</li><li>PID 14 (from 9), exit 0: cat /proc/sys/kernel/random/boot_id</li><li>PID 15 (from 9), exit 0: grep ^Seccomp: /proc/self/status</li></ul>
+<details><summary>3 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 9</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 9</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 9</td></tr></tbody></table></div></details>
+</div>
+<div class="group plimsoll">
+<b>plimsoll&#39;s runner</b>
+<div class="who">plimsoll&#39;s in-sandbox runner, node /runner.mjs: it writes the run&#39;s files, checks that a step cannot open its descriptors, then starts each step in its own shell.</div>
+<span class="chip eff">10 effected</span><span class="chip att">10 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">4 written</span>
+<ul class="procs"><li>PID 16 (from 1), exit 0: node /runner.mjs</li><li>PID 17 (from 16), exit 0: mkdir -p /work/project</li><li>PID 24 (from 16), exit 0: /usr/local/bin/node -e const fs=require(&#34;node:fs&#34;); const p=&#34;/proc/&#34;&#43;process.ppid; const checks=[[p&#43;&#34;/fd/0&#34;,fs.constants.O_RDONLY],[p&#43;&#34;/fd/1&#34;,fs.const …</li></ul>
+<details><summary>10 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="attempted"><td>attempted</td><td>open for writing</td><td class="fp">/proc/16/fd/1</td><td class="fp">errno=13 (permission denied)</td><td class="fp nw">PID 24</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 17</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 17</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/packages/network</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/packages/network</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/packages/network</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr></tbody></table></div></details>
+</div>
+<div class="group npm">
+<b>Step 1: npm install</b>
+<div class="who">npm itself, installing the package from its directory, offline. Its install script, if it has one, is the next group.</div>
+<span class="chip eff">1141 effected</span><span class="chip att">11 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">561 written, 552 of them node's compile cache</span>
+<ul class="procs"><li>PID 31 (from 16), exit 0: node /usr/local/bin/npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/network</li></ul>
+<details><summary>18 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="effected"><td>effected</td><td>connect</td><td class="fp">127.0.0.1 port 65535 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>connect</td><td class="fp">::1 port 65535 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">no address stated <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/tmp/node-compile-cache/v22.23.4-x64-9ac5647c-61000</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/node_modules/plimsoll-fixture-network</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/node_modules/plimsoll-fixture-network</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/tmp</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512/5d/37</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512/5d</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512/5d/37</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/index-v5/10/b1</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/index-v5/10</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr></tbody></table></div></details>
+</div>
+<div class="group package">
+<b>The package&#39;s postinstall script</b>
+<div class="who">npm runs this when it installs the package: package.json says &#34;postinstall&#34;: &#34;node install.js&#34;. Everything here is the package&#39;s own code.</div>
+<span class="chip eff">10 effected</span><span class="chip att">0 attempted</span><span class="chip und">1 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 43 (from 31), exit 0: node install.js</li></ul>
+<div class="scroll"><table class="calls"><tbody><tr class="effected"><td>effected</td><td>socket</td><td class="fp">AF_INET SOCK_DGRAM|SOCK_CLOEXEC|SOCK_NONBLOCK</td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">no address stated <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="effected"><td>effected</td><td>socket</td><td class="fp">AF_INET SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK</td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="effected"><td>effected</td><td>socket</td><td class="fp">AF_INET SOCK_DGRAM|SOCK_CLOEXEC|SOCK_NONBLOCK</td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">no address stated <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">sendmsg: the destination is not in the log; the message header changed during the call</td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 43</td></tr><tr class="undetermined"><td>undetermined</td><td>connect</td><td class="fp">203.0.113.7 port 443 <span class="small">(AF_INET)</span></td><td class="fp">errno=115 (operation now in progress)</td><td class="fp nw">PID 43</td></tr></tbody></table></div>
+</div>
+<div class="group package">
+<b>Step 2: the import</b>
+<div class="who">node loading the installed package: this is the package&#39;s own code running at import time.</div>
+<span class="chip eff">0 effected</span><span class="chip att">0 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 54 (from 16), exit 0: node -e require(&#34;plimsoll-fixture-network&#34;)</li></ul>
+
+</div>
+</div>
+</div>
+
+<div class="run" id="run-canary">
+<h3>The canary package: 13 processes, 19 programs started, 562 files written</h3>
+<p class="small">Receipt <code>receipts/canary.intoto.json.gz</code>: <span class="chip eff">1168 effected</span><span class="chip att">28 attempted</span><span class="chip und">0 undetermined</span> and no entry the reader could not read as one event.</p>
+<div class="groups">
+<div class="group ">
+<b>The pod&#39;s start and sandboxd</b>
+<div class="who">The pod&#39;s first process, which runsc starts from the container spec, so the log shows no program load for it, and what it forked without loading a program. The first process bound ports 9090 and 8080, sandboxd&#39;s two ports in the template: it is sandboxd, agent-sandbox&#39;s daemon in the pod.</div>
+<span class="chip eff">11 effected</span><span class="chip att">1 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 1, exit 0: no program load in the log</li><li>PID 8 (from 1), exit 0: no program load in the log</li></ul>
+<details><summary>7 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="effected"><td>effected</td><td>bind</td><td class="fp">::1 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">::ffff:7f00:1 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">port 9090 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>listen</td><td class="fp">socket:[4]</td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">port 8080 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="effected"><td>effected</td><td>listen</td><td class="fp">socket:[5]</td><td class="fp">ok</td><td class="fp nw">PID 1</td></tr><tr class="attempted"><td>attempted</td><td>socket</td><td class="fp">AF_INET SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK</td><td class="fp">errno=22 (invalid argument)</td><td class="fp nw">PID 1</td></tr></tbody></table></div></details>
+</div>
+<div class="group plimsoll">
+<b>plimsoll&#39;s check of the pod</b>
+<div class="who">The command plimsoll sends before any of the run&#39;s code: it reads the kernel&#39;s first log line (gVisor&#39;s boot line), the boot ID, the seccomp mode (the kernel&#39;s filter on which calls a process may make) and the mount table.</div>
+<span class="chip eff">4 effected</span><span class="chip att">3 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 9 (from 1), exit 0: cat /proc/mounts</li><li>PID 11 (from 9), exit 0: no program load in the log</li><li>PID 12 (from 11), exit 0: dmesg</li><li>PID 13 (from 11), exit 0: head -n 1</li><li>PID 14 (from 9), exit 0: cat /proc/sys/kernel/random/boot_id</li><li>PID 15 (from 9), exit 0: grep ^Seccomp: /proc/self/status</li></ul>
+<details><summary>3 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 9</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 9</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 9</td></tr></tbody></table></div></details>
+</div>
+<div class="group plimsoll">
+<b>plimsoll&#39;s runner</b>
+<div class="who">plimsoll&#39;s in-sandbox runner, node /runner.mjs: it writes the run&#39;s files, checks that a step cannot open its descriptors, then starts each step in its own shell.</div>
+<span class="chip eff">10 effected</span><span class="chip att">10 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">4 written</span>
+<ul class="procs"><li>PID 16 (from 1), exit 0: node /runner.mjs</li><li>PID 17 (from 16), exit 0: mkdir -p /work/project</li><li>PID 24 (from 16), exit 0: /usr/local/bin/node -e const fs=require(&#34;node:fs&#34;); const p=&#34;/proc/&#34;&#43;process.ppid; const checks=[[p&#43;&#34;/fd/0&#34;,fs.constants.O_RDONLY],[p&#43;&#34;/fd/1&#34;,fs.const …</li></ul>
+<details><summary>10 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="attempted"><td>attempted</td><td>open for writing</td><td class="fp">/proc/16/fd/1</td><td class="fp">errno=13 (permission denied)</td><td class="fp nw">PID 24</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 17</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 17</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/packages/canary</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/packages/canary</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/packages/canary</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr><tr class="attempted"><td>attempted</td><td>connect</td><td class="fp">/var/run/nscd/socket <span class="small">(AF_UNIX)</span></td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 16</td></tr></tbody></table></div></details>
+</div>
+<div class="group npm">
+<b>Step 1: npm install</b>
+<div class="who">npm itself, installing the package from its directory, offline. Its install script, if it has one, is the next group.</div>
+<span class="chip eff">1143 effected</span><span class="chip att">13 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">558 written, 552 of them node's compile cache</span>
+<ul class="procs"><li>PID 31 (from 16), exit 1: node /usr/local/bin/npm install --offline --no-audit --no-fund --foreground-scripts --install-links ./packages/canary</li></ul>
+<details><summary>20 calls listed</summary><div class="scroll"><table class="calls"><tbody><tr class="effected"><td>effected</td><td>connect</td><td class="fp">127.0.0.1 port 65535 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>connect</td><td class="fp">::1 port 65535 <span class="small">(AF_INET6)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>bind</td><td class="fp">no address stated <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="effected"><td>effected</td><td>send</td><td class="fp">127.0.0.1 port 53 <span class="small">(AF_INET)</span></td><td class="fp">ok</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/tmp/node-compile-cache/v22.23.4-x64-9ac5647c-61000</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/node_modules/plimsoll-fixture-canary</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/project/node_modules/plimsoll-fixture-canary</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/tmp</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512/c2/97</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512/c2</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/content-v2/sha512/c2/97</td><td class="fp">errno=17 (file exists)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/index-v5/5d/5c</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>mkdir</td><td class="fp">/work/.npm/_cacache/index-v5/5d</td><td class="fp">errno=2 (no such file or directory)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>rmdir</td><td class="fp">/work/project/node_modules</td><td class="fp">errno=39 (directory not empty)</td><td class="fp nw">PID 31</td></tr><tr class="attempted"><td>attempted</td><td>rmdir</td><td class="fp">/work/project/node_modules/plimsoll-fixture-canary</td><td class="fp">errno=39 (directory not empty)</td><td class="fp nw">PID 31</td></tr></tbody></table></div></details>
+</div>
+<div class="group package">
+<b>The package&#39;s postinstall script</b>
+<div class="who">npm runs this when it installs the package: package.json says &#34;postinstall&#34;: &#34;node install.js&#34;. Everything here is the package&#39;s own code.</div>
+<span class="chip eff">0 effected</span><span class="chip att">1 attempted</span><span class="chip und">0 undetermined</span><span class="chip wr">0 written</span>
+<ul class="procs"><li>PID 43 (from 31), exit 1: node install.js</li></ul>
+<div class="scroll"><table class="calls"><tbody><tr class="attempted"><td>attempted</td><td>open to create or empty</td><td class="fp">/root/.canary</td><td class="fp">errno=13 (permission denied)</td><td class="fp nw">PID 43</td></tr></tbody></table></div>
+</div>
+</div>
+</div>
+
+<p class="aside">Most of what the receipts list is npm, not the package. npm turns on node's compile cache (<a href="https://nodejs.org/api/module.html#module-compile-cache">node's module documentation (EXTERNAL · official docs ↗)</a>), and in the quiet run 552 of the 560 files npm wrote are that cache. A package's own groups are short by comparison: that is what grouping by process is for.</p>
+
+<h2 id="sides">The receipt's three sides, in plain words</h2>
+<p>Every open for writing, file change and network call in a receipt sits on exactly one of three sides, decided by what the call returned in the log.</p>
+<div class="sides">
+<div class="eff"><h3>Effected</h3><p>The call returned success: it did what it asked. The network package's script sent 4 datagrams to port 53 of 127.0.0.1, the address the pod's name resolver is set to. Its source looks up <code>canary.example</code>, and a lookup shows in the log as a datagram to port 53, never as the name.</p></div>
+<div class="att"><h3>Attempted</h3><p>The call returned an error. The canary script's open of <code>/root/.canary</code> answered <code>errno=13 (permission denied)</code>, the error number and name the call returned: the code runs as user 61000 on a read-only root. Of the 77 attempted calls in the three receipts, 50 are a <code>mkdir</code> answering that the directory was already there (file exists) or that its parent was not there yet, and 18 are a connect to <code>/var/run/nscd/socket</code>, a name-service socket that does not exist in the pod. Attempted means the call failed, not that a policy stopped it, and never that the package did not try.</p></div>
+<div class="und"><h3>Undetermined</h3><p>The log does not show the outcome. The network script's <code>connect</code> to 203.0.113.7 port 443 answered <code>errno=115 (operation now in progress)</code>: node connects without waiting, and whether the connection ever completed is decided by calls the log does not follow. plimsoll refuses a pod unless a network policy denies its traffic out and this daemon's startup check saw all 7 outbound connections it tried from the pool's pods time out or find no route. The receipt does not lean on any of that: it says only that the connection was started.</p></div>
+</div>
+
+<h2 id="join">Which run it was</h2>
+<p>plimsoll reads each claimed pod back from Kubernetes before it sends any code, and the run record names the pod by its UID, the unique ID the API server gave it when it was made. Kubernetes never gives that UID to another object in the cluster's history. runsc logs each container's spec when the pod starts, before any program in it runs, and the spec names the same UID. The receipt command verifies the run record's signature in the <dfn>bundle</dfn> (the <a href="../../trainers/glossary.html#harness">harness (INTERNAL · glossary →)</a>'s signed file of run records, one per line), requires the two UIDs to be equal, and names the record by its digest as the receipt's second subject.</p>
+<div class="join">
+<div><b>Run record</b>, bundle line 1<br><span class="fp">instance k8s-pod-uid:fcbbc735-79ae-4871-b08f-3a8dab68675f<br>record b69b8960903c708887f2eaeecd140224e9a9306efd7d3cafd5ee35bcd1291205</span></div>
+<div class="eq">=</div>
+<div><b>runsc log</b> of the quiet run<br><span class="fp">container spec, pod UID fcbbc735-79ae-4871-b08f-3a8dab68675f<br>log 8f458f815dbe87f88031f6e8956cfc54e336ff452a4ab95b623f2629c356833e</span></div>
+</div><div class="join">
+<div><b>Run record</b>, bundle line 2<br><span class="fp">instance k8s-pod-uid:6ff9c6f1-4b63-40a0-af88-869b1a087a1b<br>record bf86e832588ee1c77659c9bae0763b7e614aa40d51bceb525b80fcdcccf6013d</span></div>
+<div class="eq">=</div>
+<div><b>runsc log</b> of the network run<br><span class="fp">container spec, pod UID 6ff9c6f1-4b63-40a0-af88-869b1a087a1b<br>log 98f9a3e05af99afbd6e853613b30757033376c58946b36ee9b846ca4899a65e0</span></div>
+</div><div class="join">
+<div><b>Run record</b>, bundle line 3<br><span class="fp">instance k8s-pod-uid:7f4001ae-cf30-4523-868f-50168cf8fd58<br>record 3400f04835e2a3395e3a8ba9f624586b5df21619cc959d8cfc1c08e2e15f1ef7</span></div>
+<div class="eq">=</div>
+<div><b>runsc log</b> of the canary run<br><span class="fp">container spec, pod UID 7f4001ae-cf30-4523-868f-50168cf8fd58<br>log 13e70966358938126ca8e0fe77bcbe57e4c534d4916eff2487423fc8c51a33c2</span></div>
+</div>
+<div class="case">
+<p><b>The wrong run's record is refused.</b> Signing the network run's log joined to the quiet run's record (bundle line 1). This and the commands below ran in the live run's scratch directory, where the receipts were not yet compressed and the key that signed them sat in <code>secrets/</code>:</p>
+<pre>$ dependency-receipt -log logs/network.boot.json.gz -key secrets/harness.key -out tampered/never-written.intoto.json -bundle bundle.jsonl -line 1 
+dependency-receipt: receipt: refused: the run record names instance &#34;k8s-pod-uid:fcbbc735-79ae-4871-b08f-3a8dab68675f&#34;, the log names &#34;k8s-pod-uid:6ff9c6f1-4b63-40a0-af88-869b1a087a1b&#34;
+exit 1</pre>
+<p class="verdict">Refused before anything was signed.</p>
+</div>
+
+<h2 id="tamper">Changing a receipt or its log fails the check</h2>
+<p>The check opens a receipt under the signer's public key, rebuilds the whole claim from the log and the run record it names, and requires the two to be identical, byte for byte. Each receipt above checked. Two changed inputs, on the network run:</p>
+<div class="case">
+<p><b>A connection deleted from the receipt.</b> The receipt opened, the call <code>connect 203.0.113.7 port 443</code> removed from its <i>undetermined</i> side, and the rest signed again with the same key: a signer who leaves a call out. The signature is good; the log still shows the call.</p>
+<pre>$ dependency-receipt -check tampered/network-connection-deleted.intoto.json -pub harness.pub -log logs/network.boot.json.gz -bundle bundle.jsonl -line 2 
+dependency-receipt: receipt: the signed receipt is not what its evidence rebuilds: the log shows something other than the receipt states
+exit 1</pre>
+<p class="verdict">Refused: the log shows something other than the receipt states.</p>
+</div>
+<div class="case">
+<p><b>One byte of the log changed.</b> Byte 1,676,748 of the 3,607,184-byte log, the last digit of the address the first time the log names it, changed from 7 to 8, so the log would say the package connected somewhere else:</p>
+<p class="edit">…cket:[35], 0x7ed67f746660 {Family: AF_INET, Addr: 203.0.113.<mark>7→8</mark>, Port: 443}, 0x10)&#34;,&#34;level&#34;:&#34;…</p>
+<pre>$ dependency-receipt -check receipts/network.intoto.json -pub harness.pub -log tampered/network-one-byte.boot.json -bundle bundle.jsonl -line 2 
+dependency-receipt: receipt: the signed receipt is not what its evidence rebuilds: the receipt is about log 98f9a3e05af99afbd6e853613b30757033376c58946b36ee9b846ca4899a65e0, the log given is a8ce7729abe09505e8b2e1ea24bf3988acd1a8df008a0ef65cc15d30d1d0b109
+exit 1</pre>
+<p class="verdict">Refused: the receipt is about another log.</p>
+</div>
+
+<h2 id="limits">What the log cannot show</h2>
+<p>A receipt is exactly as good as the log under it. These are its limits, stated in the receipt code's README; nothing on this page gets around them.</p>
+<ul class="limits">
+<li><b>The log is the signer's word.</b> Whoever runs the node holds the log. The check proves the receipt says exactly what this log shows and names this run; it cannot prove runsc wrote this log for that pod.</li>
+<li><b>Behavior the package keeps for later.</b> One install and one import is one observation. Code that waits, or checks whether it is watched, shows nothing.</li>
+<li><b>Names looked up in DNS</b> show as datagrams to port 53, not the names.</li>
+<li><b>The destination of a datagram sent with <code>sendmsg</code></b>, which node's UDP sockets use: the network script's datagram to 198.51.100.9 is in its receipt as one send with no destination.</li>
+<li><b>Writes through shared memory mappings</b>, <code>sendfile</code>, <code>splice</code>, <code>copy_file_range</code> and <code>fallocate</code> are outside the calls the log keeps, so an open for writing can appear with no write after it.</li>
+<li><b>Paths of calls that take no descriptor</b> (<code>mkdir</code>, <code>rename</code>, <code>unlink</code>, <code>open</code>) are read from the program's memory before the call reads them, so a second thread can change them in between, and a symlink in a folder of the path can make the call land elsewhere. Files written are named from descriptors and are not affected.</li>
+<li><b>Starting a new program</b> can close descriptors silently, so after one the reader leaves a descriptor's name unresolved rather than give it a new file's name.</li>
+<li><b>io_uring</b>, Linux's interface for queued file and network work, which runsc leaves off unless started with <code>--iouring</code>; the receipt is refused for a log made with it on.</li>
+<li><b>Anything outside gVisor.</b> plimsoll's providers that run each sandbox in a small virtual machine of its own (Kata Containers, E2B, Docker Cloud) have no such log, so no receipt.</li>
+<li><b>The whole pod is one observation.</b> sandboxd, plimsoll's check, the runner and npm are in every receipt with the package; this page's grouping is a reading of the process tree, not part of the signed claim.</li>
+<li><b>This cluster is a local test setup.</b> The pod network between plimsolld and sandboxd is kind's default, which is not encrypted, so these runs show the receipt, not a protected channel (<a href="https://github.com/plimsollmark/plimsoll/blob/main/docs/agentsandbox.md">plimsoll's agent-sandbox guide (EXTERNAL · source repo ↗)</a>). The daemon was not in <a href="../../trainers/glossary.html#hardened-mode">hardened mode (INTERNAL · glossary →)</a>, and the image is named by tag; each run's record states the image's digest as the node reported it.</li>
+</ul>
+<p>Every receipt also signs this list of what it cannot see, so its limits travel with it:</p>
+<ul class="limits small"><li>behavior the package keeps for later: one install and one import is one observation, and code that waits, or checks whether it is watched, shows nothing</li><li>names looked up in DNS: a lookup shows as a datagram to port 53, not the name</li><li>the destination of a datagram sent with sendmsg</li><li>writes through shared memory mappings, sendfile, splice, copy_file_range and fallocate</li><li>paths of calls that take no descriptor are copied from the program&#39;s memory before the call reads them, so a second thread can change them in between; files written are named from descriptors and are not affected</li><li>the pod&#39;s whole life is one observation: a pod that served several calls shows all of them</li><li>anything outside gVisor</li></ul>
+
+<h2 id="how">How it ran, and how to check it</h2>
+<div class="scroll"><table>
+<tbody>
+<tr><th>Cluster</th><td>kind, Kubernetes v1.37.0, containerd://2.3.4, agent-sandbox's controller (the program that keeps the warm pool and hands out its pods) <code>registry.k8s.io/agent-sandbox/agent-sandbox-controller:v1.0.7</code></td></tr>
+<tr><th>Observer</th><td>runsc <code>release-20260907.0</code>, network <code>sandbox</code>, 46 system calls logged, 16 bytes of written data kept per call; configuration digest <span class="fp">1469f8adb827c216bd3451bd590203169c3613c052b3f35988737f9ad8b32955</span></td></tr>
+<tr><th>Image</th><td><code>plimsoll/sandbox-agentsandbox:dev</code>, as each record names it: <span class="fp">agentsandbox-image:sha256:c7750b7916591611e93978029237cdb1cd3268d885e79b7b91624514ba2b72ff</span></td></tr>
+<tr><th>plimsolld</th><td>built with go1.26.10 from commit <span class="fp">47b36cdd3d41ef6b3d8d29737309130579ef9e35</span>: main at <span class="fp">1c9951d63ad6</span> and 1 commit past it (<i>agentsandbox: a completed project run&#39;s result names its image too. runPlan returned the runner&#39;s report, a fr …</i>), with 11 files not yet committed, none of them part of plimsolld (this example's own files and its documentation): <code>docs/example-programs.md</code>, <code>examples/dependency-receipt/README.md</code>, <code>examples/dependency-receipt/live/cluster.yaml</code>, <code>examples/dependency-receipt/live/evidence.go</code>, <code>examples/dependency-receipt/live/live_test.go</code>, <code>examples/dependency-receipt/live/main.go</code>, <code>examples/dependency-receipt/live/page.go</code>, <code>examples/dependency-receipt/live/page.html.tmpl</code>, <code>examples/dependency-receipt/live/run.go</code>, <code>examples/dependency-receipt/live/tamper.go</code>, <code>scripts/public-manifest.txt</code></td></tr>
+<tr><th>Startup check</th><td>As plimsolld logged it: tier <code>kernel</code>, the kernel log inside the pod began <code>[   0.000000] Starting gVisor...</code>, a write was tried at 4,903 paths and succeeded only under <code>/dev/shm</code>, <code>/tmp</code>, <code>/work</code>; outbound: tcp 1.1.1.1:443 timeout, tcp 10.244.0.1:10250 timeout, tcp 169.254.169.254:80 timeout, tcp 172.24.0.2:6443 timeout, tcp 8.8.8.8:53 timeout, tcp [2001:4860:4860::8888]:53 ENETUNREACH, tcp [2606:4700:4700::1111]:443 ENETUNREACH. This is the daemon's own log line, not a signed record.</td></tr>
+<tr><th>Signing key</th><td><a href="harness.pub">harness.pub</a>, key ID <span class="fp">6a9724e384b8de2aadcebd12cd9d967c736214522fdb220d1de49bc73f56a8f4</span>: it signed the bundle and the receipts</td></tr>
+<tr><th>Bundle</th><td><a href="bundle.jsonl">bundle.jsonl</a>: 4 lines, 3 runs and the closing checkpoint, sha256 <span class="fp">cbc289183cd9b399b1ef6701649057e6c3bdc3a7740e6ca701da8befac740528</span></td></tr>
+</tbody></table></div>
+<h3>plimsolld's settings</h3>
+<div class="scroll"><table><tbody><tr><td><code>SANDBOX_AGENTSANDBOX_API_SERVER</code></td><td class="fp">https://172.24.0.2:6443</td></tr><tr><td><code>SANDBOX_AGENTSANDBOX_IMAGE</code></td><td class="fp">plimsoll/sandbox-agentsandbox:dev</td></tr><tr><td><code>SANDBOX_AGENTSANDBOX_NAMESPACE</code></td><td class="fp">plimsoll-dependency-receipt</td></tr><tr><td><code>SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS</code></td><td class="fp">runsc-receipt</td></tr><tr><td><code>SANDBOX_AGENTSANDBOX_RUNTIME_CLASS</code></td><td class="fp">gvisor-receipt</td></tr><tr><td><code>SANDBOX_AGENTSANDBOX_WARM_POOL</code></td><td class="fp">receipt</td></tr><tr><td><code>SANDBOX_CPUS</code></td><td class="fp">1</td></tr><tr><td><code>SANDBOX_MEMORY_MB</code></td><td class="fp">512</td></tr><tr><td><code>SANDBOX_MIN_ISOLATION</code></td><td class="fp">kernel</td></tr><tr><td><code>SANDBOX_PROVIDER</code></td><td class="fp">agentsandbox</td></tr></tbody></table></div>
+<p class="small">Besides these, the daemon read its secrets from files: the API server's certificate authority, a service-account token, sandboxd's token and the caller registry. plimsolld ran in a container on kind's network with a route to the pods, since it reaches each pod's sandboxd at the pod's address.</p>
+<h3>Files</h3>
+<ul>
+<li><a href="evidence.json">evidence.json</a>: every number on this page</li>
+<li>quiet: <a href="receipts/quiet.intoto.json.gz">receipts/quiet.intoto.json.gz</a> (44 KB), <a href="logs/quiet.boot.json.gz">logs/quiet.boot.json.gz</a> (244 KB)</li>
+<li>network: <a href="receipts/network.intoto.json.gz">receipts/network.intoto.json.gz</a> (44 KB), <a href="logs/network.boot.json.gz">logs/network.boot.json.gz</a> (256 KB)</li>
+<li>canary: <a href="receipts/canary.intoto.json.gz">receipts/canary.intoto.json.gz</a> (44 KB), <a href="logs/canary.boot.json.gz">logs/canary.boot.json.gz</a> (250 KB)</li>
+<li>the receipt with a connection deleted: <a href="tampered/network-connection-deleted.intoto.json.gz">tampered/network-connection-deleted.intoto.json.gz</a></li>
+</ul>
+<p>The receipts and logs are gzip-compressed. The receipt command reads a log either way and a receipt only as written. From the repository root:</p>
+<pre>go run ./examples/dependency-receipt/live -verify     # this page's files, offline: starts nothing
+gunzip -k docs/examples/dependency-receipt/receipts/network.intoto.json.gz
+go run ./examples/dependency-receipt -check docs/examples/dependency-receipt/receipts/network.intoto.json \
+    -pub docs/examples/dependency-receipt/harness.pub -log docs/examples/dependency-receipt/logs/network.boot.json.gz \
+    -bundle docs/examples/dependency-receipt/bundle.jsonl -line 2</pre>
+<p><code>-verify</code> checks the bundle's signatures and chain, checks every receipt against its log and record, requires both changed inputs and the wrong record to be refused, and requires this page to be exactly what <code>evidence.json</code> renders. Running everything again needs a kind cluster with agent-sandbox and the <code>gvisor-receipt</code> runtime class: <code>go run ./examples/dependency-receipt/live</code> makes a Kubernetes namespace (a named group of the cluster's objects) of its own and deletes it after.</p>
+
+
+<footer>Recorded on 2026-10-29 on a local kind cluster; rendered from <a href="evidence.json">evidence.json</a> by <code>examples/dependency-receipt/live</code>. plimsoll is an independent project, not affiliated with or endorsed by the Kubernetes, gVisor or npm projects.</footer>
+</main>
+</body>
+</html>

@@ -68,6 +68,10 @@ type dockerHostFiles struct {
 	// every container the provider starts (lockdownFlags). Preflight checks it is
 	// still there, since every container start fails without it.
 	resolvConf string
+	// seccomp is the directory Preflight pins the configured seccomp profiles into,
+	// each copy named by the digest of its bytes (pinSeccompProfile), so a run applies
+	// exactly the bytes its record names.
+	seccomp string
 	// lock is the open directory whose lock keeps systemd-tmpfiles from aging these
 	// files away (holdHostDir); kept here so it is never closed.
 	lock *os.File
@@ -80,7 +84,7 @@ var dockerProcessFiles = sync.OnceValues(func() (dockerHostFiles, error) {
 	if err != nil {
 		return dockerHostFiles{}, err
 	}
-	f := dockerHostFiles{dir: dir, config: filepath.Join(dir, "config"), resolvConf: filepath.Join(dir, "resolv.conf")}
+	f := dockerHostFiles{dir: dir, config: filepath.Join(dir, "config"), resolvConf: filepath.Join(dir, "resolv.conf"), seccomp: filepath.Join(dir, "seccomp")}
 	fail := func(what string, err error) (dockerHostFiles, error) {
 		if f.lock != nil {
 			_ = f.lock.Close()
@@ -93,6 +97,11 @@ var dockerProcessFiles = sync.OnceValues(func() (dockerHostFiles, error) {
 	}
 	if err := os.Mkdir(f.config, 0o700); err != nil {
 		return fail("client config", err)
+	}
+	// Docker's daemon reads the pinned profiles as another user, so the directory is
+	// searchable; its parent stays private to this process.
+	if err := os.Mkdir(f.seccomp, 0o755); err != nil {
+		return fail("seccomp profiles", err)
 	}
 	if err := writeGuestResolvConf(f.resolvConf); err != nil {
 		return fail("guest resolv.conf", err)

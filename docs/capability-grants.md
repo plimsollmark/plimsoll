@@ -212,6 +212,345 @@ run's reach. This profile is tested against a stand-in shaped like RunPod's API
 second submission in the same run was refused by the cap before it reached RunPod (RunPod counted one
 job), and the job's status was polled to completion.
 
+### Standard client libraries, in any language
+
+The injected `host.*` client is JavaScript. A granted run on the docker provider also gets a
+**local web address** that any HTTP client can use: inside the sandbox, a process of
+plimsoll's own listens on `127.0.0.1:8471` and passes each connection, byte for byte, to the
+broker's Unix socket. For a project run that process is the container's command itself,
+delivered with the daemon (it starts the runner as its child, so the image needs no change);
+for a snippet it is a listener the injected client opens in the guest's own node process. The
+container still has no network (`--network none` leaves only the loopback interface), the
+forwarder checks nothing and adds nothing, and every request on it is checked by the same
+broker as before: the route, the budgets, the credential it adds. A Python step that calls
+`urllib`, `httpx` or the OpenAI and Anthropic client libraries works unchanged, because both
+libraries read their base URL and key from the environment (`OPENAI_BASE_URL` and
+`OPENAI_API_KEY`; `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`; checked against both
+libraries' sources, 2026-10-28), and a profile's `sdk_env` puts those variables into the
+guest's environment. `{origin}` in a value stands for the local address.
+
+```json
+"openai": {
+  "base_url": "https://api.openai.com",
+  "allow": ["POST /v1/chat/completions", "POST /v1/responses"],
+  "sdk_env": {"OPENAI_BASE_URL": "{origin}/v1", "OPENAI_API_KEY": "plimsoll-grant"},
+  "allowed_callers": ["agent-a"],
+  "token": {"type": "static", "env": "OPENAI_API_KEY"}
+}
+```
+
+**The address needs its own <dfn>*seccomp*</dfn> profile (seccomp is the kernel's
+per-process list of the operations a program may ask it for).** The audited default profile
+allows Unix sockets only, so under it no forwarder can listen. A second profile, which the
+daemon derives from the default at startup, adds IPv4 TCP sockets and the few socket
+options the forwarder and the client libraries set, and nothing else; the daemon applies
+it to exactly the runs whose grant sets `sdk_env`, and the default to every other run,
+chosen per run from the grant. Ask for it beside `SANDBOX_DOCKER_SECCOMP`:
+
+```sh
+SANDBOX_DOCKER_SECCOMP=/etc/plimsoll/seccomp.json \
+SANDBOX_DOCKER_SECCOMP_SDK=derived
+```
+
+An operator's own profile is never replaced: with a profile file configured and no variant
+beside it, a run whose grant sets `sdk_env` is refused before anything starts (marked as a
+run in which nothing ran, reason `environment`), and a plain grant keeps the default and
+gets no forwarder at all. What the variant adds to a run, and why it is a profile of its own, is in
+[docs/seccomp.md](seccomp.md#the-second-profile-runs-whose-grant-sets-sdk_env); setting
+`sdk_env` on a profile is the operator's authorization of that exposure for the runs that
+select it. Each run's record names the profile it applied (`seccomp:sha256:...`). Under
+<dfn>*gVisor*</dfn> (`runsc`, the user-space kernel the docker provider can run containers
+on) no host profile is applied to any run and the record says `seccomp:skipped:runsc`. If the
+forwarder cannot listen, the run fails before any guest code starts: a snippet exits 126
+with the forwarder's message on stderr and no output of its own, and a project runs no step
+(`TestDockerForwarderThatCannotListenFailsBeforeGuestCode`).
+
+The key in `sdk_env` is a placeholder: both libraries refuse to construct a client without
+one, and the broker replaces whatever the guest sends with the credential it minted. Never
+put the real key there; the `token` field is where it lives, in the daemon. A variable name
+plimsoll itself sets in the guest environment or the dynamic loader reads (`PATH`, `HOME`,
+`HOSTNAME`, `NODE_OPTIONS`, `HOST_API_SOCKET`, `HOST_API_LISTEN`, `LD_*`, `PLIMSOLL_*`) is
+refused when the profile loads, since a profile's entry would come later and win, moving the
+broker's socket or the forwarder; so is a value with a control character.
+
+What this does and does not reach, stated plainly:
+
+- **Request and response bodies of JSON APIs**, on the routes the profile allows. A client
+  library's create calls (`POST /v1/chat/completions`, `POST /v1/responses`,
+  `POST /v1/messages`) send no query string and fit.
+- **Not a call with a query string.** The broker refuses any target with `?` (the route it
+  approves must be the bytes it sends), so list and pagination calls (`files.list`,
+  `limit=`, `after=`) and `extra_query` are refused with 403, as they always were.
+- **Not WebSockets** (the OpenAI Realtime API): the broker carries requests and responses.
+- **Streamed answers, piece by piece.** A `stream: true` call's answer (`text/event-stream`,
+  the format both chat APIs stream in) is passed through as it arrives; see the next section
+  for its limits.
+- **Uploads, on the routes the profile marks for them.** A route listed in
+  `route_content_types` takes a body of that type (`multipart/form-data` for a Files or
+  transcription route) up to its `route_max_request_bytes`, passed through as it arrives;
+  every other route sends its body as `application/json`, as before. See "Large uploads"
+  below.
+- **Not in sessions, and not on `wasm`, <dfn>*E2B*</dfn> (a hosted service that runs each
+  sandbox in a small virtual machine) or Docker Cloud yet**: the forwarder exists for a run
+  on the docker provider (snippets and projects). A grant with `sdk_env` in a session is
+  refused before anything runs, marked as unsupported: a session's container
+  applies one seccomp profile for its life, and a later call could not change the profile of
+  processes already running. The WASM guest has one function to call and no sockets, and
+  on E2B and Docker Cloud the guest's base URL would have to be the <dfn>*guard*</dfn>, the
+  HTTPS address outside the virtual machine that stands in for the socket there, which is
+  not built.
+
+**The guard has the same door.** On E2B and Docker Cloud the broker is reached through the
+guard, an HTTPS address outside the virtual machine. Beside the JSON envelope the injected
+client posts to it, the guard serves a raw route: a request to `<guard URL>/raw/<target>`
+reaches the broker as a standard client's request to `<target>`, method, headers and body as
+sent, so `<guard URL>/raw` is the base URL a client library on those providers would take.
+The same credential (`X-Plimsoll-Guard`), the same per-run limits on requests in flight and
+the same body deadline apply, the body is bounded by the matched route's request limit (1 MiB
+unless the profile raised it, as "Large uploads" below describes), and the target is cut from
+the request line as written, so an encoded or non-canonical target, a query string, a
+doubled slash or a trailing slash is refused by the broker exactly as on the socket
+(`TestEgressGuardRawRouteCarriesAStandardClientsRequest`,
+`TestEgressGuardRawRouteRefusesWhatIsNotTheRoute`). The injected client names the route for
+the guest: `host.raw.url` is the base URL, and `host.raw.headers` the headers a client must
+add (none on E2B, whose network rule adds the guard credential outside the guest; the run's
+guard credential on Docker Cloud, which that client already holds). A guest's `fetch` with
+those two reaches the API as a standard client, and the live tests (`TestE2BGuardLive`,
+`TestDockerCloudGuardLive`) make the three raw requests this way. Both passed against the
+live services on 2026-10-29: upstream saw the broker's credential and only the passed header,
+a refused request came back marked not to retry, a request carrying an expired guard
+credential was refused, and a streamed answer reached the guest in pieces. What is not built:
+`sdk_env` on these providers (a client library in another language would need the base URL
+and, on E2B, `SSL_CERT_FILE` pointed at the guest's trust store, which E2B's proxy
+certificate is added to; on Docker Cloud a loopback forwarder to add the credential, since a
+client library sends no custom header unchanged).
+
+The two tests that state this are `TestDockerProjectGrantServesAStandardClientAtLoopback`
+(a Python step using the standard library, sending the exact header set the client
+libraries send) and `TestDockerSnippetGrantServesAStandardClientAtLoopback` (Node's
+`fetch`). Both assert that the API saw the broker's credential and the passed
+`anthropic-version`, and none of the client's telemetry or its placeholder key.
+
+### A grant to a chat API is a grant to the internet through the API's own tools
+
+The broker checks the route and never reads the body, so **everything the body can ask the
+API to do is granted along with the route**. The chat APIs run tools on their own servers at
+the request's asking: on the Claude API, web fetch, web search and the <dfn>*MCP*</dfn>
+connector (MCP is the Model Context Protocol, a standard by which a model calls tools
+served by another program; the connector lets the API call such a server on the request's
+behalf), all server-side tools named in the request's `tools` list; on OpenAI's Responses
+API, the hosted tools `web_search`, `mcp` (a remote MCP server of the request's choosing),
+code interpreter and the shell tool. A guest that may `POST /v1/messages` can put a URL that
+carries data into a user message and ask for web fetch, and Anthropic's own documentation
+says what that means: "Enabling the web fetch tool in environments where Claude processes
+untrusted input alongside sensitive data poses data exfiltration risks"
+([web fetch tool, EXTERNAL · official docs ↗](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool),
+read 2026-10-28). OpenAI says the same of remote MCP: "A malicious server can exfiltrate
+sensitive data from anything that enters the model's context"
+([remote MCP, EXTERNAL · official docs ↗](https://developers.openai.com/api/docs/guides/tools-remote-mcp),
+read 2026-10-28). The byte caps and call budgets bound how much; they do not close the
+channel, and neither does any route list, because the tool request is inside an allowed
+body.
+
+What an operator does about it, on the API's side, since plimsoll cannot see the body:
+
+- **Claude API:** an organization admin turns web fetch and web search off, or restricts
+  their domains, on the Console's Capabilities page
+  ([platform.claude.com/settings/capabilities](https://platform.claude.com/settings/capabilities));
+  with a tool off, a request that includes it fails with a 400 `invalid_request_error`
+  (the web fetch and web search tool pages, read 2026-10-28). Use a key from an
+  organization or workspace configured that way for the grant's `token`.
+- **OpenAI Responses API:** the tool guides document per-request controls only
+  (`web_search` with `external_web_access: false` and `filters.allowed_domains`; `mcp` with
+  `require_approval` and `allowed_tools`), which a hostile guest simply does not send. The
+  shell and code interpreter guides say hosted containers have no network unless "an admin
+  must configure your org allow list in the dashboard", and a request's `allowed_domains`
+  must lie within it. Third-party security guides describe a **Hosted tools** tab under
+  Settings, Organization, Data controls, where MCP tool usage, web search and file search
+  default to "Enabled for all projects" and can be turned off per project; OpenAI's own
+  documentation, as read on 2026-10-28, does not describe that tab, so check it in the
+  dashboard before relying on it, and prefer a project whose hosted tools are off for the
+  grant's key.
+- **Either API:** keep the grant's key in a project or workspace that holds nothing else, so
+  what a prompt-injected tool call can reach is that project's own data and the request's.
+
+### Streamed answers
+
+Chat APIs send a long answer in pieces, as server-sent events: one HTTP response
+of type `text/event-stream` whose body is a series of `event:` and `data:` lines, written as
+the model produces them (the OpenAI stream ends with `data: [DONE]`, the Claude stream with a
+`message_stop` event, and the Anthropic client library requires streaming for a long answer
+to avoid HTTP timeouts). The broker passes such an answer through **piece by piece**: the
+status and content type go to the guest as soon as the API sends them, then each piece as it
+arrives, over the local address, the injected client's socket, and the guard's raw route alike.
+Every other content type is buffered and capped exactly as before, so a JSON API's behavior
+is unchanged byte for byte.
+
+The protections work piece by piece too. A stream is cut when it has carried **4 MiB** in all
+(the same response cap as a buffered answer; a chat answer is tens of kilobytes), when
+**60 seconds** pass with no piece at all (the single 60 s call limit becomes a per-gap limit,
+since an answer can take minutes while never pausing that long; the Claude API sends `ping`
+events while it works), or when the run's own deadline ends. The first 60 s still bound the
+wait for the response headers. Because the status is already with the guest, a cut cannot be
+turned into a 502: the stream simply ends without its final event, and a client library
+raises. The call's row in the trace records the bytes delivered and `Delivered: false` for a
+cut stream, so "the guest got a complete answer" stays a question the trace can answer. Memory
+per streamed call is one 32 KiB piece, never the answer
+(`TestBrokerStreamsEventStreamPieceByPiece`, `TestBrokerStreamIsCutAtTheByteCap`,
+`TestBrokerStreamIsCutWhenIdle`, `TestEgressGuardStreamsEventStream`). The `wasm` provider's
+host function returns one answer, so there a stream is buffered whole within the cap, as it was.
+
+### Large uploads
+
+A chat API's Files route takes a video or a document as `multipart/form-data`, and a
+transcription route takes audio the same way; the OpenAI client library's `files.create` and
+an `httpx.post(files=...)` send such a body in one request with its length declared. Three
+profile fields let a route take one, and each is a number the operator chose:
+
+```json
+"checker": {
+  "base_url": "https://api.example",
+  "allow": ["POST /v1/files", "POST /v1/responses", "POST /v1/asr/transcribe"],
+  "route_max_request_bytes": {"POST /v1/files": 16777216, "POST /v1/asr/transcribe": 8388608},
+  "route_content_types": {"POST /v1/files": ["multipart/form-data"], "POST /v1/asr/transcribe": ["multipart/form-data"]},
+  "max_request_bytes": 50331648,
+  "sdk_env": {"OPENAI_BASE_URL": "{origin}/v1", "OPENAI_API_KEY": "plimsoll-grant"},
+  "allowed_callers": ["agent-a"],
+  "token": {"type": "static", "env": "MODEL_API_KEY"}
+}
+```
+
+- **`route_max_request_bytes`** sets the request body limit of one `allow` entry, keyed as
+  written there (raised for an upload route, or lowered for a route whose bodies are small).
+  The default is 1 MiB, and the most a profile may set is 512 MiB, so the Claude Files API's
+  500 MB request limit fits under it. The limit is the matched entry's: when two entries
+  match the same path, the first in `allow` decides, so an entry with a raised limit goes
+  first or stands alone.
+- **`route_content_types`** names the media types the broker takes from the guest's
+  `Content-Type` on that entry. Every route takes `application/json`. On a route that lists
+  types, a body of any other type is refused with 415 before a byte is read or sent; on a
+  route that lists none, every body is sent as `application/json`, as it always was, whatever
+  the guest's header said. A listed type is sent with the guest's `boundary` and `charset`
+  parameters alone, each checked (a boundary of 1 to 70 of the characters RFC 2046 allows, a
+  charset of token characters), and every other parameter dropped. A wildcard,
+  `application/json`, `multipart/byteranges` or a `message/*` type cannot be listed.
+- **`max_request_bytes`** is the run's total: the request body bytes of all its calls,
+  uploads and JSON alike, so what a grant lets a run send to the API is a number the
+  operator wrote, not the call budget times the body limit. 256 MiB when unset, which is
+  what the default call budget could send at the default limit (a profile that raised
+  `max_calls` could send more before this field existed, and is now bounded here); at most
+  1 GiB. A route limit above the run's total is refused when the profile loads, since no
+  call could use it.
+
+How a body moves. Within the default limit a body is read whole and then sent, as it always
+was. On a route with a raised limit the body is **passed through** as it arrives: the broker
+reads one piece from the guest and writes it to the API, holds one piece and never the file,
+and tells the API the length the guest declared (an undeclared, chunked body is sent
+chunked). A declared length over the route's limit or over what is left of the run's total is
+refused with 413 and `X-Should-Retry: false` before a byte is read; an undeclared body is cut
+at the limit, which the API sees as a request that broke off, and the guest gets the 413. Both
+count as denied in the trace, and a passed-through call's row records the bytes that went.
+Because a refused declared upload is answered before its body is read, a client still sending
+it may see the connection close rather than the 413 (the OpenAI library reports a connection
+error there); the API never sees it either way. The run's total is charged before a body is
+sent (an undeclared body holds the route's whole limit until its call ends, then gives back what
+it did not use), so two uploads in flight cannot both fit the same remainder. An API may answer
+before a body is in: the call ends there, and the rest of the body never goes, so the API never
+receives a byte the run was not charged for. A body on the local
+address or on the guard's raw route takes as long as it needs while it moves: the read
+deadline moves out at each piece (10 s between pieces on the socket, the guard's body deadline
+on the raw route), so it bounds a stall and not the upload, and the run's own deadline bounds
+the whole.
+
+What this is and is not. The upload goes to the operator's API on the operator's key, on a
+route the profile allows, within limits the profile states; what the body asks the API to do
+with it is the matter of "A grant to a chat API is a grant to the internet through the API's
+own tools" above, and the byte budget bounds how much a run can send to the API, not what.
+Uploads are for a standard client at the local address or the guard's raw route: the injected
+`host.*` client and the `wasm` host function carry JSON envelopes, and a body there keeps the
+default limit. The tests: `TestBrokerPassesAnUploadThroughWithinTheRouteLimit` (the API has
+the first half of a 3 MiB body before the guest sends the second),
+`TestBrokerRefusesADeclaredUploadOverTheRouteLimit`,
+`TestBrokerCutsAnUndeclaredUploadAtTheRouteLimit`, `TestBrokerRefusesABodyTypeTheRouteDoesNotTake`,
+`TestBrokerChargesEveryBodyToTheRunsRequestBudget`, `TestEgressGuardRawRouteStreamsAnUpload`,
+and on docker `TestDockerProjectGrantCarriesTheCheckersUploads`, in which a Python step using
+the standard library sends what a video-checking program sends through the OpenAI library and
+httpx (a 12 MiB clip as multipart to the Files route, a two-part transcription, a JSON call, a
+streamed answer) and then a clip over the route's limit, a body of the wrong type and clips
+past the run's total, none of which reaches the API.
+
+### What a standard client's request looks like to the broker
+
+The broker builds the request it sends from scratch: the route it matched, the body (JSON, or
+on a route marked for uploads a body of a type it lists), `Accept: application/json`, and the
+credential it minted. Nothing the guest put in a header
+reaches the API by default, so a client library's telemetry (`User-Agent`, the
+`x-stainless-*` headers the OpenAI and Anthropic libraries send), its cookies, and above all
+the key it was given are dropped: a guest that sends `Authorization: Bearer sk-dummy` or
+`x-api-key: dummy` has them replaced by the run's minted credential, never forwarded
+(`TestBrokerCoreForwardsOnlyPassListedHeaders`).
+
+Some APIs require a header the client sends itself: the Claude API refuses a request without
+`anthropic-version`. A profile's `pass_headers` names the request headers the broker copies
+through, first value only, checked as visible ASCII of at most 1024 bytes; a value with a
+line break or a byte outside that range is dropped whole, never cleaned. A name the broker or
+the connection owns is refused when the profile loads: `Authorization`, `Cookie`, `Host`,
+`Content-Type`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Accept-Encoding`,
+`Forwarded` and the `X-Forwarded-*` and `X-Plimsoll-*` families among them. So is a header
+a model API reads an API key from: `x-api-key` (the Claude API still accepts a key there),
+`x-goog-api-key`, `api-key` and `ocp-apim-subscription-key`. Passed through, the guest's own
+key would arrive beside the run's credential, and the guest, not the profile, could choose
+the account the API acts for. HTTP standardizes no credential header besides
+`Authorization`, so this list is what the APIs document, the same headers an AI gateway such
+as LiteLLM strips from its clients by default.
+
+A profile's `set_headers` gives a header a value of the operator's: the broker sets it on
+every request, and whatever the guest sent under that name is dropped. A header has one owner,
+so a name is set or passed, never both, and the names `pass_headers` refuses are refused here
+too, an API key header among them: the credential belongs in `token`, never as a value in the
+grants file. A value is visible ASCII of at most 1024 bytes, not empty and not padded with
+spaces.
+
+```json
+"claude": {
+  "base_url": "https://api.anthropic.com",
+  "allow": ["POST /v1/messages"],
+  "pass_headers": ["anthropic-version"],
+  "allowed_callers": ["agent-a"],
+  "token": {"type": "static", "env": "ANTHROPIC_API_KEY"}
+}
+```
+
+Do not pass `anthropic-beta` or `OpenAI-Beta`: a beta header is how a request switches on
+server-side features, tools among them, so passing it hands the guest a lever the route
+check cannot see (the next section says why that matters).
+
+**`anthropic-workspace-id`.** The Claude API requires this header on every request made with
+a key that is not scoped to a workspace, and refuses such a request without it (400
+`invalid_request_error`); a key created for one workspace runs there and needs no header
+([authentication, EXTERNAL · official docs ↗](https://platform.claude.com/docs/en/manage-claude/authentication#select-a-workspace),
+read 2026-10-28). The handling that keeps the choice of workspace out of the guest's hands:
+create the grant's key scoped to the one workspace the grant is for (the Console's API keys
+page offers it) and send no header, or, with a key that reaches several workspaces, fix the
+workspace in the profile with `"set_headers": {"anthropic-workspace-id": "wrkspc_..."}`.
+Do not list `anthropic-workspace-id` in `pass_headers`: the guest would then name the
+workspace, and the API runs the request in any workspace that key can reach. The same holds
+for `OpenAI-Organization` and `OpenAI-Project`, which pick the organization and project a
+request to the OpenAI API counts against
+([API overview, EXTERNAL · official docs ↗](https://developers.openai.com/api/reference/overview),
+read 2026-10-29): set them, never pass them.
+
+**The broker's own answers carry `X-Should-Retry: false`.** The OpenAI and Anthropic client
+libraries retry a 408, 409, 429 or 5xx twice by default and read that header to stop
+(checked against both libraries' base clients, 2026-10-28). Every answer the broker makes
+itself (a route refused, a body too large, a spent call budget or route cap, a shed while the
+circuit breaker is open, an upstream it could not reach) carries it, so a client does not
+spend the run's call budget on retries of a refusal; an answer the API gave passes through
+bare, and the client's retry policy toward the API stays the client's. A request that names
+its own destination, an absolute-form target such as `GET http://other.example/v1/items`, a
+`CONNECT` to a host, or a doubled leading slash, is refused before anything is sent: the only
+origin the broker ever dials is the profile's `base_url`.
+
 ### Prior art, and what differs here
 
 Keeping the credential out of the guest is not a new idea, and two funded platforms
@@ -250,12 +589,13 @@ Checked September 2026 against their current documentation, four things differ h
 
 **Where theirs is broader, and it is a real trade.** Vercel's firewall governs whatever
 the sandbox runs, so package installs, `git`, and Postgres clients all work with a
-credential attached at the boundary. plimsoll's broker serves JavaScript runs through
-the injected client, and everything else in the guest has no network access whatsoever:
-the project toolchain is built into the image precisely because a run has no network. If
-your agent needs to `npm install` mid-run against a private registry, their model covers
-that case and this one does not. What this one offers instead is dependencies built into
-the image ahead of time, with the registry credential never present in a run:
+credential attached at the boundary. plimsoll's broker serves HTTP clients (the injected
+JavaScript client, or any language through the local address above, on the docker
+provider), and everything else in the guest has no network access whatsoever: the project
+toolchain is built into the image precisely because a run has no network. If your agent
+needs to `npm install` mid-run against a private registry, their model covers that case
+and this one does not. What this one offers instead is dependencies built into the image
+ahead of time, with the registry credential never present in a run:
 [docs/guest-dependencies.md](guest-dependencies.md).
 
 Vendor documentation changes; this comparison is dated for that reason. If it is wrong

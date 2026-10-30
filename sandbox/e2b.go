@@ -196,8 +196,8 @@ func (e *E2B) EgressGuardKnownToken(token string) bool {
 	return e.guards.lookup(token) != nil
 }
 
-func (e *E2B) EgressGuardCall(ctx context.Context, token, method, rawTarget string, body []byte) EgressGuardResponse {
-	return e.guards.call(ctx, token, method, rawTarget, body)
+func (e *E2B) EgressGuardCall(ctx context.Context, token string, call GuardRequest) EgressGuardResponse {
+	return e.guards.call(ctx, token, call)
 }
 
 // vmSmokeProbe runs inside the throwaway smoke microVM. It proves the pieces a

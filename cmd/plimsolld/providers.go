@@ -64,6 +64,9 @@ var providers = map[string]providerDescriptor{
 			if strings.TrimSpace(getenv("SANDBOX_DOCKER_SECCOMP")) == "unconfined" {
 				fail("hardened mode forbids SANDBOX_DOCKER_SECCOMP=unconfined")
 			}
+			if strings.TrimSpace(getenv("SANDBOX_DOCKER_SECCOMP_SDK")) == "unconfined" {
+				fail("hardened mode forbids SANDBOX_DOCKER_SECCOMP_SDK=unconfined")
+			}
 		},
 	},
 	"dockercloud": {

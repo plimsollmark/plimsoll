@@ -33,6 +33,10 @@ type Sessions struct {
 	// reports instead of SessionEnvironments: a provider whose image changed during
 	// the open.
 	OpenedEnvironments *sandbox.Environments
+	// Warm is how many warm-only opens (SessionOptions.WarmOnly) it hands a session, as
+	// a pool member, before it refuses them as a provider whose pool is empty does; 0,
+	// the default, refuses every one, as a provider without a pool does.
+	Warm int
 
 	mu     sync.Mutex
 	opened []*FakeSession
@@ -75,6 +79,17 @@ func (p *Sessions) OpenSession(_ context.Context, opts sandbox.SessionOptions) (
 	if p.BeforeOpen != nil {
 		if err := p.BeforeOpen(); err != nil {
 			return nil, err
+		}
+	}
+	if opts.WarmOnly {
+		p.mu.Lock()
+		warm := p.Warm > 0
+		if warm {
+			p.Warm--
+		}
+		p.mu.Unlock()
+		if !warm {
+			return nil, sandbox.RefuseNoWarmSandbox()
 		}
 	}
 	s := &FakeSession{Options: opts, expires: time.Now().Add(opts.Lifetime), done: make(chan struct{}), holdsMemory: p.SuspendHoldsMemory,
@@ -288,4 +303,63 @@ func (s *FakeSession) Suspend(context.Context) (bool, error) {
 func (s *FakeSession) Close(context.Context) error {
 	s.End(sandbox.SessionClosed)
 	return nil
+}
+
+// Pooled is Sessions with fresh runs: a provider with a warm pool (its Sessions' Warm
+// members serve warm-only opens) that also runs projects, so a test of a cell Run runs
+// by itself tells the pool's answer ("<language> <n>: <code>", from a session's
+// RunCell) from a fresh one. RunProject answers a fresh cell's project
+// (sandbox.RunCellFresh: the code in .plimsoll/cell.py or .plimsoll/cell.js) with
+// "fresh <language>: <code>" on stdout and the call's other files on stderr, one path a
+// line, and counts every project it runs.
+type Pooled struct {
+	*Sessions
+
+	mu    sync.Mutex
+	fresh []sandbox.ProjectRequest
+}
+
+var _ sandbox.ProjectCapable = (*Pooled)(nil)
+
+// NewPooled is a Pooled provider whose pool hands warm warm-only opens a session.
+func NewPooled(warm int) *Pooled { return &Pooled{Sessions: &Sessions{Warm: warm}} }
+
+// SupportsProjects is true.
+func (*Pooled) SupportsProjects() bool { return true }
+
+// RunProject answers a fresh cell's project as Pooled says, and completes any other with
+// no steps.
+func (p *Pooled) RunProject(_ context.Context, req sandbox.ProjectRequest) (sandbox.ProjectResult, error) {
+	if err := sandbox.ValidateProjectRequest(req); err != nil {
+		return sandbox.ProjectResult{}, err
+	}
+	p.mu.Lock()
+	p.fresh = append(p.fresh, req)
+	p.mu.Unlock()
+	var lang, code string
+	var others []string
+	for _, f := range req.Files {
+		switch f.Path {
+		case ".plimsoll/cell.py":
+			lang, code = "python", f.Content
+		case ".plimsoll/cell.js":
+			lang, code = "javascript", f.Content
+		default:
+			if !strings.HasPrefix(f.Path, ".plimsoll/") {
+				others = append(others, f.Path+"\n")
+			}
+		}
+	}
+	res := sandbox.ProjectResult{Sandbox: "fake-sessions", Isolation: sandbox.IsolationContainer, Outcome: sandbox.ProjectOutcomeCompleted}
+	if code != "" {
+		res.Steps = []sandbox.StepResult{{Command: req.Steps[0], Stdout: fmt.Sprintf("fresh %s: %s", lang, code), Stderr: strings.Join(others, "")}}
+	}
+	return res, nil
+}
+
+// FreshRuns returns the projects run so far, in order.
+func (p *Pooled) FreshRuns() []sandbox.ProjectRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]sandbox.ProjectRequest(nil), p.fresh...)
 }

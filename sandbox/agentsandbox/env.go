@@ -56,6 +56,10 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 	if len(missing) > 0 {
 		return sandbox.Provider{}, fmt.Errorf("agentsandbox: %s required", strings.Join(missing, ", "))
 	}
+	handlers := splitList(getenv("SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS"))
+	if err := checkRunscHandlers(handlers); err != nil {
+		return sandbox.Provider{}, fmt.Errorf("agentsandbox: SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS: %w", err)
+	}
 	p, err := New(Config{
 		APIServer:          or("SANDBOX_AGENTSANDBOX_API_SERVER", inClusterAPIServer),
 		CAFile:             or("SANDBOX_AGENTSANDBOX_CA_FILE", inClusterCAFile),
@@ -63,6 +67,7 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 		Namespace:          getenv("SANDBOX_AGENTSANDBOX_NAMESPACE"),
 		WarmPool:           getenv("SANDBOX_AGENTSANDBOX_WARM_POOL"),
 		RuntimeClass:       getenv("SANDBOX_AGENTSANDBOX_RUNTIME_CLASS"),
+		RunscHandlers:      handlers,
 		Image:              getenv("SANDBOX_AGENTSANDBOX_IMAGE"),
 		RequirePinnedImage: pinned,
 		SandboxdToken:      strings.TrimSpace(string(token)),
@@ -74,4 +79,18 @@ func FromEnv(getenv func(string) string) (sandbox.Provider, error) {
 		return sandbox.Provider{}, err
 	}
 	return sandbox.Provider{Sandbox: p, Resources: res}, nil
+}
+
+// splitList reads a comma list: unset or blank is none, and each entry is trimmed of
+// surrounding spaces. An empty entry ("a,,b", a trailing comma) is kept, for the caller
+// to refuse.
+func splitList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	for i, part := range parts {
+		parts[i] = strings.TrimSpace(part)
+	}
+	return parts
 }

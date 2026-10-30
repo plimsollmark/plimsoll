@@ -10,9 +10,11 @@ scratch="$(mktemp -d "$PWD/tmp/receipt-challenge.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 command_line='node --test --test-reporter=junit --test-reporter-destination=reports.xml test.mjs'
 
-# The project: three commits with fixed authors and dates, so their IDs are the same on
+# The project: five commits with fixed authors and dates, so their IDs are the same on
 # every regeneration. main: the fixture, then a README. The branch "broken": a sum that
-# drops the last value, whose tests fail.
+# drops the last value, whose tests fail. The branch "skipped": every test marked to skip,
+# so every step exits 0 and no test runs. The branch "hangs": a test that waits an hour, so
+# the recipe's 30-second limit ends the run.
 project="$scratch/project"
 mkdir -p "$project"
 cp examples/pr-receipt/fixture/{package.json,sum.mjs,test.mjs} "$project/"
@@ -31,6 +33,23 @@ g checkout -q main
 printf '%s\n' '# sum' > "$project/README.md"
 g add -A; at '2026-10-03T12:00:00Z'; g commit -q -m 'Add a README'
 later=$(g rev-parse HEAD)
+g checkout -q -b skipped "$tested"
+cat > "$project/test.mjs" <<'JS'
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {sum} from './sum.mjs';
+test.skip('adds three numbers', () => assert.equal(sum([10, 20, -5]), 25));
+test.skip('sums an empty list to 0', () => assert.equal(sum([]), 0));
+JS
+g add -A; at '2026-10-04T12:00:00Z'; g commit -q -m 'Skip the sum tests for now'
+skipped=$(g rev-parse HEAD)
+g checkout -q -b hangs "$tested"
+cat > "$project/test.mjs" <<'JS'
+import test from 'node:test';
+test('waits for a reply that never comes', () => new Promise(resolve => setTimeout(resolve, 3600000)));
+JS
+g add -A; at '2026-10-05T12:00:00Z'; g commit -q -m 'Test against the reply service'
+hangs=$(g rev-parse HEAD)
 g checkout -q "$tested"
 g bundle create "$scratch/project.bundle" --all 2>/dev/null
 
@@ -46,14 +65,17 @@ receipt() { # $1 out dir, $2 key, $3 commit
 receipt "$scratch/honest" "$scratch/operator" "$tested"
 receipt "$scratch/other-signer" "$scratch/other" "$tested"
 receipt "$scratch/failing" "$scratch/operator" "$broken" || true # the run fails; its receipt is still made
+receipt "$scratch/skipped" "$scratch/operator" "$skipped" || true # every step exits 0; the job fails at its tests check
+receipt "$scratch/timed-out" "$scratch/operator" "$hangs" || true # the time limit ends the run; its receipt is still made
 
 rm -rf "$here/receipts" && mkdir -p "$here/receipts"
 cp "$scratch/project.bundle" "$here/"
 cp "$scratch/operator.pub" "$here/operator.pub"
-for d in honest other-signer failing; do
+for d in honest other-signer failing skipped timed-out; do
   mkdir -p "$here/receipts/$d"
   cp "$scratch/$d"/run-*.cdx.json "$here/receipts/$d/receipt.cdx.json"
-  cp "$scratch/$d/junit.xml" "$here/receipts/$d/junit.xml"
+  # A run that did not return its report has no junit.xml (junit.py says why).
+  if [ -f "$scratch/$d/junit.xml" ]; then cp "$scratch/$d/junit.xml" "$here/receipts/$d/junit.xml"; fi
 done
 
 # Two forgeries: the honest receipt with one exit code changed inside the signed exchange,
@@ -80,6 +102,6 @@ for d in bom['declarations']['evidence'][0]['data']:
 PY
 
 cat > "$here/commits.json" <<JSON
-{"tested": "$tested", "later": "$later", "broken": "$broken"}
+{"tested": "$tested", "later": "$later", "broken": "$broken", "skipped": "$skipped", "hangs": "$hangs"}
 JSON
-echo "challenge regenerated: tested $tested, later $later, broken $broken"
+echo "challenge regenerated: tested $tested, later $later, broken $broken, skipped $skipped, hangs $hangs"

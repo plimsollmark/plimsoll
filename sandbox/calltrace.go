@@ -18,7 +18,9 @@ import (
 // upstream status. The broker records a row for every call it forwarded, including
 // one whose response it then refused to deliver (no upstream answer, an oversized or
 // unreadable body, a malformed status), and such a row keeps the upstream status it
-// saw. A 2xx Status with Delivered false is therefore a call the guest never got an
+// saw; for a streamed answer cut short (the byte cap, a gap longer than the idle
+// limit, the run's deadline) Delivered is false and RespBytes is what the guest got.
+// A 2xx Status with Delivered false is therefore a call the guest never got a complete
 // answer to, and zero RespBytes cannot stand in for that distinction, because an
 // empty successful response is valid. A consumer asking "did the guest get a
 // successful response" must check both.
@@ -28,7 +30,7 @@ type CallRow struct {
 	Route     string        // matched HostRoute.Path TEMPLATE, never the raw path
 	Status    int           // upstream HTTP status; 0 if the upstream never responded
 	Delivered bool          // the upstream response reached the guest (false: the broker returned its own error instead)
-	ReqBytes  int           // request body bytes the broker read (<= maxHostRequestBytes)
+	ReqBytes  int           // request body bytes the broker sent, or read before refusing (<= the route's request limit)
 	RespBytes int           // response body bytes returned to the guest (<= maxHostResponseBytes)
 	Latency   time.Duration // broker -> upstream -> guest round trip for this call
 }

@@ -21,7 +21,14 @@ import (
 // run's evidence and the verdict it supports. It is separate from the run record the
 // attest harness signs, which says what the sandbox was asked and answered; this one
 // says what the vendor saw and what follows from it.
-const PredicateType = "https://plimsollmark.github.io/plimsoll/examples/adapter/qualification/v1"
+//
+// Version 2 pins the requirements file each adapter statement was judged against and
+// signs a verdict per requirement; no verifier here reads version 1.
+const PredicateType = "https://plimsollmark.github.io/plimsoll/examples/adapter/qualification/v2"
+
+// RequirementsPath is where every run's request carries the requirements file, so the
+// file an adapter statement pins is bound to the run's signed request as harness.js is.
+const RequirementsPath = "requirements.json"
 
 // Predicate is a qualification statement's predicate.
 type Predicate struct {
@@ -33,11 +40,18 @@ type Predicate struct {
 	// the run's request; Harness is harness.js's SHA-256, "" for a probe run.
 	Adapter FileDigest `json:"adapter"`
 	Harness string     `json:"harness_sha256,omitempty"`
+	// Requirements is the requirements file an adapter run was judged against, as the
+	// run's request carried it. Absent on the probe's statement: the probe is judged by
+	// rules of its own and decides no requirement.
+	Requirements *FileDigest `json:"requirements,omitempty"`
 	// Evidence is what the verdict is made from.
 	Evidence Evidence `json:"evidence"`
 	// Rules are the rules' outcomes, and Verdict "pass" when every rule held.
-	Rules   []Outcome `json:"rules"`
-	Verdict string    `json:"verdict"`
+	Rules []Outcome `json:"rules"`
+	// RequirementVerdicts is each requirement's verdict, Judge's reading of Rules
+	// through the pinned file, on an adapter statement only.
+	RequirementVerdicts []RequirementVerdict `json:"requirement_verdicts,omitempty"`
+	Verdict             string               `json:"verdict"`
 }
 
 // FileDigest names a file of the run's request.
@@ -76,7 +90,8 @@ type Verified struct {
 }
 
 // Verify checks qualification statements against the bundle of run records they speak
-// for. The caller has already verified the bundle (attest.VerifyBundle); entries is it,
+// for and the requirements file reqs, which the caller holds (read by ReadRequirements).
+// The caller has already verified the bundle (attest.VerifyBundle); entries is it,
 // checkpoint included. For every statement it checks:
 //
 //   - the signature, by pub, over the statement's DSSE encoding;
@@ -86,12 +101,18 @@ type Verified struct {
 //     that run's signed request carried, and the step it ran names the scenario;
 //   - that the report and exit code it holds are what that run's signed response printed;
 //   - that its scenario is the simulator's own definition of that scenario;
-//   - that its rules and verdict are what Evaluate makes of its evidence.
+//   - that its rules and verdict are what Evaluate makes of its evidence;
+//   - for an adapter run, that it pins reqs (the digest of reqs' exact bytes), that the
+//     run's signed request carried that file, and that its requirement verdicts are what
+//     Judge makes of its rules through reqs; the probe's statement pins nothing.
 //
 // And across statements: each adapter run was served under exactly one credential (the
 // probe under at most one), and no two runs shared one. What Verify cannot check is the ledger itself: that is the
 // vendor's account as the signer read it, and trusting it is trusting the signer.
-func Verify(pub ed25519.PublicKey, statements []attest.Envelope, entries []attest.Entry) ([]Verified, error) {
+func Verify(pub ed25519.PublicKey, reqs Requirements, statements []attest.Envelope, entries []attest.Entry) ([]Verified, error) {
+	if reqs.SHA256() == "" {
+		return nil, errNoRequirements
+	}
 	v := attest.NewVerifier(pub)
 	runs := 0
 	for _, e := range entries {
@@ -119,7 +140,7 @@ func Verify(pub ed25519.PublicKey, statements []attest.Envelope, entries []attes
 		if err != nil {
 			return nil, fmt.Errorf("statement %d: run %d's record: %w", i+1, p.Run, err)
 		}
-		if err := check(p, subject, rec.SHA256, entry); err != nil {
+		if err := check(p, subject, rec.SHA256, entry, reqs); err != nil {
 			return nil, fmt.Errorf("statement %d (run %d): %w", i+1, p.Run, err)
 		}
 		for _, c := range p.Evidence.Credentials {
@@ -139,7 +160,10 @@ func Verify(pub ed25519.PublicKey, statements []attest.Envelope, entries []attes
 // bundle; and everything Verify checks of one statement against its run. The checks
 // across runs, that every run has one statement and that no credential served two
 // runs, are Verify's: one line cannot show them.
-func VerifyOne(pub ed25519.PublicKey, env attest.Envelope, entry attest.Entry) (Verified, error) {
+func VerifyOne(pub ed25519.PublicKey, reqs Requirements, env attest.Envelope, entry attest.Entry) (Verified, error) {
+	if reqs.SHA256() == "" {
+		return Verified{}, errNoRequirements
+	}
 	p, subject, err := open(pub, env)
 	if err != nil {
 		return Verified{}, err
@@ -151,17 +175,34 @@ func VerifyOne(pub ed25519.PublicKey, env attest.Envelope, entry attest.Entry) (
 	if uint64(p.Run) != link.Index {
 		return Verified{}, fmt.Errorf("the statement names run %d, the line is line %d of its bundle", p.Run, link.Index)
 	}
-	if err := check(p, subject, rec.SHA256, entry); err != nil {
+	if err := check(p, subject, rec.SHA256, entry, reqs); err != nil {
 		return Verified{}, err
 	}
 	return Verified{Predicate: p, Record: subject}, nil
 }
 
+var errNoRequirements = errors.New("no requirements file: an adapter statement is checked against the requirements file it pins, read by ReadRequirements")
+
 // check is one opened statement (p, with its subject digest) against the line of the
-// run it names, whose verified record has digest record.
-func check(p Predicate, subject, record string, entry attest.Entry) error {
+// run it names, whose verified record has digest record, and the requirements file reqs.
+func check(p Predicate, subject, record string, entry attest.Entry, reqs Requirements) error {
 	if subject != record {
 		return fmt.Errorf("its subject %s is not run %d's record %s", short(subject), p.Run, short(record))
+	}
+	// The pin first: a holder whose requirements file is not the one the run was judged
+	// against learns that, by digest, before anything else.
+	switch p.Evidence.Kind {
+	case KindAdapter:
+		if p.Requirements == nil {
+			return errors.New("it pins no requirements file; an adapter statement must name the one it was judged against")
+		}
+		if p.Requirements.SHA256 != reqs.SHA256() {
+			return fmt.Errorf("it was judged against requirements %s, and this requirements file is %s", short(p.Requirements.SHA256), short(reqs.SHA256()))
+		}
+	case KindProbe:
+		if p.Requirements != nil || p.RequirementVerdicts != nil {
+			return errors.New("the probe's statement pins requirements or carries requirement verdicts; the probe decides no requirement")
+		}
 	}
 	if err := matchRun(p, entry); err != nil {
 		return err
@@ -173,6 +214,15 @@ func check(p Predicate, subject, record string, entry attest.Entry) error {
 	rules, pass := Evaluate(p.Evidence)
 	if !reflect.DeepEqual(rules, p.Rules) || Verdict(pass) != p.Verdict {
 		return fmt.Errorf("its verdict %q does not follow from its evidence, which gives %q", p.Verdict, Verdict(pass))
+	}
+	if p.Evidence.Kind == KindAdapter {
+		verdicts, err := Judge(reqs, rules)
+		if err != nil {
+			return err
+		}
+		if !sameJSON(verdicts, p.RequirementVerdicts) {
+			return fmt.Errorf("its requirement verdicts do not follow from its rules through requirements %s", short(reqs.SHA256()))
+		}
 	}
 	// An adapter run calls the vendor, so the vendor saw its credential; the probe's
 	// calls are all refused before the vendor, so it may have seen none.
@@ -203,6 +253,11 @@ func matchRun(p Predicate, entry attest.Entry) error {
 	}
 	files := map[string]string{}
 	for _, f := range req.GetProject().GetFiles() {
+		// The daemon refuses a repeated path; a request that carries one anyway leaves
+		// no single file for a digest to name.
+		if _, dup := files[f.GetPath()]; dup {
+			return fmt.Errorf("the request carries %s twice", f.GetPath())
+		}
 		files[f.GetPath()] = f.GetContent()
 	}
 	steps := req.GetProject().GetSteps()
@@ -222,6 +277,9 @@ func matchRun(p Predicate, entry attest.Entry) error {
 	case KindAdapter:
 		if digest(files["harness.js"]) != p.Harness {
 			return errors.New("the request did not carry that harness.js")
+		}
+		if content, ok := files[p.Requirements.Path]; !ok || digest(content) != p.Requirements.SHA256 {
+			return fmt.Errorf("the request did not carry %s with the digest the statement pins", p.Requirements.Path)
 		}
 		var plan Plan
 		if err := json.Unmarshal([]byte(files["plan.json"]), &plan); err != nil || !reflect.DeepEqual(plan, p.Evidence.Plan) {
@@ -259,6 +317,28 @@ func digest(s string) string {
 
 // Digest is the SHA-256 the statements name files by.
 func Digest(s string) string { return digest(s) }
+
+// CarriedRequirements reads the requirements file a run's request carried at
+// RequirementsPath, for a holder with no copy of its own (a receipt that attaches the
+// run, say). Verify against it then shows the statements were judged against the file
+// the runs carried, and the pin names that file by digest; it shows nothing about any
+// other copy. The entry's record is the caller's to verify.
+func CarriedRequirements(entry attest.Entry) (Requirements, error) {
+	req, _, err := entry.Messages()
+	if err != nil {
+		return Requirements{}, err
+	}
+	var found []string
+	for _, f := range req.GetProject().GetFiles() {
+		if f.GetPath() == RequirementsPath {
+			found = append(found, f.GetContent())
+		}
+	}
+	if len(found) != 1 {
+		return Requirements{}, fmt.Errorf("the run's request carries %d copies of %s, want one", len(found), RequirementsPath)
+	}
+	return ReadRequirements([]byte(found[0]))
+}
 
 func short(s string) string {
 	if len(s) > 12 {

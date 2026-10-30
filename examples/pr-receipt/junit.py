@@ -9,7 +9,9 @@ out, or never run because an earlier step failed), so any reader can rebuild it.
 
 Either way the file is only as honest as the tests: the project's own code writes the
 framework's report, so it can claim anything. What it cannot do is differ from what the
-run returned. Pass or fail is decided from the signed exit codes, never from this file.
+run returned. Pass or fail is decided from the signed exit codes and, when a report was
+requested, from that report as the signed result holds it (verify.py's tests check: no
+failure or error, at least the minimum of tests that ran); never from this file.
 
   python3 -I junit.py OUTPUT_DIRECTORY   # reads its run-*.cdx.json, writes junit.xml
 """
@@ -19,6 +21,34 @@ import json
 from pathlib import Path
 import sys
 from xml.etree import ElementTree as ET
+from xml.parsers import expat
+
+# The most a JUnit report is read at: a run returns at most 8 MiB of artifacts in all, so a
+# report that the run returned is never longer, and a longer one was written by hand.
+MAX_REPORT_BYTES = 8 << 20
+
+
+def parse_report(content):
+    """The root element of a JUnit report, refusing (ValueError) one over MAX_REPORT_BYTES
+    or one that declares a DOCTYPE or an entity. Under --self-consistent the receipt, and
+    with it the report, can be anyone's, and xml.etree expands the entities a DOCTYPE
+    declares: nested ones take any amount of memory (the "XML vulnerabilities" section of
+    Python's xml documentation). A test framework's report needs neither. The check is a
+    first pass with expat that stops at the DOCTYPE, before any entity is declared."""
+    if len(content) > MAX_REPORT_BYTES:
+        raise ValueError(f'the report is {len(content)} bytes, over the {MAX_REPORT_BYTES} a run returns')
+
+    def refuse(*_):
+        raise ValueError('the report declares a DOCTYPE or an entity')
+
+    first = expat.ParserCreate()
+    first.StartDoctypeDeclHandler = refuse
+    first.EntityDeclHandler = refuse
+    try:
+        first.Parse(content, True)
+    except expat.ExpatError as e:
+        raise ValueError(f'the report is not XML: {e}') from None
+    return ET.fromstring(content)
 
 
 def exchange(bom_bytes):

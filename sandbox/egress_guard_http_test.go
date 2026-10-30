@@ -27,7 +27,7 @@ func (f *fakeE2BGuard) EgressGuardPath() string { return "/v1/e2b/guard" }
 
 func (f *fakeE2BGuard) EgressGuardKnownToken(token string) bool { return token == f.token }
 
-func (f *fakeE2BGuard) EgressGuardCall(_ context.Context, token, method, path string, body []byte) EgressGuardResponse {
+func (f *fakeE2BGuard) EgressGuardCall(_ context.Context, token string, call GuardRequest) EgressGuardResponse {
 	f.calls.Add(1)
 	if f.entered != nil {
 		f.entered <- struct{}{}
@@ -35,7 +35,8 @@ func (f *fakeE2BGuard) EgressGuardCall(_ context.Context, token, method, path st
 	if f.block != nil {
 		<-f.block
 	}
-	if token != f.token || method != http.MethodGet || path != "/v1/items" || string(body) != `{"x":1}` {
+	body, _ := io.ReadAll(call.Body)
+	if token != f.token || call.Method != http.MethodGet || call.RawTarget != "/v1/items" || string(body) != `{"x":1}` || call.ContentLength != int64(len(body)) || call.Headers != nil {
 		return EgressGuardResponse{Status: http.StatusUnauthorized, Body: []byte("bad envelope")}
 	}
 	return EgressGuardResponse{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{"ok":true}`)}
@@ -133,7 +134,7 @@ func (g *twoTokenGuard) EgressGuardPath() string { return "/v1/e2b/guard" }
 func (g *twoTokenGuard) EgressGuardKnownToken(token string) bool {
 	return token == "run-a" || token == "run-b"
 }
-func (g *twoTokenGuard) EgressGuardCall(context.Context, string, string, string, []byte) EgressGuardResponse {
+func (g *twoTokenGuard) EgressGuardCall(context.Context, string, GuardRequest) EgressGuardResponse {
 	g.calls.Add(1)
 	return EgressGuardResponse{Status: http.StatusOK, ContentType: "application/json", Body: []byte(`{"ok":true}`)}
 }

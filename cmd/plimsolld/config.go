@@ -211,6 +211,27 @@ type hardenedFacts struct {
 	Uncapped []string
 }
 
+// hardenedFloor is the weakest isolation hardened mode accepts: kernel, the weaker of
+// its two allowed levels (vm and verified kernel). Startup checks the provider's proven
+// tier against it, and the daemon holds every run to it as a floor (isolationFloor),
+// because a provider can read its boundary again on each dispatch (agentsandbox reads its
+// runtime class) and find a weaker one than startup proved.
+const hardenedFloor = sandbox.IsolationKernel
+
+// isolationFloor is the floor the daemon merges into every request's minimum
+// (rpc.SandboxService.Floor): the stronger of hardenedFloor in hardened mode and the
+// operator's SANDBOX_MIN_ISOLATION (configured; IsolationUnknown when unset), none when
+// neither applies, so a daemon with neither dispatches exactly as before. The operator's
+// minimum is checked at startup too, but a startup check alone holds nothing once a
+// provider finds a weaker boundary on a later dispatch.
+func isolationFloor(hardened bool, configured sandbox.IsolationClass) sandbox.IsolationClass {
+	floor := configured
+	if hardened {
+		floor = max(floor, hardenedFloor)
+	}
+	return floor
+}
+
 // enforceHardenedPolicy is the production policy PLIMSOLL_HARDENED=1 turns on.
 // The soft posture — warnings for runc, optional pinning, defaulted budgets — is
 // fine for development, but a warning is not a production policy: in hardened
@@ -225,8 +246,9 @@ func enforceHardenedPolicy(getenv func(string) string, f hardenedFacts) error {
 
 	// Boundary: only a hardware VM or a verified user-space kernel is a
 	// hostile-code boundary. f.Isolation is post-EnsureReady evidence, so for
-	// docker this is true only after the pinned daemon proved a runsc runtime.
-	if !f.IsolationPending && f.Isolation != sandbox.IsolationVM && f.Isolation != sandbox.IsolationKernel {
+	// docker this is true only after the pinned daemon proved a runsc runtime. The
+	// same level is the floor the daemon then holds every run to (isolationFloor).
+	if !f.IsolationPending && !f.Isolation.Meets(hardenedFloor) {
 		fail("provider %q reports isolation %q; hardened mode requires vm (e2b, dockercloud, agentsandbox on a Kata runtime class) or verified kernel (docker with SANDBOX_DOCKER_RUNTIME=runsc, agentsandbox on a runsc runtime class)",
 			f.Provider, f.Isolation.String())
 	}

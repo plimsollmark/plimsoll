@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"mime"
 	"net"
 	"net/url"
 	"path"
@@ -100,6 +101,313 @@ type HostAPIGrant struct {
 	// running can use the grant too. A session refuses a granted call without it before
 	// anything runs (CheckSessionGrant).
 	AllowInSessions bool
+	// PassHeaders names the request headers the broker copies from the guest's request
+	// to the upstream one, first value only, checked as a field value (visible ASCII,
+	// space and tab, at most maxPassHeaderValueBytes). Every other guest header is
+	// dropped, as it always was. It exists for the headers an API requires that a
+	// standard client sends itself (the Claude API's anthropic-version, the optional
+	// anthropic-beta and OpenAI-Beta). Validate refuses a name the broker owns or that
+	// shapes the connection (Authorization, Host, Content-Type, Content-Length,
+	// Transfer-Encoding, the X-Plimsoll-* family) and one an API reads an API key from
+	// (x-api-key, api-key and the rest of providerKeyHeaders): see passHeaderRefused.
+	PassHeaders []string
+	// SetHeaders are request headers the broker sets on every upstream request with the
+	// grant's own value, whatever the guest sent: for a header that picks where the
+	// run's credential acts (anthropic-workspace-id, OpenAI-Organization, OpenAI-Project)
+	// or one the operator pins rather than trusting the guest's (anthropic-version). A
+	// header has one owner: a name is the grant's to set or the guest's to pass, never
+	// both. Validate refuses every name PassHeaders refuses, an API key header among
+	// them, since a credential is the Minter's and never a value in a grants file, and a
+	// value that is empty, longer than maxPassHeaderValueBytes, outside visible ASCII,
+	// space and tab, or padded with either.
+	SetHeaders map[string]string
+	// SDKEnv is the environment a granted guest process gets so that a standard client
+	// library finds the broker without any plimsoll-specific code: each entry is a
+	// variable name and a literal value, in which "{origin}" stands for the loopback
+	// origin the provider serves the broker on inside the sandbox
+	// ({"OPENAI_BASE_URL": "{origin}/v1", "OPENAI_API_KEY": "plimsoll-grant"}). The
+	// client libraries refuse to start without a key, so a profile names a dummy one;
+	// the broker never forwards it. Validate refuses a name plimsoll or the dynamic
+	// loader reads (sdkEnvNameRefused) and a value with a control character.
+	SDKEnv map[string]string
+	// RouteMaxRequestBytes sets the request body limit for an allow entry (keyed by the
+	// entry as written in Allow), for a route that takes an upload; an entry it does not
+	// name keeps the default (maxHostRequestBytes, 1 MiB). A raised limit changes how the
+	// body moves: it is passed through to the API as it arrives instead of buffered. A
+	// body over the route's limit is refused with 413 before anything is sent when its
+	// length is declared, and cut at the limit when it is not. Validate keeps each limit
+	// between 1 and MaxRouteRequestBytes and under the run's MaxRequestBytes.
+	RouteMaxRequestBytes map[HostRoute]int64
+	// RouteContentTypes names the media types the broker takes from the guest's
+	// Content-Type on an allow entry and sends to the API ("multipart/form-data"), with
+	// the boundary and charset parameters alone, checked. Every route takes
+	// application/json. On a route that lists types, a body of another type is refused
+	// with 415; on a route that lists none the body is sent as application/json, as it
+	// always was, whatever the guest's header said.
+	RouteContentTypes map[HostRoute][]string
+	// MaxRequestBytes is the run's request body bytes across all its brokered calls,
+	// what the grant lets a run send to the API in all; 0 means DefaultMaxRequestBytes,
+	// and Validate refuses more than MaxRequestBytesCeiling. A call whose body would
+	// take the total past it is refused with 413 before anything is sent.
+	MaxRequestBytes int64
+}
+
+// Request body budgets. maxHostRequestBytes (broker.go) is every call's limit unless
+// the profile raises it for a route; the run's total is the number the operator chose
+// for what a run may send, not an accident of the call budget times the body limit.
+const (
+	// MaxRouteRequestBytes is the most a profile may let one call send on a route: 512
+	// MiB, so the Claude Files API's 500 MB request limit fits under it (the plan's D4).
+	MaxRouteRequestBytes = 512 << 20
+	// DefaultMaxRequestBytes is a run's total when the profile sets none: what the
+	// default call budget (DefaultMaxHostCalls) could send at the default body limit.
+	DefaultMaxRequestBytes = 256 << 20
+	// MaxRequestBytesCeiling is the most a profile may let a run send in all: 1 GiB.
+	MaxRequestBytesCeiling = 1 << 30
+)
+
+// requestLimit is the request body limit for a call matched to route: the profile's
+// for the entry, or the default.
+func (g *HostAPIGrant) requestLimit(route HostRoute) int64 {
+	if g != nil {
+		if n := g.RouteMaxRequestBytes[route]; n > 0 {
+			return n
+		}
+	}
+	return maxHostRequestBytes
+}
+
+// requestBudget is the run's total request body bytes.
+func (g *HostAPIGrant) requestBudget() int64 {
+	if g != nil && g.MaxRequestBytes > 0 {
+		return g.MaxRequestBytes
+	}
+	return DefaultMaxRequestBytes
+}
+
+// requestContentType is the Content-Type the broker sends for a body on route, given
+// the guest's header: application/json when the guest sent none, or JSON, or the
+// route lists no type; the guest's media type when the route lists it, rebuilt from
+// the type and its boundary and charset parameters alone, each checked (RFC 2046
+// boundary characters, at most 70; a charset of token characters), so a parameter
+// cannot carry a line break or a second header into the request. The second result is
+// false when the body's type is refused.
+func (g *HostAPIGrant) requestContentType(route HostRoute, guest string) (string, bool) {
+	types := g.RouteContentTypes[route]
+	if len(types) == 0 || strings.TrimSpace(guest) == "" {
+		return "application/json", true
+	}
+	mediaType, params, err := mime.ParseMediaType(guest)
+	if err != nil {
+		return "", false
+	}
+	if mediaType == "application/json" {
+		return "application/json", true
+	}
+	if !slices.Contains(types, mediaType) {
+		return "", false
+	}
+	kept := make(map[string]string, 2)
+	if v, ok := params["boundary"]; ok {
+		if !validBoundary(v) {
+			return "", false
+		}
+		kept["boundary"] = v
+	}
+	if v, ok := params["charset"]; ok {
+		if v == "" || len(v) > 40 || !isToken(v) {
+			return "", false
+		}
+		kept["charset"] = v
+	}
+	return mime.FormatMediaType(mediaType, kept), true
+}
+
+// validBoundary reports whether v is a multipart boundary as RFC 2046 section 5.1.1
+// defines one: 1 to 70 characters from its bchars set, not ending in a space.
+func validBoundary(v string) bool {
+	if v == "" || len(v) > 70 || strings.HasSuffix(v, " ") {
+		return false
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("'()+_,-./:=? ", r):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isToken reports whether v is an RFC 9110 token: visible ASCII with no separator.
+func isToken(v string) bool {
+	if v == "" {
+		return false
+	}
+	for _, r := range v {
+		if r <= ' ' || r >= 0x7f || strings.ContainsRune(`"(),/:;<=>?@[\]{}`, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// validRequestMediaType reports whether t may be a RouteContentTypes entry: a
+// lowercase type and subtype, each a token, no wildcard, and not a type that is
+// application/json (every route takes it already), multipart/byteranges or a
+// message/* type (an HTTP message inside the body is the one shape an upstream may
+// read as a second request).
+func validRequestMediaType(t string) bool {
+	kind, sub, ok := strings.Cut(t, "/")
+	if !ok || !isToken(kind) || !isToken(sub) || strings.ToLower(t) != t || strings.Contains(t, "*") {
+		return false
+	}
+	return t != "application/json" && t != "multipart/byteranges" && kind != "message"
+}
+
+// maxPassHeaderValueBytes bounds one passed header value; the API headers this is for
+// are short tokens (a date, a comma-separated list of feature names).
+const maxPassHeaderValueBytes = 1024
+
+// maxSDKEnvValueBytes bounds one SDKEnv value: a URL or a dummy key.
+const maxSDKEnvValueBytes = 1024
+
+// sdkEnvOriginToken is the placeholder in an SDKEnv value for the broker's loopback
+// origin inside the sandbox.
+const sdkEnvOriginToken = "{origin}"
+
+// passHeaderRefused reports whether name may not be a PassHeaders entry: the broker
+// sets it itself (the credential, the body's type and length), the transport owns it
+// (connection and framing headers, which a forwarded value could use to desynchronize
+// the upstream), it names the guest's own origin (Host), it carries a proxy's or
+// plimsoll's own trust (Forwarded, X-Forwarded-*, X-Plimsoll-*), an API reads it as
+// an API key (providerKeyHeaders), or it is not a valid field name at all.
+func passHeaderRefused(name string) bool {
+	if !validFieldName(name) {
+		return true
+	}
+	lower := strings.ToLower(name)
+	switch lower {
+	case "authorization", "proxy-authorization", "cookie", "host", "content-length", "content-type",
+		"transfer-encoding", "connection", "upgrade", "te", "trailer", "keep-alive", "expect",
+		"forwarded", "via", "accept-encoding":
+		return true
+	}
+	if slices.Contains(providerKeyHeaders, lower) {
+		return true
+	}
+	return strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "x-plimsoll-") || strings.HasPrefix(lower, "proxy-")
+}
+
+// providerKeyHeaders are the headers model APIs read an API key from besides
+// Authorization. HTTP standardizes no other credential field (RFC 9110 has Authorization
+// and Proxy-Authorization), so the list is what the APIs document, and it is the list an
+// AI gateway strips from its clients by default (LiteLLM, from v1.82.0: x-api-key,
+// x-goog-api-key and api-key, with ocp-apim-subscription-key among the provider key
+// headers it forwards only when told to). The Claude API still accepts its key in
+// x-api-key beside Authorization (platform.claude.com, authentication, read 2026-10-29),
+// the Gemini API reads x-goog-api-key, Azure OpenAI api-key, and Azure API Management
+// ocp-apim-subscription-key. Passing one would let the guest's own key ride beside the
+// broker's credential, and which of two keys an API honors is documented nowhere: the
+// guest, not the profile, could choose the account the upstream acts for, and through an
+// upload route put data into an account of its own.
+var providerKeyHeaders = []string{"x-api-key", "x-goog-api-key", "api-key", "ocp-apim-subscription-key"}
+
+// validFieldName reports whether name is an RFC 9110 token: one or more of the
+// characters allowed in a header field name.
+func validFieldName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validFieldValue reports whether v may be forwarded as a header value: visible ASCII,
+// space and horizontal tab only, bounded. A CR, LF or NUL, or a byte past 0x7e, is
+// refused whole rather than cleaned, so no value reaches the upstream in a form the
+// guest did not send.
+func validFieldValue(v string) bool {
+	if len(v) > maxPassHeaderValueBytes {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c != '\t' && (c < 0x20 || c > 0x7e) {
+			return false
+		}
+	}
+	return true
+}
+
+// passedHeaders returns the guest headers the grant lets through, from the raw guest
+// request headers: for each PassHeaders name, the first value, when it is a valid field
+// value. Names are matched without regard to case. A nil guest header set (the JSON
+// envelope clients, which send none) passes nothing.
+func (g *HostAPIGrant) passedHeaders(guest map[string][]string) map[string]string {
+	if g == nil || len(g.PassHeaders) == 0 || len(guest) == 0 {
+		return nil
+	}
+	var out map[string]string
+	for _, name := range g.PassHeaders {
+		for k, vs := range guest {
+			if !strings.EqualFold(k, name) || len(vs) == 0 || !validFieldValue(vs[0]) {
+				continue
+			}
+			if out == nil {
+				out = make(map[string]string, len(g.PassHeaders))
+			}
+			out[name] = vs[0]
+			break
+		}
+	}
+	return out
+}
+
+// sdkEnvNameRefused reports whether name may not be an SDKEnv variable: not a plain
+// uppercase identifier, or one plimsoll or the dynamic loader reads at startup (the
+// loader names are the ones Preflight refuses on an image, checkLoaderEnv).
+func sdkEnvNameRefused(name string) bool {
+	if name == "" || (name[0] >= '0' && name[0] <= '9') {
+		return true
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if !((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			return true
+		}
+	}
+	switch name {
+	case "PATH", "HOME", "HOSTNAME", "NODE_OPTIONS", "GLIBC_TUNABLES", "LOCPATH", "NLSPATH", "GCONV_PATH", HostAPISocketEnv, HostAPIListenEnv:
+		// The last two are plimsoll's own entries in the guest environment; a profile's
+		// entry of the same name would come later and win, moving or breaking the
+		// broker's socket or the forwarder (release review, 2026-10-28).
+		return true
+	}
+	return strings.HasPrefix(name, "LD_") || strings.HasPrefix(name, "PLIMSOLL_") || strings.HasPrefix(name, "NODE_")
+}
+
+// sdkEnv renders the grant's SDKEnv as NAME=value entries for origin, sorted by name
+// so every provider hands the guest the same list. Nil for a grant without any.
+func (g *HostAPIGrant) sdkEnv(origin string) []string {
+	if g == nil || len(g.SDKEnv) == 0 {
+		return nil
+	}
+	names := slices.Sorted(maps.Keys(g.SDKEnv))
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, name+"="+strings.ReplaceAll(g.SDKEnv[name], sdkEnvOriginToken, origin))
+	}
+	return out
 }
 
 // ErrGrantNotForSessions is a granted call inside a session whose grant does not set
@@ -110,11 +418,26 @@ var ErrGrantNotForSessions = errors.New("sandbox: the grant does not allow calls
 // carry a grant: nil without a grant or when the grant allows sessions, otherwise a
 // refusal marked not dispatched, reason permission.
 func CheckSessionGrant(g *HostAPIGrant) error {
-	if g == nil || g.AllowInSessions {
+	if g == nil {
+		return nil
+	}
+	if g.WantsLoopback() {
+		// A session's container runs under one seccomp profile for its life, and a later
+		// call cannot relax it; the loopback forwarder, its profile variant and its
+		// lifetime in a kept sandbox are not designed. Stated, not half-served.
+		return NotDispatched(RefusalUnsupported, fmt.Errorf("%w: a grant with sdk_env (the local address for standard client libraries) is not available in a session; make the call as a run", ErrUnsupported))
+	}
+	if g.AllowInSessions {
 		return nil
 	}
 	return NotDispatched(RefusalPermission, fmt.Errorf("%w: code an earlier call of the session left running could use it while this call runs; allow_in_sessions on the grant's profile accepts that, or make the call outside a session", ErrGrantNotForSessions))
 }
+
+// WantsLoopback reports whether the grant asks for the local address a standard
+// client library reaches the broker through: its profile set sdk_env. Only such a run
+// gets the loopback forwarder, the environment, and the seccomp profile variant that
+// allows IPv4 TCP sockets; every other granted run keeps the injected client alone.
+func (g *HostAPIGrant) WantsLoopback() bool { return g != nil && len(g.SDKEnv) > 0 }
 
 // DefaultMaxHostCalls is a run's brokered-call budget when its grant sets none.
 // MaxHostCallsCeiling is the most a grant may ask for.
@@ -148,6 +471,16 @@ func (g *HostAPIGrant) Clone() *HostAPIGrant {
 		c.HealthCheck = &hc
 	}
 	c.RouteMaxCalls = maps.Clone(g.RouteMaxCalls)
+	c.PassHeaders = append([]string(nil), g.PassHeaders...)
+	c.SetHeaders = maps.Clone(g.SetHeaders)
+	c.SDKEnv = maps.Clone(g.SDKEnv)
+	c.RouteMaxRequestBytes = maps.Clone(g.RouteMaxRequestBytes)
+	if g.RouteContentTypes != nil {
+		c.RouteContentTypes = make(map[HostRoute][]string, len(g.RouteContentTypes))
+		for route, types := range g.RouteContentTypes {
+			c.RouteContentTypes[route] = append([]string(nil), types...)
+		}
+	}
 	return &c
 }
 
@@ -308,6 +641,72 @@ func (g *HostAPIGrant) Validate() error {
 					"so a call spelled for the wildcard alone (\"ep1.json\" for \"ep1\") can reach the capped route uncounted; "+
 					"move the cap to the wider route, or list the routes it should reach instead of the \"*\"", route.Method, route.Path, w.Method, w.Path)
 			}
+		}
+	}
+	if g.MaxRequestBytes < 0 || g.MaxRequestBytes > MaxRequestBytesCeiling {
+		return fmt.Errorf("host-api grant: MaxRequestBytes must be 0 (the default, %d) or between 1 and %d", DefaultMaxRequestBytes, MaxRequestBytesCeiling)
+	}
+	for route, n := range g.RouteMaxRequestBytes {
+		if !slices.Contains(g.Allow, route) {
+			return fmt.Errorf("host-api grant: RouteMaxRequestBytes names %s %q, which is not an entry of Allow", route.Method, route.Path)
+		}
+		if n < 1 || n > MaxRouteRequestBytes {
+			return fmt.Errorf("host-api grant: RouteMaxRequestBytes for %s %q must be between 1 and %d", route.Method, route.Path, MaxRouteRequestBytes)
+		}
+		if n > g.requestBudget() {
+			return fmt.Errorf("host-api grant: RouteMaxRequestBytes for %s %q (%d) is above the run's MaxRequestBytes (%d), so no call could send that much", route.Method, route.Path, n, g.requestBudget())
+		}
+	}
+	for route, types := range g.RouteContentTypes {
+		if !slices.Contains(g.Allow, route) {
+			return fmt.Errorf("host-api grant: RouteContentTypes names %s %q, which is not an entry of Allow", route.Method, route.Path)
+		}
+		if len(types) == 0 {
+			return fmt.Errorf("host-api grant: RouteContentTypes for %s %q lists no type", route.Method, route.Path)
+		}
+		for i, t := range types {
+			if !utf8.ValidString(t) || !validRequestMediaType(t) {
+				return fmt.Errorf("host-api grant: RouteContentTypes for %s %q: %q is not a media type the broker forwards (a lowercase type/subtype, no wildcard, not application/json, multipart/byteranges or message/*)", route.Method, route.Path, t)
+			}
+			if slices.Contains(types[:i], t) {
+				return fmt.Errorf("host-api grant: RouteContentTypes for %s %q lists %q twice", route.Method, route.Path, t)
+			}
+		}
+	}
+	seenHeaders := make(map[string]struct{}, len(g.PassHeaders))
+	for _, name := range g.PassHeaders {
+		if !utf8.ValidString(name) || passHeaderRefused(name) {
+			return fmt.Errorf("host-api grant: PassHeaders entry %q is not a header the broker forwards (not a field name, one the broker or the transport owns, or one an API reads an API key from)", name)
+		}
+		lower := strings.ToLower(name)
+		if _, dup := seenHeaders[lower]; dup {
+			return fmt.Errorf("host-api grant: PassHeaders names %q twice", name)
+		}
+		seenHeaders[lower] = struct{}{}
+	}
+	seenSet := make(map[string]struct{}, len(g.SetHeaders))
+	for name, value := range g.SetHeaders {
+		if !utf8.ValidString(name) || passHeaderRefused(name) {
+			return fmt.Errorf("host-api grant: SetHeaders entry %q is not a header a grant may set (not a field name, one the broker or the transport owns, or one an API reads an API key from: the credential is the token's, never a value in the profile)", name)
+		}
+		if value == "" || !validFieldValue(value) || strings.Trim(value, " \t") != value {
+			return fmt.Errorf("host-api grant: SetHeaders value for %q must be a header value of 1 to %d bytes of visible ASCII, space and tab, with no space or tab at either end", name, maxPassHeaderValueBytes)
+		}
+		lower := strings.ToLower(name)
+		if _, passed := seenHeaders[lower]; passed {
+			return fmt.Errorf("host-api grant: %q is both passed from the guest and set by the grant; a header has one owner", name)
+		}
+		if _, dup := seenSet[lower]; dup {
+			return fmt.Errorf("host-api grant: SetHeaders names %q twice", name)
+		}
+		seenSet[lower] = struct{}{}
+	}
+	for name, value := range g.SDKEnv {
+		if !utf8.ValidString(name) || sdkEnvNameRefused(name) {
+			return fmt.Errorf("host-api grant: SDKEnv name %q must be an uppercase identifier and not one plimsoll or the loader reads", name)
+		}
+		if !utf8.ValidString(value) || len(value) > maxSDKEnvValueBytes || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+			return fmt.Errorf("host-api grant: SDKEnv value for %q must be at most %d bytes with no control character", name, maxSDKEnvValueBytes)
 		}
 	}
 	if hc := g.HealthCheck; hc != nil {
@@ -726,6 +1125,9 @@ globalThis[__HOST_JSON__] = (function () {
     return e;
   }
   const socket = process.env.HOST_API_SOCKET;
+  // A run with sdk_env also has the loopback forwarder (HOST_API_LISTEN), a process of
+  // plimsoll's that listens before this one starts (hostForwarderWrapperJS); this
+  // client needs nothing of it and keeps the socket.
   // Allowlist baked in host-side; the client offers only Allow-ed calls. Mirrors the
   // Go routeAllowed check (decoded==raw, no query/fragment, no . / .. segments,
   // segment-wise "*" match) so the client and the docker broker agree on what a grant
@@ -853,6 +1255,11 @@ globalThis[__HOST_JSON__] = (function () {
     post: (p, b) => call("POST", p, b),
     patch: (p, b) => call("PATCH", p, b),
     del: (p) => call("DELETE", p),
+    // raw names the guard's raw route for a standard HTTP client: the base URL a
+    // client library takes, and the headers it must add (none on E2B, whose network
+    // rule adds the guard credential outside the guest; the run's guard credential on
+    // dockercloud, which this client already holds).
+    raw: { url: __guardURL ? __guardURL + "/raw" : "", headers: __GUARD_HEADERS_JSON__ },
   };
 })();
 `

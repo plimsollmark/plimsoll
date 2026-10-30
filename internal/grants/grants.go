@@ -302,6 +302,46 @@ type profileConfig struct {
 	// PreambleFile points at a .js file (relative to the grants file) to use as the
 	// preamble, for SDKs too large to inline. Mutually exclusive with Preamble.
 	PreambleFile string `json:"preamble_file"`
+
+	// PassHeaders names the request headers the broker copies from the guest's request
+	// to the API's (first value, checked), for the headers an API requires that a
+	// standard client library sends itself: ["anthropic-version", "anthropic-beta"].
+	// Every other guest header is dropped. A name the broker or the transport owns
+	// (Authorization, Content-Type, Host, Transfer-Encoding, X-Plimsoll-*) is refused
+	// at load, and so is a header an API reads an API key from (x-api-key, api-key);
+	// sandbox.HostAPIGrant.PassHeaders has the list.
+	PassHeaders []string `json:"pass_headers"`
+	// SetHeaders are headers the broker sets on every request with the profile's own
+	// value, whatever the guest sent: {"anthropic-workspace-id": "wrkspc_01..."} keeps
+	// the choice of workspace out of the guest's hands, as {"OpenAI-Project": "proj_..."}
+	// does for a project. A name is set or passed, never both; the names pass_headers
+	// refuses are refused here too, an API key header among them, since the credential
+	// belongs in token and never in this file.
+	SetHeaders map[string]string `json:"set_headers"`
+	// SDKEnv is the environment a granted guest process gets, so a standard client
+	// library finds the broker with no plimsoll-specific code: variable name to literal
+	// value, "{origin}" standing for the broker's loopback origin inside the sandbox:
+	// {"OPENAI_BASE_URL": "{origin}/v1", "OPENAI_API_KEY": "plimsoll-grant"}. The
+	// libraries refuse to start without a key, so the profile names a dummy one, which
+	// the broker never forwards. Never put a real credential here: the token field is
+	// where the API's credential lives, and it stays in the daemon.
+	SDKEnv map[string]string `json:"sdk_env"`
+
+	// RouteMaxRequestBytes sets the request body limit for an allow entry, keyed as
+	// written in allow ({"POST /v1/files": 16777216}), for a route that takes an
+	// upload; the default is 1 MiB and the most a profile may set is 512 MiB. A body
+	// over it is refused with 413 before it is sent (when its length is declared) or
+	// cut at the limit.
+	RouteMaxRequestBytes map[string]int64 `json:"route_max_request_bytes"`
+	// RouteContentTypes names the media types the broker takes from the guest's
+	// Content-Type on an allow entry ({"POST /v1/files": ["multipart/form-data"]});
+	// every route takes application/json, and on a route that lists types another type
+	// is refused with 415. A route that lists none sends every body as application/json.
+	RouteContentTypes map[string][]string `json:"route_content_types"`
+	// MaxRequestBytes is the most a run may send in request bodies across all its calls
+	// (256 MiB when unset; at most 1 GiB), so what a grant lets a run upload is a number
+	// the operator chose, not the call budget times the body limit.
+	MaxRequestBytes int64 `json:"max_request_bytes"`
 }
 
 // tokenConfig selects how a profile's per-run credential is produced. "static"
@@ -462,21 +502,35 @@ func Load(path string) (*Registry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
 		}
-		routeMax, err := parseRouteMaxCalls(pc.RouteMaxCalls)
+		routeMax, err := parseRouteKeyed("route_max_calls", pc.RouteMaxCalls)
+		if err != nil {
+			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
+		}
+		routeBytes, err := parseRouteKeyed("route_max_request_bytes", pc.RouteMaxRequestBytes)
+		if err != nil {
+			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
+		}
+		routeTypes, err := parseRouteKeyed("route_content_types", pc.RouteContentTypes)
 		if err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
 		}
 		grant := &sandbox.HostAPIGrant{
-			BaseURL:         pc.BaseURL,
-			Allow:           allow,
-			Scopes:          pc.Scopes,
-			Global:          pc.Global,
-			Preamble:        preamble,
-			Minter:          minter,
-			HealthCheck:     health,
-			MaxCalls:        pc.MaxCalls,
-			RouteMaxCalls:   routeMax,
-			AllowInSessions: pc.AllowInSessions,
+			BaseURL:              pc.BaseURL,
+			Allow:                allow,
+			Scopes:               pc.Scopes,
+			Global:               pc.Global,
+			Preamble:             preamble,
+			Minter:               minter,
+			HealthCheck:          health,
+			MaxCalls:             pc.MaxCalls,
+			RouteMaxCalls:        routeMax,
+			AllowInSessions:      pc.AllowInSessions,
+			PassHeaders:          pc.PassHeaders,
+			SetHeaders:           pc.SetHeaders,
+			SDKEnv:               pc.SDKEnv,
+			RouteMaxRequestBytes: routeBytes,
+			RouteContentTypes:    routeTypes,
+			MaxRequestBytes:      pc.MaxRequestBytes,
 		}
 		if err := grant.Validate(); err != nil {
 			return nil, fmt.Errorf("grants: profile %q: %w", name, err)
@@ -552,19 +606,20 @@ func parseHealthCheck(line string) (*sandbox.HostRoute, error) {
 	return &sandbox.HostRoute{Method: method, Path: path}, nil
 }
 
-// parseRouteMaxCalls turns route_max_calls into the grant's RouteMaxCalls; the grant's
-// Validate checks that each key is an allow entry.
-func parseRouteMaxCalls(caps map[string]int) (map[sandbox.HostRoute]int, error) {
-	if len(caps) == 0 {
+// parseRouteKeyed turns a profile object keyed by "METHOD /path" lines (route_max_calls,
+// route_max_request_bytes, route_content_types) into the grant's map keyed by route;
+// the grant's Validate checks that each key is an allow entry.
+func parseRouteKeyed[T any](field string, m map[string]T) (map[sandbox.HostRoute]T, error) {
+	if len(m) == 0 {
 		return nil, nil
 	}
-	out := make(map[sandbox.HostRoute]int, len(caps))
-	for line, n := range caps {
+	out := make(map[sandbox.HostRoute]T, len(m))
+	for line, v := range m {
 		route, err := parseRoute(line)
 		if err != nil {
-			return nil, fmt.Errorf("route_max_calls entry %w", err)
+			return nil, fmt.Errorf("%s entry %w", field, err)
 		}
-		out[route] = n
+		out[route] = v
 	}
 	return out, nil
 }

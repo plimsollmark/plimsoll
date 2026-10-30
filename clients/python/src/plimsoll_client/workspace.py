@@ -29,19 +29,32 @@ absolute path is accepted when it lies inside the work directory.
 
 Calls of one Workspace are serialized by the session; an operation made of several
 calls (``edit``, a large ``write``, ``hydrate``) is not atomic against another thread's.
+
+Two uses that are not an agent's shell. :meth:`Workspace.run` runs one program, each
+argument passed as given and never parsed by a shell, with an environment and a stdin of
+its own and outside the shell's saved directory and exports (the script that starts it
+travels as a file too, ``run``, sets nothing a later ``exec`` sees, and is deleted, with
+the stdin copy, before the program starts). And a Workspace
+made with ``confined=False`` lets ``read`` and ``write`` take an absolute path anywhere in
+the sandbox, for a caller that is not an agent and needs a file outside the work directory
+(a harness staging an archive in ``/tmp``): the sandbox, not the work directory, is then
+the boundary.
 """
 
 from __future__ import annotations
 
 import base64
 import posixpath
+import re
+import shlex
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Union
+from typing import Dict, List, Mapping, Optional, Sequence, Union
 
 from . import _validate as v
+from ._transport import CancelHandle
 from .types import ProjectResult, SessionSummary
 
-__all__ = ["ExecOutcome", "Workspace", "WorkspacePathError", "WorkspaceTooLargeError", "STATE_DIR", "MAX_READ_BYTES"]
+__all__ = ["ExecOutcome", "Workspace", "WorkspacePathError", "WorkspaceTooLargeError", "STATE_DIR", "MAX_READ_BYTES", "STEP_KINDS"]
 
 #: The directory in the work directory that carries each call's arguments and the
 #: shell's state. Never captured by ``persist`` and never listed by ``glob`` or ``grep``.
@@ -71,6 +84,15 @@ _EXEC_STEP = (
     + "export -p | grep -Ev '^export (PWD|OLDPWD|__plimsoll_)' > \"$__plimsoll_s/env.new\"; "
     + 'mv "$__plimsoll_s/env.new" "$__plimsoll_s/env"; pwd > "$__plimsoll_s/cwd"; exit $__plimsoll_rc'
 )
+# The run script and the stdin copy are read, then deleted before the program starts: the
+# script holds the environment's values (a setup step's credential, say), and nothing a
+# later call runs may find them on disk. The open descriptor keeps stdin readable.
+_RUN_STEP = (
+    _PRELUDE
+    + 'pwd > "$__plimsoll_s/root"; base64 -d "$__plimsoll_s/in.b64" > "$__plimsoll_s/in" || exit 125; '
+    + 'exec < "$__plimsoll_s/in"; __plimsoll_r="$(cat "$__plimsoll_s/run")" || exit 125; '
+    + 'rm -f "$__plimsoll_s/in" "$__plimsoll_s/in.b64" "$__plimsoll_s/run"; eval "$__plimsoll_r"'
+)
 _TRUE_STEP = "true"
 _READ_STEP = _PRELUDE + 'head -c "$(cat "$__plimsoll_s/a2")" -- "$(cat "$__plimsoll_s/a1")" > "$__plimsoll_s/out"'
 _WRITE_B64_STEP = (
@@ -96,24 +118,31 @@ _PERSIST_STEP = (
 )
 _HYDRATE_STEP = _PRELUDE + 'tar -xf "$__plimsoll_s/ws.tar" -C "$PWD" && rm -f "$__plimsoll_s/ws.tar"'
 
+#: What each fixed step does, by its text: a label for a log of a workspace's calls (a
+#: call's record names its request by digest only).
+STEP_KINDS: Dict[str, str] = {
+    _ROOT_STEP: "root",
+    _EXEC_STEP: "exec",
+    _RUN_STEP: "run",
+    _TRUE_STEP: "write",
+    _READ_STEP: "read",
+    _WRITE_B64_STEP: "write",
+    _APPEND_B64_STEP: "write",
+    _GLOB_SHELL_STEP: "glob",
+    _GLOB_FIND_STEP: "glob",
+    _GREP_STEP: "grep",
+    _PERSIST_STEP: "persist",
+    _HYDRATE_STEP: "hydrate",
+}
+
 #: Every step this module sends, for a test that asserts no other text ever becomes a step.
-FIXED_STEPS = frozenset(
-    {
-        _ROOT_STEP,
-        _EXEC_STEP,
-        _TRUE_STEP,
-        _READ_STEP,
-        _WRITE_B64_STEP,
-        _APPEND_B64_STEP,
-        _GLOB_SHELL_STEP,
-        _GLOB_FIND_STEP,
-        _GREP_STEP,
-        _PERSIST_STEP,
-        _HYDRATE_STEP,
-    }
-)
+FIXED_STEPS = frozenset(STEP_KINDS)
+
+# An environment variable `run` may set: a shell name, so `export NAME=...` sets exactly it.
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _CMD = STATE_DIR + "/cmd"
+_RUN = STATE_DIR + "/run"
 _A1 = STATE_DIR + "/a1"
 _A2 = STATE_DIR + "/a2"
 _A3 = STATE_DIR + "/a3"
@@ -179,16 +208,48 @@ def _check_text(what: str, text: str, *, allow_newline: bool) -> str:
     return text
 
 
+def _check_path(path: str) -> None:
+    if not isinstance(path, str):
+        raise WorkspacePathError("path must be a str")
+    if path == "":
+        raise WorkspacePathError("path is required")
+    if "\x00" in path or "\n" in path or "\r" in path or "\\" in path:
+        raise WorkspacePathError(f"unsafe path {path!r}")
+    if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in path):
+        raise WorkspacePathError(f"unsafe path {path!r}")
+
+
+def _argv_script(argv: Sequence[str], env: Mapping[str, str]) -> str:
+    """The script the run step sources: one export per variable, then exec of the
+    program, every value quoted so the shell reads it back byte for byte."""
+    if isinstance(argv, (str, bytes)) or not isinstance(argv, Sequence) or len(argv) == 0:
+        raise ValueError("argv must be a non-empty sequence of str")
+    # After `exec`, bash reads a leading - as its own option and dash has no `--` to stop
+    # that, so such a program name could run something else: refused.
+    if isinstance(argv[0], str) and argv[0].startswith("-"):
+        raise ValueError(f"program name {argv[0]!r} starts with -; name it by path (./{argv[0]})")
+    lines = []
+    for name, value in env.items():
+        if not isinstance(name, str) or not _ENV_NAME.match(name):
+            raise ValueError(f"environment variable name {name!r} is not a shell name")
+        lines.append(f"export {name}={shlex.quote(_check_text('environment value', value, allow_newline=True))}")
+    words = [shlex.quote(_check_text("argument", a, allow_newline=True)) for a in argv]
+    lines.append("exec " + " ".join(words))
+    return "\n".join(lines) + "\n"
+
+
 class Workspace:
     """Shell, files and search over one open :class:`~plimsoll_client.client.Session`.
 
     ``timeout`` (seconds) is the budget of a command whose ``exec`` names none, and of
     every other call; ``max_timeout`` caps any budget asked for, for a daemon whose
     ceiling is known (``Info.project_environment.max_timeout_ms``). The daemon refuses
-    a budget past its own ceiling either way.
+    a budget past its own ceiling either way. ``confined=False`` lets ``read`` and
+    ``write`` take an absolute path outside the work directory (see the module
+    docstring); everything else stays inside it.
     """
 
-    def __init__(self, session, *, timeout: float = 120.0, max_timeout: Optional[float] = None) -> None:
+    def __init__(self, session, *, timeout: float = 120.0, max_timeout: Optional[float] = None, confined: bool = True) -> None:
         if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
             raise ValueError("timeout must be a positive number of seconds")
         if max_timeout is not None and (not isinstance(max_timeout, (int, float)) or max_timeout <= 0):
@@ -196,6 +257,7 @@ class Workspace:
         self._session = session
         self._timeout = float(timeout)
         self._max_timeout = float(max_timeout) if max_timeout is not None else None
+        self._confined = bool(confined)
         self._root: Optional[str] = None
 
     @property
@@ -228,14 +290,7 @@ class Workspace:
         """The work-directory-relative form of ``path``: a relative path is taken from
         the work directory (``.`` is the directory itself); an absolute path must lie
         inside it. Raises :class:`WorkspacePathError` otherwise."""
-        if not isinstance(path, str):
-            raise WorkspacePathError("path must be a str")
-        if path == "":
-            raise WorkspacePathError("path is required")
-        if "\x00" in path or "\n" in path or "\r" in path or "\\" in path:
-            raise WorkspacePathError(f"unsafe path {path!r}")
-        if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in path):
-            raise WorkspacePathError(f"unsafe path {path!r}")
+        _check_path(path)
         rel = path
         if rel.startswith("/"):
             root = self.root
@@ -252,6 +307,16 @@ class Workspace:
         return rel
 
     def _file_path(self, path: str) -> str:
+        if not self._confined:
+            _check_path(path)
+            if path.startswith("/"):
+                full = "/" + posixpath.normpath(path).lstrip("/")
+                root = self.root
+                if full != root and not full.startswith(root + "/"):
+                    if full == "/":
+                        raise WorkspacePathError("/ is not a file")
+                    return full
+                path = full
         rel = self.resolve(path)
         if rel == ".":
             raise WorkspacePathError("the work directory itself is not a file")
@@ -292,9 +357,49 @@ class Workspace:
             result=result,
         )
 
+    def run(
+        self,
+        argv: Sequence[str],
+        *,
+        env: Optional[Mapping[str, str]] = None,
+        stdin: Union[str, bytes, bytearray, None] = None,
+        timeout: Optional[float] = None,
+        cancel: Optional[CancelHandle] = None,
+    ) -> ExecOutcome:
+        """Runs the program ``argv`` in the work directory: each argument reaches it as
+        given (no shell parses one), ``env`` is added to the sandbox's environment,
+        ``stdin`` is its whole input (None: an empty one), and the shell ``exec`` keeps
+        sees nothing of it, neither a directory change nor an export. A non-zero exit is
+        an outcome, not an error; a program that is not found exits 127."""
+        script = _argv_script(argv, env or {})
+        if stdin is None:
+            data = b""
+        elif isinstance(stdin, str):
+            data = _check_text("stdin", stdin, allow_newline=True).encode("utf-8")
+        elif isinstance(stdin, (bytes, bytearray)):
+            data = bytes(stdin)
+        else:
+            raise TypeError("stdin must be str, bytes or None")
+        encoded = base64.b64encode(data).decode("ascii")
+        if len(script.encode("utf-8")) + len(encoded) > v.MAX_PROJECT_BYTES - 1024:
+            raise WorkspaceTooLargeError("the program's arguments, environment and stdin are past one call's files budget")
+        result = self._call({_RUN: script, _IN_B64: encoded}, [_RUN_STEP], [_ROOT], timeout, tolerate_timeout=True, cancel=cancel)
+        self._learn(result)
+        step = result.steps[0]
+        return ExecOutcome(
+            stdout=step.stdout,
+            stderr=step.stderr,
+            exit_code=step.exit_code,
+            timed_out=step.timed_out or result.outcome == "timed_out",
+            stdout_truncated=step.stdout_truncated,
+            stderr_truncated=step.stderr_truncated,
+            cwd=self._root or "",
+            result=result,
+        )
+
     # ---- files ----
 
-    def read(self, path: str, *, max_bytes: int = 1 << 20) -> bytes:
+    def read(self, path: str, *, max_bytes: int = 1 << 20, cancel: Optional[CancelHandle] = None) -> bytes:
         """At most ``max_bytes`` of the file at ``path``. FileNotFoundError when there is
         no such file (a directory counts as none)."""
         if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
@@ -302,7 +407,7 @@ class Workspace:
         if max_bytes > MAX_READ_BYTES:
             raise ValueError(f"max_bytes must be at most {MAX_READ_BYTES}, the artifact budget")
         rel = self._file_path(path)
-        result = self._call({_A1: rel, _A2: str(max_bytes)}, [_READ_STEP], [_OUT])
+        result = self._call({_A1: rel, _A2: str(max_bytes)}, [_READ_STEP], [_OUT], cancel=cancel)
         step = result.steps[0]
         if step.exit_code != 0:
             raise FileNotFoundError(f"{path}: {step.stderr_text.strip() or 'cannot read'}")
@@ -311,27 +416,31 @@ class Workspace:
             raise WorkspaceTooLargeError(f"{path}: the sandbox could not return it within the artifact budget")
         return content
 
-    def write(self, path: str, content: Union[str, bytes, bytearray]) -> None:
+    def write(self, path: str, content: Union[str, bytes, bytearray], *, cancel: Optional[CancelHandle] = None) -> None:
         """Writes ``content`` to ``path``, creating parent directories. Text goes as the
-        call's file; bytes go as base64 and are decoded by a fixed step."""
+        call's file; bytes, and anything outside the work directory, go as base64 and
+        are decoded by a fixed step."""
         rel = self._file_path(path)
         if isinstance(content, str):
             _check_text("content", content, allow_newline=True)
+            if rel.startswith("/"):
+                self._put_bytes(rel, content.encode("utf-8"), cancel)
+                return
             if len(content.encode("utf-8")) > v.MAX_PROJECT_BYTES - 1024:
                 raise WorkspaceTooLargeError(f"{path}: text past one call's files budget; write it as bytes")
-            self._call({rel: content}, [_TRUE_STEP], [])
+            self._call({rel: content}, [_TRUE_STEP], [], cancel=cancel)
             return
         if isinstance(content, (bytes, bytearray)):
-            self._put_bytes(rel, bytes(content))
+            self._put_bytes(rel, bytes(content), cancel)
             return
         raise TypeError("content must be str or bytes")
 
-    def _put_bytes(self, rel: str, data: bytes) -> None:
+    def _put_bytes(self, rel: str, data: bytes, cancel: Optional[CancelHandle] = None) -> None:
         chunks = [data[i : i + _CHUNK_BYTES] for i in range(0, len(data), _CHUNK_BYTES)] or [b""]
         for i, chunk in enumerate(chunks):
             step = _WRITE_B64_STEP if i == 0 else _APPEND_B64_STEP
             encoded = base64.b64encode(chunk).decode("ascii")
-            result = self._call({_A1: rel, _IN_B64: encoded}, [step], [])
+            result = self._call({_A1: rel, _IN_B64: encoded}, [step], [], cancel=cancel)
             if result.steps[0].exit_code != 0:
                 raise OSError(f"{rel}: {result.steps[0].stderr_text.strip() or 'cannot write'}")
 
@@ -463,13 +572,14 @@ class Workspace:
         timeout: Optional[float] = None,
         *,
         tolerate_timeout: bool = False,
+        cancel: Optional[CancelHandle] = None,
     ) -> ProjectResult:
         budget = self._timeout if timeout is None else float(timeout)
         if budget <= 0:
             raise ValueError("timeout must be a positive number of seconds")
         if self._max_timeout is not None and budget > self._max_timeout:
             budget = self._max_timeout
-        result = self._session.run_project(files, list(steps), list(artifacts), timeout=budget)
+        result = self._session.run_project(files, list(steps), list(artifacts), timeout=budget, cancel=cancel)
         if result.outcome == "setup_failed":
             raise RuntimeError(f"plimsoll: the call did not run: {result.outcome}: {result.detail}")
         if result.outcome in ("protocol_error", "runner_failed") or not result.steps:

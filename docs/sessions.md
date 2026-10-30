@@ -118,7 +118,7 @@ which every implementation runs. The suite checks that:
 | `openshell` | Yes. How it keeps the boundary between calls: [docs/openshell.md](openshell.md#sessions). |
 | `docker` | Yes, with a project image configured, under either runtime: <dfn>*runc*</dfn>, docker's default, which shares the machine's kernel, or <dfn>*gVisor*</dfn>, which puts a kernel of its own between the code and the machine's. How: [Docker](#docker) below. |
 | `e2b` | Yes. <dfn>*E2B*</dfn> is a hosted service that runs each sandbox in a small virtual machine of its own. How it keeps the boundary between calls: [E2B](#e2b) below. |
-| `dockercloud` | Not yet. It would need its own live proof, and its live suite spends money. |
+| `dockercloud` | Not yet. Docker Cloud sessions are held back until the open's check can read every listener inside Docker's machine. |
 | `wasm` | No. The engine runs in the daemon's own process, and keeping hostile code's state there between calls is the wrong direction. |
 
 ## Turning them on
@@ -137,7 +137,7 @@ startup check proves its runs; this one proves what only a session does, on this
 | `SANDBOX_MAX_SESSIONS` | Open sessions at once, daemon-wide. Default 0: sessions off. |
 | `SANDBOX_MAX_SESSIONS_PER_CALLER` | Open sessions one caller may hold, suspended ones included. Default 0: no cap beyond `SANDBOX_MAX_SESSIONS`. `PLIMSOLL_HARDENED=1` requires it with sessions on: a suspended session holds no concurrency slot, so without it one caller with a short idle timeout could hold every place. With docker, keep `SANDBOX_MAX_SESSIONS` below `SANDBOX_MAX_CONCURRENT` (the daemon warns otherwise): a paused docker session keeps its slot. |
 | `SANDBOX_MAX_SESSIONS_PER_OWNER` | Open sessions one owner of one caller may hold: the end user an open names (`OpenSessionRequest.owner`, an opaque `[A-Za-z0-9._:-]{1,64}` name; anything else is refused, since dropping it would lift the cap). Default 0: no per-owner cap; an open with no owner counts against none. At the cap, the open closes that owner's least recently used session with no call in progress (a suspended one included) and takes its place, so a full daemon still serves it (the closed session stays closed if the new open then fails); the closed session's later calls are refused, not dispatched, with the end `replaced`. When every one is running a call, the open is refused, not dispatched, reason `capacity`. The official clients send hex(HMAC-SHA256(key = SHA-256(`"plimsoll session owner key v2\n"` + the caller's token), message = `"plimsoll session owner v2\n"` + owner)), never the name, and the daemon never logs it. The key is derived rather than the token itself because HMAC replaces a key longer than 64 bytes with its SHA-256, which for a long imported token is exactly the `token_sha256` the daemon's clients file holds; derived, it is 32 bytes and keyed by the token alone. Closing rather than refusing: a refused user would be locked out of new conversations until an old session expired. Counted per daemon, in memory: behind [placement](placement.md) across several daemons, one owner can hold that many on each. The open's rate and concurrency slot are checked before anything is closed, so a refused open closes nothing, and a victim whose close fails stays open and the open is refused. `Describe` states the cap as `max_sessions_per_owner` (with `max_sessions_per_caller`), so an app relying on it can check. |
-| `SANDBOX_SESSION_POOL` | Docker only: containers kept ready for sessions, each never used and with its interpreters already running ([Docker](#docker), "A warm pool"). Default 0: none. At most `SANDBOX_MAX_SESSIONS`. |
+| `SANDBOX_SESSION_POOL` | `docker` and `openshell`: sandboxes kept ready for sessions, each never used and with its interpreters already running ([Docker](#docker), "A warm pool"; [openshell.md](openshell.md#sessions) for what differs there), and for a `Run` cell that asks for one ("A cell for one call"). Default 0: none. At most `SANDBOX_MAX_SESSIONS`; startup fails when it is set for another provider. |
 | `SANDBOX_SESSION_LIFETIME` | Absolute lifetime from open. Default `30m`, at most `12h`. A request may ask for less. |
 | `SANDBOX_SESSION_IDLE` | A session with no call for this long is suspended: its sandbox is stopped (`openshell`) or paused (`docker`, `e2b`). Default `5m`; `0` never suspends, which the daemon refuses with a provider billed by the second (`e2b`), since such a session would bill until its lifetime. A request may ask for less, but not under 1 s. A session no request has named by its first idle timeout is closed instead, with the end `unclaimed` ([what the daemon guarantees](#what-the-daemon-guarantees)). |
 | `SANDBOX_SESSION_DISK_MB` | A call that leaves more than this in the session's files ends the session. Default 1024; 0 means no bound, and nothing is measured. It is measured after each call, not enforced during one ([openshell.md](openshell.md#sessions) says why the `openshell` provider's per-run disk cap does not apply to sessions). On docker it is the used space of the session's three size-capped in-memory filesystems, a file deleted while a process holds it open included. On `openshell` it is a walk of the session's files, which stops at 200,000 entries (counted as over the budget) and which code of the session can hide files from (a deleted file still held open, a directory swapped for a link during the walk), so there it is an estimate, not a bound. |
@@ -157,24 +157,36 @@ the lifetime and the idle timeout.
 
 ## The API
 
-Three procedures beside `Run`, which is unchanged:
+Three procedures beside `Run`, which also runs a cell by itself (below, "A cell for one
+call"):
 
 - `OpenSession` returns a session ID (128 random bits), the session's
   <dfn>*fingerprint*</dfn> (the SHA-256 hash of the ID), the tier measured at open, and
   when the session expires. The request may name the languages the session's cells will
   use (`languages`), as a hint: a daemon with a warm pool then hands over a
-  container with those interpreters already running ([Docker](#docker), "A warm pool"). A
+  sandbox with those interpreters already running ([Docker](#docker), "A warm pool"). A
   hint changes how fast the first cell answers, never what runs: a cell in any language
   the daemon states still runs, a language the session's image does not run is dropped
   from the hint, and only a name plimsoll does not know (a typo) is refused, marked not
-  dispatched. A session that finishes opening after its caller gave up
+  dispatched. An open may also be `warm_only`: it is handed a waiting pool sandbox or
+  nothing. With none it may hand over (no pool, none waiting, or none that may live as
+  long as the session asks), it is refused, marked not dispatched, reason `capacity`,
+  and no sandbox is made, so a caller that would rather run fresh than wait for a
+  session's sandbox to be made can do so; every provider without a pool, the ones
+  billed by the second included, refuses it the same way, and it never closes another
+  session of the owner to make room. `Describe` states the pool's size
+  (`session_pool`, 0 when there is none), so a client knows when a warm-only open can
+  succeed. A daemon that predates `warm_only` would ignore it and make a sandbox (on
+  `e2b` one billed by the second), so the field came with protocol 5,
+  which such a daemon refuses before it reads the open: no client has to ask `Describe`
+  first. A session that finishes opening after its caller gave up
   is closed at once, since nobody holds its ID. An answer already on its way when the
   caller gives up is still lost, and that session holds its place until it expires; the
   per-caller session cap bounds how many such places one caller can leave behind.
 - `SessionRun` is a `Run` request with the session ID: a snippet, a project, or a
   cell, code for the session's interpreter (below). A
   <dfn>*module run*</dfn>, which runs a compiled simulator once per row of a parameter
-  table, has no session form, and a cell has no form outside a session. `SessionRun` answers a `RunResponse` and, when the session
+  table, has no session form; a cell runs by itself through `Run` too (below). `SessionRun` answers a `RunResponse` and, when the session
   ended during the call, why. A session that the cleanup after a call ends is reported to
   the next call.
 - `CloseSession` ends the session, or collects one that ended by itself. It states how
@@ -202,6 +214,54 @@ res, err := s.RunJavaScript(ctx, sandbox.Request{Code: `require("fs").writeFileS
 res, err = s.RunJavaScript(ctx, sandbox.Request{Code: `console.log(require("fs").readFileSync("/tmp/a", "utf8"))`})
 summary, err := s.Close(ctx)
 ```
+
+**A cell for one call (`prefer_warm`).** `Run` takes a cell too: code for an interpreter
+of its language, its files written into the work directory first, its final expression's
+value printed, in a sandbox of its own that keeps nothing after the call (the result
+states `interpreter_started` and `interpreter_ended`). With `prefer_warm` set on the
+request, a daemon that keeps a warm pool runs it in a waiting pool sandbox, which has run
+only plimsoll's own programs and already has the cell's interpreter running, claimed for
+this call alone and deleted after it, so the call answers without a sandbox being made for
+it. Otherwise, and whenever none fits (no pool, none waiting, a session image that does not
+run the language or meet the request's software rule), the daemon runs the cell in a
+sandbox made for it: as a project of one step, the cell's files, its code and a runner that
+runs it as a session's interpreter does, or on a daemon that runs no projects (`wasm`) as a
+JavaScript snippet. A miss is never a refusal. `RunResponse.warm` says which sandbox ran
+it. The call goes through everything a `Run` does, before either sandbox is touched: the
+isolation floor, the software rule, the ship scan, the caller's limits and, on a provider
+billed by the second, the paid-time reservation. A call canceled before its pool sandbox
+was claimed is answered as canceled and marked not dispatched, and is not run fresh
+instead; one canceled during the cell is unmarked, since the code may have run. The pool
+sandbox is deleted on every path. Files under `.plimsoll/`, where a fresh cell's code and
+runner go, are refused on both paths, and a cell a daemon has no way to run fresh is
+refused whether or not a pool sandbox is waiting, so the pool's state never decides a
+refusal. `prefer_warm` on any other payload is refused, not dispatched.
+
+Measured through plimsolld on a laptop (2026-10-29), a cell served by a pool sandbox answered
+in 35 ms (Python) and 42 ms (JavaScript) under runc, against 320 to 690 ms for the same call
+in a sandbox made for it, and in 51 and 78 ms under gVisor, against 570 to 993 ms. The low
+end of each range is a fresh call within 5 seconds of the docker provider's last <dfn>*Preflight*</dfn>,
+its check of the docker daemon, the runtime and the images; a fresh call later than that runs
+the check first, and a pool sandbox never does. The method, the spread and a call that finds
+no pool sandbox free are on the
+[warm pool page (INTERNAL · plimsoll site →)](https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html).
+
+The official clients use it for every call that keeps nothing: the Go client's
+`Remote.RunCell(ctx, cell, client.CellOptions{PreferWarm: true})`, the Python client's
+`Client.run_cell(..., prefer_warm=True)` (and the async client's), the TypeScript client's
+`runCell(cell, { preferWarm: true })`, which `CodeSandboxes` uses for a call that names no
+conversation (no key) unless `sessions` is `"never"`, and the
+[MCP (INTERNAL · trainer site →)](https://plimsollmark.github.io/plimsoll/trainers/glossary.html#mcp)
+server's `run_code` without a sandbox handle. What it costs: a pool sandbox runs the cell in
+the session image (on docker the project image, which a fresh cell uses too), in a sandbox
+that waited up to the pool's 30-minute bound with plimsoll's interpreters running in it.
+The record is a single run's on either path, with no session fields, and it does not cover
+`warm`: which sandbox ran the call is stated in the answer but not signed (no record
+format changed). A deterministic cell answers the same on both paths with two exceptions:
+a traceback names the cell's file `cell` in a fresh sandbox and `<cell 1>` in a pool one,
+and a fresh cell passes on an exit code its code chose (`sys.exit(3)` is 3), where a pool
+sandbox's interpreter reports 1. The Python client's `CodeExecutor` does not use the path:
+its fresh run is a script (Python through `runpy`, JavaScript as an ES module), not a cell.
 
 ## Interpreters: state between calls
 
@@ -468,8 +528,9 @@ A docker session is the container a project run gets, kept for the session:
   ([warm pool page](https://plimsollmark.github.io/plimsoll/measurements/warm-pool/index.html),
   with the data and the programs).
   - A waiting container has run only plimsoll's own programs: init, `sleep`, and the
-    interpreters with their relays. It goes to one session, and its first cell in each
-    language still says its interpreter is new. Closing that session removes the
+    interpreters with their relays. It goes to one session, or to one cell a `Run` asked
+    for it ("A cell for one call"), and its first cell in each language still says its
+    interpreter is new. Closing that session, or that cell's answer, removes the
     container. Nothing goes back into the pool or is reused, so
     [Who may share a session](#who-may-share-a-session) holds unchanged.
   - A container is handed over only while it matches the image, runtime and isolation the
@@ -529,6 +590,8 @@ A docker session is the container a project run gets, kept for the session:
     every language.
   - At startup, the session check runs on a container from the pool, so the warm path is
     the one startup proves.
+  - `openshell` keeps the same pool, with gateway sandboxes for containers
+    ([openshell.md](openshell.md#sessions), "A warm pool").
 
 A session's snippets run in the project image, not the snippet image, because one
 container runs every call. The answer to `OpenSession` and every call's record state the project image.

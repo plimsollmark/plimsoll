@@ -86,6 +86,7 @@ func Build(getenv func(string) string) (Provider, error) {
 		d.ModuleImage = getenv("SANDBOX_DOCKER_MODULE_IMAGE") // "" = module runs unsupported
 		d.Runtime = getenv("SANDBOX_DOCKER_RUNTIME")          // e.g. "runsc" (gVisor); "" = runc
 		d.Seccomp = getenv("SANDBOX_DOCKER_SECCOMP")          // "" = docker default (explicit); path or "unconfined"
+		d.SeccompSDK = getenv("SANDBOX_DOCKER_SECCOMP_SDK")   // the profile a run whose grant sets sdk_env gets instead; "" = none
 		requirePinned, err := BoolFromEnv(getenv, "SANDBOX_REQUIRE_PINNED_IMAGES")
 		if err != nil {
 			return Provider{}, err

@@ -22,6 +22,17 @@ if [ -n "${PLIMSOLL_REF:-}" ]; then
   [ -z "$(git -C "$source_dir" status --porcelain)" ] || { echo 'Pinned source checkout must be clean' >&2; exit 2; }
 fi
 [ -f "$source_dir/examples/sbom/main.go" ] || { echo 'Pinned source does not include the receipt converter yet' >&2; exit 2; }
+# The head this run is for (the workflow passes the pull request's head from the event); the
+# receipt's states compare the commit it tested with it. Unset: the project's own HEAD.
+if [ -n "${PR_HEAD_SHA:-}" ]; then
+  [[ "$PR_HEAD_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo 'PR_HEAD_SHA must be a full commit SHA' >&2; exit 2; }
+fi
+# The fewest tests the returned report must list as run for the job to pass; with JUNIT_PATH
+# set and this unset, 1. Without a test report there is nothing to count, so it needs one.
+if [ -n "${PLIMSOLL_MIN_TESTS:-}" ]; then
+  [[ "$PLIMSOLL_MIN_TESTS" =~ ^[1-9][0-9]{0,5}$ ]] || { echo 'PLIMSOLL_MIN_TESTS must be a whole number from 1 to 999999' >&2; exit 2; }
+  [ -n "${JUNIT_PATH:-}" ] || { echo 'PLIMSOLL_MIN_TESTS needs JUNIT_PATH: without a test report the receipt cannot count tests' >&2; exit 2; }
+fi
 mkdir -p "$source_dir/tmp"
 work_dir="$(mktemp -d "$source_dir/tmp/pr-receipt.XXXXXXXX")"
 umask 077
@@ -29,6 +40,7 @@ cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}"
 mkdir -p "$cache_dir"
 key_dir="$(mktemp -d "$cache_dir/plimsoll-pr-key.XXXXXXXX")"
 daemon_pid=''
+daemon_tmp=''
 cleanup() {
   if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
     if tr '\0' ' ' < "/proc/$daemon_pid/cmdline" | grep -Fq "$work_dir/plimsolld"; then
@@ -37,10 +49,28 @@ cleanup() {
     fi
   fi
   rm -rf "$key_dir"
+  if [ -n "$daemon_tmp" ]; then rm -rf "$daemon_tmp"; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# The daemon's own temporary directory, short and private. The docker provider makes Unix
+# sockets in it, and Linux refuses a socket path over 107 bytes, so it cannot sit under the
+# checkout: a GitHub runner's checkout path holds the repository's name twice. It is the
+# runner's RUNNER_TEMP (which the runner empties at each job's start and end) when that is
+# short enough, else /tmp, in a new directory mktemp names at random with mode 0700, never a
+# fixed name another local user could make first; removed at exit. socket_room is the
+# longest name the daemon makes in it, plimsoll-docker-config-<up to 10 digits>/alive.sock
+# (sandbox/docker_cli.go); receipt_test.go checks it against every socket the provider makes.
+socket_room=44
+daemon_parent="${RUNNER_TEMP:-/tmp}"
+# 16 is "/plimsoll.XXXXXX", 1 the slash before the socket's own directory.
+if [ $(( ${#daemon_parent} + 16 + 1 + socket_room )) -gt 107 ]; then daemon_parent=/tmp; fi
+daemon_tmp="$(mktemp -d "$daemon_parent/plimsoll.XXXXXX")"
+if [ $(( ${#daemon_tmp} + 1 + socket_room )) -gt 107 ]; then
+  echo "The daemon's temporary directory $daemon_tmp leaves its socket paths over Linux's 107 bytes" >&2
+  exit 1
+fi
 # Local-only. No project file is built or executed on the runner itself.
 go -C "$source_dir" build -o "$work_dir/plimsolld" ./cmd/plimsolld
 go -C "$source_dir" build -o "$work_dir/plimsoll-attest" ./cmd/plimsoll-attest
@@ -58,7 +88,7 @@ docker_resolution=()
 for setting in DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG XDG_RUNTIME_DIR; do
   if [[ -v "$setting" ]]; then docker_resolution+=("$setting=${!setting}"); fi
 done
-env -i PATH="$PATH" HOME="$HOME" TMPDIR="$work_dir" "${docker_resolution[@]}" \
+env -i PATH="$PATH" HOME="$HOME" TMPDIR="$daemon_tmp" "${docker_resolution[@]}" \
 SANDBOX_PROVIDER=docker SANDBOX_DOCKER_RUNTIME=runsc \
 SANDBOX_DOCKER_IMAGE="${PROJECT_IMAGE:-plimsoll/sandbox:latest}" \
 SANDBOX_DOCKER_PROJECT_IMAGE="${PROJECT_IMAGE:-plimsoll/sandbox:latest}" \
@@ -106,6 +136,30 @@ env -u PLIMSOLL_ATTEST_KEY "$work_dir/plimsoll-attest" sign-statement -key "$sig
   -type https://in-toto.io/attestation/test-result/v0.1 -out "$output_dir/test-result.intoto.json" \
   "$output_dir/test-result.statement.json" > "$output_dir/statement.log"
 rm -- "$output_dir/test-result.statement.json"
+# The receipt's states (states.py), in verify.py's report on the receipt just made, written to
+# states.json: which commit it covers and whether that is the head this run is for, whether
+# the run completed, what came back, how many tests the returned report lists, and what stays
+# unverified. A key made for this run is read as self-consistent only, never as trusted.
+boms=("$output_dir"/run-*.cdx.json)
+[ "${#boms[@]}" = 1 ] || { echo "Expected one receipt, found ${#boms[@]}" >&2; exit 1; }
+verify_args=(--sbom "$work_dir/sbom" --receipt "${boms[0]}" --repo "$project_dir" --repository "${PR_REPOSITORY:-}"
+  --head "${PR_HEAD_SHA:-$(git -C "$project_dir" rev-parse --verify 'HEAD^{commit}')}" --pr "${PR_NUMBER:-}"
+  --command "${TEST_COMMAND-npm test}" --attest "$work_dir/plimsoll-attest" --test-result "$output_dir/test-result.intoto.json")
+if [ -n "$operator_key" ]; then verify_args+=(--trusted-pub "${operator_key%.key}.pub"); else verify_args+=(--self-consistent); fi
+[ -z "${JUNIT_PATH:-}" ] || verify_args+=(--junit-path "$JUNIT_PATH")
+[ -z "${PLIMSOLL_MIN_TESTS:-}" ] || verify_args+=(--min-tests "$PLIMSOLL_MIN_TESTS")
+[ ! -f "$output_dir/junit.xml" ] || verify_args+=(--junit "$output_dir/junit.xml")
+[ -z "${COVERAGE_PATH:-}" ] || verify_args+=(--coverage-path "$COVERAGE_PATH")
+[ ! -f "$output_dir/coverage.cobertura.xml" ] || verify_args+=(--coverage "$output_dir/coverage.cobertura.xml")
+[ -z "${PR_BASE_SHA:-}" ] || verify_args+=(--base "$PR_BASE_SHA")
+[ -z "${SESSION_TRAILER:-}" ] || verify_args+=(--session-trailer "$SESSION_TRAILER")
+verify_status=0
+python3 -I "$script_dir/verify.py" "${verify_args[@]}" > "$output_dir/states.json" || verify_status=$?
+if [ "$verify_status" -gt 1 ]; then
+  echo "The receipt's states could not be derived (verify.py exited $verify_status)" >&2
+  # A usage error prints no report; the summary then says no states were written.
+  [ -s "$output_dir/states.json" ] || rm -f -- "$output_dir/states.json"
+fi
 # Everything in the output directory is published: refuse it if any file names a
 # directory of this machine's (the checkout, the project, the output, the home). A
 # workflow may upload the output even after a failure (a failed command still gets a
@@ -119,8 +173,13 @@ for local_path in "$source_dir" "$project_dir" "$output_dir" "$HOME"; do
     exit 1
   fi
 done
+# The summary, one line per state, for the log (the workflow writes it to the job summary).
+if [ -f "$output_dir/states.json" ]; then python3 -I "$script_dir/states.py" summary "$output_dir/states.json"; fi
 # A normal failed command still gets a signed receipt. Publish the artifacts,
-# then fail the job from the recorded result, never from guest-printed text.
+# then fail the job from the recorded result, never from guest-printed text, and from the
+# receipt's own check: every check in states.json must pass (a head other than PR_HEAD_SHA,
+# a file beside the receipt that differs from it, a returned test report that lists a failure
+# or fewer tests that ran than PLIMSOLL_MIN_TESTS, or no report at all fails the job).
 python3 - "$output_dir" <<'PY'
 import base64
 import glob
@@ -133,8 +192,22 @@ data = bom['declarations']['evidence'][0]['data']
 a = next(d for d in data if d['name'] == 'exchange.json')['contents']['attachment']
 x = json.loads(base64.b64decode(a['content']))
 p = x['response']['project']
-passed = p['outcome'] == 'PROJECT_OUTCOME_COMPLETED' and bool(p['steps']) and all(s['exit_code'] == 0 and not s['timed_out'] for s in p['steps'])
+ran = p['outcome'] == 'PROJECT_OUTCOME_COMPLETED' and bool(p['steps']) and all(s['exit_code'] == 0 and not s['timed_out'] for s in p['steps'])
+try:
+    report = json.loads((out / 'states.json').read_text())
+except (OSError, ValueError):
+    report = {}
+checks = report.get('checks') if isinstance(report, dict) and isinstance(report.get('checks'), list) else []
+refused = [c if isinstance(c, dict) else {} for c in checks if not isinstance(c, dict) or c.get('passed') is not True]
+checked = bool(checks) and not refused
+passed = ran and checked
 (out / 'status.txt').write_text('PASS\n' if passed else 'FAIL\n')
-print('Receipt checked; project command ' + ('passed' if passed else 'failed'))
+if ran and not checked:
+    names = ', '.join(str(c.get('check', 'a malformed check')) for c in refused)
+    print("Receipt made, but its own check refused it at: " + (names if refused else 'nothing: the check could not run'))
+    for c in refused:  # verify.py's own words, from signed values and this configuration
+        print(f"  {c.get('check', 'a malformed check')}: {c.get('detail', 'no detail')}")
+else:
+    print('Receipt checked; project command ' + ('passed' if passed else 'failed'))
 sys.exit(0 if passed else 1)
 PY

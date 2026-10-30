@@ -1,0 +1,23 @@
+# did-it-learn 6887745aaaf49d18492f38aa7000aa4a83d4f932 (12:44, the last commit before the fix), as loop/kit.py shipped it into a rebuild's sandbox:
+#   13 files: harness/package.json, tasks/drone/API.md, tasks/drone/baselines/stabilizer.js, tasks/drone/host.mjs, tasks/drone/raster.py, tasks/drone/run.mjs, tasks/drone/scene.mjs, tasks/drone/shoot.mjs, tasks/drone/sim.mjs, tasks/drone/software.mjs, tasks/drone/task.mjs, tasks/drone/view.html, tasks/drone/view.mjs
+# did-it-learn b49116e19281648cf1aac82db70b00508506f59c (12:55, the fix), the same way:
+#   13 files: harness/package.json, tasks/drone/API.md, tasks/drone/baselines/stabilizer.js, tasks/drone/host.mjs, tasks/drone/raster.py, tasks/drone/run.mjs, tasks/drone/scene.mjs, tasks/drone/shoot.mjs, tasks/drone/sim.mjs, tasks/drone/software.mjs, tasks/drone/task.mjs, tasks/drone/view.html, tasks/drone/view.mjs
+# The check the entry made before shipping, in loop/kit.py at 6887745aaaf49d18492f38aa7000aa4a83d4f932:
+#   222:            assert "VALIDATION_SEEDS" not in text and "2711538435" not in text
+# The withheld values: the easy course's 16 practice seeds, from examples/squeeze/jobs/hackathon-regrade.json, one per line.
+$ wc -l < tmp/argon-scan/seeds.txt
+16
+$ go run ./cmd/plimsoll-withheld build -mode refuse -values tmp/argon-scan/seeds.txt > tmp/argon-scan/withheld.json
+(exit 0; the set file's SHA-256: 9d537b8d0bc5d3d42ade48900cb164a7648ed55de6ad3bc46bade7ad5d837449)
+$ go run ./cmd/plimsoll-withheld scan -set tmp/argon-scan/withheld.json tmp/argon-scan/before/workspace
+seeds.txt:2 (refuse): tmp/argon-scan/before/workspace/tasks/drone/view.mjs
+(exit 1)
+$ go run ./cmd/plimsoll-withheld scan -set tmp/argon-scan/withheld.json tmp/argon-scan/after/workspace
+clean: 13 files against set 9d537b8d0bc5d3d42ade48900cb164a7648ed55de6ad3bc46bade7ad5d837449
+(exit 0)
+# What the find points at:
+$ sed -n 2p tmp/argon-scan/seeds.txt
+3107713414
+$ grep -n -o 'track=[^&]*' tmp/argon-scan/before/workspace/tasks/drone/view.mjs tmp/argon-scan/after/workspace/tasks/drone/view.mjs
+tmp/argon-scan/before/workspace/tasks/drone/view.mjs:26:track=/tmp/codex-drone/tracks/seed-3107713414.json
+tmp/argon-scan/after/workspace/tasks/drone/view.mjs:26:track=/tmp/codex-drone/tracks/seed-101.json

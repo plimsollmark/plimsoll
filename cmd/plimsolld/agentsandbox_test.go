@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,7 @@ import (
 // TestAgentSandboxRegistered: this build has the provider and -h documents it.
 func TestAgentSandboxRegistered(t *testing.T) {
 	help := helpText()
-	for _, want := range []string{"| agentsandbox |", "SANDBOX_PROVIDER=agentsandbox", "SANDBOX_AGENTSANDBOX_WARM_POOL", "SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE"} {
+	for _, want := range []string{"| agentsandbox |", "SANDBOX_PROVIDER=agentsandbox", "SANDBOX_AGENTSANDBOX_WARM_POOL", "SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE", "SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("-h lacks %q", want)
 		}
@@ -49,6 +50,11 @@ func TestBuildAgentSandboxFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	declared := map[string]string{"SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS": "runsc-receipt"}
+	maps.Copy(declared, good)
+	if _, err := buildProvider(getenvFrom(declared)); err != nil {
+		t.Fatalf("a declared gVisor handler: %v", err)
+	}
 	if p.Sandbox.Name() != "agentsandbox" || p.Resources.MemoryMB != 512 || p.Resources.CPUs != 2 || p.Resources.DiskMB != 160 {
 		t.Fatalf("built %s with %+v", p.Sandbox.Name(), p.Resources)
 	}
@@ -73,6 +79,8 @@ func TestBuildAgentSandboxFromEnv(t *testing.T) {
 		{"a short token", with("SANDBOX_AGENTSANDBOX_SANDBOXD_TOKEN_FILE", apiToken), "32 to 512"},
 		{"a cleartext API server", with("SANDBOX_AGENTSANDBOX_API_SERVER", "http://127.0.0.1:6443"), "https URL"},
 		{"an unpinned image when pinning is required", with("SANDBOX_REQUIRE_PINNED_IMAGES", "1"), "not pinned"},
+		{"a declared gVisor handler the built-in table maps", with("SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS", "runsc-receipt,runc"), "SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS"},
+		{"an empty declared handler", with("SANDBOX_AGENTSANDBOX_RUNSC_HANDLERS", "runsc-receipt,"), "an empty entry"},
 	} {
 		if _, err := buildProvider(getenvFrom(c.env)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: got %v, want %q", c.name, err, c.want)

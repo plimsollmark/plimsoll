@@ -1,0 +1,1585 @@
+{
+  "date": "2026-10-29",
+  "commit": "e408c11f6590aca0933920f40b1b67695f3c30f1",
+  "key_id": "9264f8cf24ee225014c4359279b8b3513ffca1e771b2f4719b148404ce21d7c7",
+  "daemon": {
+    "provider": "docker",
+    "isolation": "container",
+    "policy": "seccomp:sha256:a39bc7bf6cf712f4d65d108f615aeae5785d8def8bc0e658fbd4e36a6305b089 sdk_env:seccomp:sha256:c5b32b1a17c39da0438800a99bd0607700877ac8d01b72b839394023f0d64376",
+    "protocol": 5
+  },
+  "image": {
+    "tag": "plimsoll-wip/sdk-grants:dev",
+    "id": "sha256:bf5af9606ed33a1cac6f2436ba705301415e4019da48bbefa01a123892db465d",
+    "base": "plimsoll/sandbox-python:latest",
+    "base_id": "sha256:48666c14b387c1f8ac2633dbfd32a3bb118369f35e0d0319e66f2fa0f3ec9171"
+  },
+  "pins": [
+    {
+      "name": "openai",
+      "version": "3.41.0",
+      "sha256": "7060a74b239609b21f2919eb98807a8aad463b4f510b8b3b388b15559360b0a8"
+    },
+    {
+      "name": "anthropic",
+      "version": "2.3.0",
+      "sha256": "aa6a3984f9276f307933d42dc6f58b6efc821a5ecafbc8d1bb5993a066767622"
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
+    },
+    {
+      "name": "anyio",
+      "version": "4.15.1",
+      "sha256": "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101"
+    },
+    {
+      "name": "docstring-parser",
+      "version": "0.18.0",
+      "sha256": "b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b"
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
+    },
+    {
+      "name": "httpcore2",
+      "version": "2.16.0",
+      "sha256": "5c4358319f2602d984ad93182c9fee5160f22e9da7babdda870a5e7c4e2dc34f"
+    },
+    {
+      "name": "httpx2",
+      "version": "2.16.0",
+      "sha256": "fd2c5d7909e8d86fe92d53020c310ca0e4e431b838c207c5754b9bbf0308d49a"
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
+    },
+    {
+      "name": "jiter",
+      "version": "0.18.0",
+      "sha256": "ea69e23481497c2143775a98d273ccc43de5c92a6387df18c903d2d37bc2b181"
+    },
+    {
+      "name": "opentelemetry-api",
+      "version": "1.45.2",
+      "sha256": "2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34"
+    },
+    {
+      "name": "pydantic",
+      "version": "2.14.2",
+      "sha256": "7efbf7507b937931cd32a5755acb00ea1cf5ccb1d4e8067a5850d5069e382118"
+    },
+    {
+      "name": "pydantic-core",
+      "version": "2.50.2",
+      "sha256": "23385c4626f8b5a7792aa381ea573d9432cfbf4c21375a0a5eed2a4fb64e0e58"
+    },
+    {
+      "name": "sniffio",
+      "version": "1.3.1",
+      "sha256": "2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2"
+    },
+    {
+      "name": "truststore",
+      "version": "0.10.5",
+      "sha256": "9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c"
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0",
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
+    }
+  ],
+  "profiles": [
+    {
+      "name": "anthropic",
+      "base_url": "http://127.0.0.1:43323",
+      "allow": [
+        "POST /v1/messages"
+      ],
+      "pass_headers": [
+        "anthropic-version"
+      ],
+      "sdk_env": [
+        [
+          "ANTHROPIC_API_KEY",
+          "dummy-anthropic-key-in-the-sandbox"
+        ],
+        [
+          "ANTHROPIC_BASE_URL",
+          "{origin}"
+        ]
+      ],
+      "token_env": "STUB_ANTHROPIC_KEY",
+      "allowed_callers": [
+        "sdk-grants-example"
+      ]
+    },
+    {
+      "name": "openai",
+      "base_url": "http://127.0.0.1:45519",
+      "allow": [
+        "POST /v1/chat/completions",
+        "POST /v1/files"
+      ],
+      "sdk_env": [
+        [
+          "OPENAI_API_KEY",
+          "dummy-openai-key-in-the-sandbox"
+        ],
+        [
+          "OPENAI_BASE_URL",
+          "{origin}/v1"
+        ]
+      ],
+      "route_max_request_bytes": {
+        "POST /v1/files": 16777216
+      },
+      "route_content_types": {
+        "POST /v1/files": [
+          "multipart/form-data"
+        ]
+      },
+      "max_request_bytes": 67108864,
+      "token_env": "STUB_OPENAI_KEY",
+      "allowed_callers": [
+        "sdk-grants-example"
+      ]
+    }
+  ],
+  "seccomp": {
+    "default": "seccomp:sha256:a39bc7bf6cf712f4d65d108f615aeae5785d8def8bc0e658fbd4e36a6305b089",
+    "variant": "seccomp:sha256:c5b32b1a17c39da0438800a99bd0607700877ac8d01b72b839394023f0d64376",
+    "default_bytes": 8388,
+    "variant_bytes": 13327,
+    "added": [
+      {
+        "syscall": "getsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg1 == 1, arg2 == 3",
+        "comment": "getsockopt allowed for one option libuv reads (docs/seccomp.md)."
+      },
+      {
+        "syscall": "getsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg1 == 1, arg2 == 4",
+        "comment": "getsockopt allowed for one option libuv reads (docs/seccomp.md)."
+      },
+      {
+        "syscall": "setsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg1 == 1, arg2 == 2",
+        "comment": "setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md)."
+      },
+      {
+        "syscall": "setsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg1 == 1, arg2 == 9",
+        "comment": "setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md)."
+      },
+      {
+        "syscall": "setsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg1 == 6, arg2 == 1",
+        "comment": "setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md)."
+      },
+      {
+        "syscall": "setsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg1 == 6, arg2 == 4",
+        "comment": "setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md)."
+      },
+      {
+        "syscall": "setsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg1 == 6, arg2 == 5",
+        "comment": "setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md)."
+      },
+      {
+        "syscall": "setsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg1 == 6, arg2 == 6",
+        "comment": "setsockopt allowed for one option the forwarder or a client transport sets (docs/seccomp.md)."
+      },
+      {
+        "syscall": "socket",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg0 == 2, arg1 \u0026 0xfff7f7ff == 1, arg2 == 0",
+        "comment": "AF_INET (2) stream sockets, protocol 0: the type is masked so only SOCK_NONBLOCK and SOCK_CLOEXEC may join SOCK_STREAM; UDP, raw, SCTP (132) and MPTCP (262) fail the type or protocol check."
+      },
+      {
+        "syscall": "socket",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "arg0 == 2, arg1 \u0026 0xfff7f7ff == 1, arg2 == 6",
+        "comment": "AF_INET (2) stream sockets, IPPROTO_TCP (6)."
+      }
+    ],
+    "removed": [
+      {
+        "syscall": "getsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "",
+        "comment": ""
+      },
+      {
+        "syscall": "setsockopt",
+        "action": "SCMP_ACT_ALLOW",
+        "args": "",
+        "comment": ""
+      }
+    ],
+    "unchanged": 243
+  },
+  "runs": [
+    {
+      "name": "openai",
+      "title": "The OpenAI library",
+      "profile": "openai",
+      "trace_id": "sdk-grants-openai",
+      "record": {
+        "sha256": "fda8ba7ada2c8220a91bb96207235da81efa31e0a8a442aaff2f44c3cf55dd06",
+        "request_sha256": "0121c7761ac38beb8890a2464b50673b1d0e7dc9579a53d3cf129d9d7e71ff29",
+        "result_sha256": "78f5407e030420ff928e2b9be3b9d4e867f48904e99f0cc3f15d85df1ea88077",
+        "provider": "docker",
+        "isolation": "container",
+        "environment": "docker-image:sha256:bf5af9606ed33a1cac6f2436ba705301415e4019da48bbefa01a123892db465d",
+        "policy": "seccomp:sha256:c5b32b1a17c39da0438800a99bd0607700877ac8d01b72b839394023f0d64376",
+        "started_unix_ms": 1793300471565,
+        "ended_unix_ms": 1793300475665
+      },
+      "policy_is": "variant",
+      "outcome": "PROJECT_OUTCOME_COMPLETED",
+      "exit_code": 0,
+      "python": "3.14.8",
+      "sdks": {
+        "openai": "3.41.0"
+      },
+      "environment": [
+        [
+          "HOME",
+          "/"
+        ],
+        [
+          "HOSTNAME",
+          "41b808e93688"
+        ],
+        [
+          "HOST_API_LISTEN",
+          "127.0.0.1:8471"
+        ],
+        [
+          "HOST_API_SOCKET",
+          "/run/host-api.sock"
+        ],
+        [
+          "NODE_OPTIONS",
+          "--import=file:///tmp/plimsoll-host.mjs"
+        ],
+        [
+          "NODE_VERSION",
+          "22.23.4"
+        ],
+        [
+          "OMP_NUM_THREADS",
+          "1"
+        ],
+        [
+          "OPENAI_API_KEY",
+          "dummy-openai-key-in-the-sandbox"
+        ],
+        [
+          "OPENAI_BASE_URL",
+          "http://127.0.0.1:8471/v1"
+        ],
+        [
+          "OPENBLAS_NUM_THREADS",
+          "1"
+        ],
+        [
+          "PATH",
+          "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ],
+        [
+          "PLIMSOLL_RUNNER_PID",
+          "13"
+        ],
+        [
+          "PWD",
+          "/work"
+        ],
+        [
+          "SHLVL",
+          "1"
+        ],
+        [
+          "YARN_VERSION",
+          "1.22.22"
+        ]
+      ],
+      "sdk_env": [
+        [
+          "OPENAI_API_KEY",
+          "dummy-openai-key-in-the-sandbox"
+        ],
+        [
+          "OPENAI_BASE_URL",
+          "http://127.0.0.1:8471/v1"
+        ]
+      ],
+      "processes": 1,
+      "unreadable": 2,
+      "refused": [
+        "pid 1, node --eval (PermissionError errno 13)",
+        "pid 13, node /runner.mjs (PermissionError errno 13)"
+      ],
+      "key_in_guest": 0,
+      "sockets": {
+        "ipv4_tcp": "allowed",
+        "ipv4_udp": "PermissionError: errno 1, Operation not permitted",
+        "ipv6_tcp": "PermissionError: errno 1, Operation not permitted",
+        "outside_address": "OSError: errno 101, Network unreachable"
+      },
+      "calls": [
+        {
+          "name": "chat",
+          "title": "A chat call",
+          "url": "http://127.0.0.1:8471/v1/chat/completions",
+          "status": 200,
+          "answer": "Hello from the stub API.",
+          "reached": true,
+          "target": "/v1/chat/completions",
+          "headers": [
+            {
+              "name": "Host",
+              "sent": "127.0.0.1:8471",
+              "received": "127.0.0.1:45519",
+              "fate": "replaced"
+            },
+            {
+              "name": "Accept-Encoding",
+              "sent": "gzip, deflate",
+              "received": "gzip",
+              "fate": "replaced"
+            },
+            {
+              "name": "Connection",
+              "sent": "keep-alive",
+              "fate": "dropped"
+            },
+            {
+              "name": "authorization",
+              "sent": "Bearer dummy-openai-key-in-the-sandbox",
+              "received": "Bearer stub-openai-key-held-by-the-daemon-bc8e8a1ea6ba1cda1c7a4124",
+              "fate": "replaced"
+            },
+            {
+              "name": "accept",
+              "sent": "application/json",
+              "received": "application/json",
+              "fate": "same"
+            },
+            {
+              "name": "content-type",
+              "sent": "application/json",
+              "received": "application/json",
+              "fate": "same"
+            },
+            {
+              "name": "user-agent",
+              "sent": "OpenAI/Python 3.41.0",
+              "received": "Go-http-client/1.1",
+              "fate": "replaced"
+            },
+            {
+              "name": "x-stainless-lang",
+              "sent": "python",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-package-version",
+              "sent": "3.41.0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-os",
+              "sent": "Linux",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-arch",
+              "sent": "x64",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-runtime",
+              "sent": "CPython",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-runtime-version",
+              "sent": "3.14.8",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-async",
+              "sent": "false",
+              "fate": "dropped"
+            },
+            {
+              "name": "openai-organization",
+              "sent": "org-chosen-by-the-guest",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-raw-response",
+              "sent": "true",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-retry-count",
+              "sent": "0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-read-timeout",
+              "sent": "600",
+              "fate": "dropped"
+            },
+            {
+              "name": "Content-Length",
+              "sent": "74",
+              "received": "74",
+              "fate": "same"
+            }
+          ]
+        },
+        {
+          "name": "stream",
+          "title": "The same call, streamed",
+          "url": "http://127.0.0.1:8471/v1/chat/completions",
+          "status": 200,
+          "reached": true,
+          "target": "/v1/chat/completions",
+          "headers": [
+            {
+              "name": "Host",
+              "sent": "127.0.0.1:8471",
+              "received": "127.0.0.1:45519",
+              "fate": "replaced"
+            },
+            {
+              "name": "Accept-Encoding",
+              "sent": "gzip, deflate",
+              "received": "gzip",
+              "fate": "replaced"
+            },
+            {
+              "name": "Connection",
+              "sent": "keep-alive",
+              "fate": "dropped"
+            },
+            {
+              "name": "authorization",
+              "sent": "Bearer dummy-openai-key-in-the-sandbox",
+              "received": "Bearer stub-openai-key-held-by-the-daemon-bc8e8a1ea6ba1cda1c7a4124",
+              "fate": "replaced"
+            },
+            {
+              "name": "accept",
+              "sent": "application/json",
+              "received": "application/json",
+              "fate": "same"
+            },
+            {
+              "name": "content-type",
+              "sent": "application/json",
+              "received": "application/json",
+              "fate": "same"
+            },
+            {
+              "name": "user-agent",
+              "sent": "OpenAI/Python 3.41.0",
+              "received": "Go-http-client/1.1",
+              "fate": "replaced"
+            },
+            {
+              "name": "x-stainless-lang",
+              "sent": "python",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-package-version",
+              "sent": "3.41.0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-os",
+              "sent": "Linux",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-arch",
+              "sent": "x64",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-runtime",
+              "sent": "CPython",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-runtime-version",
+              "sent": "3.14.8",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-async",
+              "sent": "false",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-retry-count",
+              "sent": "0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-read-timeout",
+              "sent": "600",
+              "fate": "dropped"
+            },
+            {
+              "name": "Content-Length",
+              "sent": "88",
+              "received": "88",
+              "fate": "same"
+            }
+          ],
+          "stream": {
+            "content_type": "text/event-stream",
+            "pieces": [
+              {
+                "n": 1,
+                "event": "Pieces ",
+                "written_ms": 0,
+                "arrived_ms": 2.3310546875,
+                "next_written_ms": 400.10205078125
+              },
+              {
+                "n": 2,
+                "event": "of ",
+                "written_ms": 400.10205078125,
+                "arrived_ms": 400.82958984375,
+                "next_written_ms": 800.9208984375
+              },
+              {
+                "n": 3,
+                "event": "an ",
+                "written_ms": 800.9208984375,
+                "arrived_ms": 801.693359375,
+                "next_written_ms": 1201.715087890625
+              },
+              {
+                "n": 4,
+                "event": "answer, ",
+                "written_ms": 1201.715087890625,
+                "arrived_ms": 1202.361083984375,
+                "next_written_ms": 1602.4580078125
+              },
+              {
+                "n": 5,
+                "event": "one ",
+                "written_ms": 1602.4580078125,
+                "arrived_ms": 1603.217041015625,
+                "next_written_ms": 2003.39306640625
+              },
+              {
+                "n": 6,
+                "event": "at ",
+                "written_ms": 2003.39306640625,
+                "arrived_ms": 2004.11279296875,
+                "next_written_ms": 2405.25
+              },
+              {
+                "n": 7,
+                "event": "a ",
+                "written_ms": 2405.25,
+                "arrived_ms": 2405.947021484375,
+                "next_written_ms": 2805.678955078125
+              },
+              {
+                "n": 8,
+                "event": "time.",
+                "written_ms": 2805.678955078125,
+                "arrived_ms": 2806.337158203125,
+                "next_written_ms": 3217.781982421875
+              }
+            ],
+            "before_next": 8,
+            "compared": 8,
+            "first_to_last_ms": 2804.006103515625,
+            "written_span_ms": 3217.781982421875,
+            "max_delay_ms": 2.3310546875,
+            "matched": 8,
+            "unpaired": [
+              {
+                "n": 9,
+                "event": "[DONE]",
+                "written_ms": 3217.781982421875,
+                "arrived_ms": 0
+              }
+            ]
+          }
+        },
+        {
+          "name": "upload",
+          "title": "An 8 MiB file upload",
+          "url": "http://127.0.0.1:8471/v1/files",
+          "status": 200,
+          "reached": true,
+          "target": "/v1/files",
+          "headers": [
+            {
+              "name": "Host",
+              "sent": "127.0.0.1:8471",
+              "received": "127.0.0.1:45519",
+              "fate": "replaced"
+            },
+            {
+              "name": "Accept-Encoding",
+              "sent": "gzip, deflate",
+              "received": "gzip",
+              "fate": "replaced"
+            },
+            {
+              "name": "Connection",
+              "sent": "keep-alive",
+              "fate": "dropped"
+            },
+            {
+              "name": "authorization",
+              "sent": "Bearer dummy-openai-key-in-the-sandbox",
+              "received": "Bearer stub-openai-key-held-by-the-daemon-bc8e8a1ea6ba1cda1c7a4124",
+              "fate": "replaced"
+            },
+            {
+              "name": "accept",
+              "sent": "application/json",
+              "received": "application/json",
+              "fate": "same"
+            },
+            {
+              "name": "user-agent",
+              "sent": "OpenAI/Python 3.41.0",
+              "received": "Go-http-client/1.1",
+              "fate": "replaced"
+            },
+            {
+              "name": "x-stainless-lang",
+              "sent": "python",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-package-version",
+              "sent": "3.41.0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-os",
+              "sent": "Linux",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-arch",
+              "sent": "x64",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-runtime",
+              "sent": "CPython",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-runtime-version",
+              "sent": "3.14.8",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-async",
+              "sent": "false",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-raw-response",
+              "sent": "true",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-retry-count",
+              "sent": "0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-read-timeout",
+              "sent": "600",
+              "fate": "dropped"
+            },
+            {
+              "name": "Content-Length",
+              "sent": "8388891",
+              "received": "8388891",
+              "fate": "same"
+            },
+            {
+              "name": "Content-Type",
+              "sent": "multipart/form-data; boundary=a2eea6779dfbd74e702e4d9a9caf0fa9",
+              "received": "multipart/form-data; boundary=a2eea6779dfbd74e702e4d9a9caf0fa9",
+              "fate": "same"
+            }
+          ],
+          "upload": {
+            "bytes": 8388608,
+            "guest_sha256": "fa16e68dc6e4ff55d4eaf64f51a79ea3d3444b4b128c6856137e74b008605a06",
+            "stub_sha256": "fa16e68dc6e4ff55d4eaf64f51a79ea3d3444b4b128c6856137e74b008605a06",
+            "body_bytes": 8388891,
+            "parts": [
+              {
+                "name": "purpose",
+                "content_type": "",
+                "bytes": 9,
+                "sha256": "3279da18bfd0f199ae711d946059b48b901df03b584d4c51f14db38b15144137"
+              },
+              {
+                "name": "file",
+                "filename": "sample.bin",
+                "content_type": "application/octet-stream",
+                "bytes": 8388608,
+                "sha256": "fa16e68dc6e4ff55d4eaf64f51a79ea3d3444b4b128c6856137e74b008605a06"
+              }
+            ],
+            "route_limit": 16777216,
+            "file_id": "file-stub-1"
+          }
+        },
+        {
+          "name": "refused",
+          "title": "A route the profile does not allow",
+          "url": "http://127.0.0.1:8471/v1/embeddings",
+          "status": 403,
+          "reached": false,
+          "headers": [
+            {
+              "name": "Host",
+              "sent": "127.0.0.1:8471",
+              "fate": "dropped"
+            },
+            {
+              "name": "Accept-Encoding",
+              "sent": "gzip, deflate",
+              "fate": "dropped"
+            },
+            {
+              "name": "Connection",
+              "sent": "keep-alive",
+              "fate": "dropped"
+            },
+            {
+              "name": "authorization",
+              "sent": "Bearer dummy-openai-key-in-the-sandbox",
+              "fate": "dropped"
+            },
+            {
+              "name": "accept",
+              "sent": "application/json",
+              "fate": "dropped"
+            },
+            {
+              "name": "content-type",
+              "sent": "application/json",
+              "fate": "dropped"
+            },
+            {
+              "name": "user-agent",
+              "sent": "OpenAI/Python 3.41.0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-lang",
+              "sent": "python",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-package-version",
+              "sent": "3.41.0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-os",
+              "sent": "Linux",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-arch",
+              "sent": "x64",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-runtime",
+              "sent": "CPython",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-runtime-version",
+              "sent": "3.14.8",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-async",
+              "sent": "false",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-retry-count",
+              "sent": "0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-read-timeout",
+              "sent": "600",
+              "fate": "dropped"
+            },
+            {
+              "name": "Content-Length",
+              "sent": "69",
+              "fate": "dropped"
+            }
+          ],
+          "refusal": {
+            "error": "PermissionDeniedError",
+            "status": 403,
+            "x_should_retry": "false",
+            "body": "forbidden by sandbox capability allowlist\n",
+            "retry_count": "0",
+            "stub_at_route": 0
+          }
+        }
+      ],
+      "audit": {
+        "msg": "project run",
+        "grant_profile": "openai",
+        "sandbox": "docker",
+        "isolation": "container",
+        "outcome": "completed",
+        "host_calls": 3,
+        "host_calls_denied": 1
+      },
+      "metrics": [
+        {
+          "profile": "openai",
+          "method": "POST",
+          "route": "/v1/chat/completions",
+          "count": 2,
+          "sum_seconds": 3.2186490009999997
+        },
+        {
+          "profile": "openai",
+          "method": "POST",
+          "route": "/v1/files",
+          "count": 1,
+          "sum_seconds": 0.023475147
+        }
+      ],
+      "stub_requests": 3
+    },
+    {
+      "name": "anthropic",
+      "title": "The Anthropic library",
+      "profile": "anthropic",
+      "trace_id": "sdk-grants-anthropic",
+      "record": {
+        "sha256": "f4f25aa46924ca63424a826650aff91e35113962bd77e0d86e20607db7534ae0",
+        "request_sha256": "d5d430b26536f452a19de34a293e70895ea3ccbd99469847c00d14bc950a84ec",
+        "result_sha256": "664860b0d594f8ae57c24e4a55a6b21dad226ac0724ca4bcc04a56005d7f0fb0",
+        "provider": "docker",
+        "isolation": "container",
+        "environment": "docker-image:sha256:bf5af9606ed33a1cac6f2436ba705301415e4019da48bbefa01a123892db465d",
+        "policy": "seccomp:sha256:c5b32b1a17c39da0438800a99bd0607700877ac8d01b72b839394023f0d64376",
+        "started_unix_ms": 1793300475667,
+        "ended_unix_ms": 1793300482097
+      },
+      "policy_is": "variant",
+      "outcome": "PROJECT_OUTCOME_COMPLETED",
+      "exit_code": 0,
+      "python": "3.14.8",
+      "sdks": {
+        "anthropic": "2.3.0"
+      },
+      "environment": [
+        [
+          "ANTHROPIC_API_KEY",
+          "dummy-anthropic-key-in-the-sandbox"
+        ],
+        [
+          "ANTHROPIC_BASE_URL",
+          "http://127.0.0.1:8471"
+        ],
+        [
+          "HOME",
+          "/"
+        ],
+        [
+          "HOSTNAME",
+          "5b504cdc786e"
+        ],
+        [
+          "HOST_API_LISTEN",
+          "127.0.0.1:8471"
+        ],
+        [
+          "HOST_API_SOCKET",
+          "/run/host-api.sock"
+        ],
+        [
+          "NODE_OPTIONS",
+          "--import=file:///tmp/plimsoll-host.mjs"
+        ],
+        [
+          "NODE_VERSION",
+          "22.23.4"
+        ],
+        [
+          "OMP_NUM_THREADS",
+          "1"
+        ],
+        [
+          "OPENBLAS_NUM_THREADS",
+          "1"
+        ],
+        [
+          "PATH",
+          "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ],
+        [
+          "PLIMSOLL_RUNNER_PID",
+          "13"
+        ],
+        [
+          "PWD",
+          "/work"
+        ],
+        [
+          "SHLVL",
+          "1"
+        ],
+        [
+          "YARN_VERSION",
+          "1.22.22"
+        ]
+      ],
+      "sdk_env": [
+        [
+          "ANTHROPIC_API_KEY",
+          "dummy-anthropic-key-in-the-sandbox"
+        ],
+        [
+          "ANTHROPIC_BASE_URL",
+          "http://127.0.0.1:8471"
+        ]
+      ],
+      "processes": 1,
+      "unreadable": 2,
+      "refused": [
+        "pid 1, node --eval (PermissionError errno 13)",
+        "pid 13, node /runner.mjs (PermissionError errno 13)"
+      ],
+      "key_in_guest": 0,
+      "sockets": {
+        "ipv4_tcp": "allowed",
+        "ipv4_udp": "PermissionError: errno 1, Operation not permitted",
+        "ipv6_tcp": "PermissionError: errno 1, Operation not permitted",
+        "outside_address": "OSError: errno 101, Network unreachable"
+      },
+      "calls": [
+        {
+          "name": "messages",
+          "title": "A messages call",
+          "url": "http://127.0.0.1:8471/v1/messages",
+          "status": 200,
+          "answer": "Hello from the stub API.",
+          "reached": true,
+          "target": "/v1/messages",
+          "headers": [
+            {
+              "name": "Host",
+              "sent": "127.0.0.1:8471",
+              "received": "127.0.0.1:43323",
+              "fate": "replaced"
+            },
+            {
+              "name": "Accept-Encoding",
+              "sent": "gzip, deflate",
+              "received": "gzip",
+              "fate": "replaced"
+            },
+            {
+              "name": "Connection",
+              "sent": "keep-alive",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-timeout",
+              "sent": "600",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-retry-count",
+              "sent": "0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-read-timeout",
+              "sent": "600",
+              "fate": "dropped"
+            },
+            {
+              "name": "Accept",
+              "sent": "application/json",
+              "received": "application/json",
+              "fate": "same"
+            },
+            {
+              "name": "Content-Type",
+              "sent": "application/json",
+              "received": "application/json",
+              "fate": "same"
+            },
+            {
+              "name": "User-Agent",
+              "sent": "Anthropic/Python 2.3.0",
+              "received": "Go-http-client/1.1",
+              "fate": "replaced"
+            },
+            {
+              "name": "X-Stainless-Lang",
+              "sent": "python",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-Package-Version",
+              "sent": "2.3.0",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-OS",
+              "sent": "Linux",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-Arch",
+              "sent": "x64",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-Runtime",
+              "sent": "CPython",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-Runtime-Version",
+              "sent": "3.14.8",
+              "fate": "dropped"
+            },
+            {
+              "name": "Authorization",
+              "sent": "Bearer dummy-anthropic-key-in-the-sandbox",
+              "received": "Bearer stub-anthropic-key-held-by-the-daemon-29dc33e2fa88addcb933ca5f",
+              "fate": "replaced"
+            },
+            {
+              "name": "X-Stainless-Async",
+              "sent": "false",
+              "fate": "dropped"
+            },
+            {
+              "name": "anthropic-version",
+              "sent": "2026-10-21",
+              "received": "2026-10-21",
+              "fate": "passed"
+            },
+            {
+              "name": "anthropic-beta",
+              "sent": "plimsoll-example-not-passed",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-Raw-Response",
+              "sent": "raw",
+              "fate": "dropped"
+            },
+            {
+              "name": "Content-Length",
+              "sent": "90",
+              "received": "90",
+              "fate": "same"
+            }
+          ]
+        },
+        {
+          "name": "stream",
+          "title": "The same call, streamed",
+          "url": "http://127.0.0.1:8471/v1/messages",
+          "status": 200,
+          "reached": true,
+          "target": "/v1/messages",
+          "headers": [
+            {
+              "name": "Host",
+              "sent": "127.0.0.1:8471",
+              "received": "127.0.0.1:43323",
+              "fate": "replaced"
+            },
+            {
+              "name": "Accept-Encoding",
+              "sent": "gzip, deflate",
+              "received": "gzip",
+              "fate": "replaced"
+            },
+            {
+              "name": "Connection",
+              "sent": "keep-alive",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-timeout",
+              "sent": "NOT_GIVEN",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-retry-count",
+              "sent": "0",
+              "fate": "dropped"
+            },
+            {
+              "name": "x-stainless-read-timeout",
+              "sent": "600",
+              "fate": "dropped"
+            },
+            {
+              "name": "Accept",
+              "sent": "application/json",
+              "received": "application/json",
+              "fate": "same"
+            },
+            {
+              "name": "Content-Type",
+              "sent": "application/json",
+              "received": "application/json",
+              "fate": "same"
+            },
+            {
+              "name": "User-Agent",
+              "sent": "Anthropic/Python 2.3.0",
+              "received": "Go-http-client/1.1",
+              "fate": "replaced"
+            },
+            {
+              "name": "X-Stainless-Lang",
+              "sent": "python",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-Package-Version",
+              "sent": "2.3.0",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-OS",
+              "sent": "Linux",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-Arch",
+              "sent": "x64",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-Runtime",
+              "sent": "CPython",
+              "fate": "dropped"
+            },
+            {
+              "name": "X-Stainless-Runtime-Version",
+              "sent": "3.14.8",
+              "fate": "dropped"
+            },
+            {
+              "name": "Authorization",
+              "sent": "Bearer dummy-anthropic-key-in-the-sandbox",
+              "received": "Bearer stub-anthropic-key-held-by-the-daemon-29dc33e2fa88addcb933ca5f",
+              "fate": "replaced"
+            },
+            {
+              "name": "X-Stainless-Async",
+              "sent": "false",
+              "fate": "dropped"
+            },
+            {
+              "name": "anthropic-version",
+              "sent": "2026-10-21",
+              "received": "2026-10-21",
+              "fate": "passed"
+            },
+            {
+              "name": "Content-Length",
+              "sent": "104",
+              "received": "104",
+              "fate": "same"
+            }
+          ],
+          "stream": {
+            "content_type": "text/event-stream",
+            "pieces": [
+              {
+                "n": 1,
+                "event": "message_start",
+                "written_ms": 0,
+                "arrived_ms": 4.345947265625,
+                "next_written_ms": 401.466064453125
+              },
+              {
+                "n": 2,
+                "event": "content_block_start",
+                "written_ms": 401.466064453125,
+                "arrived_ms": 402.253662109375,
+                "next_written_ms": 802.18798828125
+              },
+              {
+                "n": 3,
+                "event": "content_block_delta: Pieces ",
+                "written_ms": 802.18798828125,
+                "arrived_ms": 802.811279296875,
+                "next_written_ms": 1203.68994140625
+              },
+              {
+                "n": 4,
+                "event": "content_block_delta: of ",
+                "written_ms": 1203.68994140625,
+                "arrived_ms": 1204.484375,
+                "next_written_ms": 1604.341064453125
+              },
+              {
+                "n": 5,
+                "event": "content_block_delta: an ",
+                "written_ms": 1604.341064453125,
+                "arrived_ms": 1604.91796875,
+                "next_written_ms": 2004.573974609375
+              },
+              {
+                "n": 6,
+                "event": "content_block_delta: answer, ",
+                "written_ms": 2004.573974609375,
+                "arrived_ms": 2005.238525390625,
+                "next_written_ms": 2405.65185546875
+              },
+              {
+                "n": 7,
+                "event": "content_block_delta: one ",
+                "written_ms": 2405.65185546875,
+                "arrived_ms": 2406.5146484375,
+                "next_written_ms": 2806.791015625
+              },
+              {
+                "n": 8,
+                "event": "content_block_delta: at ",
+                "written_ms": 2806.791015625,
+                "arrived_ms": 2807.48193359375,
+                "next_written_ms": 3207.949951171875
+              },
+              {
+                "n": 9,
+                "event": "content_block_delta: a ",
+                "written_ms": 3207.949951171875,
+                "arrived_ms": 3208.5849609375,
+                "next_written_ms": 3608.683837890625
+              },
+              {
+                "n": 10,
+                "event": "content_block_delta: time.",
+                "written_ms": 3608.683837890625,
+                "arrived_ms": 3609.193115234375,
+                "next_written_ms": 4009.1240234375
+              },
+              {
+                "n": 11,
+                "event": "content_block_stop",
+                "written_ms": 4009.1240234375,
+                "arrived_ms": 4009.7392578125,
+                "next_written_ms": 4410.036865234375
+              },
+              {
+                "n": 12,
+                "event": "message_delta",
+                "written_ms": 4410.036865234375,
+                "arrived_ms": 4410.6337890625,
+                "next_written_ms": 4810.85205078125
+              },
+              {
+                "n": 13,
+                "event": "message_stop",
+                "written_ms": 4810.85205078125,
+                "arrived_ms": 4811.5966796875
+              }
+            ],
+            "before_next": 12,
+            "compared": 12,
+            "first_to_last_ms": 4807.250732421875,
+            "written_span_ms": 4810.85205078125,
+            "max_delay_ms": 4.345947265625,
+            "matched": 13,
+            "unpaired": null
+          }
+        }
+      ],
+      "audit": {
+        "msg": "project run",
+        "grant_profile": "anthropic",
+        "sandbox": "docker",
+        "isolation": "container",
+        "outcome": "completed",
+        "host_calls": 2,
+        "host_calls_denied": 0
+      },
+      "metrics": [
+        {
+          "profile": "anthropic",
+          "method": "POST",
+          "route": "/v1/messages",
+          "count": 2,
+          "sum_seconds": 4.8118555569999995
+        }
+      ],
+      "stub_requests": 2
+    },
+    {
+      "name": "plain",
+      "title": "The control run: no grant",
+      "trace_id": "sdk-grants-plain",
+      "record": {
+        "sha256": "3722626717610134b1fc06b63b5521c88a0a34e5ae0e3874547cd8fda0f27c38",
+        "request_sha256": "e409d98ef845063eb895ca3649497522611bdc70db4fbc23d2933698289d2db4",
+        "result_sha256": "e6aa0b602b91e3d82110501003338f3555cb5aa09555d12909cef04faa60e5f8",
+        "provider": "docker",
+        "isolation": "container",
+        "environment": "docker-image:sha256:bf5af9606ed33a1cac6f2436ba705301415e4019da48bbefa01a123892db465d",
+        "policy": "seccomp:sha256:a39bc7bf6cf712f4d65d108f615aeae5785d8def8bc0e658fbd4e36a6305b089",
+        "started_unix_ms": 1793300482098,
+        "ended_unix_ms": 1793300482727
+      },
+      "policy_is": "default",
+      "outcome": "PROJECT_OUTCOME_COMPLETED",
+      "exit_code": 0,
+      "python": "3.14.8",
+      "sdks": {},
+      "environment": [
+        [
+          "HOME",
+          "/"
+        ],
+        [
+          "HOSTNAME",
+          "55c9a052d944"
+        ],
+        [
+          "NODE_VERSION",
+          "22.23.4"
+        ],
+        [
+          "OMP_NUM_THREADS",
+          "1"
+        ],
+        [
+          "OPENBLAS_NUM_THREADS",
+          "1"
+        ],
+        [
+          "PATH",
+          "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ],
+        [
+          "PLIMSOLL_RUNNER_PID",
+          "1"
+        ],
+        [
+          "PWD",
+          "/work"
+        ],
+        [
+          "SHLVL",
+          "1"
+        ],
+        [
+          "YARN_VERSION",
+          "1.22.22"
+        ]
+      ],
+      "sdk_env": null,
+      "processes": 1,
+      "unreadable": 1,
+      "refused": [
+        "pid 1, node /runner.mjs (PermissionError errno 13)"
+      ],
+      "key_in_guest": 0,
+      "sockets": {
+        "ipv4_tcp": "PermissionError: errno 1, Operation not permitted",
+        "ipv4_udp": "PermissionError: errno 1, Operation not permitted",
+        "ipv6_tcp": "PermissionError: errno 1, Operation not permitted",
+        "outside_address": "PermissionError: errno 1, Operation not permitted"
+      },
+      "calls": null,
+      "audit": {
+        "msg": "project run",
+        "grant_profile": "",
+        "sandbox": "docker",
+        "isolation": "container",
+        "outcome": "completed",
+        "host_calls": 0,
+        "host_calls_denied": 0
+      },
+      "metrics": null,
+      "stub_requests": 0
+    }
+  ],
+  "stub": {
+    "requests": 5,
+    "dummy_key_hits": 0,
+    "broker_key_ok": 5,
+    "undeclared": 0
+  },
+  "checks": [
+    {
+      "id": "records",
+      "says": "Every run's record is signed by the harness and checks against the request and answer stored with it.",
+      "pass": true,
+      "detail": "3 single runs verified, 0 sessions"
+    },
+    {
+      "id": "dummy-key",
+      "says": "No request the API received carried the guest's dummy key, in a header or in a body.",
+      "pass": true,
+      "detail": "0 occurrences in 5 requests"
+    },
+    {
+      "id": "broker-key",
+      "says": "Every request the API received carried the key the daemon holds for that API.",
+      "pass": true,
+      "detail": "5 of 5 requests"
+    },
+    {
+      "id": "key-not-in-guest",
+      "says": "The keys the daemon holds appear nowhere in what each run was sent or answered: not in its environment, not in any process environment the guest could read, not in its output.",
+      "pass": true,
+      "detail": "0 occurrences; 3 process environments read"
+    },
+    {
+      "id": "headers",
+      "says": "Of the guest's headers, only the one the profile passes reached the API; the broker set its own credential and transport headers.",
+      "pass": true,
+      "detail": "OpenAI-Organization dropped, anthropic-beta dropped, anthropic-version passed; 0 headers leaked, altered or lost"
+    },
+    {
+      "id": "stream",
+      "says": "Each piece of both streamed answers reached the guest's library before the stub wrote the next one.",
+      "pass": true,
+      "detail": "openai: 8 of 8 pieces before the next was written, 8 of 8 matching the stub's, first to last 2804 ms; anthropic: 12 of 12 pieces before the next was written, 13 of 13 matching the stub's, first to last 4807 ms"
+    },
+    {
+      "id": "upload",
+      "says": "The 8 MiB upload reached the API byte for byte, on a route raised above the 1 MiB default.",
+      "pass": true,
+      "detail": "guest fa16e68dc6e4ff55, stub fa16e68dc6e4ff55"
+    },
+    {
+      "id": "refusal",
+      "says": "The call to a route the profile does not allow was refused by the broker, marked not to retry, made once, and never reached the API.",
+      "pass": true,
+      "detail": "status 403, X-Should-Retry \"false\", retry count \"0\", 0 requests at the route, 1 denied on the audit line"
+    },
+    {
+      "id": "policy",
+      "says": "The two runs whose grant sets sdk_env ran under the derived variant, the control run under the default, each named by digest in its record.",
+      "pass": true,
+      "detail": "openai variant, anthropic variant, plain default"
+    },
+    {
+      "id": "sockets",
+      "says": "Under the variant an IPv4 TCP socket opens and a UDP or IPv6 socket does not, and an outside address is unreachable; under the default no IPv4 socket opens.",
+      "pass": true,
+      "detail": "openai IPv4 TCP allowed, UDP errno 1, IPv6 errno 1, outside address errno 101; anthropic IPv4 TCP allowed, UDP errno 1, IPv6 errno 1, outside address errno 101; control IPv4 TCP errno 1, UDP errno 1, IPv6 errno 1, outside address errno 1"
+    },
+    {
+      "id": "versions",
+      "says": "The guest imported the pinned versions of both libraries.",
+      "pass": true,
+      "detail": "openai 3.41.0 (pinned 3.41.0), anthropic 2.3.0 (pinned 2.3.0)"
+    },
+    {
+      "id": "stub-routes",
+      "says": "The stub received only calls on routes the profiles allow: three from the OpenAI run, two from the Anthropic run, none from the control run.",
+      "pass": true,
+      "detail": "0 off the allow lists; 3, 2 and 0"
+    },
+    {
+      "id": "audit",
+      "says": "The daemon's audit line for each run counts the calls the stub received, and the one refusal.",
+      "pass": true,
+      "detail": "openai 3 calls 1 denied; anthropic 2 and 0; plain 0"
+    }
+  ],
+  "files": [
+    {
+      "name": "bundle.jsonl",
+      "bytes": 45237,
+      "sha256": "aaeb72c958cf51e08b86ced4e67a346901033c5623d9b53ab01e2a647ae781f7"
+    },
+    {
+      "name": "harness.pub",
+      "bytes": 113,
+      "sha256": "64d53be3462fd4ef7ca1b01759eb56188a5f0812a547ac1c5e9c3c6e3c54a094"
+    },
+    {
+      "name": "observations.dsse.json",
+      "bytes": 6687,
+      "sha256": "6cd6aee10ee7bafa90379271be88cf9007b3207fdff820a758c56c38b57e3384"
+    },
+    {
+      "name": "stub.jsonl",
+      "bytes": 6144,
+      "sha256": "108929e0046f5e33a5f608147c7f68bd12f7eb8892fa661ba7686621552de068"
+    },
+    {
+      "name": "grants.json",
+      "bytes": 1156,
+      "sha256": "74ea5eaa3b0960653d3bc53171567ec69f66abfc01da8a2b47101dd0cfcd213c"
+    },
+    {
+      "name": "seccomp-default.json",
+      "bytes": 8388,
+      "sha256": "a39bc7bf6cf712f4d65d108f615aeae5785d8def8bc0e658fbd4e36a6305b089"
+    },
+    {
+      "name": "seccomp-sdk.json",
+      "bytes": 13327,
+      "sha256": "c5b32b1a17c39da0438800a99bd0607700877ac8d01b72b839394023f0d64376"
+    }
+  ]
+}

@@ -25,6 +25,8 @@ var unsigned = map[protoreflect.FullName]string{
 	"plimsoll.v1.SessionRunRequest.trace_id":   "the caller's correlation key: it changes nothing that runs",
 	"plimsoll.v1.SessionRunRequest.session_id": "a capability: the record carries the session's fingerprint instead",
 	"plimsoll.v1.RunResponse.duration_ms":      "differs on every run, so no replay could reproduce it",
+	"plimsoll.v1.RunRequest.prefer_warm":       "chooses which sandbox a cell runs in, not what runs; the answer's warm states which did",
+	"plimsoll.v1.RunResponse.warm":             "which of a Run cell's two sandboxes ran it: record version 4 has no field for it, and adding one is a new record version",
 	"plimsoll.v1.StepResult.duration_ms":       "differs on every run, so no replay could reproduce it",
 	"plimsoll.v1.RunResponse.record":           "the record itself",
 	"plimsoll.v1.JavaScriptResult.advice":      "analysis of the run, not its output (docs/efficiency-advisor.md)",

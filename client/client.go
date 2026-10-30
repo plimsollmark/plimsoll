@@ -297,6 +297,11 @@ type Info struct {
 	// sessions and on one owner's of them (SessionOptions.Owner), 0 when there is none.
 	SessionsPerCaller int
 	SessionsPerOwner  int
+	// SessionPool is how many sandboxes the daemon keeps ready for sessions, 0 when it
+	// keeps none: with one, a cell run with CellOptions.PreferWarm, or a session opened
+	// with SessionOptions.WarmOnly, can answer without a sandbox being made for it.
+	// Stated with SupportsSessions.
+	SessionPool int
 	// SessionEnvironment is where a session's calls run (every kind in one sandbox;
 	// on docker the project image), stated with SupportsSessions. Informational, like
 	// Environments.
@@ -336,6 +341,7 @@ func (r *Remote) Describe(ctx context.Context) (Info, error) {
 		SessionEnvironment:       payloadEnvironment(resp.Msg.GetSessionEnvironment()),
 		SessionsPerCaller:        int(resp.Msg.GetMaxSessionsPerCaller()),
 		SessionsPerOwner:         int(resp.Msg.GetMaxSessionsPerOwner()),
+		SessionPool:              int(resp.Msg.GetSessionPool()),
 		Environments: sandbox.Environments{
 			JavaScript: payloadEnvironment(resp.Msg.GetJavascriptEnvironment()),
 			Project:    payloadEnvironment(resp.Msg.GetProjectEnvironment()),
@@ -415,6 +421,56 @@ func (r *Remote) RunProject(ctx context.Context, in sandbox.ProjectRequest) (san
 	return out, err
 }
 
+// CellOptions is how Run runs a cell by itself (RunCell).
+type CellOptions struct {
+	// PreferWarm lets the daemon run the cell in a sandbox it keeps ready for sessions
+	// (Info.SessionPool): one that has run only plimsoll's own programs, with the cell's
+	// interpreter already running, claimed for this call alone and deleted after it, so
+	// the call answers without a sandbox being made for it. When none fits (no pool,
+	// none waiting, a session image that does not run the language or meet the
+	// software rule) the cell runs in a sandbox made for it, as without the flag: a miss
+	// is never a refusal. CellResult.Warm says which ran.
+	PreferWarm bool
+}
+
+// RunCell runs a cell by itself: code for an interpreter of its language, its files
+// written into the work directory first, its final expression's value printed, in a
+// sandbox of its own that keeps nothing after the call (the result states
+// InterpreterStarted and InterpreterEnded). With no pool member, the daemon runs it as
+// a project of one step (the files, the code and a runner that runs it as a session's
+// interpreter does); a daemon that runs no projects runs a JavaScript cell without
+// files as a snippet. Files under .plimsoll/, where the code and the runner go, are
+// refused.
+//
+// What PreferWarm costs: a pool member runs the cell in the session image (on docker
+// the project image, which a fresh cell uses too), in a sandbox that waited up to the
+// pool's idle bound with plimsoll's interpreters running in it. The record is a single
+// run's on either path; which path ran is the answer's Warm, which the record does not
+// cover. A deterministic cell answers the same on both, except that a traceback names
+// its file differently and a fresh cell passes on an exit code its code chose (a pool
+// member's interpreter reports 1).
+func (r *Remote) RunCell(ctx context.Context, in sandbox.CellRequest, opts CellOptions) (sandbox.CellResult, error) {
+	if err := sandbox.ValidateCellRequest(in); err != nil {
+		return sandbox.CellResult{Sandbox: r.Name()}, err
+	}
+	c := &plimsollv1.CellRun{Language: string(in.Language), Code: in.Code}
+	for _, f := range in.Files {
+		c.Files = append(c.Files, &plimsollv1.ProjectFile{Path: f.Path, Content: f.Content})
+	}
+	req := r.envelope(ctx, in.Timeout, in.MinimumIsolation, in.Software)
+	req.PreferWarm = opts.PreferWarm
+	req.Payload = &plimsollv1.RunRequest_Cell{Cell: c}
+	resp, rec, err := r.run(ctx, req)
+	if resp == nil {
+		return sandbox.CellResult{Sandbox: r.Name()}, err
+	}
+	out, ok := cellResult(resp, rec)
+	if !ok {
+		return sandbox.CellResult{Sandbox: r.Name()}, connect.NewError(connect.CodeDataLoss, ErrResultKindMismatch)
+	}
+	return out, err
+}
+
 // javascriptResult maps a snippet's response; false when it holds another kind.
 func javascriptResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbox.Result, bool) {
 	m, ok := resp.GetResult().(*plimsollv1.RunResponse_Javascript)
@@ -460,6 +516,7 @@ func cellResult(resp *plimsollv1.RunResponse, rec *sandbox.RunRecord) (sandbox.C
 		SoftwareIdentity:    resp.GetSoftwareIdentity(),
 		EnvironmentIdentity: resp.GetEnvironment(),
 		Instance:            resp.GetInstance(),
+		Warm:                resp.GetWarm(),
 		Record:              rec,
 	}, true
 }

@@ -55,8 +55,11 @@ That live run surfaced three requirements the published contract does not state:
 
 ## An image kept in the account's own store
 
-`SANDBOX_DOCKERCLOUD_IMAGE` names an image the service pulls from a registry, so a
-private image needs a registry the service can read. Instead,
+`SANDBOX_DOCKERCLOUD_IMAGE` names an image the service pulls from a registry, and the
+service pulls from Docker Hub and Docker Hardened Images alone: on 2026-10-27 a create
+naming another registry was refused before any sandbox existed ("image registry not
+allowed: ttl.sh (allowed registries: docker.io, registry-1.docker.io, index.docker.io,
+dhi.io)"). So a private image needs a Docker Hub repository the account can read. Instead,
 `SANDBOX_DOCKERCLOUD_STORE_IMAGE` names an image in the account's own Cloud Sandboxes
 image store, as `<image id>@sha256:<manifest digest>`: the service boots it by its ID
 with no pull, and nothing outside the account can boot it. Set one of the two, never
@@ -172,6 +175,7 @@ kept as the backup until it covers those.
 | The daemon's strict production check, `PLIMSOLL_HARDENED=1` | refused | allowed, and must be named: `SANDBOX_DOCKERCLOUD_API=connect` |
 | Host-API grants | refused; a configured `SANDBOX_DOCKERCLOUD_GUARD_URL` fails startup | supported |
 | Longest run | 270 s | the configured ceiling (default 120 s) |
+| One sandbox kept for many calls | not offered yet | not offered: no known call keeps a process's input open |
 
 On REST, commands and file transfers go to the sandbox's own endpoint, which refuses
 the account's token. The provider creates a separate credential, valid for that one
@@ -188,3 +192,6 @@ that refusal on every REST run, so a change on Docker's side shows up. Keep the 
 REST API refuses a sandbox that carries its own network policy, and the Connect API
 cannot send one. On REST a delete's answer proves nothing (it reports success for a
 sandbox that does not exist), so the provider reads the sandbox until it is gone.
+
+The startup smoke test also states which languages the image runs (JavaScript, and
+Python when `python3` answers), which a project's steps can use.

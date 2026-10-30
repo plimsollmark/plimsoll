@@ -19,4 +19,11 @@ func TestCheckSessionGrant(t *testing.T) {
 	if !errors.Is(err, ErrGrantNotForSessions) || !ok || reason != RefusalPermission {
 		t.Fatalf("a grant that does not allow sessions: %v (reason %v, marked %v)", err, reason, ok)
 	}
+	// The local address for standard client libraries (sdk_env) is not served in a
+	// session, whatever allow_in_sessions says: refused as unsupported, not half-served.
+	err = CheckSessionGrant(&HostAPIGrant{AllowInSessions: true, SDKEnv: map[string]string{"OPENAI_BASE_URL": "{origin}/v1"}})
+	reason, ok = NotDispatchedReason(err)
+	if !errors.Is(err, ErrUnsupported) || !ok || reason != RefusalUnsupported {
+		t.Fatalf("a grant with sdk_env in a session: %v (reason %v, marked %v)", err, reason, ok)
+	}
 }

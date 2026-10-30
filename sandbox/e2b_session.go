@@ -140,6 +140,11 @@ func (e *E2B) OpenSession(ctx context.Context, opts SessionOptions) (Session, er
 	if err := e.admit(opts.MinimumIsolation, SoftwareRule{}); err != nil {
 		return nil, err
 	}
+	// No pool, so a warm-only open finds nothing and makes nothing: it must never make a
+	// billed sandbox.
+	if opts.WarmOnly {
+		return nil, RefuseNoWarmSandbox()
+	}
 	// E2B has no pool, so a language hint changes nothing here; it is still checked,
 	// so a hint is refused alike on every provider.
 	if _, err := SessionLanguages(opts.Languages, e.SessionEnvironments().Project.Languages); err != nil {

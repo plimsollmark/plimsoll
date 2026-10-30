@@ -1,0 +1,46 @@
+{
+  "title": "Fleet adapter requirements",
+  "about": "What the platform requires of a fleet adapter, one shall sentence per ID. Each requirement names the rules of package qualify that decide it, and holds in a run when every rule it names held. A requirement says no more than its rules check: a verdict is only as good as the check behind it.",
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "text": "The adapter shall load, export the contract's four functions, and let the harness run every step to the end, with no call hanging.",
+      "rules": ["ran_to_the_end"]
+    },
+    {
+      "id": "REQ-002",
+      "text": "Every value the adapter returns shall have the shape the contract defines, and no more status reads of a mission shall reach the vendor than the contract's read budget.",
+      "rules": ["kept_the_shapes"]
+    },
+    {
+      "id": "REQ-003",
+      "text": "Each inventory the adapter returns shall list exactly the vendor's robots, and the last shall match the vendor's own status and battery for each robot.",
+      "rules": ["inventory_is_true"]
+    },
+    {
+      "id": "REQ-004",
+      "text": "Each movement command shall become exactly one order on the vendor's ledger, or no order where the vendor refuses its robot.",
+      "rules": ["one_order_per_command"]
+    },
+    {
+      "id": "REQ-005",
+      "text": "Every order on the vendor's ledger shall carry its command's robot and target.",
+      "rules": ["right_robot_and_target"]
+    },
+    {
+      "id": "REQ-006",
+      "text": "Each order shall end done, or failed where its robot faults, or cancelled where the platform cancelled its command; an order the vendor answers nothing about is not judged.",
+      "rules": ["ended_as_it_should"]
+    },
+    {
+      "id": "REQ-007",
+      "text": "Every order the vendor marks done shall leave its robot at the command's target.",
+      "rules": ["robot_at_target"]
+    },
+    {
+      "id": "REQ-008",
+      "text": "The mission and state the adapter reports for each command shall be the vendor's, the read count it reports shall be no lower than the reads the vendor served, a command the vendor refused shall be reported as an error coded refused, and a command the vendor holds shall be reported only as its mission or as an error coded unresolved.",
+      "rules": ["report_is_true"]
+    }
+  ]
+}

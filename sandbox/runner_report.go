@@ -8,13 +8,19 @@ import (
 
 // RunnerReport reads the project runner's authenticated report out of its stdout and
 // returns the project result it states: what every provider that runs /runner.mjs with a
-// runnerwire plan does once the runner has exited. reported is false when stdout holds no
-// report at all: the runner never reported, and only the provider can say why (the docker
-// provider reads its start marker), in its own words and never the runner's stderr. A
-// report that does not authenticate under key, or does not parse, is a protocol error and
-// never a result, since every process in the sandbox can write the runner's stdout.
-func RunnerReport(provider string, isolation IsolationClass, stdout string, key []byte) (res ProjectResult, reported bool) {
-	res = ProjectResult{Sandbox: provider, Isolation: isolation}
+// runnerwire plan does once the runner has exited. base is the result as the provider
+// knows it (sandbox, tier, instance, image, policy, trace): the report fills in only what
+// it states (steps, artifacts, outcome and detail), so a provider cannot lose a field of
+// its own by returning the report. Two providers did, and the signed record of each
+// completed project run named no image (agentsandbox and openshell, found 2026-10-29).
+// reported is false when stdout holds no report at all: the runner never reported, and
+// only the provider can say why (the docker provider reads its start marker), in its own
+// words and never the runner's stderr. A report that does not authenticate under key, or
+// does not parse, is a protocol error and never a result, since every process in the
+// sandbox can write the runner's stdout.
+func RunnerReport(base ProjectResult, stdout string, key []byte) (res ProjectResult, reported bool) {
+	res = base
+	res.Steps, res.Artifacts, res.ArtifactsTruncated, res.Outcome, res.Detail = nil, nil, false, ProjectOutcomeUnspecified, ""
 	report, found, err := runnerwire.Parse(stdout, key)
 	switch {
 	case !found:

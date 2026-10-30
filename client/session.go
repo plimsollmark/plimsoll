@@ -37,6 +37,14 @@ type SessionOptions struct {
 	// process: the daemon gets a digest keyed by the client's token (ownerDigest).
 	// Empty: the session counts against no owner.
 	Owner string
+	// WarmOnly asks for a waiting pool member or nothing: on a daemon with no member
+	// to hand over the open is refused, not dispatched, reason capacity
+	// (sandbox.ErrAtCapacity), and no sandbox is made, so the caller can run fresh
+	// instead. It never closes another session of the owner to make room. A daemon
+	// that predates the field would have ignored it and made a sandbox, so it came
+	// with protocol 5, which such a daemon refuses before reading the open. A cell for
+	// one call needs no session of its own: RunCell with CellOptions.PreferWarm.
+	WarmOnly bool
 }
 
 // ownerDigest is what an owner is sent as: hex(HMAC-SHA256(key = SHA-256("plimsoll
@@ -158,6 +166,7 @@ func (r *Remote) OpenSession(ctx context.Context, opts SessionOptions) (*Session
 		SoftwareRule:     softwarewire.ToWire(opts.Software),
 		Languages:        wireLanguages,
 		Owner:            ownerDigest(r.token, opts.Owner),
+		WarmOnly:         opts.WarmOnly,
 	})
 	r.auth(req)
 	resp, err := r.client.OpenSession(ctx, req)

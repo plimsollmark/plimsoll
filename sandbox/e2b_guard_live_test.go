@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -104,6 +107,153 @@ func TestE2BGuardLive(t *testing.T) {
 		t.Fatalf("expired guard status=%d body=%q, want 401", resp.StatusCode, body)
 	}
 	t.Log("E2B guard live proof passed: allowed route, denied route, expired credential; run TestE2BEgressDeniedLive separately for no-grant egress")
+
+	// The raw route, from inside the VM, the way a standard client calls it: one more
+	// microVM. E2B's network rule adds the guard credential outside the guest and
+	// terminates the guard's TLS with its proxy CA, which the run's node trusts through
+	// NODE_EXTRA_CA_CERTS (e2bGuestCABundle), so fetch verifies the certificate as the
+	// injected client does.
+	liveRawRouteProof(t, func(code string, grant *HostAPIGrant) (Result, error) {
+		return e.RunJavaScript(context.Background(), Request{Code: code, Grant: grant})
+	})
+}
+
+// liveRawRouteProof runs one sandbox whose guest, with Node's fetch and the header set
+// the OpenAI and Anthropic client libraries send (a dummy Authorization among them),
+// makes three requests to the guard's raw route: an allowed one, which the test's own
+// loopback upstream must see with the broker's credential and the one passed header
+// only; a refused one (a path off the allow list), which gets a 4xx with the no-retry
+// mark and never reaches the upstream; and a streamed one, which must arrive complete,
+// with the time between the guest's first and last piece recorded (the upstream leaves
+// 500 ms between events, so pieces arriving apart show at least 700 ms; the public route
+// may buffer, so that part is measured, not required).
+// The upstream is a Go server in this process on loopback, which the broker in this
+// process reaches directly, so no second public route is needed and the streamed
+// answer costs nothing beyond the one run. run runs guest code with a grant.
+func liveRawRouteProof(t *testing.T, run func(code string, grant *HostAPIGrant) (Result, error)) {
+	t.Helper()
+	const token = "live-raw-minted-credential"
+	var mu sync.Mutex
+	var paths []string
+	var itemsHeaders http.Header
+	pieces := []string{"event: message_start\ndata: {}\n\n", "event: content_block_delta\ndata: {\"text\":\"hi\"}\n\n", "event: message_stop\ndata: {}\n\n"}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.RequestURI())
+		if r.URL.Path == "/v1/items" {
+			itemsHeaders = r.Header.Clone()
+		}
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/v1/items":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"item-1"}`)
+		case "/v1/stream":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			rc := http.NewResponseController(w)
+			for i, p := range pieces {
+				if i > 0 {
+					time.Sleep(500 * time.Millisecond)
+				}
+				_, _ = io.WriteString(w, p)
+				_ = rc.Flush()
+			}
+		default:
+			w.WriteHeader(http.StatusTeapot)
+		}
+	}))
+	defer upstream.Close()
+	grant := &HostAPIGrant{
+		BaseURL:     upstream.URL,
+		Allow:       []HostRoute{{Method: http.MethodGet, Path: "/v1/items"}, {Method: http.MethodGet, Path: "/v1/stream"}},
+		Minter:      StaticToken(token),
+		PassHeaders: []string{"anthropic-version"},
+	}
+	code := `(async () => {
+  const headers = { "authorization": "Bearer dummy-from-the-guest", "x-api-key": "dummy-from-the-guest", "anthropic-version": "2026-10-21",
+    "anthropic-beta": "not-listed", "accept": "application/json", "user-agent": "OpenAI/JS 6.0.0", "x-stainless-lang": "js",
+    "x-stainless-package-version": "6.0.0", "x-stainless-retry-count": "0", "x-stainless-timeout": "600", ...host.raw.headers };
+  try {
+    const a = await fetch(host.raw.url + "/v1/items", { headers });
+    console.log("RAW-ALLOWED", a.status, await a.text());
+    const d = await fetch(host.raw.url + "/v1/not-allowed", { headers });
+    console.log("RAW-DENIED", d.status, d.headers.get("x-should-retry"));
+    const s = await fetch(host.raw.url + "/v1/stream", { headers });
+    const reader = s.body.getReader(); let first = 0, last = 0, bytes = 0;
+    for (;;) { const { done, value } = await reader.read(); if (done) break; const now = Date.now(); if (!first) first = now; last = now; bytes += value.length; }
+    console.log("RAW-STREAM", s.status, last - first, bytes);
+  } catch (err) {
+    console.error("RAW-FAILED", String(err), err?.cause?.code || "");
+    process.exit(13);
+  }
+})();`
+	res, err := run(code, grant)
+	if err != nil {
+		t.Fatalf("raw route: infrastructure error: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("raw route guest failed: exit=%d stdout=%q stderr=%q", res.ExitCode, res.Stdout, res.Stderr)
+	}
+	if !strings.Contains(res.Stdout, `RAW-ALLOWED 200 {"id":"item-1"}`) {
+		t.Errorf("allowed raw request: stdout %q", res.Stdout)
+	}
+	if !strings.Contains(res.Stdout, "RAW-DENIED 403 false") {
+		t.Errorf("refused raw request: stdout %q, want 403 with X-Should-Retry false", res.Stdout)
+	}
+	var status, gapMs, bytes int
+	if _, err := fmt.Sscanf(afterToken(res.Stdout, "RAW-STREAM "), "%d %d %d", &status, &gapMs, &bytes); err != nil || status != 200 || bytes != len(strings.Join(pieces, "")) {
+		t.Errorf("streamed raw request: status %d, %d bytes (want 200 and %d bytes): stdout %q", status, bytes, len(strings.Join(pieces, "")), res.Stdout)
+	} else if gapMs >= 700 {
+		t.Logf("streamed raw request arrived in pieces: %d ms between the first and the last", gapMs)
+	} else {
+		// The public route (a Tailscale Funnel path on this laptop) sits between the guest
+		// and the guard and may buffer a response; plimsoll's own streaming is proven by
+		// TestEgressGuardStreamsEventStream against the handler, so this is a measurement
+		// of the path, recorded rather than failed.
+		t.Logf("streamed raw request arrived whole or nearly so (%d ms between the first and the last piece): the public route buffered it; plimsoll streamed (TestEgressGuardStreamsEventStream)", gapMs)
+	}
+	if strings.Contains(res.Stdout+res.Stderr, token) {
+		t.Error("the broker's credential appeared in guest output")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range paths {
+		if strings.Contains(p, "not-allowed") {
+			t.Errorf("the refused request reached the upstream: %v", paths)
+		}
+	}
+	if itemsHeaders == nil {
+		t.Fatalf("the upstream never saw /v1/items; paths %v", paths)
+	}
+	if got := itemsHeaders.Get("Authorization"); got != "Bearer "+token {
+		t.Errorf("upstream Authorization = %q, want the broker's credential", got)
+	}
+	if got := itemsHeaders.Get("anthropic-version"); got != "2026-10-21" {
+		t.Errorf("upstream anthropic-version = %q, want the client's, passed through", got)
+	}
+	for _, name := range []string{"X-Api-Key", "Anthropic-Beta", "X-Stainless-Lang", "X-Stainless-Package-Version", "X-Stainless-Retry-Count", "X-Stainless-Timeout", EgressGuardHeader} {
+		if vals, present := itemsHeaders[http.CanonicalHeaderKey(name)]; present {
+			t.Errorf("%s reached the upstream: %q", name, vals)
+		}
+	}
+	if ua := itemsHeaders.Get("User-Agent"); strings.HasPrefix(ua, "OpenAI/") {
+		t.Errorf("the client's User-Agent reached the upstream: %q", ua)
+	}
+	t.Log("raw route live proof passed: allowed request with the broker's credential and the passed header only, refused request with the no-retry mark, streamed answer in pieces")
+}
+
+// afterToken returns what follows the first occurrence of token in s, to its line's end.
+func afterToken(s, token string) string {
+	i := strings.Index(s, token)
+	if i < 0 {
+		return ""
+	}
+	rest := s[i+len(token):]
+	if j := strings.IndexByte(rest, '\n'); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
 }
 
 // liveGuard is what the guarded live tests share, read from the environment; see

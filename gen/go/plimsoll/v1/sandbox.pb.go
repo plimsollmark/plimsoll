@@ -342,8 +342,13 @@ type DescribeResponse struct {
 	// Stated with supports_sessions; informational.
 	MaxSessionsPerCaller uint32 `protobuf:"varint,19,opt,name=max_sessions_per_caller,json=maxSessionsPerCaller,proto3" json:"max_sessions_per_caller,omitempty"`
 	MaxSessionsPerOwner  uint32 `protobuf:"varint,20,opt,name=max_sessions_per_owner,json=maxSessionsPerOwner,proto3" json:"max_sessions_per_owner,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// How many sandboxes the daemon keeps ready for sessions (SANDBOX_SESSION_POOL), 0
+	// when it keeps none: never used, interpreters already running, each handed to one
+	// session, or to one Run cell that asked for it (RunRequest.prefer_warm), and deleted
+	// after. Stated with supports_sessions; informational.
+	SessionPool   uint32 `protobuf:"varint,21,opt,name=session_pool,json=sessionPool,proto3" json:"session_pool,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DescribeResponse) Reset() {
@@ -498,6 +503,13 @@ func (x *DescribeResponse) GetMaxSessionsPerCaller() uint32 {
 func (x *DescribeResponse) GetMaxSessionsPerOwner() uint32 {
 	if x != nil {
 		return x.MaxSessionsPerOwner
+	}
+	return 0
+}
+
+func (x *DescribeResponse) GetSessionPool() uint32 {
+	if x != nil {
+		return x.SessionPool
 	}
 	return 0
 }
@@ -882,6 +894,16 @@ type RunRequest struct {
 	// Checked by the daemon before dispatch. Older daemons would drop this field,
 	// so its addition raises the protocol number.
 	SoftwareRule *SoftwareRule `protobuf:"bytes,5,opt,name=software_rule,json=softwareRule,proto3" json:"software_rule,omitempty"`
+	// prefer_warm lets the daemon run a cell in a sandbox it keeps ready for sessions
+	// (DescribeResponse.session_pool): one that has run nothing, with the cell's
+	// interpreter already running, claimed for this call alone and deleted after it.
+	// When none fits (no pool, none waiting, the session image does not run the
+	// language or meet the software rule) the cell runs in a sandbox made for it, as
+	// without the flag: a miss is never a refusal. RunResponse.warm says which ran.
+	// Only a cell takes it; on any other payload it is InvalidArgument, not dispatched.
+	// Older daemons would drop it, so its addition raised the protocol number (5). The
+	// request digest does not cover it: it chooses where the cell runs, not what runs.
+	PreferWarm bool `protobuf:"varint,6,opt,name=prefer_warm,json=preferWarm,proto3" json:"prefer_warm,omitempty"`
 	// Exactly one payload. An empty oneof is InvalidArgument.
 	//
 	// Types that are valid to be assigned to Payload:
@@ -960,6 +982,13 @@ func (x *RunRequest) GetSoftwareRule() *SoftwareRule {
 	return nil
 }
 
+func (x *RunRequest) GetPreferWarm() bool {
+	if x != nil {
+		return x.PreferWarm
+	}
+	return false
+}
+
 func (x *RunRequest) GetPayload() isRunRequest_Payload {
 	if x != nil {
 		return x.Payload
@@ -1020,10 +1049,15 @@ type RunRequest_Module struct {
 }
 
 type RunRequest_Cell struct {
-	// A cell runs only in a session, so Run refuses it, marked not dispatched. It
-	// is here as the stored form of a session's cell call (the call without its
-	// session ID, with the same request digest), which a harness signs and replays
-	// into a fresh session in order.
+	// A cell run by itself keeps nothing: it runs in a sandbox of its own (made for
+	// it, or with prefer_warm a waiting pool member), whose interpreter starts with
+	// the call and is gone after it, so its result states interpreter_started and
+	// interpreter_ended. In a sandbox made for it, the cell runs as a project of one
+	// step: its files, the code, and a runner that runs it as a session's interpreter
+	// does (its final expression printed); a provider that runs no projects runs a
+	// JavaScript cell without files as a snippet. It is also the stored form of a
+	// session's cell call (the call without its session ID, with the same request
+	// digest), which a harness replays into a fresh session in order.
 	Cell *CellRun `protobuf:"bytes,13,opt,name=cell,proto3,oneof"`
 }
 
@@ -1122,6 +1156,12 @@ type RunResponse struct {
 	// evidence kept outside plimsoll (a runtime's log of the pod) be tied to this
 	// run. The record repeats it so the client checks both statements.
 	Instance string `protobuf:"bytes,7,opt,name=instance,proto3" json:"instance,omitempty"`
+	// warm is true when a cell run with prefer_warm ran in a waiting pool member: a
+	// sandbox made before the call, which had run only plimsoll's own programs (its
+	// interpreters), handed to this call alone and deleted after it. False when the
+	// call ran in a sandbox made for it. Informational, like duration_ms: the record
+	// does not cover it.
+	Warm bool `protobuf:"varint,8,opt,name=warm,proto3" json:"warm,omitempty"`
 	// Exactly one result, of the payload's kind.
 	//
 	// Types that are valid to be assigned to Result:
@@ -1212,6 +1252,13 @@ func (x *RunResponse) GetInstance() string {
 		return x.Instance
 	}
 	return ""
+}
+
+func (x *RunResponse) GetWarm() bool {
+	if x != nil {
+		return x.Warm
+	}
+	return false
 }
 
 func (x *RunResponse) GetResult() isRunResponse_Result {
@@ -2260,7 +2307,17 @@ type OpenSessionRequest struct {
 	// digest of the user, never the user's name; the daemon never logs it.
 	// Informational, so it did not move the protocol number: a daemon that predates it
 	// has no per-owner cap, as one with the cap unset.
-	Owner         string `protobuf:"bytes,8,opt,name=owner,proto3" json:"owner,omitempty"`
+	Owner string `protobuf:"bytes,8,opt,name=owner,proto3" json:"owner,omitempty"`
+	// Hand over a waiting pool member or make nothing: an open that finds no member the
+	// daemon may hand over is refused, not dispatched, reason capacity, and no sandbox
+	// is made (a daemon without a pool refuses every such open). It never closes another
+	// session of the owner to make room: at the owner's cap it is refused the same way.
+	// For a caller that would rather run fresh than wait for a session's sandbox to be
+	// made. A daemon that predates it would ignore it and make the sandbox (on e2b and
+	// dockercloud one billed by the second), so it came with protocol 5, which such a
+	// daemon refuses before reading the request. A cell for one call needs no session:
+	// RunRequest.prefer_warm.
+	WarmOnly      bool `protobuf:"varint,9,opt,name=warm_only,json=warmOnly,proto3" json:"warm_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2349,6 +2406,13 @@ func (x *OpenSessionRequest) GetOwner() string {
 		return x.Owner
 	}
 	return ""
+}
+
+func (x *OpenSessionRequest) GetWarmOnly() bool {
+	if x != nil {
+		return x.WarmOnly
+	}
+	return false
 }
 
 type OpenSessionResponse struct {
@@ -3112,7 +3176,7 @@ var File_plimsoll_v1_sandbox_proto protoreflect.FileDescriptor
 const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"\x19plimsoll/v1/sandbox.proto\x12\vplimsoll.v1\"\x11\n" +
-	"\x0fDescribeRequest\"\xd9\a\n" +
+	"\x0fDescribeRequest\"\xfc\a\n" +
 	"\x10DescribeResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12)\n" +
@@ -3132,7 +3196,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x17session_idle_timeout_ms\x18\x11 \x01(\rR\x14sessionIdleTimeoutMs\x12P\n" +
 	"\x13session_environment\x18\x12 \x01(\v2\x1f.plimsoll.v1.PayloadEnvironmentR\x12sessionEnvironment\x125\n" +
 	"\x17max_sessions_per_caller\x18\x13 \x01(\rR\x14maxSessionsPerCaller\x123\n" +
-	"\x16max_sessions_per_owner\x18\x14 \x01(\rR\x13maxSessionsPerOwnerJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
+	"\x16max_sessions_per_owner\x18\x14 \x01(\rR\x13maxSessionsPerOwner\x12!\n" +
+	"\fsession_pool\x18\x15 \x01(\rR\vsessionPoolJ\x04\b\x06\x10\aJ\x04\b\a\x10\b\"\xa1\x01\n" +
 	"\x12PayloadEnvironment\x12\x1a\n" +
 	"\bidentity\x18\x01 \x01(\tR\bidentity\x12$\n" +
 	"\x0emax_timeout_ms\x18\x02 \x01(\rR\fmaxTimeoutMs\x12+\n" +
@@ -3162,7 +3227,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x10added_latency_ms\x18\n" +
 	" \x01(\x03R\x0eaddedLatencyMs\x12\x1f\n" +
 	"\vbytes_moved\x18\v \x01(\x03R\n" +
-	"bytesMoved\"\xab\x03\n" +
+	"bytesMoved\"\xcc\x03\n" +
 	"\n" +
 	"RunRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
@@ -3170,7 +3235,9 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\btrace_id\x18\x03 \x01(\tR\atraceId\x12\x1d\n" +
 	"\n" +
 	"timeout_ms\x18\x04 \x01(\x05R\ttimeoutMs\x12>\n" +
-	"\rsoftware_rule\x18\x05 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12<\n" +
+	"\rsoftware_rule\x18\x05 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12\x1f\n" +
+	"\vprefer_warm\x18\x06 \x01(\bR\n" +
+	"preferWarm\x12<\n" +
 	"\n" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1a.plimsoll.v1.JavaScriptRunH\x00R\n" +
@@ -3181,7 +3248,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\apayload\"H\n" +
 	"\rJavaScriptRun\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12#\n" +
-	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\xe8\x03\n" +
+	"\rgrant_profile\x18\x02 \x01(\tR\fgrantProfile\"\xfc\x03\n" +
 	"\vRunResponse\x12\x18\n" +
 	"\asandbox\x18\x01 \x01(\tR\asandbox\x12\x1c\n" +
 	"\tisolation\x18\x02 \x01(\tR\tisolation\x12\x1f\n" +
@@ -3190,7 +3257,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x06record\x18\x04 \x01(\v2\x16.plimsoll.v1.RunRecordR\x06record\x12+\n" +
 	"\x11software_identity\x18\x05 \x01(\tR\x10softwareIdentity\x12 \n" +
 	"\venvironment\x18\x06 \x01(\tR\venvironment\x12\x1a\n" +
-	"\binstance\x18\a \x01(\tR\binstance\x12?\n" +
+	"\binstance\x18\a \x01(\tR\binstance\x12\x12\n" +
+	"\x04warm\x18\b \x01(\bR\x04warm\x12?\n" +
 	"\n" +
 	"javascript\x18\n" +
 	" \x01(\v2\x1d.plimsoll.v1.JavaScriptResultH\x00R\n" +
@@ -3275,7 +3343,7 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\aoutcome\x18\x05 \x01(\x0e2\x1b.plimsoll.v1.ProjectOutcomeR\aoutcome\x12%\n" +
 	"\x0eoutcome_detail\x18\x06 \x01(\tR\routcomeDetail\x12\x16\n" +
 	"\x06stdout\x18\a \x01(\fR\x06stdout\x12\x16\n" +
-	"\x06stderr\x18\b \x01(\fR\x06stderr\"\xb5\x02\n" +
+	"\x06stderr\x18\b \x01(\fR\x06stderr\"\xd2\x02\n" +
 	"\x12OpenSessionRequest\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\rR\bprotocol\x12+\n" +
 	"\x11minimum_isolation\x18\x02 \x01(\tR\x10minimumIsolation\x12\x19\n" +
@@ -3285,7 +3353,8 @@ const file_plimsoll_v1_sandbox_proto_rawDesc = "" +
 	"\x0fidle_timeout_ms\x18\x05 \x01(\rR\ridleTimeoutMs\x12>\n" +
 	"\rsoftware_rule\x18\x06 \x01(\v2\x19.plimsoll.v1.SoftwareRuleR\fsoftwareRule\x12\x1c\n" +
 	"\tlanguages\x18\a \x03(\tR\tlanguages\x12\x14\n" +
-	"\x05owner\x18\b \x01(\tR\x05owner\"\x83\x02\n" +
+	"\x05owner\x18\b \x01(\tR\x05owner\x12\x1b\n" +
+	"\twarm_only\x18\t \x01(\bR\bwarmOnly\"\x83\x02\n" +
 	"\x13OpenSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
