@@ -904,7 +904,7 @@ go run ./examples/squeeze -import ../did-it-learn</pre>
         });
       }
     }
-    var cur = null, raf = 0, t0 = 0, playing = false;
+    var cur = null, raf = 0, t0 = null, playing = false;
     function draw(i, upto) {
       var o = options[i], t = o.t, pts = t.xyz, n = pts.length;
       if (upto === undefined) upto = n - 1;
@@ -933,6 +933,7 @@ go run ./examples/squeeze -import ../did-it-learn</pre>
     function stop() { playing = false; cancelAnimationFrame(raf); play.textContent = '▶ Play'; }
     function frame(ts) {
       if (!playing) return;
+      if (t0 === null) t0 = ts; 
       var o = options[cur], n = o.t.xyz.length;
       var k = Math.floor((ts - t0) / 1000 * 10 * 2);
       draw(cur, k);
@@ -941,7 +942,7 @@ go run ./examples/squeeze -import ../did-it-learn</pre>
     }
     play.onclick = function () {
       if (playing) { stop(); draw(cur); return; }
-      playing = true; play.textContent = '■ Stop'; t0 = performance.now(); raf = requestAnimationFrame(frame);
+      playing = true; play.textContent = '■ Stop'; t0 = null; raf = requestAnimationFrame(frame);
     };
     pick.onchange = function () { stop(); cur = +pick.value; draw(cur); };
     cur = 0;

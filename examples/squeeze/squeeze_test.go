@@ -901,3 +901,21 @@ func TestCanaryDemoTranscript(t *testing.T) {
 		t.Fatalf("canary-demo.sh printed something other than canary-demo.txt:\n%s", out)
 	}
 }
+
+// TestFlightPlaybackKeepsToOneClock pins the Play button's fix. A frame's
+// timestamp is when the frame began, so it can be earlier than a
+// performance.now() read in the click that asked for it; the difference then
+// gave position -1 and the drawing threw with the room half drawn. The first
+// frame sets the start instead, and no start time comes from another clock.
+func TestFlightPlaybackKeepsToOneClock(t *testing.T) {
+	page, err := os.ReadFile("page.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(page), "if (t0 === null) t0 = ts;") {
+		t.Error("playback must take its start from the first frame's timestamp")
+	}
+	if strings.Contains(string(page), "t0 = performance.now()") {
+		t.Error("playback must not start from performance.now(): a frame can be stamped before it")
+	}
+}
