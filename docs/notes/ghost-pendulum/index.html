@@ -129,7 +129,7 @@ footer { margin-top:2.6rem; padding-top:1rem; border-top:1px solid var(--rule); 
 <tr><td>Method</td><td><a href="https://en.wikipedia.org/wiki/Runge%E2%80%93Kutta_methods">Fourth-order Runge-Kutta (EXTERNAL · article ↗)</a>, a standard way to follow motion in small steps</td></tr>
 <tr><td>Sandbox check</td><td>256 tiles, 512 runs, all 256 identical</td></tr>
 </tbody></table></div>
-<p>The map on this page comes from <a href="flipmap.mjs">flipmap.mjs (INTERNAL · the program →)</a>, 50 lines of JavaScript with the same math as the sandbox run, about ten seconds on my laptop. The pendulums you see moving run those same equations in your browser.</p>
+<p>The map on this page comes from <a href="flipmap.mjs">flipmap.mjs (INTERNAL · the program →)</a>, 42 lines of JavaScript with the same math as the sandbox run, about ten seconds on my laptop. The pendulums you see moving run those same equations in your browser.</p>
 <p>One wrinkle, and I like it. JavaScript lets each engine work out sine and cosine its own way in the very last digit, and Chrome's last digit isn't always the one in node, which made this map. I recomputed every simulated pendulum in Chrome: 102 of 71,008 came out differently, none before time 119. So a pendulum you click can, rarely, disagree with its own dot. That's Stage 2 happening to the page itself.</p>
 <p>Two choices shape what you see: the color scale is logarithmic so the slow and fast flips both show detail, and the picture would change a little with a longer run, since more of the red dots might flip.</p>
 </article>
