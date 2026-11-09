@@ -120,20 +120,87 @@ func (f *e2bFake) dial(ctx context.Context, network, addr string) (net.Conn, err
 	}
 	f.mu.Lock()
 	b := f.boxes[id]
-	f.mu.Unlock()
 	if b == nil || b.state != "running" {
+		f.mu.Unlock()
 		return nil, &net.OpError{Op: "dial", Net: "unix", Err: syscall.ECONNREFUSED}
 	}
+	sock := b.sock
+	f.mu.Unlock()
 	var d net.Dialer
-	c, err := d.DialContext(ctx, "unix", b.sock)
+	c, err := d.DialContext(ctx, "unix", sock)
 	if err != nil {
 		return nil, err
 	}
 	tc := &trackedConn{Conn: c, f: f, b: b}
 	f.mu.Lock()
+	// A pause or deletion may have cut the sandbox while DialContext was in
+	// flight. Check and register atomically so cut cannot miss this connection.
+	if b.state != "running" {
+		f.mu.Unlock()
+		_ = c.Close()
+		return nil, &net.OpError{Op: "dial", Net: "unix", Err: syscall.ECONNREFUSED}
+	}
 	b.conns[tc] = struct{}{}
 	f.mu.Unlock()
 	return tc, nil
+}
+
+// The fake's HTTP transport may dial while the test changes the sandbox's
+// state. Exercise that shared path without Docker so the race pass always covers it.
+func TestE2BSessionDockerFakeDialState(t *testing.T) {
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan struct{})
+	go func() {
+		defer close(accepted)
+		for {
+			c, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	box := &e2bFakeBox{state: "running", sock: listener.Addr().String(), conns: map[net.Conn]struct{}{}}
+	f := &e2bFake{boxes: map[string]*e2bFakeBox{"test": box}}
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		<-start
+		for range 4000 {
+			f.mutate("test", func(b *e2bFakeBox) { b.state = "running" })
+		}
+	}()
+	for range 8 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			for range 100 {
+				c, err := f.dial(context.Background(), "tcp", "e2bfake-test:80")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				_ = c.Close()
+			}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	f.mu.Lock()
+	remaining := len(box.conns)
+	f.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("%d closed connections remain registered", remaining)
+	}
+	_ = listener.Close()
+	<-accepted
 }
 
 type trackedConn struct {
